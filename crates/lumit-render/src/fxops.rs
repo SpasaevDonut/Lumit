@@ -779,7 +779,12 @@ pub fn run_ops(
                 let matte = flare_mattes.get(flare_i).and_then(|o| o.as_ref());
                 let custom = flare_lens.get(flare_i).and_then(|o| o.as_ref());
                 flare_i += 1;
-                let (grid, lambda_count, flare_div) = lf::quality_ladder(p.quality);
+                let (tier_base, tier_lambda, flare_div) = lf::quality_ladder(p.quality);
+                // The Detail dial scales the tier's base and wavelength
+                // count (K-265) — through the shared helpers, so this
+                // equals the CPU reference.
+                let grid = lf::detail_base(tier_base, p.detail);
+                let lambda_count = lf::detail_lambda(tier_lambda, p.detail);
                 let energy = p.ghost_intensity;
                 let lambdas = lf::lambda_weights(lambda_count, p.dispersion)
                     .into_iter()

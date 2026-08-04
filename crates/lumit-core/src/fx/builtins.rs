@@ -2568,6 +2568,7 @@ pub const BUILTINS: &[EffectSchema] = &[
                     "ghost_intensity",
                     "ghost_softness",
                     "max_ghosts",
+                    "detail",
                     "dispersion",
                     "starburst_intensity",
                     "scale",
@@ -2663,7 +2664,7 @@ pub const BUILTINS: &[EffectSchema] = &[
                 // .lens file on `lens_file` overrides this pick entirely.
                 kind: ParamKind::Choice {
                     options: &crate::fx::lens_library::LENS_OPTIONS,
-                    default: 17,
+                    default: 16,
                     dividers_after: &[],
                 },
             },
@@ -2788,6 +2789,21 @@ pub const BUILTINS: &[EffectSchema] = &[
                     default: 60,
                     slider: (0, 150),
                     hard: (Some(0), Some(200)),
+                },
+            },
+            ParamSchema {
+                id: "detail",
+                label: "Detail",
+                // Ray-budget multiplier on the Quality tier's pupil grid
+                // (K-265, owner-asked): the tiers pick a sensible base and
+                // this dial hands the trade to the user — a lens whose
+                // ghost rims still show their cells buys more rays without
+                // jumping a whole tier, a preview buys fewer. Frame-time,
+                // never rebakes; 1 is the tier as shipped.
+                kind: ParamKind::Float {
+                    default: 1.0,
+                    slider: (0.25, 2.0),
+                    hard: (Some(0.25), Some(4.0)),
                 },
             },
             ParamSchema {

@@ -1123,7 +1123,7 @@ fn resolve_one(
             // table; pre-release, it simply lands on a valid curated lens.
             let lens = match e.param("lens_model") {
                 Some(EffectValue::Choice(c)) => *c,
-                _ => 17,
+                _ => 16,
             };
             let fstop = (e.float_at("fstop", lt).unwrap_or(2.8) as f32).clamp(0.7, 32.0);
             let focus_m = (e.float_at("focus", lt).unwrap_or(100.0) as f32).max(0.2);
@@ -1131,6 +1131,7 @@ fn resolve_one(
                 Some(EffectValue::Choice(c)) => (*c).min(3),
                 _ => 1,
             };
+            let detail = (e.float_at("detail", lt).unwrap_or(1.0) as f32).clamp(0.25, 4.0);
             let background = match e.param("background") {
                 Some(EffectValue::Choice(c)) => (*c).min(1),
                 _ => 0,
@@ -1197,6 +1198,7 @@ fn resolve_one(
                     use_source_colour,
                     anamorphic,
                     quality,
+                    detail,
                     background,
                     mix,
                 },

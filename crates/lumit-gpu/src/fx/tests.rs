@@ -2920,7 +2920,7 @@ fn flare_params() -> lumit_core::fx::lens_flare::LensFlareParams {
         // Raster pixels of a 192×108 probe framing (K-260).
         light: [63.4, 32.4],
         intensity: 1.0,
-        lens: 17,
+        lens: 16,
         fstop: 2.8,
         focus_m: 100.0,
         blades: 8,
@@ -2941,6 +2941,7 @@ fn flare_params() -> lumit_core::fx::lens_flare::LensFlareParams {
         use_source_colour: true,
         anamorphic: 1.0,
         quality: 0,
+        detail: 1.0,
         background: 0,
         mix: 1.0,
     }
@@ -3025,7 +3026,7 @@ fn flare_bake_data(p: &lumit_core::fx::lens_flare::LensFlareParams) -> FlareBake
 // a drift would make the GPU trace different rays from the oracle (K-262).
 #[test]
 fn lens_flare_pair_grid_mirrors_lumit_core() {
-    for base in [8u32, 24, 48, 64, 96, 144] {
+    for base in [8u32, 24, 48, 64, 96, 144, 320] {
         for spread in [
             0.0f32, 0.05, 0.119, 0.12, 0.3, 0.49, 0.5, 1.0, 1.49, 1.5, 4.0, 99.0,
         ] {
@@ -3140,7 +3141,7 @@ fn lens_flare_dump_frame() {
     let lens: u32 = std::env::var("LUMIT_FLARE_LENS")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(17);
+        .unwrap_or(16);
     let light = std::env::var("LUMIT_FLARE_LIGHT")
         .ok()
         .and_then(|v| {
@@ -3148,10 +3149,20 @@ fn lens_flare_dump_frame() {
             Some([x.trim().parse::<f32>().ok()?, y.trim().parse::<f32>().ok()?])
         })
         .unwrap_or([0.42, 0.28]);
+    let fstop: f32 = std::env::var("LUMIT_FLARE_FSTOP")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2.8);
+    let detail: f32 = std::env::var("LUMIT_FLARE_DETAIL")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1.0);
     let p = lf::LensFlareParams {
         light: [light[0] * w as f32, light[1] * h as f32],
         lens,
         quality,
+        fstop,
+        detail,
         max_ghosts: 60,
         ghost_softness: 0.0, // bare geometry — nothing hides behind blur
         ..flare_params()
@@ -3385,7 +3396,7 @@ fn wgsl_lens_flare_trace_matches_the_cpu_reference() {
     let fx = FxEngine::new(&ctx);
     use lumit_core::fx::lens_flare as lf;
     let (w, h) = (192u32, 108u32);
-    for lens in [17u32, 5] {
+    for lens in [16u32, 5] {
         for light_frac in [[0.33f32, 0.30f32], [0.85, 0.75]] {
             let p = lf::LensFlareParams {
                 lens,
@@ -3784,7 +3795,7 @@ fn lens_flare_montage() {
     let tex = upload_linear_f32(&ctx, &img, tw, th);
     for (k, &lens) in picks.iter().enumerate() {
         let p = lf::LensFlareParams {
-            light: [0.38 * tw as f32, 0.32 * th as f32],
+            light: [0.68 * tw as f32, 0.30 * th as f32],
             lens,
             quality: 1,
             max_ghosts: 60,

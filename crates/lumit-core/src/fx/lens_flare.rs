@@ -100,6 +100,12 @@ pub struct LensFlareParams {
     /// 0 Draft, 1 Normal, 2 High, 3 Ultra (pupil sample density and
     /// wavelength count; Draft renders the flare buffer at half resolution).
     pub quality: u32,
+    /// Ray-budget multiplier on the Quality tier's pupil grid, 0.25..4
+    /// (K-265, owner-asked): the tiers pick a sensible base, and this dial
+    /// hands the trade to the user when a lens needs more (or a preview
+    /// less) without changing wavelength count or buffer resolution.
+    /// Frame-time — never rebakes.
+    pub detail: f32,
     /// 0 Transparent (the layer's own alpha carries the flare — today's
     /// behaviour), 1 Black (the output is made opaque, the flare-element-
     /// over-black export the Screen/Add workflow wants). Applies only while
@@ -928,23 +934,41 @@ pub fn pupil_mask(u: f32, v: f32, blades: u32, rot_rad: f32, roundness: f32, sof
     1.0 - t * t * (3.0 - 2.0 * t)
 }
 
-/// The pupil grid one ghost pair gets, from the Quality ladder's base and
-/// the pair's image spread (K-262). A ghost that lands in a tight blob is
-/// oversampled by the base grid; a frame-filling defocused one is
-/// undersampled and shows its cell facets. Spending the budget by size
-/// makes Normal hold up without paying Ultra's cost everywhere. Shared by
-/// the CPU reference and the GPU dispatch so both trace the same rays.
+/// The pupil grid one ghost pair gets, from the Quality ladder's base
+/// (times the Detail dial) and the pair's image spread (K-262, retuned
+/// K-265). A frame-filling defocused ghost is undersampled by a flat grid
+/// and shows its cell facets, so big spreads earn more. The K-262 HALF
+/// rung for tight blobs is gone (K-265): a small ghost is not a cheap
+/// ghost — its caustic rim carries structure the blob-size probe cannot
+/// see, and the owner's EF 70-200 rendered that rim as sunflower teeth at
+/// Ultra. Shared by the CPU reference and the GPU dispatch so both trace
+/// the same rays.
+/// The Quality tier's grid base scaled by the Detail dial (K-265), the
+/// one place the multiplication lives so the CPU reference and the GPU
+/// dispatch cannot disagree about rounding.
+pub fn detail_base(tier_base: u32, detail: f32) -> u32 {
+    ((tier_base as f32 * detail.clamp(0.25, 4.0)).round() as u32).max(8)
+}
+
+/// The Quality tier's traced wavelength count scaled by the Detail dial
+/// (K-265). The dial must scale BOTH axes of the budget: the owner's
+/// EF 70-200 wore a toothed corona that more rays barely touched, because
+/// each of Ultra's 32 discrete wavelengths paints its own rim and the
+/// teeth were the 32 rims fanned radially — spectral banding, dissolved
+/// only by more bands. Capped at 64: combos scale linearly with it.
+pub fn detail_lambda(tier_lambda: u32, detail: f32) -> u32 {
+    ((tier_lambda as f32 * detail.clamp(0.25, 4.0)).round() as u32).clamp(3, 64)
+}
+
 pub fn pair_grid(base: u32, spread: f32) -> u32 {
-    let mult = if spread < 0.12 {
-        0.5
-    } else if spread < 0.5 {
+    let mult = if spread < 0.5 {
         1.0
     } else if spread < 1.5 {
         1.75
     } else {
         2.5
     };
-    ((base as f32 * mult).round() as u32).clamp(8, 256)
+    ((base as f32 * mult).round() as u32).clamp(8, 512)
 }
 
 /// The effective iris roundness for a working f-stop (K-260): wide open a
@@ -1375,6 +1399,7 @@ pub fn bake_with(p: &LensFlareParams, lens_text: Option<&str>) -> FlareBaked {
         use_source_colour: true,
         anamorphic: 1.0,
         quality: 0,
+        detail: 1.0,
         background: 0,
         mix: 1.0,
     };
@@ -1650,7 +1675,13 @@ pub fn cpu_flare(
     if w == 0 || h == 0 || p.ghost_intensity <= 0.0 {
         return out;
     }
-    let (base_side, lambda_count, _) = quality_ladder(p.quality);
+    let (tier_base, tier_lambda, _) = quality_ladder(p.quality);
+    // The Detail dial scales the tier's base AND its wavelength count
+    // before the per-pair budget (K-265); both the CPU reference and the
+    // GPU dispatch derive the same numbers, so the oracle holds at any
+    // setting.
+    let base_side = detail_base(tier_base, p.detail);
+    let lambda_count = detail_lambda(tier_lambda, p.detail);
     let weights = lambda_weights(lambda_count, p.dispersion);
     let roundness = effective_roundness(p.roundness, p.fstop, baked.native_fstop);
     let rot = p.aperture_rotation_deg.to_radians();
@@ -1801,6 +1832,28 @@ pub fn cpu_flare(
                 let corner_density = |ci: usize, cj: usize| -> f32 {
                     cell_area_px / corner_mean_area(ci, cj).max(MIN_AREA_FRAC * cell_area_px)
                 };
+                // The SMALLEST live cell touching a corner — the pull-in's
+                // length scale (K-265). The mean is wrong for that job: at
+                // a fold the stretched cells inflate it, so pulled corners
+                // stuck out by the fold's size instead of the local cell's,
+                // and every hard ghost edge grew a grid-independent
+                // sawtooth corona (the owner's EF 70-200).
+                let corner_min_area = |ci: usize, cj: usize| -> f32 {
+                    let mut min = f32::MAX;
+                    for qj in cj.saturating_sub(1)..=cj.min(qs - 1) {
+                        for qi in ci.saturating_sub(1)..=ci.min(qs - 1) {
+                            let a = areas[qj * qs + qi];
+                            if a > 0.0 && a < min {
+                                min = a;
+                            }
+                        }
+                    }
+                    if min == f32::MAX {
+                        0.0
+                    } else {
+                        min
+                    }
+                };
                 for j in 0..qs {
                     for i in 0..qs {
                         if areas[j * qs + i] <= 0.0 {
@@ -1874,11 +1927,12 @@ pub fn cpu_flare(
                             }
                             cx /= lit.len() as f32;
                             cy /= lit.len() as f32;
-                            // Densest lit neighbourhood sets the scale:
-                            // the true boundary lies within one cell of
-                            // the last lit corner, so one local cell-width
-                            // is the reach — further painted whiskers.
-                            let mut min_mean = f32::MAX;
+                            // Smallest lit neighbour sets the scale: the
+                            // true boundary lies within one cell of the
+                            // last lit corner, so one COMPACT cell-width
+                            // is the reach — the mean let fold-stretched
+                            // neighbours grow it into sawteeth (K-265).
+                            let mut min_area = f32::MAX;
                             for &k in &lit {
                                 let (ci, cj) = match k {
                                     0 => (i, j),
@@ -1886,12 +1940,12 @@ pub fn cpu_flare(
                                     2 => (i + 1, j + 1),
                                     _ => (i, j + 1),
                                 };
-                                let m = corner_mean_area(ci, cj);
+                                let m = corner_min_area(ci, cj);
                                 if m > 0.0 {
-                                    min_mean = min_mean.min(m);
+                                    min_area = min_area.min(m);
                                 }
                             }
-                            let reach = min_mean.min(1e12).sqrt().max(1.0);
+                            let reach = min_area.min(1e12).sqrt().max(1.0);
                             for (k, vert) in v.iter_mut().enumerate() {
                                 if corners4[k].1 > 0.0 {
                                     continue;

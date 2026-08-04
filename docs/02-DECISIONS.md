@@ -5392,3 +5392,43 @@ is near-free. Accepted: the owner's bound was quality at fixed settings, and the
 submission splitting keeps any of it from becoming a watchdog kill. One driver find
 for CI: dynamically-indexed `let` arrays in WGSL crash lavapipe's shader compiler —
 use `var`.
+
+**K-265 · DECIDED · The flare's budget is the user's dial, every bundled lens must
+flare everywhere, and the big allocations are pooled — found live by the owner within
+the hour of K-264.** Five reports, five causes. **(1) The application died after
+minutes of lens-switching.** The K-264 multisample target — the effect's largest
+allocation, ~66 MB at a 1080p flare buffer — was created and dropped EVERY FRAME,
+exactly the rolling-backlog disease K-263 diagnosed for buffers, felt as renders
+slowing over minutes and then the process dying. Pooled now, keyed by size, beside the
+ray scratch. **(2) Several curated lenses rendered nothing.** The K-264 montage was
+judged with a near-centred light, and lenses that only work there slipped through: a
+three-position probe (centre, off-centre, far corner) now stands behind the curation,
+and it found the Kinoptik, both fisheyes, every wide-angle retrofocus design, both
+superzoom compacts and the 50mm Tessar file either dead off-centre or baking ZERO
+ghost pairs. The library is re-cut to twenty verified-alive, still maximally distinct
+lenses (in: FD 300/2.8, Canon 50/1.2 LTM, both Noktons, Elmarit 90, Summilux-C 100
+cine, Orestor 135, Ultra Prime 135, Tessar 100/4.5, DEM 180 APO; out: everything the
+probe failed, plus the Projection Optics wash — an 8-diagonal ghost no bounded grid
+can sample, the recorded §4 limit). **Wide-angle and fisheye prescriptions are a
+recorded model limit**: the trace's angular acceptance collapses off-axis for
+retrofocus designs, so none are bundled — a lens that only flares with a centred
+light is a bug report, not a look. **(3) The Lens file row could not pick a file.**
+The File parameter row was display-only — true for the LUT too since the Flutter
+port. It is now the picker: click opens the dialogue through the schema's own
+extension filter, set rows grow a clear button, and the fix covers every File
+parameter. **(4) "Let me choose the rays myself."** A new **Detail** dial (0.25–4,
+default 1) multiplies the Quality tier's pupil grid AND its wavelength count through
+shared helpers, because the owner's toothed EF 70-200 corona proved more rays alone
+cannot dissolve spectral banding. The K-262 half-grid rung for small-spread pairs is
+gone — a small ghost is not a cheap ghost, its caustic rim carries structure the
+blob-size probe cannot see — and the grid clamp rises to 512 for the dial's headroom.
+Software-rasteriser cost for the default Normal frame: 3.32 s → 4.41 s (the halved
+pairs quadrupled), accepted for the same reason as K-264. **(5) The corona that
+remains on the EF 70-200 at f1.5 is pinned as a known limit** after ablating, one by
+one: grid 72→288, wavelengths 32→64, the pull-in reach (mean → smallest neighbour —
+kept, it is the right scale), sub-sample inflation off, a local branch-jump cull
+(reverted: it nicked interior caustics without touching the corona), and a 3× wider
+housing feather. The corona is invariant to all of them: it is the fold structure of
+that ghost in an extrapolated regime (shooting an f2.8 zoom at f1.5), and the recorded
+fix is adaptive refinement at folds, not another guard. The ablation list lives here
+so nobody re-chases it.

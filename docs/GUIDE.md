@@ -657,6 +657,29 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   erroring. Ghost softness now defaults to 0.02 — with the smooth shading
   there is nothing left for blur to hide, so the default is a taste, not a
   bandage.
+  The owner then lived with it for an hour and found five more truths (K-265).
+  The app died after minutes of switching lenses: the new multisampled canvas —
+  the biggest piece of memory the effect owns — was being created and thrown
+  away every frame, the exact disease the K-263 pass diagnosed for buffers,
+  and it is now kept and reused like the rest. Several of the twenty lenses
+  turned out to flare only when the light sat near the centre — the contact
+  sheet that chose them had been rendered with a near-centred light, so
+  lenses that die off-centre slipped through. The curation now stands on a
+  three-position probe (centre, off-centre, far corner) and the list was
+  re-cut: every wide-angle and fisheye design failed it, because the ray
+  model's acceptance genuinely collapses off-axis for those constructions —
+  so none are bundled, and that limit is written down rather than papered
+  over. The Lens file row, which shipped un-clickable (true of the LUT's file
+  row too, an old gap from the Flutter port), is now the picker itself: click
+  it, choose a file, and a small × clears it. And a new **Detail** dial
+  (0.25–4) hands the ray budget to the user — it multiplies both the number
+  of rays AND the number of traced colours, because the owner's zoom-lens
+  test proved a corona of colour-banding that rays alone cannot dissolve.
+  One artefact survived every fix thrown at it — a toothed fringe on one
+  ghost of a zoom shot two stops past its widest — and rather than another
+  guard, the decision log records the six things that were tried and ruled
+  out, so the real cure (subdividing the grid exactly at the folds) stays an
+  honest TODO instead of a mystery.
 - **RGB split gains a Wavelength mode** (K-090's quality-tier pattern: where the smooth
   look is optional, it hides behind a Bool next to the fast one). Off — the default —
   the split is three tinted samples: the first colour pulled one way, the third the

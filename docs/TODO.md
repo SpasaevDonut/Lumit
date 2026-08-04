@@ -328,9 +328,11 @@ dropdown and resolves as Manual until light layers can act as flare sources); ap
 designer** (a window building a prescription element by element with a live lens
 diagram — the `lens_file` parameter landed in K-264, so the designer's output has a
 place to go); an **Occlusion layer** reference fading the flare when the light is
-covered; **adaptive grid refinement at vignette folds** — the K-264 known limit: a
-mild ripple on hard vignetted edges of extreme-defocus ghosts at Normal, resolved at
-Ultra. The panel side owes the pair row's dropper to
+covered; **adaptive grid refinement at vignette folds** — the K-264/K-265 known limits: a
+mild ripple on hard vignetted edges of extreme-defocus ghosts at Normal, and the
+toothed fold corona on a zoom shot past its native stop (K-265 lists the six
+ablations already ruled out — do not re-chase it with guards); refinement at the
+folds is the real cure for both. The panel side owes the pair row's dropper to
 **Transform's px@comp pairs** (the pixel-writing pick exists since K-260 — the flare's
 Light uses it; Transform's rows just aren't wired to it), **Radial blur's centre
 migration** from the grandfathered % of frame to px@comp (K-260 convention), and one-op

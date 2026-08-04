@@ -27,6 +27,7 @@ import 'package:uuid/uuid.dart';
 import '../icons/icons.dart';
 import '../state/comp_time.dart';
 import '../state/dropper.dart';
+import '../state/file_dialogs.dart';
 import '../state/preview_throttle.dart';
 import '../state/timeline_columns.dart';
 import '../theme/theme.dart';
@@ -358,18 +359,55 @@ class EffectParamRowFrb extends StatelessWidget {
         }
         return Text('—', style: t.small);
 
-      case BridgeParamKind_File(:final filterName):
+      case BridgeParamKind_File(:final filter, :final filterName):
         if (value case BridgeEffectValue_File(:final field0)) {
           final paths = field0.paths;
+          // The row is the picker (K-265): click to choose a file through
+          // the schema's own filter, and an unset row says so. It was a
+          // bare label through K-264 — the parameter existed and nothing
+          // in the panel could set it, which the owner found within the
+          // hour. A set row grows a clear button, because a File value's
+          // neutral state is "none" and there was no way back to it.
           return SizedBox(
             width: effectCellWidth + 60,
-            child: LumitTooltip(
-              message: paths.isEmpty ? 'No $filterName chosen' : paths.first,
-              child: Text(
-                paths.isEmpty ? 'None' : _basename(paths.first),
-                style: t.small,
-                overflow: TextOverflow.ellipsis,
-              ),
+            child: Row(
+              children: [
+                Flexible(
+                  child: LumitTooltip(
+                    message:
+                        paths.isEmpty ? 'Choose a $filterName' : paths.first,
+                    child: HouseButton(
+                      key: ValueKey<String>('fx-file-$id-${param.id}'),
+                      onPressed: () async {
+                        final path =
+                            await pickEffectInputFile(filter, filterName);
+                        if (path == null) return;
+                        _set(BridgeEffectValue.file(BridgeFileParam(
+                          paths: [path],
+                          index: const BridgeScalar.static_(0),
+                        )));
+                      },
+                      child: Text(
+                        paths.isEmpty ? 'Choose…' : _basename(paths.first),
+                        style: t.small,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ),
+                ),
+                if (paths.isNotEmpty)
+                  LumitTooltip(
+                    message: 'Clear',
+                    child: HouseButton(
+                      key: ValueKey<String>('fx-file-clear-$id-${param.id}'),
+                      onPressed: () => _set(BridgeEffectValue.file(
+                          const BridgeFileParam(
+                              paths: [],
+                              index: BridgeScalar.static_(0)))),
+                      child: Text('×', style: t.small),
+                    ),
+                  ),
+              ],
             ),
           );
         }

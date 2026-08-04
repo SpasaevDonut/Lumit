@@ -1,7 +1,7 @@
 # Lens flare — traced ghosts and Fourier starburst
 
 **Status: authoritative implementation note** for the Lens flare effect
-([08-EFFECTS.md](../08-EFFECTS.md) §3.27; K-256..K-264). Specs say *what*; this note is
+([08-EFFECTS.md](../08-EFFECTS.md) §3.27; K-256..K-265). Specs say *what*; this note is
 the *how*: the optical model, the exact formulas, the GPU pass structure, and the test
 plan. Sources: the FlareSim renderer (github.com/SeanBRVFX/FlareSim_Nuke_builded, itself
 built on space55/blackhole-rt) for the optical model and the lens-file collection — its
@@ -37,10 +37,13 @@ AFTER the surface (`1.0 0.0` = air), clear semi-diameter, and the AR-coating lay
 (0 bare glass, 1 single-layer MgF₂, 2+ multicoat). The last thickness is the back-focal
 distance: the running z sum is the sensor plane. **Twenty curated prescriptions are embedded** in
 `lumit-core` (`lens_files/` + the generated `fx/lens_library.rs`) — K-264, down from
-K-261's 1299: a thousand-entry picker is a search problem, not a choice, and the twenty
-are chosen for maximally different flare characters (multicoated cine glass, 1930s
-uncoated exotics, a Tessar, an f0.95, fisheyes, process lenses, superzooms, long
-telephotos). Transcribed patent data — each file cites its patent — sorted by name; the
+K-261's 1299 (a thousand-entry picker is a search problem, not a choice), re-verified
+K-265: every entry must bake a live ghost train AND keep flaring at a three-position
+light probe (centre, off-centre, far corner), because the first cut was judged from a
+centred montage and shipped lenses that rendered nothing in the owner's hands. The
+twenty span maximally different characters — multicoated cine glass, 1930s uncoated
+exotics, a Tessar, f0.95/f1.0 superspeeds, process glass, a pro telezoom, long
+telephotos; no wide-angles or fisheyes (§4's acceptance limit). Transcribed patent data — each file cites its patent — sorted by name; the
 native f-number is parsed from the collection filename (estimated from
 `focal / (2·front semi-aperture)` when absent). The **`lens_file` parameter** (K-264,
 the LUT File pattern) overrides the pick with a user's own `.lens` file: lumit-render
@@ -129,13 +132,16 @@ within one local cell-width (`√(min live neighbour area)`), so the fade to zer
 where the boundary is. The working f-stop scales the stop surface's semi-aperture and
 the pupil spray together by `native/f` (clamped 0.05..1).
 
-**The grid side is per PAIR, not per frame (K-262).** The Quality ladder sets a base
-(32 / 64 / 96 / 144); each pair's own grid is `pair_grid(base, spread)` where `spread` is
-the pair's on-axis image extent as a fraction of the sensor diagonal, measured by an 8×8
-probe at bake: under 0.12 → ½ base, under 0.5 → base, under 1.5 → 1.75×, else 2.5×
-(clamped 8..256). A ghost that lands in a tight blob is oversampled by a flat grid while a
-frame-filling one is undersampled and shows its cell facets — spending the budget by size
-is what lets Normal hold up.
+**The grid side is per PAIR, not per frame (K-262, retuned K-265).** The Quality ladder
+sets a base (32 / 64 / 96 / 144), the **Detail dial scales it and the wavelength count**
+(`detail_base` / `detail_lambda`, 0.25–4, λ capped at 64 — the dial must buy both axes,
+because spectral banding is untouched by rays alone); each pair's own grid is
+`pair_grid(base, spread)` where `spread` is the pair's image extent as a fraction of the
+sensor diagonal, measured by an 8×8 probe at bake: under 0.5 → base, under 1.5 → 1.75×,
+else 2.5× (clamped 8..512). K-262's ½-base rung for tight blobs is gone (K-265): a small
+ghost is not a cheap ghost — its caustic rim carries structure the blob-size probe cannot
+see. A frame-filling defocused ghost is undersampled by a flat grid and shows its cell
+facets — spending the budget by size is what lets Normal hold up.
 
 **The frame's dispatch plan (K-263).** The GPU sorts combos grid-major, so the table
 falls into runs of one grid; `plan_batches` cuts each run into batches of combos and
@@ -217,12 +223,23 @@ was 161, across six passes. The summation order is unchanged, so the result is b
 what the naive loop produced. The dispatch shape changes with it: x runs *along* the blur
 axis in tiles of 64 and y across it, so the vertical pass dispatches `(⌈h/64⌉, w, 1)`.
 
-**Known limit**: a lens whose ghosts are ALL extreme frame-filling defocus (some process
-lenses) still resolves one pupil cell to several pixels at Draft/Normal; the adaptive
-budget (§3) and the K-264 smooth shading remove the visible faceting, and what remains
-is a mild ripple on hard vignetted edges at Normal that Ultra resolves — the cell
-structure is still there below the noise floor, and adaptive refinement at vignette
-folds stays the recorded follow-up.
+**Known limits** (both wait on adaptive refinement at folds, the recorded follow-up):
+
+- a lens whose ghosts are ALL extreme frame-filling defocus (some process lenses)
+  still resolves one pupil cell to several pixels — an 8-diagonal wash samples mostly
+  off-frame, which is why the Projection Optics prescription left the bundle (K-265);
+  what remains on bundled lenses is a mild ripple on hard vignetted edges at Normal
+  that Ultra resolves.
+- a ghost rendered in an extrapolated regime (an f2.8 zoom shot at f1.5) can wear a
+  toothed corona at its fold. K-265 ablated grid density (72→288), wavelength count
+  (32→64), the pull-in reach, sub-sample inflation, a local branch-jump cull and a 3×
+  feather, one at a time — the corona is invariant to all of them. It is the fold's
+  own discontinuous structure; do not re-chase it with guards (the decision log holds
+  the full list).
+- wide-angle and fisheye prescriptions flare only near a centred light: the angular
+  acceptance of the three-phase walk collapses off-axis for retrofocus designs. None
+  are bundled (K-265's three-position probe is the curation gate); a user file loads
+  them with the limit understood.
 
 ## 5. The bake (CPU, cached by parameter hash)
 

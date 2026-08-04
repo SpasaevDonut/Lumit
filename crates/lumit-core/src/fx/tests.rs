@@ -5005,7 +5005,7 @@ fn lens_flare_neutral_points_and_default_resolve() {
             assert!((rp.light[0] - 640.0).abs() < 1e-3);
             assert!((rp.light[1] - 360.0).abs() < 1e-3);
             assert_eq!(rp.intensity, 1.0);
-            assert_eq!(rp.lens, 17, "default lens is the Master Prime 50");
+            assert_eq!(rp.lens, 16, "default lens is the Master Prime 50");
             assert_eq!(rp.blades, 8);
             assert_eq!(rp.max_ghosts, 60);
             assert_eq!(rp.quality, 1);
@@ -5265,19 +5265,30 @@ fn lens_flare_quad_guard_drops_slivers_and_keeps_ghosts() {
 #[test]
 fn lens_flare_grid_budget_follows_ghost_size() {
     use crate::fx::lens_flare::*;
-    // Monotonic in spread, and never outside the clamp.
+    // Monotonic (non-strict) in spread, and never outside the clamp. A
+    // tight blob gets the FULL base since K-265 — the half rung starved
+    // caustic rims into sunflower teeth on the owner's EF 70-200.
     let tight = pair_grid(64, 0.05);
     let mid = pair_grid(64, 0.3);
     let wide = pair_grid(64, 1.0);
     let huge = pair_grid(64, 4.0);
-    assert!(
-        tight < mid && mid < wide && wide < huge,
-        "{tight} {mid} {wide} {huge}"
-    );
-    assert!(tight >= 8 && huge <= 256);
+    assert_eq!(tight, mid, "no half rung: small ghosts keep the base");
+    assert!(mid < wide && wide < huge, "{mid} {wide} {huge}");
+    assert!(tight >= 8 && huge <= 512);
     // Degenerate inputs stay in range rather than exploding a dispatch.
-    assert!((8..=256).contains(&pair_grid(2, 0.0)));
-    assert!((8..=256).contains(&pair_grid(256, 99.0)));
+    assert!((8..=512).contains(&pair_grid(2, 0.0)));
+    assert!((8..=512).contains(&pair_grid(512, 99.0)));
+    // The Detail dial scales the base through one shared helper (K-265).
+    assert_eq!(detail_base(64, 1.0), 64);
+    assert_eq!(detail_base(64, 2.0), 128);
+    assert_eq!(detail_base(64, 0.25), 16);
+    assert_eq!(detail_base(64, 99.0), 256, "dial clamps at 4x");
+    // …and the wavelength axis scales with it (K-265): more rays barely
+    // touch spectral banding, so the dial must buy bands too.
+    assert_eq!(detail_lambda(32, 1.0), 32);
+    assert_eq!(detail_lambda(32, 2.0), 64);
+    assert_eq!(detail_lambda(32, 4.0), 64, "capped: combos scale linearly");
+    assert_eq!(detail_lambda(8, 0.25), 3, "floor keeps colour honest");
 
     // Every bundled pair carries a finite, non-negative spread.
     let p = default_flare_params();
@@ -5293,7 +5304,7 @@ fn default_flare_params() -> crate::fx::lens_flare::LensFlareParams {
         // manual_light, so any sane point works; this is 0.33/0.30 of 96×54.
         light: [31.7, 16.2],
         intensity: 1.0,
-        lens: 17,
+        lens: 16,
         fstop: 2.8,
         focus_m: 100.0,
         blades: 8,
@@ -5314,6 +5325,7 @@ fn default_flare_params() -> crate::fx::lens_flare::LensFlareParams {
         use_source_colour: true,
         anamorphic: 1.0,
         quality: 1,
+        detail: 1.0,
         background: 0,
         mix: 1.0,
     }

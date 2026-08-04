@@ -597,6 +597,28 @@ fn density_of(mean: f32) -> f32 {
     return tp.cell_area_px / max(mean, 3e-3 * tp.cell_area_px);
 }
 
+// The SMALLEST live cell touching a corner — the pull-in's length scale
+// (K-265; the CPU twin's comment tells the story).
+fn corner_min_area(area_base: u32, side: u32, cx: u32, cy: u32) -> f32 {
+    var m = 1e30;
+    let qx0 = max(cx, 1u) - 1u;
+    let qy0 = max(cy, 1u) - 1u;
+    let qx1 = min(cx, side - 1u);
+    let qy1 = min(cy, side - 1u);
+    for (var qy = qy0; qy <= qy1; qy = qy + 1u) {
+        for (var qx = qx0; qx <= qx1; qx = qx + 1u) {
+            let a = areas[area_base + qy * side + qx];
+            if (a > 0.0 && a < m) {
+                m = a;
+            }
+        }
+    }
+    if (m == 1e30) {
+        return 0.0;
+    }
+    return m;
+}
+
 @compute @workgroup_size(64)
 fn build_verts(@builtin(global_invocation_id) gid: vec3<u32>) {
     let side = tp.grid - 1u;
@@ -626,10 +648,11 @@ fn build_verts(@builtin(global_invocation_id) gid: vec3<u32>) {
         vec2<f32>(c2.pos_x, c2.pos_y),
         vec2<f32>(c3.pos_x, c3.pos_y),
     );
+    let area_base = slot * tp.quad_stride;
     // Vertex-smoothed density (K-264): each corner's own neighbourhood
     // mean, interpolated by the raster — continuous across cells, where the
     // per-cell constant of K-263 jumped at every cell edge (the faceting).
-    let area_base = slot * tp.quad_stride;
+
     var means = array<f32, 4>(
         corner_mean_area(area_base, side, qx, qy),
         corner_mean_area(area_base, side, qx + 1u, qy),
@@ -683,13 +706,27 @@ fn build_verts(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     if (lit_n < 4.0) {
         lit_c = lit_c / lit_n;
-        var min_mean = 1e30;
+        // Smallest lit neighbour, not the mean: fold-stretched neighbours
+        // grew the reach into sawteeth (K-265).
+        var min_area = 1e30;
         for (var i = 0; i < 4; i = i + 1) {
-            if (w4[i] > 0.0 && means[i] > 0.0) {
-                min_mean = min(min_mean, means[i]);
+            if (w4[i] <= 0.0) {
+                continue;
+            }
+            var cx = qx;
+            var cy = qy;
+            if (i == 1 || i == 2) {
+                cx = qx + 1u;
+            }
+            if (i == 2 || i == 3) {
+                cy = qy + 1u;
+            }
+            let m = corner_min_area(area_base, side, cx, cy);
+            if (m > 0.0) {
+                min_area = min(min_area, m);
             }
         }
-        let reach = max(sqrt(min(min_mean, 1e12)), 1.0);
+        let reach = max(sqrt(min(min_area, 1e12)), 1.0);
         for (var i = 0; i < 4; i = i + 1) {
             if (w4[i] > 0.0) {
                 continue;

@@ -182,6 +182,8 @@ pub struct LensFlareFx {
     /// case worth holding memory for, so a second render makes its own and
     /// whichever finishes first keeps the slot.
     scratch: Mutex<Option<Scratch>>,
+    /// The pooled multisample target with its size — see [`Self::take_msaa`].
+    msaa: Mutex<Option<(wgpu::Texture, u32, u32)>>,
 }
 
 /// A bounded, oldest-first cache of bakes by parameter hash (K-263).
@@ -630,6 +632,7 @@ impl LensFlareFx {
             combine_layout,
             cache: Mutex::new(BakeCache::new(Self::CACHE_CAP)),
             scratch: Mutex::new(None),
+            msaa: Mutex::new(None),
         }
     }
 
@@ -669,9 +672,9 @@ impl LensFlareFx {
         let held = self.scratch.lock().ok().and_then(|mut s| s.take());
         match held {
             // Big enough and not wildly oversized: reuse as is. The upper
-            // bound gives a frame that once ran at Ultra its memory back when
-            // the quality goes down again, instead of holding the peak for
-            // the session.
+            // bound gives a frame that once ran at Ultra its memory back
+            // when the quality goes down again, instead of holding the
+            // peak for the session.
             Some(s)
                 if s.ray_bytes >= ray_bytes
                     && s.area_bytes >= area_bytes
@@ -689,6 +692,46 @@ impl LensFlareFx {
                 area_bytes,
                 vert_bytes,
             },
+        }
+    }
+
+    /// The pooled 4x multisample render target (K-265): the largest
+    /// allocation the effect makes (~66 MB at a 1080p flare buffer), and
+    /// creating it per frame was the K-263 lesson all over again — a
+    /// rolling backlog of dropped allocations the driver reclaims late,
+    /// which the owner felt as renders slowing over minutes and then the
+    /// application dying. Keyed by size; a size change (zoom tier, comp
+    /// resize) rebuilds it once.
+    fn take_msaa(&self, ctx: &GpuContext, fw: u32, fh: u32) -> wgpu::Texture {
+        if let Ok(mut slot) = self.msaa.lock() {
+            if let Some((tex, w, h)) = slot.take() {
+                if w == fw && h == fh {
+                    return tex;
+                }
+            }
+        }
+        ctx.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("fx-lens-flare-msaa"),
+            size: wgpu::Extent3d {
+                width: fw.max(1),
+                height: fh.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 4,
+            dimension: wgpu::TextureDimension::D2,
+            format: WORKING_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        })
+    }
+
+    /// Hand the multisample target back for the next frame.
+    fn put_msaa(&self, tex: wgpu::Texture, fw: u32, fh: u32) {
+        if let Ok(mut slot) = self.msaa.lock() {
+            if slot.is_none() {
+                *slot = Some((tex, fw, fh));
+            }
         }
     }
 
@@ -718,16 +761,14 @@ fn scratch_buffer(ctx: &GpuContext, label: &str, bytes: u64) -> wgpu::Buffer {
 /// (lumit-gpu stays lumit-core-free in production, so the formula is
 /// mirrored and a test pins the two together).
 pub fn pair_grid_of(base: u32, spread: f32) -> u32 {
-    let mult = if spread < 0.12 {
-        0.5
-    } else if spread < 0.5 {
+    let mult = if spread < 0.5 {
         1.0
     } else if spread < 1.5 {
         1.75
     } else {
         2.5
     };
-    ((base as f32 * mult).round() as u32).clamp(8, 256)
+    ((base as f32 * mult).round() as u32).clamp(8, 512)
 }
 
 /// One dispatch of the trace → cells → raster chain: a run of combos that
@@ -802,7 +843,7 @@ pub(super) fn plan_batches(combo_grids: &[u32], light_count: u32) -> Vec<Batch> 
     let lights_total = light_count.max(1);
     let mut offset = 0usize;
     while offset < combo_grids.len() {
-        let grid = combo_grids[offset].clamp(2, 256);
+        let grid = combo_grids[offset].clamp(2, 512);
         let run_end = combo_grids[offset..]
             .iter()
             .position(|&g| g != combo_grids[offset])
@@ -984,22 +1025,7 @@ impl FxEngine {
         let div = op.flare_div.max(1);
         let (fw, fh) = ((w / div).max(1), (h / div).max(1));
         let flare_tex = work_texture(ctx, fw, fh, "fx-lens-flare-buffer");
-        let msaa_tex = live.then(|| {
-            ctx.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("fx-lens-flare-msaa"),
-                size: wgpu::Extent3d {
-                    width: fw,
-                    height: fh,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 4,
-                dimension: wgpu::TextureDimension::D2,
-                format: WORKING_FORMAT,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                view_formats: &[],
-            })
-        });
+        let msaa_tex = live.then(|| lf.take_msaa(ctx, fw, fh));
 
         let mut encoder = ctx
             .device
@@ -1501,6 +1527,9 @@ impl FxEngine {
             cpass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
         }
         ctx.queue.submit([encoder.finish()]);
+        if let Some(tex) = msaa_tex {
+            lf.put_msaa(tex, fw, fh);
+        }
         out
     }
 
