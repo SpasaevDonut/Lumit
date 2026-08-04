@@ -1,0 +1,50 @@
+---
+title: Compositions
+description: Create compositions, change their settings, and nest one inside another.
+sidebar:
+  order: 1
+---
+
+A **composition** is a timeline with a fixed resolution, frame rate, duration, and
+background colour. It holds an ordered stack of [layers](/use/layers/).
+
+A project can hold many compositions. Compositions are assets, so they sit in the
+Project panel beside your footage.
+
+## Make a composition
+
+1. Choose **Composition ▸ New composition**.
+2. Set the resolution, frame rate, duration, and background colour.
+3. Confirm.
+
+## Change the settings
+
+Choose **Composition ▸ Composition settings**. You can change any of the settings at
+any time.
+
+Changing the frame rate does not move your keyframes. A keyframe holds a time, not a
+frame number.
+
+## Nest one composition in another
+
+A composition used as a layer inside another is a **Precomp layer**. The verb is
+**precompose**.
+
+Precompose when you want to:
+
+- Treat a group of layers as one object.
+- Apply one effect to several layers at once.
+- Retime a whole group together.
+
+Select the layers and choose **Layer ▸ Precompose**.
+
+A Precomp layer supports [Retime](/use/retime/), so you can ramp the speed of a whole
+nested composition.
+
+Lumit refuses to place a composition inside itself.
+
+## Related
+
+- [Layers](/use/layers/)
+- [Importing media](/use/importing/)
+- [Preview and playback](/use/preview/)

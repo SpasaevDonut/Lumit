@@ -1,0 +1,62 @@
+---
+title: Layers
+description: The layer stack, the layer kinds, and the switches on each one.
+sidebar:
+  order: 3
+---
+
+A composition holds an ordered stack of **layers**. Layers draw from the bottom up: the
+top layer composites over everything below it.
+
+Lumit says *layer*, never *track*.
+
+## Add a layer
+
+- Drag an asset from the Project panel onto the timeline.
+- Or choose **Layer ▸ New** and pick a kind that needs no source file.
+
+## The layer kinds
+
+| Kind | What it is |
+| --- | --- |
+| **Footage layer** | One footage item as the source. Supports [Retime](/use/retime/). |
+| **Solid layer** | A flat colour at a fixed size. Often a base for effects. |
+| **Precomp layer** | Another composition, used as a layer. Supports Retime. |
+| **[Text layer](/use/text/)** | Editable styled text. |
+| **[Shape layer](/use/shapes/)** | Vector shapes with fills and strokes. |
+| **[Sequence layer](/use/sequence-layers/)** | Clips cut back-to-back on one row. |
+| **Adjustment layer** | Invisible. Its effects apply to everything below it. |
+| **Null layer** | Invisible and transform-only. Used to drive other layers. |
+| **[Camera layer](/use/camera/)** | A 3D viewpoint. Affects layers with the 3D switch on. |
+
+Audio layers and Light layers are specified but not built. See [Audio](/use/audio/).
+
+## Order and selection
+
+Drag a layer up or down to change what draws over what. Select several layers to apply
+an effect or a command to all of them at once.
+
+## Switches
+
+Each layer carries switches in the timeline outline: visibility, lock, solo, shy, 3D,
+and motion blur among them.
+
+The **motion blur switch** smears one layer along its own transform. It is not the same
+as the Motion blur effect, which re-renders the whole scene below at sub-frame times.
+See [Effects](/use/effects/).
+
+## Adjustment layers
+
+An adjustment layer draws nothing of its own. Its effect stack applies to the composite
+of everything below it. Use one to grade a whole composition at once.
+
+## Parenting
+
+Parent a layer to another and it inherits the parent's transform. A null layer is the
+usual parent, because it never draws.
+
+## Related
+
+- [Transforming layers](/use/transform/)
+- [Keyframes](/use/keyframes/)
+- [Masks](/use/masks/) and [Mattes](/use/mattes/)

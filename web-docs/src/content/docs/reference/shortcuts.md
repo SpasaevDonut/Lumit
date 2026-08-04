@@ -1,16 +1,24 @@
 ---
 title: Keyboard shortcuts
-description: The Lumit keymap.
+description: Where to find the current keymap.
 sidebar:
   order: 1
 ---
 
-:::note[Being written]
-The keymap is still moving while the beta settles, so this page is deliberately empty
-rather than wrong. The command palette is the reliable way to find any action and see its
-current shortcut.
+Every action in Lumit is reachable from the keyboard, and every shortcut is
+rebindable.
+
+## Finding a shortcut
+
+The menus show the current binding beside each command, and they take it from the
+keymap rather than carrying a chord of their own. So the menu is always right, even
+after you rebind something.
+
+:::note[Not listed here yet]
+The keymap is still moving while the beta settles, so this page does not print a table
+that would be wrong within a week. Use the menus.
 :::
 
-Every action in Lumit is reachable from the keyboard, and every shortcut is rebindable.
-Until this page is filled in, open the command palette and search — it shows the binding
-next to each command.
+## Related
+
+- [Workspaces and panels](/use/workspaces/)

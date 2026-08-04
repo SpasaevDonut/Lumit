@@ -1,35 +1,85 @@
 ---
 title: Your first composition
-description: Import footage, build a composition, animate it and export.
+description: Make a composition, add a layer, animate it, and export it.
 sidebar:
   order: 2
 ---
 
-:::note[Being written]
-This page is a stub while the beta settles. If you hit something confusing before it is
-finished, open an issue on
-[GitHub](https://github.com/luminalmvm/Lumit/issues) — that is the fastest way to get it
-documented.
-:::
+This page takes you from an empty project to an exported file. Each step links to the
+page that covers it in full.
 
-## The shape of a project
+## 1. Make a composition
 
-A Lumit project is a single `.lum` file. Inside it are **compositions**, and inside those
-are **layers** stacked in order — footage, solids, text, shapes, and nested sequences.
-Effects attach to layers, and almost every value on a layer or effect can be keyframed.
+A **composition** is a timeline with a fixed resolution, frame rate, duration, and
+background colour. Everything you build lives inside one.
 
-## Getting footage in
+1. Choose **Composition ▸ New composition**.
+2. Set the resolution, frame rate, and duration.
+3. Confirm.
 
-Drag files into the project panel, or use **File → Import**. Lumit decodes with FFmpeg and
-will use hardware decoding where the platform offers it.
+See [Compositions](/use/compositions/).
 
-## Animating
+## 2. Bring in your media
 
-Every animatable property has a stopwatch beside it. Turn it on and Lumit writes a keyframe
-whenever the value changes; the graph editor gives you the curve between them. Speed ramps
-and retiming live on the layer itself rather than in a separate dialog.
+Import the files you want to use. They appear in the Project panel as **assets**.
 
-## Exporting
+1. Choose **File ▸ Import**.
+2. Select one or more files.
 
-**File → Export** queues the composition. Export runs off the interface thread, so the
-editor stays interactive while it works.
+Lumit never changes the file on disk. The project stores a reference to it.
+
+See [Importing media](/use/importing/).
+
+## 3. Add a layer
+
+Drag an asset from the Project panel onto the timeline. It becomes a **layer**.
+
+Layers stack. The top layer draws over the ones below it. You can also add layers that
+need no source file, such as a solid, some text, or a shape.
+
+See [Layers](/use/layers/).
+
+## 4. Move it
+
+Every layer has a transform: anchor point, position, scale, rotation, and opacity.
+Twirl the layer open in the timeline to reach them.
+
+See [Transforming layers](/use/transform/).
+
+## 5. Animate it
+
+Turn on the stopwatch beside a property. Lumit then records a **keyframe** each time
+you change the value at a new time.
+
+1. Move the playhead to the start.
+2. Turn on the stopwatch beside Position.
+3. Move the playhead forward.
+4. Move the layer.
+
+Lumit adds the second keyframe for you.
+
+See [Keyframes](/use/keyframes/), then [the graph editor](/use/graph-editor/) to shape
+the motion between them.
+
+## 6. Watch it back
+
+Press play. Lumit caches frames as it goes, and the cache bar under the time ruler
+shows which frames are ready.
+
+See [Preview and playback](/use/preview/).
+
+## 7. Export it
+
+Choose **File ▸ Export**. Export runs away from the interface, so you can keep working
+while it writes.
+
+See [Exporting](/use/export/).
+
+## Where to go next
+
+- [Retiming and speed](/use/retime/) — speed ramps, freezes, and reverse.
+- [Effects](/use/effects/) — the built-in roster.
+- [Masks](/use/masks/) and [Mattes](/use/mattes/) — cut a layer to a shape.
+- [Sequence layers](/use/sequence-layers/) — cut clips back-to-back on one row.
+- [Text](/use/text/) and [Shapes](/use/shapes/).
+- [Workspaces and panels](/use/workspaces/) — arrange the application.

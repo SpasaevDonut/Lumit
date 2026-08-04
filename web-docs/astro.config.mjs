@@ -19,9 +19,12 @@ export default defineConfig({
       editLink: {
         baseUrl: "https://github.com/luminalmvm/Lumit/edit/main/web-docs/",
       },
+      // Using the application comes first and stays first. The engine section is
+      // background reading — nobody needs it to edit, so it sits below.
       sidebar: [
         { label: "Start here", autogenerate: { directory: "start" } },
-        { label: "Editing", autogenerate: { directory: "editing" } },
+        { label: "Using Lumit", autogenerate: { directory: "use" } },
+        { label: "How Lumit works", autogenerate: { directory: "engine" } },
         { label: "Reference", autogenerate: { directory: "reference" } },
       ],
     }),

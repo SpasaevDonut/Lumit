@@ -1,0 +1,69 @@
+---
+title: Retiming and speed
+description: Speed ramps, freezes, reverse, and how Lumit fills in frames.
+sidebar:
+  order: 7
+---
+
+**Retime** maps composition time to source time. Use it to ramp speed, hold a frame, or
+run footage backwards.
+
+Lumit says *Retime*, never *time remap*.
+
+## What can be retimed
+
+- **Footage layers** carry their own Retime.
+- **Precomp layers** carry their own Retime, so you can ramp a whole nested composition.
+- Inside a [Sequence layer](/use/sequence-layers/), each clip carries its own.
+
+## Speed
+
+**Speed** is the rate the retime map runs at:
+
+| Speed | Result |
+| --- | --- |
+| 100% | Normal. |
+| 0% | A **freeze**. The frame holds. |
+| −100% | Reverse. |
+
+## Make a speed ramp
+
+1. Turn on Retime for the layer.
+2. Add a keyframe where the ramp starts.
+3. Add another where it ends.
+4. Shape the curve between them in [the graph editor](/use/graph-editor/).
+
+A gentle ramp is a curve, not a straight line. Use the Velocity lens to judge it.
+
+## Overrun
+
+**Overrun** is when the map asks for source time past the end of the media, or before
+its start. Lumit holds the boundary frame and marks the region in the timeline.
+
+Overrun never moves your clip boundaries or edit points.
+
+## Frame interpolation
+
+When a retime lands between two source frames, Lumit synthesises one:
+
+| Mode | How |
+| --- | --- |
+| **Nearest** | Repeat the closer frame. Sharp, but it stutters. |
+| **Blend** | Crossfade the two frames. Smooth, but it ghosts. |
+| **Flow** | Synthesise a new frame from optical flow. |
+
+Interpolation is a render setting. It does not change the retime map.
+
+:::note[Partly built]
+Flow interpolation is not finished. Nearest and blend work now.
+:::
+
+## Stretch
+
+**Stretch** is a uniform rate multiplier on the whole layer. Unlike Retime, stretch
+rescales the layer's keyframes with it.
+
+## Related
+
+- [The graph editor](/use/graph-editor/)
+- [Sequence layers](/use/sequence-layers/)

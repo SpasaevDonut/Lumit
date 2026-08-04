@@ -1,0 +1,39 @@
+---
+title: Masks
+description: Cut a layer down to a shape you draw.
+sidebar:
+  order: 10
+---
+
+A **mask** is a bezier path on a layer that gates the layer's alpha. Use one to show
+part of a layer and hide the rest.
+
+## Draw a mask
+
+1. Select the layer.
+2. Pick a shape tool or the pen tool.
+3. Draw in the Viewer.
+
+The mask belongs to the layer you had selected. With no layer selected, the same tools
+make a [shape layer](/use/shapes/) instead.
+
+## Mask properties
+
+| Property | What it does |
+| --- | --- |
+| **Path** | The bezier path itself. Animatable. |
+| **Feather** | Softens the edge. |
+| **Expansion** | Grows or shrinks the mask from its path. |
+| **Opacity** | How strongly the mask gates. |
+
+## Combine modes
+
+A layer can carry several masks. Each has a combine mode that says how it joins the
+ones above it, such as add, subtract, or intersect.
+
+Order matters, because each mode acts on the result so far.
+
+## Related
+
+- [Mattes](/use/mattes/) — gate a layer using another layer instead.
+- [Shapes](/use/shapes/)

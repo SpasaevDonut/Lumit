@@ -1,0 +1,37 @@
+---
+title: Cameras and 3D
+description: Move a viewpoint through a composition.
+sidebar:
+  order: 14
+---
+
+A **Camera layer** is a 3D viewpoint. It only affects layers that have the 3D switch
+turned on.
+
+## Set one up
+
+1. Choose **Layer ▸ New ▸ Camera**.
+2. Turn on the 3D switch for the layers you want it to see.
+
+The topmost visible camera is the active one.
+
+## Position in depth
+
+A 3D layer gains a Z position. The camera's zoom is a focal distance in composition
+pixels, which means the plane at Z = 0 maps one-to-one.
+
+This is the After Effects model, so the numbers behave the way you expect.
+
+## What is not built
+
+Lights, depth of field driven by the camera, and the wider 3D feature set are specified
+but not finished. Layers are planes in space; there is no geometry.
+
+:::caution[Partly built]
+Camera layers work. **Light layers** are not implemented.
+:::
+
+## Related
+
+- [Transforming layers](/use/transform/)
+- [Layers](/use/layers/)

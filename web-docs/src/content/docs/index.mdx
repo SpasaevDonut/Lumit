@@ -7,11 +7,11 @@ hero:
   image:
     file: ../../assets/lumit-mark.svg
   actions:
+    - text: Your first composition
+      link: /start/first-composition/
+      icon: right-arrow
     - text: Install Lumit
       link: /start/install/
-      icon: right-arrow
-    - text: Download
-      link: https://lumitlab.com/download
       icon: external
       variant: minimal
 ---
@@ -19,20 +19,23 @@ hero:
 import { Card, CardGrid } from "@astrojs/starlight/components";
 
 <CardGrid stagger>
-  <Card title="Install" icon="laptop">
-    Get Lumit running on Windows, Linux or macOS, and know what to expect on each.
+  <Card title="Start here" icon="rocket">
+    Install Lumit, then build a composition end to end — import, animate, export.
 
-    [Installation →](/start/install/)
+    [Your first composition →](/start/first-composition/)
   </Card>
-  <Card title="Your first composition" icon="add-document">
-    Import footage, build a composition, keyframe something and export it.
+  <Card title="Using Lumit" icon="laptop">
+    Every part of the application: layers, keyframes, retiming, effects, masks,
+    text, and export.
 
-    [First composition →](/start/first-composition/)
+    [Compositions →](/use/compositions/) · [Layers →](/use/layers/) ·
+    [Keyframes →](/use/keyframes/) · [Retiming →](/use/retime/)
   </Card>
-  <Card title="Keyboard shortcuts" icon="setting">
-    The full keymap, and how to rebind it.
+  <Card title="How Lumit works" icon="setting">
+    Background reading. Why the engine is separate, why time is stored as exact
+    fractions, and how the cache survives your edits.
 
-    [Shortcuts →](/reference/shortcuts/)
+    [How Lumit is built →](/engine/overview/)
   </Card>
   <Card title="Contribute" icon="github">
     Lumit is GPLv3 and developed in the open. Issues and pull requests are welcome.
@@ -40,3 +43,14 @@ import { Card, CardGrid } from "@astrojs/starlight/components";
     [On GitHub →](https://github.com/luminalmvm/Lumit)
   </Card>
 </CardGrid>
+
+## Not built yet
+
+Lumit is in public beta, and these pages say so where it matters rather than
+describing features that do not exist:
+
+- [Audio](/use/audio/) — the largest gap. No audio layers, waveforms, or beat markers.
+- [Expressions](/use/expressions/) — specified, partly built, not usable.
+- [Cameras and 3D](/use/camera/) — cameras work; light layers do not.
+- [Retiming](/use/retime/) — flow interpolation is unfinished; nearest and blend work.
+- [Effects](/use/effects/) — 33 built-in effects; plugin hosting is not built.
