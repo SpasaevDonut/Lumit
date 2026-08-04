@@ -73,9 +73,40 @@ synthesis itself moves GPU-side).
    content edge) before falling back to the init flow with the pixel marked invalid.
 4. **Smoothing**: one 3×3 edge-aware blur of the flow field — bilateral on luma *and* on
    flow difference, so vectors from the two sides of a motion boundary never average into
-   a phantom in-between motion. Skip the paper's full variational refinement in v1 —
-   measure first; it is the difference between 2 ms and 10 ms and mostly helps large
-   untextured regions, rare in game footage.
+   a phantom in-between motion.
+5. **Variational refinement** — DIS part three, and **not optional** (K-257). This note
+   previously said to skip it in v1 and "measure first"; the measurement happened and both
+   halves of the reasoning were wrong. Untextured regions are not rare in game capture (smoke,
+   sky, muzzle flash, water, darkness are most of a frame during the fast moments a montage
+   slows down), and without refinement they fail *hard* rather than softly: densification
+   leaves the coarse guess, flags the pixel invalid, §2 counts invalid as occluded, and §3
+   crossfades it — patches of ghosted mush, the reported artefact.
+
+   Per the paper (§3.3), minimise `E(U) = ∫ σ·Ψ(E_I) + γ·Ψ(E_G) + α·Ψ(E_S) dx` with
+   `Ψ(a²) = √(a² + ε²)`, ε = 0.001, σ = 5, γ = 10, α = 10. `E_I` is intensity constancy,
+   `E_G` gradient constancy — the term that survives a brightness step, which a muzzle flash
+   is and which plain intensity constancy reads as motion everywhere — and `E_S = ‖∇u‖² +
+   ‖∇v‖²`. Both data tensors are normalised by their own gradient energy plus ζ² (ζ = 0.1) so
+   a high-contrast pixel cannot shout down a low-contrast one. Run once per pyramid level,
+   `1·(s+1)` fixed-point iterations at scale `s` counting from the coarsest, each linearising
+   about the current warp and solving for the increment with `θ_vi = 5` SOR sweeps at ω = 1.6.
+
+   **Sweeps are red–black, not raster order.** Plain SOR wants each pixel to read its
+   neighbours' just-updated values, which is strictly sequential. On a checkerboard every
+   neighbour of a red pixel is black, so a whole colour updates with no pixel reading another
+   of its own colour — the identical algorithm, reordered into something the WGSL can run in
+   parallel. **The CPU oracle is written this way deliberately**: a sequential oracle would
+   have condemned the shader to disagree with it by construction, and the §6.5 parity contract
+   would have had to be abandoned rather than met.
+
+   **Validity changes meaning.** It was "at least one patch covered me photometrically"; it
+   becomes "the refined flow explains these pixels", from the residual after refinement
+   (`VR_RESIDUAL_MAX`). A refined field has an answer everywhere, so the honest question is
+   whether the answer is right, not whether one was found.
+
+   **Cost, measured (960×540 pair, dev machine):** parts 1–2 on the CPU 456 ms, all three
+   1.82 s — 4×. Parts 1–2 on the GPU 4.8 ms. The refinement therefore *must* reach WGSL: the
+   CPU oracle at 1.8 s per pair is a correctness reference, not a preview path.
 
 **Output**: the dense flow at working res plus a per-pixel validity mask (v1: one f32
 storage buffer read back to the CPU, since synthesis still runs there; `Rg16Float`
@@ -174,13 +205,15 @@ cannot translate the same parameters into two different measurements.
 | `iterations` | Vector detail | §1 step 2's cap: 6 / 12 / 20 / 32 (Medium is the paper's ≤ 12) |
 | `min_level_dim` | Vector detail | §1's pyramid floor: 48 / 24 / 24 / 16. Below ~24 the 8×8 patches go frame-scale — the failure §6.1 measured |
 | `smoothness` | Smoothness | Scales `FLOW_SIGMA2` in §1 step 4's bilateral, quadratically over a 4× span each way, clamped. 50 is exactly the tuned constant, so the default is bit-identical to the pre-parameter engine |
+| `refine_iters` | Vector detail | §1 step 5's fixed-point iterations per level: 1 / 1 / 2 / 3. `0` disables DIS part three and is **not user-reachable** — it is the two-part engine K-257 replaced, kept only so the A/B test and the GPU parity test can address it |
 | `occlusion` | Occlusion handling | §3's weights: Visible-only keeps the `(1 − occ)` terms, Blend drops them |
 | `fallback` | Fallback | §3's both-occluded branch: crossfade or the nearer endpoint |
 | `hud_guard` | HUD guard | Runs §3.1 step 5's `hud_weights` and mixes synthesis back toward the plain blend by it |
 
 **GPU limitation (interim).** `dis.wgsl` still carries the iteration cap, the pyramid floor
-and the smoothing sigma as shader constants, so `GpuFlow::flow_pair_with` returns
-`FlowError::Unsupported` for a non-default Vector detail or Smoothness and the caller runs the
+and the smoothing sigma as shader constants, and has **no variational-refinement pass at all**,
+so `GpuFlow::flow_pair_with` returns `FlowError::Unsupported` for a non-default Vector detail or
+Smoothness *and for any `refine_iters > 0`* — which is every default — and the caller runs the
 CPU oracle. Refusing is deliberate: a field measured to different rules than the settings
 asked for would make the picture depend on which backend was alive, which is the
 preview-≠-export fault K-256 exists to remove. These move into the per-level `Params` uniform

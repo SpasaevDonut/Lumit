@@ -459,6 +459,7 @@ pub fn flow_settings(p: &lumit_core::retime::FlowParams) -> lumit_flow::FlowSett
             FlowFallback::Nearest => lumit_flow::Fallback::Nearest,
         },
         hud_guard: p.hud_guard,
+        refine_iters: p.detail.refine_iters(),
     }
 }
 

@@ -1066,6 +1066,36 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   draft mode stops being cheap on that layer. If you need the speed back, drop the flow
   resolution to Half or Quarter — that is a decision you make once, and it then applies
   identically to the preview and the export.
+  **Why the vectors used to look bad, and what fixed it.** DIS is a three-part algorithm, and
+  Lumit shipped two of them. Parts one and two are *local*: little tiles hunt for where their
+  bit of picture went, then every pixel takes a vote among the tiles covering it. That works
+  wherever there is something to match — and has nothing whatsoever to say about a patch of
+  sky, a cloud of smoke, water, or a dark corner, because every position there looks like
+  every other. Those pixels came out with whatever the coarse guess was, flagged
+  untrustworthy; untrustworthy was then treated as "hidden behind something", and hidden
+  pixels get a plain crossfade. So large soft regions turned into patches of ghosted mush.
+  Three reasonable-looking local decisions, one bad picture.
+  Part three is **variational refinement**, and it was skipped with the note "mostly helps
+  large untextured regions, rare in game footage". They are not rare — smoke, sky, muzzle
+  flash and motion-blurred backgrounds are most of a frame during exactly the fast moments a
+  montage slows down. Refinement stops treating pixels one at a time and solves the whole
+  field at once, balancing three demands: each pixel should land on matching *brightness*, it
+  should land on matching *edges* (this is the one that survives an explosion lighting up the
+  frame — brightness changes everywhere, edges stay put), and neighbouring pixels should move
+  alike unless there is strong evidence otherwise. That last demand is what fills the empty
+  regions: a pixel with no evidence of its own inherits motion from neighbours that have
+  some, seeping inward from the textured edges. It is the difference between "we don't know,
+  so here's mush" and "we don't know, so here's what the surrounding motion implies", which
+  is nearly always right.
+  Two side effects worth knowing. "Untrustworthy" now means something better — it used to
+  mean "nobody found an answer for me", and now means "the answer I was given doesn't actually
+  explain my pixels", which is the question that was worth asking all along. And the solver
+  sweeps the image in a **checkerboard** pattern rather than left-to-right, which sounds like
+  an odd detail but is the whole reason it can run on the graphics card at all: on a
+  checkerboard, every neighbour of a "red" pixel is "black", so an entire colour can be
+  updated at once by a million threads without any two of them tripping over each other. The
+  slow reference implementation is written the same way on purpose, so that the fast one is
+  allowed to agree with it.
   **The HUD guard.** Game footage has a health bar, a killfeed, a minimap — things painted on
   top of the picture that stay perfectly still while the whole world slides underneath them
   during a fast turn. Flow sees a frame where everything moves except a few sharp rectangles,

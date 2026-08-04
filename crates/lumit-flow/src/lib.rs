@@ -57,6 +57,35 @@ pub(crate) const OCC_REL: f32 = 0.05;
 /// Synthesis weight epsilon (§3).
 const SYNTH_EPS: f32 = 1e-4;
 
+// --- Variational refinement (K-257, impl note §1 step 4) --------------------
+// The paper's weights, unchanged: intensity constancy, gradient constancy,
+// smoothness. Gradient constancy is weighted as heavily as smoothness because
+// it is the term that survives a brightness change — a muzzle flash is a step
+// in intensity across a moving frame, which plain intensity constancy reads as
+// motion everywhere.
+/// Intensity-constancy weight σ (Kroeger et al., §3.3).
+pub(crate) const VR_SIGMA: f32 = 5.0;
+/// Gradient-constancy weight γ.
+pub(crate) const VR_GAMMA: f32 = 10.0;
+/// Smoothness weight α.
+pub(crate) const VR_ALPHA: f32 = 10.0;
+/// Robust penaliser floor: Ψ(a²) = √(a² + ε²).
+pub(crate) const VR_EPS2: f32 = 0.001 * 0.001;
+/// Successive over-relaxation factor. Above 1 the sweep overshoots on purpose,
+/// which is what makes it converge in a handful of passes instead of dozens;
+/// 1.6 is the usual choice for this class of system and is stable here.
+pub(crate) const VR_OMEGA: f32 = 1.6;
+/// SOR sweeps per fixed-point iteration (the paper's θ_vi = 5).
+pub(crate) const VR_SOR: usize = 5;
+/// Normalisation floor for the motion tensors, so a flat region divides by its
+/// own noise rather than by zero.
+pub(crate) const VR_ZETA2: f32 = 0.1 * 0.1;
+/// After refinement, a pixel whose residual exceeds this is not explained by
+/// the flow it was given. Replaces "no patch covered me" as the meaning of
+/// invalid (K-257): a refined field has an answer everywhere, so the honest
+/// question is whether the answer is right, not whether one was found.
+pub(crate) const VR_RESIDUAL_MAX: f32 = 0.12;
+
 /// A single-channel image in 0..1 (encoded luma), row-major.
 #[derive(Clone)]
 pub struct Gray {
@@ -147,6 +176,11 @@ pub struct FlowSettings {
     /// Bias static, well-textured regions toward pure blending (docs/08 §3.1
     /// step 5) — what stops a game HUD smearing across the frame.
     pub hud_guard: bool,
+    /// Variational-refinement fixed-point iterations per pyramid level, scaled
+    /// by depth (K-257; the paper's θ_vo base). `0` disables the third part of
+    /// DIS entirely — which is what Lumit shipped until K-257, and what the
+    /// A/B test measures against. Vector detail sets it.
+    pub refine_iters: u32,
 }
 
 impl Default for FlowSettings {
@@ -159,6 +193,7 @@ impl Default for FlowSettings {
             occlusion: OcclusionMode::VisibleOnly,
             fallback: Fallback::Blend,
             hud_guard: true,
+            refine_iters: 1,
         }
     }
 }
@@ -607,6 +642,204 @@ fn smooth(a: &Gray, u: &[f32], v: &[f32], flow_sigma2: f32) -> (Vec<f32>, Vec<f3
     (su, sv)
 }
 
+/// Variational refinement (impl note §1 step 4, K-257) — the third part of DIS,
+/// run once per pyramid level after densification.
+///
+/// # In plain terms
+///
+/// Everything before this point is *local*: each patch hunted for its own
+/// match, and each pixel took a vote among the patches covering it. That works
+/// wherever there is something to match, and has nothing to say wherever there
+/// isn't — a patch of sky, smoke, or a dark corner offers no evidence at all, so
+/// those pixels came out of densification with whatever the coarse level
+/// guessed, flagged as untrustworthy. Since occlusion counts untrustworthy as
+/// occluded and synthesis crossfades occluded, whole regions of frame turned
+/// into ghosted mush. That is the artefact this pass exists to remove.
+///
+/// The fix is to stop treating pixels one at a time and solve the *whole field*
+/// at once, balancing three demands:
+///
+/// - **Intensity constancy**: a pixel should land on a pixel of the same
+///   brightness in the other frame.
+/// - **Gradient constancy**: it should also land on the same *edge structure*.
+///   This is the term that survives a brightness change — a muzzle flash or an
+///   explosion lifts the whole frame's intensity, which the first term reads as
+///   motion in every direction at once, while edges stay put and stay matchable.
+/// - **Smoothness**: neighbouring pixels should move alike, *unless* the first
+///   two terms give a strong reason otherwise.
+///
+/// Smoothness is what fills the empty regions: a pixel with no evidence of its
+/// own inherits motion from neighbours that do have some, diffusing inward from
+/// the textured edges of the region over a few passes. All three demands are
+/// wrapped in the robust penaliser `Ψ(a²) = √(a² + ε²)`, which grows far more
+/// slowly than a square, so one badly-matched pixel bends the field near it
+/// instead of dragging the whole neighbourhood off — that is what keeps a motion
+/// boundary sharp rather than smearing across it.
+///
+/// Balancing the three is a system of equations too big to solve directly at
+/// video sizes, so it is swept iteratively: repeatedly nudge every pixel toward
+/// agreement with its neighbours and its own evidence, over-shooting each nudge
+/// slightly (the "over-relaxation" in SOR) because that converges in a handful
+/// of passes rather than dozens.
+///
+/// Returns the refined flow and a per-pixel validity: after this pass every
+/// pixel *has* an answer, so validity means "the residual says this answer is
+/// right", not "somebody found one".
+fn refine(
+    a: &Gray,
+    b: &Gray,
+    u_in: &[f32],
+    v_in: &[f32],
+    outer: usize,
+) -> (Vec<f32>, Vec<f32>, Vec<u8>) {
+    let (w, h) = (a.w, a.h);
+    let n = w * h;
+    let (mut u, mut v) = (u_in.to_vec(), v_in.to_vec());
+    if w < 3 || h < 3 {
+        return (u, v, vec![0; n]);
+    }
+    let (ax, ay) = sobel(a);
+    let idx = |x: usize, y: usize| y * w + x;
+
+    for _ in 0..outer {
+        // Warp B by the current flow and take its gradients there. The system
+        // below solves for the *increment* (du, dv) around this linearisation,
+        // which is what makes one sweep of a non-linear problem legitimate.
+        let mut bw = vec![0f32; n];
+        let mut bwx = vec![0f32; n];
+        let mut bwy = vec![0f32; n];
+        let (bx, by) = sobel(b);
+        for y in 0..h {
+            for x in 0..w {
+                let i = idx(x, y);
+                let (sx, sy) = (x as f32 + u[i], y as f32 + v[i]);
+                bw[i] = b.sample(sx, sy);
+                bwx[i] = sample_scalar(&bx, w, h, sx, sy);
+                bwy[i] = sample_scalar(&by, w, h, sx, sy);
+            }
+        }
+        // Per-pixel data-term coefficients, held fixed across the sweeps.
+        let mut du = vec![0f32; n];
+        let mut dv = vec![0f32; n];
+        // Second derivatives of the warped frame, for the gradient term.
+        let (bwxx, bwxy) = sobel(&Gray {
+            w,
+            h,
+            data: bwx.clone(),
+        });
+        let (bwyx, bwyy) = sobel(&Gray {
+            w,
+            h,
+            data: bwy.clone(),
+        });
+        // Red–black (checkerboard) sweeps rather than plain raster order.
+        //
+        // SOR wants each pixel to use its neighbours' *just-updated* values,
+        // which in raster order makes the sweep strictly sequential — every
+        // pixel waits for the one before it. On a checkerboard the four
+        // neighbours of any red pixel are all black, so a whole colour updates
+        // at once with no pixel reading another pixel of its own colour: the
+        // same algorithm, reordered into something a GPU can run a million
+        // threads of. The oracle is written this way so the WGSL can mirror it
+        // exactly and the 1e-3 parity contract still means something —
+        // a sequential oracle would have condemned the shader to disagree with
+        // it by construction.
+        for _ in 0..VR_SOR {
+            for colour in 0..2usize {
+                for y in 0..h {
+                    for x in 0..w {
+                        if (x + y) % 2 != colour {
+                            continue;
+                        }
+                        let i = idx(x, y);
+                        // Intensity constancy: Iz + Ix·du + Iy·dv ≈ 0.
+                        let iz = bw[i] - a.data[i];
+                        let (ix, iy) = (bwx[i], bwy[i]);
+                        let e_i = iz + ix * du[i] + iy * dv[i];
+                        // Normalised so a high-contrast pixel does not shout down a
+                        // low-contrast one (the paper's J̄ tensors).
+                        let n_i = 1.0 / (ix * ix + iy * iy + VR_ZETA2);
+                        let psi_i = VR_SIGMA * n_i / (2.0 * (e_i * e_i + VR_EPS2).sqrt());
+
+                        // Gradient constancy, one residual per gradient channel.
+                        let gzx = bwx[i] - ax[i];
+                        let gzy = bwy[i] - ay[i];
+                        let e_gx = gzx + bwxx[i] * du[i] + bwxy[i] * dv[i];
+                        let e_gy = gzy + bwyx[i] * du[i] + bwyy[i] * dv[i];
+                        let n_g = 1.0
+                            / (bwxx[i] * bwxx[i]
+                                + bwxy[i] * bwxy[i]
+                                + bwyx[i] * bwyx[i]
+                                + bwyy[i] * bwyy[i]
+                                + VR_ZETA2);
+                        let psi_g =
+                            VR_GAMMA * n_g / (2.0 * (e_gx * e_gx + e_gy * e_gy + VR_EPS2).sqrt());
+
+                        // Data system: A·[du dv]ᵀ = b.
+                        let a11 = psi_i * ix * ix + psi_g * (bwxx[i] * bwxx[i] + bwyx[i] * bwyx[i]);
+                        let a12 = psi_i * ix * iy + psi_g * (bwxx[i] * bwxy[i] + bwyx[i] * bwyy[i]);
+                        let a22 = psi_i * iy * iy + psi_g * (bwxy[i] * bwxy[i] + bwyy[i] * bwyy[i]);
+                        let b1 = -(psi_i * ix * iz + psi_g * (bwxx[i] * gzx + bwyx[i] * gzy));
+                        let b2 = -(psi_i * iy * iz + psi_g * (bwxy[i] * gzx + bwyy[i] * gzy));
+
+                        // Smoothness: pull toward the neighbours' *total* flow, each
+                        // neighbour weighted by how smooth the field already is
+                        // across that edge. A strong flow discontinuity earns a low
+                        // weight, so a motion boundary survives instead of being
+                        // averaged away.
+                        let (mut s_acc_u, mut s_acc_v, mut s_wsum) = (0f32, 0f32, 0f32);
+                        for (nx, ny) in [
+                            (x.wrapping_sub(1), y),
+                            (x + 1, y),
+                            (x, y.wrapping_sub(1)),
+                            (x, y + 1),
+                        ] {
+                            if nx >= w || ny >= h {
+                                continue; // outside: no neighbour, no pull
+                            }
+                            let j = idx(nx, ny);
+                            let (dux, dvy) =
+                                (u[j] + du[j] - u[i] - du[i], v[j] + dv[j] - v[i] - dv[i]);
+                            let wgt = VR_ALPHA / (2.0 * (dux * dux + dvy * dvy + VR_EPS2).sqrt());
+                            s_wsum += wgt;
+                            s_acc_u += wgt * (u[j] + du[j] - u[i]);
+                            s_acc_v += wgt * (v[j] + dv[j] - v[i]);
+                        }
+
+                        // One SOR step per component, each using the other's current
+                        // value (Gauss–Seidel), over-relaxed by ω.
+                        let den_u = a11 + s_wsum;
+                        if den_u > 1e-12 {
+                            let target = (b1 - a12 * dv[i] + s_acc_u) / den_u;
+                            du[i] += VR_OMEGA * (target - du[i]);
+                        }
+                        let den_v = a22 + s_wsum;
+                        if den_v > 1e-12 {
+                            let target = (b2 - a12 * du[i] + s_acc_v) / den_v;
+                            dv[i] += VR_OMEGA * (target - dv[i]);
+                        }
+                    }
+                }
+            }
+        }
+        for i in 0..n {
+            u[i] += du[i];
+            v[i] += dv[i];
+        }
+    }
+
+    // Validity from the residual of the *refined* field (K-257).
+    let mut valid = vec![0u8; n];
+    for y in 0..h {
+        for x in 0..w {
+            let i = idx(x, y);
+            let r = b.sample(x as f32 + u[i], y as f32 + v[i]) - a.data[i];
+            valid[i] = u8::from(r.abs() <= VR_RESIDUAL_MAX);
+        }
+    }
+    (u, v, valid)
+}
+
 /// Build the pyramid: L0 is the input, then box-downsample ×2 until the next
 /// level would drop under `min_level_dim` in either dimension (Vector detail
 /// sets the floor — see [`FlowSettings`]).
@@ -651,9 +884,22 @@ fn flow_core(
         let patches = inverse_search(a, b, gx, gy, &du, &dv, set.iterations);
         let (tu, tv, tvalid) = densify(a, b, &patches, &du, &dv);
         let (su, sv) = smooth(a, &tu, &tv, set.flow_sigma2());
-        du = su;
-        dv = sv;
-        valid = tvalid;
+        if set.refine_iters > 0 {
+            // DIS part three (K-257). The paper runs more fixed-point
+            // iterations at finer scales — θ_vo = 1·(s+1), s counting down from
+            // the coarsest — because that is where the field has the most detail
+            // left to resolve and the most room to be wrong.
+            let scale_from_coarse = levels - lvl;
+            let outer = set.refine_iters as usize * scale_from_coarse;
+            let (ru, rv, rvalid) = refine(a, b, &su, &sv, outer);
+            du = ru;
+            dv = rv;
+            valid = rvalid;
+        } else {
+            du = su;
+            dv = sv;
+            valid = tvalid;
+        }
         pw = a.w;
         ph = a.h;
     }
@@ -1758,6 +2004,88 @@ mod tests {
         );
     }
 
+    /// K-257, the reported artefact: a large low-texture region moving with the
+    /// frame. Without variational refinement the patches find nothing there, so
+    /// densification leaves the coarse guess and flags it untrustworthy —
+    /// occlusion counts that as occluded and synthesis crossfades it, which is
+    /// the ghosted mush the owner saw. With refinement, smoothness diffuses a
+    /// sensible field in from the textured edges.
+    ///
+    /// The scene is deliberately the hostile one: a wide, nearly flat band
+    /// (smoke/sky) across the middle of an otherwise detailed frame.
+    #[test]
+    fn refinement_recovers_motion_in_untextured_regions() {
+        let (w, h) = (192, 192);
+        let (dx, dy) = (4.0f32, 2.0f32);
+        // Detailed everywhere except a broad horizontal band with almost no
+        // contrast — the case local patch matching cannot answer.
+        let scene = |ox: f32, oy: f32| {
+            render(w, h, move |x, y| {
+                let (sx, sy) = (x - ox, y - oy);
+                let band = ((sy - 96.0) / 40.0).abs().min(1.0);
+                let detail = perlin(sx, sy, 21) + 0.3 * detail(sx, sy, 22);
+                // band == 0 in the middle: flat grey. band == 1 at the edges.
+                0.5 * (1.0 - band) + band * detail + 0.01 * (sx * 0.05).sin()
+            })
+        };
+        let a = scene(0.0, 0.0);
+        let b = scene(dx, dy);
+        let epe_in_band = |set: &FlowSettings| {
+            let f = flow_with(&a, &b, set);
+            // Measure only inside the flat band, where the artefact lives.
+            let (mut sum, mut n) = (0.0f64, 0usize);
+            for y in 86..106 {
+                for x in 32..160 {
+                    let i = y * w + x;
+                    let e = ((f.u[i] - dx).powi(2) + (f.v[i] - dy).powi(2)).sqrt();
+                    sum += f64::from(e);
+                    n += 1;
+                }
+            }
+            (sum / n as f64) as f32
+        };
+        let without = epe_in_band(&FlowSettings {
+            refine_iters: 0,
+            ..FlowSettings::default()
+        });
+        let with = epe_in_band(&FlowSettings::default());
+        assert!(
+            with < without,
+            "variational refinement should improve untextured regions: \
+             with {with} vs without {without}"
+        );
+    }
+
+    /// Refinement must not cost accuracy where the old path was already fine —
+    /// a plain textured translation stays within the §6.1 budget.
+    #[test]
+    fn refinement_keeps_the_analytic_accuracy_budget() {
+        let (w, h) = (192, 192);
+        let (dx, dy) = (5.0f32, -3.0f32);
+        let a = render(w, h, |x, y| perlin(x, y, 31));
+        let b = render(w, h, |x, y| perlin(x - dx, y - dy, 31));
+        let f = flow_with(&a, &b, &FlowSettings::default());
+        let epe = mean_epe(&f, 24, |_, _| (dx, dy));
+        assert!(epe < 0.3, "refined flow must still meet §6.1: {epe}");
+    }
+
+    /// Validity now means "the flow explains these pixels", not "a patch
+    /// covered me" (K-257). On a clean textured translation nearly everything
+    /// should be valid — under the old rule, flat areas were not.
+    #[test]
+    fn refined_validity_marks_explained_pixels() {
+        let (w, h) = (128, 128);
+        let a = render(w, h, |x, y| perlin(x, y, 41));
+        let b = render(w, h, |x, y| perlin(x - 3.0, y - 2.0, 41));
+        let f = flow_with(&a, &b, &FlowSettings::default());
+        let valid: usize = f.valid.iter().filter(|&&v| v == 1).count();
+        let frac = valid as f32 / (w * h) as f32;
+        assert!(
+            frac > 0.9,
+            "a clean translation should be almost entirely explained: {frac}"
+        );
+    }
+
     /// Engine crates never fault: degenerate inputs degrade, not crash.
     #[test]
     fn tiny_frames_degrade_gracefully() {
@@ -1880,9 +2208,19 @@ mod tests {
                 }),
             ),
         ];
+        // The shader implements DIS parts one and two; the variational
+        // refinement of K-257 has no WGSL pass yet, and `flow_pair_with`
+        // refuses rather than return a differently-measured field. Parity is
+        // therefore measured on the two-part path both backends do implement —
+        // when the refinement lands in WGSL, this `refine_iters: 0` comes out
+        // and the test covers the whole algorithm again.
+        let two_part = FlowSettings {
+            refine_iters: 0,
+            ..FlowSettings::default()
+        };
         for (i, (a, b)) in scenes.iter().enumerate() {
-            let (cf, cg) = flow_pair(a, b);
-            let (gf, gg) = g.flow_pair(a, b).unwrap();
+            let (cf, cg) = flow_pair_with(a, b, &two_part);
+            let (gf, gg) = g.flow_pair_with(a, b, &two_part).unwrap();
             let (df, dg) = (mean_abs_diff(&cf, &gf), mean_abs_diff(&cg, &gg));
             assert!(df < 1e-3, "scene {i}: fwd CPU/GPU diff {df}");
             assert!(dg < 1e-3, "scene {i}: bwd CPU/GPU diff {dg}");
@@ -1906,8 +2244,12 @@ mod tests {
         let (w, h) = (160, 128);
         let a = render(w, h, |x, y| perlin(x, y, 9));
         let b = render(w, h, |x, y| perlin(x - 5.2, y + 3.4, 9));
-        let (f1, g1) = g.flow_pair(&a, &b).unwrap();
-        let (f2, g2) = g.flow_pair(&a, &b).unwrap();
+        let two_part = FlowSettings {
+            refine_iters: 0,
+            ..FlowSettings::default()
+        };
+        let (f1, g1) = g.flow_pair_with(&a, &b, &two_part).unwrap();
+        let (f2, g2) = g.flow_pair_with(&a, &b, &two_part).unwrap();
         assert_eq!(f1.u, f2.u);
         assert_eq!(f1.v, f2.v);
         assert_eq!(f1.valid, f2.valid);
@@ -1944,24 +2286,41 @@ mod tests {
     #[ignore = "manual benchmark; prints timings"]
     fn bench_flow_1080p() {
         let Some(mut g) = gpu_flow() else { return };
-        // 1080p at the default Half working quality = 960×540 flow fields.
         let (w, h) = (960, 540);
         let a = render(w, h, |x, y| perlin(x, y, 3));
         let b = render(w, h, |x, y| perlin(x - 9.7, y + 4.3, 3));
+        // The GPU implements DIS parts one and two only (K-257): asking it for
+        // the default settings returns Unsupported in nanoseconds, which is not
+        // a timing. Measure what it actually runs.
+        let two_part = FlowSettings {
+            refine_iters: 0,
+            ..FlowSettings::default()
+        };
         for _ in 0..3 {
-            let _ = g.flow_pair(&a, &b); // warm-up (plan + pipeline caches)
+            let _ = g.flow_pair_with(&a, &b, &two_part); // warm-up
         }
         let runs = 20;
         let t0 = std::time::Instant::now();
         for _ in 0..runs {
-            let _ = g.flow_pair(&a, &b);
+            let _ = g
+                .flow_pair_with(&a, &b, &two_part)
+                .expect("two-part GPU path");
         }
         let per_pair = t0.elapsed() / runs;
-        eprintln!("gpu flow pair (960x540): {per_pair:?}");
+        eprintln!("gpu flow pair, parts 1-2 (960x540): {per_pair:?}");
 
         let t0 = std::time::Instant::now();
-        let _ = flow_pair(&a, &b);
-        eprintln!("cpu flow pair (960x540): {:?}", t0.elapsed());
+        let _ = flow_pair_with(&a, &b, &two_part);
+        eprintln!(
+            "cpu flow pair, parts 1-2 only (960x540): {:?}",
+            t0.elapsed()
+        );
+        let t0 = std::time::Instant::now();
+        let _ = flow_pair_with(&a, &b, &FlowSettings::default());
+        eprintln!(
+            "cpu flow pair, with refinement (960x540): {:?}",
+            t0.elapsed()
+        );
 
         // End-to-end 1080p interpolate (gray + halve + flow + synthesis).
         let px = |g: &Gray| -> Vec<u8> {

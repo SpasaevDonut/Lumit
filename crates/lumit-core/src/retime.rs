@@ -211,6 +211,21 @@ impl VectorDetail {
         }
     }
 
+    /// Variational-refinement fixed-point iterations per pyramid level (K-257),
+    /// the third part of DIS. This is where most of the quality lives: it is
+    /// what fills smoke, sky and darkness with a sensible field instead of
+    /// leaving them flagged untrustworthy and crossfaded. Low still runs one
+    /// pass — refinement off is not a user-reachable state, because the result
+    /// is the artefact this project reported.
+    pub const fn refine_iters(self) -> u32 {
+        match self {
+            VectorDetail::Low => 1,
+            VectorDetail::Medium => 1,
+            VectorDetail::High => 2,
+            VectorDetail::Ultra => 3,
+        }
+    }
+
     /// The smallest pyramid dimension to build down to. A shallower pyramid
     /// (larger floor) is cheaper but blind to large motion; deeper than ~24 px
     /// and the 8×8 patches go frame-scale, which the §6.1 occlusion test

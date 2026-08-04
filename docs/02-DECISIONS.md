@@ -5174,3 +5174,46 @@ egui era and has not been touched since. The DIS algorithm itself stands (K-169,
 Superseded in passing: the "flow fields are f32 storage buffers because fp16 rounding would eat
 the CPU-parity budget" note of `docs/impl/optical-flow.md` §1 applies to the *search*, which
 keeps its f32 working buffers and its CPU oracle; only the *stored* field narrows to fp16.
+
+**K-257 · DECIDED · DIS ships its variational refinement; "skip it in v1" is reversed.** From
+the owner (2026-08-04), reporting that the motion vectors are artefact-heavy and the flow and
+Fast motion blur that ride on them look poor. `docs/impl/optical-flow.md` §1 step 4 said: *skip
+the paper's full variational refinement in v1 — measure first; it is the difference between 2 ms
+and 10 ms and mostly helps large untextured regions, rare in game footage.* The measurement has
+now happened, and both halves of that sentence were wrong.
+
+DIS is **three** parts — inverse search, densification, variational refinement (Kroeger et al.,
+ECCV 2016) — and Lumit shipped two. The paper's own parameter analysis reports that refinement
+"always significantly reduced the error for a moderate increase in run-time"; OpenCV's
+`DISOpticalFlow`, the implementation everyone benchmarks against, enables it by default. The
+quality bar the impl note sets — "≈ Twixtor's easy-80% on game footage" — was set for the whole
+algorithm and judged against two thirds of it.
+
+The dismissal of untextured regions was the deeper mistake. Smoke, sky, muzzle flash, water,
+darkness and motion-blurred backgrounds are not *rare* in game capture, they are most of a
+frame during exactly the fast moments a montage slows down. And the current code fails hard
+there rather than softly: densification weights patch votes by a narrow Gaussian photometric
+term (σ = 0.08), so where nothing matches, the pixel keeps the coarse initialisation and is
+marked invalid; `occlusion` counts invalid as occluded; synthesis then crossfades it. Untextured
+regions collapse to patches of ghosted crossfade — the reported artefact, arrived at by three
+correct-looking local decisions. The single 3×3 bilateral pass was standing in for the
+regularisation the paper leaves to the refinement, and it cannot.
+
+Shipping, per the paper: intensity constancy **and gradient constancy** (the latter is what
+survives illumination change — a muzzle flash or explosion is a brightness step across a moving
+frame, the case plain intensity constancy has no answer for), a smoothness term, the robust
+penaliser `Ψ(a²) = √(a² + ε²)`, solved by successive over-relaxation once per pyramid level.
+Validity stops meaning "no patch covered me" and starts meaning "the refined flow does not
+explain these pixels", measured from the residual after refinement — a dense field has an
+answer everywhere, and the honest question is whether that answer is right.
+
+**Not adopted, and why.** Learned flow is the state of the art — WAFT (2025) leads Spring,
+Sintel and KITTI by replacing cost volumes with high-resolution warping, and RIFE-class models
+are what the community already pre-processes with. All of them are trained networks, which
+collides with three standing commitments: engine determinism (docs/14), preview equals export
+(K-031), and no model-file download in v1 (K-169's reasoning, unchanged). One architectural
+point decides the shape regardless: **RIFE synthesises frames directly and emits no flow
+field**, so Fast motion blur (§3.2) and Datamosh (§3.12) need DIS-class vectors whatever
+happens to retime synthesis — a learned model could one day replace the *synthesis* half and
+never the *measurement* half. The follow-up the owner accepted is a measurement harness on real
+gameplay, so the learned ceiling is judged later against numbers rather than impressions.

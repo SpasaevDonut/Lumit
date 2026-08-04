@@ -299,9 +299,18 @@ guard and the native-decode rule have landed; four pieces have not.
     written there, so every scrub remeasures. Key by `(item, frame A, frame B,
     params, algorithm version)` and *not* by the preview quality tier; store
     `rg16float` + `r8` confidence.
-4. **`dis.wgsl` hardcodes the iteration cap, pyramid floor and smoothing sigma**,
-    so a non-default Vector detail or Smoothness falls to the CPU oracle
-    (`FlowError::Unsupported`). Push them into the per-level `Params` uniform.
+4. **`dis.wgsl` has no variational-refinement pass** (K-257) and hardcodes the
+    iteration cap, pyramid floor and smoothing sigma, so *every default setting*
+    now falls to the CPU oracle (`FlowError::Unsupported`). **This is the urgent
+    one**: measured on a 960×540 pair, the GPU does parts 1–2 in 4.8 ms while the
+    CPU does all three in 1.82 s, so flow currently has no usable preview path at
+    all. The refinement is red–black SOR by construction, so it ports as two
+    dispatches per sweep with no reordering; push the constants into the
+    per-level `Params` uniform in the same pass.
+5. **A measurement harness on real gameplay** (K-257 follow-up), so the learned
+    ceiling — RIFE-class synthesis, WAFT-class flow — is judged later against
+    numbers rather than impressions. Note that a learned synthesiser emits no
+    flow field, so Fast motion blur and Datamosh need DIS vectors regardless.
 Also unexposed: `set_interpolation` still writes `Interpolation::Flow(Default::
 default())`, so no `FlowParams` field is reachable from the bridge or the UI.
 

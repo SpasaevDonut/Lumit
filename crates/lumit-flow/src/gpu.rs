@@ -240,6 +240,11 @@ impl GpuFlow {
         if set.iterations != default.iterations
             || set.min_level_dim != default.min_level_dim
             || set.flow_sigma2() != default.flow_sigma2()
+            // The shader has no variational-refinement pass yet (K-257), so a
+            // GPU field would be the two-part DIS the owner reported as
+            // artefact-ridden. Until the WGSL lands, correct and slow beats
+            // fast and wrong.
+            || set.refine_iters > 0
         {
             return Err(FlowError::Unsupported);
         }
