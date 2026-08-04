@@ -26,6 +26,12 @@ Create **two** Pages projects, both pointed at this repository:
 | Root directory     | `web`          | `web-docs`          |
 | Build command      | `npm run build`| `npm run build`     |
 | Output directory   | `dist`         | `dist`              |
+| Build watch path   | `web/*`        | `web-docs/*`        |
+
+Node is pinned by `.node-version` (22) in each directory — Pages defaults to an
+older Node than Astro 5 will build on, and that file is what stops it guessing.
+The build watch paths keep a change to one site from rebuilding the other, and keep
+engine commits from rebuilding either.
 
 Then add the custom domain to each under **Custom domains**. Because the DNS is
 already in the same Cloudflare account, the records are created for you.
