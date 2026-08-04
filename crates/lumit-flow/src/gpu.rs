@@ -24,6 +24,10 @@ pub enum FlowError {
     Readback(String),
     #[error("frame dimensions differ")]
     DimensionMismatch,
+    /// The settings ask for something the kernels do not implement; the caller
+    /// runs the CPU oracle instead of returning a differently-measured field.
+    #[error("these flow settings have no GPU path")]
+    Unsupported,
 }
 
 /// One uniform block per pyramid level (matches `Params` in dis.wgsl).
@@ -209,6 +213,36 @@ impl GpuFlow {
     /// `flow_pair` bit-closely. Degenerate sizes return the same zeroed
     /// fields the CPU does.
     pub fn flow_pair(&mut self, a: &Gray, b: &Gray) -> Result<(FlowField, FlowField), FlowError> {
+        self.flow_pair_with(a, b, &crate::FlowSettings::default())
+    }
+
+    /// Both directions under explicit settings, or [`FlowError::Unsupported`]
+    /// when the kernels cannot express them.
+    ///
+    /// The shader still carries the iteration cap, the pyramid floor and the
+    /// smoothing sigma as WGSL constants, so a non-default Vector detail or
+    /// Smoothness has no GPU expression yet. Refusing is the only honest answer:
+    /// returning a field measured to different rules than the settings asked for
+    /// would make the picture depend on which backend happened to be alive,
+    /// which is exactly the preview-≠-export class of fault K-256 exists to
+    /// remove. The caller degrades to the CPU oracle, which is correct and slow.
+    ///
+    /// ponytail: constants baked into dis.wgsl; push them into the per-level
+    /// `Params` uniform when the GPU flow relocation lands, and this refusal
+    /// goes away.
+    pub fn flow_pair_with(
+        &mut self,
+        a: &Gray,
+        b: &Gray,
+        set: &crate::FlowSettings,
+    ) -> Result<(FlowField, FlowField), FlowError> {
+        let default = crate::FlowSettings::default();
+        if set.iterations != default.iterations
+            || set.min_level_dim != default.min_level_dim
+            || set.flow_sigma2() != default.flow_sigma2()
+        {
+            return Err(FlowError::Unsupported);
+        }
         if a.w != b.w || a.h != b.h {
             return Err(FlowError::DimensionMismatch);
         }

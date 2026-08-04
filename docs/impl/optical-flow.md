@@ -160,10 +160,31 @@ counts, the ±1 central difference and the destination-flow fixed point remain f
 
 ## 5. Parameters and defaults (user-facing, per [08-EFFECTS.md](../08-EFFECTS.md))
 
-Flow interpolation: quality Half/Full (working res), smoothness σ (densification), and
-"fallback sensitivity" (the confidence threshold for §3's blend fallback; default
-mid). Motion blur: amount k (default 1.0), shutter from comp settings or override,
-max taps. Resist adding more knobs — Twixtor's manual is a warning, not a target.
+Resist adding more knobs — Twixtor's manual is a warning, not a target. The set is closed at
+the §3.1 table, which ships in full as of K-256.
+
+**Engine-side (`lumit_flow::FlowSettings`).** `lumit-flow` is an engine crate and knows
+nothing of the document, so the stored `FlowParams` are translated into plain numbers by
+`lumit_render::decode::flow_settings` — one function, so preview, export and the flow cache
+cannot translate the same parameters into two different measurements.
+
+| Setting | From | Effect on the algorithm |
+|---|---|---|
+| `divisor` | Flow resolution | 1/2/4 on the source dims before §1's pyramid. Repeated box-halving, never a second resampler, so the WGSL mirrors it. A source under `8·d·2` px stays whole rather than starving the pyramid |
+| `iterations` | Vector detail | §1 step 2's cap: 6 / 12 / 20 / 32 (Medium is the paper's ≤ 12) |
+| `min_level_dim` | Vector detail | §1's pyramid floor: 48 / 24 / 24 / 16. Below ~24 the 8×8 patches go frame-scale — the failure §6.1 measured |
+| `smoothness` | Smoothness | Scales `FLOW_SIGMA2` in §1 step 4's bilateral, quadratically over a 4× span each way, clamped. 50 is exactly the tuned constant, so the default is bit-identical to the pre-parameter engine |
+| `occlusion` | Occlusion handling | §3's weights: Visible-only keeps the `(1 − occ)` terms, Blend drops them |
+| `fallback` | Fallback | §3's both-occluded branch: crossfade or the nearer endpoint |
+| `hud_guard` | HUD guard | Runs §3.1 step 5's `hud_weights` and mixes synthesis back toward the plain blend by it |
+
+**GPU limitation (interim).** `dis.wgsl` still carries the iteration cap, the pyramid floor
+and the smoothing sigma as shader constants, so `GpuFlow::flow_pair_with` returns
+`FlowError::Unsupported` for a non-default Vector detail or Smoothness and the caller runs the
+CPU oracle. Refusing is deliberate: a field measured to different rules than the settings
+asked for would make the picture depend on which backend was alive, which is the
+preview-≠-export fault K-256 exists to remove. These move into the per-level `Params` uniform
+when the GPU relocation lands, and the refusal goes with them.
 
 ## 6. Test plan
 

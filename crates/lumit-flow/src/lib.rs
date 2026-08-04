@@ -101,12 +101,97 @@ impl FlowField {
     }
 }
 
-/// Working resolution for flow (impl note §1): `Half` is the default — flow on
-/// a half-size copy, scaled back up — `Full` computes at the frames' own size.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum FlowQuality {
-    Half,
-    Full,
+/// What synthesis does where a pixel exists in only one of the two frames
+/// (docs/08 §3.1 "Occlusion handling").
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum OcclusionMode {
+    /// Take only the frame the pixel is visible in.
+    #[default]
+    VisibleOnly,
+    /// Weight both anyway: ghosting instead of holes when the mask is wrong.
+    Blend,
+}
+
+/// What shows where confidence is too low to synthesise (docs/08 §3.1
+/// "Fallback"). Flow failure degrades to a picture, never to garbage.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Fallback {
+    /// Crossfade the two frames — soft, identical to the Blend policy.
+    #[default]
+    Blend,
+    /// Show the nearer source frame — crisp, no ghosted double image.
+    Nearest,
+}
+
+/// Every knob the flow engine takes (docs/08 §3.1, K-256).
+///
+/// `lumit-flow` is an engine crate and knows nothing of the document, so this
+/// is the plain-numbers form its caller translates `FlowParams` into — the same
+/// split the effect ops use. Defaults match `FlowParams::default`.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct FlowSettings {
+    /// Divide the source dimensions by this before measuring: 1 native (the
+    /// default), 2 half, 4 quarter. Never derived from the preview scale
+    /// (K-256) — flow measured on a shrunk decode is a different measurement.
+    pub divisor: u32,
+    /// Inverse-search iterations per patch per level ("Vector detail").
+    pub iterations: u32,
+    /// Pyramid floor: stop when the next level would drop under this.
+    pub min_level_dim: u32,
+    /// Regularisation, 0–100 ("Smoothness"): scales the flow-range sigma of the
+    /// edge-aware smoothing pass, so high means fewer tears and a gloopier
+    /// field, low means crisper motion boundaries.
+    pub smoothness: f32,
+    pub occlusion: OcclusionMode,
+    pub fallback: Fallback,
+    /// Bias static, well-textured regions toward pure blending (docs/08 §3.1
+    /// step 5) — what stops a game HUD smearing across the frame.
+    pub hud_guard: bool,
+}
+
+impl Default for FlowSettings {
+    fn default() -> Self {
+        Self {
+            divisor: 1,
+            iterations: MAX_ITERS as u32,
+            min_level_dim: MIN_LEVEL_DIM as u32,
+            smoothness: 50.0,
+            occlusion: OcclusionMode::VisibleOnly,
+            fallback: Fallback::Blend,
+            hud_guard: true,
+        }
+    }
+}
+
+impl FlowSettings {
+    /// The flow-range sigma² the smoothing bilateral uses, from `smoothness`.
+    ///
+    /// Smoothness is a 0–100 dial; the thing it actually moves is how far apart
+    /// two vectors may be and still average together. At 50 it is the tuned
+    /// [`FLOW_SIGMA2`] the analytic tests were fitted against, so the default
+    /// behaves exactly as it did before the dial existed. It scales
+    /// quadratically — the sigma is a squared distance — over a 4× span each
+    /// way, which is the range where the difference is visible without either
+    /// end degenerating (0 would refuse to smooth at all, 100 would average
+    /// across any motion boundary).
+    pub fn flow_sigma2(&self) -> f32 {
+        let s = (self.smoothness / 50.0).clamp(0.25, 2.0);
+        FLOW_SIGMA2 * s * s
+    }
+
+    /// Working dimensions for a source of `w × h`.
+    ///
+    /// A source too small to divide stays whole: halving an already-tiny frame
+    /// starves the pyramid, and a frame under one patch cannot be searched at
+    /// all (`flow` degrades to a zero field there).
+    pub fn working_size(&self, w: usize, h: usize) -> (usize, usize) {
+        let d = self.divisor.max(1) as usize;
+        if d == 1 || w.min(h) < PATCH * d * 2 {
+            (w, h)
+        } else {
+            (w / d, h / d)
+        }
+    }
 }
 
 /// BT.709 luma of sRGB-encoded RGBA bytes, in 0..1 (correlation happens on
@@ -254,6 +339,7 @@ fn inverse_search(
     gy: &[f32],
     init_u: &[f32],
     init_v: &[f32],
+    iterations: u32,
 ) -> PatchField {
     let (w, h) = (a.w, a.h);
     let (npx, npy) = (patch_count(w), patch_count(h));
@@ -332,7 +418,7 @@ fn inverse_search(
                 // somewhere absurd; mirrored exactly in WGSL).
                 let (mut bu, mut bv) = (u, v);
                 let mut best = f32::INFINITY;
-                for _ in 0..MAX_ITERS {
+                for _ in 0..iterations {
                     // r = Σ g·(A(x) − B(x+u)); Δu = H⁻¹ r reduces the residual.
                     let (mut r1, mut r2, mut cost) = (0f32, 0f32, 0f32);
                     for dy in 0..PATCH {
@@ -492,7 +578,7 @@ fn densify(
 /// less the more their luma differs (flow must not bleed across image edges)
 /// and the more their *flow* differs (vectors from the two sides of a motion
 /// boundary must never average into a phantom in-between motion).
-fn smooth(a: &Gray, u: &[f32], v: &[f32]) -> (Vec<f32>, Vec<f32>) {
+fn smooth(a: &Gray, u: &[f32], v: &[f32], flow_sigma2: f32) -> (Vec<f32>, Vec<f32>) {
     let (w, h) = (a.w, a.h);
     let mut su = vec![0f32; w * h];
     let mut sv = vec![0f32; w * h];
@@ -508,7 +594,7 @@ fn smooth(a: &Gray, u: &[f32], v: &[f32]) -> (Vec<f32>, Vec<f32>) {
                     let d = a.at(qx, qy) - c;
                     let q = qy * w + qx;
                     let fd = (u[q] - u[i]) * (u[q] - u[i]) + (v[q] - v[i]) * (v[q] - v[i]);
-                    let wgt = (-(d * d) / SIGMA2).exp() * (-fd / FLOW_SIGMA2).exp();
+                    let wgt = (-(d * d) / SIGMA2).exp() * (-fd / flow_sigma2).exp();
                     wsum += wgt;
                     acc_u += wgt * u[q];
                     acc_v += wgt * v[q];
@@ -522,12 +608,13 @@ fn smooth(a: &Gray, u: &[f32], v: &[f32]) -> (Vec<f32>, Vec<f32>) {
 }
 
 /// Build the pyramid: L0 is the input, then box-downsample ×2 until the next
-/// level would drop under ~16 px in either dimension.
-pub(crate) fn build_pyramid(g: &Gray) -> Vec<Gray> {
+/// level would drop under `min_level_dim` in either dimension (Vector detail
+/// sets the floor — see [`FlowSettings`]).
+pub(crate) fn build_pyramid_to(g: &Gray, min_level_dim: usize) -> Vec<Gray> {
     let mut p = vec![g.clone()];
     loop {
         let last = &p[p.len() - 1];
-        if (last.w / 2).max(1).min((last.h / 2).max(1)) < MIN_LEVEL_DIM {
+        if (last.w / 2).max(1).min((last.h / 2).max(1)) < min_level_dim {
             break;
         }
         let next = downsample(last);
@@ -538,7 +625,12 @@ pub(crate) fn build_pyramid(g: &Gray) -> Vec<Gray> {
 
 /// Coarse-to-fine DIS over prebuilt pyramids (`grads` are `pa`'s Sobel fields
 /// per level — the template side).
-fn flow_core(pa: &[Gray], pb: &[Gray], grads: &[(Vec<f32>, Vec<f32>)]) -> FlowField {
+fn flow_core(
+    pa: &[Gray],
+    pb: &[Gray],
+    grads: &[(Vec<f32>, Vec<f32>)],
+    set: &FlowSettings,
+) -> FlowField {
     let (w0, h0) = (pa[0].w, pa[0].h);
     if w0 < PATCH || h0 < PATCH {
         return FlowField::zeroed(w0, h0); // too small to search — degrade
@@ -556,9 +648,9 @@ fn flow_core(pa: &[Gray], pb: &[Gray], grads: &[(Vec<f32>, Vec<f32>)]) -> FlowFi
             dv = upsample_flow(&dv, pw, ph, a.w, a.h);
         }
         let (gx, gy) = (&grads[lvl].0, &grads[lvl].1);
-        let patches = inverse_search(a, b, gx, gy, &du, &dv);
+        let patches = inverse_search(a, b, gx, gy, &du, &dv, set.iterations);
         let (tu, tv, tvalid) = densify(a, b, &patches, &du, &dv);
-        let (su, sv) = smooth(a, &tu, &tv);
+        let (su, sv) = smooth(a, &tu, &tv, set.flow_sigma2());
         du = su;
         dv = sv;
         valid = tvalid;
@@ -574,28 +666,41 @@ fn flow_core(pa: &[Gray], pb: &[Gray], grads: &[(Vec<f32>, Vec<f32>)]) -> FlowFi
     }
 }
 
-/// Dense forward flow A→B by DIS (coarse-to-fine inverse search).
+/// Dense forward flow A→B by DIS (coarse-to-fine inverse search), at the
+/// engine's default settings.
 pub fn flow(a: &Gray, b: &Gray) -> FlowField {
+    flow_with(a, b, &FlowSettings::default())
+}
+
+/// Dense forward flow A→B under explicit settings.
+pub fn flow_with(a: &Gray, b: &Gray, set: &FlowSettings) -> FlowField {
     if a.w < PATCH || a.h < PATCH || a.w != b.w || a.h != b.h {
         return FlowField::zeroed(a.w, a.h);
     }
-    let pa = build_pyramid(a);
-    let pb = build_pyramid(b);
+    let floor = set.min_level_dim.max(PATCH as u32) as usize;
+    let pa = build_pyramid_to(a, floor);
+    let pb = build_pyramid_to(b, floor);
     let grads: Vec<(Vec<f32>, Vec<f32>)> = pa.iter().map(sobel).collect();
-    flow_core(&pa, &pb, &grads)
+    flow_core(&pa, &pb, &grads, set)
 }
 
 /// Both directions at once (A→B, B→A), sharing the pyramids — the impl note's
 /// "reuse everything; it is 2× cost".
 pub fn flow_pair(a: &Gray, b: &Gray) -> (FlowField, FlowField) {
+    flow_pair_with(a, b, &FlowSettings::default())
+}
+
+/// Both directions under explicit settings.
+pub fn flow_pair_with(a: &Gray, b: &Gray, set: &FlowSettings) -> (FlowField, FlowField) {
     if a.w < PATCH || a.h < PATCH || a.w != b.w || a.h != b.h {
         return (FlowField::zeroed(a.w, a.h), FlowField::zeroed(b.w, b.h));
     }
-    let pa = build_pyramid(a);
-    let pb = build_pyramid(b);
+    let floor = set.min_level_dim.max(PATCH as u32) as usize;
+    let pa = build_pyramid_to(a, floor);
+    let pb = build_pyramid_to(b, floor);
     let ga: Vec<(Vec<f32>, Vec<f32>)> = pa.iter().map(sobel).collect();
     let gb: Vec<(Vec<f32>, Vec<f32>)> = pb.iter().map(sobel).collect();
-    (flow_core(&pa, &pb, &ga), flow_core(&pb, &pa, &gb))
+    (flow_core(&pa, &pb, &ga, set), flow_core(&pb, &pa, &gb, set))
 }
 
 /// Forward–backward occlusion mask (impl note §2), on `f`'s pixel grid:
@@ -694,6 +799,98 @@ pub fn confidence(f: &FlowField, g: &FlowField) -> Vec<f32> {
     out
 }
 
+/// Speed (px per frame pair) below which a pixel counts as fully static, and
+/// above which it counts as fully moving. Between the two the guard tapers.
+const HUD_STATIC_LO: f32 = 0.25;
+const HUD_STATIC_HI: f32 = 1.0;
+/// Local gradient energy (encoded luma per px) below which a region is too
+/// smooth to be an overlay, and above which it is definitely drawn detail.
+const HUD_TEX_LO: f32 = 0.02;
+const HUD_TEX_HI: f32 = 0.08;
+
+fn smoothstep(lo: f32, hi: f32, x: f32) -> f32 {
+    let t = ((x - lo) / (hi - lo)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// The HUD/overlay guard (docs/08 §3.1 step 5): per-pixel 0..1, how much this
+/// pixel should be left to a plain blend instead of being warped.
+///
+/// # In plain terms
+///
+/// A game's health bar, killfeed and minimap are painted on *after* the camera
+/// moves — they sit still while the whole world slides underneath them. Flow
+/// sees a frame where everything moves except a few sharp rectangles, and the
+/// motion of the background inevitably bleeds into them: the classic Twixtor
+/// artefact where the HUD smears across the screen during a fast turn.
+///
+/// The tell is a region that is **not moving** but **is full of detail**. A
+/// static patch of sky is smooth; a static patch of *text* is not. So the guard
+/// looks for near-zero flow sitting on high local gradient, and where it finds
+/// both it hands the pixel to a plain crossfade — which for genuinely static
+/// content is the correct picture anyway, since A and B agree there.
+///
+/// Both tests taper rather than switch, and the result is box-blurred, because
+/// a hard boundary between "warped" and "not warped" is itself a visible
+/// artefact — the thing FX-19 learned the expensive way on motion blur.
+pub fn hud_weights(a: &Gray, f: &FlowField) -> Vec<f32> {
+    let (w, h) = (a.w, a.h);
+    let n = w * h;
+    if f.w != w || f.h != h || f.u.len() != n {
+        return vec![0.0; n]; // mismatched: guard nothing, never fault
+    }
+    let (gx, gy) = sobel(a);
+    // "Is there detail *near* this pixel", not "is this pixel itself an edge".
+    // A gradient is zero inside every stroke of a letter and only spikes at its
+    // rim, so a per-pixel test guards the outlines of a HUD and leaves its
+    // insides to be smeared — which is the artefact, not the fix. The 3×3 max
+    // spreads each piece of evidence over its neighbourhood first.
+    let mut tex = vec![0f32; n];
+    for y in 0..h {
+        for x in 0..w {
+            let mut m = 0f32;
+            for oy in -1i32..=1 {
+                for ox in -1i32..=1 {
+                    let qx = (x as i32 + ox).clamp(0, w as i32 - 1) as usize;
+                    let qy = (y as i32 + oy).clamp(0, h as i32 - 1) as usize;
+                    let q = qy * w + qx;
+                    m = m.max((gx[q] * gx[q] + gy[q] * gy[q]).sqrt());
+                }
+            }
+            tex[y * w + x] = m;
+        }
+    }
+    let mut raw = vec![0f32; n];
+    for i in 0..n {
+        let speed = (f.u[i] * f.u[i] + f.v[i] * f.v[i]).sqrt();
+        // 1 where still, 0 where moving.
+        let stillness = 1.0 - smoothstep(HUD_STATIC_LO, HUD_STATIC_HI, speed);
+        if stillness <= 0.0 {
+            continue;
+        }
+        raw[i] = stillness * smoothstep(HUD_TEX_LO, HUD_TEX_HI, tex[i]);
+    }
+    // Widen by a pixel and remove the seam, exactly as `confidence` does: an
+    // overlay's anti-aliased edge is a gradient the per-pixel test reads
+    // differently from its interior.
+    let mut out = vec![0f32; n];
+    for y in 0..h {
+        for x in 0..w {
+            let (mut acc, mut cnt) = (0f32, 0f32);
+            for oy in -1i32..=1 {
+                for ox in -1i32..=1 {
+                    let qx = (x as i32 + ox).clamp(0, w as i32 - 1) as usize;
+                    let qy = (y as i32 + oy).clamp(0, h as i32 - 1) as usize;
+                    acc += raw[qy * w + qx];
+                    cnt += 1.0;
+                }
+            }
+            out[y * w + x] = acc / cnt;
+        }
+    }
+    out
+}
+
 /// 3×3 max filter (grow a mask by one pixel).
 fn dilate3(mask: &[u8], w: usize, h: usize) -> Vec<u8> {
     let mut out = vec![0u8; w * h];
@@ -762,6 +959,30 @@ pub fn synthesize(
     bwd: &FlowField,
     phi: f32,
 ) -> Vec<u8> {
+    synthesize_with(a, b, w, h, fwd, bwd, phi, &FlowSettings::default(), None)
+}
+
+/// Synthesis under explicit settings, with an optional HUD guard weight per
+/// pixel (from [`hud_weights`], at the frames' own size).
+///
+/// The three §3.1 knobs land here. **Occlusion handling** chooses whether a
+/// pixel that exists in only one frame takes that frame alone or is weighted
+/// from both. **Fallback** chooses what shows where *neither* frame can explain
+/// the pixel — a crossfade (soft, ghosted) or the nearer frame (crisp, but it
+/// jumps). The **HUD guard** overrides both, per pixel, by mixing the whole
+/// synthesised result back toward a plain blend wherever the guard fired.
+#[allow(clippy::too_many_arguments)]
+pub fn synthesize_with(
+    a: &[u8],
+    b: &[u8],
+    w: usize,
+    h: usize,
+    fwd: &FlowField,
+    bwd: &FlowField,
+    phi: f32,
+    set: &FlowSettings,
+    hud: Option<&[f32]>,
+) -> Vec<u8> {
     if phi <= 0.0 {
         return a.to_vec();
     }
@@ -805,40 +1026,70 @@ pub fn synthesize(
             // B's grid is its negation, hence the minus sign here too.
             let sb = sample_rgba(b, w, h, xf - (1.0 - phi) * b1u, yf - (1.0 - phi) * b1v);
             let (oa, ob) = (occ_a[i], occ_b[i]);
-            if oa == 1 && ob == 1 {
-                // Revealed background with no source in either frame: plain
-                // blend, identical to Frame-Mix (§3 soft failure).
-                for c in 0..4 {
-                    let la = f32::from(a[i * 4 + c]);
-                    let lb = f32::from(b[i * 4 + c]);
-                    out[i * 4 + c] = (la * (1.0 - phi) + lb * phi).round().clamp(0.0, 255.0) as u8;
-                }
-            } else {
-                // A's warp is trusted unless the content only exists in B
-                // (revealed, occ_b), and vice versa (§3 weights).
-                let wa = (1.0 - phi) * (1.0 - f32::from(ob)) + SYNTH_EPS;
-                let wb = phi * (1.0 - f32::from(oa)) + SYNTH_EPS;
-                for c in 0..4 {
-                    out[i * 4 + c] = ((wa * sa[c] + wb * sb[c]) / (wa + wb))
-                        .round()
-                        .clamp(0.0, 255.0) as u8;
-                }
+            // How much this pixel should be left alone (HUD guard, §3.1 step 5):
+            // a static, detailed overlay must not be dragged by the motion of
+            // the world sliding underneath it.
+            let guard = hud.map_or(0.0, |g| g.get(i).copied().unwrap_or(0.0));
+            for c in 0..4 {
+                let la = f32::from(a[i * 4 + c]);
+                let lb = f32::from(b[i * 4 + c]);
+                let synth = if oa == 1 && ob == 1 {
+                    // Neither frame can explain this pixel — revealed
+                    // background with no source anywhere (§3 soft failure).
+                    match set.fallback {
+                        Fallback::Blend => la * (1.0 - phi) + lb * phi,
+                        Fallback::Nearest => {
+                            if phi < 0.5 {
+                                la
+                            } else {
+                                lb
+                            }
+                        }
+                    }
+                } else {
+                    // A's warp is trusted unless the content only exists in B
+                    // (revealed, occ_b), and vice versa (§3 weights). Under
+                    // Blend handling the occlusion terms are dropped, so both
+                    // warps contribute by phase alone: ghosting where the mask
+                    // was right, but no hole where it was wrong.
+                    let (ga, gb) = match set.occlusion {
+                        OcclusionMode::VisibleOnly => (1.0 - f32::from(ob), 1.0 - f32::from(oa)),
+                        OcclusionMode::Blend => (1.0, 1.0),
+                    };
+                    let wa = (1.0 - phi) * ga + SYNTH_EPS;
+                    let wb = phi * gb + SYNTH_EPS;
+                    (wa * sa[c] + wb * sb[c]) / (wa + wb)
+                };
+                // The guard mixes back toward the unwarped blend. For genuinely
+                // static content that *is* the correct picture, since A and B
+                // agree there — so a full guard costs nothing but the smear.
+                let plain = la * (1.0 - phi) + lb * phi;
+                let v = synth * (1.0 - guard) + plain * guard;
+                out[i * 4 + c] = v.round().clamp(0.0, 255.0) as u8;
             }
         }
     }
     out
 }
 
-/// Luma pair at the working resolution for `quality` (impl note §1: default
-/// half). Tiny frames stay at full size — halving would starve the pyramid.
-fn grays_at(a: &[u8], b: &[u8], w: usize, h: usize, quality: FlowQuality) -> (Gray, Gray, bool) {
+/// Luma pair at the settings' working resolution. Returns the pair and whether
+/// it was actually reduced (a source too small to divide stays whole, since
+/// halving an already-tiny frame starves the pyramid).
+fn grays_at(a: &[u8], b: &[u8], w: usize, h: usize, set: &FlowSettings) -> (Gray, Gray, bool) {
     let ga = to_gray(a, w, h);
     let gb = to_gray(b, w, h);
-    if quality == FlowQuality::Half && w.min(h) >= 64 {
-        (downsample(&ga), downsample(&gb), true)
-    } else {
-        (ga, gb, false)
+    let (ww, _) = set.working_size(w, h);
+    if ww == w {
+        return (ga, gb, false);
     }
+    // Repeated halving reaches quarter and beyond with the one box filter the
+    // WGSL mirrors, rather than needing a second resampler.
+    let (mut ra, mut rb) = (ga, gb);
+    while ra.w > ww {
+        ra = downsample(&ra);
+        rb = downsample(&rb);
+    }
+    (ra, rb, true)
 }
 
 /// End-to-end on the CPU: the flow-interpolated frame at `phi` between RGBA
@@ -850,7 +1101,7 @@ pub fn interpolate_at(
     w: usize,
     h: usize,
     phi: f32,
-    quality: FlowQuality,
+    set: &FlowSettings,
 ) -> Vec<u8> {
     if phi <= 0.0 {
         return a.to_vec();
@@ -858,20 +1109,35 @@ pub fn interpolate_at(
     if phi >= 1.0 {
         return b.to_vec();
     }
-    let (ga, gb, halved) = grays_at(a, b, w, h, quality);
-    let (fwd, bwd) = flow_pair(&ga, &gb);
-    let (fwd, bwd) = if halved {
+    let (ga, gb, reduced) = grays_at(a, b, w, h, set);
+    let (fwd, bwd) = flow_pair_with(&ga, &gb, set);
+    // The guard is measured where the flow is, then carried up with it: the
+    // gradient test wants the same pixels the vectors were solved on.
+    let hud = set.hud_guard.then(|| hud_weights(&ga, &fwd));
+    let (fwd, bwd) = if reduced {
         (upsample_field(&fwd, w, h), upsample_field(&bwd, w, h))
     } else {
         (fwd, bwd)
     };
-    synthesize(a, b, w, h, &fwd, &bwd, phi)
+    let hud = hud.map(|g| {
+        if reduced {
+            upsample_flow(&g, ga.w, ga.h, w, h)
+                .into_iter()
+                // upsample_flow scales values by the size ratio (a flow field
+                // grows with the image); a 0..1 weight must not.
+                .map(|v| (v / (w as f32 / ga.w.max(1) as f32)).clamp(0.0, 1.0))
+                .collect::<Vec<f32>>()
+        } else {
+            g
+        }
+    });
+    synthesize_with(a, b, w, h, &fwd, &bwd, phi, set, hud.as_deref())
 }
 
-/// CPU convenience at the default (half) quality — what the `Flow` retiming
-/// policy calls when no engine is held.
+/// CPU convenience at the engine defaults — what the `Flow` retiming policy
+/// calls when no engine is held.
 pub fn interpolate(a: &[u8], b: &[u8], w: usize, h: usize, phi: f32) -> Vec<u8> {
-    interpolate_at(a, b, w, h, phi, FlowQuality::Half)
+    interpolate_at(a, b, w, h, phi, &FlowSettings::default())
 }
 
 /// The backend-choosing engine callers hold on to: WGSL DIS on a GPU when one
@@ -914,18 +1180,33 @@ impl FlowEngine {
     }
 
     /// Both flow directions at the frames' own resolution, on whichever
-    /// backend is live.
+    /// backend is live, at the engine defaults.
     pub fn flow_pair(&mut self, a: &Gray, b: &Gray) -> (FlowField, FlowField) {
+        self.flow_pair_with(a, b, &FlowSettings::default())
+    }
+
+    /// Both flow directions under explicit settings.
+    ///
+    /// The GPU backend takes only the settings its kernels honour so far; a
+    /// setting it cannot express sends the pair to the CPU oracle rather than
+    /// quietly returning a field measured to different rules, because the two
+    /// disagreeing is worse than the slow answer.
+    pub fn flow_pair_with(
+        &mut self,
+        a: &Gray,
+        b: &Gray,
+        set: &FlowSettings,
+    ) -> (FlowField, FlowField) {
         if let Some(g) = self.gpu.as_mut() {
-            match g.flow_pair(a, b) {
+            match g.flow_pair_with(a, b, set) {
                 Ok(pair) => return pair,
                 Err(_) => self.gpu = None, // degrade to CPU from here on
             }
         }
-        flow_pair(a, b)
+        flow_pair_with(a, b, set)
     }
 
-    /// The flow-interpolated frame at `phi`, at the given working quality.
+    /// The flow-interpolated frame at `phi` under explicit settings.
     pub fn interpolate_at(
         &mut self,
         a: &[u8],
@@ -933,7 +1214,7 @@ impl FlowEngine {
         w: usize,
         h: usize,
         phi: f32,
-        quality: FlowQuality,
+        set: &FlowSettings,
     ) -> Vec<u8> {
         if phi <= 0.0 {
             return a.to_vec();
@@ -941,19 +1222,31 @@ impl FlowEngine {
         if phi >= 1.0 {
             return b.to_vec();
         }
-        let (ga, gb, halved) = grays_at(a, b, w, h, quality);
-        let (fwd, bwd) = self.flow_pair(&ga, &gb);
-        let (fwd, bwd) = if halved {
+        let (ga, gb, reduced) = grays_at(a, b, w, h, set);
+        let (fwd, bwd) = self.flow_pair_with(&ga, &gb, set);
+        let hud = set.hud_guard.then(|| hud_weights(&ga, &fwd));
+        let (fwd, bwd) = if reduced {
             (upsample_field(&fwd, w, h), upsample_field(&bwd, w, h))
         } else {
             (fwd, bwd)
         };
-        synthesize(a, b, w, h, &fwd, &bwd, phi)
+        let hud = hud.map(|g| {
+            if reduced {
+                let scale = w as f32 / ga.w.max(1) as f32;
+                upsample_flow(&g, ga.w, ga.h, w, h)
+                    .into_iter()
+                    .map(|v| (v / scale).clamp(0.0, 1.0))
+                    .collect::<Vec<f32>>()
+            } else {
+                g
+            }
+        });
+        synthesize_with(a, b, w, h, &fwd, &bwd, phi, set, hud.as_deref())
     }
 
-    /// Default-quality interpolation (half working resolution).
+    /// Interpolation at the engine defaults.
     pub fn interpolate(&mut self, a: &[u8], b: &[u8], w: usize, h: usize, phi: f32) -> Vec<u8> {
-        self.interpolate_at(a, b, w, h, phi, FlowQuality::Half)
+        self.interpolate_at(a, b, w, h, phi, &FlowSettings::default())
     }
 }
 
@@ -1237,6 +1530,231 @@ mod tests {
         assert!(
             e_synth < e_cross,
             "flow synth error {e_synth} should beat crossfade {e_cross}"
+        );
+    }
+
+    /// The HUD guard (docs/08 §3.1 step 5) fires on the thing it is named for:
+    /// a static, detailed overlay sitting over a moving world.
+    ///
+    /// Built as the artefact itself — a sharp textured block that does not
+    /// move, and a flow field that (wrongly, as DIS does near a strong moving
+    /// edge) claims it does not — so the assertion is that the guard picks out
+    /// the overlay and leaves the moving background alone.
+    #[test]
+    fn the_hud_guard_fires_on_static_detail_and_not_on_moving_content() {
+        let (w, h) = (128, 96);
+        // Left half: a busy static "HUD" panel. Right half: smooth gradient.
+        let img = render(w, h, |x, y| {
+            if x < 48.0 {
+                // High-frequency detail, like text.
+                0.5 + 0.45 * ((x * 1.7).sin() * (y * 1.9).sin()).signum()
+            } else {
+                0.2 + 0.5 * (x / w as f32)
+            }
+        });
+        // Flow: the HUD region measured as still, the rest as moving fast.
+        let n = w * h;
+        let mut f = FlowField {
+            w,
+            h,
+            u: vec![0.0; n],
+            v: vec![0.0; n],
+            valid: vec![1; n],
+        };
+        for y in 0..h {
+            for x in 0..w {
+                if x >= 48 {
+                    f.u[y * w + x] = 6.0;
+                }
+            }
+        }
+        let g = hud_weights(&img, &f);
+        // Sample well inside each region, clear of the blurred boundary.
+        let at = |x: usize, y: usize| g[y * w + x];
+        assert!(
+            at(24, 48) > 0.8,
+            "static detailed overlay should be guarded, got {}",
+            at(24, 48)
+        );
+        assert!(
+            at(100, 48) < 0.05,
+            "moving content must not be guarded, got {}",
+            at(100, 48)
+        );
+    }
+
+    /// Static but *smooth* content is not an overlay — a locked-off sky must
+    /// not trip the guard, or the guard is just "blend everything still".
+    #[test]
+    fn the_hud_guard_ignores_static_smooth_content() {
+        let (w, h) = (64, 64);
+        let flat = render(w, h, |_, _| 0.5);
+        let n = w * h;
+        let still = FlowField {
+            w,
+            h,
+            u: vec![0.0; n],
+            v: vec![0.0; n],
+            valid: vec![1; n],
+        };
+        let g = hud_weights(&flat, &still);
+        assert!(
+            g.iter().all(|&v| v < 0.01),
+            "a featureless still region is not a HUD"
+        );
+    }
+
+    /// The guard changes the picture in the direction it claims: guarded
+    /// pixels come back as the plain blend, unwarped.
+    #[test]
+    fn a_guarded_pixel_synthesises_as_the_plain_blend() {
+        let (w, h) = (32, 32);
+        let n = w * h;
+        let a: Vec<u8> = (0..n * 4).map(|i| (i % 251) as u8).collect();
+        let b: Vec<u8> = (0..n * 4).map(|i| ((i * 7) % 251) as u8).collect();
+        // A flow field that would drag every pixel a long way sideways.
+        let f = FlowField {
+            w,
+            h,
+            u: vec![5.0; n],
+            v: vec![0.0; n],
+            valid: vec![1; n],
+        };
+        let bwd = FlowField {
+            w,
+            h,
+            u: vec![-5.0; n],
+            v: vec![0.0; n],
+            valid: vec![1; n],
+        };
+        let set = FlowSettings::default();
+        let guarded = synthesize_with(&a, &b, w, h, &f, &bwd, 0.5, &set, Some(&vec![1.0; n]));
+        // Full guard everywhere == the crossfade, exactly.
+        for i in 0..n * 4 {
+            let want = (f32::from(a[i]) * 0.5 + f32::from(b[i]) * 0.5).round() as u8;
+            assert_eq!(
+                guarded[i], want,
+                "guarded pixel {i} should be the plain blend"
+            );
+        }
+        // With no guard the warp is visible, so the result differs.
+        let warped = synthesize_with(&a, &b, w, h, &f, &bwd, 0.5, &set, None);
+        assert_ne!(warped, guarded);
+    }
+
+    /// The Fallback knob (docs/08 §3.1) picks what shows where neither frame
+    /// can explain a pixel: a crossfade, or the nearer frame.
+    #[test]
+    fn the_fallback_knob_chooses_blend_or_nearest_where_both_are_occluded() {
+        let (w, h) = (16, 16);
+        let n = w * h;
+        let a = vec![0u8; n * 4];
+        let b = vec![200u8; n * 4];
+        // All-invalid fields make every pixel occluded in both directions.
+        let dead = || FlowField {
+            w,
+            h,
+            u: vec![0.0; n],
+            v: vec![0.0; n],
+            valid: vec![0; n],
+        };
+        let blend = synthesize_with(
+            &a,
+            &b,
+            w,
+            h,
+            &dead(),
+            &dead(),
+            0.25,
+            &FlowSettings {
+                fallback: Fallback::Blend,
+                hud_guard: false,
+                ..FlowSettings::default()
+            },
+            None,
+        );
+        assert_eq!(blend[0], 50, "0.25 of the way from 0 to 200");
+        let nearest = synthesize_with(
+            &a,
+            &b,
+            w,
+            h,
+            &dead(),
+            &dead(),
+            0.25,
+            &FlowSettings {
+                fallback: Fallback::Nearest,
+                hud_guard: false,
+                ..FlowSettings::default()
+            },
+            None,
+        );
+        assert_eq!(nearest[0], 0, "nearer frame at phi 0.25 is A");
+    }
+
+    /// Smoothness moves the regularisation it claims to move, and the default
+    /// leaves the tuned constant exactly where the analytic tests found it.
+    #[test]
+    fn smoothness_scales_the_flow_sigma_around_the_tuned_default() {
+        let at = |s: f32| {
+            FlowSettings {
+                smoothness: s,
+                ..FlowSettings::default()
+            }
+            .flow_sigma2()
+        };
+        assert_eq!(at(50.0), FLOW_SIGMA2);
+        assert!(at(10.0) < at(50.0));
+        assert!(at(90.0) > at(50.0));
+        // Clamped at both ends: never zero (which would refuse to smooth) and
+        // never unbounded (which would average across any motion boundary).
+        assert!(at(0.0) > 0.0);
+        assert!(at(1000.0) <= FLOW_SIGMA2 * 4.0);
+    }
+
+    /// Flow resolution is a divisor on the source, and a frame too small to
+    /// divide stays whole rather than starving the pyramid.
+    #[test]
+    fn working_size_divides_but_never_starves() {
+        let full = FlowSettings::default();
+        assert_eq!(full.working_size(1920, 1080), (1920, 1080));
+        let half = FlowSettings {
+            divisor: 2,
+            ..FlowSettings::default()
+        };
+        assert_eq!(half.working_size(1920, 1080), (960, 540));
+        let quarter = FlowSettings {
+            divisor: 4,
+            ..FlowSettings::default()
+        };
+        assert_eq!(quarter.working_size(1920, 1080), (480, 270));
+        // Too small to divide: unchanged, not reduced into uselessness.
+        assert_eq!(quarter.working_size(40, 40), (40, 40));
+    }
+
+    /// Vector detail buys accuracy: the same hard motion is recovered at least
+    /// as well at Ultra's iteration count as at Low's.
+    #[test]
+    fn more_vector_detail_is_never_worse() {
+        let (w, h) = (192, 192);
+        let (dx, dy) = (7.0f32, -5.0f32);
+        let a = render(w, h, |x, y| perlin(x, y, 9));
+        let b = render(w, h, |x, y| perlin(x - dx, y - dy, 9));
+        let epe_at = |iters: u32| {
+            let f = flow_with(
+                &a,
+                &b,
+                &FlowSettings {
+                    iterations: iters,
+                    ..FlowSettings::default()
+                },
+            );
+            mean_epe(&f, 24, |_, _| (dx, dy))
+        };
+        let (low, ultra) = (epe_at(6), epe_at(32));
+        assert!(
+            ultra <= low + 1e-4,
+            "more iterations should not be worse: low {low}, ultra {ultra}"
         );
     }
 

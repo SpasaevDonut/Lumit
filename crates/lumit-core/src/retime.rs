@@ -130,15 +130,217 @@ pub enum Interpolation {
     Flow(FlowParams),
 }
 
-/// Optical-flow parameters (docs/08-EFFECTS.md). Placeholder for now: the
-/// flow engine is future work, but the policy must already round-trip
-/// project files, so the shape exists with only the forward-compat map.
+/// The resolution flow is *measured* at (docs/08 §3.1, K-256).
+///
+/// Deliberately independent of the preview quality tier. Flow used to run on
+/// whatever the preview scale had shrunk the decode to, which made a draft
+/// scrub and an export two different measurements rather than one measurement
+/// at two sizes — the field would change shape as you raised the quality. The
+/// cost of fixing that is real and accepted: a layer with Flow live decodes at
+/// native width even in draft preview, because full-resolution flow cannot be
+/// measured on a shrunk decode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum FlowResolution {
+    /// The source's own pixels — the default, and the only setting where
+    /// preview and export are the same measurement at every quality tier.
+    #[default]
+    Native,
+    /// Half the source's dimensions: ~4× cheaper, vectors scaled back up.
+    Half,
+    /// Quarter dimensions — the escape hatch for slow machines on 4K sources.
+    Quarter,
+}
+
+impl FlowResolution {
+    /// The Choice option labels, in code order.
+    pub const OPTIONS: &'static [&'static str] = &["Native", "Half", "Quarter"];
+
+    /// How much to divide the source dimensions by before measuring.
+    pub const fn divisor(self) -> u32 {
+        match self {
+            FlowResolution::Native => 1,
+            FlowResolution::Half => 2,
+            FlowResolution::Quarter => 4,
+        }
+    }
+
+    /// The mode for a stored Choice index, or `None` for an unknown code.
+    pub const fn from_code(code: u32) -> Option<Self> {
+        match code {
+            0 => Some(FlowResolution::Native),
+            1 => Some(FlowResolution::Half),
+            2 => Some(FlowResolution::Quarter),
+            _ => None,
+        }
+    }
+
+    pub const fn code(self) -> u32 {
+        match self {
+            FlowResolution::Native => 0,
+            FlowResolution::Half => 1,
+            FlowResolution::Quarter => 2,
+        }
+    }
+}
+
+/// How hard the flow search works (docs/08 §3.1 "Vector detail"): pyramid depth
+/// and the inverse-search iteration cap. More detail finds smaller and faster
+/// motion at proportionally more time; it does not change what the vectors
+/// *mean*, so it is safe to preview at Medium and export at Ultra — unlike
+/// [`FlowResolution`], which changes the measurement itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum VectorDetail {
+    Low,
+    #[default]
+    Medium,
+    High,
+    Ultra,
+}
+
+impl VectorDetail {
+    pub const OPTIONS: &'static [&'static str] = &["Low", "Medium", "High", "Ultra"];
+
+    /// Inverse-search iterations per patch per level (docs/impl/optical-flow.md
+    /// §1 step 2 pins Medium at the paper's ≤ 12).
+    pub const fn iterations(self) -> u32 {
+        match self {
+            VectorDetail::Low => 6,
+            VectorDetail::Medium => 12,
+            VectorDetail::High => 20,
+            VectorDetail::Ultra => 32,
+        }
+    }
+
+    /// The smallest pyramid dimension to build down to. A shallower pyramid
+    /// (larger floor) is cheaper but blind to large motion; deeper than ~24 px
+    /// and the 8×8 patches go frame-scale, which the §6.1 occlusion test
+    /// measured as whole strips of garbage the finer levels cannot heal.
+    pub const fn min_level_dim(self) -> u32 {
+        match self {
+            VectorDetail::Low => 48,
+            VectorDetail::Medium => 24,
+            VectorDetail::High => 24,
+            VectorDetail::Ultra => 16,
+        }
+    }
+
+    pub const fn from_code(code: u32) -> Option<Self> {
+        match code {
+            0 => Some(VectorDetail::Low),
+            1 => Some(VectorDetail::Medium),
+            2 => Some(VectorDetail::High),
+            3 => Some(VectorDetail::Ultra),
+            _ => None,
+        }
+    }
+
+    pub const fn code(self) -> u32 {
+        match self {
+            VectorDetail::Low => 0,
+            VectorDetail::Medium => 1,
+            VectorDetail::High => 2,
+            VectorDetail::Ultra => 3,
+        }
+    }
+}
+
+/// What synthesis does where a pixel is visible in only one of the two frames
+/// (docs/08 §3.1 "Occlusion handling").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum OcclusionMode {
+    /// Take only the frame the pixel is actually visible in — sharp, and the
+    /// right answer when the occlusion mask is right.
+    #[default]
+    VisibleOnly,
+    /// Weight both frames anyway: trades ghosting at a revealed edge for fewer
+    /// holes when the mask is wrong.
+    Blend,
+}
+
+impl OcclusionMode {
+    pub const OPTIONS: &'static [&'static str] = &["Visible only", "Blend"];
+
+    pub const fn from_code(code: u32) -> Option<Self> {
+        match code {
+            0 => Some(OcclusionMode::VisibleOnly),
+            1 => Some(OcclusionMode::Blend),
+            _ => None,
+        }
+    }
+
+    pub const fn code(self) -> u32 {
+        match self {
+            OcclusionMode::VisibleOnly => 0,
+            OcclusionMode::Blend => 1,
+        }
+    }
+}
+
+/// Where confidence is too low to synthesise, this is what shows instead
+/// (docs/08 §3.1 "Fallback"). Flow failure degrades to a picture, never to
+/// garbage — that requirement is binding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum FlowFallback {
+    /// Crossfade the two frames — soft, identical to the Blend policy.
+    #[default]
+    Blend,
+    /// Show the nearer source frame — crisp, and a cleaner failure on footage
+    /// where a ghosted double image would read as a fault.
+    Nearest,
+}
+
+impl FlowFallback {
+    pub const OPTIONS: &'static [&'static str] = &["Blend", "Nearest"];
+
+    pub const fn from_code(code: u32) -> Option<Self> {
+        match code {
+            0 => Some(FlowFallback::Blend),
+            1 => Some(FlowFallback::Nearest),
+            _ => None,
+        }
+    }
+
+    pub const fn code(self) -> u32 {
+        match self {
+            FlowFallback::Blend => 0,
+            FlowFallback::Nearest => 1,
+        }
+    }
+}
+
+/// Optical-flow parameters (docs/08 §3.1, K-256). Every knob §3.1 specifies,
+/// plus the engagement override and the HUD guard.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FlowParams {
-    /// Compute flow fields at half working resolution (the fast default,
-    /// docs/08 §3.1 quality knob); false = full resolution.
+    /// The resolution flow is measured at — independent of preview quality
+    /// (K-256). Defaults to Native.
+    #[serde(default)]
+    pub resolution: FlowResolution,
+    /// Pyramid depth and refinement iterations (docs/08 §3.1 "Vector detail").
+    #[serde(default)]
+    pub detail: VectorDetail,
+    /// Regularisation weight, 0–100 (docs/08 §3.1 "Smoothness"): high means
+    /// fewer tears and a gloopier field, low means crisper motion boundaries
+    /// and more chance of a vector escaping on its own.
+    #[serde(default = "default_smoothness")]
+    pub smoothness: f64,
+    /// What to do where a pixel exists in only one of the two frames.
+    #[serde(default)]
+    pub occlusion: OcclusionMode,
+    /// What to show where confidence is too low to synthesise at all.
+    #[serde(default)]
+    pub fallback: FlowFallback,
+    /// Bias static, well-textured regions toward pure blending (docs/08 §3.1
+    /// step 5) — the guard that stops a game HUD smearing across the frame.
+    /// On by default: this project's primary footage is game capture (K-002).
     #[serde(default = "default_true")]
-    pub half_resolution: bool,
+    pub hud_guard: bool,
+    /// Force flow on even where it cannot help (K-256). Flow normally passes
+    /// through to Nearest unless the source rate through the retime undershoots
+    /// the comp rate — at 100% speed there is no in-between frame to invent, so
+    /// measuring one is pure cost. This overrides that gate.
+    #[serde(default)]
+    pub always: bool,
     /// The rate the footage is *interpreted* at for flow, in fps — a
     /// keyframeable value (K-095, K-160). `0` (the default) means Native:
     /// interpolate between adjacent source frames, unchanged behaviour. A
@@ -162,7 +364,13 @@ pub struct FlowParams {
 impl Default for FlowParams {
     fn default() -> Self {
         Self {
-            half_resolution: true,
+            resolution: FlowResolution::Native,
+            detail: VectorDetail::Medium,
+            smoothness: DEFAULT_SMOOTHNESS,
+            occlusion: OcclusionMode::VisibleOnly,
+            fallback: FlowFallback::Blend,
+            hud_guard: true,
+            always: false,
             input_fps: crate::anim::Property::zero(),
             extra: serde_json::Map::new(),
         }
@@ -180,6 +388,52 @@ impl FlowParams {
         let v = self.input_fps.value_at(lt);
         (v >= 0.5).then_some(v)
     }
+
+    /// The rate the clip is actually *read* at for flow at local time `lt`,
+    /// given its native rate: the conform rate when one is set and sits below
+    /// native, otherwise native itself (K-095). The one place that rule lives,
+    /// so the frame picker, the engagement gate and the cache key can never
+    /// disagree about which frames flow is working between.
+    pub fn read_fps_at(&self, lt: f64, native_fps: f64) -> f64 {
+        match self.input_fps_at(lt) {
+            Some(r) if r > 0.0 && r < native_fps => r,
+            _ => native_fps,
+        }
+    }
+
+    /// Whether flow has anything to do here (K-088's "engages only when it can
+    /// help", built at last in K-256).
+    ///
+    /// Flow invents the frame *between* two real ones. At 100% speed on
+    /// matched rates there is no such frame — every comp frame lands on a
+    /// source frame — so measuring motion is pure cost for a picture that would
+    /// be identical. The question is whether one source frame would otherwise
+    /// hold across two or more comp frames: the source advances
+    /// `|speed| · source_rate / comp_rate` frames per comp frame, and anything
+    /// under 1 repeats. `source_fps` is the rate the clip is *read* at, so pass
+    /// the conform rate ([`Self::input_fps_at`]) when one is set — conforming
+    /// 600 fps footage to 24 is exactly how you make flow engage on material
+    /// whose adjacent frames barely move (K-095).
+    ///
+    /// [`Self::always`] overrides this: the user asked for flow, they get flow.
+    /// Degenerate rates (either at or below zero) answer `false` — nothing is
+    /// known about the timing, and the cheap mistake is not to spend.
+    pub fn engages(&self, source_fps: f64, comp_fps: f64, speed: f64) -> bool {
+        if self.always {
+            return true;
+        }
+        // NaN included: an unknowable rate declines rather than guesses.
+        if !(source_fps.is_finite() && source_fps > 0.0) {
+            return false;
+        }
+        if !(comp_fps.is_finite() && comp_fps > 0.0) {
+            return false;
+        }
+        // A freeze (speed 0) holds one frame indefinitely: nothing to
+        // interpolate *towards*, so flow stays out of it too.
+        let advance = speed.abs() * source_fps / comp_fps;
+        advance > 0.0 && advance < 1.0
+    }
 }
 
 /// True when a flow input rate is a plain, un-keyframed Native (0 fps): the
@@ -191,6 +445,34 @@ fn input_fps_is_native(p: &crate::anim::Property) -> bool {
 
 fn default_true() -> bool {
     true
+}
+
+/// How fast a retime *property* is running at local time `lt` — source seconds
+/// per local second, 1.0 being 100%.
+///
+/// Both a Layer's and a Clip's retime are stored as an [`crate::anim::Property`]
+/// mapping local time to source time (not as a [`Retime`] store, which has its
+/// own closed-form [`Retime::speed_at`]), so the speed is the slope of that
+/// curve. A central difference gives it: exact on the linear stretches that
+/// dominate, and at a keyframe it averages the two sides, which is the right
+/// answer for the one thing this feeds — the flow engagement gate (K-256),
+/// where being a hair out at the instant a ramp changes gradient decides
+/// nothing. `None` is un-retimed: 100%.
+pub fn property_speed_at(retime: Option<&crate::anim::Property>, lt: f64) -> f64 {
+    let Some(p) = retime else {
+        return 1.0;
+    };
+    // Small enough to be local on a real ramp, large enough that the
+    // subtraction keeps its significant digits at ordinary timeline times.
+    const H: f64 = 1e-3;
+    (p.value_at(lt + H) - p.value_at(lt - H)) / (2.0 * H)
+}
+
+/// docs/08 §3.1: Smoothness is 0–100, default 50.
+pub const DEFAULT_SMOOTHNESS: f64 = 50.0;
+
+fn default_smoothness() -> f64 {
+    DEFAULT_SMOOTHNESS
 }
 
 /// One point where two segments meet (or the curve starts/ends). Stores the
@@ -2439,6 +2721,133 @@ mod tests {
         };
         let back: FlowParams = serde_json::from_value(serde_json::to_value(&set).unwrap()).unwrap();
         assert_eq!(back, set);
+    }
+
+    /// K-256: flow engages only where a source frame would otherwise hold
+    /// across two or more comp frames — the K-088 rule, built at last.
+    #[test]
+    fn flow_engages_only_where_it_can_help() {
+        let p = FlowParams::default();
+        // 30 fps source into a 30 fps comp: at 100% every comp frame lands on
+        // a source frame, so there is no in-between frame to invent.
+        assert!(!p.engages(30.0, 30.0, 1.0));
+        // Half speed holds each source frame for two comp frames — the case
+        // flow exists for.
+        assert!(p.engages(30.0, 30.0, 0.5));
+        // Faster than real time skips frames; nothing to interpolate.
+        assert!(!p.engages(30.0, 30.0, 2.0));
+        // A freeze has no motion to interpolate towards either.
+        assert!(!p.engages(30.0, 30.0, 0.0));
+        // Reverse is symmetric: it is the magnitude that decides.
+        assert!(p.engages(30.0, 30.0, -0.5));
+        assert!(!p.engages(30.0, 30.0, -1.0));
+        // 60 fps source into a 30 fps comp already has frames to spare at
+        // 100%, and only starts repeating below half speed.
+        assert!(!p.engages(60.0, 30.0, 1.0));
+        assert!(!p.engages(60.0, 30.0, 0.5));
+        assert!(p.engages(60.0, 30.0, 0.25));
+        // Degenerate rates decline rather than guess.
+        assert!(!p.engages(0.0, 30.0, 0.5));
+        assert!(!p.engages(30.0, 0.0, 0.5));
+    }
+
+    /// The manual override forces flow on regardless of the gate (K-256) —
+    /// the "wind toggle" K-095 refers to.
+    #[test]
+    fn the_flow_override_beats_the_gate() {
+        let forced = FlowParams {
+            always: true,
+            ..FlowParams::default()
+        };
+        assert!(forced.engages(30.0, 30.0, 1.0));
+        assert!(forced.engages(30.0, 30.0, 0.0));
+        assert!(forced.engages(0.0, 0.0, 0.0));
+    }
+
+    /// The conform rate is what the gate measures against (K-095 + K-256):
+    /// 600 fps footage at 10% speed still advances 60 source frames per comp
+    /// frame, so flow would decline — until the clip is conformed to 24, at
+    /// which point there is real motion between the bracketing frames.
+    #[test]
+    fn a_conform_rate_is_what_makes_high_framerate_footage_engage() {
+        let native = FlowParams::default();
+        assert!(!native.engages(native.read_fps_at(0.0, 600.0), 30.0, 0.1));
+        let conformed = FlowParams {
+            input_fps: crate::anim::Property::fixed(24.0),
+            ..FlowParams::default()
+        };
+        assert_eq!(conformed.read_fps_at(0.0, 600.0), 24.0);
+        assert!(conformed.engages(conformed.read_fps_at(0.0, 600.0), 30.0, 0.1));
+        // A conform rate at or above native is ignored: it cannot manufacture
+        // frames the source does not have.
+        assert_eq!(conformed.read_fps_at(0.0, 24.0), 24.0);
+        assert_eq!(conformed.read_fps_at(0.0, 12.0), 12.0);
+    }
+
+    /// The speed the gate reads comes from the retime property's slope.
+    #[test]
+    fn property_speed_reads_the_slope_of_the_retime() {
+        // No retime is 100%.
+        assert!((property_speed_at(None, 1.0) - 1.0).abs() < 1e-6);
+        // A static property is a freeze: source time never advances.
+        let frozen = crate::anim::Property::fixed(3.0);
+        assert!(property_speed_at(Some(&frozen), 1.0).abs() < 1e-6);
+    }
+
+    /// Every §3.1 parameter round-trips, and the defaults are the documented
+    /// ones (docs/08 §3.1's table, K-256).
+    #[test]
+    fn flow_params_default_and_round_trip() {
+        let d = FlowParams::default();
+        assert_eq!(d.resolution, FlowResolution::Native);
+        assert_eq!(d.detail, VectorDetail::Medium);
+        assert_eq!(d.smoothness, DEFAULT_SMOOTHNESS);
+        assert_eq!(d.occlusion, OcclusionMode::VisibleOnly);
+        assert_eq!(d.fallback, FlowFallback::Blend);
+        assert!(d.hud_guard);
+        assert!(!d.always);
+        let set = FlowParams {
+            resolution: FlowResolution::Quarter,
+            detail: VectorDetail::Ultra,
+            smoothness: 12.5,
+            occlusion: OcclusionMode::Blend,
+            fallback: FlowFallback::Nearest,
+            hud_guard: false,
+            always: true,
+            ..FlowParams::default()
+        };
+        let back: FlowParams = serde_json::from_value(serde_json::to_value(&set).unwrap()).unwrap();
+        assert_eq!(back, set);
+        // A file written before the parameters existed still loads, taking the
+        // documented defaults for everything it does not mention.
+        let old: FlowParams = serde_json::from_str("{}").unwrap();
+        assert_eq!(old, FlowParams::default());
+    }
+
+    /// The choice enums agree with their option lists in both directions —
+    /// a stored index and its label must never drift apart.
+    #[test]
+    fn flow_choice_codes_round_trip_through_their_labels() {
+        for i in 0..FlowResolution::OPTIONS.len() as u32 {
+            assert_eq!(FlowResolution::from_code(i).map(|v| v.code()), Some(i));
+        }
+        for i in 0..VectorDetail::OPTIONS.len() as u32 {
+            assert_eq!(VectorDetail::from_code(i).map(|v| v.code()), Some(i));
+        }
+        for i in 0..OcclusionMode::OPTIONS.len() as u32 {
+            assert_eq!(OcclusionMode::from_code(i).map(|v| v.code()), Some(i));
+        }
+        for i in 0..FlowFallback::OPTIONS.len() as u32 {
+            assert_eq!(FlowFallback::from_code(i).map(|v| v.code()), Some(i));
+        }
+        assert_eq!(FlowResolution::from_code(99), None);
+        assert_eq!(VectorDetail::from_code(99), None);
+        // Detail buys iterations monotonically, and the divisors are the
+        // documented 1 / 2 / 4.
+        assert!(VectorDetail::Low.iterations() < VectorDetail::Ultra.iterations());
+        assert_eq!(FlowResolution::Native.divisor(), 1);
+        assert_eq!(FlowResolution::Half.divisor(), 2);
+        assert_eq!(FlowResolution::Quarter.divisor(), 4);
     }
 
     #[test]

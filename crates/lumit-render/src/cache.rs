@@ -72,7 +72,11 @@ impl<'a> Stamper<'a> {
 }
 
 impl lumit_eval::SourceStamper for Stamper<'_> {
-    fn stamp(&self, item: Uuid, lt: f64) -> Option<(String, u64)> {
+    fn source_fps(&self, item: Uuid) -> Option<f64> {
+        self.probes.probe(item).video().map(|(fps, ..)| fps)
+    }
+
+    fn stamp(&self, item: Uuid, lt: f64, native: bool) -> Option<(String, u64)> {
         let Some(ProjectItem::Footage(f)) = self.doc.item(item) else {
             return None;
         };
@@ -98,7 +102,14 @@ impl lumit_eval::SourceStamper for Stamper<'_> {
             draft: false,
             ..self.quality
         };
-        let target = settled.target_width(width);
+        // A layer that needs flow decodes at its own width whatever the preview
+        // tier says (K-256), so its name must say so too — the plan and this
+        // stamp must never disagree about the width the pixels have.
+        let target = if native {
+            None
+        } else {
+            settled.target_width(width)
+        };
         Some((
             format!("{}#w{}", f.media.absolute_path, target.unwrap_or(0)),
             source_frame as u64,

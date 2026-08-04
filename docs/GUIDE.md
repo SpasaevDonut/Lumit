@@ -635,14 +635,20 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   threshold off everything, so the transition is seamless. "Luminance only" (the default)
   sharpens the brightness signal and leaves colour alone, because sharpening the colour
   channels of compressed game capture produces rainbow fringes.
-- **Flow is a layer option** (K-088) — the wind toggle in a footage layer's switch
-  cluster. On, it synthesises in-between frames with optical flow wherever the footage's
-  rate (through any retime) undershoots the comp's — the moment a source frame would sit
-  across two comp frames, flow takes over; footage already at comp rate costs nothing. A
-  **Flow** group appears beside Transform and Effects with the engine's knobs (Quality:
-  half-resolution fields, the fast default, or full). Under the hood it's the retime's
-  frame-interpolation policy — an un-retimed layer quietly gains an identity retime to
-  carry it, and loses it again when you switch off.
+- **Flow is a layer option** (K-088). On, it synthesises in-between frames with optical flow
+  wherever the footage's rate (through any retime) undershoots the comp's — the moment a
+  source frame would sit across two comp frames, flow takes over; footage already at comp
+  rate costs nothing, because the engine now checks and stands down (see the flow section
+  further down for what that gate does and how to override it). Under the hood it's the
+  retime's frame-interpolation policy — an un-retimed layer quietly gains an identity retime
+  to carry it, and loses it again when you switch off.
+  **Where this stands (K-256):** the engine, the parameters and the gate are built and
+  tested; the *controls* are not. Today the policy is chosen from the frame-interpolation
+  dropdown in a layer's Source rows (Nearest / Blend / Optical flow) and takes the default
+  parameters. The switch-cluster toggle and the **Flow** group beside Transform and Effects —
+  carrying flow resolution, vector detail, smoothness, occlusion handling, fallback, the HUD
+  guard, the override and the input rate — are still to be wired, along with moving flow onto
+  the render device and giving it a cache tier of its own.
 - **Effects are usable end to end.** Twirl a layer open, open its **Effects** group,
   and "Add effect" lists the catalogue. Each effect shows a bypass
   tick, a remove button, and one row per parameter — a Blur radius has a stopwatch
@@ -1036,6 +1042,42 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   you want the slow-motion to ease in. It's the same "conform to N fps" idea editors know from
   interpreting footage in other tools, and because it changes which frames get blended, it's
   folded into the picture cache's identity so you never see a frame flowed at the wrong rate.
+  Three more things about flow are worth understanding, because they each fix something that
+  used to be quietly wrong.
+  **Flow only switches itself on when it can actually help.** Inventing a frame *between* two
+  real ones only means anything when there is a gap to fill. At 100% speed every frame of the
+  composition lands squarely on a frame of the footage — there is no in-between moment — so
+  measuring all that motion would cost a great deal and change nothing. Flow now checks: how
+  far does the footage advance per composition frame? If it advances a whole frame or more,
+  flow stands down and you get the plain nearest frame. If it advances less than one — meaning
+  the same source frame would otherwise be shown twice or more in a row, which is exactly what
+  makes slow motion look like a slideshow — flow takes over. A freeze stands down too, since
+  there is nothing to move towards. If you want flow anyway, for a look rather than for the
+  maths, there is an override in the Flow group that forces it on regardless.
+  **Flow is measured at the footage's own size, not the preview's.** This one was a real trap.
+  Previews are usually rendered smaller than full size for speed, and flow used to be measured
+  on whatever shrunken copy the preview happened to be using. That is not the same measurement
+  at a smaller size — it is a *different* measurement, because motion that is obvious at full
+  resolution can vanish entirely in a quarter-size copy. The result was a preview that could
+  look meaningfully different from the export, which is the one thing the pipeline promises
+  never happens. Flow now always measures at the size *you* choose in the Flow group
+  (Native by default), no matter how coarse the preview is. The price is honest and worth
+  knowing: a layer with flow on decodes its footage at full size even in draft preview, so
+  draft mode stops being cheap on that layer. If you need the speed back, drop the flow
+  resolution to Half or Quarter — that is a decision you make once, and it then applies
+  identically to the preview and the export.
+  **The HUD guard.** Game footage has a health bar, a killfeed, a minimap — things painted on
+  top of the picture that stay perfectly still while the whole world slides underneath them
+  during a fast turn. Flow sees a frame where everything moves except a few sharp rectangles,
+  and the motion of the background inevitably bleeds into them: the classic artefact where the
+  HUD smears across the screen, familiar to anyone who has used Twixtor on gameplay. The guard
+  looks for the tell — a region that is **not moving** but **is full of fine detail** (a still
+  patch of sky is smooth; a still patch of *text* is not) — and hands those pixels to a plain
+  crossfade instead of warping them. For genuinely static content that is the correct picture
+  anyway, since both frames agree there, so the guard costs nothing but the smear. It fades in
+  and out gradually rather than switching, because a hard edge between "warped" and "not
+  warped" is itself something you would see. It is on by default and can be turned off in the
+  Flow group.
   **This is wired up for
   Footage layers now**: a Speed % box in a footage layer's twirl-down retimes it (50% =
   half speed, and so on), and the same Retime map feeds preview, export, and the cache

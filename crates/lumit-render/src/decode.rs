@@ -44,11 +44,15 @@ pub struct CompJob {
     /// Frame interpolation: `Some((ceil_frame, weight))` pairs
     /// `source_frame` with `ceil_frame` at `weight` (K-021 Blend/Flow).
     pub blend: Option<(usize, f32)>,
-    /// When true, `blend`'s pair is combined with optical-flow synthesis
-    /// rather than a plain crossfade (K-021 Flow policy).
-    pub flow: bool,
-    /// Full-resolution flow fields (FlowParams.half_resolution = false).
-    pub flow_full: bool,
+    /// Set when `blend`'s pair is combined by optical-flow synthesis rather
+    /// than a plain crossfade (K-021 Flow policy), carrying the parameters the
+    /// synthesis runs with (K-256).
+    ///
+    /// `None` covers both "the policy is not Flow" and "it is, but the
+    /// engagement gate declined" — flow that cannot help renders as Nearest,
+    /// and the plan is where that is decided so the decode, the render and the
+    /// cache key all see one answer.
+    pub flow: Option<lumit_core::retime::FlowParams>,
     /// Neighbour source frames a temporal effect stack needs (echo, flow
     /// motion blur, datamosh): `(offset, source_frame)`, one per non-zero
     /// offset in the stack's temporal window. Empty for a plain layer, so
@@ -432,6 +436,32 @@ impl PreviewEngine {
     }
 }
 
+/// Translate a layer's stored [`lumit_core::retime::FlowParams`] into the
+/// plain-numbers [`lumit_flow::FlowSettings`] the engine takes (K-256).
+///
+/// `lumit-flow` is an engine crate that knows nothing of the document, so the
+/// mapping has to live somewhere that sees both — here, once, so preview,
+/// export and the flow cache can never translate the same parameters into two
+/// different measurements.
+pub fn flow_settings(p: &lumit_core::retime::FlowParams) -> lumit_flow::FlowSettings {
+    use lumit_core::retime::{FlowFallback, OcclusionMode};
+    lumit_flow::FlowSettings {
+        divisor: p.resolution.divisor(),
+        iterations: p.detail.iterations(),
+        min_level_dim: p.detail.min_level_dim(),
+        smoothness: p.smoothness as f32,
+        occlusion: match p.occlusion {
+            OcclusionMode::VisibleOnly => lumit_flow::OcclusionMode::VisibleOnly,
+            OcclusionMode::Blend => lumit_flow::OcclusionMode::Blend,
+        },
+        fallback: match p.fallback {
+            FlowFallback::Blend => lumit_flow::Fallback::Blend,
+            FlowFallback::Nearest => lumit_flow::Fallback::Nearest,
+        },
+        hud_guard: p.hud_guard,
+    }
+}
+
 fn decode_comp(
     decoders: &mut HashMap<Uuid, lumit_media::VideoDecoder>,
     cache: &mut lumit_cache::ByteLru<(Uuid, usize, Option<u32>), CachedFrame>,
@@ -525,12 +555,7 @@ fn decode_comp(
                 slate: None,
             };
             let px2 = decode(decoders, cache, &req2)?;
-            if job.flow {
-                let quality = if job.flow_full {
-                    lumit_flow::FlowQuality::Full
-                } else {
-                    lumit_flow::FlowQuality::Half
-                };
+            if let Some(params) = &job.flow {
                 flow_engine
                     .get_or_insert_with(lumit_flow::FlowEngine::new_auto)
                     .interpolate_at(
@@ -539,7 +564,7 @@ fn decode_comp(
                         px.width as usize,
                         px.height as usize,
                         w,
-                        quality,
+                        &flow_settings(params),
                     )
             } else {
                 lumit_core::pixels::blend_rgba(&px.rgba, &px2.rgba, w)

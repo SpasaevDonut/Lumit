@@ -5120,3 +5120,57 @@ The same pass made the Keymap page's clash test wait for the engine rather than 
 rebind it makes before opening the page is an frb call onto the worker thread, not done when
 it returns, and the Linux runner built the banner before the clash existed. It now settles on
 `keymapConflicts()` first. A test that passes because the machine is quick is not passing.
+
+**K-256 · DECIDED · Flow is rebuilt on the render device: GPU synthesis, a cache tier of its
+own, a resolution independent of preview quality, and the §3.1 parameters it was always
+specified to have.** From the owner (2026-08-04), reopening the flow engine that landed in the
+egui era and has not been touched since. The DIS algorithm itself stands (K-169, and
+`docs/impl/optical-flow.md` remains the authoritative *how*); everything around it is replaced.
+
+- **One device, one walk.** `FlowEngine::new_auto` built its *own headless wgpu device* inside
+  the decode worker, measured flow there, read the field back, and synthesised the in-between
+  frame per-pixel on the CPU in sRGB bytes. Flow now runs in `realise`, on the compositor's
+  device, where both source textures already exist, and synthesis is a WGSL pass in linear
+  premultiplied fp16 as `docs/impl/optical-flow.md` §3 always required. The decode worker goes
+  back to decoding: `DrawSource` carries the two bracketing frames and the phase, not
+  pre-synthesised pixels. Because preview, the headless renderer and export all drive that one
+  walk, K-031 holds by construction rather than by a second implementation agreeing.
+- **Flow resolution is its own setting, not a side effect of preview quality.** Flow was
+  measured on whatever the preview scale had shrunk the decode to, so a draft scrub and an
+  export were different *measurements*, not the same measurement at two sizes. Flow resolution
+  moves into `FlowParams` and defaults to native. **The accepted cost:** a layer with Flow live
+  decodes at native width even in draft preview, because full-resolution flow cannot be
+  measured on a shrunk decode — draft stops being cheap on flow layers, and that is the price
+  of a preview that does not lie about what the export will look like. The quality knob remains
+  for anyone who wants the speed back.
+- **A `flow/` cache tier** beside `frames/` (docs/06 §5.4 reserved it and nothing was ever
+  written there), keyed by `(item, frame A, frame B, flow params, algorithm version)` and
+  **not** by the preview quality tier, since flow no longer varies with it — so a draft scrub
+  warms the cache for the full-quality pass. Fields store as `rg16float` plus an `r8`
+  confidence rather than the f32 buffers the CPU parity contract needed (≈18 MB per 1080p
+  pair). Retime flow and Fast motion blur hit the *same* entry when they want the same frame
+  pair: they are one measurement with two consumers (retime uses the vectors to invent a frame
+  between two, motion blur uses them to streak pixels within one), and a layer running both
+  paid for DIS twice.
+- **Flow is a switch, not a dropdown entry.** Completing K-088: the Source rows' interpolation
+  dropdown drops to Nearest / Blend, and Flow becomes a toggle in the footage layer's switch
+  cluster which reveals the **Flow** group beside Transform and Effects. `Interpolation::Flow`
+  remains the storage (K-088's "the option surfaces the policy"); only the control moves. The
+  gate is the K-246 duration rule — media that runs qualifies, so image sequences qualify for
+  free the day they become a footage kind, with no flow-specific work.
+- **The engagement gate ships, with an override.** K-088's "engages only when it can help" was
+  never built; Flow ran whenever selected, paying full cost on clips where it changed nothing.
+  Flow now passes through to Nearest unless the source rate through the retime undershoots the
+  comp rate, and the Flow group carries a manual override that forces it regardless (the "wind
+  toggle" K-095 refers to).
+- **The §3.1 parameters ship**: Vector detail, Smoothness, Occlusion handling and Fallback join
+  the resolution and the already-built-but-unreachable keyframeable Input rate (K-095, K-160 —
+  `set_interpolation` wrote `Interpolation::Flow(Default::default())` and discarded every one of
+  them, so two decisions' worth of working engine had no control surface at all). **The
+  HUD/overlay guard of §3.1 step 5 ships with them**: static regions with high texture bias
+  toward pure blending, which is what stops a game HUD smearing across the frame — the
+  single most valuable behaviour for this project's primary footage (K-002).
+
+Superseded in passing: the "flow fields are f32 storage buffers because fp16 rounding would eat
+the CPU-parity budget" note of `docs/impl/optical-flow.md` §1 applies to the *search*, which
+keeps its f32 working buffers and its CPU oracle; only the *stored* field narrows to fp16.

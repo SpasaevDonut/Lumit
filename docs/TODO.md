@@ -235,8 +235,9 @@ colour individually; only the two Timeline tokens default from the mode.
     value and speed graphs, nothing extra. Retime-specific affordances come later
     (see *Retime UI wiring* under Next); the parity rule itself is spec, and lives
     in [04-RETIMING.md](04-RETIMING.md).
-- **The Flow column is reserved, not wired** - per-layer optical flow has no
-    engine backing. Build the engine model first, then the fold-out's Flow group.
+- **The Flow column is reserved, not wired** - the engine model now exists
+    (K-256), so what remains is the surface: the switch-cluster toggle replacing
+    the Source rows' "Optical flow" dropdown entry, and the fold-out's Flow group.
 - **Lock guards the gestures, not the property rows** - a locked layer's bar,
     razor, rename, reorder and delete refuse; its transform/effect/volume rows are
     still editable. Guard the rows or enforce in the engine ops; decide which.
@@ -284,6 +285,25 @@ in the Effect controls panel ([13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md)
 §7.1).
 
 ## Next - engine/bridge follow-ups
+
+**Flow's remaining K-256 work.** The parameters, the engagement gate, the HUD
+guard and the native-decode rule have landed; four pieces have not.
+1. **Flow still runs in the decode worker on its own headless GPU device**
+    (`FlowEngine::new_auto` → `GpuContext::headless`), reading the field back to
+    synthesise per-pixel on the CPU in sRGB bytes. It belongs in `realise`, on the
+    compositor's device, with `DrawSource` carrying the two bracketing frames and
+    the phase instead of pre-synthesised pixels.
+2. **Synthesis is CPU and sRGB**; it should be a WGSL pass in linear premultiplied
+    fp16 ([impl/optical-flow.md](impl/optical-flow.md) §3).
+3. **No `flow/` cache tier** - docs/06 §5.4 reserves the folder and nothing is
+    written there, so every scrub remeasures. Key by `(item, frame A, frame B,
+    params, algorithm version)` and *not* by the preview quality tier; store
+    `rg16float` + `r8` confidence.
+4. **`dis.wgsl` hardcodes the iteration cap, pyramid floor and smoothing sigma**,
+    so a non-default Vector detail or Smoothness falls to the CPU oracle
+    (`FlowError::Unsupported`). Push them into the per-level `Params` uniform.
+Also unexposed: `set_interpolation` still writes `Interpolation::Flow(Default::
+default())`, so no `FlowParams` field is reachable from the bridge or the UI.
 
 **The LUT effect's GPU path ignores a non-default domain**
 ([impl/lut.md](impl/lut.md) §3 status): `fx_lut.wgsl` skips the
