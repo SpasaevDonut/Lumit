@@ -1339,6 +1339,22 @@ fn grays_at(a: &[u8], b: &[u8], w: usize, h: usize, set: &FlowSettings) -> (Gray
     (ra, rb, true)
 }
 
+/// The luma pair flow is measured on, at the settings' working resolution —
+/// the first half of [`interpolate_at`], exposed so a caller that caches
+/// measurements can do the two halves separately.
+///
+/// Returns `(A, B, reduced)`, `reduced` saying whether the working resolution
+/// is below the frames' own.
+pub fn flow_grays(
+    a: &[u8],
+    b: &[u8],
+    w: usize,
+    h: usize,
+    set: &FlowSettings,
+) -> (Gray, Gray, bool) {
+    grays_at(a, b, w, h, set)
+}
+
 /// End-to-end on the CPU: the flow-interpolated frame at `phi` between RGBA
 /// frames `a` and `b` (`w×h`), at the given working quality. This is the
 /// K-019 reference path (export with no capable GPU).
@@ -1512,6 +1528,73 @@ impl FlowEngine {
             }
         });
         synthesize_with(a, b, w, h, &fwd, &bwd, phi, set, hud.as_deref())
+    }
+
+    /// Paint the frame at `phi` from flow that has *already* been measured —
+    /// the second half of [`Self::interpolate_at`].
+    ///
+    /// Separating the halves is what lets a caller cache the measurement: the
+    /// field between two source frames is one field however many phases are
+    /// drawn from it, and a slow ramp draws many. `fwd`/`bwd` are at their own
+    /// (working) resolution, which need not be the frames'.
+    #[allow(clippy::too_many_arguments)]
+    pub fn synthesize_at(
+        &mut self,
+        a: &[u8],
+        b: &[u8],
+        w: usize,
+        h: usize,
+        fwd: &FlowField,
+        bwd: &FlowField,
+        phi: f32,
+        set: &FlowSettings,
+    ) -> Vec<u8> {
+        if phi <= 0.0 {
+            return a.to_vec();
+        }
+        if phi >= 1.0 {
+            return b.to_vec();
+        }
+        if let Some(s) = self.synth.as_ref() {
+            match s.synthesize(a, b, w, h, fwd, bwd, phi, set) {
+                Ok(px) => return px,
+                Err(_) => self.synth = None,
+            }
+        }
+        // CPU fallback: here the field *must* be brought up to frame size,
+        // since `synthesize_with` indexes it per output pixel.
+        let reduced = fwd.w != w || fwd.h != h;
+        let hud = set.hud_guard.then(|| {
+            let ga = to_gray(a, w, h);
+            let ga = if reduced {
+                let mut g = ga;
+                while g.w > fwd.w {
+                    g = downsample(&g);
+                }
+                g
+            } else {
+                ga
+            };
+            let raw = hud_weights(&ga, fwd);
+            if reduced {
+                let scale = w as f32 / ga.w.max(1) as f32;
+                upsample_flow(&raw, ga.w, ga.h, w, h)
+                    .into_iter()
+                    .map(|v| (v / scale).clamp(0.0, 1.0))
+                    .collect::<Vec<f32>>()
+            } else {
+                raw
+            }
+        });
+        let (f, g);
+        let (fwd, bwd) = if reduced {
+            f = upsample_field(fwd, w, h);
+            g = upsample_field(bwd, w, h);
+            (&f, &g)
+        } else {
+            (fwd, bwd)
+        };
+        synthesize_with(a, b, w, h, fwd, bwd, phi, set, hud.as_deref())
     }
 
     /// Interpolation at the engine defaults.

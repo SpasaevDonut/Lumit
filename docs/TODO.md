@@ -286,33 +286,26 @@ in the Effect controls panel ([13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md)
 
 ## Next - engine/bridge follow-ups
 
-**Flow's remaining K-256 work.** The parameters, the engagement gate, the HUD
-guard and the native-decode rule have landed; four pieces have not.
-1. **Flow still runs in the decode worker on its own headless GPU device**
-    (`FlowEngine::new_auto` → `GpuContext::headless`), reading the field back to
-    synthesise per-pixel on the CPU in sRGB bytes. It belongs in `realise`, on the
-    compositor's device, with `DrawSource` carrying the two bracketing frames and
-    the phase instead of pre-synthesised pixels.
-2. **Synthesis is CPU and sRGB**; it should be a WGSL pass in linear premultiplied
-    fp16 ([impl/optical-flow.md](impl/optical-flow.md) §3).
-3. **No `flow/` cache tier** - docs/06 §5.4 reserves the folder and nothing is
-    written there, so every scrub remeasures. Key by `(item, frame A, frame B,
-    params, algorithm version)` and *not* by the preview quality tier; store
-    `rg16float` + `r8` confidence.
-4. **`dis.wgsl` has no variational-refinement pass** (K-257) and hardcodes the
-    iteration cap, pyramid floor and smoothing sigma, so *every default setting*
-    now falls to the CPU oracle (`FlowError::Unsupported`). **This is the urgent
-    one**: measured on a 960×540 pair, the GPU does parts 1–2 in 4.8 ms while the
-    CPU does all three in 1.82 s, so flow currently has no usable preview path at
-    all. The refinement is red–black SOR by construction, so it ports as two
-    dispatches per sweep with no reordering; push the constants into the
-    per-level `Params` uniform in the same pass.
-5. **A measurement harness on real gameplay** (K-257 follow-up), so the learned
-    ceiling — RIFE-class synthesis, WAFT-class flow — is judged later against
-    numbers rather than impressions. Note that a learned synthesiser emits no
-    flow field, so Fast motion blur and Datamosh need DIS vectors regardless.
-Also unexposed: `set_interpolation` still writes `Interpolation::Flow(Default::
-default())`, so no `FlowParams` field is reachable from the bridge or the UI.
+**Flow's remaining K-256 work.** The engine, the GPU port and the cache have
+landed; the surface has not.
+1. **`set_interpolation` still writes `Interpolation::Flow(Default::default())`**,
+    so no `FlowParams` field is reachable from the bridge or the UI.
+2. **The Flow layer option** (K-088): the switch-cluster toggle replacing the
+    Source rows' "Optical flow" dropdown entry, and the Flow group beside
+    Transform and Effects carrying the eight parameters.
+3. **`PreviewEngine::default` still builds its pool without a GPU**, so the egui
+    Viewer path measures flow on a headless device of its own; the headless
+    renderer the Flutter frontend drives shares the render device correctly.
+    Pass a context in, or delete the path if nothing drives it.
+4. **The remaining CPU work in synthesis is the luma conversion and the frame
+    uploads** — about 70 ms of the 79 ms a 1080p interpolation costs, against
+    8 ms for the flow itself. Both would go if the decoded frame reached the
+    card once and stayed there, which is the `DrawSource` change K-256 sketched.
+
+**Not to be built: a `flow/` disk tier.** docs/06 §5.4 reserves the folder and it
+should stay empty. Measuring a 1080p pair on the GPU costs ~8 ms; reading 37 MB
+of stored field off an SSD costs more. It would be a cache slower than the thing
+it caches. The RAM tier (`DEFAULT_FLOW_CACHE_BYTES`) is the one that pays.
 
 **The LUT effect's GPU path ignores a non-default domain**
 ([impl/lut.md](impl/lut.md) §3 status): `fx_lut.wgsl` skips the
