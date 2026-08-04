@@ -41,7 +41,8 @@ const VR_ALPHA: f32 = 10.0;
 const VR_EPS2: f32 = 0.001 * 0.001;
 const VR_OMEGA: f32 = 1.6;
 const VR_ZETA2: f32 = 0.1 * 0.1;
-const VR_RESIDUAL_MAX: f32 = 0.12;
+const VR_RESIDUAL_FLOOR: f32 = 0.12;
+const VR_RESIDUAL_REL: f32 = 3.0;
 const DET_MIN: f32 = 1e-6;
 const COST_VAR_RATIO: f32 = 0.25;
 const COST_FLOOR: f32 = 0.05;
@@ -591,5 +592,9 @@ fn vr_validity(@builtin(global_invocation_id) gid: vec3u) {
     let i = y * P.w + x;
     let f = out_vec[i].xy;
     let r = sample_o(f32(x) + f.x, f32(y) + f.y) - luma_t[i];
-    out_vec[i] = vec4f(f, select(0.0, 1.0, abs(r) <= VR_RESIDUAL_MAX), 0.0);
+    // Forgiven in proportion to local contrast: a busy region leaves a bigger
+    // residual than a flat one even when the flow is right.
+    let ag = grad_t[i].xy;
+    let allow = VR_RESIDUAL_FLOOR + VR_RESIDUAL_REL * length(ag);
+    out_vec[i] = vec4f(f, select(0.0, 1.0, abs(r) <= allow), 0.0);
 }

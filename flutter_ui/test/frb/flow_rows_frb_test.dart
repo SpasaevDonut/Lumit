@@ -10,6 +10,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/panels/effect_controls_panel_frb.dart';
+import 'package:lumit_flutter/panels/layer_fold_frb.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
@@ -52,6 +53,52 @@ void main() {
       ));
       await tester.pump();
     }
+
+    testWidgets('the group is in the Timeline fold-out, where Transform lives',
+        (tester) async {
+      // The regression this pins: the group was first built into the Effect
+      // controls panel, which hides its layer sections behind a setting that
+      // is *off* by default (K-193) — so turning flow on showed no controls at
+      // all. K-088 says "in the expanded layer", and the expanded layer is the
+      // Timeline's twirl-down, which is where Transform actually is.
+      final p = withComp();
+      final layer = footageLayer(p);
+      layer.setFlowEnabled(on_: true);
+      expect(
+        p.uiState.workspace.interface
+            .transformInEffectControls,
+        isFalse,
+        reason: 'the default this was hidden behind',
+      );
+
+      final rows = layerFoldRows(
+        entry: p.comp.getModel().layers.single,
+        open: {flowPath(layer.internallayerId.toString())},
+        hasAudio: false,
+      );
+      expect(
+        rows.whereType<FoldGroupRow>().map((g) => g.label),
+        contains('Flow'),
+      );
+      expect(
+        rows.whereType<FoldFlowRow>().map((r) => r.kind).toSet(),
+        FlowRowKind.values.toSet(),
+        reason: 'every parameter has a row',
+      );
+
+      // And it is gone again when flow is off.
+      layer.setFlowEnabled(on_: false);
+      final without = layerFoldRows(
+        entry: p.comp.getModel().layers.single,
+        open: const {},
+        hasAudio: false,
+      );
+      expect(without.whereType<FoldFlowRow>(), isEmpty);
+      expect(
+        without.whereType<FoldGroupRow>().map((g) => g.label),
+        isNot(contains('Flow')),
+      );
+    });
 
     testWidgets('the group appears only while flow is on', (tester) async {
       final p = withComp();

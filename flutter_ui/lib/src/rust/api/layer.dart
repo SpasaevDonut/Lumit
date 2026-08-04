@@ -207,6 +207,11 @@ class BridgeLayerInfo {
   /// rebuild, and asking per row per frame is exactly the cost K-184 removed.
   final bool flow;
 
+  /// The Flow group's Input rate (K-095/K-160), the one animatable member —
+  /// carried here so its fold-out row can draw its keyframe diamonds without
+  /// a call, exactly as the Retime row's scalar is.
+  final BridgeScalar flowInputRate;
+
   const BridgeLayerInfo({
     required this.name,
     required this.kind,
@@ -229,6 +234,7 @@ class BridgeLayerInfo {
     required this.shapeContents,
     required this.markers,
     required this.flow,
+    required this.flowInputRate,
   });
 
   @override
@@ -253,7 +259,8 @@ class BridgeLayerInfo {
       paint.hashCode ^
       shapeContents.hashCode ^
       markers.hashCode ^
-      flow.hashCode;
+      flow.hashCode ^
+      flowInputRate.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -280,7 +287,8 @@ class BridgeLayerInfo {
           paint == other.paint &&
           shapeContents == other.shapeContents &&
           markers == other.markers &&
-          flow == other.flow;
+          flow == other.flow &&
+          flowInputRate == other.flowInputRate;
 }
 
 /// What kind of source a layer has — what the Timeline draws its bar and its

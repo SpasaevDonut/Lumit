@@ -7758,6 +7758,7 @@ impl SseDecode for crate::api::layer::BridgeLayerInfo {
             <Vec<crate::api::layer::BridgeShapeItem>>::sse_decode(deserializer);
         let mut var_markers = <Vec<crate::api::layer::BridgeLayerMarker>>::sse_decode(deserializer);
         let mut var_flow = <bool>::sse_decode(deserializer);
+        let mut var_flowInputRate = <crate::api::effect::BridgeScalar>::sse_decode(deserializer);
         return crate::api::layer::BridgeLayerInfo {
             name: var_name,
             kind: var_kind,
@@ -7780,6 +7781,7 @@ impl SseDecode for crate::api::layer::BridgeLayerInfo {
             shape_contents: var_shapeContents,
             markers: var_markers,
             flow: var_flow,
+            flow_input_rate: var_flowInputRate,
         };
     }
 }
@@ -10404,6 +10406,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::layer::BridgeLayerInfo {
             self.shape_contents.into_into_dart().into_dart(),
             self.markers.into_into_dart().into_dart(),
             self.flow.into_into_dart().into_dart(),
+            self.flow_input_rate.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -12140,6 +12143,7 @@ impl SseEncode for crate::api::layer::BridgeLayerInfo {
         <Vec<crate::api::layer::BridgeShapeItem>>::sse_encode(self.shape_contents, serializer);
         <Vec<crate::api::layer::BridgeLayerMarker>>::sse_encode(self.markers, serializer);
         <bool>::sse_encode(self.flow, serializer);
+        <crate::api::effect::BridgeScalar>::sse_encode(self.flow_input_rate, serializer);
     }
 }
 

@@ -105,6 +105,39 @@ final class FoldStrokeRow extends LayerFoldRow {
   const FoldStrokeRow(this.stroke, {required int depth}) : super(depth);
 }
 
+/// One control of a footage layer's Flow group (K-088, K-256). Which control
+/// is the [kind]; all of them read and write the whole group in one op, so a
+/// row needs nothing but its own identity.
+///
+/// The Input rate is the one animatable member, so it is the one that carries a
+/// scalar and draws diamonds on its lane.
+final class FoldFlowRow extends LayerFoldRow {
+  final FlowRowKind kind;
+
+  /// The Input rate's curve; null on every other kind.
+  final BridgeScalar? rate;
+  const FoldFlowRow(this.kind, {this.rate, required int depth}) : super(depth);
+}
+
+/// The controls of the Flow group, in the order they are shown.
+///
+/// Resolution first because it is the one that costs money, then the rate (what
+/// frames flow works between), then how hard it looks, then what it does where
+/// it cannot see.
+enum FlowRowKind {
+  resolution('Flow resolution'),
+  inputRate('Input rate'),
+  detail('Vector detail'),
+  smoothness('Smoothness'),
+  occlusion('Occlusion'),
+  fallback('Fallback'),
+  hudGuard('HUD guard'),
+  always('Always on');
+
+  final String label;
+  const FlowRowKind(this.label);
+}
+
 /// The waveform lane (K-172): the outline names it, the lane side draws the
 /// layer's source peaks through its live in/out/offset.
 final class FoldWaveformRow extends LayerFoldRow {
@@ -123,6 +156,10 @@ List<BridgeKeyframe> laneKeysOf(LayerFoldRow row) => switch (row) {
       FoldRetimeRow(:final scalar) => switch (scalar) {
           BridgeScalar_Keyframed(:final field0) => field0,
           BridgeScalar_Static() => const [],
+        },
+      FoldFlowRow(:final rate) => switch (rate) {
+          BridgeScalar_Keyframed(:final field0) => field0,
+          _ => const [],
         },
       FoldEffectParamRow(:final value) => switch (value) {
           BridgeEffectValue_Float(
@@ -257,6 +294,7 @@ String foldRowPath(String layerId, LayerFoldRow row) => switch (row) {
         '${effectPath(layerId, info.id.toString())}/${param.id}',
       FoldVolumeRow() => '${audioPath(layerId)}/volume',
       FoldRetimeRow() => retimePath(layerId),
+      FoldFlowRow(:final kind) => '${flowPath(layerId)}/${kind.name}',
       FoldWaveformRow() => waveformPath(layerId),
       FoldMaskRow(:final mask) => '${masksPath(layerId)}/${mask.id}',
       FoldStrokeRow(:final stroke) => '${paintPath(layerId)}/${stroke.id}',
@@ -270,6 +308,9 @@ bool isUnderPath(String ancestor, String path) =>
 
 /// The path of a layer's Retime row.
 String retimePath(String layerId) => '$layerId/retime';
+
+/// The path of a layer's Flow group in the open set.
+String flowPath(String layerId) => '$layerId/flow';
 
 /// The path of a layer's Transform group in the open set.
 String transformPath(String layerId) => '$layerId/transform';
@@ -334,6 +375,30 @@ List<LayerFoldRow> layerFoldRows({
   // down while a solo is in force, for the same reason the other four rows do.
   if (info.retime case final retime? when !soloed) {
     rows.add(FoldRetimeRow(retime, depth: 1));
+  }
+
+  // Flow above Transform and below Retime, which is the order the picture is
+  // built in: the retime picks a moment, flow decides what is *shown* at a
+  // moment between two frames, and the transform then places the result. Only
+  // on a layer whose flow switch is on — an empty heading is a promise the row
+  // cannot keep (K-088).
+  if (info.flow && !soloed) {
+    final flowOpen = open.contains(flowPath(id));
+    rows.add(FoldGroupRow(
+      path: flowPath(id),
+      label: 'Flow',
+      open: flowOpen,
+      depth: 1,
+    ));
+    if (flowOpen) {
+      for (final kind in FlowRowKind.values) {
+        rows.add(FoldFlowRow(
+          kind,
+          rate: kind == FlowRowKind.inputRate ? info.flowInputRate : null,
+          depth: 2,
+        ));
+      }
+    }
   }
 
   rows.add(FoldGroupRow(

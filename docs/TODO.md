@@ -286,6 +286,23 @@ in the Effect controls panel ([13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md)
 
 ## Next - engine/bridge follow-ups
 
+**Fast motion blur only works on footage layers.** docs/08 §3.2 says the effect
+is "applied per layer or, **most commonly, on an adjustment layer over the whole
+montage**", and that case is a silent passthrough — as is a Precomp layer. Only
+Footage layers are given a `flow_field` at all, because the decode worker is the
+only thing that measures flow and it only ever sees decoded source frames. An
+adjustment layer's "source" is the composite of everything beneath it, which
+exists as a GPU texture and never as decoded frames.
+
+The shape it needs: build the below-stack at the neighbour time the way
+`temporal_below` already does for Posterize and `accumulation_below` for §3.26
+(docs/impl/temporal-rerender.md), render both to textures in `realise`, and
+measure between them. That last part wants a texture entry point on the flow
+engine — `GpuFlow` takes a CPU `Gray` today, so it needs one small kernel
+converting an RGBA texture to the luma buffer the pyramid starts from, after
+which the whole measurement stays on the card. Doing it by reading the two
+composites back to the CPU would work and would cost more than the flow does.
+
 **Flow's remaining K-256 work.** The engine, the GPU port, the cache and the
 controls have landed. What is left:
 1. **Turning the flow switch off discards the Flow group.** `FlowParams` lives

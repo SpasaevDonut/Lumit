@@ -57,6 +57,10 @@ pub(crate) const OCC_ABS: f32 = 1.5;
 pub(crate) const OCC_REL: f32 = 0.05;
 /// Synthesis weight epsilon (§3).
 const SYNTH_EPS: f32 = 1e-4;
+/// How much confidence a pixel keeps when the flow does not explain it but the
+/// two directions still agree (FX-19). Not zero: a hard cut-off is exactly the
+/// visible seam that decision existed to remove.
+const VALID_DIM: f32 = 0.4;
 
 // --- Variational refinement (K-257, impl note §1 step 4) --------------------
 // The paper's weights, unchanged: intensity constancy, gradient constancy,
@@ -81,11 +85,25 @@ pub(crate) const VR_SOR: usize = 5;
 /// Normalisation floor for the motion tensors, so a flat region divides by its
 /// own noise rather than by zero.
 pub(crate) const VR_ZETA2: f32 = 0.1 * 0.1;
-/// After refinement, a pixel whose residual exceeds this is not explained by
-/// the flow it was given. Replaces "no patch covered me" as the meaning of
-/// invalid (K-257): a refined field has an answer everywhere, so the honest
-/// question is whether the answer is right, not whether one was found.
-pub(crate) const VR_RESIDUAL_MAX: f32 = 0.12;
+/// After refinement, a pixel whose residual exceeds its allowance is not
+/// explained by the flow it was given. Replaces "no patch covered me" as the
+/// meaning of invalid (K-257): a refined field has an answer everywhere, so the
+/// honest question is whether the answer is right, not whether one was found.
+///
+/// The allowance is **relative to local contrast**, not a flat number. A busy
+/// region leaves a larger residual than a flat one *even when the flow is
+/// exactly right* — a half-pixel error across a strong edge moves the value far
+/// more than the same error across a wall — so a single absolute threshold
+/// calls detailed footage invalid and flat footage valid regardless of whether
+/// either is correct. That is not a hypothetical: shipping one cost Fast motion
+/// blur most of its picture, because `confidence` zeroes on invalid and a fast
+/// camera move over detailed geometry failed the test nearly everywhere.
+pub(crate) const VR_RESIDUAL_FLOOR: f32 = 0.12;
+/// How much of the local gradient magnitude to forgive on top of the floor.
+/// Generous on purpose: this decides whether a vector is *usable*, and the
+/// forward–backward test in §2 is the sharper instrument for whether it is
+/// right.
+pub(crate) const VR_RESIDUAL_REL: f32 = 3.0;
 
 /// A single-channel image in 0..1 (encoded luma), row-major.
 #[derive(Clone)]
@@ -829,13 +847,15 @@ fn refine(
         }
     }
 
-    // Validity from the residual of the *refined* field (K-257).
+    // Validity from the residual of the *refined* field, forgiven in
+    // proportion to how much contrast is there to be wrong about (K-257).
     let mut valid = vec![0u8; n];
     for y in 0..h {
         for x in 0..w {
             let i = idx(x, y);
             let r = b.sample(x as f32 + u[i], y as f32 + v[i]) - a.data[i];
-            valid[i] = u8::from(r.abs() <= VR_RESIDUAL_MAX);
+            let contrast = (ax[i] * ax[i] + ay[i] * ay[i]).sqrt();
+            valid[i] = u8::from(r.abs() <= VR_RESIDUAL_FLOOR + VR_RESIDUAL_REL * contrast);
         }
     }
     (u, v, valid)
@@ -1010,10 +1030,6 @@ pub fn confidence(f: &FlowField, g: &FlowField) -> Vec<f32> {
     for y in 0..h {
         for x in 0..w {
             let i = y * w + x;
-            if f.valid[i] == 0 {
-                raw[i] = 0.0; // nothing explained this patch: fully suspect
-                continue;
-            }
             let (fu, fv) = (f.u[i], f.v[i]);
             let gu = sample_scalar(&g.u, w, h, x as f32 + fu, y as f32 + fv);
             let gv = sample_scalar(&g.v, w, h, x as f32 + fu, y as f32 + fv);
@@ -1023,7 +1039,13 @@ pub fn confidence(f: &FlowField, g: &FlowField) -> Vec<f32> {
             // Same rel/abs scale the occlusion cut-off uses (§2): cn == 0 → 1,
             // cn == thr → 0, linear and clamped between. Smooth, no step.
             let thr = (OCC_REL * (fn_ + gn)).max(OCC_ABS);
-            raw[i] = (1.0 - cn / thr).clamp(0.0, 1.0);
+            let agree = (1.0 - cn / thr).clamp(0.0, 1.0);
+            // Validity *dims* confidence rather than extinguishing it. FX-19's
+            // whole point was that a hard cut-off shows as a hard edge between
+            // blurred and unblurred; a binary term inside a smooth measure is
+            // that cut-off wearing a disguise. An unexplained pixel whose two
+            // directions still agree has a vector worth some of its streak.
+            raw[i] = agree * if f.valid[i] == 0 { VALID_DIM } else { 1.0 };
         }
     }
     // 3×3 box blur: ramp the confidence over a pixel so the streak-length taper
@@ -1353,6 +1375,35 @@ pub fn flow_grays(
     set: &FlowSettings,
 ) -> (Gray, Gray, bool) {
     grays_at(a, b, w, h, set)
+}
+
+/// Bring a measured field and its confidence up to `w × h`, for a consumer
+/// that wants them at the frame's own size.
+///
+/// The vectors are scaled by the size ratio — a 3 px displacement measured at
+/// half resolution is a 6 px displacement of the full-size picture — while the
+/// confidence is a 0..1 weight and is resampled without scaling. Getting that
+/// asymmetry wrong is silent: the streaks come out half length, or the taper
+/// saturates, and neither looks like a bug in the flow.
+pub fn field_to_size(
+    f: &FlowField,
+    conf: &[f32],
+    w: usize,
+    h: usize,
+) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    if f.w == w && f.h == h {
+        return (f.u.clone(), f.v.clone(), conf.to_vec());
+    }
+    let scale = w as f32 / f.w.max(1) as f32;
+    let u = upsample_flow(&f.u, f.w, f.h, w, h);
+    let v = upsample_flow(&f.v, f.w, f.h, w, h);
+    // `upsample_flow` applies the scaling the vectors want; undo it for the
+    // weight, which is the same number at every resolution.
+    let c = upsample_flow(conf, f.w, f.h, w, h)
+        .into_iter()
+        .map(|x| (x / scale).clamp(0.0, 1.0))
+        .collect();
+    (u, v, c)
 }
 
 /// End-to-end on the CPU: the flow-interpolated frame at `phi` between RGBA
@@ -2246,6 +2297,64 @@ mod tests {
         );
     }
 
+    /// Real footage is not a clean synthetic translation, and validity must
+    /// survive that.
+    ///
+    /// The regression this pins: K-257 changed validity from "a patch covered
+    /// me" to "the residual is under an absolute 0.12", and on a fast camera
+    /// move — where the source is itself motion-blurred, compressed and noisy —
+    /// almost nothing met that. `confidence` hard-zeros on invalid, so Fast
+    /// motion blur's streak collapsed and the blur appeared only in scattered
+    /// patches. A detailed region has a larger residual than a flat one *even
+    /// when the flow is right*, so the test has to be relative to contrast.
+    #[test]
+    fn validity_survives_real_footage_conditions() {
+        let (w, h) = (256, 192);
+        let (dx, dy) = (24.0f32, 6.0f32); // a fast flick, not a gentle pan
+                                          // What makes this hard is not the distance, it is that a frame taken
+                                          // during a fast move is *itself* smeared: the shutter was open while
+                                          // the camera turned. So each frame is the scene averaged along its own
+                                          // motion, and the two smears do not line up. Add per-frame grain and a
+                                          // slight exposure change, both of which real capture has.
+        let grain = |x: f32, y: f32, seed: u32| detail(x * 3.1, y * 2.7, seed) - 0.5;
+        let scene = |x: f32, y: f32| 0.55 * perlin(x, y, 61) + 0.35 * detail(x, y, 62);
+        // Box-average along the motion — the source's own motion blur.
+        let smeared = move |x: f32, y: f32, ox: f32, oy: f32| {
+            let mut acc = 0.0;
+            for k in 0..7 {
+                let t = k as f32 / 6.0 - 0.5;
+                acc += scene(x - ox + t * dx, y - oy + t * dy);
+            }
+            acc / 7.0
+        };
+        let a = render(w, h, |x, y| {
+            smeared(x, y, 0.0, 0.0) + 0.05 * grain(x, y, 90)
+        });
+        let b = render(w, h, |x, y| {
+            0.97 * smeared(x, y, dx, dy) + 0.05 * grain(x, y, 91)
+        });
+        let f = flow_with(&a, &b, &FlowSettings::default());
+        let valid = f.valid.iter().filter(|&&v| v == 1).count();
+        let frac = valid as f32 / (w * h) as f32;
+        assert!(
+            frac > 0.75,
+            "most of a moving, noisy, slightly-dimmer frame must still be \
+             explained — got {frac}"
+        );
+
+        // And the confidence that rides on it must not collapse: Fast motion
+        // blur scales its streak by this, so a mostly-zero field is a mostly
+        // unblurred picture (FX-19).
+        let (fwd, bwd) = flow_pair_with(&a, &b, &FlowSettings::default());
+        let conf = confidence(&fwd, &bwd);
+        let mean = conf.iter().sum::<f32>() / conf.len() as f32;
+        assert!(
+            mean > 0.5,
+            "confidence over ordinary moving footage should be mostly high — \
+             got {mean}"
+        );
+    }
+
     /// Engine crates never fault: degenerate inputs degrade, not crash.
     #[test]
     fn tiny_frames_degrade_gracefully() {
@@ -2303,9 +2412,21 @@ mod tests {
             c2.iter().all(|&x| x < 0.9),
             "an inconsistent pair loses confidence"
         );
-        // An all-invalid forward is fully suspect everywhere (0 after the blur).
+        // An all-invalid forward is *dimmed*, not extinguished. It used to go
+        // to zero, and that hard cut-off is what left Fast motion blur with
+        // scattered patches of blur and hard edges between them on a fast
+        // camera move — the very artefact FX-19's smooth confidence exists to
+        // avoid, reintroduced by a binary term inside it. A vector nothing
+        // could explain photometrically, but whose two directions still agree,
+        // is worth some of its streak.
         let c3 = confidence(&field(1.0, 0.0, 0), &g);
-        assert!(c3.iter().all(|&x| x == 0.0));
+        assert!(
+            c3.iter().all(|&x| x > 0.0 && x < 0.5),
+            "invalid dims confidence rather than killing it"
+        );
+        // ...and it is still clearly below a pair that is both valid and
+        // consistent, or the term would mean nothing.
+        assert!(c3.iter().zip(&c).all(|(a, b)| a < b));
         // A mismatched-size twin degrades to all-1 (claim nothing suspect).
         let small = FlowField {
             w: 2,

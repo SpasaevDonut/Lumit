@@ -620,7 +620,10 @@ impl GpuFlow {
                         &[(3, grad_t), (4, &warp), (5, &warp2), (6, &duv)],
                     ),
                     vr_apply: self.bind(&lv.params, &[(4, &duv), (6, dense)]),
-                    vr_validity: self.bind(&lv.params, &[(1, luma_t), (2, luma_o), (6, dense)]),
+                    vr_validity: self.bind(
+                        &lv.params,
+                        &[(1, luma_t), (2, luma_o), (3, grad_t), (6, dense)],
+                    ),
                     w: lv.w,
                     h: lv.h,
                     npx: lv.npx,

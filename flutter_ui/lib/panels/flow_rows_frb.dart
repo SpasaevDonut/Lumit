@@ -77,7 +77,7 @@ class FlowRowsFrb extends StatelessWidget {
           'flow-resolution',
           const ['Native', 'Half', 'Quarter'],
           p.resolution,
-          (v) => write(_with(p, resolution: v)),
+          (v) => write(flowParamsWith(p, resolution: v)),
         ),
         _inputRateRow(context, t),
         _choice(
@@ -87,7 +87,7 @@ class FlowRowsFrb extends StatelessWidget {
           'flow-detail',
           const ['Low', 'Medium', 'High', 'Ultra'],
           p.detail,
-          (v) => write(_with(p, detail: v)),
+          (v) => write(flowParamsWith(p, detail: v)),
         ),
         _row(
           context,
@@ -100,7 +100,7 @@ class FlowRowsFrb extends StatelessWidget {
               value: p.smoothness,
               min: 0,
               max: 100,
-              onChanged: (v) => write(_with(p, smoothness: v.toDouble())),
+              onChanged: (v) => write(flowParamsWith(p, smoothness: v.toDouble())),
             ),
           ),
         ),
@@ -111,7 +111,7 @@ class FlowRowsFrb extends StatelessWidget {
           'flow-occlusion',
           const ['Visible only', 'Blend'],
           p.occlusion,
-          (v) => write(_with(p, occlusion: v)),
+          (v) => write(flowParamsWith(p, occlusion: v)),
         ),
         _choice(
           context,
@@ -120,7 +120,7 @@ class FlowRowsFrb extends StatelessWidget {
           'flow-fallback',
           const ['Blend', 'Nearest'],
           p.fallback,
-          (v) => write(_with(p, fallback: v)),
+          (v) => write(flowParamsWith(p, fallback: v)),
         ),
         _row(
           context,
@@ -129,7 +129,7 @@ class FlowRowsFrb extends StatelessWidget {
           HouseCheckbox(
             key: const ValueKey('flow-hud-guard'),
             value: p.hudGuard,
-            onChanged: (v) => write(_with(p, hudGuard: v)),
+            onChanged: (v) => write(flowParamsWith(p, hudGuard: v)),
           ),
         ),
         _row(
@@ -139,7 +139,7 @@ class FlowRowsFrb extends StatelessWidget {
           HouseCheckbox(
             key: const ValueKey('flow-always'),
             value: p.always,
-            onChanged: (v) => write(_with(p, always: v)),
+            onChanged: (v) => write(flowParamsWith(p, always: v)),
           ),
         ),
       ],
@@ -249,12 +249,12 @@ class FlowRowsFrb extends StatelessWidget {
               width: 92,
               child: BareDropdown<double>(
                 key: const ValueKey('flow-input-rate-preset'),
-                value: _presetLabel(shown) == null ? -1 : shown,
+                value: flowPresetLabel(shown) == null ? -1 : shown,
                 options: [
-                  if (_presetLabel(shown) == null) -1,
-                  ..._presets.map((p) => p.$1),
+                  if (flowPresetLabel(shown) == null) -1,
+                  ...flowRatePresets.map((p) => p.$1),
                 ],
-                label: (v) => _presetLabel(v) ?? 'Custom',
+                label: (v) => flowPresetLabel(v) ?? 'Custom',
                 onChanged: (v) {
                   if (v >= 0) writeRate(v);
                 },
@@ -294,7 +294,7 @@ class FlowRowsFrb extends StatelessWidget {
 /// worth conforming high-speed capture to.
 /// A list rather than a map, because Dart will not const a map keyed by
 /// doubles — and the order here is the order the menu shows.
-const List<(double, String)> _presets = [
+const List<(double, String)> flowRatePresets = [
   (0, 'Auto'),
   (12, 'On 2s (12)'),
   (8, 'On 3s (8)'),
@@ -305,15 +305,17 @@ const List<(double, String)> _presets = [
 ];
 
 /// The preset label for an exact rate, or null when the value is the user's own.
-String? _presetLabel(double fps) {
-  for (final (rate, label) in _presets) {
+String? flowPresetLabel(double fps) {
+  for (final (rate, label) in flowRatePresets) {
     if ((rate - fps).abs() < 0.001) return label;
   }
   return null;
 }
 
 /// Copy-with over the generated struct, which has no `copyWith` of its own.
-BridgeFlowParams _with(
+/// Shared with the Timeline fold-out's rows, so one definition of "change one
+/// field of the group" serves both surfaces.
+BridgeFlowParams flowParamsWith(
   BridgeFlowParams p, {
   int? resolution,
   int? detail,

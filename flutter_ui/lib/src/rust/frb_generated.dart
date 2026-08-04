@@ -7313,8 +7313,8 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   BridgeLayerInfo dco_decode_bridge_layer_info(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 21)
-      throw Exception('unexpected arr length: expect 21 but see ${arr.length}');
+    if (arr.length != 22)
+      throw Exception('unexpected arr length: expect 22 but see ${arr.length}');
     return BridgeLayerInfo(
       name: dco_decode_String(arr[0]),
       kind: dco_decode_bridge_layer_kind(arr[1]),
@@ -7337,6 +7337,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       shapeContents: dco_decode_list_bridge_shape_item(arr[18]),
       markers: dco_decode_list_bridge_layer_marker(arr[19]),
       flow: dco_decode_bool(arr[20]),
+      flowInputRate: dco_decode_bridge_scalar(arr[21]),
     );
   }
 
@@ -9176,6 +9177,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     var var_shapeContents = sse_decode_list_bridge_shape_item(deserializer);
     var var_markers = sse_decode_list_bridge_layer_marker(deserializer);
     var var_flow = sse_decode_bool(deserializer);
+    var var_flowInputRate = sse_decode_bridge_scalar(deserializer);
     return BridgeLayerInfo(
         name: var_name,
         kind: var_kind,
@@ -9197,7 +9199,8 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         paint: var_paint,
         shapeContents: var_shapeContents,
         markers: var_markers,
-        flow: var_flow);
+        flow: var_flow,
+        flowInputRate: var_flowInputRate);
   }
 
   @protected
@@ -11224,6 +11227,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     sse_encode_list_bridge_shape_item(self.shapeContents, serializer);
     sse_encode_list_bridge_layer_marker(self.markers, serializer);
     sse_encode_bool(self.flow, serializer);
+    sse_encode_bridge_scalar(self.flowInputRate, serializer);
   }
 
   @protected

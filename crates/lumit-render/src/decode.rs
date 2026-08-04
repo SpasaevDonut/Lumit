@@ -674,12 +674,29 @@ fn decode_comp(
                 .find(|(o, _)| *o == offset)
                 .map(|(_, other)| {
                     let (w, h) = (px.width as usize, px.height as usize);
-                    let ga = lumit_flow::to_gray(&px.rgba, w, h);
-                    let gb = lumit_flow::to_gray(other, w, h);
-                    // Defaults: an effect asking for motion has no parameters
-                    // of its own, and sharing the retime policy's settings
-                    // would make one layer's blur depend on the other's retime.
-                    let set = lumit_flow::FlowSettings::default();
+                    // An effect asking for motion has no parameters of its own,
+                    // and sharing the retime policy's settings would make one
+                    // layer's blur depend on the other's retime.
+                    //
+                    // Half resolution, though, not the retime default of
+                    // native. Retime measures natively so that preview and
+                    // export agree about the picture (K-256); an effect has no
+                    // such argument, and a smaller working size is *better*
+                    // here rather than merely cheaper. Between consecutive
+                    // frames of a fast camera move the displacement is large,
+                    // and an 8×8 patch on a 1080p frame is a tiny window on
+                    // content that is often periodic — container ribs, railings,
+                    // brickwork — where the patch matches many positions
+                    // equally well and picks one. Halving doubles what each
+                    // patch spans relative to that repeat, which is the
+                    // difference between disambiguating it and guessing. It is
+                    // also the working resolution docs/impl/optical-flow.md §1
+                    // names as the default, and a quarter of the cost.
+                    let set = lumit_flow::FlowSettings {
+                        divisor: 2,
+                        ..lumit_flow::FlowSettings::default()
+                    };
+                    let (ga, gb, _) = lumit_flow::flow_grays(&px.rgba, other, w, h, &set);
                     let nb = job
                         .temporal
                         .iter()
@@ -700,7 +717,11 @@ fn decode_comp(
                     // by (FX-19); the same deterministic function export runs, so
                     // the two match (K-031). Datamosh ignores it.
                     let conf = lumit_flow::confidence(&fwd, &bwd);
-                    (fwd.u, fwd.v, conf)
+                    // The consumers want a field at the frame's own size. The
+                    // vectors scale with the image — a 3 px move at half res is
+                    // 6 px at full — while the confidence is a 0..1 weight and
+                    // must not be touched by that scaling.
+                    lumit_flow::field_to_size(&fwd, &conf, w, h)
                 })
         });
         // Blend / Flow policy: combine with the next source frame.
