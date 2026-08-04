@@ -222,6 +222,48 @@ the algorithm again.
 **Measured (960×540 pair, dev machine):** GPU parts 1–2 4.3 ms, all three **8.9 ms**; CPU all
 three 1.9 s. The refinement roughly doubles GPU cost and is comfortably inside budget.
 
+## 5.5 Measured quality (the harness, K-269 follow-up)
+
+`crates/lumit-render/tests/flow_quality.rs` scores the engine on real footage by
+rebuilding a frame from its two neighbours and comparing against the frame that
+was actually there — ground truth out of ordinary film. It reports PSNR **and**
+SSIM against two baselines: **nearest** (hold the previous frame) and **blend**
+(crossfade). Blend is the one that matters: flow costs far more, and its failure
+mode is tearing rather than a soft double image, so losing to a crossfade makes
+it worse than useless.
+
+**The first run settled a question that had been argued from impressions.**
+
+| footage | effective rate | blend PSNR / SSIM | flow PSNR / SSIM | Δ PSNR |
+|---|---|---|---|---|
+| gameplay, 600 fps capture | 600 (native) | 31.86 / 0.9012 | **35.62 / 0.9707** | **+3.77** |
+| gameplay | 60 (stride 10) | 24.35 / 0.6871 | **27.21 / 0.8276** | **+2.86** |
+| gameplay | 24 (stride 25) | 21.49 / 0.6170 | **21.88 / 0.6675** | +0.39 |
+| anime, 24 fps on 2s | stride 2 | **40.72 / 0.9613** | 40.65 / 0.9581 | −0.07 |
+| anime | stride 3 | 38.79 / **0.9593** | **39.32** / 0.9568 | +0.53 |
+
+Read together: **DIS is strong on game capture and weak on cel animation.** On
+gameplay it beats a crossfade on both measures at every rate tested, by margins
+(+0.14 SSIM at 60 fps) that are the engine plainly working. On anime it is level
+on PSNR and *below* blend on SSIM at every stride — closer on average, worse in
+shape, which is what "full of artefacts" describes when someone looks at it.
+
+Why the split: cel animation is flat regions bounded by hard line art, so there
+is no photometric evidence to match across most of the frame and the smoothness
+term diffuses motion straight over boundaries it should stop at. Game capture is
+the opposite — texture everywhere, mostly-rigid camera motion.
+
+Two corollaries worth keeping:
+
+- **Parameters do not decide this.** The full sweep — Ultra detail, half
+  resolution, smoothness 90, guard off — spans about 0.2 dB on either clip.
+  Anything that fixes anime is not a knob.
+- **The §1 step 5 refinement helps where it was argued for and hurts where it
+  was not.** Gameplay at realistic strides improves with it (27.21 vs 26.96);
+  anime is very slightly better without. K-269's reasoning holds for smoke and
+  sky and over-generalised to all untextured regions — line art is untextured
+  with *hard* edges, which is the opposite case.
+
 ## 6. Test plan
 
 1. Analytic: translating/rotating checkerboard and Perlin textures with known flow —
