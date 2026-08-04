@@ -5432,3 +5432,33 @@ housing feather. The corona is invariant to all of them: it is the fold structur
 that ghost in an extrapolated regime (shooting an f2.8 zoom at f1.5), and the recorded
 fix is adaptive refinement at folds, not another guard. The ablation list lives here
 so nobody re-chases it.
+
+**K-266 · DECIDED · Px parameters survive preview scaling, the flare stops at its own
+buffer, weight cliffs smooth, and a precomp is a legal layer input.** Four owner
+reports from live use. **(1) The light landed past where it was put** — at 1500 of a
+1920 comp, both axes off by exactly the preview factor. An ADJUSTMENT layer's stack
+resolves px@comp parameters with factor 1 ("runs on the comp-sized intermediate"),
+but under reduced-resolution preview that intermediate is the preview raster: every
+px-dimensioned parameter on an adjustment layer — the flare's light, DoF apertures,
+blur radii — ran 1.28× too big/far, in preview only. New `fx::rescale_px` scales
+every px field of resolved ops (exhaustive match, so a new op must declare its px
+fields), and the realise walk applies `render_width / comp_width` to adjustment
+stacks before running them. The Precomp-layer variant of the same disease is TODO'd
+with the diagnosis. **(2) Anamorphic squeeze below 1 smeared the frame edge**: the
+combine's clamp-addressed tap repeated the flare buffer's border row outward.
+Outside the buffer there is no flare — the tap returns zero, both twins, pinned by
+test. **(3) The chunky wash edges** (the owner's Ultra Prime screenshot): a weight
+cliff — the housing feather compressed into less than a cell, a vignette cut —
+lands inside one cell and draws as facets. A corner's COLOUR weight is now the mean
+over its 3×3 ray neighbourhood (dead rays as zero), turning any cliff into a
+two-cell ramp; geometry decisions stay on raw weights so virtual continuations
+cannot smear light into fan lines. Verified on the reported lens: the staircase is
+gone. **(4) A precomp as a Matte source detected nothing** — `pixels_for` has no
+pixels for a comp, so the reference silently became "no matte". Layer inputs
+(flare mattes AND DoF depth, same mechanism) now carry an optional nested draw
+list, built with the ancestor-path cycle guard and realised recursively exactly as
+a Precomp layer's picture is. Boundary: footage inside a matte-only precomp still
+needs the decode planner taught (solids, text, shapes, nested renders all work) —
+TODO'd. On area sources generally: Matte mode approximates an area by its
+brightest eight points with non-max suppression; raising that count and sampling
+the area proper is recorded as the follow-up rather than pretended.

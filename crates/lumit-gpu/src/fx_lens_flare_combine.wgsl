@@ -39,10 +39,16 @@ struct CombineParams {
 @group(0) @binding(4) var<uniform> cp: CombineParams;
 @group(0) @binding(5) var<storage, read> lights: array<Light>;
 
-// Clamp-addressed bilinear tap of an rgba texture's rgb.
+// Bilinear tap of an rgba texture's rgb — ZERO outside the texture
+// (K-266): a squeeze or scale below 1 asks for coordinates past the flare
+// buffer, and clamp-addressing repeated the edge row outward. Half a texel
+// of grace keeps the true border texels filtered.
 fn tap_rgb(tex: texture_2d<f32>, fx_in: f32, fy_in: f32, dims: vec2<i32>) -> vec3<f32> {
     let fx = fx_in;
     let fy = fy_in;
+    if (fx < -0.5 || fy < -0.5 || fx > f32(dims.x) - 0.5 || fy > f32(dims.y) - 0.5) {
+        return vec3<f32>(0.0);
+    }
     let x0 = clamp(i32(floor(fx)), 0, dims.x - 1);
     let y0 = clamp(i32(floor(fy)), 0, dims.y - 1);
     let x1 = min(x0 + 1, dims.x - 1);

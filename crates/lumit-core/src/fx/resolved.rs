@@ -652,6 +652,103 @@ pub enum Resolved {
 /// marker-driven modes (Flash's Trigger and Strobe, §3.7). Placeholders,
 /// unknown names and bypassed effects resolve to nothing (they render as
 /// identity, docs/03 §8).
+/// Rescale every pixel-dimensioned field of already-resolved ops by `f` —
+/// the repair for a stack resolved against one raster and run on another
+/// (K-266). The Adjust arm of the draw builder resolves with `px_scale` 1
+/// because its stack runs on "the comp-sized intermediate" — which is only
+/// true at full preview resolution. Under reduced-resolution preview the
+/// intermediate is the preview raster, and every px@comp parameter (the
+/// flare's light, DoF apertures, blur radii) landed too far right and too
+/// big by exactly the preview factor; the owner measured the flare's light
+/// hitting the frame edge at 1500 of a 1920 comp. The realise walk calls
+/// this with `render_width / comp_width` before running an adjustment
+/// stack.
+///
+/// Exhaustive on purpose: a new op must decide here whether it owns pixel
+/// fields, so the bug cannot quietly return with the next effect.
+pub fn rescale_px(ops: &mut [Resolved], f: f32) {
+    if (f - 1.0).abs() < 1e-6 {
+        return;
+    }
+    for op in ops {
+        match op {
+            Resolved::Blur { radius_px, .. } => *radius_px *= f,
+            Resolved::DirBlur { length_px, .. } => *length_px *= f,
+            // Radial blur's centre is a frame fraction; only the legacy
+            // strength is per-frame-relative too. Nothing in pixels.
+            Resolved::RadialBlur { .. } => {}
+            Resolved::Sharpen { radius_px, .. } => *radius_px *= f,
+            // SharpenSimple's radius is a fixed 3x3 kernel scale, not px.
+            Resolved::SharpenSimple { .. } => {}
+            Resolved::RgbSplit { amount_px, .. } => *amount_px *= f,
+            Resolved::SpectralSplit { amount_px, .. } => *amount_px *= f,
+            Resolved::ChromaticAberration { amount_px, .. } => *amount_px *= f,
+            Resolved::Flash { .. }
+            | Resolved::ColourBalance { .. }
+            | Resolved::Saturation { .. }
+            | Resolved::Vibrancy { .. }
+            | Resolved::MatteKey(_)
+            | Resolved::Vignette { .. }
+            | Resolved::Exposure { .. }
+            | Resolved::HueShift { .. }
+            | Resolved::Contrast { .. }
+            | Resolved::Gamma { .. }
+            | Resolved::Temperature { .. }
+            | Resolved::Invert { .. }
+            | Resolved::Tint { .. }
+            | Resolved::Lut { .. } => {}
+            Resolved::Transform {
+                anchor, position, ..
+            } => {
+                anchor[0] *= f;
+                anchor[1] *= f;
+                position[0] *= f;
+                position[1] *= f;
+            }
+            Resolved::Glow { radius_px, .. } => *radius_px *= f,
+            Resolved::Shake { offset_px, mb, .. } => {
+                offset_px[0] *= f;
+                offset_px[1] *= f;
+                if let Some(samples) = mb {
+                    for s in samples.iter_mut() {
+                        s.offset_px[0] *= f;
+                        s.offset_px[1] *= f;
+                    }
+                }
+            }
+            Resolved::BlockGlitch {
+                block_size_px,
+                amount_px,
+                chan_px,
+                ..
+            } => {
+                *block_size_px *= f;
+                *amount_px *= f;
+                *chan_px *= f;
+            }
+            // Scanlines' period and Datamosh's blocks follow their own
+            // texture-relative conventions (docs/08); Echo and MotionBlur
+            // carry times and flow scales, not pixels.
+            Resolved::Scanlines { .. }
+            | Resolved::Datamosh { .. }
+            | Resolved::Echo { .. }
+            | Resolved::MotionBlur { .. } => {}
+            Resolved::Dof {
+                near_aperture,
+                far_aperture,
+                ..
+            } => {
+                *near_aperture *= f;
+                *far_aperture *= f;
+            }
+            Resolved::LensFlare(p) => {
+                p.light[0] *= f;
+                p.light[1] *= f;
+            }
+        }
+    }
+}
+
 pub fn resolve_stack(
     effects: &[EffectInstance],
     lt: f64,

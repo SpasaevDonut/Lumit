@@ -597,6 +597,26 @@ fn density_of(mean: f32) -> f32 {
     return tp.cell_area_px / max(mean, 3e-3 * tp.cell_area_px);
 }
 
+// A corner's weight for COLOUR: the mean over its 3x3 ray neighbourhood,
+// dead rays as zero (K-266). The raw per-ray weight cliffs — the housing
+// feather compressed into less than a cell, a vignette cut — land inside
+// one cell and drew every wash ghost's edge as chunky facets; smoothed one
+// lattice step, a cliff becomes a two-cell ramp and the raster's
+// interpolation does the rest. Geometry decisions (lit corners, pull-in)
+// stay on RAW weights: smearing light onto a virtual continuation's
+// far-flung corner would draw the K-264 fan lines again.
+fn smooth_weight(base: u32, cx: u32, cy: u32) -> f32 {
+    var sum = 0.0;
+    for (var dy = -1; dy <= 1; dy = dy + 1) {
+        for (var dx = -1; dx <= 1; dx = dx + 1) {
+            let x = u32(clamp(i32(cx) + dx, 0, i32(tp.grid) - 1));
+            let y = u32(clamp(i32(cy) + dy, 0, i32(tp.grid) - 1));
+            sum = sum + max(rays[base + y * tp.grid + x].weight, 0.0);
+        }
+    }
+    return sum / 9.0;
+}
+
 // The SMALLEST live cell touching a corner — the pull-in's length scale
 // (K-265; the CPU twin's comment tells the story).
 fn corner_min_area(area_base: u32, side: u32, cx: u32, cy: u32) -> f32 {
@@ -669,10 +689,10 @@ fn build_verts(@builtin(global_invocation_id) gid: vec3<u32>) {
     let light = lights[tp.light_offset + gid.z];
     let tint = vec3<f32>(combo.rgb_r * light.r, combo.rgb_g * light.g, combo.rgb_b * light.b);
     var col = array<vec3<f32>, 4>(
-        tint * (d[0] * max(c0.weight, 0.0)),
-        tint * (d[1] * max(c1.weight, 0.0)),
-        tint * (d[2] * max(c2.weight, 0.0)),
-        tint * (d[3] * max(c3.weight, 0.0)),
+        tint * (d[0] * smooth_weight(base, qx, qy)),
+        tint * (d[1] * smooth_weight(base, qx + 1u, qy)),
+        tint * (d[2] * smooth_weight(base, qx + 1u, qy + 1u)),
+        tint * (d[3] * smooth_weight(base, qx, qy + 1u)),
     );
     // Flux-conserving sub-pixel inflation (K-261, refined K-262/K-264 — the
     // CPU `inflate_quad` twin). A sub-pixel COMPACT quad inflates about its

@@ -41,6 +41,18 @@ These sit above everything else: they are what the editor feels like in the hand
     Same shape of win in Matte mode from skipping dead light slots with an
     indirect dispatch: eight slots are always dispatched, however many sources
     the detection actually found.
+- **Area flare sources, and mattes that decode footage.** Matte mode
+    approximates an area source by its brightest eight points (K-257's top-K
+    with suppression) — raising MAX_LIGHTS and sampling an area honestly is
+    the follow-up the owner's "lights that aren't a single point" asks for.
+    And a precomp referenced ONLY as a matte renders solids/text/shapes but
+    not footage: the decode planner never visits it (K-266 boundary in
+    `pixels_for`) — teach `collect_comp_jobs` to walk matte references.
+- **The Precomp-layer twin of the K-266 adjustment fix.** Effects ON a
+    Precomp layer also resolve px@comp with factor 1 (`DrawSource::Nested`'s
+    arm in build.rs) while running on whatever raster the nested comp
+    realises at — same preview-only drift `fx::rescale_px` fixed for
+    Adjust; wire the same factor through the nested arm.
 - **Replace `poll(Maintain::Wait)` with a keyed mutex** - every present waits for
     the card to go idle before handing the texture over (`shared.rs`,
     `shared_linux.rs`, `shared_metal.rs`; find it by the call, not a line number).

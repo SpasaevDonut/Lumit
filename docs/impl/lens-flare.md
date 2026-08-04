@@ -1,7 +1,7 @@
 # Lens flare — traced ghosts and Fourier starburst
 
 **Status: authoritative implementation note** for the Lens flare effect
-([08-EFFECTS.md](../08-EFFECTS.md) §3.27; K-256..K-265). Specs say *what*; this note is
+([08-EFFECTS.md](../08-EFFECTS.md) §3.27; K-256..K-266). Specs say *what*; this note is
 the *how*: the optical model, the exact formulas, the GPU pass structure, and the test
 plan. Sources: the FlareSim renderer (github.com/SeanBRVFX/FlareSim_Nuke_builded, itself
 built on space55/blackhole-rt) for the optical model and the lens-file collection — its
@@ -191,6 +191,11 @@ RGB × the light's colour × the exposure gain. The guards:
   rendered small has every cell at a couple of px², and inflating them all tiled it
   with overlapping diamonds. A sub-sample SLIVER (longest edge past 6 px) still parks:
   inflating one is the K-261 streak artefact, and un-inflated it covers nothing.
+- **Corner weights smooth over the 3×3 ray neighbourhood for COLOUR (K-266)**:
+  a weight cliff — the housing feather compressed into less than a cell, a
+  vignette cut — otherwise lands inside one cell and draws every wash ghost's
+  edge as chunky facets. Geometry decisions (lit corners, the pull-in) stay on
+  RAW weights, or virtual continuations would smear light into fan lines.
 - **Long thin fold cells DRAW (K-264, reversing K-262's drop-at-any-size)**: the drop
   existed because a cell-flat density at the cap painted them as chromatic lines, and
   it cut triangular notches out of every caustic rim. With corner-averaged density
@@ -209,6 +214,10 @@ owner's Ultra report, and coverage sampling smooths them for a cost that is a ro
 error beside the trace. The CPU reference models the SAME four standard sample
 positions (coverage × centre-interpolated colour, `MSAA_SAMPLES`), which is what keeps
 the frame oracle tight rather than merely close.
+
+The combine's flare tap is ZERO outside the buffer (K-266): squeeze or scale
+below 1 asks for coordinates past it, and clamp-addressing repeated the edge
+row outward as a smear.
 
 The additive raster (hardware, one-one blend, fp16 buffer; Draft at half resolution) is
 followed by the **Ghost blur**: 3 separable box passes (≈ Gaussian) at a radius of

@@ -4869,6 +4869,79 @@ fn lens_flare_custom_lens_file_overrides_and_degrades() {
     assert_eq!(fallback.energy_gain, picked.energy_gain);
 }
 
+// Px-dimensioned resolved fields rescale when the stack runs on a raster
+// other than the one it resolved against (K-266) — the adjustment-layer
+// preview bug: the flare's light hit the frame edge at 1500 of a 1920 comp
+// because the preview factor was applied to the raster and not the params.
+#[test]
+fn resolved_px_fields_rescale_for_a_different_raster() {
+    use crate::fx::{rescale_px, Resolved};
+    let mut ops = vec![
+        Resolved::Blur {
+            radius_px: 10.0,
+            edge: 0,
+            mix: 1.0,
+        },
+        Resolved::LensFlare(crate::fx::lens_flare::LensFlareParams {
+            light: [1000.0, 500.0],
+            ..default_flare_params()
+        }),
+    ];
+    rescale_px(&mut ops, 0.5);
+    match &ops[0] {
+        Resolved::Blur { radius_px, mix, .. } => {
+            assert_eq!(*radius_px, 5.0, "px fields scale");
+            assert_eq!(*mix, 1.0, "unitless fields do not");
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+    match &ops[1] {
+        Resolved::LensFlare(p) => {
+            assert_eq!(p.light, [500.0, 250.0], "the flare's light is px@comp");
+            assert_eq!(p.intensity, 1.0);
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+    // Factor 1 is exactly a no-op.
+    let mut same = vec![Resolved::Blur {
+        radius_px: 7.0,
+        edge: 0,
+        mix: 1.0,
+    }];
+    rescale_px(&mut same, 1.0);
+    match &same[0] {
+        Resolved::Blur { radius_px, .. } => assert_eq!(*radius_px, 7.0),
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+// An anamorphic squeeze (or scale) below 1 asks the combine for flare
+// coordinates past the buffer, and there is NO flare there (K-266): the
+// clamp-addressed tap repeated the buffer's edge row outward as a smear.
+#[test]
+fn lens_flare_combine_does_not_repeat_the_flare_past_its_buffer() {
+    use crate::fx::lens_flare::*;
+    let p = LensFlareParams {
+        anamorphic: 0.5,
+        starburst_intensity: 0.0,
+        ghost_softness: 0.0,
+        ..default_flare_params()
+    };
+    let baked = bake(&p);
+    let (w, h) = (64u32, 36u32);
+    // A uniformly lit flare buffer: any edge repeat is then unmissable.
+    let flare = vec![0.5_f32; (w * h * 3) as usize];
+    let mut out = vec![0.0_f32; (w * h * 4) as usize];
+    let lights = manual_light(&p, w, h);
+    cpu_combine(&mut out, w, h, &p, &baked, &flare, w, h, &lights);
+    // squeeze 0.5 maps x=0 to sx = 32 + (0.5-32)/0.5 = -31: far outside.
+    let left_edge: f32 = (0..h).map(|y| out[((y * w) * 4) as usize]).sum();
+    assert_eq!(left_edge, 0.0, "outside the buffer there is no flare");
+    // The centre still receives it.
+    let centre = out[(((h / 2) * w + w / 2) * 4) as usize];
+    assert!(centre > 0.0, "the squeezed flare itself still lands");
+}
+
 // §8.5 (CPU side) — the trace lands rays: at the default light the top
 // pairs put finite, weighted rays on the sensor, and stopping the iris
 // down clips rays the wide stop passed.

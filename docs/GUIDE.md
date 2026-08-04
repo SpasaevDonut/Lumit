@@ -680,6 +680,29 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   guard, the decision log records the six things that were tried and ruled
   out, so the real cure (subdividing the grid exactly at the folds) stays an
   honest TODO instead of a mystery.
+  A fourth pass (K-266) closed the day's remaining reports. The flare's
+  light was landing past where the owner put it — but only in preview, and
+  only on adjustment layers, because an adjustment's effects are resolved
+  as if they will run at full comp size and preview quietly runs them
+  smaller; a new one-place repair (`rescale_px`) scales every
+  pixel-flavoured parameter by the true factor before the stack runs, which
+  also silently fixes preview-vs-export drift for blur radii and DoF
+  apertures on adjustment layers. Anamorphic squeeze below 1 used to smear
+  the frame edge — the flare was being asked for pixels beyond its own
+  canvas and the card answered with the nearest edge pixel, repeated;
+  outside the canvas is now simply dark. The chunky tiled edges on the big
+  soft ghosts fell to one more smoothing rule: a ray's brightness is now
+  averaged with its eight neighbours before drawing, so a hard lighting
+  cliff becomes a gentle two-panel ramp (the geometry still uses the raw
+  values, so nothing bleeds where it shouldn't). And picking a precomp as
+  the flare's matte — the natural way to author "a white circle on black
+  as my light source" — finally works: a comp has no pixels until it is
+  rendered, so the matte machinery quietly gave up on them; it now renders
+  the nested comp exactly the way a precomp layer is rendered, loops
+  guarded, and hands the picture to the light detector. One honest edge
+  remains written down: footage inside a matte-only precomp needs the
+  decode planner taught before it appears there, and an area light is
+  still approximated by its eight brightest points.
 - **RGB split gains a Wavelength mode** (K-090's quality-tier pattern: where the smooth
   look is optional, it hides behind a Bool next to the fast one). Off — the default —
   the split is three tinted samples: the first colour pulled one way, the third the

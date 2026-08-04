@@ -373,6 +373,45 @@ pub fn build_comp_draws_at(
     // planner (app_state::collect_comp_jobs) decodes layer-input references
     // exactly like matte sources, and export applies the same in-span-only
     // gate (K-031).
+    // A layer-input reference to a PRECOMP (K-266): its picture exists only
+    // as a render, so package the nested comp's draw list for realise to
+    // run recursively — the DrawSource::Nested shape, on the input slot.
+    // `visited_path` is a snapshot of the ancestor chain at this comp's
+    // entry, so a matte that (transitively) contains its own comp stops at
+    // the cycle instead of recursing forever; a fresh clone per input keeps
+    // the closure borrow-free. Footage INSIDE such a precomp only has
+    // pixels when the decode planner visited it as a placed layer too —
+    // solids, text, shapes and nested renders always work (docs boundary).
+    let visited_path: Vec<uuid::Uuid> = visited.clone();
+    let nested_input_for = |src: &lumit_core::model::Layer| -> Option<DofInputDraw> {
+        let lumit_core::model::LayerKind::Precomp { comp: nested_id } = &src.kind else {
+            return None;
+        };
+        if visited_path.contains(nested_id) {
+            return None;
+        }
+        let nested = doc.comp(*nested_id)?;
+        let slt = t_comp - src.start_offset.0.to_f64();
+        let frame_slt = frame_t - src.start_offset.0.to_f64();
+        let mut path = visited_path.clone();
+        path.push(*nested_id);
+        let draws = build_comp_draws_at(doc, nested, slt, frame_slt, pixels_by_layer, &mut path);
+        Some(DofInputDraw {
+            rgba: Vec::new(),
+            tex_w: nested.width,
+            tex_h: nested.height,
+            fx: Vec::new(),
+            lut_files: Vec::new(),
+            nested: Some(Box::new(crate::draw::NestedInputDraw {
+                width: nested.width,
+                height: nested.height,
+                background: [0.0, 0.0, 0.0, 0.0],
+                draws,
+                camera: nested.camera_pose(slt),
+            })),
+        })
+    };
+
     let dof_inputs_for =
         |effects: &[lumit_core::model::EffectInstance]| -> Vec<Option<DofInputDraw>> {
             use lumit_core::model::EffectNamespace;
@@ -388,6 +427,10 @@ pub fn build_comp_draws_at(
                     let src = comp.layers.iter().find(|l| l.id == id)?;
                     if !in_span(src) {
                         return None;
+                    }
+                    // A Precomp depth renders its comp (K-266).
+                    if let Some(nested) = nested_input_for(src) {
+                        return Some(nested);
                     }
                     let mode = e.layer_source("depth");
                     // Depth source (K-142). None samples the depth layer's raw
@@ -430,6 +473,7 @@ pub fn build_comp_draws_at(
                         tex_h,
                         fx,
                         lut_files,
+                        nested: None,
                     })
                 })
                 .collect()
@@ -459,6 +503,12 @@ pub fn build_comp_draws_at(
                     let src = comp.layers.iter().find(|l| l.id == id)?;
                     if !in_span(src) {
                         return None;
+                    }
+                    // A Precomp matte renders its comp (K-266) — "a white
+                    // circle in a precomp" is the natural way to author a
+                    // flare source, and it detected nothing before this.
+                    if let Some(nested) = nested_input_for(src) {
+                        return Some(nested);
                     }
                     let mode = e.layer_source("matte");
                     let (rgba, tex_w, tex_h, natural) = if mode.applies_masks() {
@@ -493,6 +543,7 @@ pub fn build_comp_draws_at(
                         tex_h,
                         fx,
                         lut_files,
+                        nested: None,
                     })
                 })
                 .collect()
@@ -728,6 +779,9 @@ pub fn build_comp_draws_at(
                     dof_inputs: dof_inputs_for(&layer.effects),
                     flare_mattes: flare_mattes_for(&layer.effects),
                     flare_lens_files: flare_lens_files(&layer.effects, lt),
+                    // The adjust stack resolves at comp scale but runs on
+                    // the render target (K-266) — realise rescales.
+                    fx_ref_width: Some(comp.width as f32),
                     // An adjustment layer is a staging point, not a picture —
                     // motion blur has no image of its own to smear (docs/06 §4).
                     mb: Vec::new(),
@@ -922,6 +976,7 @@ pub fn build_comp_draws_at(
             dof_inputs: dof_inputs_for(&layer.effects),
             flare_mattes: flare_mattes_for(&layer.effects),
             flare_lens_files: flare_lens_files(&layer.effects, lt),
+            fx_ref_width: None,
             // Per-layer motion blur (docs/06 §4, K-120): the layer's own
             // transform sampled across the open shutter, empty unless it blurs.
             // Built the same way export does, so the two smear identically.

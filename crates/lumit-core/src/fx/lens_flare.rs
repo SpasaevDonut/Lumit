@@ -1832,6 +1832,29 @@ pub fn cpu_flare(
                 let corner_density = |ci: usize, cj: usize| -> f32 {
                     cell_area_px / corner_mean_area(ci, cj).max(MIN_AREA_FRAC * cell_area_px)
                 };
+                // A corner's weight for COLOUR: the mean over its 3×3 ray
+                // neighbourhood, dead rays as zero (K-266) — the WGSL
+                // `smooth_weight` twin. The raw per-ray weight cliffs (a
+                // housing feather compressed into less than a cell, a
+                // vignette cut) land inside one cell and drew every wash
+                // ghost's edge as chunky facets; smoothed one lattice step,
+                // a cliff becomes a two-cell ramp. Geometry decisions (lit
+                // corners, the pull-in) stay on RAW weights: smearing light
+                // onto a virtual continuation's far-flung corner would draw
+                // the K-264 fan lines again.
+                let smooth_weight = |ci: usize, cj: usize| -> f32 {
+                    let mut sum = 0.0_f32;
+                    for dj in -1i64..=1 {
+                        for di in -1i64..=1 {
+                            let x = (ci as i64 + di).clamp(0, side as i64 - 1) as usize;
+                            let y = (cj as i64 + dj).clamp(0, side as i64 - 1) as usize;
+                            if let Some((_, wt)) = corners[y * side + x] {
+                                sum += wt.max(0.0);
+                            }
+                        }
+                    }
+                    sum / 9.0
+                };
                 // The SMALLEST live cell touching a corner — the pull-in's
                 // length scale (K-265). The mean is wrong for that job: at
                 // a fold the stretched cells inflate it, so pulled corners
@@ -1892,8 +1915,14 @@ pub fn cpu_flare(
                                 rgb: [0.0; 3],
                             },
                         ];
-                        for ((vert, corner), d) in v.iter_mut().zip([c0, c1, c2, c3]).zip(density) {
-                            let b = d * gain * corner.1;
+                        let smoothed = [
+                            smooth_weight(i, j),
+                            smooth_weight(i + 1, j),
+                            smooth_weight(i + 1, j + 1),
+                            smooth_weight(i, j + 1),
+                        ];
+                        for ((vert, wt), d) in v.iter_mut().zip(smoothed).zip(density) {
+                            let b = d * gain * wt;
                             vert.rgb = [
                                 b * rgb_w[0] * light.rgb[0],
                                 b * rgb_w[1] * light.rgb[1],
@@ -2066,9 +2095,16 @@ pub fn cpu_combine(
     let sb_res = STARBURST_RES as usize;
     let sb_half = 0.6 * fscale * w.min(h) as f32;
     let sample_flare = |x: f32, y: f32| -> [f32; 3] {
-        // Resolution-relative bilinear tap of the flare buffer.
+        // Resolution-relative bilinear tap of the flare buffer. OUTSIDE it
+        // there is no flare (K-266): a squeeze or scale below 1 asks for
+        // coordinates past the buffer, and clamp-addressing repeated the
+        // edge row outward — the owner's "dreadful" anamorphic smear. Half
+        // a texel of grace keeps the true border texels filtered.
         let u = (x / w as f32) * fw as f32 - 0.5;
         let v = (y / h as f32) * fh as f32 - 0.5;
+        if u < -0.5 || v < -0.5 || u > fw as f32 - 0.5 || v > fh as f32 - 0.5 {
+            return [0.0; 3];
+        }
         let x0 = u.floor().max(0.0) as usize;
         let y0 = v.floor().max(0.0) as usize;
         let x1 = (x0 + 1).min(fw as usize - 1);
