@@ -1,0 +1,35 @@
+---
+const links = [
+  { href: "/#features", label: "Features", small: false },
+  { href: "/#roadmap", label: "Roadmap", small: false },
+  { href: "https://docs.lumitlab.com", label: "Docs", small: true },
+  { href: "https://github.com/luminalmvm/Lumit", label: "GitHub", small: true },
+  { href: "/download", label: "Download", small: true },
+];
+---
+
+<header
+  class="sticky top-0 z-20 border-b border-line bg-ink/70 backdrop-blur-xl"
+>
+  <div class="mx-auto flex h-[62px] w-full max-w-[1080px] items-center gap-7 px-5 sm:px-10">
+    <a href="/" class="mr-auto flex items-center gap-2.5 no-underline">
+      <img src="/lumit-mark.svg" alt="" width="26" height="26" class="block" />
+      <span class="text-[19px] font-semibold tracking-[-0.035em] text-fg">Lumit</span>
+    </a>
+    <nav class="flex gap-6">
+      {
+        links.map((l) => (
+          <a
+            href={l.href}
+            class:list={[
+              "text-[14.5px] text-fg-2 no-underline transition-colors hover:text-fg",
+              !l.small && "hidden sm:inline",
+            ]}
+          >
+            {l.label}
+          </a>
+        ))
+      }
+    </nav>
+  </div>
+</header>

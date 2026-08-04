@@ -5496,3 +5496,26 @@ order, CPU and GPU op-for-op). A one-tile point source is its own anchor's only
 contributor and reads exactly as before; the owner's white-circle precomp now carries
 the flux of every tile it lights. Position stays the anchor pixel; sub-tile centroid
 positioning would be the next refinement if ever needed.
+
+**K-268 · DECIDED · The website lives in this repository, not a separate one.**
+`web/` is lumitlab.com and `web-docs/` is docs.lumitlab.com: two small Astro projects,
+static output, deployed as two Cloudflare Pages projects pointed at those two root
+directories (a real subdomain needs its own deployment target, hence two rather than
+one). They sit outside the Cargo workspace and nothing depends on them.
+
+Kept in-tree because the alternative has to synchronise three things across a repo
+boundary for no present gain. **(1)** The download page reads the GitHub releases API of
+*this* repository and links straight at the assets `release.yml` publishes on a `v*` tag,
+so tagging updates the site with no deploy; split, the site would trail the pipeline that
+feeds it. **(2)** The site uses the brand assets from `assets/brand/`, so a split means
+copying the mark and letting it drift from the app icon — the exact failure this project
+avoids elsewhere by keeping one source of truth. **(3)** This repo's standing rule is that
+a doc changes in the same commit as the thing it describes; that is impossible across two
+repositories, and release notes, install instructions and the roadmap all straddle the
+seam.
+
+Nothing is hosted by us: GitHub serves the release binaries from its own CDN with no
+bandwidth cap, and Cloudflare Pages serves the two static sites. There is no server and
+no scaling story to own. Revisit only if the site grows contributors who should not have
+to clone a Rust + Flutter tree — at which point Cloudflare's per-path build filters
+already prevent the two from triggering each other's builds.

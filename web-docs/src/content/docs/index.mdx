@@ -1,0 +1,42 @@
+---
+title: Lumit docs
+description: Documentation for Lumit, the native motion-graphics and compositing editor.
+template: splash
+hero:
+  tagline: A native motion-graphics and compositing editor. GPU-first, open source, GPLv3.
+  image:
+    file: ../../assets/lumit-mark.svg
+  actions:
+    - text: Install Lumit
+      link: /start/install/
+      icon: right-arrow
+    - text: Download
+      link: https://lumitlab.com/download
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+<CardGrid stagger>
+  <Card title="Install" icon="laptop">
+    Get Lumit running on Windows, Linux or macOS, and know what to expect on each.
+
+    [Installation →](/start/install/)
+  </Card>
+  <Card title="Your first composition" icon="add-document">
+    Import footage, build a composition, keyframe something and export it.
+
+    [First composition →](/start/first-composition/)
+  </Card>
+  <Card title="Keyboard shortcuts" icon="setting">
+    The full keymap, and how to rebind it.
+
+    [Shortcuts →](/reference/shortcuts/)
+  </Card>
+  <Card title="Contribute" icon="github">
+    Lumit is GPLv3 and developed in the open. Issues and pull requests are welcome.
+
+    [On GitHub →](https://github.com/luminalmvm/Lumit)
+  </Card>
+</CardGrid>
