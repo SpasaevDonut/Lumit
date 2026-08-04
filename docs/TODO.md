@@ -286,21 +286,29 @@ in the Effect controls panel ([13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md)
 
 ## Next - engine/bridge follow-ups
 
-**Flow's remaining K-256 work.** The engine, the GPU port and the cache have
-landed; the surface has not.
-1. **`set_interpolation` still writes `Interpolation::Flow(Default::default())`**,
-    so no `FlowParams` field is reachable from the bridge or the UI.
-2. **The Flow layer option** (K-088): the switch-cluster toggle replacing the
-    Source rows' "Optical flow" dropdown entry, and the Flow group beside
-    Transform and Effects carrying the eight parameters.
-3. **`PreviewEngine::default` still builds its pool without a GPU**, so the egui
-    Viewer path measures flow on a headless device of its own; the headless
-    renderer the Flutter frontend drives shares the render device correctly.
-    Pass a context in, or delete the path if nothing drives it.
+**Flow's remaining K-256 work.** The engine, the GPU port, the cache and the
+controls have landed. What is left:
+1. **Turning the flow switch off discards the Flow group.** `FlowParams` lives
+    inside the `Flow` variant of `Interpolation`, so there is nowhere to keep it
+    while the policy is Nearest. Comparing a flow shot against the plain one is
+    ordinary and should not cost the tuning. Move `FlowParams` onto the layer
+    beside the policy (pre-release, no migration); `flow_rows_frb_test.dart`
+    pins the current behaviour and inverts when this lands.
+2. **The Flow input rate (K-095/K-160) has no control.** It is keyframeable, so
+    it wants a property row with a stopwatch, not a plain field — which is why
+    it is not in the group with the other seven.
+3. **`PreviewEngine::default` still builds its pool without a GPU**, so that
+    path measures flow on a headless device of its own; the headless renderer
+    the Flutter frontend drives shares the render device correctly. Pass a
+    context in, or delete the path if nothing drives it.
 4. **The remaining CPU work in synthesis is the luma conversion and the frame
     uploads** — about 70 ms of the 79 ms a 1080p interpolation costs, against
     8 ms for the flow itself. Both would go if the decoded frame reached the
     card once and stayed there, which is the `DrawSource` change K-256 sketched.
+5. **A measurement harness on real gameplay** (K-257 follow-up), so the learned
+    ceiling — RIFE-class synthesis, WAFT-class flow — is judged against numbers
+    rather than impressions. A learned synthesiser emits no flow field, so Fast
+    motion blur and Datamosh need DIS vectors regardless.
 
 **Not to be built: a `flow/` disk tier.** docs/06 §5.4 reserves the folder and it
 should stay empty. Measuring a 1080p pair on the GPU costs ~8 ms; reading 37 MB

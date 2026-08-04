@@ -69,6 +69,7 @@ void main() {
         paint: const [],
         shapeContents: const [],
         markers: const [],
+        flow: false,
       ),
     );
   }

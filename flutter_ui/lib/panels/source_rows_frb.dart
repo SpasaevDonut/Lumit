@@ -258,8 +258,20 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
   /// changes nothing is worse than no row. It is also what puts the Source
   /// card on screen at all, so an offer here would give an adjustment layer a
   /// source card describing a source it does not have.
+  ///
+  /// **Flow is not one of the choices here (K-256).** It used to be a third
+  /// entry in this dropdown, which made it look like a peer of Nearest and
+  /// Blend — a small setting you pick and forget. It is not: it carries eight
+  /// parameters of its own and is the most expensive thing a layer can ask for.
+  /// It is the Flow switch in the layer's switch cluster instead, which reveals
+  /// the Flow group (K-088). Choosing Nearest or Blend here turns it off, since
+  /// they are the same setting underneath.
   List<Widget> _retimeRows(LumitTheme t) {
     if (widget.layer.getKind() != BridgeLayerKind.footage) return const [];
+    // Flow has its own switch; a layer that is on it shows Nearest here, which
+    // is what it falls back to whenever flow cannot help.
+    const choices = [BridgeRetimeInterp.nearest, BridgeRetimeInterp.blend];
+    final live = widget.layer.getInterpolation();
     return [
       _row(
         t,
@@ -268,8 +280,8 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
           width: _cellWidth + 40,
           child: BareDropdown<BridgeRetimeInterp>(
             key: const ValueKey('src-retime-interp'),
-            value: widget.layer.getInterpolation(),
-            options: BridgeRetimeInterp.values,
+            value: choices.contains(live) ? live : BridgeRetimeInterp.nearest,
+            options: choices,
             label: (i) => switch (i) {
               BridgeRetimeInterp.nearest => 'Nearest',
               BridgeRetimeInterp.blend => 'Blend',

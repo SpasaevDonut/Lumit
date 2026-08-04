@@ -50,6 +50,7 @@ import 'fx_section.dart';
 import 'transform_rows_frb.dart';
 import '../state/drag_payloads.dart';
 import 'placeholder.dart';
+import 'flow_rows_frb.dart';
 import 'source_rows_frb.dart';
 
 class EffectControlsPanelFrb extends StatefulWidget {
@@ -196,6 +197,18 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
                       onChanged: ui.model.refresh,
                       open: _isOpen('source'),
                       onToggle: () => _toggle('source'),
+                    ),
+                    // Flow sits between what the layer is made of and where it
+                    // sits, because that is what it is: how the source is
+                    // *sampled* (K-088). It shows itself only when the layer's
+                    // flow switch is on.
+                    FlowRowsFrb(
+                      key: ValueKey<String>(
+                          'flow-card-${layer.internallayerId}'),
+                      layer: layer,
+                      onChanged: ui.model.refresh,
+                      open: _isOpen('flow'),
+                      onToggle: () => _toggle('flow'),
                     ),
                     _TransformSection(
                       key: ValueKey<String>('tf-card-${layer.internallayerId}'),

@@ -4618,10 +4618,10 @@ class _OutlineRowState extends State<_OutlineRow> {
   /// Group 3: flow (collapse on a Precomp) · fx · motion blur · 3D, spread
   /// across the same span the fold-out's value cells use.
   ///
-  /// The flow slot: optical flow has no per-layer engine backing yet
-  /// (docs/TODO.md), so a Precomp layer shows its collapse switch there —
-  /// the spec's flow-or-collapse cell (K-168) — and other kinds leave it
-  /// empty rather than offering a control that cannot do anything.
+  /// The flow slot is the spec's flow-or-collapse cell (K-168): a Precomp shows
+  /// its collapse switch there, **footage shows its Flow switch** (K-088/K-256),
+  /// and other kinds leave it empty rather than offering a control that cannot
+  /// do anything.
   Widget _renderCells(BuildContext context, BridgeLayerInfo info) {
     final id = layer.internallayerId.toString();
     final switches = info.switches;
@@ -4632,11 +4632,14 @@ class _OutlineRowState extends State<_OutlineRow> {
           // Packed left in ordinary switch cells, exactly as group 1 is: the
           // group's remaining span belongs to the fold-out's value column,
           // not to spreading four icons across it.
-          info.kind == BridgeLayerKind.precomp
-              ? _switch(context, id, 'collapse', LumitIcon.collapse,
-                  switches.collapse, BridgeLayerSwitch.collapse,
-                  tip: 'Collapse transformations')
-              : const SizedBox(width: switchCellWidth),
+          if (info.kind == BridgeLayerKind.precomp)
+            _switch(context, id, 'collapse', LumitIcon.collapse,
+                switches.collapse, BridgeLayerSwitch.collapse,
+                tip: 'Collapse transformations')
+          else if (info.kind == BridgeLayerKind.footage)
+            _flowSwitch(context, id, info.flow)
+          else
+            const SizedBox(width: switchCellWidth),
           _switch(context, id, 'fx', LumitIcon.fx, switches.fx,
               BridgeLayerSwitch.fx,
               tip: switches.fx
@@ -4811,6 +4814,50 @@ class _OutlineRowState extends State<_OutlineRow> {
   /// read as buttons rather than loose glyphs. With an [offIcon] the glyph
   /// itself flips (closed eye, muted speaker, hollow circle) and keeps full
   /// strength either way; without one the off state dims, as before.
+  /// The Flow cell. Shaped exactly like [_switch] but writing the layer's
+  /// interpolation policy rather than a `BridgeLayerSwitch`, because that is
+  /// what flow *is* underneath (K-088: "the option surfaces the policy").
+  ///
+  /// The state comes from the read model, never from a bridge call — this
+  /// builds on every timeline rebuild, which is the cost K-184 removed.
+  Widget _flowSwitch(BuildContext context, String id, bool on) {
+    final t = ThemeScope.of(context).theme;
+    final cell = GestureDetector(
+      key: ValueKey<String>('tl-flow-$id'),
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        layer.setFlowEnabled(on_: !on);
+        widget.onChanged();
+      },
+      child: SizedBox(
+        width: switchCellWidth,
+        height: _rowHeight,
+        child: Center(
+          child: Container(
+            width: 18,
+            height: 18,
+            decoration: BoxDecoration(
+              color: t.surface0,
+              borderRadius: BorderRadius.circular(t.tokens.controlRadius),
+              border: Border.all(color: t.hairline),
+            ),
+            child: Center(
+              child: lumitIcon(LumitIcon.flow,
+                  size: iconSize,
+                  color: on ? t.textPrimary : t.textDisabled),
+            ),
+          ),
+        ),
+      ),
+    );
+    return LumitTooltip(
+      message: on
+          ? 'Flow — in-between frames are synthesised; click to turn off'
+          : 'Flow — synthesise in-between frames with optical flow',
+      child: cell,
+    );
+  }
+
   Widget _switch(
     BuildContext context,
     String id,

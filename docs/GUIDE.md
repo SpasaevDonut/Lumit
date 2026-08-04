@@ -642,13 +642,15 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   further down for what that gate does and how to override it). Under the hood it's the
   retime's frame-interpolation policy — an un-retimed layer quietly gains an identity retime
   to carry it, and loses it again when you switch off.
-  **Where this stands (K-256):** the engine, the parameters and the gate are built and
-  tested; the *controls* are not. Today the policy is chosen from the frame-interpolation
-  dropdown in a layer's Source rows (Nearest / Blend / Optical flow) and takes the default
-  parameters. The switch-cluster toggle and the **Flow** group beside Transform and Effects —
-  carrying flow resolution, vector detail, smoothness, occlusion handling, fallback, the HUD
-  guard, the override and the input rate — are still to be wired, along with moving flow onto
-  the render device and giving it a cache tier of its own.
+  **How you reach it (K-256):** the **Flow** switch in a footage layer's switch cluster, in
+  the same cell a Precomp uses for Collapse. Turning it on reveals a **Flow** group beside
+  Transform and Effects, carrying flow resolution, vector detail, smoothness, occlusion
+  handling, fallback, the HUD guard and an always-on override. Flow deliberately left the
+  in-between-frames dropdown, which still offers Nearest and Blend: sitting there made the
+  most expensive thing a layer can ask for look like a small setting you pick and forget.
+  One rough edge worth knowing: turning the switch off and on again resets the group to
+  defaults, because the parameters are stored inside the policy and have nowhere to live
+  while the policy is Nearest. Fixing that is on the backlog.
 - **Effects are usable end to end.** Twirl a layer open, open its **Effects** group,
   and "Add effect" lists the catalogue. Each effect shows a bypass
   tick, a remove button, and one row per parameter — a Blur radius has a stopwatch

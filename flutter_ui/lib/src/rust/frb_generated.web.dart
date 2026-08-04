@@ -132,6 +132,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeFileParam dco_decode_box_autoadd_bridge_file_param(dynamic raw);
 
   @protected
+  BridgeFlowParams dco_decode_box_autoadd_bridge_flow_params(dynamic raw);
+
+  @protected
   BridgeMask dco_decode_box_autoadd_bridge_mask(dynamic raw);
 
   @protected
@@ -272,6 +275,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeFileParam dco_decode_bridge_file_param(dynamic raw);
+
+  @protected
+  BridgeFlowParams dco_decode_bridge_flow_params(dynamic raw);
 
   @protected
   BridgeHistory dco_decode_bridge_history(dynamic raw);
@@ -720,6 +726,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  BridgeFlowParams sse_decode_box_autoadd_bridge_flow_params(
+      SseDeserializer deserializer);
+
+  @protected
   BridgeMask sse_decode_box_autoadd_bridge_mask(SseDeserializer deserializer);
 
   @protected
@@ -886,6 +896,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeFileParam sse_decode_bridge_file_param(SseDeserializer deserializer);
+
+  @protected
+  BridgeFlowParams sse_decode_bridge_flow_params(SseDeserializer deserializer);
 
   @protected
   BridgeHistory sse_decode_bridge_history(SseDeserializer deserializer);
@@ -1384,6 +1397,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeFileParam self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_bridge_flow_params(
+      BridgeFlowParams self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_bridge_mask(
       BridgeMask self, SseSerializer serializer);
 
@@ -1563,6 +1580,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_bridge_file_param(
       BridgeFileParam self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_flow_params(
+      BridgeFlowParams self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_history(BridgeHistory self, SseSerializer serializer);

@@ -201,6 +201,12 @@ class BridgeLayerInfo {
   /// to remove.
   final List<BridgeLayerMarker> markers;
 
+  /// Whether optical flow is live on this layer (K-088/K-256) — the switch
+  /// cluster's Flow cell, and what decides whether the fold-out shows a Flow
+  /// group. In the read model because the Timeline draws that cell on every
+  /// rebuild, and asking per row per frame is exactly the cost K-184 removed.
+  final bool flow;
+
   const BridgeLayerInfo({
     required this.name,
     required this.kind,
@@ -222,6 +228,7 @@ class BridgeLayerInfo {
     required this.paint,
     required this.shapeContents,
     required this.markers,
+    required this.flow,
   });
 
   @override
@@ -245,7 +252,8 @@ class BridgeLayerInfo {
       masks.hashCode ^
       paint.hashCode ^
       shapeContents.hashCode ^
-      markers.hashCode;
+      markers.hashCode ^
+      flow.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -271,7 +279,8 @@ class BridgeLayerInfo {
           masks == other.masks &&
           paint == other.paint &&
           shapeContents == other.shapeContents &&
-          markers == other.markers;
+          markers == other.markers &&
+          flow == other.flow;
 }
 
 /// What kind of source a layer has — what the Timeline draws its bar and its
@@ -1079,6 +1088,20 @@ class LayerReference {
         that: this,
       );
 
+  /// Whether flow is live on this layer — the switch-cluster toggle (K-088).
+  bool getFlowEnabled() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceGetFlowEnabled(
+        that: this,
+      );
+
+  /// This layer's Flow group, or the defaults when its policy is not Flow —
+  /// so the panel can show the controls it *would* get without the document
+  /// having to hold them yet.
+  BridgeFlowParams getFlowParams() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceGetFlowParams(
+        that: this,
+      );
+
   /// One read for everything a row draws — see [`BridgeLayerInfo`]. One
   /// document lock and one crossing, where the per-field getters cost one of
   /// each per field.
@@ -1370,6 +1393,21 @@ class LayerReference {
   void setEffects({required List<BridgeEffectInstance> effects}) =>
       BridgeLib.instance.api
           .crateApiLayerLayerReferenceSetEffects(that: this, effects: effects);
+
+  /// Turn flow on or off, keeping the group's settings either way (K-088).
+  /// Off returns the layer to Nearest — the policy it had before flow is not
+  /// recorded, and Nearest is the crisp default docs/04 §10 names.
+  void setFlowEnabled({required bool on_}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceSetFlowEnabled(that: this, on_: on_);
+
+  /// Write the Flow group. One undo step.
+  ///
+  /// Setting parameters *turns flow on* if it was off: the group is only
+  /// reachable from a layer whose flow is live, and a write that silently did
+  /// nothing would be worse than one that means what it says.
+  void setFlowParams({required BridgeFlowParams params}) =>
+      BridgeLib.instance.api
+          .crateApiLayerLayerReferenceSetFlowParams(that: this, params: params);
 
   /// Choose how in-between frames are found. One undo step.
   void setInterpolation({required BridgeRetimeInterp interpolation}) =>
