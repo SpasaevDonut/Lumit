@@ -701,8 +701,26 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   the nested comp exactly the way a precomp layer is rendered, loops
   guarded, and hands the picture to the light detector. One honest edge
   remains written down: footage inside a matte-only precomp needs the
-  decode planner taught before it appears there, and an area light is
-  still approximated by its eight brightest points.
+  decode planner taught before it appears there.
+  A fifth pass (K-267) closed the next round. The choppy ghost edges that
+  survived at corner lights turned out to be a measuring problem, not a
+  drawing one: the effect sizes each ghost's ray budget from a once-per-lens
+  measurement of how BIG the ghost gets, but a ghost near the frame corner
+  does not get bigger — it gets locally *stretched*, like an image printed
+  on rubber, and the stretched patch is where the facets show. So every
+  frame now runs a tiny probe (a handful of test rays per ghost, microseconds)
+  at the light's actual position, finds the worst-stretched ghosts, and gives
+  extra rays exactly there — under a strict allowance, worst first, so the
+  frame's cost is bounded and predictable rather than exploding on a bad
+  lens. Anamorphic squeeze below 1 stopped cutting to black at the edges:
+  the ghost picture is now simply rendered onto a wider canvas (up to twice
+  as wide) before the squeeze samples it, so there is real image where it
+  reaches. And an area light finally weighs as an area: the detector still
+  anchors each flare on the brightest spot (now up to sixteen of them), but
+  every lit detection tile pours its brightness into the nearest anchor, so
+  the owner's white-circle precomp flares with the strength of the whole
+  circle where it used to count as a single pixel — while a true pinpoint
+  light reads exactly as before.
 - **RGB split gains a Wavelength mode** (K-090's quality-tier pattern: where the smooth
   look is optional, it hides behind a Bool next to the fast one). Off — the default —
   the split is three tinted samples: the first colour pulled one way, the third the

@@ -5462,3 +5462,37 @@ needs the decode planner taught (solids, text, shapes, nested renders all work) 
 TODO'd. On area sources generally: Matte mode approximates an area by its
 brightest eight points with non-max suppression; raising that count and sampling
 the area proper is recorded as the follow-up rather than pretended.
+
+**K-267 · DECIDED · The grid budget re-measures at the frame's light, the flare buffer
+pads for squeeze/scale, and an area source weighs as its whole lit area.** Third live
+round on the same branch. **(1) "Still choppy at the corner" (7Artisans).** The bake's
+image-spread probe is a bounding box, and the corner measurements showed the box does
+not grow at corner lights — what grows is the worst LOCAL stretch: a pair the same
+overall size stretches ~6× near a fold, and those cells are the polyline edges. New
+frame-time probe (`frame_grid_needs`, the Hullin patent's "grid resolution adapted at
+runtime, guided by bounding shape estimations"): a 12×12 weight-gated trace per
+renderable pair at the actual light direction measures the worst adjacent-landing
+distance and derives the grid side that would keep the largest cell under 0.5% of the
+sensor diagonal. Uncapped this septupled a frame (24 s on the software rasteriser), so
+the raise is BUDGETED (`plan_frame_grids`): half again over the frame's rung-grid ray
+baseline, spent worst-stretch-first with partial grants, per-pair cap 3× the rung,
+hard clamp 512. Manual mode only (Matte lights exist GPU-side; both twins gate the
+same way). The probe runs in lumit-render through the same seam callback as the bake
+and returns the FINAL per-pair grids, so the CPU reference and the GPU dispatch cannot
+disagree about a single ray. Cost at the default Normal frame: 3.35 s → 5.76 s
+software-rasterised, the bounded price of the last three rounds' artefact class;
+Detail stays the user's dial in both directions. **(2) Anamorphic below 1 "cuts to
+black at the edges"** — K-266 honestly stopped the edge-repeat smear and honestly
+showed there was no flare past the buffer. Now there is: the ghost buffer renders
+PADDED (`flare_pad_dims`, up to 2× per axis, geometry centred, screen transform and
+blur radius still derived from the base dims), and the combine's tap only gains a
+constant border offset — zero when unpadded, bit-compatible. Past even the 2× cap
+(squeeze below 0.5 at Scale 1) the zero-outside rule still holds, pinned by the same
+test. **(3) "Eight brightest points, do better — now."** MAX_LIGHTS rises 8 → 16, and
+detection stops pretending an area is a pixel: after the top-K anchor pick, EVERY
+gated detection tile's flux — its brightest pixel's colour × its threshold gate —
+accumulates onto its nearest anchor (Chebyshev, ties to the lowest index, fixed tile
+order, CPU and GPU op-for-op). A one-tile point source is its own anchor's only
+contributor and reads exactly as before; the owner's white-circle precomp now carries
+the flux of every tile it lights. Position stays the anchor pixel; sub-tile centroid
+positioning would be the next refinement if ever needed.

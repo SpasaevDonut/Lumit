@@ -81,11 +81,14 @@ fn combine(@builtin(global_invocation_id) gid: vec3<u32>) {
     let sx = cx + (f32(xy.x) + 0.5 - cx) / (cp.squeeze * cp.fscale);
     let sy = cyc + (f32(xy.y) + 0.5 - cyc) / cp.fscale;
     // Flare buffer tap (resolution-relative: Draft renders it half-size).
+    // The buffer may be PADDED past the base cp.fw × cp.fh for Squeeze or
+    // Scale under 1 (K-267), geometry centred — the padding only adds the
+    // constant border offset, zero when unpadded.
     let fdims = vec2<i32>(textureDimensions(flare_tex));
     let f = tap_rgb(
         flare_tex,
-        sx / cp.w * cp.fw - 0.5,
-        sy / cp.h * cp.fh - 0.5,
+        sx / cp.w * cp.fw - 0.5 + (f32(fdims.x) - cp.fw) / 2.0,
+        sy / cp.h * cp.fh - 0.5 + (f32(fdims.y) - cp.fh) / 2.0,
         fdims,
     );
     // One starburst sprite per live light: anchored on its light, sized by

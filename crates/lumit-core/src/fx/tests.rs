@@ -4916,30 +4916,113 @@ fn resolved_px_fields_rescale_for_a_different_raster() {
 }
 
 // An anamorphic squeeze (or scale) below 1 asks the combine for flare
-// coordinates past the buffer, and there is NO flare there (K-266): the
-// clamp-addressed tap repeated the buffer's edge row outward as a smear.
+// coordinates past the buffer. Up to the 2× padding cap the buffer now
+// renders wider and carries real flare there (K-267); past even the
+// padded extent there is still NO flare (K-266) — the clamp-addressed tap
+// used to repeat the edge row outward as a smear.
 #[test]
 fn lens_flare_combine_does_not_repeat_the_flare_past_its_buffer() {
     use crate::fx::lens_flare::*;
-    let p = LensFlareParams {
+    let (w, h) = (64u32, 36u32);
+    // Squeeze 0.5 sits inside the padding: the frame edge samples the
+    // padded buffer's real content, not black.
+    let p_half = LensFlareParams {
         anamorphic: 0.5,
         starburst_intensity: 0.0,
         ghost_softness: 0.0,
         ..default_flare_params()
     };
-    let baked = bake(&p);
-    let (w, h) = (64u32, 36u32);
-    // A uniformly lit flare buffer: any edge repeat is then unmissable.
-    let flare = vec![0.5_f32; (w * h * 3) as usize];
+    let baked = bake(&p_half);
+    let (rw, rh) = flare_pad_dims(w, h, p_half.anamorphic, p_half.scale);
+    assert_eq!((rw, rh), (w * 2, h), "squeeze 0.5 pads to double width");
+    let flare = vec![0.5_f32; (rw * rh * 3) as usize];
     let mut out = vec![0.0_f32; (w * h * 4) as usize];
-    let lights = manual_light(&p, w, h);
-    cpu_combine(&mut out, w, h, &p, &baked, &flare, w, h, &lights);
-    // squeeze 0.5 maps x=0 to sx = 32 + (0.5-32)/0.5 = -31: far outside.
+    let lights = manual_light(&p_half, w, h);
+    cpu_combine(&mut out, w, h, &p_half, &baked, &flare, w, h, &lights);
     let left_edge: f32 = (0..h).map(|y| out[((y * w) * 4) as usize]).sum();
-    assert_eq!(left_edge, 0.0, "outside the buffer there is no flare");
+    assert!(
+        left_edge > 0.0,
+        "K-267: the padded buffer must reach the squeezed frame edge"
+    );
+    // Squeeze 0.25 outruns even the 2× padding cap — and past the padded
+    // buffer there must be nothing, never a repeated edge row.
+    let p_quarter = LensFlareParams {
+        anamorphic: 0.25,
+        ..p_half
+    };
+    let (rw, rh) = flare_pad_dims(w, h, p_quarter.anamorphic, p_quarter.scale);
+    assert_eq!((rw, rh), (w * 2, h), "the padding caps at 2x");
+    let flare = vec![0.5_f32; (rw * rh * 3) as usize];
+    let mut out = vec![0.0_f32; (w * h * 4) as usize];
+    let lights = manual_light(&p_quarter, w, h);
+    cpu_combine(&mut out, w, h, &p_quarter, &baked, &flare, w, h, &lights);
+    // squeeze 0.25 maps x=0 to sx = 32 + (0.5-32)/0.25 = -94, u = -94.5/64
+    // of the base width plus the 32 px pad offset: still far outside.
+    let left_edge: f32 = (0..h).map(|y| out[((y * w) * 4) as usize]).sum();
+    assert_eq!(
+        left_edge, 0.0,
+        "outside the padded buffer there is no flare"
+    );
     // The centre still receives it.
     let centre = out[(((h / 2) * w + w / 2) * 4) as usize];
     assert!(centre > 0.0, "the squeezed flare itself still lands");
+}
+
+// Area sources (K-267): a practical spanning many tiles weighs as its
+// whole lit area — every gated tile's flux lands on its nearest anchor —
+// while a one-tile point source reads exactly as before (its own tile's
+// brightest pixel through the gate). This was the owner's white-circle
+// precomp: detected as one pixel, it flared like a pin-prick.
+#[test]
+fn lens_flare_detects_area_sources_as_summed_flux() {
+    use crate::fx::lens_flare::*;
+    let (w, h) = (256u32, 96u32);
+    let mut matte = vec![0.0_f32; (w * h * 4) as usize];
+    // A white disc spanning several detection tiles…
+    let (cx, cy, r) = (48.0_f32, 48.0_f32, 40.0_f32);
+    // …and a single-pixel practical far to the right.
+    let dot = (16 * w + 240) as usize;
+    for y in 0..h {
+        for x in 0..w {
+            let i = ((y * w + x) * 4) as usize;
+            let inside = (x as f32 + 0.5 - cx).hypot(y as f32 + 0.5 - cy) <= r;
+            if inside || i / 4 == dot {
+                matte[i] = 1.0;
+                matte[i + 1] = 1.0;
+                matte[i + 2] = 1.0;
+                matte[i + 3] = 1.0;
+            }
+        }
+    }
+    let lights = detect_lights(&matte, w, h, 1.0, 0.25, true, [1.0, 1.0, 1.0]);
+    assert_eq!(lights.len(), 2, "one disc anchor, one dot anchor");
+    // The disc's anchor sits inside the disc, the dot's on the dot.
+    let disc = &lights[0];
+    let dot_light = &lights[1];
+    assert!(
+        (disc.pos[0] * w as f32 - cx).abs() < r && (disc.pos[1] * h as f32 - cy).abs() < r,
+        "first anchor must sit in the disc: {:?}",
+        disc.pos
+    );
+    assert!(
+        (dot_light.pos[0] * w as f32 - 240.5).abs() < 1.0,
+        "second anchor must sit on the dot: {:?}",
+        dot_light.pos
+    );
+    // The dot reads as the classic point: white × gate(1.0) — and the disc
+    // reads as MANY tiles of that, several times the dot's flux.
+    let gate = threshold_gate(1.0, 1.0, 0.25);
+    assert!(
+        (dot_light.rgb[0] - gate).abs() < 1e-6,
+        "{:?}",
+        dot_light.rgb
+    );
+    assert!(
+        disc.rgb[0] > dot_light.rgb[0] * 3.0,
+        "area flux must dwarf the point: disc {} vs dot {}",
+        disc.rgb[0],
+        dot_light.rgb[0]
+    );
 }
 
 // §8.5 (CPU side) — the trace lands rays: at the default light the top
@@ -5370,6 +5453,98 @@ fn lens_flare_grid_budget_follows_ghost_size() {
     assert!(baked.spreads.iter().all(|s| s.is_finite() && *s >= 0.0));
 }
 
+// Frame-time grid probe (K-267): the bake spread is a bounding-box measure
+// and misses folds — a pair the same overall size can stretch several-fold
+// locally at a corner light, and those cells were the owner's choppy
+// polyline edges on the 7Artisans. The probe must see the local stretch
+// and raise the grid, the boost must respect its floor and caps, and the
+// raw-rows entry the GPU seam uses must agree with the typed one exactly.
+#[test]
+fn lens_flare_frame_probe_sees_corner_stretch() {
+    use crate::fx::lens_flare::*;
+    let p = crate::fx::lens_flare::LensFlareParams {
+        lens: 0,
+        ..default_flare_params()
+    };
+    let baked = bake(&p);
+    let pair_count = baked.pairs.len().min(p.max_ghosts as usize);
+    let stop_scale = fstop_scale(baked.native_fstop, p.fstop);
+    let shift = focus_shift_mm(p.focus_m, baked.focal_mm);
+    let corner = light_direction([0.85, 0.78], 9.0 / 16.0, baked.focal_mm);
+    let sp = frame_grid_needs(&baked, pair_count, corner, p.coating, stop_scale, shift);
+    assert_eq!(sp.len(), pair_count);
+    assert!(sp.iter().all(|s| s.is_finite() && *s >= 1.0));
+    // At least one renderable pair must outgrow its bake-floor grid at the
+    // Normal tier — the condition the K-267 budget raise exists for.
+    let grew = sp
+        .iter()
+        .zip(&baked.spreads)
+        .any(|(need, b)| boost_grid(pair_grid(64, *b), *need) > pair_grid(64, *b));
+    assert!(grew, "corner light must raise at least one pair's grid");
+    // The boost never lowers the floor, honours its 3x cap, and stays in
+    // the dispatchable range.
+    assert_eq!(boost_grid(64, 1.0), 64);
+    assert_eq!(boost_grid(64, 63.0), 64, "never below the bake floor");
+    assert_eq!(boost_grid(64, 100.4), 100);
+    assert_eq!(boost_grid(64, 4096.0), 192, "capped at 3x the rung grid");
+    assert_eq!(boost_grid(360, 4096.0), 512, "hard 512 dispatch clamp");
+    assert_eq!(boost_grid(4, 1.0), 8, "degenerate floor stays sane");
+    // The budget plan never lowers a rung, spends at most the headroom,
+    // and raises the pair that asked.
+    let plan = plan_frame_grids(64, &baked.spreads, &sp);
+    assert_eq!(plan.len(), pair_count);
+    let mut baseline = 0u64;
+    let mut spent = 0u64;
+    for (pi, &g) in plan.iter().enumerate() {
+        let rung = pair_grid(64, baked.spreads.get(pi).copied().unwrap_or(1.0));
+        assert!(g >= rung, "pair {pi}: planned {g} under rung {rung}");
+        assert!(g <= 512);
+        baseline += u64::from(rung) * u64::from(rung);
+        spent += u64::from(g) * u64::from(g);
+    }
+    assert!(
+        spent as f64 <= baseline as f64 * (1.0 + f64::from(FRAME_RAY_HEADROOM)) + 512.0 * 512.0,
+        "plan overspends: {spent} vs baseline {baseline}"
+    );
+    assert!(
+        plan.iter()
+            .enumerate()
+            .any(|(pi, &g)| g > pair_grid(64, baked.spreads.get(pi).copied().unwrap_or(1.0))),
+        "the corner frame must actually spend its headroom"
+    );
+    // The raw-rows entry is the same probe.
+    let rows: Vec<[f32; 8]> = baked
+        .surfaces
+        .iter()
+        .map(|s| {
+            [
+                s.radius_mm,
+                s.z_mm,
+                s.semi_ap_mm,
+                s.cauchy_a,
+                s.cauchy_b,
+                s.coating_layers,
+                s.is_stop,
+                0.0,
+            ]
+        })
+        .collect();
+    let sp2 = frame_grid_needs_from_rows(
+        &rows,
+        &baked.pairs,
+        baked.sensor_z_mm,
+        baked.focal_mm,
+        baked.pupil_mm,
+        baked.start_z_mm,
+        pair_count,
+        corner,
+        p.coating,
+        stop_scale,
+        shift,
+    );
+    assert_eq!(sp, sp2, "seam entry must be bit-identical");
+}
+
 /// The documented drop-on defaults, shared by the lens flare tests.
 fn default_flare_params() -> crate::fx::lens_flare::LensFlareParams {
     crate::fx::lens_flare::LensFlareParams {
@@ -5458,4 +5633,75 @@ fn lens_flare_detects_matte_sources_deterministically() {
     assert_eq!(threshold_gate(0.99, 1.0, 0.0), 0.0);
     assert_eq!(threshold_gate(1.0, 1.0, 0.0), 1.0);
     assert!((threshold_gate(1.0, 1.0, 0.5) - 0.5).abs() < 1e-6);
+}
+
+#[test]
+fn zz_debug_cells() {
+    use crate::fx::lens_flare::*;
+    let p = LensFlareParams {
+        lens: 0,
+        quality: 3,
+        ..default_flare_params()
+    };
+    let baked = bake(&p);
+    let (tier_base, _, _) = quality_ladder(p.quality);
+    let base_side = detail_base(tier_base, p.detail);
+    let pc = baked.pairs.len().min(p.max_ghosts as usize);
+    let ss = fstop_scale(baked.native_fstop, p.fstop);
+    let sh = focus_shift_mm(p.focus_m, baked.focal_mm);
+    let (w, h) = (960u32, 540u32);
+    let dir = light_direction([0.85, 0.78], h as f32 / w as f32, baked.focal_mm);
+    let st = screen_transform(w);
+    for (pi, pair) in baked.pairs.iter().take(pc).enumerate() {
+        let spread = baked.spreads.get(pi).copied().unwrap_or(1.0);
+        let side = pair_grid(base_side, spread) as usize;
+        // trace the full grid, find max adjacent-corner distance among
+        // rays whose weight is significant, plus landing bbox
+        let mut pos = vec![None; side * side];
+        for j in 0..side {
+            for i in 0..side {
+                let u = (i as f32 / (side - 1) as f32) * 2.0 - 1.0;
+                let v = (j as f32 / (side - 1) as f32) * 2.0 - 1.0;
+                if u * u + v * v > 1.1f32 {
+                    continue;
+                }
+                let o = [
+                    u * baked.pupil_mm * ss,
+                    v * baked.pupil_mm * ss,
+                    baked.start_z_mm,
+                ];
+                pos[j * side + i] = trace_splat(&baked, *pair, 550.0, o, dir, p.coating, ss, sh);
+            }
+        }
+        let mut dmax = 0.0f32;
+        let mut wmax = 0.0f32;
+        let (mut bx0, mut bx1, mut by0, mut by1) = (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
+        for j in 0..side {
+            for i in 0..side {
+                if let Some((a, wa)) = pos[j * side + i] {
+                    if wa > 1e-5 {
+                        wmax = wmax.max(wa);
+                        bx0 = bx0.min(a[0]);
+                        bx1 = bx1.max(a[0]);
+                        by0 = by0.min(a[1]);
+                        by1 = by1.max(a[1]);
+                        for (ni, nj) in [(i + 1, j), (i, j + 1)] {
+                            if ni < side && nj < side {
+                                if let Some((b, wb)) = pos[nj * side + ni] {
+                                    if wb > 1e-5 {
+                                        let d = (a[0] - b[0]).hypot(a[1] - b[1]);
+                                        dmax = dmax.max(d);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if wmax > 1e-4 && dmax * st > 6.0 {
+            eprintln!("pair {pi} {:?} spread {spread:.2} side {side} maxcell_px {:.0} bbox_px {:.0}x{:.0} wmax {wmax:.4}",
+                pair, dmax * st, (bx1 - bx0) * st, (by1 - by0) * st);
+        }
+    }
 }

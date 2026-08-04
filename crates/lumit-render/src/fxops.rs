@@ -822,37 +822,68 @@ pub fn run_ops(
                 };
                 let params = *p;
                 let custom_text = custom.map(|(_, text)| text.clone());
-                tex = fx.lens_flare(ctx, &tex, w, h, &op, matte, &move || {
-                    let b = lf::bake_with(&params, custom_text.as_deref());
-                    lumit_gpu::fx::FlareBakeData {
-                        surfaces: b
-                            .surfaces
-                            .iter()
-                            .map(|s| {
-                                [
-                                    s.radius_mm,
-                                    s.z_mm,
-                                    s.semi_ap_mm,
-                                    s.cauchy_a,
-                                    s.cauchy_b,
-                                    s.coating_layers,
-                                    s.is_stop,
-                                    0.0,
-                                ]
-                            })
-                            .collect(),
-                        ghosts: b.pairs.clone(),
-                        spreads: b.spreads.clone(),
-                        sensor_z_mm: b.sensor_z_mm,
-                        focal_mm: b.focal_mm,
-                        native_fstop: b.native_fstop,
-                        pupil_mm: b.pupil_mm,
-                        start_z_mm: b.start_z_mm,
-                        energy_gain: b.energy_gain,
-                        starburst: b.starburst,
-                        sb_res: lf::STARBURST_RES,
-                    }
-                });
+                // Manual mode's frame-time grid probe (K-267): the GPU
+                // hands back its cached bake's tables and this closure runs
+                // the one lumit-core probe both twins share, at the frame's
+                // actual light direction.
+                let light_frac = op.light_frac;
+                let aspect = h as f32 / w.max(1) as f32;
+                let probe = move |pb: &lumit_gpu::fx::FlareProbeBake| {
+                    let needs = lf::frame_grid_needs_from_rows(
+                        pb.surfaces,
+                        pb.ghosts,
+                        pb.sensor_z_mm,
+                        pb.focal_mm,
+                        pb.pupil_mm,
+                        pb.start_z_mm,
+                        pb.pair_count,
+                        lf::light_direction(light_frac, aspect, pb.focal_mm),
+                        params.coating,
+                        lf::fstop_scale(pb.native_fstop, params.fstop),
+                        lf::focus_shift_mm(params.focus_m, pb.focal_mm),
+                    );
+                    lf::plan_frame_grids(grid, pb.spreads, &needs)
+                };
+                tex = fx.lens_flare(
+                    ctx,
+                    &tex,
+                    w,
+                    h,
+                    &op,
+                    matte,
+                    &move || {
+                        let b = lf::bake_with(&params, custom_text.as_deref());
+                        lumit_gpu::fx::FlareBakeData {
+                            surfaces: b
+                                .surfaces
+                                .iter()
+                                .map(|s| {
+                                    [
+                                        s.radius_mm,
+                                        s.z_mm,
+                                        s.semi_ap_mm,
+                                        s.cauchy_a,
+                                        s.cauchy_b,
+                                        s.coating_layers,
+                                        s.is_stop,
+                                        0.0,
+                                    ]
+                                })
+                                .collect(),
+                            ghosts: b.pairs.clone(),
+                            spreads: b.spreads.clone(),
+                            sensor_z_mm: b.sensor_z_mm,
+                            focal_mm: b.focal_mm,
+                            native_fstop: b.native_fstop,
+                            pupil_mm: b.pupil_mm,
+                            start_z_mm: b.start_z_mm,
+                            energy_gain: b.energy_gain,
+                            starburst: b.starburst,
+                            sb_res: lf::STARBURST_RES,
+                        }
+                    },
+                    &probe,
+                );
             }
         }
     }

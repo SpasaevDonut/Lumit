@@ -143,8 +143,10 @@ pub const STARBURST_SAMPLES: u32 = 100;
 /// Aperture-image side for the starburst FFT.
 pub const APERTURE_RES: u32 = 256;
 
-/// Most flare sources a frame renders (Matte mode's top-K cap; Manual is one).
-pub const MAX_LIGHTS: usize = 8;
+/// Most flare sources a frame renders (Matte mode's top-K cap; Manual is
+/// one). 16 since K-267: area sources anchor on one slot each, and eight
+/// anchors starved scenes with several practicals plus an area source.
+pub const MAX_LIGHTS: usize = 16;
 /// Detection tile side, raster pixels (impl note §6).
 pub const DETECT_TILE: u32 = 32;
 /// Non-max suppression radius, in tiles (Chebyshev): one highlight must not
@@ -216,9 +218,11 @@ pub fn threshold_gate(luma: f32, threshold: f32, softness: f32) -> f32 {
 /// suppression, gating each through [`threshold_gate`]. Deterministic by
 /// construction — no float reduction order depends on threading.
 ///
-/// Each light's colour is `(use_source ? source rgb : white) × gate × tint`
-/// (K-259), so the same function serves both "the practical's own colour
-/// flares" and "this matte only says *where*".
+/// Each light's colour is the summed flux of every gated tile nearest it —
+/// `(use_source ? tile rgb : white) × gate` per tile, times the tint
+/// (K-259/K-267) — so the same function serves "the practical's own colour
+/// flares", "this matte only says *where*", and area sources whose light
+/// is their whole lit extent rather than one pixel.
 pub fn detect_lights(
     matte: &[f32],
     w: u32,
@@ -246,7 +250,8 @@ pub fn detect_lights(
         }
     }
     let mut suppressed = vec![false; tx * ty];
-    let mut out = Vec::new();
+    // Anchors: the top-K picks, position at each pick's brightest pixel.
+    let mut anchors: Vec<(usize, u32)> = Vec::new();
     for _ in 0..MAX_LIGHTS {
         let mut best: Option<usize> = None;
         for (t, &(luma, _)) in tiles.iter().enumerate() {
@@ -260,30 +265,11 @@ pub fn detect_lights(
         }
         let Some(b) = best else { break };
         let (luma, idx) = tiles[b];
-        let weight = threshold_gate(luma, threshold, softness);
-        if weight <= 0.0 {
+        if threshold_gate(luma, threshold, softness) <= 0.0 {
             // Cells are visited brightest-first, so nothing dimmer passes.
             break;
         }
-        let (px, py) = (idx % w, idx / w);
-        let i = (idx * 4) as usize;
-        let src = if use_source_colour {
-            [
-                matte[i].max(0.0),
-                matte[i + 1].max(0.0),
-                matte[i + 2].max(0.0),
-            ]
-        } else {
-            [1.0, 1.0, 1.0]
-        };
-        out.push(FlareLight {
-            pos: [(px as f32 + 0.5) / w as f32, (py as f32 + 0.5) / h as f32],
-            rgb: [
-                src[0] * weight * tint[0],
-                src[1] * weight * tint[1],
-                src[2] * weight * tint[2],
-            ],
-        });
+        anchors.push((b, idx));
         let (bx, by) = ((b % tx) as i64, (b / tx) as i64);
         for sy in (by - SUPPRESS_TILES)..=(by + SUPPRESS_TILES) {
             for sx in (bx - SUPPRESS_TILES)..=(bx + SUPPRESS_TILES) {
@@ -293,7 +279,60 @@ pub fn detect_lights(
             }
         }
     }
-    out
+    // Area sources (K-267): every gated tile's flux — its brightest pixel's
+    // colour (or white) times its gate — lands on the NEAREST anchor
+    // (Chebyshev in tiles; ties to the lowest anchor index), tile order
+    // fixed for determinism. A one-tile point source is its own anchor's
+    // only contributor, so it reads exactly as before K-267; a practical
+    // spanning many tiles finally weighs as its whole lit area instead of
+    // one pixel.
+    let mut acc = vec![[0.0_f32; 3]; anchors.len()];
+    if !anchors.is_empty() {
+        for (t, &(luma, idx)) in tiles.iter().enumerate() {
+            if luma <= 0.0 {
+                continue;
+            }
+            let weight = threshold_gate(luma, threshold, softness);
+            if weight <= 0.0 {
+                continue;
+            }
+            let (cx, cy) = ((t % tx) as i64, (t / tx) as i64);
+            let mut nearest = 0usize;
+            let mut nearest_d = i64::MAX;
+            for (a, &(at, _)) in anchors.iter().enumerate() {
+                let (ax, ay) = ((at % tx) as i64, (at / tx) as i64);
+                let d = (cx - ax).abs().max((cy - ay).abs());
+                if d < nearest_d {
+                    nearest_d = d;
+                    nearest = a;
+                }
+            }
+            let i = (idx * 4) as usize;
+            let src = if use_source_colour {
+                [
+                    matte[i].max(0.0),
+                    matte[i + 1].max(0.0),
+                    matte[i + 2].max(0.0),
+                ]
+            } else {
+                [1.0, 1.0, 1.0]
+            };
+            for c in 0..3 {
+                acc[nearest][c] += src[c] * weight;
+            }
+        }
+    }
+    anchors
+        .iter()
+        .zip(&acc)
+        .map(|(&(_, idx), rgb)| {
+            let (px, py) = (idx % w, idx / w);
+            FlareLight {
+                pos: [(px as f32 + 0.5) / w as f32, (py as f32 + 0.5) / h as f32],
+                rgb: [rgb[0] * tint[0], rgb[1] * tint[1], rgb[2] * tint[2]],
+            }
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -960,6 +999,205 @@ pub fn detail_lambda(tier_lambda: u32, detail: f32) -> u32 {
     ((tier_lambda as f32 * detail.clamp(0.25, 4.0)).round() as u32).clamp(3, 64)
 }
 
+/// The largest quad cell a frame tolerates, as a fraction of the sensor
+/// diagonal (K-267): the frame-time probe below raises a pair's grid until
+/// its worst cell sits under this. 0.005 of the diagonal is ~5.5 px at
+/// 1080p — under the eye's line-detection threshold once 4×MSAA feathers
+/// the edge.
+pub const FRAME_CELL_FRAC: f32 = 0.005;
+
+/// How far past the bake-spread grid the frame-time probe may push one
+/// pair (K-267): a fold can demand an unbounded grid, and ray cost is
+/// quadratic in the side, so the boost is capped at 3× the rung grid.
+pub const FRAME_BOOST_CAP: u32 = 3;
+
+/// Per-pair grid NEED for THIS FRAME's light (K-267). The bake spread is a
+/// global bounding-box measure and misses folds: a pair whose image stays
+/// the same overall size can still stretch 6× locally near a caustic at a
+/// corner light, and those cells were the owner's choppy polyline edges.
+/// A 12×12 weight-gated probe per renderable pair at the actual light
+/// direction (the Hullin patent's "grid resolution adapted at runtime,
+/// guided by bounding shape estimations") measures the worst adjacent-ray
+/// landing distance; cell size shrinks inversely with the grid side, so
+/// the side that puts the worst cell under [`FRAME_CELL_FRAC`] is
+/// `(G−1) · d_max / target + 1`. Returned per pair (1.0 = no need);
+/// [`boost_grid`] applies it WITHOUT ever lowering the bake floor. Manual
+/// mode only — Matte lights exist GPU-side, so both twins keep the bake
+/// grids there and parity holds.
+pub fn frame_grid_needs(
+    baked: &FlareBaked,
+    pair_count: usize,
+    dir: [f32; 3],
+    coating: f32,
+    stop_scale: f32,
+    sensor_shift_mm: f32,
+) -> Vec<f32> {
+    const G: usize = 12;
+    let sensor_diag = (SENSOR_MM[0] * SENSOR_MM[0] + SENSOR_MM[1] * SENSOR_MM[1]).sqrt();
+    let target_mm = FRAME_CELL_FRAC * sensor_diag;
+    let unit = |i: usize| (i as f32 / (G - 1) as f32) * 2.0 - 1.0;
+    let mut landings: Vec<Option<[f32; 2]>> = vec![None; G * G];
+    baked
+        .pairs
+        .iter()
+        .take(pair_count)
+        .map(|&pair| {
+            for cell in landings.iter_mut() {
+                *cell = None;
+            }
+            for j in 0..G {
+                for i in 0..G {
+                    let (u, v) = (unit(i), unit(j));
+                    if u * u + v * v > 1.0 {
+                        continue;
+                    }
+                    let o = [
+                        u * baked.pupil_mm * stop_scale,
+                        v * baked.pupil_mm * stop_scale,
+                        baked.start_z_mm,
+                    ];
+                    landings[j * G + i] = trace_splat(
+                        baked,
+                        pair,
+                        550.0,
+                        o,
+                        dir,
+                        coating,
+                        stop_scale,
+                        sensor_shift_mm,
+                    )
+                    .and_then(|(pos, wgt)| (wgt > 1e-6).then_some(pos));
+                }
+            }
+            let mut d_max = 0.0_f32;
+            for j in 0..G {
+                for i in 0..G {
+                    let Some(a) = landings[j * G + i] else {
+                        continue;
+                    };
+                    for (ni, nj) in [(i + 1, j), (i, j + 1)] {
+                        if ni >= G || nj >= G {
+                            continue;
+                        }
+                        if let Some(b) = landings[nj * G + ni] {
+                            d_max = d_max.max((a[0] - b[0]).hypot(a[1] - b[1]));
+                        }
+                    }
+                }
+            }
+            if d_max > 0.0 {
+                ((G - 1) as f32 * d_max / target_mm + 1.0).min(4096.0)
+            } else {
+                1.0
+            }
+        })
+        .collect()
+}
+
+/// Apply one pair's frame-time grid need to its bake-spread grid (K-267):
+/// never below the bake floor, never past [`FRAME_BOOST_CAP`]× it, always
+/// inside `pair_grid`'s 8..512 clamp.
+pub fn boost_grid(pair_grid: u32, need: f32) -> u32 {
+    let cap = pair_grid.saturating_mul(FRAME_BOOST_CAP);
+    pair_grid.max((need.round() as u32).min(cap)).clamp(8, 512)
+}
+
+/// Extra rays the frame-time probe may add, as a fraction of the frame's
+/// rung baseline (K-267). Uncapped, the probe septupled a frame's cost —
+/// every fold demanded its 3× grid at once. Half again over the baseline
+/// keeps the boost a bounded, predictable spend.
+pub const FRAME_RAY_HEADROOM: f32 = 0.5;
+
+/// The frame's final per-pair grids (K-267): each pair's K-262 rung grid,
+/// raised toward its [`frame_grid_needs`] want under a shared ray budget —
+/// [`FRAME_RAY_HEADROOM`] extra over the rung baseline, spent worst local
+/// stretch first (ties keep rank order, §2.4 determinism), partial grants
+/// when the budget runs short. Computed ONCE per frame in lumit-core and
+/// carried across the GPU seam as plain numbers, so the CPU reference and
+/// the GPU dispatch cannot disagree about a single ray.
+pub fn plan_frame_grids(base_side: u32, spreads: &[f32], needs: &[f32]) -> Vec<u32> {
+    let n = needs.len();
+    let rung: Vec<u32> = (0..n)
+        .map(|i| pair_grid(base_side, spreads.get(i).copied().unwrap_or(1.0)))
+        .collect();
+    let mut out = rung.clone();
+    let sq = |g: u32| u64::from(g) * u64::from(g);
+    let baseline: u64 = rung.iter().map(|&g| sq(g)).sum();
+    let mut budget = (baseline as f64 * f64::from(FRAME_RAY_HEADROOM)) as u64;
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&a, &b| {
+        let ra = needs[a] / rung[a] as f32;
+        let rb = needs[b] / rung[b] as f32;
+        rb.partial_cmp(&ra)
+            .unwrap_or(core::cmp::Ordering::Equal)
+            .then(a.cmp(&b))
+    });
+    for i in order {
+        let want = boost_grid(rung[i], needs[i]);
+        if want <= rung[i] || budget == 0 {
+            continue;
+        }
+        let extra = sq(want) - sq(rung[i]);
+        let grant = if extra <= budget {
+            want
+        } else {
+            // Partial grant: the side whose square spends what remains.
+            ((budget + sq(rung[i])) as f64).sqrt().floor() as u32
+        };
+        let grant = grant.clamp(rung[i], 512);
+        budget -= sq(grant) - sq(rung[i]);
+        out[i] = grant;
+    }
+    out
+}
+
+/// [`frame_grid_needs`] from the plain buffers the GPU seam carries (the
+/// `FlareBakeData` shape — K-267): lumit-render runs the probe against the
+/// GPU's cached bake without re-baking, so the surface table arrives as raw
+/// rows. Fields the probe never reads (native f-stop, front aperture, gain,
+/// starburst) are zeroed in the view.
+#[allow(clippy::too_many_arguments)]
+pub fn frame_grid_needs_from_rows(
+    surfaces: &[[f32; 8]],
+    pairs: &[[u32; 2]],
+    sensor_z_mm: f32,
+    focal_mm: f32,
+    pupil_mm: f32,
+    start_z_mm: f32,
+    pair_count: usize,
+    dir: [f32; 3],
+    coating: f32,
+    stop_scale: f32,
+    sensor_shift_mm: f32,
+) -> Vec<f32> {
+    let view = FlareBaked {
+        surfaces: surfaces
+            .iter()
+            .map(|r| FlareSurface {
+                radius_mm: r[0],
+                z_mm: r[1],
+                semi_ap_mm: r[2],
+                cauchy_a: r[3],
+                cauchy_b: r[4],
+                coating_layers: r[5],
+                is_stop: r[6],
+                _pad: 0.0,
+            })
+            .collect(),
+        sensor_z_mm,
+        focal_mm,
+        native_fstop: 0.0,
+        front_semi_ap: 0.0,
+        pupil_mm,
+        start_z_mm,
+        pairs: pairs.to_vec(),
+        spreads: Vec::new(),
+        energy_gain: 0.0,
+        starburst: Vec::new(),
+    };
+    frame_grid_needs(&view, pair_count, dir, coating, stop_scale, sensor_shift_mm)
+}
+
 pub fn pair_grid(base: u32, spread: f32) -> u32 {
     let mult = if spread < 0.5 {
         1.0
@@ -969,6 +1207,24 @@ pub fn pair_grid(base: u32, spread: f32) -> u32 {
         2.5
     };
     ((base as f32 * mult).round() as u32).clamp(8, 512)
+}
+
+/// The flare buffer's dimensions once padding for Squeeze/Scale is applied
+/// (K-267). A squeeze or Scale below 1 samples PAST the base buffer in the
+/// combine, and K-266's zero-outside tap honestly showed nothing there —
+/// the owner's "cuts to black at the edges". The buffer renders larger
+/// instead, up to 2× per axis (the working Squeeze floor is 0.5), with the
+/// geometry centred so the combine only adds a constant offset. Mirrored
+/// in lumit-gpu (pinned by test); the clamps match `cpu_combine`'s.
+pub fn flare_pad_dims(fw: u32, fh: u32, squeeze: f32, scale: f32) -> (u32, u32) {
+    let squeeze = squeeze.clamp(0.25, 4.0);
+    let fscale = scale.clamp(0.05, 20.0);
+    let px = (1.0 / (squeeze * fscale)).clamp(1.0, 2.0);
+    let py = (1.0 / fscale).clamp(1.0, 2.0);
+    (
+        ((fw as f32) * px).ceil() as u32,
+        ((fh as f32) * py).ceil() as u32,
+    )
 }
 
 /// The effective iris roundness for a working f-stop (K-260): wide open a
@@ -1671,7 +1927,13 @@ pub fn cpu_flare(
     h: u32,
     lights: &[FlareLight],
 ) -> Vec<f32> {
-    let mut out = vec![0.0_f32; (w * h * 3) as usize];
+    // The rendered raster is the PADDED buffer (K-267): larger than the
+    // base `w × h` when Squeeze/Scale under 1 will sample past it, with the
+    // optics centred in it. The screen transform and the light direction's
+    // aspect stay derived from the base dims — padding adds border, it
+    // never rescales the image.
+    let (rw, rh) = flare_pad_dims(w, h, p.anamorphic, p.scale);
+    let mut out = vec![0.0_f32; (rw * rh * 3) as usize];
     if w == 0 || h == 0 || p.ghost_intensity <= 0.0 {
         return out;
     }
@@ -1691,6 +1953,29 @@ pub fn cpu_flare(
     let st = screen_transform(w);
     let gain = p.ghost_intensity * baked.energy_gain;
     let pair_count = baked.pairs.len().min(p.max_ghosts as usize);
+    // Manual mode's frame-time grid probe (K-267): the bake spreads are a
+    // floor, and a pair folded tight by this frame's light earns more grid
+    // under the frame's bounded ray headroom. Matte lights exist GPU-side
+    // only, so Matte mode keeps the bake grids on both twins and parity
+    // holds.
+    let frame_grids: Vec<u32> = if p.source != 1 {
+        lights
+            .first()
+            .map(|l| {
+                let needs = frame_grid_needs(
+                    baked,
+                    pair_count,
+                    light_direction(l.pos, aspect, baked.focal_mm),
+                    p.coating,
+                    stop_scale,
+                    sensor_shift,
+                );
+                plan_frame_grids(base_side, &baked.spreads, &needs)
+            })
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
 
     // Per-corner trace results for one (pair, λ): landing px and weight
     // (Fresnel × mask); None = dead. Sized for the widest grid in play.
@@ -1706,9 +1991,11 @@ pub fn cpu_flare(
         }
         let dir = light_direction(light.pos, aspect, baked.focal_mm);
         for (pi, pair) in baked.pairs.iter().take(pair_count).enumerate() {
-            // The pair's own grid (K-262), by its measured image spread.
-            let side =
-                pair_grid(base_side, baked.spreads.get(pi).copied().unwrap_or(1.0)).max(2) as usize;
+            // The pair's own grid (K-262), by its measured image spread,
+            // raised — never lowered — by this frame's budgeted probe
+            // (K-267).
+            let rung = pair_grid(base_side, baked.spreads.get(pi).copied().unwrap_or(1.0));
+            let side = frame_grids.get(pi).copied().unwrap_or(rung).max(2) as usize;
             let unit = |i: usize| (i as f32 / (side - 1) as f32) * 2.0 - 1.0;
             let cell_mm = 2.0 * baked.pupil_mm * stop_scale / (side - 1) as f32;
             let cell_area_px = cell_mm * cell_mm * st * st;
@@ -1774,7 +2061,7 @@ pub fn cpu_flare(
                         )
                         .map(|(pos, wt)| {
                             (
-                                [pos[0] * st + w as f32 / 2.0, h as f32 / 2.0 - pos[1] * st],
+                                [pos[0] * st + rw as f32 / 2.0, rh as f32 / 2.0 - pos[1] * st],
                                 wt * mask,
                             )
                         });
@@ -1991,14 +2278,22 @@ pub fn cpu_flare(
                         if !inflate_quad(&mut v) {
                             continue;
                         }
-                        raster_triangle(&mut out, w, h, [v[0], v[1], v[2]]);
-                        raster_triangle(&mut out, w, h, [v[0], v[2], v[3]]);
+                        raster_triangle(&mut out, rw, rh, [v[0], v[1], v[2]]);
+                        raster_triangle(&mut out, rw, rh, [v[0], v[2], v[3]]);
                     }
                 }
             }
         }
     }
-    blur_flare(&mut out, w, h, ghost_blur_radius(p.ghost_softness, w, h), 3);
+    // Blur radius from the BASE dims (the look must not change with the
+    // padding), applied over the padded raster.
+    blur_flare(
+        &mut out,
+        rw,
+        rh,
+        ghost_blur_radius(p.ghost_softness, w, h),
+        3,
+    );
     out
 }
 
@@ -2094,33 +2389,38 @@ pub fn cpu_combine(
     let fscale = p.scale.clamp(0.05, 20.0);
     let sb_res = STARBURST_RES as usize;
     let sb_half = 0.6 * fscale * w.min(h) as f32;
+    // The flare buffer arrives PADDED (K-267): `cpu_flare` renders it at
+    // `flare_pad_dims`, geometry centred, so the resolution-relative tap
+    // only shifts by the border. Unpadded, the constant is zero and the
+    // maths is K-266's exactly.
+    let (rw, rh) = flare_pad_dims(fw, fh, p.anamorphic, p.scale);
     let sample_flare = |x: f32, y: f32| -> [f32; 3] {
         // Resolution-relative bilinear tap of the flare buffer. OUTSIDE it
         // there is no flare (K-266): a squeeze or scale below 1 asks for
         // coordinates past the buffer, and clamp-addressing repeated the
         // edge row outward — the owner's "dreadful" anamorphic smear. Half
         // a texel of grace keeps the true border texels filtered.
-        let u = (x / w as f32) * fw as f32 - 0.5;
-        let v = (y / h as f32) * fh as f32 - 0.5;
-        if u < -0.5 || v < -0.5 || u > fw as f32 - 0.5 || v > fh as f32 - 0.5 {
+        let u = (x / w as f32) * fw as f32 - 0.5 + (rw - fw) as f32 / 2.0;
+        let v = (y / h as f32) * fh as f32 - 0.5 + (rh - fh) as f32 / 2.0;
+        if u < -0.5 || v < -0.5 || u > rw as f32 - 0.5 || v > rh as f32 - 0.5 {
             return [0.0; 3];
         }
         let x0 = u.floor().max(0.0) as usize;
         let y0 = v.floor().max(0.0) as usize;
-        let x1 = (x0 + 1).min(fw as usize - 1);
-        let y1 = (y0 + 1).min(fh as usize - 1);
-        let x0 = x0.min(fw as usize - 1);
-        let y0 = y0.min(fh as usize - 1);
+        let x1 = (x0 + 1).min(rw as usize - 1);
+        let y1 = (y0 + 1).min(rh as usize - 1);
+        let x0 = x0.min(rw as usize - 1);
+        let y0 = y0.min(rh as usize - 1);
         let (tx, ty) = (
             (u - u.floor()).clamp(0.0, 1.0),
             (v - v.floor()).clamp(0.0, 1.0),
         );
         let mut rgb = [0.0_f32; 3];
         for (c, out_c) in rgb.iter_mut().enumerate() {
-            let a = flare[(y0 * fw as usize + x0) * 3 + c] * (1.0 - tx)
-                + flare[(y0 * fw as usize + x1) * 3 + c] * tx;
-            let b = flare[(y1 * fw as usize + x0) * 3 + c] * (1.0 - tx)
-                + flare[(y1 * fw as usize + x1) * 3 + c] * tx;
+            let a = flare[(y0 * rw as usize + x0) * 3 + c] * (1.0 - tx)
+                + flare[(y0 * rw as usize + x1) * 3 + c] * tx;
+            let b = flare[(y1 * rw as usize + x0) * 3 + c] * (1.0 - tx)
+                + flare[(y1 * rw as usize + x1) * 3 + c] * tx;
             *out_c = a * (1.0 - ty) + b * ty;
         }
         rgb

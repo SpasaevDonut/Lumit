@@ -1475,9 +1475,13 @@ commits integers.
 
 **Source modes (K-257).** **Manual light** is the tracked-point workflow: one
 white source at the Light point. **Matte** detects the flare's sources in a
-referenced layer's picture (impl note §6): the brightest points — up to eight,
-non-max suppressed — each spawn a full flare, positioned on the source, tinted
-by its colour, gated by the soft Threshold; the matte layer renders alone
+referenced layer's picture (impl note §6): the brightest points — up to
+sixteen anchors, non-max suppressed — each spawn a full flare, positioned on
+the source, gated by the soft Threshold; each anchor's brightness is the
+**summed flux of every gated detection tile nearest it** (K-267), so a
+practical spanning half the frame finally weighs as its whole lit area
+where it used to count as one pixel, while a true point source reads
+exactly as before; the matte layer renders alone
 exactly as a DoF depth pass does (its own masks and effects apply, K-142
 default) and is expected to be hidden. **Lights** is prepared for light
 layers: the option exists and resolves as Manual until they land, so projects
@@ -1503,9 +1507,16 @@ spectral fringe from a stacked-copies RGB-split look, each band weighted by
 its **integral** of the CIE colour-matching functions rather than a point
 sample, impl note deviation D5), and the pupil-grid base (32 / 64 / 96 / 144).
 The grid base is only a budget: each ghost pair's own grid scales by its
-measured image size (K-262), so a frame-filling defocused ghost gets up to
-2.5× the cells and a tight blob half — which is what lets **Normal stand on
-its own** rather than being the tier where cell facets show.
+measured image size (K-262, retuned K-265 — a tight blob keeps the full
+base, its caustic rim carries structure the size probe cannot see), and a
+**frame-time probe** (K-267) re-measures each pair's worst local stretch at
+the actual light position every frame, raising — never lowering — its grid
+under a bounded ray headroom, worst stretch first. That is what lets
+**Normal stand on its own** rather than being the tier where cell facets
+show, and what keeps corner lights from wearing their cells as polyline
+edges. A Squeeze or Scale below 1 renders the ghost buffer padded (up to 2×
+per axis, K-267) so the widened field carries real flare to the frame edge
+instead of cutting to black.
 
 **Cost and traits.** `heavy` cost (the one effect that owns a render pass), `full-frame`
 ROI, `{0}` temporal, premultiplied (an additive light overlay), not seeded — the flare is
@@ -1525,7 +1536,8 @@ CPU degradation rung renders the effect as a labelled no-op, like the LUT (K-114
 precedent). Exact numbers in the impl note §8.
 
 **Status (core K-256..K-260; FlareSim model K-261; artefact and picker
-pass K-262; smooth-shading, curation and custom-file pass K-264,
+pass K-262; smooth-shading, curation and custom-file pass K-264; frame-time
+grid probe, padded anamorphic buffer and area-flux sources K-267,
 shipped):** everything above — the curated library with per-surface
 coatings and the `.lens` file override, the three-phase pupil-grid trace
 with the vertex-smoothed energy-conserving quad raster (4× multisampled)

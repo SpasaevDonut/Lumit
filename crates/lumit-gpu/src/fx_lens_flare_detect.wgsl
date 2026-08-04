@@ -9,9 +9,11 @@
 //                  scans a strided share of the cell's pixels for the
 //                  brightest (Rec. 709 luma; ties to the lowest linear
 //                  index), thread 0 merges the partials in thread order.
-//   detect_pick  — one thread: top-MAX_LIGHTS cells by luma (ties to the
-//                  lower cell index), Chebyshev suppression radius 2,
-//                  each gated by the soft threshold; dead slots zeroed.
+//   detect_pick  — one thread: top-MAX_LIGHTS anchor cells by luma (ties
+//                  to the lower cell index), Chebyshev suppression radius
+//                  2, each gated by the soft threshold; then every gated
+//                  tile's flux accumulates onto its nearest anchor
+//                  (K-267 area sources); dead slots zeroed.
 
 struct Tile {
     luma: f32,
@@ -53,7 +55,7 @@ struct DetectParams {
 @group(0) @binding(3) var<uniform> dp: DetectParams;
 
 const DETECT_TILE: u32 = 32u;
-const MAX_LIGHTS: u32 = 8u;
+const MAX_LIGHTS: u32 = 16u;
 const SUPPRESS_TILES: i32 = 2;
 
 var<workgroup> partial_luma: array<f32, 64>;
@@ -135,9 +137,17 @@ fn detect_pick(@builtin(global_invocation_id) gid: vec3<u32>) {
     // tile counts stay small (a 4K frame at 32 px tiles is 4080), but WGSL
     // wants a bound: suppress by re-checking distance to already-picked
     // tiles instead of a flag array, which needs only the picks.
-    var picked_x: array<i32, 8>;
-    var picked_y: array<i32, 8>;
+    // `var` (not `let`) for every dynamically indexed array: lavapipe's
+    // shader compiler crashes on dynamically indexed `let` arrays (K-264).
+    var picked_x: array<i32, 16>;
+    var picked_y: array<i32, 16>;
+    var anchor_px: array<u32, 16>;
+    var anchor_py: array<u32, 16>;
+    var acc_r: array<f32, 16>;
+    var acc_g: array<f32, 16>;
+    var acc_b: array<f32, 16>;
     var picked_count = 0u;
+    // Anchor picks: top-K by luma with Chebyshev suppression.
     for (var k = 0u; k < MAX_LIGHTS; k = k + 1u) {
         var best_tile = 0u;
         var best_luma = -1.0;
@@ -164,6 +174,57 @@ fn detect_pick(@builtin(global_invocation_id) gid: vec3<u32>) {
                 best_tile = t;
             }
         }
+        if (best_luma > 0.0 && gate(best_luma) > 0.0) {
+            let idx = tiles[best_tile].index;
+            anchor_px[picked_count] = idx % dp.w;
+            anchor_py[picked_count] = idx / dp.w;
+            picked_x[picked_count] = i32(best_tile % dp.tiles_x);
+            picked_y[picked_count] = i32(best_tile / dp.tiles_x);
+            acc_r[picked_count] = 0.0;
+            acc_g[picked_count] = 0.0;
+            acc_b[picked_count] = 0.0;
+            picked_count = picked_count + 1u;
+        }
+    }
+    // Area sources (K-267): every gated tile's flux — its brightest pixel's
+    // colour (or white) times its gate — lands on the NEAREST anchor
+    // (Chebyshev; ties to the lowest anchor index), tile order fixed so the
+    // sum matches the CPU reference op-for-op. A one-tile point source is
+    // its own anchor's only contributor and reads exactly as before.
+    if (picked_count > 0u) {
+        for (var t = 0u; t < tile_count; t = t + 1u) {
+            let tl = tiles[t];
+            if (tl.luma <= 0.0) {
+                continue;
+            }
+            let weight = gate(tl.luma);
+            if (weight <= 0.0) {
+                continue;
+            }
+            let tx = i32(t % dp.tiles_x);
+            let ty = i32(t / dp.tiles_x);
+            var nearest = 0u;
+            var nearest_d = 2147483647;
+            for (var p = 0u; p < picked_count; p = p + 1u) {
+                let d = max(abs(tx - picked_x[p]), abs(ty - picked_y[p]));
+                if (d < nearest_d) {
+                    nearest_d = d;
+                    nearest = p;
+                }
+            }
+            let px = tl.index % dp.w;
+            let py = tl.index / dp.w;
+            let c = textureLoad(matte_tex, vec2<i32>(i32(px), i32(py)), 0);
+            var src = vec3<f32>(1.0, 1.0, 1.0);
+            if (dp.use_source_colour == 1u) {
+                src = max(c.rgb, vec3<f32>(0.0));
+            }
+            acc_r[nearest] = acc_r[nearest] + src.r * weight;
+            acc_g[nearest] = acc_g[nearest] + src.g * weight;
+            acc_b[nearest] = acc_b[nearest] + src.b * weight;
+        }
+    }
+    for (var k = 0u; k < MAX_LIGHTS; k = k + 1u) {
         var out: Light;
         out.pos_x = 0.0;
         out.pos_y = 0.0;
@@ -173,26 +234,12 @@ fn detect_pick(@builtin(global_invocation_id) gid: vec3<u32>) {
         out._pad0 = 0.0;
         out._pad1 = 0.0;
         out._pad2 = 0.0;
-        if (best_luma > 0.0) {
-            let weight = gate(best_luma);
-            if (weight > 0.0) {
-                let idx = tiles[best_tile].index;
-                let px = idx % dp.w;
-                let py = idx / dp.w;
-                let c = textureLoad(matte_tex, vec2<i32>(i32(px), i32(py)), 0);
-                var src = vec3<f32>(1.0, 1.0, 1.0);
-                if (dp.use_source_colour == 1u) {
-                    src = max(c.rgb, vec3<f32>(0.0));
-                }
-                out.pos_x = (f32(px) + 0.5) / f32(dp.w);
-                out.pos_y = (f32(py) + 0.5) / f32(dp.h);
-                out.r = src.r * weight * dp.tint_r;
-                out.g = src.g * weight * dp.tint_g;
-                out.b = src.b * weight * dp.tint_b;
-                picked_x[picked_count] = i32(best_tile % dp.tiles_x);
-                picked_y[picked_count] = i32(best_tile / dp.tiles_x);
-                picked_count = picked_count + 1u;
-            }
+        if (k < picked_count) {
+            out.pos_x = (f32(anchor_px[k]) + 0.5) / f32(dp.w);
+            out.pos_y = (f32(anchor_py[k]) + 0.5) / f32(dp.h);
+            out.r = acc_r[k] * dp.tint_r;
+            out.g = acc_g[k] * dp.tint_g;
+            out.b = acc_b[k] * dp.tint_b;
         }
         lights[k] = out;
     }

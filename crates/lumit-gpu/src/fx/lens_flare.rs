@@ -122,10 +122,39 @@ pub struct FlareBakeData {
     pub sb_res: u32,
 }
 
+/// What the frame-time spread probe (K-267) reads from a cached bake,
+/// handed back across the crate seam to the caller's `probe` closure (the
+/// same lazy-callback pattern as the bake itself — the formulas stay in
+/// lumit-core, which this crate deliberately does not depend on).
+pub struct FlareProbeBake<'a> {
+    /// Surface rows in the `FlareBakeData` layout.
+    pub surfaces: &'a [[f32; 8]],
+    /// Ranked ghost pairs, brightest first.
+    pub ghosts: &'a [[u32; 2]],
+    /// Sensor plane z, mm.
+    pub sensor_z_mm: f32,
+    /// Focal length, mm.
+    pub focal_mm: f32,
+    /// Native f-number.
+    pub native_fstop: f32,
+    /// Pupil spray radius, mm.
+    pub pupil_mm: f32,
+    /// Ray start z, mm.
+    pub start_z_mm: f32,
+    /// Each pair's bake-time image spread, parallel to `ghosts` — the rung
+    /// floor the probe's budget plan raises from.
+    pub spreads: &'a [f32],
+    /// How many ranked pairs this frame renders — the probe stops there.
+    pub pair_count: usize,
+}
+
 /// One cached GPU-side bake: uploaded textures and the surface buffer.
 struct GpuBaked {
     surfaces: wgpu::Buffer,
     surface_count: u32,
+    /// The raw surface rows, retained for [`FlareProbeBake`] (K-267) —
+    /// a few hundred bytes beside the uploaded buffer.
+    surface_rows: Vec<[f32; 8]>,
     ghosts: Vec<[u32; 2]>,
     spreads: Vec<f32>,
     sensor_z_mm: f32,
@@ -246,7 +275,7 @@ impl<T: Clone> BakeCache<T> {
 
 /// Most flare sources a frame renders — must equal
 /// `lumit_core::fx::lens_flare::MAX_LIGHTS` (pinned by test).
-pub const MAX_LIGHTS: u32 = 8;
+pub const MAX_LIGHTS: u32 = 16;
 
 /// Detection tile side — must equal `lens_flare::DETECT_TILE` (pinned by
 /// the same test).
@@ -771,6 +800,20 @@ pub fn pair_grid_of(base: u32, spread: f32) -> u32 {
     ((base as f32 * mult).round() as u32).clamp(8, 512)
 }
 
+/// The flare buffer's padded dimensions for Squeeze/Scale under 1 — the
+/// exact twin of `lumit_core::fx::lens_flare::flare_pad_dims` (K-267),
+/// pinned by test.
+pub fn flare_pad_dims_of(fw: u32, fh: u32, squeeze: f32, scale: f32) -> (u32, u32) {
+    let squeeze = squeeze.clamp(0.25, 4.0);
+    let fscale = scale.clamp(0.05, 20.0);
+    let px = (1.0 / (squeeze * fscale)).clamp(1.0, 2.0);
+    let py = (1.0 / fscale).clamp(1.0, 2.0);
+    (
+        ((fw as f32) * px).ceil() as u32,
+        ((fh as f32) * py).ceil() as u32,
+    )
+}
+
 /// One dispatch of the trace → cells → raster chain: a run of combos that
 /// share a pupil grid, and a chunk of the frame's lights (K-263).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -939,6 +982,7 @@ fn upload_bake(ctx: &GpuContext, data: &FlareBakeData) -> GpuBaked {
     GpuBaked {
         surfaces,
         surface_count: data.surfaces.len() as u32,
+        surface_rows: data.surfaces.clone(),
         ghosts: data.ghosts.clone(),
         spreads: data.spreads.clone(),
         sensor_z_mm: data.sensor_z_mm,
@@ -971,6 +1015,7 @@ impl FxEngine {
         op: &LensFlareOp,
         matte: Option<&wgpu::Texture>,
         bake: &dyn Fn() -> FlareBakeData,
+        probe: &dyn Fn(&FlareProbeBake) -> Vec<u32>,
     ) -> wgpu::Texture {
         use wgpu::util::DeviceExt;
         let out = work_texture(ctx, w, h, "fx-lens-flare-out");
@@ -1024,8 +1069,13 @@ impl FxEngine {
         // only while a live frame draws.
         let div = op.flare_div.max(1);
         let (fw, fh) = ((w / div).max(1), (h / div).max(1));
-        let flare_tex = work_texture(ctx, fw, fh, "fx-lens-flare-buffer");
-        let msaa_tex = live.then(|| lf.take_msaa(ctx, fw, fh));
+        // The buffer renders PADDED for Squeeze/Scale under 1 (K-267): the
+        // combine samples past the base extent there, and the padding puts
+        // real flare where K-266's zero-outside tap showed black. Geometry
+        // is centred; the screen transform stays derived from the base.
+        let (fpw, fph) = flare_pad_dims_of(fw, fh, op.anamorphic, op.scale);
+        let flare_tex = work_texture(ctx, fpw, fph, "fx-lens-flare-buffer");
+        let msaa_tex = live.then(|| lf.take_msaa(ctx, fpw, fph));
 
         let mut encoder = ctx
             .device
@@ -1144,6 +1194,27 @@ impl FxEngine {
             // only known GPU-side in Matte mode).
             let ghost_count = (ghost_count_max as usize).min(baked.ghosts.len());
             let gain = baked.energy_gain;
+            // Manual mode's frame-time grid probe (K-267): ask the caller
+            // (who owns the lumit-core maths) for the frame's final per-pair
+            // grids — each pair's rung floor raised toward its need under
+            // the frame's bounded ray headroom. Matte lights exist GPU-side
+            // only, so Matte mode keeps the bake grids; the CPU reference
+            // gates the same way and parity holds.
+            let frame_grids: Vec<u32> = if !matte_mode {
+                probe(&FlareProbeBake {
+                    surfaces: &baked.surface_rows,
+                    ghosts: &baked.ghosts,
+                    sensor_z_mm: baked.sensor_z_mm,
+                    focal_mm: baked.focal_mm,
+                    native_fstop: baked.native_fstop,
+                    pupil_mm: baked.pupil_mm,
+                    start_z_mm: baked.start_z_mm,
+                    spreads: &baked.spreads,
+                    pair_count: ghost_count,
+                })
+            } else {
+                Vec::new()
+            };
             // Each pair gets its own pupil grid by its measured image spread
             // (K-262, mirroring `lumit_core::fx::lens_flare::pair_grid`), so
             // combos are sorted grid-major: a run of equal-grid combos is one
@@ -1152,7 +1223,8 @@ impl FxEngine {
                 Vec::with_capacity(ghost_count * op.lambdas.len());
             for (gi, ghost) in baked.ghosts.iter().take(ghost_count).enumerate() {
                 let spread = baked.spreads.get(gi).copied().unwrap_or(1.0);
-                let pg = pair_grid_of(op.grid, spread);
+                let rung = pair_grid_of(op.grid, spread);
+                let pg = frame_grids.get(gi).copied().unwrap_or(rung);
                 for &(lambda_nm, rgb) in &op.lambdas {
                     tagged.push((
                         pg,
@@ -1259,8 +1331,8 @@ impl FxEngine {
                                 focal_mm: baked.focal_mm,
                                 // Project into the flare buffer's raster.
                                 screen_transform: st_flare,
-                                raster_w: fw as f32,
-                                raster_h: fh as f32,
+                                raster_w: fpw as f32,
+                                raster_h: fph as f32,
                                 light_count: light_chunk,
                                 // Focus (K-260): thin-lens shift, the same
                                 // f²/(1000·d − f) the CPU reference uses.
@@ -1384,12 +1456,14 @@ impl FxEngine {
             // Mirrors `lumit_core::fx::lens_flare::ghost_blur_radius`,
             // cap included (K-262: an uncapped radius on a 4K frame is a
             // thousand taps per pixel across six passes — a GPU timeout).
+            // Radius from the BASE dims (the look must not change with the
+            // K-267 padding); the passes run over the padded buffer.
             let radius = {
                 let diag = ((fw * fw + fh * fh) as f32).sqrt();
                 ((op.ghost_softness.clamp(0.0, 2.0) * 0.01 * diag).round() as u32).min(80)
             };
             if radius > 0 {
-                let scratch_tex = work_texture(ctx, fw, fh, "fx-lens-flare-blur-scratch");
+                let scratch_tex = work_texture(ctx, fpw, fph, "fx-lens-flare-blur-scratch");
                 for pass in 0..3u32 {
                     for dir in 0..2u32 {
                         let _ = pass;
@@ -1403,8 +1477,8 @@ impl FxEngine {
                             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                                 label: Some("fx-lens-flare-blur-params"),
                                 contents: bytemuck::bytes_of(&BlurParams {
-                                    w: fw,
-                                    h: fh,
+                                    w: fpw,
+                                    h: fph,
                                     radius,
                                     dir,
                                 }),
@@ -1440,7 +1514,7 @@ impl FxEngine {
                         cpass.set_bind_group(0, &bind, &[]);
                         // x runs ALONG the blur axis in tiles of 64, y across
                         // it — the shape the line cache needs (K-263).
-                        let (along, across) = if dir == 0 { (fw, fh) } else { (fh, fw) };
+                        let (along, across) = if dir == 0 { (fpw, fph) } else { (fph, fpw) };
                         cpass.dispatch_workgroups(along.div_ceil(64), across, 1);
                     }
                 }
@@ -1528,7 +1602,7 @@ impl FxEngine {
         }
         ctx.queue.submit([encoder.finish()]);
         if let Some(tex) = msaa_tex {
-            lf.put_msaa(tex, fw, fh);
+            lf.put_msaa(tex, fpw, fph);
         }
         out
     }

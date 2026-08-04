@@ -143,6 +143,35 @@ ghost is not a cheap ghost — its caustic rim carries structure the blob-size p
 see. A frame-filling defocused ghost is undersampled by a flat grid and shows its cell
 facets — spending the budget by size is what lets Normal hold up.
 
+**The frame-time grid probe (K-267).** The bake spread is a bounding box, and the box
+does not grow at corner lights — what grows is the worst LOCAL stretch: measured, a
+pair whose image stayed the same overall size stretched ~6× near a fold, and those
+cells were the owner's choppy polyline edges. `frame_grid_needs` traces a 12×12
+weight-gated probe grid per renderable pair at the ACTUAL light direction, takes the
+worst adjacent-landing distance `d_max`, and — cell size shrinking inversely with the
+grid side — derives the side that puts the worst cell under `FRAME_CELL_FRAC` (0.5% of
+the sensor diagonal): `(G−1)·d_max/target + 1`. Uncapped, every fold demanded its
+maximum at once and the frame septupled; `plan_frame_grids` BUDGETS the raise instead:
+`FRAME_RAY_HEADROOM` (half again over the frame's rung-grid ray baseline) spent
+worst-stretch-first, partial grants when it runs short, per-pair cap 3× the rung
+(`boost_grid`), hard clamp 512, never below the rung floor. Deterministic: the sort is
+by stretch ratio with rank-order ties, and the whole plan is computed once in
+lumit-core — lumit-render runs it through the same seam callback as the lazy bake
+(`FlareProbeBake`) and hands the GPU the FINAL per-pair grids, so the CPU reference
+and the dispatch cannot disagree about a single ray. Manual mode only: Matte lights
+exist GPU-side, so both twins keep the bake grids there and parity holds.
+
+**The padded flare buffer (K-267).** A Squeeze or Scale below 1 makes the combine
+sample PAST the base buffer; K-266's zero-outside tap honestly showed nothing there
+("cuts to black at the edges"). `flare_pad_dims` (mirrored `flare_pad_dims_of`,
+pinned) grows the render target up to 2× per axis — `1/(squeeze·scale)` wide,
+`1/scale` tall, both clamped 1..2 — with the optics centred in it: the raster dims in
+the trace uniform are the padded ones, the screen transform and the Ghost-blur radius
+stay derived from the BASE dims, and the combine's tap gains only the constant border
+offset `(padded − base)/2`, zero when unpadded. Past even the 2× cap the zero-outside
+rule still holds (squeeze 0.5 is the parameter floor; the cap only truncates
+degenerate combinations), pinned by the same regression test.
+
 **The frame's dispatch plan (K-263).** The GPU sorts combos grid-major, so the table
 falls into runs of one grid; `plan_batches` cuts each run into batches of combos and
 chunks of lights, and **every batch strides the scratch by its own grid**. Through K-262
@@ -312,10 +341,15 @@ Shipped in the K-257 pass as the **Matte** source mode (docs/08 §3.27): the fla
 sources itself from a referenced layer's picture. A compute reduction tiles the matte
 into a 32 px grid (max Rec. 709 luma + argmax per tile; ties to the lowest linear index;
 fixed-order partial merges, so it is deterministic), then a single-thread pass picks the
-top-8 tiles by luma with a 2-tile Chebyshev non-max suppression, each gated by the soft
-Threshold and written as a light: position at the source pixel, colour = `(use source ?
-the pixel's RGB : white) × the gate × the Light tint` (K-259 — one expression shared by
-the CPU reference and the WGSL detection, so the oracle covers both settings). Every downstream stage runs per light on the dispatch z axis — the trace
+top-16 ANCHOR tiles by luma (`MAX_LIGHTS`, 8 → 16 in K-267) with a 2-tile Chebyshev
+non-max suppression, each gated by the soft Threshold. **Area sources (K-267): every
+gated tile's flux then accumulates onto its nearest anchor** — per tile, `(use source ?
+the tile's brightest pixel's RGB : white) × the gate`, nearest by Chebyshev with ties to
+the lowest anchor index, tiles visited in index order so the float sum matches the CPU
+reference op-for-op — and each anchor is written as a light: position at its own source
+pixel, colour = the summed flux × the Light tint (K-259). A one-tile point source is its
+own anchor's only contributor and reads exactly as before K-267; a practical spanning
+many tiles finally weighs as its whole lit area instead of one pixel. Every downstream stage runs per light on the dispatch z axis — the trace
 computes each light's direction in-shader, the vertex build tints by the light, and the
 combine stamps one starburst per live light. Manual mode is the same pipeline with one
 CPU-written light carrying the tint (white by default). The CPU twin is `lens_flare::detect_lights`, held to the GPU by
@@ -390,9 +424,14 @@ fits a compositor.
 4b. **Quad guard (K-262)**: a big cell is drawn untouched; a compact sub-pixel cell is
    inflated, dimmed and stays compact; a sub-pixel sliver and a long thin quad are both
    dropped; a short elongated rim cell survives. Fails on the K-261 inflation.
-4c. **Grid budget (K-262)**: `pair_grid` is monotonic in spread, clamped to 8..256 for
-   degenerate inputs, and every bundled pair carries a finite spread. The GPU's mirrored
-   copy is pinned equal to lumit-core's across bases and spreads.
+4c. **Grid budget (K-262/K-265/K-267)**: `pair_grid` is monotonic in spread, clamped to
+   8..512 for degenerate inputs, and every bundled pair carries a finite spread. The
+   GPU's mirrored copies (`pair_grid_of`, `flare_pad_dims_of`) are pinned equal to
+   lumit-core's across bases, spreads and pad factors. The frame-time probe
+   (`lens_flare_frame_probe_sees_corner_stretch`) must see the 7Artisans corner
+   stretch, raise at least one pair past its rung at the Normal base, respect the
+   boost floor/caps, spend at most the headroom, and agree bit-for-bit through the
+   raw-rows seam entry.
 5. **GPU trace oracle** (§8.5 shape, K-261 bounds): corner-for-corner against
    `trace_splat` across two lenses × two lights — mean position error < 0.2 px, p99
    < 3 px (a few-ULP difference near a fold legitimately lands a ray on the other
@@ -412,8 +451,16 @@ fits a compositor.
    frame splits into several submissions and a light one into exactly one
    (`lens_flare_splits_a_heavy_frame_into_several_submissions`); the bake cache evicts
    oldest-first rather than emptying (`lens_flare_bake_cache_evicts_the_oldest_not_everything`).
+6d. **Padded anamorphic (K-267)**: at squeeze 0.5 the buffer doubles in width, the
+   outer fifths of the frame carry real flare energy (the zone the un-padded buffer
+   rendered black), and the padded pipeline still meets the frame bound
+   (`wgsl_lens_flare_padded_anamorphic_matches_and_fills_the_edge`); past the 2× cap
+   the zero-outside rule holds (`lens_flare_combine_does_not_repeat_the_flare_past_its_buffer`).
 7. **Matte mode**: GPU detection + per-light flare against the CPU reference at the
-   frame bound; the shared MAX_LIGHTS / DETECT_TILE constants pinned.
+   frame bound; the shared MAX_LIGHTS / DETECT_TILE constants pinned. Area flux
+   (K-267): a multi-tile disc's anchor carries several times a one-pixel dot's flux,
+   the dot reads exactly as the pre-K-267 point, both anchors sit on their sources
+   (`lens_flare_detects_area_sources_as_summed_flux`).
 7b. **Custom lens file (K-264)**: a bundled lens's text fed through `bake_with` as a
    "custom file" bakes identically to picking it; the bake key separates library /
    custom / edited-custom; unparsable text degrades to the picked lens bit-for-bit
