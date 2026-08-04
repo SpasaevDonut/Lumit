@@ -70,6 +70,25 @@ pub struct DofInputDraw {
     /// `fx`. Empty unless the depth source is `EffectsAndMasks` and the depth
     /// layer has a LUT.
     pub lut_files: Vec<Option<String>>,
+    /// Set when the referenced layer is a **Precomp** (K-266): the nested
+    /// comp's own draw list, realised recursively exactly as a Precomp
+    /// layer's picture is — `rgba` is then empty and `tex_w`/`tex_h` are the
+    /// nested comp's size. `pixels_for` has no pixels for a comp (they only
+    /// exist on the GPU), which is why "a white circle in a precomp" as a
+    /// flare matte silently detected nothing until this field existed. The
+    /// source-mode masks/effects toggles do not apply to a comp reference —
+    /// the comp renders as itself, its layers' own effects included.
+    pub nested: Option<Box<NestedInputDraw>>,
+}
+
+/// A layer-input's nested comp render (K-266) — the [`DrawSource::Nested`]
+/// shape, boxed onto [`DofInputDraw`].
+pub struct NestedInputDraw {
+    pub width: u32,
+    pub height: u32,
+    pub background: [f64; 4],
+    pub draws: Vec<CompLayerDraw>,
+    pub camera: Option<lumit_core::model::CameraPose>,
 }
 
 /// Where a draw's pixels come from: decoded/synthesised bytes, or a nested
@@ -178,6 +197,27 @@ pub struct CompLayerDraw {
     /// carries the referenced layer's source pixels; the GPU render happens in
     /// `realise_segment`.
     pub dof_inputs: Vec<Option<DofInputDraw>>,
+    /// The Lens flare Matte sources (docs/08 §3.27, K-257), 1:1 with the
+    /// stack's `Resolved::LensFlare` ops: the referenced layer's pixels in
+    /// the same shape the DoF depth inputs take (None = unset/dangling/not
+    /// in Matte mode — the effect then detects nothing, never faults).
+    pub flare_mattes: Vec<Option<DofInputDraw>>,
+    /// The `lens_file` paths of the layer's enabled built-in `lens_flare`
+    /// effects (K-264), 1:1 with the stack's `Resolved::LensFlare` ops —
+    /// None = unset. The caller reads and hashes each file and passes the
+    /// parallel `flare_lens` texts to `run_ops`; a missing or unreadable
+    /// file degrades to the picked library lens (labelled fallback).
+    pub flare_lens_files: Vec<Option<String>>,
+    /// The raster width this layer's `fx` were RESOLVED against, when it
+    /// can differ from the raster they will RUN on (K-266) — set for
+    /// Adjust layers (the comp width; their stack runs on the render
+    /// target, which reduced-resolution preview shrinks), `None` when the
+    /// resolve factor already matches (footage layers scale by their
+    /// decode). The realise walk divides its target width by this and
+    /// rescales every px-dimensioned resolved field
+    /// (`lumit_core::fx::rescale_px`) so px@comp parameters land where
+    /// the user put them at every preview resolution.
+    pub fx_ref_width: Option<f32>,
     /// Per-layer motion-blur sub-frame placements (docs/06 §4, K-120): the
     /// layer's own transform re-evaluated across the open shutter. Empty unless
     /// the comp master and the layer switch are both on (and samples ≥ 2), in

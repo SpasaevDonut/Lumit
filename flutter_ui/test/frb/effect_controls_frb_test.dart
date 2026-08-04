@@ -9,6 +9,7 @@
 // Every document operation is genuine; see frb_test_support.dart.
 
 import 'package:flutter/widgets.dart';
+import 'package:lumit_flutter/widgets/controls.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/panels/effect_controls_panel_frb.dart';
@@ -400,6 +401,92 @@ void main() {
           reason: 'the edit landed in the key under the playhead');
       expect(keys.last.value, 40, reason: 'the other key is untouched');
     });
+    testWidgets(
+        'the lens flare panel folds: point pair, groups, conditional matte rows',
+        (tester) async {
+      final p = withLayer();
+      p.layer.addEffect(name: 'lens_flare');
+      p.uiState.model.refresh();
+      await mount(tester, p, transform: false);
+
+      // The light x/y pair is ONE row (docs/07 SS6.1) with a shared stem
+      // label, not two rows.
+      expect(
+        find.byWidgetPredicate((w) {
+          final key = w.key;
+          return key is ValueKey<String> &&
+              key.value.startsWith('fx-row-') &&
+              key.value.endsWith('-light_x-pair');
+        }),
+        findsOneWidget,
+      );
+      expect(find.text('Light'), findsOneWidget);
+      expect(find.text('Light y'), findsNothing);
+
+      // The collapsed groups show their headers, not their members.
+      expect(find.text('Lens options'), findsOneWidget);
+      expect(find.text('Flare options'), findsOneWidget);
+      expect(find.text('Blades'), findsNothing);
+
+      // Twirling Lens options open reveals the Int-kind Blades row.
+      await tester.tap(find.text('Lens options'));
+      await tester.pump();
+      expect(find.text('Blades'), findsOneWidget);
+
+      // The matte rows are hidden while Source is Manual...
+      expect(find.text('Matte layer'), findsNothing);
+      expect(find.text('Threshold'), findsNothing);
+
+      // ...and appear when Source type switches to Matte.
+      final effects = p.layer.getEffects();
+      final fx = effects.single;
+      fx.setValue(id: 'source_type', value: const BridgeEffectValue.choice(1));
+      p.layer.setEffects(effects: effects);
+      p.uiState.model.refresh();
+      await tester.pump();
+      expect(find.text('Matte layer'), findsOneWidget);
+      expect(find.text('Threshold'), findsOneWidget);
+      expect(find.text('Threshold softness'), findsOneWidget);
+
+      // Light tint is a source-mode-independent row (K-259); Use source
+      // colour appears with Matte and would with Lights.
+      expect(find.text('Light tint'), findsOneWidget);
+      expect(find.text('Use source colour'), findsOneWidget);
+
+      // Back to Manual: the tint stays, the source-colour toggle and the
+      // matte rows go.
+      final again = p.layer.getEffects();
+      again.single
+          .setValue(id: 'source_type', value: const BridgeEffectValue.choice(0));
+      p.layer.setEffects(effects: again);
+      p.uiState.model.refresh();
+      await tester.pump();
+      expect(find.text('Light tint'), findsOneWidget);
+      expect(find.text('Use source colour'), findsNothing);
+      expect(find.text('Matte layer'), findsNothing);
+    });
+
+    // The Lens picker (K-262, curated K-264). Twenty entries sit well
+    // under the searchable threshold, so the row is the PLAIN dropdown —
+    // the searchable picker's laziness is pinned in
+    // test/search_dropdown_test.dart against synthetic options. What the
+    // panel owes here: the curated default shows, and the custom Lens file
+    // row (K-264) is present for the prescriptions the palette leaves out.
+    testWidgets('the lens picker shows the curated default and the file row',
+        (tester) async {
+      final p = withLayer();
+      p.layer.addEffect(name: 'lens_flare');
+      p.uiState.model.refresh();
+      await mount(tester, p, transform: false);
+
+      expect(find.byType(BareSearchDropdown), findsNothing,
+          reason: 'twenty entries is a dropdown, not a search problem');
+      expect(find.text('Zeiss · Arri Master Prime T1.3 50mm'), findsOneWidget,
+          reason: 'the curated default is the reference cine prime');
+      expect(find.text('Lens file'), findsOneWidget,
+          reason: 'a user .lens file covers everything the palette leaves out');
+    });
+
     // Without the built library there is nothing to test against; the harness
     // throws with the command to run.
   }, skip: !engineAvailable);

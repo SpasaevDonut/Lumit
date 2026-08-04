@@ -17,6 +17,40 @@ this file is the concrete backlog underneath it.
 
 These sit above everything else: they are what the editor feels like in the hand.
 
+- **Show how far through a preview frame the engine is.** Asked for by the owner
+    while testing the Lens flare: a heavy effect makes a change land seconds
+    later, and with nothing on screen saying so, a slow frame and a hung one look
+    identical - which is exactly the confusion the K-263 device-loss bug caused.
+    A thin bar (Viewer or status line, per [15-DESIGN.md](15-DESIGN.md)'s calm
+    voice - progress, never a punishment) fed by the worker as it walks the
+    layer/effect stack. The obvious feed is the realise walk in
+    `lumit-render/src/realise.rs` reporting "n of m stack steps" on the existing
+    worker response stream ([17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md)); it
+    must cost nothing when nothing is watching. **Pairs with taking the flare's
+    bake off the render thread**: choosing a lens blocks the picture for about
+    half a second of pure CPU optics (measured, K-263) and that is the single
+    longest stall the effect has - a bake that runs beside the render, with the
+    bar showing it, turns a freeze into a wait you can see.
+- **The flare's raster still draws the cells it culled.** After K-263 a batch
+    draws exactly its own cells, but a cell the guards kill is still stored and
+    still submitted as a degenerate off-screen triangle. Compacting to just the
+    live cells would cut the vertex work again; it must be a **prefix-sum**
+    compaction, not an atomic append, because additive blending is float
+    addition and the drawn order has to stay fixed or the frame stops being
+    bit-stable (docs/impl/lens-flare.md §2.4). Measure the live fraction first.
+    Same shape of win in Matte mode from skipping dead light slots with an
+    indirect dispatch: eight slots are always dispatched, however many sources
+    the detection actually found.
+- **Mattes that decode footage.** A precomp referenced ONLY as a matte
+    renders solids/text/shapes but not footage: the decode planner never
+    visits it (K-266 boundary in `pixels_for`) — teach `collect_comp_jobs`
+    to walk matte references. (Area sources themselves landed in K-267:
+    per-tile flux onto the nearest of up to sixteen anchors.)
+- **The Precomp-layer twin of the K-266 adjustment fix.** Effects ON a
+    Precomp layer also resolve px@comp with factor 1 (`DrawSource::Nested`'s
+    arm in build.rs) while running on whatever raster the nested comp
+    realises at — same preview-only drift `fx::rescale_px` fixed for
+    Adjust; wire the same factor through the nested arm.
 - **Replace `poll(Maintain::Wait)` with a keyed mutex** - every present waits for
     the card to go idle before handing the texture over (`shared.rs`,
     `shared_linux.rs`, `shared_metal.rs`; find it by the call, not a line number).
@@ -292,6 +326,28 @@ silently wrong. Pass the six domain floats through `LutParams`, or refuse
 non-default-domain cubes as a labelled no-op. The LUT caches also key by path
 alone - no mtime, no LRU bound (§4).
 
+**Lens flare follow-ups (K-256..K-264, [impl/lens-flare.md](impl/lens-flare.md))** — the
+shipped core is docs/08 §3.27 (FlareSim model + 1299-lens library, K-261; artefact and
+picker pass K-262; bounded-submission and batching pass K-263; smooth-shading,
+curation and custom-file pass K-264 — the remaining
+performance items sit in **Now** above, being preview-responsiveness work);
+still owed, each stable against the shipped parameters: the
+**Lights source wiring** (the mode is in the
+dropdown and resolves as Manual until light layers can act as flare sources); aperture
+**dirt / scratches** overlays and an **image aperture** file parameter; the **lens
+designer** (a window building a prescription element by element with a live lens
+diagram — the `lens_file` parameter landed in K-264, so the designer's output has a
+place to go); an **Occlusion layer** reference fading the flare when the light is
+covered; **adaptive grid refinement at vignette folds** — the K-264/K-265 known limits: a
+mild ripple on hard vignetted edges of extreme-defocus ghosts at Normal, and the
+toothed fold corona on a zoom shot past its native stop (K-265 lists the six
+ablations already ruled out — do not re-chase it with guards); refinement at the
+folds is the real cure for both. The panel side owes the pair row's dropper to
+**Transform's px@comp pairs** (the pixel-writing pick exists since K-260 — the flare's
+Light uses it; Transform's rows just aren't wired to it), **Radial blur's centre
+migration** from the grandfathered % of frame to px@comp (K-260 convention), and one-op
+writes for a paired keyframe toggle (two ops today).
+
 **Anti-aliasing in the renderer.** Edges of transformed layers, shape strokes and
 text stair-step, worst on a slow rotation. Two questions decide where the setting
 lives: whether the sample count is a **project** property (it changes what a comp
@@ -373,6 +429,14 @@ profiler (§7.1) is likewise unbuilt - the render-time indicator entry above is 
 visible piece.
 
 **CI coverage the Flutter port left thin:**
+- **The WGSL/CPU-oracle parity tests skip silently without an adapter** - they
+    print "no GPU adapter; skipping" and the run still goes green, so a job
+    without one proves nothing about the kernels. Installing Mesa's software
+    Vulkan driver (`mesa-vulkan-drivers`, the `lvp` ICD) is enough to make them
+    all run: verified 2026-08-03 on a container with no graphics hardware, where
+    the whole `lumit-gpu` suite passed in about five seconds. Worth adding to any
+    Linux job, and worth making the skip loud (an env var that turns "no adapter"
+    into a failure on the machines that should have one).
 - **Nothing in CI proves a Viewer frame arrives.** The Linux job is the only one
     running the Flutter suite and has no GPU, so the six Viewer tests that wait
     for a frame skip there on `LUMIT_NO_ZERO_COPY_VIEWER=1`. They still fail on a

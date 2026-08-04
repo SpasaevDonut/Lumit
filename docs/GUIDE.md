@@ -509,6 +509,218 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   raises coverage there, so the spill reads as light over transparency instead of
   stopping dead at the matte. At Intensity 0 the effect passes pixels through
   bit-exactly — a test pins that promise.
+- **Lens flare** (K-256) is the first effect that *simulates* something instead of
+  filtering pixels. A camera lens is a stack of curved glass discs with an iris in the
+  middle; when a bright light is in shot, a whisper of it reflects off the inside of one
+  glass surface, bounces backward, reflects off another, and still reaches the sensor —
+  that faint double-bounce image is one **ghost**, and a lens with fifteen surfaces has
+  dozens of such paths, which is the train of coloured blobs sliding across real footage.
+  Lumit doesn't draw those blobs; it ships the actual measurements of real lenses (the
+  curvature, spacing and glass of each element, from published patents) and every frame
+  shoots a grid of imaginary light rays through that geometry on the graphics card, letting
+  each ghost land where the physics puts it. That is why the ghosts stretch, flip through
+  the centre as the light crosses frame, grow when you open the F-stop, and wear
+  blue-green-magenta tints — the tint is the anti-reflective coating on each surface
+  interfering with itself, computed per wavelength, not a colour swatch. The **starburst**
+  (the spiky star on the light itself) is different physics: light bending around the iris
+  blades, which Lumit gets by taking a Fourier transform of the iris shape — an
+  established bit of optics maths — so an 8-blade iris genuinely makes an 8-spike star,
+  and the spikes fringe into rainbows because each wavelength bends by a different amount.
+  The expensive maths (the Fourier transforms, the iris image) runs once on the CPU when
+  you change a parameter and is remembered; only the ray shooting and drawing happen per
+  frame, which is what keeps it scrubbable. When it's doing too much, the dials to reach
+  for are Intensity, the separate Ghost/Starburst intensities, Max ghosts (thins the
+  train), and Quality (Draft renders the flare at half resolution). One honest caveat
+  lives in the decision log: the trace has an exact CPU twin the tests hold to, but the
+  final drawn frame is checked against a *close* reference rather than bit-for-bit,
+  because two rasterisers never fill triangle edges identically — the full story is in
+  docs/impl/lens-flare.md. A second pass (K-257) reshaped the panel to the owner's
+  design — the light is one x/y row with a pick-on-the-picture dropper, the detail
+  dials fold behind Lens options / Flare options twirls (the first effect panel whose
+  schema groups actually render as twirls, a mechanism every effect now shares), and a
+  **Source** choice appeared: Manual light is the classic tracked point, **Matte** finds
+  up to eight of the brightest points in another layer's picture on the graphics card
+  and gives each its own full flare tinted by the source's colour, and Lights waits,
+  ready, for light layers. It also taught the effect system whole-number parameters
+  (Blades really is 8, not 8.00) and conditional rows that appear only for the mode
+  that uses them. A **Light tint** colour (with the usual swatch and eyedropper) then
+  colours the flare in any mode, and beside it — when the source is a matte or, later,
+  light layers — a **Use source colour** switch decides whether each detected light
+  keeps its own colour (a warm practical flaring warm, a cool one cool) or flares white
+  through the tint alone, which is what you want when the matte is only there to say
+  *where* the lights are. A calibration pass (K-260, on advice from the author of a
+  reference flare renderer) made the optics honest: instead of trusting the patent
+  paperwork about where the sensor sits, the bake now shoots one thin test ray through
+  the lens and puts the sensor exactly where that ray comes to a point — the lens's own
+  measured focus. That mattered because patent tables lie a little (the bundled "Zeiss
+  50mm" actually measures 64.8 mm). It also added a **Focus (m)** dial: refocusing a
+  real lens slides the sensor a fraction of a millimetre, and that tiny slide visibly
+  rearranges the whole ghost train — the same lens at 1 m and at infinity throws
+  completely different flares, and now Lumit's does too. The third pass (K-261)
+  swapped the whole optical engine for the one in FlareSim, an open Nuke plugin the
+  owner pointed at: instead of ten hand-built lenses, Lumit now embeds **1,299 real
+  lens prescriptions** — text files transcribed from patents, each one the actual
+  glass recipe of a Nikon, Canon, Zeiss and so on — and the Lens dropdown picks
+  among them. Each file says how each glass surface is coated, so the old
+  "coating preset" menu became unnecessary: the lens itself knows. The tracing
+  follows FlareSim's method faithfully, but the drawing keeps Lumit's own
+  smooth-grid approach — FlareSim splats millions of ray dots and blurs the noise
+  away, which needs far more rays than drawing the ray grid as connected little
+  panels that brighten where rays bunch up. A new **Ghost softness** dial (borrowed
+  from FlareSim's Ghost Blur) adds a touch of out-of-focus softness on top.
+  A follow-up pass (K-262) fixed what the owner found when actually using it.
+  The faint lines shooting across the flare turned out to be a bug in Lumit's
+  own drawing: when a cell of the ray grid lands across a "fold" in the light,
+  it arrives as a hair-thin sliver, and the code that rescues tiny cells from
+  being dropped was stretching those slivers into long streaks. Slivers are now
+  thrown away instead — the light they carry is spread to nothing anyway, and
+  their neighbours draw the real shape. The grid is also spent more cleverly:
+  each ghost gets rays in proportion to how big it lands, so a huge soft ghost
+  is no longer drawn with the same handful of cells as a tiny sharp one. That
+  is what makes the **Normal** quality usable rather than the tier where you
+  see the grid. And the Lens list, at 1299 entries, became a **searchable
+  picker** grouped by manufacturer — the plain dropdown was building all 1299
+  rows at once, which crashed the app.
+  The next pass (K-263) chased the worst report yet: after a few passes through
+  the lens picker on a Mac, the picture simply stopped updating, and opening a
+  different project did not bring it back. That last part is the clue. Every
+  project gets its own worker, but they all share one *graphics device* — the
+  connection to the card that the whole program holds — so a frozen picture that
+  survives a new project means the device itself has died. It had. Work is given
+  to a graphics card in parcels called submissions, and both macOS and Windows
+  kill a submission that takes too long, on the assumption that anything running
+  that long has hung; the kill takes the device with it, and everything after
+  fails silently. The flare was sending an entire frame as **one** parcel whose
+  size you set with Quality, Max ghosts and the source mode — so winding those up
+  did not make a slow frame, it made a dead device. The frame is now cut into
+  parcels small enough that no combination of settings can reach the limit. That
+  changes nothing about the picture: the pieces are handed over in the same order
+  and add up the same way, they just go in several loads instead of one.
+  Two other things were feeding it. The flare was asking the card for tens of
+  megabytes of scratch memory **every frame** and throwing it away — and a
+  graphics driver only really reclaims that when the work it belonged to has
+  finished, so a Viewer redrawing continuously built up a backlog of abandoned
+  memory; on a Mac, where the card shares memory with everything else, that is a
+  slow squeeze. It now keeps one set of scratch buffers and reuses them. And the
+  work itself was being done at the wrong size: the biggest ghost in the frame set
+  the working grid for *all* of them, so fifty compact ghosts each did the work of
+  the one enormous one. Each group of ghosts now works at its own size. Add a
+  handful of smaller economies — the two passes that read the same rays merged
+  into one, a drawn cell shrunk from 192 bytes to 80, the softness blur reading
+  each texel once for a whole row of pixels instead of once per pixel, a square
+  root per ray instead of one per glass surface — and a heavy frame measured about
+  a quarter faster on a slow test machine, with nothing about the result changed:
+  the same tests that check the picture against the reference maths still pass.
+  Choosing a lens is still a pause of about half a second, because the one-off
+  maths for a new lens runs on the same thread that draws — the fix for that is
+  the progress indicator on the TODO list, not a shortcut in the optics. What did
+  improve is that Lumit now remembers the last two dozen lenses you tried instead
+  of eight, and forgets them one at a time instead of all at once; before, every
+  ninth lens threw away the eight before it, so going back to one you had just
+  looked at made you wait all over again.
+  The pass after that (K-264) went after what the owner saw at Ultra: triangles
+  in the ghost rims, blocky faceting, jagged edges. All three came from the same
+  root. The flare is drawn as a fine net of little four-cornered panels, and each
+  panel used to be given ONE brightness — so neighbouring panels disagreed at
+  their shared edge, and a smooth ghost became a mosaic of tiles. The fix is the
+  one the original research paper used: give the brightness to the CORNERS
+  (each corner averages the panels around it) and let the graphics card blend
+  smoothly across every panel — the seams simply cease to exist. The jagged
+  outlines got the standard cure, multisampling: the card checks four points
+  per pixel instead of one at the edges of shapes, which is how every game
+  smooths its edges. And the triangular notches in the bright rims turned out to
+  be panels the code was *throwing away* out of caution — an earlier bug made
+  long thin panels dangerous to draw, so they were dropped, and every dropped
+  one left a bite mark in a rim. They are safe to draw now that brightness is
+  smooth, so the rims are whole. A subtler family of the same disease: whenever
+  a ray of light "died" at some edge inside the lens — the iris, a lens
+  barrel, missing a glass surface — every panel touching it vanished, and the
+  ghost's edge was quantised into stair-steps. Rays never die now: they carry
+  on with their light set to zero, fading over a distance instead of stopping
+  at a panel boundary. Same maths, same energy, smooth reconstruction — the
+  before/after images that drove the work were rendered through the real
+  pipeline on a software graphics driver and compared by eye, and that little
+  harness stayed behind as a test anyone can run.
+  The same pass rebuilt the lens list around a decision of the owner's: twenty
+  lenses instead of 1299. A thousand entries is a search problem, not a choice;
+  the twenty were picked for maximally different characters — modern cinema
+  glass, uncoated lenses from the 1930s that flare bright and neutral, a tiny
+  four-element design that throws a sparse clean train, an f0.95 with huge
+  discs, a fisheye, a projection lens, a superzoom with a ghost for every one
+  of its many elements — and each was rendered through the pipeline into a
+  contact sheet and checked by eye for distinctness. For everything else there
+  is a new **Lens file** parameter: point it at a `.lens` prescription file
+  (the same public format the bundled ones use, and the parser already read)
+  and it replaces the picked lens entirely. The file's contents are hashed
+  into the effect's cache key, so editing the file shows up on the next frame;
+  a missing or broken file quietly falls back to the picked lens rather than
+  erroring. Ghost softness now defaults to 0.02 — with the smooth shading
+  there is nothing left for blur to hide, so the default is a taste, not a
+  bandage.
+  The owner then lived with it for an hour and found five more truths (K-265).
+  The app died after minutes of switching lenses: the new multisampled canvas —
+  the biggest piece of memory the effect owns — was being created and thrown
+  away every frame, the exact disease the K-263 pass diagnosed for buffers,
+  and it is now kept and reused like the rest. Several of the twenty lenses
+  turned out to flare only when the light sat near the centre — the contact
+  sheet that chose them had been rendered with a near-centred light, so
+  lenses that die off-centre slipped through. The curation now stands on a
+  three-position probe (centre, off-centre, far corner) and the list was
+  re-cut: every wide-angle and fisheye design failed it, because the ray
+  model's acceptance genuinely collapses off-axis for those constructions —
+  so none are bundled, and that limit is written down rather than papered
+  over. The Lens file row, which shipped un-clickable (true of the LUT's file
+  row too, an old gap from the Flutter port), is now the picker itself: click
+  it, choose a file, and a small × clears it. And a new **Detail** dial
+  (0.25–4) hands the ray budget to the user — it multiplies both the number
+  of rays AND the number of traced colours, because the owner's zoom-lens
+  test proved a corona of colour-banding that rays alone cannot dissolve.
+  One artefact survived every fix thrown at it — a toothed fringe on one
+  ghost of a zoom shot two stops past its widest — and rather than another
+  guard, the decision log records the six things that were tried and ruled
+  out, so the real cure (subdividing the grid exactly at the folds) stays an
+  honest TODO instead of a mystery.
+  A fourth pass (K-266) closed the day's remaining reports. The flare's
+  light was landing past where the owner put it — but only in preview, and
+  only on adjustment layers, because an adjustment's effects are resolved
+  as if they will run at full comp size and preview quietly runs them
+  smaller; a new one-place repair (`rescale_px`) scales every
+  pixel-flavoured parameter by the true factor before the stack runs, which
+  also silently fixes preview-vs-export drift for blur radii and DoF
+  apertures on adjustment layers. Anamorphic squeeze below 1 used to smear
+  the frame edge — the flare was being asked for pixels beyond its own
+  canvas and the card answered with the nearest edge pixel, repeated;
+  outside the canvas is now simply dark. The chunky tiled edges on the big
+  soft ghosts fell to one more smoothing rule: a ray's brightness is now
+  averaged with its eight neighbours before drawing, so a hard lighting
+  cliff becomes a gentle two-panel ramp (the geometry still uses the raw
+  values, so nothing bleeds where it shouldn't). And picking a precomp as
+  the flare's matte — the natural way to author "a white circle on black
+  as my light source" — finally works: a comp has no pixels until it is
+  rendered, so the matte machinery quietly gave up on them; it now renders
+  the nested comp exactly the way a precomp layer is rendered, loops
+  guarded, and hands the picture to the light detector. One honest edge
+  remains written down: footage inside a matte-only precomp needs the
+  decode planner taught before it appears there.
+  A fifth pass (K-267) closed the next round. The choppy ghost edges that
+  survived at corner lights turned out to be a measuring problem, not a
+  drawing one: the effect sizes each ghost's ray budget from a once-per-lens
+  measurement of how BIG the ghost gets, but a ghost near the frame corner
+  does not get bigger — it gets locally *stretched*, like an image printed
+  on rubber, and the stretched patch is where the facets show. So every
+  frame now runs a tiny probe (a handful of test rays per ghost, microseconds)
+  at the light's actual position, finds the worst-stretched ghosts, and gives
+  extra rays exactly there — under a strict allowance, worst first, so the
+  frame's cost is bounded and predictable rather than exploding on a bad
+  lens. Anamorphic squeeze below 1 stopped cutting to black at the edges:
+  the ghost picture is now simply rendered onto a wider canvas (up to twice
+  as wide) before the squeeze samples it, so there is real image where it
+  reaches. And an area light finally weighs as an area: the detector still
+  anchors each flare on the brightest spot (now up to sixteen of them), but
+  every lit detection tile pours its brightness into the nearest anchor, so
+  the owner's white-circle precomp flares with the strength of the whole
+  circle where it used to count as a single pixel — while a true pinpoint
+  light reads exactly as before.
 - **RGB split gains a Wavelength mode** (K-090's quality-tier pattern: where the smooth
   look is optional, it hides behind a Bool next to the fast one). Off — the default —
   the split is three tinted samples: the first colour pulled one way, the third the
@@ -2530,6 +2742,16 @@ performance rules so it can't be forgotten.
 What the suite guards *today*: time maths exactness (6 property suites), undo/redo
 symmetry, journal replay, the crash-recovery drill both ways, file-format round-trips,
 unknown-field survival, autosave rotation, version refusal.
+
+**Shaders get checked without a graphics card (K-263).** The little programs that run on
+the card — the `.wgsl` files — used to be checked by exactly one thing: the card itself,
+at the moment Lumit built the pipeline. That is a bad place to find a typo. It means a
+broken shader builds fine, ships fine, and turns up as a black picture on somebody's
+machine, while any test runner without a graphics card sails past it. So there is now a
+test that runs the *same* shader compiler wgpu uses (naga) over every kernel in the crate
+and fails on anything it would reject. It needs no card, so it runs everywhere and
+finishes in milliseconds. It checks that a shader is *valid*, not that it is *right* —
+being right is what the CPU-reference comparisons are for, and those do need a card.
 
 ## 7. Words you'll meet in the code
 

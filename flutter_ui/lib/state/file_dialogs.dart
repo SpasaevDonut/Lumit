@@ -118,3 +118,17 @@ Future<String?> pickKeymapSaveLocation() async {
   );
   return location?.path;
 }
+
+/// Pick one file for an effect's File parameter (docs/08 §1.2's File kind,
+/// K-265) — the LUT's `.cube`, the Lens flare's `.lens`. The schema's own
+/// lower-case extensions and label drive the dialogue's filter, so a new
+/// File parameter needs no new function here. Null when cancelled.
+Future<String?> pickEffectInputFile(
+  List<String> extensions,
+  String label,
+) async {
+  final file = await openFile(
+    acceptedTypeGroups: [XTypeGroup(label: label, extensions: extensions)],
+  );
+  return file?.path;
+}

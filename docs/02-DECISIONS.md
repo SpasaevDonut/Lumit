@@ -5120,3 +5120,379 @@ The same pass made the Keymap page's clash test wait for the engine rather than 
 rebind it makes before opening the page is an frb call onto the worker thread, not done when
 it returns, and the Linux runner built the banner before the clash existed. It now settles on
 `keymapConflicts()` first. A test that passes because the machine is quick is not passing.
+
+**K-256 · DECIDED · Lens flare is simulated, not sprited — and its oracle is staged.**
+The Tier 1 suite gains a Lens flare effect (docs/08 §3.27, docs/impl/lens-flare.md):
+ghosts ray-traced per frame through bundled real lens prescriptions (static data in
+`lumit-core`, sourced from published patents), coloured by quarter-wave coating
+interference, rasterised as warped ray grids through a hardware render pass; the
+starburst is the aperture's Fourier diffraction pattern, baked on the CPU at
+parameter-change time along with the aperture image and the FRFT ghost disc. The
+reference implementation studied end-to-end is the GPLv3 realflare renderer; the port's
+four deviations are pinned in the impl note (Cauchy-from-Abbe dispersion instead of a
+glass catalogue; deterministic per-element coating wavelengths instead of a per-element
+editor; wgpu hardware rasterisation instead of realflare's software binner, which existed
+only because OpenCL has no raster pipeline; Rec.709 working primaries instead of AP1).
+Three consequences are decisions rather than details. **(1) The §1.6 oracle is staged**:
+the CPU twin matches the GPU trace ray-for-ray at tight absolute bounds (positions to
+microns, reflectance to 1% — GPU transcendental builtins are not correctly rounded, so
+an ULP promise through sin/asin/acos would be unimplementable) and the baked textures are
+shared bit-for-bit, but the rasterised frame is held to a perceptual bound (mean error +
+total energy), because hardware fill rules pin no per-pixel contract a CPU scanline twin
+could meet at ULP tolerance — the flow-field precedent (§1.6) extended to raster fill.
+**(2) The CPU degradation rung renders the effect as a labelled no-op**, the K-114 LUT
+precedent: a software rasterisation of a heavy flare is not a usable fallback rung.
+**(3) Full-image convolution is a non-goal**: flaring every pixel of an HDR frame (the
+offline batch-tool technique) costs seconds per frame and cannot preview; the recorded
+path for image-driven flares is the top-K highlight detection spec'd in the impl note §6.
+
+
+**K-257 · DECIDED · The Lens flare panel is reshaped by owner design, and its sources
+become modes.** The first owner pass over K-256's effect. **(1) The panel**: the light
+becomes one x/y point row with a pick-on-Viewer dropper — the docs/07 §6.1 pair, built
+generically: any adjacent `_x`/`_y` Float pair folds into one row, and a declared
+%-of-frame allowlist (the flare's light, Radial blur's centre) gets the position dropper.
+Parameter groups finally CROSS the bridge (`list_parameter_groups`) and render as
+sub-twirls in the Effect controls card — the schema's K-145 groups had never reached
+Flutter — with an added `visible_when` (a group shown only while a named sibling Choice
+holds a value) and an empty-label headerless form, which is how per-mode controls appear.
+**(2) An Int parameter kind**: Blades and Max ghosts are whole numbers; the value stays a
+Float scalar (animation and serialisation unchanged) and only the schema kind, bridge and
+row change — replacing the "rounded float row" convention. **(3) Scale scales the whole
+flare** about the optical centre, not just the starburst; the starburst's own rotation
+and softness parameters are deleted (pre-release, no migration; the stochastic bake
+jitter speckled and the spectral integration is the honest smear). **(4) Coating type**
+presets pick the per-surface coating-tuning pattern (modern multicoat / vintage single
+coat / warm / cool) — the λc cycle is a bake input. **(5) The wavelength ladder rises to
+3/5/7/9** per quality: the owner read the 3-band fringe as an RGB split, correctly — bands
+are integrals, and five is where dispersion reads smooth. **(6) Source modes**: Manual
+light (the tracked point), **Matte** (shipped — impl note §6: deterministic on-GPU top-8
+bright-source detection over a referenced layer, threaded exactly as the DoF depth pass,
+each source spawning a full flare tinted by its pixel through a soft threshold gate), and
+**Lights** (prepared: the Choice exists and resolves as Manual until light layers land as
+flare sources). **(7) The lens library doubles** to six real prescriptions and drops the
+codenames for the lenses' actual names. The **lens designer** — a window where the user
+builds a prescription element by element with a live diagram, as the reference apps do —
+is recorded as the intended custom-lens path (TODO, Later), ahead of flat custom-file
+loading.
+
+**K-258 · DECIDED · The flare's exposure closes the loop, its quality ladder goes
+photo-real, and stacks forward-migrate on load.** The owner's second pass over the Lens
+flare. **(1) Loaded stacks backfill**: a built-in instance saved before its schema grew a
+parameter lacked it — the panel drew a dash and `set_value` refused the id. `open()` now
+appends every missing declared parameter at its default (`backfill_builtin_params`);
+values present are never touched. This is the general forward-migration for every effect,
+not a flare fix. **(2) Closed-loop auto-exposure**: the probe-median and probe-flux
+exposure proxies both mispredicted real lenses by orders of magnitude (ghost energy
+depends on where a design's caustics land at render framing — the Petzval read 30× dim),
+so the bake now renders the actual CPU reference at thumbnail size with gain 1 and
+normalises the measured mean to a target. Deterministic, milliseconds, and every bundled
+lens lands in one exposure band by construction. **(3) The quality ladder rises** to
+4/8/16/32 traced bands with grids 16/48/80/128 and a 512² ghost disc — at Ultra the
+spectral rims are effectively continuous (the owner's "photo-real to the extreme" tier,
+~250 ms a frame at 960×540 on the dev RTX; Normal stays real-time at ~24 ms). **(4) The
+launch square covers the whole front element** (2.3× its half-height): the previous
+undersized square was visible in the picture as a rectangular ghost boundary — the
+bundle's own clip instead of the housing's feathered vignette. **(5) Background**
+(Transparent / Black): Black makes the live output opaque — the flare-element-over-black
+export for Screen/Add workflows; the neutral passthroughs stay bit-exact. **(6) Four
+classic public-domain designs join the library** (Cooke triplet 50/3.5, Tessar 50/2.8,
+Petzval 85/2.2, Double Gauss 58/2 — the design names, era-authentic) for ten lenses
+total, and three coating presets join (Amber single coat, Two-tone vintage, Broad
+multicoat) for seven.
+
+**K-259 · DECIDED · The flare's light carries a tint, and a source may keep its own
+colour or not.** Two controls the owner asked for, plus the schema generalisation they
+needed. **Light tint** (a Colour parameter — so it gets the inspector's picker *and* its
+eyedropper for free) multiplies every light's colour in **every** source mode: in Manual
+it simply *is* the flare's colour, in Matte it tints what the detected sources
+contribute. It is a frame-time value, deliberately outside the bake key, so animating it
+never rebakes. **Use source colour** (Bool, default on) chooses whether a detected
+source's own colour rides with it: on, a warm practical flares warm and a cool one cool;
+off, every source flares white through the tint alone — which is what a matte used purely
+as a *position* mask wants. Both paths compute the light as `(use_source ? source rgb :
+white) × gate × tint` in one shared expression, mirrored by the CPU reference and the
+WGSL detection. The toggle is shown for **Matte and Lights alike**, which the K-257
+`visible_when` could not express — it named one Choice value — so it now names a **set**
+of them (`Option<(&str, &[u32])>`, `visible_when_values` across the bridge). Version
+bumped 2 → 3; pre-release, and loaded stacks backfill the new parameters at their
+defaults through K-258's migration anyway.
+**K-260 · DECIDED · The flare's optics are calibrated against the lens itself, focus
+distance is a parameter, and point parameters are authored in comp pixels.** An accuracy
+pass taken directly from the reference renderer's author. **(1) Calibrated sensor**: the
+sensor plane sits at the prescription's *measured* infinity focus — the bake traces one
+paraxial marginal ray through the main path and places the sensor at its axis crossing —
+not at the patent table's trailing gap (off by up to 10 mm on bundled lenses). The same
+trace measures the true EFL, which replaces the label focal length in the light direction
+and focus maths; measuring vindicated his warning that patent tables are not normalised
+to the label (the Zeiss "50mm" measures 64.8 mm). The four classic reconstructions are
+rescaled to land within 0.03% of their labels; real patent tables stay as published.
+**(2) Focus (m)**: the thin-lens focusing extension `f²/(1000·d − f)` mm shifts the
+sensor at trace time — frame-time, outside the bake key, so pulling focus never rebakes —
+and rearranges the whole ghost train, the "same lens, different focus, completely
+different flare" behaviour. **(3) Padded FRFT**: the aperture embeds centred in a 2×
+zero field before the ghost-disc transform (centre-cropped after); unpadded, the circular
+transform wrapped its own ringing into banded arcs across every ghost. **(4) Wide-open
+iris**: effective roundness is `max(user, 1 − clamp(fstop/native − 1, 0, 2)/2)` — at the
+native stop the iris retracts behind the circular bore and ghosts go round regardless of
+blade count. Roundness itself became an SDF lerp toward the true circle; the additive
+sine bulge it replaces pinched into a flower near 1 (caught against the reference's round
+wide-open ghosts). **(5) Point parameters are comp pixels** — standing convention: any
+x/y point parameter (the flare's Light, and every future one) is authored in px@comp,
+never % of frame; the Viewer dropper converts its fraction through the comp size at click
+time. Radial blur's legacy % centre is grandfathered until migrated.
+
+**K-261 · DECIDED · The flare adopts the FlareSim optical model and its 1299-lens
+library, rendered through the energy-conserving quad grid.** The owner pointed at
+FlareSim (github.com/SeanBRVFX/FlareSim_Nuke_builded, building on space55's renderer) as
+the reference and asked for its lens files in Lumit; its model is reimplemented here from
+understanding — not translated (the repo carries no licence; the lens files are
+transcribed patent data from PhotonsToPhotos, each citing its patent). **(1) The
+library**: 1299 .lens prescriptions embedded in lumit-core as text, parsed on selection
+(no IO, no panics); the Lens dropdown lists them all; native f-numbers come from the
+collection filenames. The K-256 ten-lens hand-built table and the K-257 Coating-type
+presets are gone — every prescription carries its own per-surface AR coating layer
+counts, and the Coating dial blends bare glass toward them. **(2) The optics**:
+FlareSim's three-phase walk (forward to the far bounce, backward to the near, forward
+out), all-pairs ghost enumeration with an interface filter and on-axis brightness probe,
+per-surface MgF₂ quarter-wave/multicoat reflectance, an iris mask (blades / roundness /
+softness) weighting a regular pupil grid sized to the entrance pupil, and the f-stop
+scaling the stop and pupil together. The K-260 focus shift and wide-open roundness
+carry over; the K-260 paraxial sensor calibration is superseded — these files carry
+measured back-focal chains. **(3) The renderer**: FlareSim's own Monte-Carlo point
+splatting was built first and measured — at photographic ghost sizes it needs orders of
+magnitude more rays than the K-256 quad-grid area method for the same smoothness, so the
+quad grid (with the K-261 flux-exact sub-pixel caustic inflation, and a housing feather
+with a 10% clip skirt so bundle edges fade instead of stepping) renders the FlareSim
+optics noise-free. The FRFT ghost-disc texture is gone — the ghost's shape IS the warped
+grid × mask. **(4) Ghost softness** (new parameter, FlareSim's Ghost Blur): a 3-pass box
+blur in % of the frame diagonal, frame-time. **(5) The exposure gain cap drops to 64**:
+a lens whose every ghost is extreme defocused wash has almost no probe energy, and the
+unbounded K-258 loop amplified the residue into artefact fields; capped, such glass
+renders honestly dim. Schema v3 → v4 (coating_preset removed, ghost_softness added;
+pre-release, old lens indices land on different-but-valid library entries). Known limit,
+pinned in TODO: extreme-defocus prescriptions show grid-aligned steps at low quality —
+adaptive refinement is the follow-up.
+
+**K-262 · DECIDED · The flare's fold artefacts are fixed at the guard, the ray budget
+follows ghost size, and a 1299-option dropdown gets a searchable picker.** The owner's
+first pass over the shipped FlareSim model found three faults. **(1) The streaks.**
+K-261's sub-pixel inflation scaled ANY quad under 4 px² up about its centroid — correct
+for a small compact cell, wrong for a fold-straddling *sliver*, whose near-zero area made
+the scale factor up to 100× and stretched a 20 px sliver into a 2000 px line: the "random
+lines across the flare". Inflation is now restricted to compact quads; long-and-thin ones
+(past 4% of the frame diagonal with `longest² > 8 × area`) are dropped at any size, and
+the caustic density cap tightens from 10 000× to 333×, which removes the hard chromatic
+spikes while keeping the bright rims. Note the failure mode: **both oracles agreed while
+drawing the artefact**, because the CPU and WGSL mirrored the same wrong formula — so the
+regression pin is a unit test of the guard itself, verified to fail on the K-261 code.
+**(2) Normal quality.** The pupil grid is now allocated **per pair** by its measured
+image spread (½× to 2.5× the ladder base, which itself rises to 32/64/96/144): a
+frame-filling defocused ghost gets the cells it needs and a tight blob stops wasting
+them. Ghost softness accordingly defaults to 0.05 instead of 0.3, and **0 is a clean
+setting** — the blur was hiding artefacts, not adding character. **(3) The crash.** A
+1299-row dropdown built every row eagerly inside an `IntrinsicWidth`, which walks them
+all twice; the app died in a Flutter layout pass with a thread-allocation failure. Long
+option lists (≥ 40) now get `BareSearchDropdown`: a search field over a lazily-built
+`ListView.builder` with maker headings, and the library's labels are regenerated as
+`Maker · Model` (53 normalised makers, series names like "AI Nikkor" folded onto Nikon)
+so grouping and typing both work. Also capped the Ghost-softness blur radius at 80 px —
+an uncapped 2% radius on a 4K frame is ~1000 taps per pixel across six passes, a GPU
+timeout waiting to happen. The default lens index moves with the re-sort (pre-release; a
+saved index lands on a different valid lens).
+
+**K-263 · DECIDED · The flare's frame is bounded, batched by its own grid, and pooled —
+no submission the watchdog can kill, no per-frame megabyte churn.** The owner tried the
+shipped K-262 flare on a Mac: after a few passes through the lens picker the Viewer
+stopped updating and nothing brought it back, not even opening a different project. That
+last detail is the diagnosis — a project is a fresh worker but the *process* keeps the
+graphics device, so a frozen picture that survives a new project means the device itself
+is gone. Three things fed it, and all three are fixed at the cause rather than by
+lowering quality; the picture is unchanged (the CPU-oracle parity, determinism and
+bit-exact-neutral tests all hold). **(1) One unbounded submission.** The whole frame —
+every ghost, wavelength and light — went to the card as a single command buffer whose
+size the user sets through Quality, Max ghosts and the source mode. macOS and Windows
+both kill a submission that runs too long, and that kill takes the device, which is
+exactly the symptom. The frame is now cut into submissions at a fixed ray–surface-step
+budget; the batches queue in the same order and blend in the same order, they are merely
+handed over in pieces. **(2) The scratch was allocated per frame and sized by hope.**
+K-262's budget bottomed out at one combo and then let eight lights at an Ultra grid ask
+for ~100 MB anyway — allocated and dropped every frame, which on a unified-memory Mac is
+how a flare fills the memory it shares with everything else. The budget is now a hard
+bound (the light dimension splits too) and the buffers are pooled and reused. **(3) One
+stride for the whole frame.** The scratch was strided by the widest grid in the frame and
+the vertex pass ran over that stride to park what a narrower batch did not fill — so a
+single frame-filling ghost made every compact ghost dispatch and draw at *its* cell
+count. A batch is a run of combos at one grid, so each now strides by its own and draws
+exactly its own cells. Alongside those: the energy pass folded into the vertex pass (it
+re-read the same four rays to recompute the same area); a drawn corner is 20 bytes stored
+once per cell instead of six 32-byte vertices; the Ghost blur sums through a workgroup
+line cache (~3.5 texture fetches a pixel where 161 was the worst case); the aperture
+feather tracks its radius squared and takes one square root a ray instead of one per
+surface; the bake stops interpolating the CIE table 6.5 million times for a hundred
+answers, hoists the wavelength-independent iris mask out of the wavelength loop, and
+measures ghost spreads only for the 200 pairs a frame can reach. The bake cache stops
+emptying itself at the cap and evicts oldest-first at 24 — clearing the lot made trying
+lenses quadratic. Measured on a software rasteriser: a 960×540 Normal/60-ghost frame
+3.03 s → 2.30 s, and a bake 0.80 s → 0.66 s. Also new: `tests/wgsl_validates.rs` parses
+and validates every shipped WGSL kernel with naga, so a broken shader fails on any
+machine instead of only on one with a graphics card. **Not** fixed here and recorded in
+TODO: the bake still runs on the render thread, so picking a lens blocks the picture for
+about half a second — the fix is the progress indicator and an off-thread bake; and the
+raster still draws culled cells, which a deterministic prefix-sum compaction would skip.
+
+**K-264 · DECIDED · The flare's density lives at the grid corners, its raster is
+multisampled, a ray never dies at an aperture, the library is a curated twenty, and a
+.lens file is a parameter.** The owner's Ultra pass after K-263 showed triangles in the
+ghost rims, blocky faceting, and jagged edges — and asked for the library to shrink from
+1299 to at most twenty distinctive lenses plus a user-loadable prescription, with the
+Ghost softness default at 0.02. Nothing here lowers quality to hide anything; every fix
+is at the reconstruction. **(1) Vertex-smoothed density** ([Hullin et al. 2011]'s
+per-vertex rule, confirmed against the published implementations): a corner's density is
+the launch cell area over the mean landed area of the live cells touching it,
+interpolated by the raster — the K-256..K-263 per-CELL density was constant inside a
+cell and jumped at its edge, and that repeated discontinuity WAS the faceting and the
+moiré. The caustic cap now floors the mean, so fold clusters still top out at 333×.
+**(2) 4× multisampling** on the ghost raster (resolved into the flare buffer), with the
+CPU reference modelling the same four standard sample positions — coverage times
+centre-interpolated colour — so the oracle stays tight. Sub-sample inflation's floor
+drops 4 px² → 1 px² accordingly; at 4 it also caught the merely small and tiled
+small-rendered wash ghosts with overlapping diamonds. **(3) Geometry never dies at an
+aperture.** Every binary kill in the walk — the iris mask, the housing skirt, a missed
+sphere, total internal reflection — sampled its boundary at pupil-cell granularity and
+drew it as a staircase. All four now continue the ray with weight forced continuously to
+zero (mask multiplies; the feather clamps its denominator to the glass's own extent so a
+transcription error cannot outrun it; a miss continues virtually through the vertex
+plane; TIR continues straight — its transmitted Fresnel already fades to zero). Cells
+spanning from lit geometry to a distant virtual landing pull their unlit corners to
+within one local cell-width of the lit centroid, so the fade lands where the boundary
+is: drawn they fanned lines, dropped they notched rims — K-262's streak drop is
+superseded, long thin fold cells draw, and the trace oracle pins positions only for rays
+carrying weight. **(4) The adaptive budget probes off-axis too** and takes the larger
+spread — on-axis-only handed frame-filling off-centre ghosts the half grid. **(5) The
+starburst sprite fades radially to zero** inside its border; its pedestal used to end at
+the quad edge as a hard grey square. **(6) The library is twenty curated lenses**
+(owner-decided; verified distinct by rendering all twenty through the pipeline into a
+montage and looking): cine multicoat, 1930s uncoated exotics, Tessar, f0.95, fisheye,
+process glass, superzoom, long telephoto. Saved pre-K-264 indices land on a valid
+curated lens (pre-release). **(7) `lens_file`** (the LUT File pattern): a user's .lens
+in the same Optical Bench format overrides the pick entirely, content-hashed into the
+bake key so edits take effect next frame; unset/missing/unparsable degrades to the pick.
+The K-262 searchable picker stays as the guard for any future long Choice list, pinned
+by a synthetic-options widget test. **(8) Ghost softness defaults to 0.02**
+(owner-set): taste, not cover. Verified by eye through a new `#[ignore]`d GPU
+frame-dump harness (before/after PNGs at Ultra on the artefact lenses) — the faceting,
+moiré, rim notches and staircase edges are gone at Ultra with a mild ripple left on
+hard vignetted edges at Normal (known limit, TODO'd with adaptive refinement). Cost, measured
+on the software rasteriser: a 960×540 Normal/60-ghost frame 2.30 s → 3.32 s — the
+multisample fill and the always-completing walks are real work, mitigated by skipping
+pupil corners so far outside the iris that no cell they touch can hold light (a fifth
+of the square, bit-identical output); on a hardware GPU the multisample share of that
+is near-free. Accepted: the owner's bound was quality at fixed settings, and the K-263
+submission splitting keeps any of it from becoming a watchdog kill. One driver find
+for CI: dynamically-indexed `let` arrays in WGSL crash lavapipe's shader compiler —
+use `var`.
+
+**K-265 · DECIDED · The flare's budget is the user's dial, every bundled lens must
+flare everywhere, and the big allocations are pooled — found live by the owner within
+the hour of K-264.** Five reports, five causes. **(1) The application died after
+minutes of lens-switching.** The K-264 multisample target — the effect's largest
+allocation, ~66 MB at a 1080p flare buffer — was created and dropped EVERY FRAME,
+exactly the rolling-backlog disease K-263 diagnosed for buffers, felt as renders
+slowing over minutes and then the process dying. Pooled now, keyed by size, beside the
+ray scratch. **(2) Several curated lenses rendered nothing.** The K-264 montage was
+judged with a near-centred light, and lenses that only work there slipped through: a
+three-position probe (centre, off-centre, far corner) now stands behind the curation,
+and it found the Kinoptik, both fisheyes, every wide-angle retrofocus design, both
+superzoom compacts and the 50mm Tessar file either dead off-centre or baking ZERO
+ghost pairs. The library is re-cut to twenty verified-alive, still maximally distinct
+lenses (in: FD 300/2.8, Canon 50/1.2 LTM, both Noktons, Elmarit 90, Summilux-C 100
+cine, Orestor 135, Ultra Prime 135, Tessar 100/4.5, DEM 180 APO; out: everything the
+probe failed, plus the Projection Optics wash — an 8-diagonal ghost no bounded grid
+can sample, the recorded §4 limit). **Wide-angle and fisheye prescriptions are a
+recorded model limit**: the trace's angular acceptance collapses off-axis for
+retrofocus designs, so none are bundled — a lens that only flares with a centred
+light is a bug report, not a look. **(3) The Lens file row could not pick a file.**
+The File parameter row was display-only — true for the LUT too since the Flutter
+port. It is now the picker: click opens the dialogue through the schema's own
+extension filter, set rows grow a clear button, and the fix covers every File
+parameter. **(4) "Let me choose the rays myself."** A new **Detail** dial (0.25–4,
+default 1) multiplies the Quality tier's pupil grid AND its wavelength count through
+shared helpers, because the owner's toothed EF 70-200 corona proved more rays alone
+cannot dissolve spectral banding. The K-262 half-grid rung for small-spread pairs is
+gone — a small ghost is not a cheap ghost, its caustic rim carries structure the
+blob-size probe cannot see — and the grid clamp rises to 512 for the dial's headroom.
+Software-rasteriser cost for the default Normal frame: 3.32 s → 4.41 s (the halved
+pairs quadrupled), accepted for the same reason as K-264. **(5) The corona that
+remains on the EF 70-200 at f1.5 is pinned as a known limit** after ablating, one by
+one: grid 72→288, wavelengths 32→64, the pull-in reach (mean → smallest neighbour —
+kept, it is the right scale), sub-sample inflation off, a local branch-jump cull
+(reverted: it nicked interior caustics without touching the corona), and a 3× wider
+housing feather. The corona is invariant to all of them: it is the fold structure of
+that ghost in an extrapolated regime (shooting an f2.8 zoom at f1.5), and the recorded
+fix is adaptive refinement at folds, not another guard. The ablation list lives here
+so nobody re-chases it.
+
+**K-266 · DECIDED · Px parameters survive preview scaling, the flare stops at its own
+buffer, weight cliffs smooth, and a precomp is a legal layer input.** Four owner
+reports from live use. **(1) The light landed past where it was put** — at 1500 of a
+1920 comp, both axes off by exactly the preview factor. An ADJUSTMENT layer's stack
+resolves px@comp parameters with factor 1 ("runs on the comp-sized intermediate"),
+but under reduced-resolution preview that intermediate is the preview raster: every
+px-dimensioned parameter on an adjustment layer — the flare's light, DoF apertures,
+blur radii — ran 1.28× too big/far, in preview only. New `fx::rescale_px` scales
+every px field of resolved ops (exhaustive match, so a new op must declare its px
+fields), and the realise walk applies `render_width / comp_width` to adjustment
+stacks before running them. The Precomp-layer variant of the same disease is TODO'd
+with the diagnosis. **(2) Anamorphic squeeze below 1 smeared the frame edge**: the
+combine's clamp-addressed tap repeated the flare buffer's border row outward.
+Outside the buffer there is no flare — the tap returns zero, both twins, pinned by
+test. **(3) The chunky wash edges** (the owner's Ultra Prime screenshot): a weight
+cliff — the housing feather compressed into less than a cell, a vignette cut —
+lands inside one cell and draws as facets. A corner's COLOUR weight is now the mean
+over its 3×3 ray neighbourhood (dead rays as zero), turning any cliff into a
+two-cell ramp; geometry decisions stay on raw weights so virtual continuations
+cannot smear light into fan lines. Verified on the reported lens: the staircase is
+gone. **(4) A precomp as a Matte source detected nothing** — `pixels_for` has no
+pixels for a comp, so the reference silently became "no matte". Layer inputs
+(flare mattes AND DoF depth, same mechanism) now carry an optional nested draw
+list, built with the ancestor-path cycle guard and realised recursively exactly as
+a Precomp layer's picture is. Boundary: footage inside a matte-only precomp still
+needs the decode planner taught (solids, text, shapes, nested renders all work) —
+TODO'd. On area sources generally: Matte mode approximates an area by its
+brightest eight points with non-max suppression; raising that count and sampling
+the area proper is recorded as the follow-up rather than pretended.
+
+**K-267 · DECIDED · The grid budget re-measures at the frame's light, the flare buffer
+pads for squeeze/scale, and an area source weighs as its whole lit area.** Third live
+round on the same branch. **(1) "Still choppy at the corner" (7Artisans).** The bake's
+image-spread probe is a bounding box, and the corner measurements showed the box does
+not grow at corner lights — what grows is the worst LOCAL stretch: a pair the same
+overall size stretches ~6× near a fold, and those cells are the polyline edges. New
+frame-time probe (`frame_grid_needs`, the Hullin patent's "grid resolution adapted at
+runtime, guided by bounding shape estimations"): a 12×12 weight-gated trace per
+renderable pair at the actual light direction measures the worst adjacent-landing
+distance and derives the grid side that would keep the largest cell under 0.5% of the
+sensor diagonal. Uncapped this septupled a frame (24 s on the software rasteriser), so
+the raise is BUDGETED (`plan_frame_grids`): half again over the frame's rung-grid ray
+baseline, spent worst-stretch-first with partial grants, per-pair cap 3× the rung,
+hard clamp 512. Manual mode only (Matte lights exist GPU-side; both twins gate the
+same way). The probe runs in lumit-render through the same seam callback as the bake
+and returns the FINAL per-pair grids, so the CPU reference and the GPU dispatch cannot
+disagree about a single ray. Cost at the default Normal frame: 3.35 s → 5.76 s
+software-rasterised, the bounded price of the last three rounds' artefact class;
+Detail stays the user's dial in both directions. **(2) Anamorphic below 1 "cuts to
+black at the edges"** — K-266 honestly stopped the edge-repeat smear and honestly
+showed there was no flare past the buffer. Now there is: the ghost buffer renders
+PADDED (`flare_pad_dims`, up to 2× per axis, geometry centred, screen transform and
+blur radius still derived from the base dims), and the combine's tap only gains a
+constant border offset — zero when unpadded, bit-compatible. Past even the 2× cap
+(squeeze below 0.5 at Scale 1) the zero-outside rule still holds, pinned by the same
+test. **(3) "Eight brightest points, do better — now."** MAX_LIGHTS rises 8 → 16, and
+detection stops pretending an area is a pixel: after the top-K anchor pick, EVERY
+gated detection tile's flux — its brightest pixel's colour × its threshold gate —
+accumulates onto its nearest anchor (Chebyshev, ties to the lowest index, fixed tile
+order, CPU and GPU op-for-op). A one-tile point source is its own anchor's only
+contributor and reads exactly as before; the owner's white-circle precomp now carries
+the flux of every tile it lights. Position stays the anchor pixel; sub-tile centroid
+positioning would be the next refinement if ever needed.

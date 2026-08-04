@@ -633,6 +633,14 @@ pub enum Resolved {
         /// 0..1.
         mix: f32,
     },
+    /// Lens flare (docs/08 §3.27, docs/impl/lens-flare.md, K-256): traced
+    /// ghosts and the Fourier starburst. The op carries its full parameter
+    /// bundle ([`LensFlareParams`], all plain numbers); the baked resources
+    /// (disc/starburst textures, ghost ranking) derive from those numbers
+    /// through `lens_flare::bake`, cached GPU-side by [`lens_flare::bake_key`]
+    /// — so nothing travels beside the op. GPU-only: the CPU degradation rung
+    /// renders it as a labelled no-op (the K-114 LUT precedent).
+    LensFlare(crate::fx::lens_flare::LensFlareParams),
 }
 
 /// Resolve a layer's live stack at layer time `lt` for a raster whose
@@ -644,6 +652,103 @@ pub enum Resolved {
 /// marker-driven modes (Flash's Trigger and Strobe, §3.7). Placeholders,
 /// unknown names and bypassed effects resolve to nothing (they render as
 /// identity, docs/03 §8).
+/// Rescale every pixel-dimensioned field of already-resolved ops by `f` —
+/// the repair for a stack resolved against one raster and run on another
+/// (K-266). The Adjust arm of the draw builder resolves with `px_scale` 1
+/// because its stack runs on "the comp-sized intermediate" — which is only
+/// true at full preview resolution. Under reduced-resolution preview the
+/// intermediate is the preview raster, and every px@comp parameter (the
+/// flare's light, DoF apertures, blur radii) landed too far right and too
+/// big by exactly the preview factor; the owner measured the flare's light
+/// hitting the frame edge at 1500 of a 1920 comp. The realise walk calls
+/// this with `render_width / comp_width` before running an adjustment
+/// stack.
+///
+/// Exhaustive on purpose: a new op must decide here whether it owns pixel
+/// fields, so the bug cannot quietly return with the next effect.
+pub fn rescale_px(ops: &mut [Resolved], f: f32) {
+    if (f - 1.0).abs() < 1e-6 {
+        return;
+    }
+    for op in ops {
+        match op {
+            Resolved::Blur { radius_px, .. } => *radius_px *= f,
+            Resolved::DirBlur { length_px, .. } => *length_px *= f,
+            // Radial blur's centre is a frame fraction; only the legacy
+            // strength is per-frame-relative too. Nothing in pixels.
+            Resolved::RadialBlur { .. } => {}
+            Resolved::Sharpen { radius_px, .. } => *radius_px *= f,
+            // SharpenSimple's radius is a fixed 3x3 kernel scale, not px.
+            Resolved::SharpenSimple { .. } => {}
+            Resolved::RgbSplit { amount_px, .. } => *amount_px *= f,
+            Resolved::SpectralSplit { amount_px, .. } => *amount_px *= f,
+            Resolved::ChromaticAberration { amount_px, .. } => *amount_px *= f,
+            Resolved::Flash { .. }
+            | Resolved::ColourBalance { .. }
+            | Resolved::Saturation { .. }
+            | Resolved::Vibrancy { .. }
+            | Resolved::MatteKey(_)
+            | Resolved::Vignette { .. }
+            | Resolved::Exposure { .. }
+            | Resolved::HueShift { .. }
+            | Resolved::Contrast { .. }
+            | Resolved::Gamma { .. }
+            | Resolved::Temperature { .. }
+            | Resolved::Invert { .. }
+            | Resolved::Tint { .. }
+            | Resolved::Lut { .. } => {}
+            Resolved::Transform {
+                anchor, position, ..
+            } => {
+                anchor[0] *= f;
+                anchor[1] *= f;
+                position[0] *= f;
+                position[1] *= f;
+            }
+            Resolved::Glow { radius_px, .. } => *radius_px *= f,
+            Resolved::Shake { offset_px, mb, .. } => {
+                offset_px[0] *= f;
+                offset_px[1] *= f;
+                if let Some(samples) = mb {
+                    for s in samples.iter_mut() {
+                        s.offset_px[0] *= f;
+                        s.offset_px[1] *= f;
+                    }
+                }
+            }
+            Resolved::BlockGlitch {
+                block_size_px,
+                amount_px,
+                chan_px,
+                ..
+            } => {
+                *block_size_px *= f;
+                *amount_px *= f;
+                *chan_px *= f;
+            }
+            // Scanlines' period and Datamosh's blocks follow their own
+            // texture-relative conventions (docs/08); Echo and MotionBlur
+            // carry times and flow scales, not pixels.
+            Resolved::Scanlines { .. }
+            | Resolved::Datamosh { .. }
+            | Resolved::Echo { .. }
+            | Resolved::MotionBlur { .. } => {}
+            Resolved::Dof {
+                near_aperture,
+                far_aperture,
+                ..
+            } => {
+                *near_aperture *= f;
+                *far_aperture *= f;
+            }
+            Resolved::LensFlare(p) => {
+                p.light[0] *= f;
+                p.light[1] *= f;
+            }
+        }
+    }
+}
+
 pub fn resolve_stack(
     effects: &[EffectInstance],
     lt: f64,
@@ -1097,6 +1202,104 @@ fn resolve_one(
             // the Resolved::Lut ops — the whole threading contract.
             let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
             Some(Resolved::Lut { mix })
+        }
+        "lens_flare" => {
+            // Lens flare (docs/08 §3.27, K-256/K-257). Everything resolves to
+            // plain numbers; the bake derives from them GPU-side (cached by
+            // lens_flare::bake_key), so nothing travels beside the op except
+            // the Matte source's rendered layer (the DoF layer-input shape).
+            // Light position is a raster fraction; % keeps it
+            // resolution-independent (§2.3).
+            // px@comp -> raster pixels through the §2.3 preview factor, the
+            // Transform-anchor convention (K-260: point params are pixels).
+            let lx = e.float_at("light_x", lt).unwrap_or(640.0) as f32 * px_scale;
+            let ly = e.float_at("light_y", lt).unwrap_or(360.0) as f32 * px_scale;
+            let intensity = (e.float_at("intensity", lt).unwrap_or(1.0) as f32).max(0.0);
+            // Library index (K-261; out-of-range clamps inside lens_entry).
+            // A pre-K-264 save's index pointed into the old 1299-lens
+            // table; pre-release, it simply lands on a valid curated lens.
+            let lens = match e.param("lens_model") {
+                Some(EffectValue::Choice(c)) => *c,
+                _ => 16,
+            };
+            let fstop = (e.float_at("fstop", lt).unwrap_or(2.8) as f32).clamp(0.7, 32.0);
+            let focus_m = (e.float_at("focus", lt).unwrap_or(100.0) as f32).max(0.2);
+            let quality = match e.param("quality") {
+                Some(EffectValue::Choice(c)) => (*c).min(3),
+                _ => 1,
+            };
+            let detail = (e.float_at("detail", lt).unwrap_or(1.0) as f32).clamp(0.25, 4.0);
+            let background = match e.param("background") {
+                Some(EffectValue::Choice(c)) => (*c).min(1),
+                _ => 0,
+            };
+            // Source mode (K-257): Lights resolves as Manual until light
+            // layers land (the option is prepared, not wired).
+            let source = match e.param("source_type") {
+                Some(EffectValue::Choice(c)) => (*c).min(2),
+                _ => 0,
+            };
+            let threshold = (e.float_at("threshold", lt).unwrap_or(1.0) as f32).max(0.0);
+            let threshold_softness =
+                (e.float_at("threshold_softness", lt).unwrap_or(0.25) as f32).max(0.0);
+            // Light tint (K-259): scene-linear RGB, clamped at zero below and
+            // open above (an HDR tint pushes the flare hotter). Alpha unused.
+            let tint = e.colour_at("light_tint", lt).unwrap_or([1.0; 4]);
+            let light_tint = [
+                (tint[0] as f32).max(0.0),
+                (tint[1] as f32).max(0.0),
+                (tint[2] as f32).max(0.0),
+            ];
+            let use_source_colour = e.bool_of("use_source_colour").unwrap_or(true);
+            let anamorphic = (e.float_at("anamorphic", lt).unwrap_or(1.0) as f32).clamp(0.5, 3.0);
+            // Int-kind params arrive as Float values; the resolve rounds.
+            let blades = (e.float_at("blades", lt).unwrap_or(8.0).round() as i64).clamp(3, 16);
+            let aperture_rotation = e.float_at("aperture_rotation", lt).unwrap_or(0.0) as f32;
+            let roundness = (e.float_at("roundness", lt).unwrap_or(0.15) as f32).clamp(0.0, 1.0);
+            let aperture_softness =
+                (e.float_at("aperture_softness", lt).unwrap_or(0.05) as f32).clamp(0.0, 1.0);
+            let ghost_intensity =
+                (e.float_at("ghost_intensity", lt).unwrap_or(1.0) as f32).max(0.0);
+            let ghost_softness =
+                (e.float_at("ghost_softness", lt).unwrap_or(0.02) as f32).clamp(0.0, 2.0);
+            let max_ghosts =
+                (e.float_at("max_ghosts", lt).unwrap_or(60.0).round() as i64).clamp(0, 200);
+            let dispersion = (e.float_at("dispersion", lt).unwrap_or(1.0) as f32).max(0.0);
+            let coating = (e.float_at("coating", lt).unwrap_or(0.75) as f32).clamp(0.0, 1.0);
+            let sb_intensity =
+                (e.float_at("starburst_intensity", lt).unwrap_or(1.0) as f32).max(0.0);
+            let scale = (e.float_at("scale", lt).unwrap_or(1.0) as f32).clamp(0.05, 20.0);
+            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            Some(Resolved::LensFlare(
+                crate::fx::lens_flare::LensFlareParams {
+                    light: [lx, ly],
+                    intensity,
+                    lens,
+                    fstop,
+                    focus_m,
+                    blades: blades as u32,
+                    aperture_rotation_deg: aperture_rotation,
+                    roundness,
+                    aperture_softness,
+                    ghost_intensity,
+                    ghost_softness,
+                    max_ghosts: max_ghosts as u32,
+                    dispersion,
+                    coating,
+                    starburst_intensity: sb_intensity,
+                    scale,
+                    source,
+                    threshold,
+                    threshold_softness,
+                    light_tint,
+                    use_source_colour,
+                    anamorphic,
+                    quality,
+                    detail,
+                    background,
+                    mix,
+                },
+            ))
         }
         "dof" => {
             // Scalars only; the depth pass (the referenced layer's rendered

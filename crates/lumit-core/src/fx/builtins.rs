@@ -23,11 +23,13 @@ const SHAKE_GROUPS: &[ParamGroup] = &[
         label: "Per-axis wobble",
         params: &["x_amp", "x_freq", "y_amp", "y_freq", "z_amp", "z_freq"],
         collapsed: true,
+        visible_when: None,
     },
     ParamGroup {
         label: "Motion blur",
         params: &["motion_blur", "mb_amount"],
         collapsed: true,
+        visible_when: None,
     },
 ];
 
@@ -2309,6 +2311,7 @@ pub const BUILTINS: &[EffectSchema] = &[
                 "replace_colour",
             ],
             collapsed: true,
+            visible_when: None,
         }],
         match_name: "matte_key",
         label: "Matte key",
@@ -2531,6 +2534,395 @@ pub const BUILTINS: &[EffectSchema] = &[
             MIX_PARAM,
         ],
     },
+    // Lens flare (docs/08 §3.27, docs/impl/lens-flare.md, K-256; panel
+    // reshape and source modes K-257): ghosts ray-traced through a real lens
+    // prescription, the starburst from the aperture's Fourier diffraction —
+    // the one effect that owns a render pass. Heavy cost; full-frame ROI;
+    // premultiplied (an additive light overlay, the Glow shape); not seeded.
+    // Intensity 0 and Mix 0 are bit-exact passthroughs (pinned by test).
+    // GPU-only per K-256: the CPU degradation rung renders it as a labelled
+    // no-op, and the §1.6 oracle is staged (trace at mean/quantile bounds,
+    // frame at a perceptual bound). Parameter order is the owner's panel
+    // design: the light point pair, the three headline dials, the coating
+    // character above the lens it colours, then the collapsed detail groups,
+    // the Source mode with its conditional matte rows, and Quality last.
+    EffectSchema {
+        groups: &[
+            ParamGroup {
+                label: "Lens options",
+                params: &[
+                    "focus",
+                    "anamorphic",
+                    "blades",
+                    "aperture_rotation",
+                    "coating",
+                    "roundness",
+                    "aperture_softness",
+                ],
+                collapsed: true,
+                visible_when: None,
+            },
+            ParamGroup {
+                label: "Flare options",
+                params: &[
+                    "ghost_intensity",
+                    "ghost_softness",
+                    "max_ghosts",
+                    "detail",
+                    "dispersion",
+                    "starburst_intensity",
+                    "scale",
+                ],
+                collapsed: true,
+                visible_when: None,
+            },
+            // The source-colour toggle: headerless, and shown for BOTH the
+            // source modes that HAVE a source colour to take (Matte, and
+            // Lights when it lands) — K-259.
+            ParamGroup {
+                label: "",
+                params: &["use_source_colour"],
+                collapsed: false,
+                visible_when: Some(("source_type", &[1, 2])),
+            },
+            // The matte rows: headerless (empty label renders them in place,
+            // no twirl), shown only while Source type is Matte.
+            ParamGroup {
+                label: "",
+                params: &["matte", "threshold", "threshold_softness"],
+                collapsed: false,
+                visible_when: Some(("source_type", &[1])),
+            },
+        ],
+        match_name: "lens_flare",
+        label: "Lens flare",
+        version: 4,
+        category: FxCategory::Stylise,
+        traits: EffectTraits {
+            cost: CostClass::Heavy,
+            roi: Roi::FullFrame,
+            temporal: &[0],
+            premultiplied: true,
+            seeded: false,
+            beat_input: false,
+        },
+        params: &[
+            ParamSchema {
+                id: "light_x",
+                label: "Light x",
+                // px@comp (K-260: point parameters are PIXELS, the
+                // Transform-anchor convention — never % of frame). Open both
+                // sides: an off-frame light keeps flaring. The schema default
+                // is nominal 1080p; `instantiate_for_raster` centres a fresh
+                // instance on the actual comp's upper-left third (§1.2).
+                // Pairs with light_y into one point row (docs/07 §6.1).
+                kind: ParamKind::Float {
+                    default: 640.0,
+                    slider: (0.0, 3840.0),
+                    hard: (None, None),
+                },
+            },
+            ParamSchema {
+                id: "light_y",
+                label: "Light y",
+                kind: ParamKind::Float {
+                    default: 360.0,
+                    slider: (0.0, 2160.0),
+                    hard: (None, None),
+                },
+            },
+            ParamSchema {
+                id: "intensity",
+                label: "Intensity",
+                // Master gain on everything the effect adds; 0 is the
+                // neutral point (bit-exact passthrough, pinned by test).
+                kind: ParamKind::Float {
+                    default: 1.0,
+                    slider: (0.0, 4.0),
+                    hard: (Some(0.0), None),
+                },
+            },
+            ParamSchema {
+                id: "fstop",
+                label: "F-stop",
+                // Wider (smaller number) grows the ghost discs and softens
+                // the starburst ringing.
+                kind: ParamKind::Float {
+                    default: 2.8,
+                    slider: (1.0, 22.0),
+                    hard: (Some(0.7), Some(32.0)),
+                },
+            },
+            ParamSchema {
+                id: "lens_model",
+                label: "Lens",
+                // The embedded prescription library (K-261, curated to
+                // twenty K-264): real lenses, transcribed patent data,
+                // chosen for maximally different flare characters. Sorted
+                // by name; the default is the Master Prime 50 (the
+                // reference cine prime the effect was tuned against). A
+                // .lens file on `lens_file` overrides this pick entirely.
+                kind: ParamKind::Choice {
+                    options: &crate::fx::lens_library::LENS_OPTIONS,
+                    default: 16,
+                    dividers_after: &[],
+                },
+            },
+            ParamSchema {
+                id: "lens_file",
+                label: "Lens file",
+                // A user's own .lens prescription (K-264, the LUT File
+                // pattern): set, it overrides the Lens pick entirely — the
+                // twenty bundled lenses are a curated palette, and this is
+                // the door to everything else (the FlareSim /
+                // PhotonsToPhotos Optical Bench format the parser already
+                // reads). Unset, missing on disk or unparsable degrades to
+                // the picked lens — a labelled fallback, never a fault.
+                kind: ParamKind::File {
+                    filter: &["lens"],
+                    filter_name: "Lens prescription",
+                },
+            },
+            // --- Lens options group ---
+            ParamSchema {
+                id: "focus",
+                label: "Focus (m)",
+                // Focus distance in metres (K-260): shifts the sensor from
+                // its calibrated infinity position by the thin-lens image
+                // shift, changing the whole flare's shape — real flares
+                // breathe with focus. Large values are infinity.
+                kind: ParamKind::Float {
+                    default: 100.0,
+                    slider: (0.5, 100.0),
+                    hard: (Some(0.2), None),
+                },
+            },
+            ParamSchema {
+                id: "anamorphic",
+                label: "Anamorphic squeeze",
+                kind: ParamKind::Float {
+                    default: 1.0,
+                    slider: (1.0, 2.0),
+                    hard: (Some(0.5), Some(3.0)),
+                },
+            },
+            ParamSchema {
+                id: "blades",
+                label: "Blades",
+                // Iris blade count: the starburst's spike count and the
+                // ghost disc shape.
+                kind: ParamKind::Int {
+                    default: 8,
+                    slider: (3, 16),
+                    hard: (Some(3), Some(16)),
+                },
+            },
+            ParamSchema {
+                id: "aperture_rotation",
+                label: "Rotation",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (-180.0, 180.0),
+                    hard: (None, None),
+                },
+            },
+            ParamSchema {
+                id: "coating",
+                label: "Coating",
+                // 0 = uncoated (bright neutral ghosts), 1 = full quarter-wave
+                // coating interference (dim, colour-cast ghosts).
+                kind: ParamKind::Float {
+                    default: 0.75,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(1.0)),
+                },
+            },
+            ParamSchema {
+                id: "roundness",
+                label: "Roundness",
+                kind: ParamKind::Float {
+                    default: 0.15,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(1.0)),
+                },
+            },
+            ParamSchema {
+                id: "aperture_softness",
+                label: "Softness",
+                // Softens the iris edge, and with it every ghost's rim.
+                kind: ParamKind::Float {
+                    default: 0.05,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(1.0)),
+                },
+            },
+            // --- Flare options group ---
+            ParamSchema {
+                id: "ghost_intensity",
+                label: "Ghost intensity",
+                kind: ParamKind::Float {
+                    default: 1.0,
+                    slider: (0.0, 4.0),
+                    hard: (Some(0.0), None),
+                },
+            },
+            ParamSchema {
+                id: "ghost_softness",
+                label: "Ghost softness",
+                // Box-blur radius as % of the frame diagonal (K-261,
+                // FlareSim's Ghost Blur): a touch of out-of-focus softness.
+                // 0.02 by default (owner-set, K-264) — with the
+                // vertex-smoothed density and the multisampled raster the
+                // geometry no longer needs hiding, so the default is taste,
+                // not cover, and 0 stays a usable, clean setting.
+                kind: ParamKind::Float {
+                    default: 0.02,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(2.0)),
+                },
+            },
+            ParamSchema {
+                id: "max_ghosts",
+                label: "Max ghosts",
+                // The brightest-ranked ghosts survive the cap.
+                kind: ParamKind::Int {
+                    default: 60,
+                    slider: (0, 150),
+                    hard: (Some(0), Some(200)),
+                },
+            },
+            ParamSchema {
+                id: "detail",
+                label: "Detail",
+                // Ray-budget multiplier on the Quality tier's pupil grid
+                // (K-265, owner-asked): the tiers pick a sensible base and
+                // this dial hands the trade to the user — a lens whose
+                // ghost rims still show their cells buys more rays without
+                // jumping a whole tier, a preview buys fewer. Frame-time,
+                // never rebakes; 1 is the tier as shipped.
+                kind: ParamKind::Float {
+                    default: 1.0,
+                    slider: (0.25, 2.0),
+                    hard: (Some(0.25), Some(4.0)),
+                },
+            },
+            ParamSchema {
+                id: "dispersion",
+                label: "Dispersion",
+                kind: ParamKind::Float {
+                    default: 1.0,
+                    slider: (0.0, 2.0),
+                    hard: (Some(0.0), None),
+                },
+            },
+            ParamSchema {
+                id: "starburst_intensity",
+                label: "Starburst intensity",
+                kind: ParamKind::Float {
+                    default: 1.0,
+                    slider: (0.0, 4.0),
+                    hard: (Some(0.0), None),
+                },
+            },
+            ParamSchema {
+                id: "scale",
+                label: "Scale",
+                // Scales the WHOLE flare about the optical centre — ghost
+                // train and starburst together (owner pass 2).
+                kind: ParamKind::Float {
+                    default: 1.0,
+                    slider: (0.1, 4.0),
+                    hard: (Some(0.05), Some(20.0)),
+                },
+            },
+            // --- Source ---
+            ParamSchema {
+                id: "source_type",
+                label: "Source",
+                // Where the light comes from. Lights is prepared for light
+                // layers (K-257): it resolves as Manual until they land.
+                kind: ParamKind::Choice {
+                    options: &["Manual light", "Matte", "Lights"],
+                    default: 0,
+                    dividers_after: &[],
+                },
+            },
+            ParamSchema {
+                id: "light_tint",
+                label: "Light tint",
+                // Multiplies every light's colour, in every source mode
+                // (K-259): in Manual it IS the flare's colour; in Matte it
+                // tints whatever the sources contribute. Scene-linear, and
+                // open above 1 so an HDR tint can push a flare hotter.
+                kind: ParamKind::Colour {
+                    default: [1.0, 1.0, 1.0, 1.0],
+                    range: (0.0, 4.0),
+                },
+            },
+            ParamSchema {
+                id: "use_source_colour",
+                label: "Use source colour",
+                // On: a detected source's own colour tints its flare (a warm
+                // practical flares warm). Off: every source flares white
+                // through Light tint alone, which is what a matte used purely
+                // as a *position* mask wants (K-259).
+                kind: ParamKind::Bool { default: true },
+            },
+            ParamSchema {
+                id: "matte",
+                label: "Matte layer",
+                // The layer whose brightest sources spawn the flares
+                // (impl note §6); unset is a labelled no-flare, never a
+                // fault — the File/Layer no-op convention (§1.2).
+                kind: ParamKind::Layer {},
+            },
+            ParamSchema {
+                id: "threshold",
+                label: "Threshold",
+                // Linear luma at/above which a detected source flares fully.
+                // Slider normalised 0–1 (typing goes above; open ceiling).
+                kind: ParamKind::Float {
+                    default: 1.0,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), None),
+                },
+            },
+            ParamSchema {
+                id: "threshold_softness",
+                label: "Threshold softness",
+                // Half-width of the soft gate around the threshold.
+                kind: ParamKind::Float {
+                    default: 0.25,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), None),
+                },
+            },
+            ParamSchema {
+                id: "quality",
+                label: "Quality",
+                // The ray-grid density and traced wavelength count; Draft
+                // renders the flare buffer at half resolution.
+                kind: ParamKind::Choice {
+                    options: &["Draft", "Normal", "High", "Ultra"],
+                    default: 1,
+                    dividers_after: &[],
+                },
+            },
+            ParamSchema {
+                id: "background",
+                label: "Background",
+                // Transparent keeps the layer's own alpha; Black makes the
+                // output opaque — the flare-element-over-black export for
+                // Screen/Add workflows (K-258).
+                kind: ParamKind::Choice {
+                    options: &["Transparent", "Black"],
+                    default: 0,
+                    dividers_after: &[],
+                },
+            },
+            MIX_PARAM,
+        ],
+    },
 ];
 
 /// Look a schema up by its match name.
@@ -2567,7 +2959,67 @@ pub fn instantiate_for_raster(match_name: &str, w: f64, h: f64) -> Option<Effect
             p.value = EffectValue::Float(Property::fixed(v));
         }
     }
+    // The flare's light is px@comp (K-260), so its tasteful default — the
+    // upper-left third (§1.2) — needs the actual raster.
+    if match_name == "lens_flare" {
+        for p in &mut inst.params {
+            let v = match p.id.as_str() {
+                "light_x" => w * 0.33,
+                "light_y" => h * 0.30,
+                _ => continue,
+            };
+            p.value = EffectValue::Float(Property::fixed(v));
+        }
+    }
     Some(inst)
+}
+
+/// The value a parameter kind starts at (docs/08 §1.2): what `instantiate`
+/// fills a fresh instance with, and what [`backfill_builtin_params`] appends
+/// for a parameter the saved instance predates.
+pub fn default_param_value(kind: &ParamKind) -> EffectValue {
+    match *kind {
+        ParamKind::Float { default, .. } => EffectValue::Float(Property::fixed(default)),
+        // Int is a display/rounding kind; the value is a Float like any
+        // other scalar (see the schema's Int docs).
+        ParamKind::Int { default, .. } => EffectValue::Float(Property::fixed(default as f64)),
+        ParamKind::Choice { default, .. } => EffectValue::Choice(default),
+        ParamKind::Bool { default } => EffectValue::Bool(default),
+        ParamKind::Colour { default, .. } => EffectValue::Colour(default.map(Property::fixed)),
+        ParamKind::Seed => EffectValue::Seed(fresh_seed()),
+        ParamKind::File { .. } => EffectValue::File(FileParam::empty()),
+        // A fresh layer reference is unset (docs/impl/layer-input.md): the
+        // effect is a labelled no-op until the owner picks a layer, the same
+        // sanctioned exception the File parameter takes to the "no no-op
+        // default" rule.
+        ParamKind::Layer {} => EffectValue::Layer(None),
+    }
+}
+
+/// Forward-migrate a stack loaded from disk (K-258): a built-in instance
+/// saved before its schema grew a parameter simply lacks it, which left the
+/// panel drawing a dash and `set_value` refusing the id. Append every
+/// missing declared parameter at its default. Never touches present values,
+/// unknown effects, or plugin namespaces — a project round-trips untouched
+/// unless its schema really did grow.
+pub fn backfill_builtin_params(effects: &mut [EffectInstance]) {
+    for e in effects.iter_mut() {
+        if e.effect.namespace != EffectNamespace::Builtin {
+            continue;
+        }
+        let Some(s) = schema(&e.effect.match_name) else {
+            continue;
+        };
+        for p in s.params {
+            if !e.params.iter().any(|have| have.id == p.id) {
+                e.params.push(EffectParam {
+                    id: p.id.to_owned(),
+                    value: default_param_value(&p.kind),
+                    extra: serde_json::Map::new(),
+                });
+            }
+        }
+    }
 }
 
 pub fn instantiate(match_name: &str) -> Option<EffectInstance> {
@@ -2586,23 +3038,7 @@ pub fn instantiate(match_name: &str) -> Option<EffectInstance> {
             .iter()
             .map(|p| EffectParam {
                 id: p.id.to_owned(),
-                value: match p.kind {
-                    ParamKind::Float { default, .. } => {
-                        EffectValue::Float(Property::fixed(default))
-                    }
-                    ParamKind::Choice { default, .. } => EffectValue::Choice(default),
-                    ParamKind::Bool { default } => EffectValue::Bool(default),
-                    ParamKind::Colour { default, .. } => {
-                        EffectValue::Colour(default.map(Property::fixed))
-                    }
-                    ParamKind::Seed => EffectValue::Seed(fresh_seed()),
-                    ParamKind::File { .. } => EffectValue::File(FileParam::empty()),
-                    // A fresh layer reference is unset (docs/impl/
-                    // layer-input.md): the effect is a labelled no-op until the
-                    // owner picks a layer, the same sanctioned exception the
-                    // File parameter takes to the "no no-op default" rule.
-                    ParamKind::Layer {} => EffectValue::Layer(None),
-                },
+                value: default_param_value(&p.kind),
                 extra: serde_json::Map::new(),
             })
             .collect(),

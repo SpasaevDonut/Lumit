@@ -27,6 +27,7 @@ import 'package:uuid/uuid.dart';
 import '../icons/icons.dart';
 import '../state/comp_time.dart';
 import '../state/dropper.dart';
+import '../state/file_dialogs.dart';
 import '../state/preview_throttle.dart';
 import '../state/timeline_columns.dart';
 import '../theme/theme.dart';
@@ -204,7 +205,11 @@ class EffectParamRowFrb extends StatelessWidget {
   /// null. Float is the only single-scalar animatable kind the schema declares;
   /// a colour animates per channel, which the swatch has no room to key.
   BridgeScalar? _animatableScalarOf(BridgeEffectValue? value) {
-    if (param.kind is! BridgeParamKind_Float) return null;
+    // Int is a Float value with integer display (docs/08 §1.2), so it
+    // animates exactly like Float.
+    if (param.kind is! BridgeParamKind_Float && param.kind is! BridgeParamKind_Int) {
+      return null;
+    }
     return switch (value) {
       BridgeEffectValue_Float(:final field0) => field0,
       _ => null,
@@ -253,6 +258,28 @@ class EffectParamRowFrb extends StatelessWidget {
         }
         return Text('—', style: t.small);
 
+      case BridgeParamKind_Int(
+          :final sliderMin,
+          :final sliderMax,
+          :final hardMin,
+          :final hardMax
+        ):
+        if (value case BridgeEffectValue_Float(:final field0)) {
+          return _scalarField(
+            context,
+            scalar: field0,
+            frame: frame,
+            sliderMin: sliderMin.toDouble(),
+            sliderMax: sliderMax.toDouble(),
+            hardMin: hardMin?.toDouble(),
+            hardMax: hardMax?.toDouble(),
+            keyName: '$id-${param.id}',
+            integer: true,
+            write: (s) => _set(BridgeEffectValue.float(s)),
+          );
+        }
+        return Text('—', style: t.small);
+
       case BridgeParamKind_Colour(:final min, :final max):
         if (value case BridgeEffectValue_Colour(:final field0)) {
           return _colourSwatch(context, id, field0, min, max);
@@ -280,13 +307,31 @@ class EffectParamRowFrb extends StatelessWidget {
           final index = field0 < options.length ? field0.toInt() : 0;
           return SizedBox(
             width: effectCellWidth + 40,
-            child: BareDropdown<int>(
-              key: ValueKey<String>('fx-choice-$id-${param.id}'),
-              value: index,
-              options: [for (var i = 0; i < options.length; i++) i],
-              label: (i) => options[i],
-              onChanged: (i) => _set(BridgeEffectValue.choice(i)),
-            ),
+            // A long list gets the searchable, lazily-built picker: a
+            // plain dropdown builds every row eagerly, and at 1299 options
+            // (the K-262 lens library) that took the app down in layout.
+            // No shipped list is that long since the K-264 curation, but
+            // the guard stays for the next one.
+            child: options.length >= searchableOptionThreshold
+                ? BareSearchDropdown(
+                    key: ValueKey<String>('fx-choice-$id-${param.id}'),
+                    value: index,
+                    options: options,
+                    // "Maker · Model" labels group by their maker.
+                    group: (label) {
+                      final i = label.indexOf(' · ');
+                      return i > 0 ? label.substring(0, i) : null;
+                    },
+                    hint: 'Search ${param.label.toLowerCase()}',
+                    onChanged: (i) => _set(BridgeEffectValue.choice(i)),
+                  )
+                : BareDropdown<int>(
+                    key: ValueKey<String>('fx-choice-$id-${param.id}'),
+                    value: index,
+                    options: [for (var i = 0; i < options.length; i++) i],
+                    label: (i) => options[i],
+                    onChanged: (i) => _set(BridgeEffectValue.choice(i)),
+                  ),
           );
         }
         return Text('—', style: t.small);
@@ -314,18 +359,55 @@ class EffectParamRowFrb extends StatelessWidget {
         }
         return Text('—', style: t.small);
 
-      case BridgeParamKind_File(:final filterName):
+      case BridgeParamKind_File(:final filter, :final filterName):
         if (value case BridgeEffectValue_File(:final field0)) {
           final paths = field0.paths;
+          // The row is the picker (K-265): click to choose a file through
+          // the schema's own filter, and an unset row says so. It was a
+          // bare label through K-264 — the parameter existed and nothing
+          // in the panel could set it, which the owner found within the
+          // hour. A set row grows a clear button, because a File value's
+          // neutral state is "none" and there was no way back to it.
           return SizedBox(
             width: effectCellWidth + 60,
-            child: LumitTooltip(
-              message: paths.isEmpty ? 'No $filterName chosen' : paths.first,
-              child: Text(
-                paths.isEmpty ? 'None' : _basename(paths.first),
-                style: t.small,
-                overflow: TextOverflow.ellipsis,
-              ),
+            child: Row(
+              children: [
+                Flexible(
+                  child: LumitTooltip(
+                    message:
+                        paths.isEmpty ? 'Choose a $filterName' : paths.first,
+                    child: HouseButton(
+                      key: ValueKey<String>('fx-file-$id-${param.id}'),
+                      onPressed: () async {
+                        final path =
+                            await pickEffectInputFile(filter, filterName);
+                        if (path == null) return;
+                        _set(BridgeEffectValue.file(BridgeFileParam(
+                          paths: [path],
+                          index: const BridgeScalar.static_(0),
+                        )));
+                      },
+                      child: Text(
+                        paths.isEmpty ? 'Choose…' : _basename(paths.first),
+                        style: t.small,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ),
+                ),
+                if (paths.isNotEmpty)
+                  LumitTooltip(
+                    message: 'Clear',
+                    child: HouseButton(
+                      key: ValueKey<String>('fx-file-clear-$id-${param.id}'),
+                      onPressed: () => _set(BridgeEffectValue.file(
+                          const BridgeFileParam(
+                              paths: [],
+                              index: BridgeScalar.static_(0)))),
+                      child: Text('×', style: t.small),
+                    ),
+                  ),
+              ],
             ),
           );
         }
@@ -347,11 +429,16 @@ class EffectParamRowFrb extends StatelessWidget {
     required double? hardMax,
     required String keyName,
     required void Function(BridgeScalar) write,
+    bool integer = false,
   }) {
     // The drag paces itself by the declared slider span, so a 0–1 parameter and
-    // a 0–500 one both feel the same under the pointer.
+    // a 0–500 one both feel the same under the pointer. An integer row steps
+    // whole numbers and never shows decimals (docs/08 §1.2's Int kind).
     final span = (sliderMax - sliderMin).abs();
-    final speed = span <= 0 ? 0.5 : span / 200;
+    final speed = integer
+        ? (span <= 40 ? 0.08 : span / 400)
+        : (span <= 0 ? 0.5 : span / 200);
+    double snap(num v) => integer ? v.roundToDouble() : v.toDouble();
 
     if (scalar case BridgeScalar_Keyframed()) {
       final sampled =
@@ -366,7 +453,7 @@ class EffectParamRowFrb extends StatelessWidget {
           min: hardMin ?? -1000000,
           max: hardMax ?? 1000000,
           speed: speed,
-          onCommit: (v) => write(scalarWithValueAt(scalar, v, comp, frame)),
+          onCommit: (v) => write(scalarWithValueAt(scalar, snap(v), comp, frame)),
         ),
       );
     }
@@ -381,11 +468,11 @@ class EffectParamRowFrb extends StatelessWidget {
         min: hardMin ?? -1000000,
         max: hardMax ?? 1000000,
         speed: speed,
-        decimals: 2,
-        onChanged: (v) => write(BridgeScalar.static_(v.toDouble())),
-        onChangeLive: (v) => _setLive(
-            BridgeEffectValue.float(BridgeScalar.static_(v.toDouble()))),
-        onChangeEnd: (v) => write(BridgeScalar.static_(v.toDouble())),
+        decimals: integer ? 0 : 2,
+        onChanged: (v) => write(BridgeScalar.static_(snap(v))),
+        onChangeLive: (v) =>
+            _setLive(BridgeEffectValue.float(BridgeScalar.static_(snap(v)))),
+        onChangeEnd: (v) => write(BridgeScalar.static_(snap(v))),
       ),
     );
   }
@@ -578,6 +665,214 @@ class EffectParamRowFrb extends StatelessWidget {
   }
 }
 
+/// Two `_x`/`_y` Float parameters as ONE point row (docs/07 §6.1): the pair
+/// convention the Lens flare's light and Radial blur's centre follow. One
+/// label (the shared stem), one stopwatch carrying both channels — the
+/// Position-row shape — two value fields, and for %-of-frame pairs a
+/// position dropper that picks the point off the Viewer.
+class EffectPointRowFrb extends StatelessWidget {
+  final UuidValue effectId;
+  final BridgeParamInfo xParam;
+  final BridgeParamInfo yParam;
+  final BridgeEffectValue? xValue;
+  final BridgeEffectValue? yValue;
+  final CompositionReference comp;
+  final int playheadFrame;
+  final ValueChanged<int> onSeek;
+  final void Function(UuidValue effect, String param, BridgeEffectValue value)
+      onWrite;
+  final void Function(UuidValue effect, String param, BridgeEffectValue value)
+      onLive;
+  final bool twoColumn;
+
+  /// Whether the pair may take the position dropper, and in what unit it
+  /// writes: null = no dropper; false = % of frame (fraction × 100, the
+  /// legacy Radial blur centre); true = comp PIXELS (fraction × comp size,
+  /// read from the comp at CLICK time — never in a rebuild, K-184 — which is
+  /// the K-260 convention every new point pair uses).
+  final bool? pickPixels;
+
+  const EffectPointRowFrb({
+    super.key,
+    required this.effectId,
+    required this.xParam,
+    required this.yParam,
+    required this.xValue,
+    required this.yValue,
+    required this.comp,
+    required this.playheadFrame,
+    required this.onSeek,
+    required this.onWrite,
+    required this.onLive,
+    this.twoColumn = false,
+    this.pickPixels,
+  });
+
+  BridgeScalar? _scalar(BridgeEffectValue? v) => switch (v) {
+        BridgeEffectValue_Float(:final field0) => field0,
+        _ => null,
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final playhead =
+        Provider.of<LumitUiState>(context, listen: false).playheadFrame;
+    return ValueListenableBuilder<int>(
+      valueListenable: playhead,
+      builder: (context, frame, _) => _build(context, frame),
+    );
+  }
+
+  Widget _build(BuildContext context, int frame) {
+    final t = ThemeScope.of(context).theme;
+    final id = effectId;
+    final sx = _scalar(xValue);
+    final sy = _scalar(yValue);
+    // The shared stem: "Light x" / "Light y" → "Light".
+    var stem = xParam.label;
+    if (stem.toLowerCase().endsWith(' x')) {
+      stem = stem.substring(0, stem.length - 2);
+    }
+
+    final keyframes = (sx == null || sy == null)
+        ? null
+        : KeyframeControlsFrb(
+            scalars: [sx, sy],
+            comp: comp,
+            playheadFrame: playheadFrame,
+            onSeek: onSeek,
+            rowKey: '$id-${xParam.id}-pair',
+            // Two parameters, so two writes: a keyframe op on the pair costs
+            // two undo steps today (the staged editor commits per param).
+            onWrite: (next) {
+              if (next.length == 2) {
+                onWrite(id, xParam.id, BridgeEffectValue.float(next[0]));
+                onWrite(id, yParam.id, BridgeEffectValue.float(next[1]));
+              }
+            },
+          );
+
+    final label = Text(stem, style: t.body, overflow: TextOverflow.ellipsis);
+
+    Widget field(BridgeParamInfo param, BridgeScalar? scalar) {
+      if (scalar == null) return Text('—', style: t.small);
+      final kind = param.kind;
+      if (kind is! BridgeParamKind_Float) return Text('—', style: t.small);
+      final span = (kind.sliderMax - kind.sliderMin).abs();
+      final speed = span <= 0 ? 0.5 : span / 200;
+      if (scalar case BridgeScalar_Keyframed()) {
+        final sampled =
+            sampleScalar(scalar: scalar, time: timeOfFrame(comp, frame));
+        return SizedBox(
+          width: effectCellWidth,
+          child: KeyedValueField(
+            fieldKey: ValueKey<String>('fx-float-$id-${param.id}'),
+            value: sampled,
+            min: kind.hardMin ?? -1000000,
+            max: kind.hardMax ?? 1000000,
+            speed: speed,
+            onCommit: (v) => onWrite(
+              id,
+              param.id,
+              BridgeEffectValue.float(scalarWithValueAt(scalar, v, comp, frame)),
+            ),
+          ),
+        );
+      }
+      return SizedBox(
+        width: effectCellWidth,
+        child: DragValueField(
+          key: ValueKey<String>('fx-float-$id-${param.id}'),
+          value: (scalar as BridgeScalar_Static).field0,
+          min: kind.hardMin ?? -1000000,
+          max: kind.hardMax ?? 1000000,
+          speed: speed,
+          decimals: 2,
+          onChanged: (v) => onWrite(
+              id, param.id, BridgeEffectValue.float(BridgeScalar.static_(v.toDouble()))),
+          onChangeLive: (v) => onLive(
+              id, param.id, BridgeEffectValue.float(BridgeScalar.static_(v.toDouble()))),
+          onChangeEnd: (v) => onWrite(
+              id, param.id, BridgeEffectValue.float(BridgeScalar.static_(v.toDouble()))),
+        ),
+      );
+    }
+
+    final control = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        field(xParam, sx),
+        const SizedBox(width: 4),
+        field(yParam, sy),
+        if (pickPixels != null) ...[
+          const SizedBox(width: 4),
+          _DropperButton(
+            id: 'fx-$id-${xParam.id}',
+            tip: 'Pick $stem on the Viewer',
+            arm: (ui) => ui.armDropper(DropperArm(
+              id: 'fx-$id-${xParam.id}',
+              reads: DropperReads.position,
+              label: stem,
+              onPick: (sample) {
+                // Pixel pairs write fraction × comp size (K-260); the legacy
+                // %-pairs write fraction × 100. The size is read here, at
+                // click time — a pick is an edit, not a rebuild (K-184).
+                double x = sample.xFrac * 100;
+                double y = sample.yFrac * 100;
+                if (pickPixels == true) {
+                  try {
+                    final size = comp.getSize();
+                    x = sample.xFrac * size.width;
+                    y = sample.yFrac * size.height;
+                  } catch (_) {
+                    return; // the comp has gone; drop the pick
+                  }
+                }
+                onWrite(id, xParam.id,
+                    BridgeEffectValue.float(BridgeScalar.static_(x)));
+                onWrite(id, yParam.id,
+                    BridgeEffectValue.float(BridgeScalar.static_(y)));
+              },
+            )),
+          ),
+        ],
+      ],
+    );
+
+    if (twoColumn) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: fxTwoColumnRow(
+          context: context,
+          name: label,
+          keyframeControls: keyframes,
+          control: control,
+        ),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          if (keyframes != null) keyframes,
+          const SizedBox(width: 4),
+          Expanded(child: label),
+          const SizedBox(width: 10),
+          control,
+        ],
+      ),
+    );
+  }
+}
+
+/// The `_x` parameters whose pair takes the position dropper, mapped to the
+/// unit it writes: true = comp pixels (the K-260 convention), false = % of
+/// frame (the legacy Radial blur centre, until it migrates).
+const Map<String, bool> pickablePointParams = {
+  'light_x': true,
+  'centre_x': false,
+};
+
 /// The effect schema, fetched once per session and then answered from here.
 ///
 /// `listEffects` serialises every built-in's declaration and `listParameters`
@@ -590,6 +885,14 @@ List<BridgeEffectInfo> cachedListEffects() => _effectSchema ??= listEffects();
 final Map<String, List<BridgeParamInfo>> _paramSchema = {};
 List<BridgeParamInfo> cachedListParameters(String effect) =>
     _paramSchema[effect] ??= listParameters(effect: effect);
+
+final Map<String, List<BridgeParamGroup>> _groupSchema = {};
+
+/// An effect's parameter groups (docs/08 §1.2, K-145/K-257), memoised like
+/// the parameters: the twirls and conditional runs the panel folds the flat
+/// parameter list into.
+List<BridgeParamGroup> cachedListParameterGroups(String effect) =>
+    _groupSchema[effect] ??= listParameterGroups(effect: effect);
 
 /// An effect's display label from the schema, falling back to its match name
 /// for an effect this build does not know.
@@ -610,6 +913,8 @@ String effectLabelOf(String name) {
 BridgeEffectValue defaultEffectValue(BridgeParamKind kind) => switch (kind) {
       BridgeParamKind_Float(:final default_) =>
         BridgeEffectValue.float(BridgeScalar.static_(default_)),
+      BridgeParamKind_Int(:final default_) =>
+        BridgeEffectValue.float(BridgeScalar.static_(default_.toDouble())),
       BridgeParamKind_Choice(:final default_) =>
         BridgeEffectValue.choice(default_),
       BridgeParamKind_Bool(:final default_) => BridgeEffectValue.bool(default_),

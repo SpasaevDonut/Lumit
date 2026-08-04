@@ -38,3 +38,4 @@ Rules of engagement:
 | [phase-0-kickoff.md](phase-0-kickoff.md) | The cold-start build order: workspace scaffold and six runnable slices to Gate 0 | 16 |
 | [paint.md](paint.md) | Paint strokes: the gesture-not-pixels model, the dab-along-a-polyline rasteriser, the clone-source trap, where paint sits in the render | 03, 06, 07 |
 | [shape-layers.md](shape-layers.md) | The plan for `LayerKind::Shape`: model, renderer, bridge and tools — a plan, not a spec | 03, 06, 07 |
+| [lens-flare.md](lens-flare.md) | The Lens flare effect: lens prescriptions, ghost ray tracing with coating interference, FRFT/FFT bakes, hardware-raster ghosts, the staged oracle | 08 |
