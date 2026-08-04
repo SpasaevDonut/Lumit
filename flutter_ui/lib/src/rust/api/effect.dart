@@ -11,7 +11,7 @@ import 'package:uuid/uuid.dart';
 part 'effect.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `animation_at`, `param`, `presets_in`, `read_at`, `read_at`, `read_at`, `read_instance_info`, `read`, `write_at`, `write_at`, `write`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `get_effects`, `new`
 
 /// Every built-in effect, in schema order — the Add-effect menu's source of
@@ -61,6 +61,13 @@ double sampleScalar(
 /// simply has no rows to draw.
 List<BridgeParamInfo> listParameters({required String effect}) =>
     BridgeLib.instance.api.crateApiEffectListParameters(effect: effect);
+
+/// Every parameter group `effect` declares, in schema order (empty for an
+/// effect with none, or an unknown name). The panel inserts each group's
+/// twirl at its first member's position and hides the members it covers from
+/// the flat run.
+List<BridgeParamGroup> listParameterGroups({required String effect}) =>
+    BridgeLib.instance.api.crateApiEffectListParameterGroups(effect: effect);
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<BridgeEffectInstance>>
 abstract class BridgeEffectInstance implements RustOpaqueInterface {
@@ -301,6 +308,55 @@ class BridgeKeyframe {
           interpOut == other.interpOut;
 }
 
+/// One collapsible parameter group of an effect (docs/08 §1.2, K-145/K-257):
+/// the panel tucks the named member rows behind a twirl. An empty `label`
+/// renders headerless (the rows appear in place, no twirl) — the shape a
+/// conditional run of parameters takes. `visible_when_param` with a
+/// non-empty `visible_when_values` shows the group only while that sibling
+/// Choice parameter holds one of those indices.
+class BridgeParamGroup {
+  final String label;
+
+  /// Member parameter ids — a contiguous run of the schema's parameters.
+  final List<String> params;
+
+  /// Whether the twirl starts closed.
+  final bool collapsed;
+
+  /// See the struct docs.
+  final String? visibleWhenParam;
+
+  /// See the struct docs. Empty when the group is unconditional.
+  final Uint32List visibleWhenValues;
+
+  const BridgeParamGroup({
+    required this.label,
+    required this.params,
+    required this.collapsed,
+    this.visibleWhenParam,
+    required this.visibleWhenValues,
+  });
+
+  @override
+  int get hashCode =>
+      label.hashCode ^
+      params.hashCode ^
+      collapsed.hashCode ^
+      visibleWhenParam.hashCode ^
+      visibleWhenValues.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeParamGroup &&
+          runtimeType == other.runtimeType &&
+          label == other.label &&
+          params == other.params &&
+          collapsed == other.collapsed &&
+          visibleWhenParam == other.visibleWhenParam &&
+          visibleWhenValues == other.visibleWhenValues;
+}
+
 /// One declared parameter of an effect, as the panel needs to *draw* it:
 /// what to call it, what kind of control it is, and the range or option list
 /// that control needs.
@@ -352,6 +408,17 @@ sealed class BridgeParamKind with _$BridgeParamKind {
     double? hardMin,
     double? hardMax,
   }) = BridgeParamKind_Float;
+
+  /// A whole-number parameter (docs/08 §1.2): the value is still a Float
+  /// scalar in the model — the kind only asks the row to step, display and
+  /// commit whole numbers.
+  const factory BridgeParamKind.int({
+    required PlatformInt64 default_,
+    required PlatformInt64 sliderMin,
+    required PlatformInt64 sliderMax,
+    PlatformInt64? hardMin,
+    PlatformInt64? hardMax,
+  }) = BridgeParamKind_Int;
   const factory BridgeParamKind.choice({
     required List<String> options,
     required int default_,

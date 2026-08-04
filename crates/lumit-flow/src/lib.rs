@@ -62,7 +62,7 @@ const SYNTH_EPS: f32 = 1e-4;
 /// visible seam that decision existed to remove.
 const VALID_DIM: f32 = 0.4;
 
-// --- Variational refinement (K-257, impl note §1 step 4) --------------------
+// --- Variational refinement (K-269, impl note §1 step 4) --------------------
 // The paper's weights, unchanged: intensity constancy, gradient constancy,
 // smoothness. Gradient constancy is weighted as heavily as smoothness because
 // it is the term that survives a brightness change — a muzzle flash is a step
@@ -87,7 +87,7 @@ pub(crate) const VR_SOR: usize = 5;
 pub(crate) const VR_ZETA2: f32 = 0.1 * 0.1;
 /// After refinement, a pixel whose residual exceeds its allowance is not
 /// explained by the flow it was given. Replaces "no patch covered me" as the
-/// meaning of invalid (K-257): a refined field has an answer everywhere, so the
+/// meaning of invalid (K-269): a refined field has an answer everywhere, so the
 /// honest question is whether the answer is right, not whether one was found.
 ///
 /// The allowance is **relative to local contrast**, not a flat number. A busy
@@ -171,7 +171,7 @@ pub enum Fallback {
     Nearest,
 }
 
-/// Every knob the flow engine takes (docs/08 §3.1, K-256).
+/// Every knob the flow engine takes (docs/08 §3.1, K-268).
 ///
 /// `lumit-flow` is an engine crate and knows nothing of the document, so this
 /// is the plain-numbers form its caller translates `FlowParams` into — the same
@@ -180,7 +180,7 @@ pub enum Fallback {
 pub struct FlowSettings {
     /// Divide the source dimensions by this before measuring: 1 native (the
     /// default), 2 half, 4 quarter. Never derived from the preview scale
-    /// (K-256) — flow measured on a shrunk decode is a different measurement.
+    /// (K-268) — flow measured on a shrunk decode is a different measurement.
     pub divisor: u32,
     /// Inverse-search iterations per patch per level ("Vector detail").
     pub iterations: u32,
@@ -196,8 +196,8 @@ pub struct FlowSettings {
     /// step 5) — what stops a game HUD smearing across the frame.
     pub hud_guard: bool,
     /// Variational-refinement fixed-point iterations per pyramid level, scaled
-    /// by depth (K-257; the paper's θ_vo base). `0` disables the third part of
-    /// DIS entirely — which is what Lumit shipped until K-257, and what the
+    /// by depth (K-269; the paper's θ_vo base). `0` disables the third part of
+    /// DIS entirely — which is what Lumit shipped until K-269, and what the
     /// A/B test measures against. Vector detail sets it.
     pub refine_iters: u32,
 }
@@ -661,7 +661,7 @@ fn smooth(a: &Gray, u: &[f32], v: &[f32], flow_sigma2: f32) -> (Vec<f32>, Vec<f3
     (su, sv)
 }
 
-/// Variational refinement (impl note §1 step 4, K-257) — the third part of DIS,
+/// Variational refinement (impl note §1 step 4, K-269) — the third part of DIS,
 /// run once per pyramid level after densification.
 ///
 /// # In plain terms
@@ -848,7 +848,7 @@ fn refine(
     }
 
     // Validity from the residual of the *refined* field, forgiven in
-    // proportion to how much contrast is there to be wrong about (K-257).
+    // proportion to how much contrast is there to be wrong about (K-269).
     let mut valid = vec![0u8; n];
     for y in 0..h {
         for x in 0..w {
@@ -906,7 +906,7 @@ fn flow_core(
         let (tu, tv, tvalid) = densify(a, b, &patches, &du, &dv);
         let (su, sv) = smooth(a, &tu, &tv, set.flow_sigma2());
         if set.refine_iters > 0 {
-            // DIS part three (K-257). The paper runs more fixed-point
+            // DIS part three (K-269). The paper runs more fixed-point
             // iterations at finer scales — θ_vo = 1·(s+1), s counting down from
             // the coarsest — because that is where the field has the most detail
             // left to resolve and the most room to be wrong.
@@ -1460,7 +1460,7 @@ pub fn interpolate(a: &[u8], b: &[u8], w: usize, h: usize, phi: f32) -> Vec<u8> 
 /// device trouble costs speed, not the frame).
 pub struct FlowEngine {
     gpu: Option<gpu::GpuFlow>,
-    /// GPU synthesis (K-256). Independent of `gpu`: the field could come from
+    /// GPU synthesis (K-268). Independent of `gpu`: the field could come from
     /// the CPU oracle and still be painted on the card, and losing one does not
     /// have to cost the other.
     synth: Option<synth::GpuSynth>,
@@ -1553,7 +1553,7 @@ impl FlowEngine {
         let (ga, gb, reduced) = grays_at(a, b, w, h, set);
         let (fwd, bwd) = self.flow_pair_with(&ga, &gb, set);
         // The card paints straight from the working-resolution field: no
-        // upsample, no per-pixel CPU, no round trip (K-256). A failure here
+        // upsample, no per-pixel CPU, no round trip (K-268). A failure here
         // costs speed, never the frame.
         if let Some(s) = self.synth.as_ref() {
             match s.synthesize(a, b, w, h, &fwd, &bwd, phi, set) {
@@ -2162,7 +2162,7 @@ mod tests {
         );
     }
 
-    /// K-257, the reported artefact: a large low-texture region moving with the
+    /// K-269, the reported artefact: a large low-texture region moving with the
     /// frame. Without variational refinement the patches find nothing there, so
     /// densification leaves the coarse guess and flags it untrustworthy —
     /// occlusion counts that as occluded and synthesis crossfades it, which is
@@ -2228,7 +2228,7 @@ mod tests {
     }
 
     /// Validity now means "the flow explains these pixels", not "a patch
-    /// covered me" (K-257). On a clean textured translation nearly everything
+    /// covered me" (K-269). On a clean textured translation nearly everything
     /// should be valid — under the old rule, flat areas were not.
     #[test]
     fn refined_validity_marks_explained_pixels() {
@@ -2300,7 +2300,7 @@ mod tests {
     /// Real footage is not a clean synthetic translation, and validity must
     /// survive that.
     ///
-    /// The regression this pins: K-257 changed validity from "a patch covered
+    /// The regression this pins: K-269 changed validity from "a patch covered
     /// me" to "the residual is under an absolute 0.12", and on a fast camera
     /// move — where the source is itself motion-blurred, compressed and noisy —
     /// almost nothing met that. `confidence` hard-zeros on invalid, so Fast
@@ -2489,7 +2489,7 @@ mod tests {
                 }),
             ),
         ];
-        // All three parts of DIS, both backends (K-257): the shader now has
+        // All three parts of DIS, both backends (K-269): the shader now has
         // the refinement, and the oracle's red-black sweeps mean the two can
         // agree step for step rather than merely in spirit.
         for (i, (a, b)) in scenes.iter().enumerate() {
@@ -2559,7 +2559,7 @@ mod tests {
         let (w, h) = (960, 540);
         let a = render(w, h, |x, y| perlin(x, y, 3));
         let b = render(w, h, |x, y| perlin(x - 9.7, y + 4.3, 3));
-        // The GPU implements DIS parts one and two only (K-257): asking it for
+        // The GPU implements DIS parts one and two only (K-269): asking it for
         // the default settings returns Unsupported in nanoseconds, which is not
         // a timing. Measure what it actually runs.
         let two_part = FlowSettings {

@@ -15,6 +15,7 @@ mod colour;
 mod common;
 mod dof;
 mod engine;
+mod lens_flare;
 mod split;
 mod stylise;
 mod temporal;
@@ -22,6 +23,7 @@ mod temporal;
 pub use blur::*;
 pub use colour::*;
 pub use common::*;
+pub use lens_flare::*;
 pub use split::*;
 pub use stylise::*;
 pub use temporal::*;
@@ -87,6 +89,10 @@ pub struct FxEngine {
     /// its three sampled inputs (source, unprocessed original, depth field)
     /// plus a storage output and a uniform fit the same shape.
     dof: wgpu::ComputePipeline,
+    /// Lens flare (docs/08 §3.27, K-256): the one effect that owns a render
+    /// pass — its pipelines, layouts and bake cache live in their own
+    /// sub-struct rather than six more fields here.
+    lens_flare: LensFlareFx,
     layout: wgpu::BindGroupLayout,
     /// The adjustment blend's own layout: three sampled inputs (below,
     /// processed, coverage) where every effect kernel takes two.

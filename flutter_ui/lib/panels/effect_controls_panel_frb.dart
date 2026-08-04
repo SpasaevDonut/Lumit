@@ -526,29 +526,147 @@ class _EffectSection extends StatelessWidget {
       ),
       // An effect with its own display draws that instead of a row per
       // parameter; nothing claims one yet.
-      rows: customEffectRows(info.name) ??
-          [
-            for (final param in cachedListParameters(info.name))
-              EffectParamRowFrb(
-                key: ValueKey<String>('fx-row-$id-${param.id}'),
-                effectId: id,
-                param: param,
-                value: stagedValue(id, param.id) ?? values[param.id],
-                comp: comp,
-                ownerLayerId: layer.internallayerId,
-                ownerLayers: allLayers,
-                playheadFrame: playheadFrame,
-                onSeek: onSeek,
-                onWrite: onWrite,
-                onLive: onLive,
-                twoColumn: true,
-                // The effect's other values, for a control whose behaviour
-                // depends on a sibling (the depth-of-field dropper reads the
-                // effect's own `depth` layer).
-                siblings: values,
-              ),
-          ],
+      rows: customEffectRows(info.name) ?? _paramRows(id, values),
     );
+  }
+
+  /// The parameter rows, folded through the schema's groups (docs/08 §1.2,
+  /// K-145/K-257) and the `_x`/`_y` point-pair convention (docs/07 §6.1):
+  ///
+  /// - a labelled group renders as a sub-twirl at its first member's
+  ///   position, its members inside;
+  /// - an empty-label group renders its members in place, headerless — the
+  ///   conditional-run shape;
+  /// - a group with `visible_when` is skipped entirely (members included)
+  ///   while the named sibling Choice holds a different value;
+  /// - two adjacent Float params `foo_x`, `foo_y` fold into one point row
+  ///   (with the position dropper for the declared %-of-frame pairs).
+  List<Widget> _paramRows(
+      UuidValue id, Map<String, BridgeEffectValue> values) {
+    final params = cachedListParameters(info.name);
+    final groups = cachedListParameterGroups(info.name);
+    final byFirstMember = <String, BridgeParamGroup>{};
+    final memberOf = <String, BridgeParamGroup>{};
+    for (final g in groups) {
+      if (g.params.isNotEmpty) byFirstMember[g.params.first] = g;
+      for (final m in g.params) {
+        memberOf[m] = g;
+      }
+    }
+    bool groupVisible(BridgeParamGroup g) {
+      final param = g.visibleWhenParam;
+      final want = g.visibleWhenValues;
+      if (param == null || want.isEmpty) return true;
+      return switch (values[param]) {
+        // A group may answer to SEVERAL modes (K-259: the flare's
+        // source-colour toggle belongs to Matte and Lights alike).
+        BridgeEffectValue_Choice(:final field0) => want.contains(field0),
+        _ => false,
+      };
+    }
+
+    Widget rowFor(BridgeParamInfo param) => EffectParamRowFrb(
+          key: ValueKey<String>('fx-row-$id-${param.id}'),
+          effectId: id,
+          param: param,
+          value: stagedValue(id, param.id) ?? values[param.id],
+          comp: comp,
+          ownerLayerId: layer.internallayerId,
+          ownerLayers: allLayers,
+          playheadFrame: playheadFrame,
+          onSeek: onSeek,
+          onWrite: onWrite,
+          onLive: onLive,
+          twoColumn: true,
+          // The effect's other values, for a control whose behaviour
+          // depends on a sibling (the depth-of-field dropper reads the
+          // effect's own `depth` layer).
+          siblings: values,
+        );
+
+    // Fold a run of params into rows, pairing x/y neighbours.
+    List<Widget> foldRows(List<BridgeParamInfo> run) {
+      final out = <Widget>[];
+      var i = 0;
+      while (i < run.length) {
+        final param = run[i];
+        final next = i + 1 < run.length ? run[i + 1] : null;
+        final isPair = next != null &&
+            param.id.endsWith('_x') &&
+            next.id ==
+                '${param.id.substring(0, param.id.length - 2)}_y' &&
+            param.kind is BridgeParamKind_Float &&
+            next.kind is BridgeParamKind_Float;
+        if (isPair) {
+          out.add(EffectPointRowFrb(
+            key: ValueKey<String>('fx-row-$id-${param.id}-pair'),
+            effectId: id,
+            xParam: param,
+            yParam: next,
+            xValue: stagedValue(id, param.id) ?? values[param.id],
+            yValue: stagedValue(id, next.id) ?? values[next.id],
+            comp: comp,
+            playheadFrame: playheadFrame,
+            onSeek: onSeek,
+            onWrite: onWrite,
+            onLive: onLive,
+            twoColumn: true,
+            pickPixels: pickablePointParams[param.id],
+          ));
+          i += 2;
+        } else {
+          out.add(rowFor(param));
+          i += 1;
+        }
+      }
+      return out;
+    }
+
+    final rows = <Widget>[];
+    var i = 0;
+    while (i < params.length) {
+      final param = params[i];
+      final group = byFirstMember[param.id];
+      if (group != null) {
+        // Consume the whole contiguous member run.
+        final run = <BridgeParamInfo>[];
+        while (i < params.length && group.params.contains(params[i].id)) {
+          run.add(params[i]);
+          i += 1;
+        }
+        if (!groupVisible(group)) continue;
+        if (group.label.isEmpty) {
+          rows.addAll(foldRows(run));
+        } else {
+          rows.add(_ParamGroupSection(
+            key: ValueKey<String>('fx-group-$id-${group.label}'),
+            label: group.label,
+            collapsed: group.collapsed,
+            rows: foldRows(run),
+          ));
+        }
+      } else if (memberOf.containsKey(param.id)) {
+        // A group member reached out of order (a schema whose group is not
+        // contiguous): render it plainly rather than losing it.
+        rows.add(rowFor(param));
+        i += 1;
+      } else {
+        // Flat params fold too, so an ungrouped x/y pair still joins.
+        final flat = <BridgeParamInfo>[param];
+        i += 1;
+        // Peek: only extend the flat run while the next is also ungrouped.
+        while (i < params.length &&
+            !byFirstMember.containsKey(params[i].id) &&
+            !memberOf.containsKey(params[i].id) &&
+            flat.length < 2 &&
+            param.id.endsWith('_x')) {
+          flat.add(params[i]);
+          i += 1;
+        }
+        rows.addAll(foldRows(flat));
+      }
+    }
+    return rows;
   }
 
   /// A small text mark rather than an icon, matching v0's × for Remove — the
@@ -577,6 +695,65 @@ class _EffectSection extends StatelessWidget {
               t.small.copyWith(color: enabled ? t.textMuted : t.textDisabled),
         ),
       ),
+    );
+  }
+}
+
+/// One collapsible parameter group inside an effect's card (docs/08 §1.2,
+/// K-145): a small twirl header, its member rows indented under it. Open
+/// state is session-local (a fresh panel starts groups at their declared
+/// `collapsed`).
+class _ParamGroupSection extends StatefulWidget {
+  final String label;
+  final bool collapsed;
+  final List<Widget> rows;
+  const _ParamGroupSection({
+    super.key,
+    required this.label,
+    required this.collapsed,
+    required this.rows,
+  });
+
+  @override
+  State<_ParamGroupSection> createState() => _ParamGroupSectionState();
+}
+
+class _ParamGroupSectionState extends State<_ParamGroupSection> {
+  late bool _open = !widget.collapsed;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => setState(() => _open = !_open),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              children: [
+                lumitIcon(
+                  _open ? LumitIcon.twirlOpen : LumitIcon.twirlClosed,
+                  size: iconSize,
+                  color: t.textMuted,
+                ),
+                const SizedBox(width: 4),
+                Text(widget.label, style: t.bodyPrimary),
+              ],
+            ),
+          ),
+        ),
+        if (_open)
+          Padding(
+            padding: const EdgeInsets.only(left: 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: widget.rows,
+            ),
+          ),
+      ],
     );
   }
 }

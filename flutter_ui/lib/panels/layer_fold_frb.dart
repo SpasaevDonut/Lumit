@@ -105,7 +105,7 @@ final class FoldStrokeRow extends LayerFoldRow {
   const FoldStrokeRow(this.stroke, {required int depth}) : super(depth);
 }
 
-/// One control of a footage layer's Flow group (K-088, K-256). Which control
+/// One control of a footage layer's Flow group (K-088, K-268). Which control
 /// is the [kind]; all of them read and write the whole group in one op, so a
 /// row needs nothing but its own identity.
 ///

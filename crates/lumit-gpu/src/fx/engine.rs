@@ -314,7 +314,9 @@ impl FxEngine {
                 compilation_options: Default::default(),
                 cache: None,
             });
+        let lens_flare = super::LensFlareFx::new(ctx);
         Self {
+            lens_flare,
             blur,
             dir_blur,
             radial_blur,

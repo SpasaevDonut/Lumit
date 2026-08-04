@@ -103,7 +103,7 @@ impl lumit_eval::SourceStamper for Stamper<'_> {
             ..self.quality
         };
         // A layer that needs flow decodes at its own width whatever the preview
-        // tier says (K-256), so its name must say so too — the plan and this
+        // tier says (K-268), so its name must say so too — the plan and this
         // stamp must never disagree about the width the pixels have.
         let target = if native {
             None

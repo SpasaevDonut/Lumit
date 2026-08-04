@@ -2456,7 +2456,7 @@ class _TimelineParamRowState extends State<_TimelineParamRow> {
 }
 
 /// The Audio group's one row: the layer's Volume, in dB.
-/// One control of the Flow group in the Timeline fold-out (K-088, K-256).
+/// One control of the Flow group in the Timeline fold-out (K-088, K-268).
 ///
 /// Every kind but the Input rate writes the whole group in one op, so the row
 /// needs no state of its own: read, change one field, write it back. The Input
@@ -4800,7 +4800,7 @@ class _OutlineRowState extends State<_OutlineRow> {
   /// across the same span the fold-out's value cells use.
   ///
   /// The flow slot is the spec's flow-or-collapse cell (K-168): a Precomp shows
-  /// its collapse switch there, **footage shows its Flow switch** (K-088/K-256),
+  /// its collapse switch there, **footage shows its Flow switch** (K-088/K-268),
   /// and other kinds leave it empty rather than offering a control that cannot
   /// do anything.
   Widget _renderCells(BuildContext context, BridgeLayerInfo info) {

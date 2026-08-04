@@ -210,7 +210,7 @@ pub fn collect_comp_jobs(
                     };
                     use lumit_core::retime::Interpolation;
                     let clip = lumit_core::sequence::active_clip(clips, lt);
-                    // Same engagement gate as a Footage layer (K-256); the
+                    // Same engagement gate as a Footage layer (K-268); the
                     // clip's own retime supplies the speed.
                     let comp_fps = comp.frame_rate.fps();
                     let flow = match clip.map(|c| (&c.interpolation, c.retime.as_ref())) {
@@ -226,7 +226,7 @@ pub fn collect_comp_jobs(
                             || flow.is_some();
                     let sample_fps = flow.as_ref().and_then(|p| p.input_fps_at(lt));
                     let target_width = if flow.is_some() {
-                        None // flow decodes natively (K-256)
+                        None // flow decodes natively (K-268)
                     } else {
                         quality.target_width(nat_w)
                     };
@@ -299,7 +299,7 @@ pub fn collect_comp_jobs(
                 // inside it, decides nearest vs blend.
                 let source_time = layer.source_time_at(lt);
                 use lumit_core::retime::Interpolation;
-                // Flow only engages where it can help (K-088, built in K-256):
+                // Flow only engages where it can help (K-088, built in K-268):
                 // at 100% or faster every comp frame lands on a source frame,
                 // so there is no in-between frame to invent and the policy
                 // degrades to Nearest. `always` overrides.
@@ -317,7 +317,7 @@ pub fn collect_comp_jobs(
                 let flow_neighbour =
                     lumit_core::fx::stack_flow_neighbour(&layer.effects, layer.switches.fx);
                 // A layer that needs flow decodes at its own width whatever the
-                // preview tier says (K-256): flow measured on a shrunk decode is
+                // preview tier says (K-268): flow measured on a shrunk decode is
                 // a different measurement, not the same one smaller. Must match
                 // `Stamper::stamp`'s `native` exactly, or the frame's name lies
                 // about the width of the pixels in it.

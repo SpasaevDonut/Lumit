@@ -223,6 +223,7 @@ specified in §3.1's original text but surfaced as layer UI, not an effect. Summ
 | 3.24 | Tint | AE Tint / duotone | cheap | `{0}` |
 | 3.25 | Posterize time | AE Posterize Time | cheap | `{0}` |
 | 3.26 | Motion blur (accumulation) | RSMB / ReelSmart (accumulation) | heavy | `{0}` |
+| 3.27 | Lens flare | Optical Flares / Knoll Light Factory | heavy | `{0}` |
 
 ### 3.1 Flow engine — optical-flow retime interpolation (Twixtor-class)
 
@@ -273,7 +274,7 @@ bidirectional warping with occlusion-aware blending. This is what makes extreme 
    which the pixel is visible; inpaint the (rare) both-occluded holes from neighbours.
 5. HUD/overlay guard: static-region detection (near-zero flow with high texture) biases
    those pixels toward pure blending, reducing the classic Twixtor HUD smearing.
-   **Shipped (K-256)** as `lumit_flow::hud_weights`: per pixel, `stillness × texture`, where
+   **Shipped (K-268)** as `lumit_flow::hud_weights`: per pixel, `stillness × texture`, where
    stillness tapers over 0.25–1.0 px of measured motion and texture over 0.02–0.08 of Sobel
    magnitude in encoded luma. The texture term takes a **3×3 max** of the gradient before the
    taper, not the gradient itself — a gradient is zero inside every stroke of a glyph and
@@ -283,12 +284,12 @@ bidirectional warping with occlusion-aware blending. This is what makes extreme 
    is itself visible), and synthesis mixes each pixel back toward the plain blend by it.
 
 **Parameters** (surfaced per clip / per layer as render-policy options, not a stack entry).
-All of these ship as `FlowParams` fields (K-256); each is content in the frame-cache key,
+All of these ship as `FlowParams` fields (K-268); each is content in the frame-cache key,
 because each changes the synthesised picture.
 
 | Parameter | Range / type | Default | Notes |
 |---|---|---|---|
-| Flow resolution | Native / Half / Quarter | Native | The size flow is *measured* at. Independent of the preview quality tier (K-256) — see below |
+| Flow resolution | Native / Half / Quarter | Native | The size flow is *measured* at. Independent of the preview quality tier (K-268) — see below |
 | Vector detail | Low / Medium / High / Ultra | Medium | Pyramid depth + refinement iterations |
 | Smoothness | 0–100 | 50 | Regularisation weight; high = fewer tears, gloopier. Scales the smoothing pass's flow-range sigma, 50 being the tuned default the analytic tests were fitted against |
 | Occlusion handling | Blend / Visible-only | Visible-only | Blend trades ghosting for fewer holes |
@@ -297,7 +298,7 @@ because each changes the synthesised picture.
 | Always | bool | off | Force flow past the engagement gate below |
 | Input rate | fps, keyframeable | 0 (Auto) | The conform rate above (K-095, K-160). Shipped with cadence presets beside the field — Auto, On 2s (12), On 3s (8), On 4s (6), 24, 25, 30 — named for the cadence rather than the number, since an editor knows a cut is "on 2s" without doing 24 ÷ 2 |
 
-**Flow resolution is not the preview resolution (K-256).** Flow used to be measured on
+**Flow resolution is not the preview resolution (K-268).** Flow used to be measured on
 whatever the preview scale had shrunk the decode to, which made a draft scrub and an export
 two different *measurements* rather than one measurement at two sizes. The working resolution
 is now this parameter alone. Consequence, accepted deliberately: **a layer whose flow is live
@@ -307,7 +308,7 @@ user buys the speed back. The rule is "whoever asks": a layer with a live flow-c
 effect (§3.2, §3.12) decodes natively on the same grounds, which is also what lets the two
 consumers share one measured field.
 
-**Engagement gate (K-088, built in K-256).** Flow engages only where a source frame would
+**Engagement gate (K-088, built in K-268).** Flow engages only where a source frame would
 otherwise hold across two or more comp frames — i.e. where `|speed| · source_rate / comp_rate`
 is under 1, the source rate being the conform rate when one is set. Outside that (100% or
 faster, or a freeze) the policy degrades to Nearest and costs nothing. **Always** overrides.
@@ -1424,6 +1425,166 @@ temporal, Category **Temporal**.
 effect (a particle system) is pinned to the playhead while the rest of the scene holds. The
 split is `lumit_core::fx::resolve_stack_temporal`; with the frame and held times equal it is
 byte-identical to the plain resolve, so an ordinary render is unchanged.
+
+### 3.27 Lens flare — physically-based lens flare (Realflare-class)
+
+A **simulated** lens flare, not a sprite stack: ghosts are ray-traced through a real lens
+prescription (the element radii, glasses and spacings of an actual photographic lens), so
+they scale, stretch, colour and slide across frame exactly as a camera's do, and the
+starburst is the true diffraction pattern of the aperture, computed by Fourier transform.
+This is the [Hullin et al. 2011] / [Ritschel et al. 2009] approach, studied end-to-end in
+the realflare renderer (GPLv3, the reference implementation) and adapted to run per-frame
+inside the compositor — the full derivation, formulas and deviations are pinned in
+[docs/impl/lens-flare.md](impl/lens-flare.md). K-256.
+
+**Why simulation matters.** Sprite-based flares (the stock-plugin kind) fake the ghost
+train with drawn ellipses, so every light looks the same and nothing responds to the
+aperture. Traced ghosts get the behaviour for free: iris-shaped discs that grow with a
+wider f-stop, chromatic fringing from real glass dispersion, ghosts that flip through the
+optical centre as the light crosses frame, and coating colours — each internal reflection
+tinted by its anti-reflective coating's interference, which is where the blue/green/magenta
+cast of real flares comes from.
+
+**Algorithm sketch** (full detail in the impl note):
+1. **Bake** (CPU, on parameter change only, cached): parse the selected .lens
+   prescription; enumerate every two-surface bounce pair, filter by interface
+   and an on-axis brightness probe, rank brightest-first; bake the
+   **starburst sprite** (Fourier amplitude of the iris image under a Fresnel
+   propagation term, integrated across the visible spectrum with CIE
+   weights); close the **auto-exposure loop** by rendering a thumbnail.
+2. **Trace** (GPU compute, per frame): for each surviving pair × wavelength,
+   a regular grid of rays over the entrance pupil — each corner weighted by
+   the iris mask (blades, roundness, softness) — refracts through every
+   surface with per-surface Fresnel/MgF₂-coating weights (the FlareSim
+   three-phase walk, K-261), reflecting at the pair's two surfaces, landing
+   on the focus-shifted sensor.
+3. **Rasterise** (GPU raster, additive): each live grid cell draws as two
+   triangles at density `launch cell area ÷ landed area` (energy
+   conservation — a ghost focused small burns bright; fold caustics blow up
+   into the bright rims real flares show), with sub-pixel fold quads
+   inflated flux-exactly so no rasteriser can drop them, cells that straddle
+   a fold dropped rather than stretched into streaks, and the caustic
+   density capped (K-262), then the Ghost softness box blur.
+4. **Combine** (GPU compute): `out = input + intensity · (flare + starburst)`
+   in linear light, alpha saturating toward 1 (the Glow shape); the starburst
+   is a baked sprite at each light; the whole flare takes Scale and the
+   anamorphic squeeze. Mix blends against the untouched input.
+
+**Parameters (K-257 panel design).** Top level: **Light** (one x/y point row —
+the `_x`/`_y` pair convention of docs/07 §6.1 — with a pick-on-Viewer dropper;
+**px@comp**, open both sides since an off-frame light keeps flaring — point
+parameters are always authored in comp pixels, K-260),
+**Intensity** (0–4, open above), **F-stop** (0.7–32 — stops the iris down
+from the lens's native f-number; wide open the ghosts are big and round,
+stopped down small and bladed), **Lens** (the embedded prescription library,
+K-261, curated to **twenty real lenses** K-264 and re-verified K-265: every
+entry bakes a live ghost train and keeps flaring with the light well
+off-centre (the three-position probe), chosen for maximally different flare
+characters — modern multicoated cine glass, 1930s uncoated exotics, a
+four-element Tessar, f0.95 and f1.0 superspeeds, process glass, a pro
+telezoom, long telephotos. Wide-angle and fisheye prescriptions are
+deliberately absent: the trace's angular acceptance collapses off-axis for
+retrofocus designs (recorded limit). Every prescription carries its own
+per-surface anti-reflective coating layers, which is what replaced the
+K-257 Coating-type presets; labels are `Maker · Model` and the default is
+the Master Prime 50),
+**Lens file** (K-264: a user's own `.lens` prescription in the same
+FlareSim / PhotonsToPhotos Optical Bench format — set, it overrides the
+Lens pick entirely, with the native f-number estimated from the geometry;
+unset, missing or unparsable degrades to the picked lens, a labelled
+fallback that never faults. Content-hashed into the bake key, so editing
+the file takes effect on the next rendered frame), then three folds and
+the tail:
+
+| Group | Parameters |
+|---|---|
+| *Lens options* (twirl) | Focus (m) (0.5–100 slider, hard min 0.2 — the focus distance; K-260, refocusing shifts the sensor plane and visibly rearranges the whole ghost train, the "same lens, different focus" look), Anamorphic squeeze (0.5–3), Blades (int 3–16), Rotation, Coating (0 uncoated → 1 fully coated), Roundness, Softness |
+| *Flare options* (twirl) | Ghost intensity (0–4), Ghost softness (0–1 slider, % of the frame diagonal — FlareSim's Ghost Blur, K-261: a touch of out-of-focus softness on the ghost train; default 0.02 since K-264 — taste, not cover: the vertex-smoothed density and the multisampled raster leave nothing for it to hide, and **0 is a clean setting**), Max ghosts (int 0–200 — the brightest survive), **Detail** (0.25–4 slider, default 1; K-265 — multiplies the Quality tier's ray grid AND its traced wavelength count through one shared pair of helpers, so the budget is the user's dial: a lens whose rims still show structure buys more without jumping a tier, a preview buys less), Dispersion (0–2), Starburst intensity (0–4), Scale (0.05–20 — the WHOLE flare about the optical centre, ghosts and starbursts together) |
+| *Source* | Source type (Manual light / Matte / Lights); **Light tint** (a colour, with picker and eyedropper — multiplies every light in every mode); then, shown conditionally: **Use source colour** (Matte *and* Lights) and — Matte only — Matte layer (a layer reference), Threshold (linear luma, slider 0–1, open above), Threshold softness |
+
+and **Quality** (Draft / Normal / High / Ultra), **Background** (Transparent /
+Black, K-258 — Black makes the output opaque, the flare-element-over-black
+export for Screen/Add workflows; the neutral passthroughs stay bit-exact
+regardless), **Mix**. Blades and Max
+ghosts are the first **Int-kind** parameters (§1.2): stored and animated as
+Float scalars, but declared whole-number so the row steps, displays and
+commits integers.
+
+**Source modes (K-257).** **Manual light** is the tracked-point workflow: one
+white source at the Light point. **Matte** detects the flare's sources in a
+referenced layer's picture (impl note §6): the brightest points — up to
+sixteen anchors, non-max suppressed — each spawn a full flare, positioned on
+the source, gated by the soft Threshold; each anchor's brightness is the
+**summed flux of every gated detection tile nearest it** (K-267), so a
+practical spanning half the frame finally weighs as its whole lit area
+where it used to count as one pixel, while a true point source reads
+exactly as before; the matte layer renders alone
+exactly as a DoF depth pass does (its own masks and effects apply, K-142
+default) and is expected to be hidden. **Lights** is prepared for light
+layers: the option exists and resolves as Manual until they land, so projects
+built against it survive the wiring.
+
+**Colouring the flare (K-259).** Every light's colour is `(use source ? the
+source's own rgb : white) × gate × Light tint`. **Light tint** applies in all
+three modes — in Manual it is simply the flare's colour, since the light is
+otherwise white — and is a frame-time value outside the bake key, so animating
+it costs no rebake. **Use source colour** (Matte and Lights, default on) is
+what decides whether a warm practical flares warm and a cool one cool; turned
+off, every detected source flares white through the tint alone, which is what a
+matte used purely as a *position* mask wants.
+
+**Reducing it.** The "it's doing too much" dials, in order: Intensity (everything),
+Ghost intensity / Starburst intensity (each half separately), Max ghosts (thins the
+train), Quality (cost), Mix (final blend). Defaults are tuned to read well on 1080p
+footage without touching anything (§1.2).
+
+**Quality.** Two axes ride the ladder: the traced wavelength count (3 bands
+at Draft, 8 at Normal, 16 at High, 32 at Ultra — what separates a smooth
+spectral fringe from a stacked-copies RGB-split look, each band weighted by
+its **integral** of the CIE colour-matching functions rather than a point
+sample, impl note deviation D5), and the pupil-grid base (32 / 64 / 96 / 144).
+The grid base is only a budget: each ghost pair's own grid scales by its
+measured image size (K-262, retuned K-265 — a tight blob keeps the full
+base, its caustic rim carries structure the size probe cannot see), and a
+**frame-time probe** (K-267) re-measures each pair's worst local stretch at
+the actual light position every frame, raising — never lowering — its grid
+under a bounded ray headroom, worst stretch first. That is what lets
+**Normal stand on its own** rather than being the tier where cell facets
+show, and what keeps corner lights from wearing their cells as polyline
+edges. A Squeeze or Scale below 1 renders the ghost buffer padded (up to 2×
+per axis, K-267) so the widened field carries real flare to the frame edge
+instead of cutting to black.
+
+**Cost and traits.** `heavy` cost (the one effect that owns a render pass), `full-frame`
+ROI, `{0}` temporal, premultiplied (an additive light overlay), not seeded — the flare is
+a pure function of parameters; even the starburst's sample jitter is a fixed hash baked
+into the sprite. Category **Stylise**, beside Glow. The per-frame GPU work is a few
+hundred thousand ray threads and ~2 ms of additive fill at Normal quality; the FFTs never
+run per frame.
+
+**Oracle (K-256, a documented §1.6 deviation).** The trace — the physics — has a CPU twin
+compared ray-for-ray at tight absolute bounds (positions to microns; reflectance to 1%,
+since GPU transcendental builtins are not correctly rounded); the baked textures are
+CPU-built and consumed by both paths, so they are their own reference; the rasterised
+frame is compared against a CPU scanline reference at a perceptual bound (mean error +
+total energy), because hardware rasterisation pins no per-pixel fill contract a CPU twin
+could hit at ULP tolerance — the same staged-oracle shape flow effects already use. The
+CPU degradation rung renders the effect as a labelled no-op, like the LUT (K-114
+precedent). Exact numbers in the impl note §8.
+
+**Status (core K-256..K-260; FlareSim model K-261; artefact and picker
+pass K-262; smooth-shading, curation and custom-file pass K-264; frame-time
+grid probe, padded anamorphic buffer and area-flux sources K-267,
+shipped):** everything above — the curated library with per-surface
+coatings and the `.lens` file override, the three-phase pupil-grid trace
+with the vertex-smoothed energy-conserving quad raster (4× multisampled)
+and flux-exact caustic inflation, the Ghost softness blur, Focus distance,
+the point-pair light row with its Viewer dropper, the Matte source mode,
+quality ladder, anamorphic squeeze, Mix. Pinned follow-ups (TODO):
+aperture **dirt / scratches** overlays and an **image aperture**; the
+**lens designer** window; the **Lights** source wiring (waits on light
+layers); an **Occlusion layer** reference. Every shipped parameter is
+stable when they land.
 
 ---
 

@@ -130,7 +130,7 @@ pub enum Interpolation {
     Flow(FlowParams),
 }
 
-/// The resolution flow is *measured* at (docs/08 §3.1, K-256).
+/// The resolution flow is *measured* at (docs/08 §3.1, K-268).
 ///
 /// Deliberately independent of the preview quality tier. Flow used to run on
 /// whatever the preview scale had shrunk the decode to, which made a draft
@@ -211,7 +211,7 @@ impl VectorDetail {
         }
     }
 
-    /// Variational-refinement fixed-point iterations per pyramid level (K-257),
+    /// Variational-refinement fixed-point iterations per pyramid level (K-269),
     /// the third part of DIS. This is where most of the quality lives: it is
     /// what fills smoke, sky and darkness with a sensible field instead of
     /// leaving them flagged untrustworthy and crossfaded. Low still runs one
@@ -323,12 +323,12 @@ impl FlowFallback {
     }
 }
 
-/// Optical-flow parameters (docs/08 §3.1, K-256). Every knob §3.1 specifies,
+/// Optical-flow parameters (docs/08 §3.1, K-268). Every knob §3.1 specifies,
 /// plus the engagement override and the HUD guard.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FlowParams {
     /// The resolution flow is measured at — independent of preview quality
-    /// (K-256). Defaults to Native.
+    /// (K-268). Defaults to Native.
     #[serde(default)]
     pub resolution: FlowResolution,
     /// Pyramid depth and refinement iterations (docs/08 §3.1 "Vector detail").
@@ -350,7 +350,7 @@ pub struct FlowParams {
     /// On by default: this project's primary footage is game capture (K-002).
     #[serde(default = "default_true")]
     pub hud_guard: bool,
-    /// Force flow on even where it cannot help (K-256). Flow normally passes
+    /// Force flow on even where it cannot help (K-268). Flow normally passes
     /// through to Nearest unless the source rate through the retime undershoots
     /// the comp rate — at 100% speed there is no in-between frame to invent, so
     /// measuring one is pure cost. This overrides that gate.
@@ -417,7 +417,7 @@ impl FlowParams {
     }
 
     /// Whether flow has anything to do here (K-088's "engages only when it can
-    /// help", built at last in K-256).
+    /// help", built at last in K-268).
     ///
     /// Flow invents the frame *between* two real ones. At 100% speed on
     /// matched rates there is no such frame — every comp frame lands on a
@@ -470,7 +470,7 @@ fn default_true() -> bool {
 /// own closed-form [`Retime::speed_at`]), so the speed is the slope of that
 /// curve. A central difference gives it: exact on the linear stretches that
 /// dominate, and at a keyframe it averages the two sides, which is the right
-/// answer for the one thing this feeds — the flow engagement gate (K-256),
+/// answer for the one thing this feeds — the flow engagement gate (K-268),
 /// where being a hair out at the instant a ramp changes gradient decides
 /// nothing. `None` is un-retimed: 100%.
 pub fn property_speed_at(retime: Option<&crate::anim::Property>, lt: f64) -> f64 {
@@ -2738,7 +2738,7 @@ mod tests {
         assert_eq!(back, set);
     }
 
-    /// K-256: flow engages only where a source frame would otherwise hold
+    /// K-268: flow engages only where a source frame would otherwise hold
     /// across two or more comp frames — the K-088 rule, built at last.
     #[test]
     fn flow_engages_only_where_it_can_help() {
@@ -2766,7 +2766,7 @@ mod tests {
         assert!(!p.engages(30.0, 0.0, 0.5));
     }
 
-    /// The manual override forces flow on regardless of the gate (K-256) —
+    /// The manual override forces flow on regardless of the gate (K-268) —
     /// the "wind toggle" K-095 refers to.
     #[test]
     fn the_flow_override_beats_the_gate() {
@@ -2779,7 +2779,7 @@ mod tests {
         assert!(forced.engages(0.0, 0.0, 0.0));
     }
 
-    /// The conform rate is what the gate measures against (K-095 + K-256):
+    /// The conform rate is what the gate measures against (K-095 + K-268):
     /// 600 fps footage at 10% speed still advances 60 source frames per comp
     /// frame, so flow would decline — until the clip is conformed to 24, at
     /// which point there is real motion between the bracketing frames.
@@ -2810,7 +2810,7 @@ mod tests {
     }
 
     /// Every §3.1 parameter round-trips, and the defaults are the documented
-    /// ones (docs/08 §3.1's table, K-256).
+    /// ones (docs/08 §3.1's table, K-268).
     #[test]
     fn flow_params_default_and_round_trip() {
         let d = FlowParams::default();

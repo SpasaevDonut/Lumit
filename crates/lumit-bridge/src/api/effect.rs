@@ -209,6 +209,16 @@ pub enum BridgeParamKind {
         hard_min: Option<f64>,
         hard_max: Option<f64>,
     },
+    /// A whole-number parameter (docs/08 §1.2): the value is still a Float
+    /// scalar in the model — the kind only asks the row to step, display and
+    /// commit whole numbers.
+    Int {
+        default: i64,
+        slider_min: i64,
+        slider_max: i64,
+        hard_min: Option<i64>,
+        hard_max: Option<i64>,
+    },
     Choice {
         options: Vec<String>,
         default: u32,
@@ -273,6 +283,17 @@ pub fn list_parameters(effect: String) -> Vec<BridgeParamInfo> {
                     hard_min: hard.0,
                     hard_max: hard.1,
                 },
+                ParamKind::Int {
+                    default,
+                    slider,
+                    hard,
+                } => BridgeParamKind::Int {
+                    default,
+                    slider_min: slider.0,
+                    slider_max: slider.1,
+                    hard_min: hard.0,
+                    hard_max: hard.1,
+                },
                 ParamKind::Choice {
                     options,
                     default,
@@ -298,6 +319,54 @@ pub fn list_parameters(effect: String) -> Vec<BridgeParamInfo> {
                 },
                 ParamKind::Layer {} => BridgeParamKind::Layer,
             },
+        })
+        .collect()
+}
+
+/// One collapsible parameter group of an effect (docs/08 §1.2, K-145/K-257):
+/// the panel tucks the named member rows behind a twirl. An empty `label`
+/// renders headerless (the rows appear in place, no twirl) — the shape a
+/// conditional run of parameters takes. `visible_when_param` with a
+/// non-empty `visible_when_values` shows the group only while that sibling
+/// Choice parameter holds one of those indices.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeParamGroup {
+    pub label: String,
+    /// Member parameter ids — a contiguous run of the schema's parameters.
+    pub params: Vec<String>,
+    /// Whether the twirl starts closed.
+    pub collapsed: bool,
+    /// See the struct docs.
+    pub visible_when_param: Option<String>,
+    /// See the struct docs. Empty when the group is unconditional.
+    pub visible_when_values: Vec<u32>,
+}
+
+/// Every parameter group `effect` declares, in schema order (empty for an
+/// effect with none, or an unknown name). The panel inserts each group's
+/// twirl at its first member's position and hides the members it covers from
+/// the flat run.
+#[frb(sync)]
+pub fn list_parameter_groups(effect: String) -> Vec<BridgeParamGroup> {
+    let Some(schema) = lumit_core::fx::BUILTINS
+        .iter()
+        .find(|s| s.match_name == effect)
+    else {
+        return Vec::new();
+    };
+    schema
+        .groups
+        .iter()
+        .map(|g| BridgeParamGroup {
+            label: g.label.to_owned(),
+            params: g.params.iter().map(|p| (*p).to_owned()).collect(),
+            collapsed: g.collapsed,
+            visible_when_param: g.visible_when.map(|(id, _)| id.to_owned()),
+            visible_when_values: g
+                .visible_when
+                .map(|(_, vs)| vs.to_vec())
+                .unwrap_or_default(),
         })
         .collect()
 }

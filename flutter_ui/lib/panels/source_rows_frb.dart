@@ -259,7 +259,7 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
   /// card on screen at all, so an offer here would give an adjustment layer a
   /// source card describing a source it does not have.
   ///
-  /// **Flow is not one of the choices here (K-256).** It used to be a third
+  /// **Flow is not one of the choices here (K-268).** It used to be a third
   /// entry in this dropdown, which made it look like a peer of Nearest and
   /// Blend — a small setting you pick and forget. It is not: it carries eight
   /// parameters of its own and is the most expensive thing a layer can ask for.

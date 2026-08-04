@@ -1,7 +1,7 @@
 // The Flow group: what a footage layer does when it has to invent a frame.
 //
 // K-088 made flow a layer *option* rather than an effect or a dropdown entry,
-// and K-256 built the parameters behind it. This is that group — it sits beside
+// and K-268 built the parameters behind it. This is that group — it sits beside
 // Transform and Effects, and appears only while the layer's flow switch is on.
 //
 // Every control here changes the picture, which is why every one of them is

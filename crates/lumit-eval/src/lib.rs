@@ -69,7 +69,7 @@ pub trait SourceStamper {
     /// still unprobed — an unknown source makes the whole frame unkeyable.
     ///
     /// `native` asks for the source at its own width regardless of the preview
-    /// quality tier: a layer whose flow engages decodes natively (K-256),
+    /// quality tier: a layer whose flow engages decodes natively (K-268),
     /// because full-resolution flow cannot be measured on a shrunk decode. The
     /// identity this returns embeds the decode width, and **the width in the
     /// name must be the width the pixels were decoded at** — the plan and this
@@ -80,7 +80,7 @@ pub trait SourceStamper {
 
     /// The source's own frame rate, when known.
     ///
-    /// Only the flow engagement gate needs this (K-256): flow that cannot help
+    /// Only the flow engagement gate needs this (K-268): flow that cannot help
     /// renders as plain Nearest, and a key that did not know that would hash
     /// the sub-frame position of a frame which is bit-identical to its
     /// neighbours — re-rendering, on a fast section of a ramp, frames it
@@ -564,7 +564,7 @@ fn feed_layer(
                 let nlt = lt + f64::from(o) * comp_dt;
                 let nst = layer.source_time_at(nlt);
                 // These neighbours are what the flow field is measured
-                // against, so they follow the same native-decode rule (K-256).
+                // against, so they follow the same native-decode rule (K-268).
                 let native = wants_flow(layer, &layer.interpolation);
                 if let Some((identity, frame)) = stamper.stamp(*item, nst, native) {
                     h.update(&o.to_le_bytes());
@@ -723,7 +723,7 @@ fn feed_source(
             // the RETIMED source frame, so two different ramps never collide.
             let source_time = layer.source_time_at(lt);
             // Decided before the stamp, because a flow layer decodes natively
-            // and the identity embeds the width it was decoded at (K-256).
+            // and the identity embeds the width it was decoded at (K-268).
             let effective = flow_effective_at(
                 &layer.interpolation,
                 layer.retime.as_ref(),
@@ -753,7 +753,7 @@ fn feed_source(
             // distinctly; identical times reuse, so it never over-renders a
             // truly repeated position.
             {
-                // Flow that cannot help renders as plain Nearest (K-256), and
+                // Flow that cannot help renders as plain Nearest (K-268), and
                 // that must be what the key says: otherwise a flow layer on a
                 // 100%-or-faster stretch would hash its sub-frame position and
                 // re-render frames identical to ones it already holds.
@@ -836,7 +836,7 @@ fn feed_source(
                     h.update(&frame.to_le_bytes());
                     {
                         // Gated exactly as the Footage case: flow that cannot
-                        // help keys as the Nearest it renders as (K-256). The
+                        // help keys as the Nearest it renders as (K-268). The
                         // clip's own retime supplied the speed, since a
                         // Sequence layer's clips each carry their own.
                         let interpolation = seq_interp;
@@ -900,11 +900,11 @@ fn feed_source(
 /// retime Flow option engaging, or a live flow-consuming effect (Fast motion
 /// blur, Datamosh) asking for a field.
 ///
-/// Such a layer decodes at native width whatever the preview tier says (K-256).
+/// Such a layer decodes at native width whatever the preview tier says (K-268).
 /// The rule is deliberately "whoever asks", not "the retime option only": flow
 /// measured on a shrunk decode is a *different measurement*, not the same one
 /// smaller, and a preview that quietly measures differently from the export is
-/// the exact fault K-256 set out to remove. Making the rule uniform is also what
+/// the exact fault K-268 set out to remove. Making the rule uniform is also what
 /// lets the two consumers share one cached field — they ask for the same frame
 /// pair at the same resolution, so they get the same answer once.
 fn wants_flow(
@@ -916,7 +916,7 @@ fn wants_flow(
 }
 
 /// The policy as it will actually render: `Flow` whose engagement gate declines
-/// at this moment (K-256) is the `Nearest` it degrades to, so it keys like one.
+/// at this moment (K-268) is the `Nearest` it degrades to, so it keys like one.
 ///
 /// Returns a borrowed policy in the common case (nothing to decide) and the
 /// `Nearest` constant when the gate declines. An unknown source rate keeps the
@@ -971,7 +971,7 @@ fn feed_interp(h: &mut blake3::Hasher, i: &lumit_core::retime::Interpolation, lt
         }
         Interpolation::Flow(p) => {
             // Tag 3 was half-res flow and 4 full-res flow before the params
-            // existed (K-256); both are retired rather than reused, and the
+            // existed (K-268); both are retired rather than reused, and the
             // fixed-width block that follows makes a new Flow key strictly
             // longer than either, so no old key can be re-addressed.
             h.update(&[5]);
@@ -1990,7 +1990,7 @@ mod tests {
         assert_ne!(blend, native);
         assert_ne!(native, half);
         // Every §3.1 knob is content: it changes the synthesised picture, so
-        // two frames that differ only in one must not share a name (K-256).
+        // two frames that differ only in one must not share a name (K-268).
         let knobs = [
             FlowParams {
                 detail: lumit_core::retime::VectorDetail::Ultra,

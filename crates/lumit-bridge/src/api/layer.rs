@@ -461,7 +461,7 @@ pub struct BridgeLayerInfo {
     /// the Timeline draws them on every rebuild, which is the cost K-184 exists
     /// to remove.
     pub markers: Vec<BridgeLayerMarker>,
-    /// Whether optical flow is live on this layer (K-088/K-256) — the switch
+    /// Whether optical flow is live on this layer (K-088/K-268) — the switch
     /// cluster's Flow cell, and what decides whether the fold-out shows a Flow
     /// group. In the read model because the Timeline draws that cell on every
     /// rebuild, and asking per row per frame is exactly the cost K-184 removed.
