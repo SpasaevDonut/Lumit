@@ -10,17 +10,27 @@
 // work out what that means (the thin-view rule).
 
 import 'package:flutter/widgets.dart';
+import 'package:lumit_flutter/src/rust/api/composition.dart';
+import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/retime.dart';
 
+import '../state/comp_time.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 import 'fx_section.dart';
+import 'keyframe_controls_frb.dart';
 
 /// The Flow section for [layer], or nothing when its flow switch is off.
 class FlowRowsFrb extends StatelessWidget {
   final LayerReference layer;
   final VoidCallback onChanged;
+
+  /// The comp and playhead, for the Input rate's keyframe controls — the one
+  /// animatable thing in this group.
+  final CompositionReference comp;
+  final int playheadFrame;
+  final ValueChanged<int> onSeek;
 
   /// Whether the section is twirled open, and how to toggle it — held by the
   /// panel so the open set survives a rebuild.
@@ -31,6 +41,9 @@ class FlowRowsFrb extends StatelessWidget {
     super.key,
     required this.layer,
     required this.onChanged,
+    required this.comp,
+    required this.playheadFrame,
+    required this.onSeek,
     required this.open,
     required this.onToggle,
   });
@@ -66,6 +79,7 @@ class FlowRowsFrb extends StatelessWidget {
           p.resolution,
           (v) => write(_with(p, resolution: v)),
         ),
+        _inputRateRow(context, t),
         _choice(
           context,
           t,
@@ -161,6 +175,97 @@ class FlowRowsFrb extends StatelessWidget {
         ),
       );
 
+  /// **Input rate** — the fps the clip is *interpreted* at for flow (K-095,
+  /// K-160). The only animatable control in the group, so the only one with a
+  /// stopwatch and a ◄ ◆ ► navigator.
+  ///
+  /// `0` shows as **Auto**: adjacent source frames, the clip's own rate. Two
+  /// opposite footage problems want something else. High-speed capture (a
+  /// 600 fps phone clip) has neighbours so close together there is no motion to
+  /// interpolate, and slow-motion looks frozen. **Animation drawn on 2s or 3s**
+  /// is the mirror: the same drawing is held two or three times, so half the
+  /// frame pairs flow between a frame and its own duplicate — no motion at all —
+  /// and the rest carry double. That reads as judder, not slow motion. Telling
+  /// flow the rate the animation was *drawn* at makes every pair span real
+  /// motion.
+  ///
+  /// The presets do that arithmetic: an editor knows a cut is "on 2s", not that
+  /// 24 ÷ 2 is 12. They write into the same field, so a preset and a typed rate
+  /// are the same thing to the document — and it stays keyframeable, because a
+  /// scene's cadence is not always constant.
+  Widget _inputRateRow(BuildContext context, LumitTheme t) {
+    final rate = layer.getFlowInputRate();
+    // An animated rate shows what the curve reads at the playhead, sampled
+    // engine-side — the same answer the render will use, rather than a second
+    // implementation of the interpolation living in the view.
+    final shown = switch (rate) {
+      BridgeScalar_Static(:final field0) => field0,
+      BridgeScalar_Keyframed() =>
+        sampleScalar(scalar: rate, time: timeOfFrame(comp, playheadFrame)),
+    };
+
+    void writeRate(double fps) {
+      layer.setFlowInputRate(
+        value: scalarWithValueAt(rate, fps, comp, playheadFrame),
+      );
+      onChanged();
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: fxTwoColumnRow(
+        context: context,
+        keyframeControls: KeyframeControlsFrb(
+          scalars: [rate],
+          onWrite: (next) {
+            layer.setFlowInputRate(value: next.first);
+            onChanged();
+          },
+          comp: comp,
+          playheadFrame: playheadFrame,
+          onSeek: onSeek,
+          rowKey: 'flow-input-rate',
+        ),
+        name: Text('Input rate', style: t.body, overflow: TextOverflow.ellipsis),
+        control: Row(
+          children: [
+            SizedBox(
+              width: _cellWidth,
+              child: DragValueField(
+                key: const ValueKey('flow-input-rate'),
+                value: shown,
+                min: 0,
+                max: 240,
+                decimals: 2,
+                // 0 is Auto rather than "zero frames per second", which is not
+                // a thing — so the field says so instead of showing a number
+                // that would read as a mistake.
+                suffix: shown < 0.5 ? '' : ' fps',
+                onChanged: (v) => writeRate(v.toDouble()),
+              ),
+            ),
+            const SizedBox(width: 6),
+            SizedBox(
+              width: 92,
+              child: BareDropdown<double>(
+                key: const ValueKey('flow-input-rate-preset'),
+                value: _presetLabel(shown) == null ? -1 : shown,
+                options: [
+                  if (_presetLabel(shown) == null) -1,
+                  ..._presets.map((p) => p.$1),
+                ],
+                label: (v) => _presetLabel(v) ?? 'Custom',
+                onChanged: (v) {
+                  if (v >= 0) writeRate(v);
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _row(
     BuildContext context,
     LumitTheme t,
@@ -172,12 +277,39 @@ class FlowRowsFrb extends StatelessWidget {
         child: fxTwoColumnRow(
           context: context,
           // Not keyable properties, so plain text names — there is no curve for
-          // the graph editor to aim at. (The input rate *is* keyable, and lands
-          // here as a property row when it is wired.)
+          // the graph editor to aim at. Input rate is the exception, and builds
+          // its own row above.
           name: Text(label, style: t.body, overflow: TextOverflow.ellipsis),
           control: control,
         ),
       );
+}
+
+/// Input-rate presets, keyed by the fps they write.
+///
+/// Named for the cadence rather than the number, because that is how the
+/// footage is described: an animator says a cut is "on 2s", and 24 ÷ 2 = 12 is
+/// arithmetic the editor should not have to do at the point of use. The rates
+/// cover the common animation cadences at 24 fps and the film/broadcast rates
+/// worth conforming high-speed capture to.
+/// A list rather than a map, because Dart will not const a map keyed by
+/// doubles — and the order here is the order the menu shows.
+const List<(double, String)> _presets = [
+  (0, 'Auto'),
+  (12, 'On 2s (12)'),
+  (8, 'On 3s (8)'),
+  (6, 'On 4s (6)'),
+  (24, '24 fps'),
+  (25, '25 fps'),
+  (30, '30 fps'),
+];
+
+/// The preset label for an exact rate, or null when the value is the user's own.
+String? _presetLabel(double fps) {
+  for (final (rate, label) in _presets) {
+    if ((rate - fps).abs() < 0.001) return label;
+  }
+  return null;
 }
 
 /// Copy-with over the generated struct, which has no `copyWith` of its own.

@@ -11,6 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/panels/effect_controls_panel_frb.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
+import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/retime.dart';
 
@@ -136,6 +137,59 @@ void main() {
       expect(after.fallback, 1);
       expect(after.hudGuard, isFalse);
       expect(after.always, isTrue);
+    });
+
+    testWidgets('the input rate has a control, defaulting to Auto',
+        (tester) async {
+      final p = withComp();
+      final layer = footageLayer(p);
+      layer.setFlowEnabled(on_: true);
+      await mount(tester, p);
+
+      expect(find.byKey(const ValueKey('flow-input-rate')), findsOneWidget);
+      expect(find.byKey(const ValueKey('flow-input-rate-preset')),
+          findsOneWidget);
+      // Auto is 0 — adjacent source frames, the clip's own rate.
+      final auto = layer.getFlowInputRate();
+      expect(auto, isA<BridgeScalar_Static>());
+      expect((auto as BridgeScalar_Static).field0, lessThan(0.5));
+      expect(find.text('Auto'), findsOneWidget);
+    });
+
+    testWidgets('a cadence preset writes the rate it names', (tester) async {
+      final p = withComp();
+      final layer = footageLayer(p);
+      layer.setFlowEnabled(on_: true);
+      await mount(tester, p);
+
+      // "On 2s" is 12 fps on 24 fps footage — the arithmetic an editor should
+      // not have to do at the point of use.
+      await tester.tap(find.byKey(const ValueKey('flow-input-rate-preset')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('On 2s (12)').last);
+      await tester.pumpAndSettle();
+
+      final rate = layer.getFlowInputRate();
+      expect(rate, isA<BridgeScalar_Static>());
+      expect((rate as BridgeScalar_Static).field0, 12.0);
+    });
+
+    testWidgets('the input rate is keyframeable, so a cadence can change',
+        (tester) async {
+      final p = withComp();
+      final layer = footageLayer(p);
+      layer.setFlowEnabled(on_: true);
+      await mount(tester, p);
+
+      // Anime commonly switches between 2s and 3s inside one cut, so the
+      // conform has to be able to follow it rather than being one number for
+      // the whole clip (K-160's reason for a value field over a preset list).
+      expect(find.byKey(const ValueKey('kf-stopwatch-flow-input-rate')),
+          findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('kf-stopwatch-flow-input-rate')));
+      await tester.pumpAndSettle();
+      expect(layer.getFlowInputRate(), isA<BridgeScalar_Keyframed>(),
+          reason: 'the stopwatch plants a key and the rate becomes a curve');
     });
 
     testWidgets('switching flow off discards the group, for now',

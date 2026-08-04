@@ -1044,6 +1044,17 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   you want the slow-motion to ease in. It's the same "conform to N fps" idea editors know from
   interpreting footage in other tools, and because it changes which frames get blended, it's
   folded into the picture cache's identity so you never see a frame flowed at the wrong rate.
+  **Animation has the mirror version of that problem**, and the same control fixes it. Anime
+  and hand-drawn animation are usually drawn "on 2s" or "on 3s" — a new drawing every second
+  or third frame, with the same picture held in between. So a 24fps cut on 2s really goes
+  A A B B C C. Interpolate that at its native rate and half the frame pairs are a drawing and
+  its own duplicate, where nothing moves at all, while the others carry the whole step: the
+  result judders rather than flowing. Tell Input rate the clip is 12fps — the rate it was
+  actually *drawn* at — and every pair spans two different drawings. The dropdown beside the
+  field names the cadences rather than the numbers ("On 2s", "On 3s"), because an editor knows
+  a cut is on 2s without wanting to work out that 24 ÷ 2 is 12. And because it is keyframeable,
+  a cut that switches from 2s to 3s partway through — which happens constantly — can be
+  followed rather than compromised on.
   Three more things about flow are worth understanding, because they each fix something that
   used to be quietly wrong.
   **Flow only switches itself on when it can actually help.** Inventing a frame *between* two

@@ -1094,6 +1094,31 @@ class LayerReference {
         that: this,
       );
 
+  /// The rate this clip is *interpreted* at for flow (K-095, K-160) — the
+  /// Flow group's Input rate, as a keyframeable scalar.
+  ///
+  /// `0` reads as **Auto**: adjacent source frames, the clip's own rate. Any
+  /// positive rate below native conforms the clip, so flow brackets the
+  /// source frames spaced `1/rate` apart and interpolates between *those*.
+  ///
+  /// Two quite different footage problems want this, from opposite ends.
+  /// High-speed capture — a 600 fps phone clip — has neighbours under two
+  /// thousandths of a second apart, so there is almost no motion to
+  /// interpolate and slow-motion looks frozen. **Animation drawn on 2s or 3s**
+  /// has the mirror problem: the same frame is held two or three times, so
+  /// half the pairs flow between a frame and its own duplicate (no motion at
+  /// all) and the rest carry double, which reads as judder rather than smooth
+  /// slow motion. Conforming to the rate the animation was *drawn* at — 12 fps
+  /// for 2s of 24, 8 fps for 3s — makes every bracket span real motion.
+  ///
+  /// Keyframeable because a scene's cadence is not always constant: anime
+  /// commonly switches between 2s and 3s within a cut, and a ramp lets the
+  /// conform follow it.
+  BridgeScalar getFlowInputRate() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceGetFlowInputRate(
+        that: this,
+      );
+
   /// This layer's Flow group, or the defaults when its policy is not Flow —
   /// so the panel can show the controls it *would* get without the document
   /// having to hold them yet.
@@ -1394,11 +1419,25 @@ class LayerReference {
       BridgeLib.instance.api
           .crateApiLayerLayerReferenceSetEffects(that: this, effects: effects);
 
-  /// Turn flow on or off, keeping the group's settings either way (K-088).
-  /// Off returns the layer to Nearest — the policy it had before flow is not
-  /// recorded, and Nearest is the crisp default docs/04 §10 names.
+  /// Turn flow on or off (K-088). Off returns the layer to Nearest — the
+  /// policy it had before flow is not recorded, and Nearest is the crisp
+  /// default docs/04 §10 names.
+  ///
+  /// **Turning it off discards the Flow group.** The parameters live inside
+  /// the `Flow` variant of the policy, so there is nowhere to keep them while
+  /// the policy is something else. Comparing a flow shot against the plain
+  /// one is an ordinary thing to do and should not cost the tuning that got
+  /// you there; fixing it means moving `FlowParams` onto the layer beside the
+  /// policy rather than inside it (docs/TODO.md). Recorded here rather than
+  /// worked around, because a UI-side stash of the last settings would be the
+  /// view holding document state.
   void setFlowEnabled({required bool on_}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceSetFlowEnabled(that: this, on_: on_);
+
+  /// Write the Flow input rate. One undo step. Turns flow on if it was off,
+  /// for the same reason [`Self::set_flow_params`] does.
+  void setFlowInputRate({required BridgeScalar value}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceSetFlowInputRate(that: this, value: value);
 
   /// Write the Flow group. One undo step.
   ///

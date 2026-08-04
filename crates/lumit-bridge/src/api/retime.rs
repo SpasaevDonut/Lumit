@@ -167,6 +167,60 @@ impl LayerReference {
         })
     }
 
+    /// The rate this clip is *interpreted* at for flow (K-095, K-160) — the
+    /// Flow group's Input rate, as a keyframeable scalar.
+    ///
+    /// `0` reads as **Auto**: adjacent source frames, the clip's own rate. Any
+    /// positive rate below native conforms the clip, so flow brackets the
+    /// source frames spaced `1/rate` apart and interpolates between *those*.
+    ///
+    /// Two quite different footage problems want this, from opposite ends.
+    /// High-speed capture — a 600 fps phone clip — has neighbours under two
+    /// thousandths of a second apart, so there is almost no motion to
+    /// interpolate and slow-motion looks frozen. **Animation drawn on 2s or 3s**
+    /// has the mirror problem: the same frame is held two or three times, so
+    /// half the pairs flow between a frame and its own duplicate (no motion at
+    /// all) and the rest carry double, which reads as judder rather than smooth
+    /// slow motion. Conforming to the rate the animation was *drawn* at — 12 fps
+    /// for 2s of 24, 8 fps for 3s — makes every bracket span real motion.
+    ///
+    /// Keyframeable because a scene's cadence is not always constant: anime
+    /// commonly switches between 2s and 3s within a cut, and a ramp lets the
+    /// conform follow it.
+    #[frb(sync)]
+    pub fn get_flow_input_rate(&self) -> Result<crate::api::effect::BridgeScalar, BridgeError> {
+        let layer = self.item()?;
+        let p = match &layer.interpolation {
+            Interpolation::Flow(p) => p.input_fps.clone(),
+            _ => lumit_core::anim::Property::zero(),
+        };
+        Ok(crate::api::effect::BridgeScalar::read_at(
+            &p,
+            layer.start_offset.0,
+        ))
+    }
+
+    /// Write the Flow input rate. One undo step. Turns flow on if it was off,
+    /// for the same reason [`Self::set_flow_params`] does.
+    #[frb(sync)]
+    pub fn set_flow_input_rate(
+        &self,
+        value: crate::api::effect::BridgeScalar,
+    ) -> Result<(), BridgeError> {
+        let layer = self.item()?;
+        let animation = value.animation_at(layer.start_offset.0)?;
+        let mut params = match &layer.interpolation {
+            Interpolation::Flow(p) => p.clone(),
+            _ => Default::default(),
+        };
+        params.input_fps.animation = animation;
+        self.commit(lumit_core::Op::SetLayerInterpolation {
+            comp: self.comp_id,
+            layer: self.layer_id,
+            interpolation: Interpolation::Flow(params),
+        })
+    }
+
     /// Whether flow is live on this layer — the switch-cluster toggle (K-088).
     #[frb(sync)]
     pub fn get_flow_enabled(&self) -> Result<bool, BridgeError> {

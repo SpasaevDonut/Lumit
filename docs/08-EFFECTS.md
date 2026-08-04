@@ -239,7 +239,12 @@ not a preset dropdown), so the conform rate can ramp over the clip. `0` reads as
 default) and interpolates between adjacent source frames; a positive rate below native
 conforms the clip to that rate, so flow brackets the source frames spaced `1/rate` apart and
 interpolates between those — the standard way to get real slow-motion out of high-framerate
-footage (whose adjacent frames barely move). The rate is read at frame time (`FlowParams::
+footage (whose adjacent frames barely move). **Animation drawn on 2s or 3s is the mirror
+case and wants the same control**: a 24 fps cut on 2s holds each drawing twice, so at the
+native rate half the pairs bracket a drawing and its own duplicate (no motion) while the
+rest carry the whole step, which judders. Conforming to the drawn rate — 12 for 2s, 8 for
+3s — makes every bracket span two different drawings. Keyframeable because a cut's cadence
+is not always constant. The rate is read at frame time (`FlowParams::
 input_fps_at`) and keys the frame cache — the value it reads at each local time is hashed, so
 the same source time synthesises from different frames under it — and applies identically in
 preview and export.
@@ -290,7 +295,7 @@ because each changes the synthesised picture.
 | Fallback | enum | Blend | Behaviour where confidence is low: **blend** (crossfade) or **nearest** |
 | HUD guard | bool | on | Step 5's static-region bias; off for footage with no overlay |
 | Always | bool | off | Force flow past the engagement gate below |
-| Input rate | fps, keyframeable | 0 (Native) | The conform rate above (K-095, K-160) |
+| Input rate | fps, keyframeable | 0 (Auto) | The conform rate above (K-095, K-160). Shipped with cadence presets beside the field — Auto, On 2s (12), On 3s (8), On 4s (6), 24, 25, 30 — named for the cadence rather than the number, since an editor knows a cut is "on 2s" without doing 24 ÷ 2 |
 
 **Flow resolution is not the preview resolution (K-256).** Flow used to be measured on
 whatever the preview scale had shrunk the decode to, which made a draft scrub and an export
