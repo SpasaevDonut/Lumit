@@ -266,11 +266,40 @@ fn score_flow_against_its_baselines_on_real_clips() {
             };
             w = a.width as usize;
             h = a.height as usize;
-            // A triplet whose ends are the same picture measures nothing —
-            // every method reproduces it. Counted and reported rather than
-            // silently averaged in, because a high score built out of these is
-            // the exact way this harness could lie.
-            if a.rgba == b.rgba {
+            // A triplet measures nothing unless all three pictures differ.
+            //
+            // Equal *ends* is the obvious case — every method reproduces it.
+            // The subtle one is a middle that duplicates an end, which is the
+            // norm in animation drawn on 2s and 3s: there, "hold the previous
+            // frame" reproduces the answer exactly and every other method is
+            // scored against a target one of its inputs already is. Measured on
+            // the owner's anime clip, 78% of neighbouring pairs are held, so
+            // leaving these in is not a rounding error — it is most of the
+            // sample, and it is what made holding look like the best method on
+            // that clip in an earlier run of this harness.
+            //
+            // Compared loosely: a held cel is not bit-identical after encoding.
+            let held = |x: &[u8], y: &[u8]| -> bool {
+                let n = x.len() / 4;
+                if n == 0 {
+                    return true;
+                }
+                let sum: f64 = x
+                    .chunks_exact(4)
+                    .zip(y.chunks_exact(4))
+                    .map(|(p, q)| {
+                        let lp = 0.2126 * f64::from(p[0])
+                            + 0.7152 * f64::from(p[1])
+                            + 0.0722 * f64::from(p[2]);
+                        let lq = 0.2126 * f64::from(q[0])
+                            + 0.7152 * f64::from(q[1])
+                            + 0.0722 * f64::from(q[2]);
+                        (lp - lq).abs()
+                    })
+                    .sum();
+                sum / (n as f64) < 0.5
+            };
+            if held(&a.rgba, &b.rgba) || held(&a.rgba, &mid.rgba) || held(&mid.rgba, &b.rgba) {
                 identical += 1;
                 continue;
             }

@@ -226,43 +226,62 @@ three 1.9 s. The refinement roughly doubles GPU cost and is comfortably inside b
 
 `crates/lumit-render/tests/flow_quality.rs` scores the engine on real footage by
 rebuilding a frame from its two neighbours and comparing against the frame that
-was actually there — ground truth out of ordinary film. It reports PSNR **and**
-SSIM against two baselines: **nearest** (hold the previous frame) and **blend**
-(crossfade). Blend is the one that matters: flow costs far more, and its failure
-mode is tearing rather than a soft double image, so losing to a crossfade makes
-it worse than useless.
+was actually there — ground truth out of ordinary film. It reports against
+**nearest** (hold the previous frame) and **blend** (crossfade). Blend is the one
+that matters: flow costs far more, and its failure is tearing rather than a soft
+double image, so losing to a crossfade makes it worse than useless.
 
-**The first run settled a question that had been argued from impressions.**
+**Three measures, and the third is the one that matters.** PSNR scores an error
+by size, SSIM by shape, and the **5th-percentile block SSIM** by the worst
+twentieth of the picture. Flow does not go uniformly slightly wrong: it goes
+badly wrong in a few places and stays right everywhere else, which over a 1080p
+frame averages to a rounding error. A clip that looks unusable can score level
+with a crossfade on the mean and be a fifth of a point worse on the worst blocks.
 
-| footage | effective rate | blend PSNR / SSIM | flow PSNR / SSIM | Δ PSNR |
-|---|---|---|---|---|
-| gameplay, 600 fps capture | 600 (native) | 31.86 / 0.9012 | **35.62 / 0.9707** | **+3.77** |
-| gameplay | 60 (stride 10) | 24.35 / 0.6871 | **27.21 / 0.8276** | **+2.86** |
-| gameplay | 24 (stride 25) | 21.49 / 0.6170 | **21.88 / 0.6675** | +0.39 |
-| anime, 24 fps on 2s | stride 2 | **40.72 / 0.9613** | 40.65 / 0.9581 | −0.07 |
-| anime | stride 3 | 38.79 / **0.9593** | **39.32** / 0.9568 | +0.53 |
+**Triplets where any two of the three frames are held are excluded**, compared
+loosely because a held cel is not bit-identical after encoding. Animation drawn
+on 2s and 3s holds most of its frames — 78% of neighbouring pairs on the clip
+below — so a middle frame that duplicates an end is the norm rather than the
+exception, and leaving those in scores every method against a target one of its
+own inputs already is. An earlier run of this harness did leave them in and
+concluded that *holding* was the best method on animation; it is not, it is
+comfortably the worst, and the difference was entirely the sampling.
 
-Read together: **DIS is strong on game capture and weak on cel animation.** On
-gameplay it beats a crossfade on both measures at every rate tested, by margins
-(+0.14 SSIM at 60 fps) that are the engine plainly working. On anime it is level
-on PSNR and *below* blend on SSIM at every stride — closer on average, worse in
-shape, which is what "full of artefacts" describes when someone looks at it.
+| footage | rate | nearest | blend | flow | Δ PSNR | Δ worst |
+|---|---|---|---|---|---|---|
+| gameplay 600 fps | native | 29.02 / 0.8688 | 31.86 / 0.9012 | **35.62 / 0.9707** | +3.77 | — |
+| gameplay | 60 (÷10) | 22.20 / 0.6530 / 0.033 | 24.35 / 0.6871 / 0.083 | **26.93 / 0.8208 / 0.342** | +2.58 | **+0.259** |
+| gameplay | 24 (÷25) | 20.38 / 0.6012 | 21.49 / 0.6170 | **22.00 / 0.6663** | +0.51 | — |
+| anime on 2s | stride 2 | 32.74 / 0.9532 / 0.666 | 37.08 / **0.9536** / **0.699** | 37.07 / 0.9506 / 0.681 | −0.00 | −0.018 |
+| anime | stride 3 | 31.52 / 0.9511 / 0.671 | 35.99 / **0.9541** / **0.712** | **36.87** / 0.9519 / 0.697 | +0.88 | −0.015 |
 
-Why the split: cel animation is flat regions bounded by hard line art, so there
-is no photometric evidence to match across most of the frame and the smoothness
-term diffuses motion straight over boundaries it should stop at. Game capture is
-the opposite — texture everywhere, mostly-rigid camera motion.
+(PSNR dB / SSIM / worst-5% where measured.)
 
-Two corollaries worth keeping:
+**What it says.** On game capture flow is not marginally better than a crossfade,
+it is holding structure together where a crossfade falls apart: +0.26 of
+worst-block SSIM at a 60 fps effective rate, against a blend that has essentially
+collapsed there (0.083). This is the footage the project exists for (K-002) and
+the engine is doing its job on it.
 
-- **Parameters do not decide this.** The full sweep — Ultra detail, half
-  resolution, smoothness 90, guard off — spans about 0.2 dB on either clip.
-  Anything that fixes anime is not a knob.
-- **The §1 step 5 refinement helps where it was argued for and hurts where it
-  was not.** Gameplay at realistic strides improves with it (27.21 vs 26.96);
-  anime is very slightly better without. K-269's reasoning holds for smoke and
-  sky and over-generalised to all untextured regions — line art is untextured
-  with *hard* edges, which is the opposite case.
+On cel animation flow is level with a crossfade on PSNR and consistently *worse*
+on both structural measures. Interpolation itself is clearly worth doing — nearest
+is far behind — so this is not "the content cannot be interpolated". It is that
+warping introduces localised damage a crossfade does not, and the damage lands on
+line art where it is most visible. Cel animation is flat regions bounded by hard
+edges: no photometric evidence across most of the frame, and a smoothness term
+that diffuses motion straight over boundaries it should stop at.
+
+**Two corollaries.** Parameters do not decide this — the full sweep spans about
+0.2 dB on either clip, so whatever fixes animation is not a knob. And a
+confidence-weighted bias toward the fallback, written to stop flow ever losing to
+a crossfade, was measured and removed: it cost gameplay 0.036 of worst-block SSIM
+to gain animation 0.012 and changed neither verdict.
+
+**Content is separable, cheaply.** `clip_cadence.rs` reports held-frame fraction
+and flat fraction: 78% held and 67% flat on the animation clip, 0% held and 23%
+flat on the game capture. Either statistic alone separates them, which is what
+makes choosing an engine automatically (§0's `rife` backend) a tractable thing
+rather than a guess.
 
 ## 6. Test plan
 
