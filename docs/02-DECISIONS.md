@@ -5340,3 +5340,55 @@ machine instead of only on one with a graphics card. **Not** fixed here and reco
 TODO: the bake still runs on the render thread, so picking a lens blocks the picture for
 about half a second — the fix is the progress indicator and an off-thread bake; and the
 raster still draws culled cells, which a deterministic prefix-sum compaction would skip.
+
+**K-264 · DECIDED · The flare's density lives at the grid corners, its raster is
+multisampled, a ray never dies at an aperture, the library is a curated twenty, and a
+.lens file is a parameter.** The owner's Ultra pass after K-263 showed triangles in the
+ghost rims, blocky faceting, and jagged edges — and asked for the library to shrink from
+1299 to at most twenty distinctive lenses plus a user-loadable prescription, with the
+Ghost softness default at 0.02. Nothing here lowers quality to hide anything; every fix
+is at the reconstruction. **(1) Vertex-smoothed density** ([Hullin et al. 2011]'s
+per-vertex rule, confirmed against the published implementations): a corner's density is
+the launch cell area over the mean landed area of the live cells touching it,
+interpolated by the raster — the K-256..K-263 per-CELL density was constant inside a
+cell and jumped at its edge, and that repeated discontinuity WAS the faceting and the
+moiré. The caustic cap now floors the mean, so fold clusters still top out at 333×.
+**(2) 4× multisampling** on the ghost raster (resolved into the flare buffer), with the
+CPU reference modelling the same four standard sample positions — coverage times
+centre-interpolated colour — so the oracle stays tight. Sub-sample inflation's floor
+drops 4 px² → 1 px² accordingly; at 4 it also caught the merely small and tiled
+small-rendered wash ghosts with overlapping diamonds. **(3) Geometry never dies at an
+aperture.** Every binary kill in the walk — the iris mask, the housing skirt, a missed
+sphere, total internal reflection — sampled its boundary at pupil-cell granularity and
+drew it as a staircase. All four now continue the ray with weight forced continuously to
+zero (mask multiplies; the feather clamps its denominator to the glass's own extent so a
+transcription error cannot outrun it; a miss continues virtually through the vertex
+plane; TIR continues straight — its transmitted Fresnel already fades to zero). Cells
+spanning from lit geometry to a distant virtual landing pull their unlit corners to
+within one local cell-width of the lit centroid, so the fade lands where the boundary
+is: drawn they fanned lines, dropped they notched rims — K-262's streak drop is
+superseded, long thin fold cells draw, and the trace oracle pins positions only for rays
+carrying weight. **(4) The adaptive budget probes off-axis too** and takes the larger
+spread — on-axis-only handed frame-filling off-centre ghosts the half grid. **(5) The
+starburst sprite fades radially to zero** inside its border; its pedestal used to end at
+the quad edge as a hard grey square. **(6) The library is twenty curated lenses**
+(owner-decided; verified distinct by rendering all twenty through the pipeline into a
+montage and looking): cine multicoat, 1930s uncoated exotics, Tessar, f0.95, fisheye,
+process glass, superzoom, long telephoto. Saved pre-K-264 indices land on a valid
+curated lens (pre-release). **(7) `lens_file`** (the LUT File pattern): a user's .lens
+in the same Optical Bench format overrides the pick entirely, content-hashed into the
+bake key so edits take effect next frame; unset/missing/unparsable degrades to the pick.
+The K-262 searchable picker stays as the guard for any future long Choice list, pinned
+by a synthetic-options widget test. **(8) Ghost softness defaults to 0.02**
+(owner-set): taste, not cover. Verified by eye through a new `#[ignore]`d GPU
+frame-dump harness (before/after PNGs at Ultra on the artefact lenses) — the faceting,
+moiré, rim notches and staircase edges are gone at Ultra with a mild ripple left on
+hard vignetted edges at Normal (known limit, TODO'd with adaptive refinement). Cost, measured
+on the software rasteriser: a 960×540 Normal/60-ghost frame 2.30 s → 3.32 s — the
+multisample fill and the always-completing walks are real work, mitigated by skipping
+pupil corners so far outside the iris that no cell they touch can hold light (a fifth
+of the square, bit-identical output); on a hardware GPU the multisample share of that
+is near-free. Accepted: the owner's bound was quality at fixed settings, and the K-263
+submission splitting keeps any of it from becoming a watchdog kill. One driver find
+for CI: dynamically-indexed `let` arrays in WGSL crash lavapipe's shader compiler —
+use `var`.

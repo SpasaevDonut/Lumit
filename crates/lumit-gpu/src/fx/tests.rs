@@ -2920,7 +2920,7 @@ fn flare_params() -> lumit_core::fx::lens_flare::LensFlareParams {
         // Raster pixels of a 192×108 probe framing (K-260).
         light: [63.4, 32.4],
         intensity: 1.0,
-        lens: 1247,
+        lens: 17,
         fstop: 2.8,
         focus_m: 100.0,
         blades: 8,
@@ -3047,7 +3047,9 @@ fn lens_flare_pair_grid_mirrors_lumit_core() {
 /// ends up taking the graphics device down with it.
 #[test]
 fn lens_flare_batches_cover_every_combo_within_the_scratch_budget() {
-    use crate::fx::lens_flare::{plan_batches, CELL_BYTES, RAY_BYTES, SCRATCH_BYTE_BUDGET};
+    use crate::fx::lens_flare::{
+        plan_batches, AREA_BYTES, CELL_BYTES, RAY_BYTES, SCRATCH_BYTE_BUDGET,
+    };
     // Grid-major tables as the frame builds them, including the worst case
     // (every combo at the widest grid) and a mixed one.
     let tables: Vec<Vec<u32>> = vec![
@@ -3076,14 +3078,15 @@ fn lens_flare_batches_cover_every_combo_within_the_scratch_budget() {
                 let quads = u64::from(b.grid - 1) * u64::from(b.grid - 1);
                 let slots = u64::from(b.lights) * u64::from(b.combos);
                 assert_eq!(b.ray_bytes, slots * rays * RAY_BYTES);
+                assert_eq!(b.area_bytes, slots * quads * AREA_BYTES);
                 assert_eq!(b.vert_bytes, slots * quads * CELL_BYTES);
                 assert!(
-                    b.ray_bytes + b.vert_bytes <= SCRATCH_BYTE_BUDGET,
+                    b.ray_bytes + b.area_bytes + b.vert_bytes <= SCRATCH_BYTE_BUDGET,
                     "batch at grid {} × {} combos × {} lights wants {} bytes",
                     b.grid,
                     b.combos,
                     b.lights,
-                    b.ray_bytes + b.vert_bytes
+                    b.ray_bytes + b.area_bytes + b.vert_bytes
                 );
                 for c in b.combo_offset..b.combo_offset + b.combos {
                     assert_eq!(
@@ -3102,6 +3105,78 @@ fn lens_flare_batches_cover_every_combo_within_the_scratch_budget() {
             );
         }
     }
+}
+
+/// Render one flare frame through the REAL GPU pipeline and write it as a
+/// tone-mapped PPM for eyeballing — the harness behind the K-264 artefact
+/// work, kept because "does it look right" is the one question no numeric
+/// bound in this file answers. `#[ignore]`d; run by hand:
+///
+/// ```text
+/// LUMIT_FLARE_DUMP=/tmp/flare.ppm cargo test -p lumit-gpu --release --lib \
+///     lens_flare_dump_frame -- --ignored --nocapture
+/// ```
+///
+/// Optional env overrides: LUMIT_FLARE_QUALITY (0-3), LUMIT_FLARE_LENS
+/// (library index), LUMIT_FLARE_LIGHT ("x,y" raster fractions).
+#[test]
+#[ignore = "a diagnostic image dump, not a gate"]
+fn lens_flare_dump_frame() {
+    let Some(path) = std::env::var_os("LUMIT_FLARE_DUMP") else {
+        eprintln!("LUMIT_FLARE_DUMP unset; skipping");
+        return;
+    };
+    let Ok(ctx) = GpuContext::headless() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let fx = FxEngine::new(&ctx);
+    use lumit_core::fx::lens_flare as lf;
+    let (w, h) = (1152u32, 648u32);
+    let quality: u32 = std::env::var("LUMIT_FLARE_QUALITY")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3);
+    let lens: u32 = std::env::var("LUMIT_FLARE_LENS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(17);
+    let light = std::env::var("LUMIT_FLARE_LIGHT")
+        .ok()
+        .and_then(|v| {
+            let (x, y) = v.split_once(',')?;
+            Some([x.trim().parse::<f32>().ok()?, y.trim().parse::<f32>().ok()?])
+        })
+        .unwrap_or([0.42, 0.28]);
+    let p = lf::LensFlareParams {
+        light: [light[0] * w as f32, light[1] * h as f32],
+        lens,
+        quality,
+        max_ghosts: 60,
+        ghost_softness: 0.0, // bare geometry — nothing hides behind blur
+        ..flare_params()
+    };
+    let img = vec![0.0f32; (w * h * 4) as usize]; // black scene: flare alone
+    let tex = upload_linear_f32(&ctx, &img, w, h);
+    let op = flare_op(&p, w, h);
+    let out = fx.lens_flare(&ctx, &tex, w, h, &op, None, &|| flare_bake_data(&p));
+    let gpu = readback_linear_f32(&ctx, &out, w, h).unwrap();
+    // Tone map for eyeballing: fixed gain (LUMIT_FLARE_GAIN, default 8),
+    // then sRGB-ish gamma. Fixed rather than auto so two dumps of different
+    // code are comparable.
+    let gain: f32 = std::env::var("LUMIT_FLARE_GAIN")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(8.0);
+    let mut ppm = format!("P6\n{w} {h}\n255\n").into_bytes();
+    for px in gpu.chunks_exact(4) {
+        for c in &px[..3] {
+            let v = (c * gain).clamp(0.0, 1.0).powf(1.0 / 2.2);
+            ppm.push((v * 255.0).round() as u8);
+        }
+    }
+    std::fs::write(&path, ppm).unwrap();
+    eprintln!("wrote {}", std::path::Path::new(&path).display());
 }
 
 /// What one default-settings flare frame costs, printed. Not a gate — the
@@ -3310,7 +3385,7 @@ fn wgsl_lens_flare_trace_matches_the_cpu_reference() {
     let fx = FxEngine::new(&ctx);
     use lumit_core::fx::lens_flare as lf;
     let (w, h) = (192u32, 108u32);
-    for lens in [1247u32, 500] {
+    for lens in [17u32, 5] {
         for light_frac in [[0.33f32, 0.30f32], [0.85, 0.75]] {
             let p = lf::LensFlareParams {
                 lens,
@@ -3363,9 +3438,15 @@ fn wgsl_lens_flare_trace_matches_the_cpu_reference() {
                         let g1 = (grid.max(2) - 1) as f32;
                         let u = (rx as f32 / g1) * 2.0 - 1.0;
                         let v = (ry as f32 / g1) * 2.0 - 1.0;
+                        // A masked-out corner traces with weight 0 since
+                        // K-264 (geometry survives the iris; see cpu_flare)
+                        // — except far outside the iris, where no cell can
+                        // hold light and both twins skip the trace.
+                        let g1f = (grid.max(2) - 1) as f32;
+                        let lim = 1.0 + 1.5 * (2.0 / g1f);
                         let mask =
                             lf::pupil_mask(u, v, p.blades, rot, roundness, p.aperture_softness);
-                        let cpu = if mask <= 0.0 {
+                        let cpu = if u * u + v * v > lim * lim {
                             None
                         } else {
                             let origin = [
@@ -3396,14 +3477,24 @@ fn wgsl_lens_flare_trace_matches_the_cpu_reference() {
                                     mismatched_liveness += 1;
                                     continue;
                                 }
+                                // Position agreement is claimed only for rays
+                                // CARRYING light. A K-264 virtual
+                                // continuation (a mount-absorbed miss) has
+                                // weight ~0 and its path may branch-flip on
+                                // a few-ULP difference at the miss boundary
+                                // — real geometry for the raster, no light,
+                                // and no meaningful "true" position to pin.
+                                let werr = (g[2] - wt).abs() / wt.max(2e-4);
+                                weight_errs.push(werr);
+                                worst_weight = worst_weight.max(werr);
+                                if wt <= 1e-3 {
+                                    continue;
+                                }
                                 live += 1;
                                 let pos_err = (g[0] - pos[0]).abs().max((g[1] - pos[1]).abs());
                                 sum_pos += pos_err;
                                 pos_errs.push(pos_err);
                                 worst_pos = worst_pos.max(pos_err);
-                                let werr = (g[2] - wt).abs() / wt.max(2e-4);
-                                weight_errs.push(werr);
-                                worst_weight = worst_weight.max(werr);
                             }
                         }
                     }
@@ -3669,4 +3760,54 @@ fn wgsl_lens_flare_matte_mode_matches_the_cpu_reference() {
         .sum::<f32>()
         / t_cpu.len() as f32;
     assert!(t_mean < 2e-3, "tinted matte mean |Δ| {t_mean}");
+}
+/// Render every bundled lens through the real GPU pipeline into one tiled
+/// montage (K-264) — the harness the curation was chosen with, kept because
+/// "do the twenty look different" is a question only eyes answer.
+/// `LUMIT_FLARE_DUMP` names the output PPM.
+#[test]
+#[ignore = "a diagnostic image dump, not a gate"]
+fn lens_flare_montage() {
+    let Ok(ctx) = GpuContext::headless() else {
+        return;
+    };
+    let fx = FxEngine::new(&ctx);
+    use lumit_core::fx::lens_flare as lf;
+    let picks: [u32; 20] = [
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+    ];
+    let (tw, th) = (288u32, 162u32);
+    let (cols, rows) = (5u32, 4u32);
+    let (mw, mh) = (tw * cols, th * rows);
+    let mut canvas = vec![0u8; (mw * mh * 3) as usize];
+    let img = vec![0.0f32; (tw * th * 4) as usize];
+    let tex = upload_linear_f32(&ctx, &img, tw, th);
+    for (k, &lens) in picks.iter().enumerate() {
+        let p = lf::LensFlareParams {
+            light: [0.38 * tw as f32, 0.32 * th as f32],
+            lens,
+            quality: 1,
+            max_ghosts: 60,
+            ghost_softness: 0.0,
+            ..flare_params()
+        };
+        let op = flare_op(&p, tw, th);
+        let out = fx.lens_flare(&ctx, &tex, tw, th, &op, None, &|| flare_bake_data(&p));
+        let gpu = readback_linear_f32(&ctx, &out, tw, th).unwrap();
+        let (ox, oy) = ((k as u32 % cols) * tw, (k as u32 / cols) * th);
+        for y in 0..th {
+            for x in 0..tw {
+                let i = ((y * tw + x) * 4) as usize;
+                let o = (((oy + y) * mw + ox + x) * 3) as usize;
+                for c in 0..3 {
+                    let v = (gpu[i + c] * 6.0).clamp(0.0, 1.0).powf(1.0 / 2.2);
+                    canvas[o + c] = (v * 255.0).round() as u8;
+                }
+            }
+        }
+        eprintln!("tile {k}: lens {lens} done");
+    }
+    let mut ppm = format!("P6\n{mw} {mh}\n255\n").into_bytes();
+    ppm.extend_from_slice(&canvas);
+    std::fs::write(std::env::var("LUMIT_FLARE_DUMP").unwrap(), ppm).unwrap();
 }

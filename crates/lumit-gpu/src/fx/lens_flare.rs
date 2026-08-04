@@ -151,8 +151,10 @@ struct GpuBaked {
 /// shares with everything else. Held and reused, the frame allocates nothing.
 struct Scratch {
     rays: wgpu::Buffer,
+    areas: wgpu::Buffer,
     verts: wgpu::Buffer,
     ray_bytes: u64,
+    area_bytes: u64,
     vert_bytes: u64,
 }
 
@@ -160,6 +162,7 @@ struct Scratch {
 /// on [`FxEngine`].
 pub struct LensFlareFx {
     trace: wgpu::ComputePipeline,
+    quad_area: wgpu::ComputePipeline,
     build_verts: wgpu::ComputePipeline,
     detect_tiles: wgpu::ComputePipeline,
     detect_pick: wgpu::ComputePipeline,
@@ -260,6 +263,10 @@ pub(super) const RAY_BYTES: u64 = 16;
 /// Bytes one drawn cell occupies: four corners at five floats each (K-263 —
 /// through K-262 it was six eight-float vertices, 192 bytes).
 pub(super) const CELL_BYTES: u64 = 4 * 20;
+
+/// Bytes one cell's landed-area entry occupies (K-264) — the input to the
+/// vertex-smoothed density.
+pub(super) const AREA_BYTES: u64 = 4;
 
 /// Ray–surface steps one command buffer may hold before the frame submits
 /// what it has and opens another (K-263).
@@ -420,8 +427,9 @@ impl LensFlareFx {
                 storage_entry(1, true, c),
                 storage_entry(2, false, c),
                 storage_entry(3, false, c),
-                uniform_entry(4, c),
-                storage_entry(5, true, c),
+                storage_entry(4, false, c),
+                uniform_entry(5, c),
+                storage_entry(6, true, c),
             ],
         });
         let detect_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -512,6 +520,7 @@ impl LensFlareFx {
             })
         };
         let trace = compute("trace", "fx-lens-flare-trace", &trace_mod, &trace_pl);
+        let quad_area = compute("quad_area", "fx-lens-flare-area", &trace_mod, &trace_pl);
         let build_verts = compute("build_verts", "fx-lens-flare-verts", &trace_mod, &trace_pl);
 
         let detect_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -552,7 +561,15 @@ impl LensFlareFx {
                 ..Default::default()
             },
             depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
+            // 4x multisampled (K-264): the ghost geometry is triangles, and
+            // their silhouettes were one of the three Ultra artefacts —
+            // coverage sampling smooths them at a cost that is a rounding
+            // error next to the trace. The CPU reference models the same
+            // four standard sample positions, so the oracle stays tight.
+            multisample: wgpu::MultisampleState {
+                count: 4,
+                ..Default::default()
+            },
             fragment: Some(wgpu::FragmentState {
                 module: &draw_mod,
                 entry_point: Some("fs_flare"),
@@ -599,6 +616,7 @@ impl LensFlareFx {
 
         Self {
             trace,
+            quad_area,
             build_verts,
             detect_tiles,
             detect_pick,
@@ -641,7 +659,13 @@ impl LensFlareFx {
     /// Take the pooled scratch if it is free and big enough, else build one.
     /// The lock covers the take and nothing else — never an allocation, never
     /// an encode (docs/14 §4).
-    fn take_scratch(&self, ctx: &GpuContext, ray_bytes: u64, vert_bytes: u64) -> Scratch {
+    fn take_scratch(
+        &self,
+        ctx: &GpuContext,
+        ray_bytes: u64,
+        area_bytes: u64,
+        vert_bytes: u64,
+    ) -> Scratch {
         let held = self.scratch.lock().ok().and_then(|mut s| s.take());
         match held {
             // Big enough and not wildly oversized: reuse as is. The upper
@@ -650,6 +674,7 @@ impl LensFlareFx {
             // the session.
             Some(s)
                 if s.ray_bytes >= ray_bytes
+                    && s.area_bytes >= area_bytes
                     && s.vert_bytes >= vert_bytes
                     && s.ray_bytes <= ray_bytes.saturating_mul(4)
                     && s.vert_bytes <= vert_bytes.saturating_mul(4) =>
@@ -658,8 +683,10 @@ impl LensFlareFx {
             }
             _ => Scratch {
                 rays: scratch_buffer(ctx, "fx-lens-flare-rays", ray_bytes),
+                areas: scratch_buffer(ctx, "fx-lens-flare-areas", area_bytes),
                 verts: scratch_buffer(ctx, "fx-lens-flare-verts", vert_bytes),
                 ray_bytes,
+                area_bytes,
                 vert_bytes,
             },
         }
@@ -717,8 +744,9 @@ pub(super) struct Batch {
     pub(super) light_offset: u32,
     /// How many lights.
     pub(super) lights: u32,
-    /// Scratch the batch needs: ray landings, and quad corners.
+    /// Scratch the batch needs: ray landings, cell areas, quad corners.
     pub(super) ray_bytes: u64,
+    pub(super) area_bytes: u64,
     pub(super) vert_bytes: u64,
 }
 
@@ -782,7 +810,7 @@ pub(super) fn plan_batches(combo_grids: &[u32], light_count: u32) -> Vec<Batch> 
             .unwrap_or(combo_grids.len());
         let rays = u64::from(grid) * u64::from(grid);
         let quads = u64::from(grid - 1) * u64::from(grid - 1);
-        let per_slot = rays * RAY_BYTES + quads * CELL_BYTES;
+        let per_slot = rays * RAY_BYTES + quads * (AREA_BYTES + CELL_BYTES);
         // At least one slot always runs: a single (light × combo) pair at the
         // widest grid is 27 MB, inside the budget, so this floor is a
         // formality that keeps the loop total rather than a silent overrun.
@@ -805,6 +833,7 @@ pub(super) fn plan_batches(combo_grids: &[u32], light_count: u32) -> Vec<Batch> 
                     light_offset: light_at,
                     lights,
                     ray_bytes: slots_used * rays * RAY_BYTES,
+                    area_bytes: slots_used * quads * AREA_BYTES,
                     vert_bytes: slots_used * quads * CELL_BYTES,
                 });
                 light_at += lights;
@@ -947,10 +976,30 @@ impl FxEngine {
                 usage: wgpu::BufferUsages::STORAGE,
             });
 
-        // Flare buffer (half size on Draft).
+        // Flare buffer (half size on Draft), and its 4x multisample target
+        // (K-264): the ghost raster draws into the multisampled texture and
+        // resolves into `flare_tex`, which everything downstream (blur,
+        // combine) reads exactly as before. The multisample texture exists
+        // only while a live frame draws.
         let div = op.flare_div.max(1);
         let (fw, fh) = ((w / div).max(1), (h / div).max(1));
         let flare_tex = work_texture(ctx, fw, fh, "fx-lens-flare-buffer");
+        let msaa_tex = live.then(|| {
+            ctx.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("fx-lens-flare-msaa"),
+                size: wgpu::Extent3d {
+                    width: fw,
+                    height: fh,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 4,
+                dimension: wgpu::TextureDimension::D2,
+                format: WORKING_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            })
+        });
 
         let mut encoder = ctx
             .device
@@ -1037,14 +1086,23 @@ impl FxEngine {
         }
 
         // Always clear the flare buffer (a zero-ghost frame must not read
-        // stale memory).
+        // stale memory). A live frame clears through the multisample target
+        // and resolves, so both textures start clean; an idle one clears the
+        // flare buffer directly.
         {
             let view = flare_tex.create_view(&Default::default());
+            let msaa_view = msaa_tex
+                .as_ref()
+                .map(|t| t.create_view(&Default::default()));
+            let (target, resolve) = match &msaa_view {
+                Some(m) => (m, Some(&view)),
+                None => (&view, None),
+            };
             let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("fx-lens-flare-clear"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
+                    view: target,
+                    resolve_target: resolve,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                         store: wgpu::StoreOp::Store,
@@ -1107,10 +1165,11 @@ impl FxEngine {
                     });
                 // One scratch for the whole frame, big enough for its widest
                 // batch and pooled between frames (see [`Scratch`]).
-                let (need_rays, need_verts) = plan.iter().fold((16u64, 16u64), |(r, v), b| {
-                    (r.max(b.ray_bytes), v.max(b.vert_bytes))
-                });
-                let scratch = lf.take_scratch(ctx, need_rays, need_verts);
+                let (need_rays, need_areas, need_verts) =
+                    plan.iter().fold((16u64, 16u64, 16u64), |(r, a, v), b| {
+                        (r.max(b.ray_bytes), a.max(b.area_bytes), v.max(b.vert_bytes))
+                    });
+                let scratch = lf.take_scratch(ctx, need_rays, need_areas, need_verts);
                 let draw_bind = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("fx-lens-flare-draw-bind"),
                     layout: &lf.draw_layout,
@@ -1121,6 +1180,19 @@ impl FxEngine {
                 });
 
                 let flare_view = flare_tex.create_view(&Default::default());
+                // Draw into the multisample target, resolving into the flare
+                // buffer (K-264). Every batch pass loads the multisample
+                // contents and re-resolves, so the last pass leaves the
+                // complete frame in `flare_tex`. The `None` arm cannot run —
+                // a baked frame is a live frame — but the no-panic rule
+                // (docs/14) prefers a plain raster to an unwrap.
+                let msaa_view = msaa_tex
+                    .as_ref()
+                    .map(|t| t.create_view(&Default::default()));
+                let (draw_view, draw_resolve) = match &msaa_view {
+                    Some(m) => (m, Some(&flare_view)),
+                    None => (&flare_view, None),
+                };
                 // Where the frame breaks its work into separate submissions.
                 let flushes = plan_flushes(&plan, baked.surface_count);
                 for (bi, job) in plan.iter().enumerate() {
@@ -1208,24 +1280,31 @@ impl FxEngine {
                             },
                             wgpu::BindGroupEntry {
                                 binding: 3,
-                                resource: scratch.verts.as_entire_binding(),
+                                resource: scratch.areas.as_entire_binding(),
                             },
                             wgpu::BindGroupEntry {
                                 binding: 4,
-                                resource: params.as_entire_binding(),
+                                resource: scratch.verts.as_entire_binding(),
                             },
                             wgpu::BindGroupEntry {
                                 binding: 5,
+                                resource: params.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 6,
                                 resource: lights_buf.as_entire_binding(),
                             },
                         ],
                     });
-                    // Two stages, each in its own pass: the pass boundary is
-                    // the write-then-read barrier between them. The energy
-                    // stage folded into the vertex stage at K-263 — it read
-                    // the same four rays and computed the same cell area.
-                    let stages: [(&wgpu::ComputePipeline, u32, &str); 2] = [
+                    // Each stage in its own pass: the pass boundary is the
+                    // write-then-read barrier between them. The area stage
+                    // is separate from the vertex stage (K-264) because the
+                    // vertex stage reads NEIGHBOURING cells' areas — the
+                    // vertex-smoothed density — and a neighbour computed in
+                    // another workgroup needs a pass boundary to be visible.
+                    let stages: [(&wgpu::ComputePipeline, u32, &str); 3] = [
                         (&lf.trace, batch_rays, "fx-lens-flare-trace-pass"),
+                        (&lf.quad_area, batch_quads, "fx-lens-flare-area-pass"),
                         (&lf.build_verts, batch_quads, "fx-lens-flare-verts-pass"),
                     ];
                     for (pipeline, x_items, label) in stages {
@@ -1241,8 +1320,8 @@ impl FxEngine {
                         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             label: Some("fx-lens-flare-draw-pass"),
                             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                view: &flare_view,
-                                resolve_target: None,
+                                view: draw_view,
+                                resolve_target: draw_resolve,
                                 ops: wgpu::Operations {
                                     load: wgpu::LoadOp::Load,
                                     store: wgpu::StoreOp::Store,
@@ -1501,13 +1580,17 @@ impl FxEngine {
             mapped_at_creation: false,
         });
         // The layout requires every binding; the trace entry never touches
-        // the vertex buffer, so a minimal stand-in satisfies it.
-        let verts_buf = ctx.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("fx-lens-flare-dbg-verts"),
-            size: 32,
-            usage: wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
+        // the area or vertex buffers, so minimal stand-ins satisfy it.
+        let dummy = |label: &str, size: u64| {
+            ctx.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size,
+                usage: wgpu::BufferUsages::STORAGE,
+                mapped_at_creation: false,
+            })
+        };
+        let areas_buf = dummy("fx-lens-flare-dbg-areas", 4);
+        let verts_buf = dummy("fx-lens-flare-dbg-verts", 32);
         let params = ctx
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1576,14 +1659,18 @@ impl FxEngine {
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: verts_buf.as_entire_binding(),
+                    resource: areas_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
-                    resource: params.as_entire_binding(),
+                    resource: verts_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
+                    resource: params.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
                     resource: lights_buf.as_entire_binding(),
                 },
             ],

@@ -1,5 +1,5 @@
 // Lens flare (docs/08-EFFECTS.md §3.27, docs/impl/lens-flare.md, K-261,
-// K-263). Two compute entry points of the per-frame ghost pipeline:
+// K-263/K-264). Three compute entry points of the per-frame ghost pipeline:
 //   trace       — one thread per pupil-grid corner: refract the ray through
 //                 the prescription with the FlareSim three-phase walk
 //                 (reflecting at the pair's two surfaces), weight by the
@@ -7,19 +7,24 @@
 //                 land on the sensor. Mirrors lumit_core's `trace_splat`
 //                 op-for-op; the dead sentinel is weight −1 (the CPU
 //                 returns None).
-//   build_verts — one thread per grid cell: the cell's energy (launch cell
-//                 area ÷ landed area in raster px², the energy-conserving
-//                 density) and the four corners it draws with, in one pass.
-//                 Energy and geometry were two passes through K-262 and the
-//                 second recomputed the first's areas from the same four
-//                 rays; merged (K-263) the cell is read once, its area is
-//                 computed once, and the intermediate energy buffer is gone.
-//                 Sub-pixel fold quads inflate about their centroid with
-//                 flux conserved (K-261) so the hardware raster cannot drop
-//                 caustic flux; culled cells park off-screen.
-// The additive raster lives in fx_lens_flare_draw.wgsl, the box blur in
-// fx_lens_flare_blur.wgsl, detection in fx_lens_flare_detect.wgsl and the
-// final combine in fx_lens_flare_combine.wgsl.
+//   quad_area   — one thread per grid cell: the cell's landed area in
+//                 flare-buffer px² (0 = a dead corner). Not folded into
+//                 build_verts (K-264), because build_verts reads the areas
+//                 of NEIGHBOURING cells too — the vertex-smoothed density —
+//                 and neighbours across a workgroup boundary need a pass
+//                 boundary to be visible.
+//   build_verts — one thread per grid cell: density at each of the cell's
+//                 four corners is launch cell area over the MEAN landed
+//                 area of the live cells touching that corner ([Hullin
+//                 2011]'s per-vertex rule, K-264) — continuous across the
+//                 grid where the old per-cell density jumped at every cell
+//                 edge and drew the Ultra faceting. Sub-pixel COMPACT quads
+//                 inflate about their centroid with flux conserved (K-261);
+//                 sub-pixel slivers park; long thin fold cells DRAW (K-264
+//                 — parking them cut notches into every caustic rim).
+// The additive raster lives in fx_lens_flare_draw.wgsl (4x multisampled
+// since K-264), the box blur in fx_lens_flare_blur.wgsl, detection in
+// fx_lens_flare_detect.wgsl and the combine in fx_lens_flare_combine.wgsl.
 
 struct Surface {
     radius_mm: f32,     // 0 = flat
@@ -113,9 +118,11 @@ struct TraceParams {
 @group(0) @binding(0) var<storage, read> surfaces: array<Surface>;
 @group(0) @binding(1) var<storage, read> combos: array<Combo>;
 @group(0) @binding(2) var<storage, read_write> rays: array<Ray>;
-@group(0) @binding(3) var<storage, read_write> verts: array<Vertex>;
-@group(0) @binding(4) var<uniform> tp: TraceParams;
-@group(0) @binding(5) var<storage, read> lights: array<Light>;
+// Landed area per grid cell, px²; 0 = dead (K-264).
+@group(0) @binding(3) var<storage, read_write> areas: array<f32>;
+@group(0) @binding(4) var<storage, read_write> verts: array<Vertex>;
+@group(0) @binding(5) var<uniform> tp: TraceParams;
+@group(0) @binding(6) var<storage, read> lights: array<Light>;
 
 // The light direction for a source at raster fraction (px, py) — the exact
 // WGSL twin of lumit_core's `light_direction` (sensor y up, so the y
@@ -210,37 +217,43 @@ fn surface_refl(cos_i: f32, n1: f32, n2: f32, layers: f32, lambda_nm: f32) -> f3
     return clamp(plain + (coated - plain) * clamp(tp.coating, 0.0, 1.0), 0.0, 1.0);
 }
 
-// Ray–surface intersection (lumit_core `intersect`, the FlareSim rule):
-// flat plane at the vertex z, else ray–sphere picking the intersection
-// closest to the vertex; the clear semi-aperture clips. ok=false = dead.
+// Ray–surface intersection (lumit_core `intersect`, K-264): flat plane at
+// the vertex z, else ray–sphere picking the intersection closest to the
+// vertex. A ray that MISSES the sphere (or finds it behind) continues
+// VIRTUALLY through the vertex plane instead of dying — physically the
+// mount absorbs it, so the caller forces its weight to zero, but killing it
+// also killed every grid cell touching it and a ghost bounded by misses
+// wore its pupil grid as a staircase. ok=false only for degenerate rays.
 struct Isect {
     pos: vec3<f32>,
     normal: vec3<f32>,
     ok: bool,
+    missed: bool,
 };
 
-fn intersect(pos: vec3<f32>, dir: vec3<f32>, radius: f32, z_mm: f32, semi_ap: f32) -> Isect {
+fn plane_hit(pos: vec3<f32>, dir: vec3<f32>, z_mm: f32, missed: bool) -> Isect {
     var out: Isect;
     out.ok = false;
-    if (abs(radius) < 1e-6) {
-        if (abs(dir.z) < 1e-12) {
-            return out;
-        }
-        let t = (z_mm - pos.z) / dir.z;
-        if (!(t > 1e-6)) {
-            return out;
-        }
-        let hit = pos + dir * t;
-        // 10% clip skirt (see the CPU `intersect`): boundary quads fade via
-        // the housing feather instead of dying corner-by-corner.
-        let skirt = semi_ap * 1.1;
-        if (hit.x * hit.x + hit.y * hit.y > skirt * skirt) {
-            return out;
-        }
-        out.pos = hit;
-        out.normal = vec3<f32>(0.0, 0.0, select(1.0, -1.0, dir.z > 0.0));
-        out.ok = true;
+    out.missed = missed;
+    let t = (z_mm - pos.z) / dir.z;
+    if (!(t > 1e-6)) {
         return out;
+    }
+    out.pos = pos + dir * t;
+    out.normal = vec3<f32>(0.0, 0.0, select(1.0, -1.0, dir.z > 0.0));
+    out.ok = true;
+    return out;
+}
+
+fn intersect(pos: vec3<f32>, dir: vec3<f32>, radius: f32, z_mm: f32) -> Isect {
+    var out: Isect;
+    out.ok = false;
+    out.missed = false;
+    if (abs(dir.z) < 1e-12) {
+        return out;
+    }
+    if (abs(radius) < 1e-6) {
+        return plane_hit(pos, dir, z_mm, false);
     }
     let centre = vec3<f32>(0.0, 0.0, z_mm + radius);
     let oc = pos - centre;
@@ -248,30 +261,26 @@ fn intersect(pos: vec3<f32>, dir: vec3<f32>, radius: f32, z_mm: f32, semi_ap: f3
     let b = 2.0 * dot(oc, dir);
     let c = dot(oc, oc) - radius * radius;
     let disc = b * b - 4.0 * a * c;
-    if (disc < 0.0) {
-        return out;
-    }
-    let sd = sqrt(disc);
-    let inv2a = 0.5 / a;
-    let t1 = (-b - sd) * inv2a;
-    let t2 = (-b + sd) * inv2a;
     var t = -1.0;
-    if (t1 > 1e-6 && t2 > 1e-6) {
-        let z1 = pos.z + t1 * dir.z;
-        let z2 = pos.z + t2 * dir.z;
-        t = select(t2, t1, abs(z1 - z_mm) < abs(z2 - z_mm));
-    } else if (t1 > 1e-6) {
-        t = t1;
-    } else if (t2 > 1e-6) {
-        t = t2;
-    } else {
-        return out;
+    if (disc >= 0.0) {
+        let sd = sqrt(disc);
+        let inv2a = 0.5 / a;
+        let t1 = (-b - sd) * inv2a;
+        let t2 = (-b + sd) * inv2a;
+        if (t1 > 1e-6 && t2 > 1e-6) {
+            let z1 = pos.z + t1 * dir.z;
+            let z2 = pos.z + t2 * dir.z;
+            t = select(t2, t1, abs(z1 - z_mm) < abs(z2 - z_mm));
+        } else if (t1 > 1e-6) {
+            t = t1;
+        } else if (t2 > 1e-6) {
+            t = t2;
+        }
+    }
+    if (t <= 0.0) {
+        return plane_hit(pos, dir, z_mm, true);
     }
     let hit = pos + dir * t;
-    let skirt = semi_ap * 1.1;
-    if (!(hit.x * hit.x + hit.y * hit.y <= skirt * skirt)) {
-        return out;
-    }
     var n = (hit - centre) / abs(radius);
     if (dot(n, dir) > 0.0) {
         n = -n;
@@ -340,11 +349,18 @@ fn trace(@builtin(global_invocation_id) gid: vec3<u32>) {
     let g1 = f32(max(tp.grid, 2u) - 1u);
     let u = (f32(gi) / g1) * 2.0 - 1.0;
     let v = (f32(gj) / g1) * 2.0 - 1.0;
-    let mask = pupil_mask(u, v);
-    if (mask <= 0.0) {
+    // A masked-out corner still traces (K-264): weight zero, geometry
+    // real, so iris edges fade inside their cell instead of quantising to
+    // it — unless it sits so far outside the iris (zero beyond radius 1)
+    // that no cell touching it can hold any lit corner; the CPU twin's
+    // comment tells the story.
+    let spacing = 2.0 / g1;
+    let lim = 1.0 + 1.5 * spacing;
+    if (u * u + v * v > lim * lim) {
         rays[slot] = dead;
         return;
     }
+    let mask = pupil_mask(u, v);
 
     var pos = vec3<f32>(u * tp.pupil_mm, v * tp.pupil_mm, tp.start_z_mm);
     var dir = dir_of(light.pos_x, light.pos_y);
@@ -361,13 +377,20 @@ fn trace(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Phase 1: forward through 0..=b, reflecting at b.
     for (var s_idx = 0u; s_idx <= b_idx; s_idx = s_idx + 1u) {
         let s = surfaces[s_idx];
-        let hit = intersect(pos, dir, s.radius_mm, s.z_mm, semi_of(s));
+        let hit = intersect(pos, dir, s.radius_mm, s.z_mm);
         if (!hit.ok) {
             rays[slot] = dead;
             return;
         }
         pos = hit.pos;
-        let semi_r = max(semi_of(s), 1e-6);
+        if (hit.missed) {
+            rrel2 = max(rrel2, 4.0);
+        }
+        // min(clear aperture, glass extent): see the CPU twin (K-264).
+        var semi_r = max(semi_of(s), 1e-6);
+        if (abs(s.radius_mm) >= 1e-6) {
+            semi_r = max(min(semi_r, abs(s.radius_mm)), 1e-6);
+        }
         rrel2 = max(rrel2, (pos.x * pos.x + pos.y * pos.y) / (semi_r * semi_r));
         let n2 = cauchy_ior(s.cauchy_a, s.cauchy_b, lambda);
         let cos_i = abs(dot(hit.normal, dir));
@@ -378,10 +401,12 @@ fn trace(@builtin(global_invocation_id) gid: vec3<u32>) {
         } else {
             let refr = refract_dir(dir, hit.normal, current / n2);
             if (refr.w < 0.5) {
-                rays[slot] = dead;
-                return;
+                // TIR: continue straight, weight zero (K-264; the CPU
+                // twin's comment tells the story).
+                rrel2 = max(rrel2, 4.0);
+            } else {
+                dir = refr.xyz;
             }
-            dir = refr.xyz;
             weight = weight * (1.0 - r);
             current = n2;
         }
@@ -391,13 +416,20 @@ fn trace(@builtin(global_invocation_id) gid: vec3<u32>) {
     for (var k = b_idx; k > a_idx; k = k - 1u) {
         let s_idx = k - 1u;
         let s = surfaces[s_idx];
-        let hit = intersect(pos, dir, s.radius_mm, s.z_mm, semi_of(s));
+        let hit = intersect(pos, dir, s.radius_mm, s.z_mm);
         if (!hit.ok) {
             rays[slot] = dead;
             return;
         }
         pos = hit.pos;
-        let semi_r = max(semi_of(s), 1e-6);
+        if (hit.missed) {
+            rrel2 = max(rrel2, 4.0);
+        }
+        // min(clear aperture, glass extent): see the CPU twin (K-264).
+        var semi_r = max(semi_of(s), 1e-6);
+        if (abs(s.radius_mm) >= 1e-6) {
+            semi_r = max(min(semi_r, abs(s.radius_mm)), 1e-6);
+        }
         rrel2 = max(rrel2, (pos.x * pos.x + pos.y * pos.y) / (semi_r * semi_r));
         var n2 = 1.0;
         if (s_idx > 0u) {
@@ -413,10 +445,12 @@ fn trace(@builtin(global_invocation_id) gid: vec3<u32>) {
         } else {
             let refr = refract_dir(dir, hit.normal, current / n2);
             if (refr.w < 0.5) {
-                rays[slot] = dead;
-                return;
+                // TIR: continue straight, weight zero (K-264; the CPU
+                // twin's comment tells the story).
+                rrel2 = max(rrel2, 4.0);
+            } else {
+                dir = refr.xyz;
             }
-            dir = refr.xyz;
             weight = weight * (1.0 - r);
             current = n2;
         }
@@ -425,23 +459,31 @@ fn trace(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Phase 3: forward through a+1..n.
     for (var s_idx = a_idx + 1u; s_idx < tp.surface_count; s_idx = s_idx + 1u) {
         let s = surfaces[s_idx];
-        let hit = intersect(pos, dir, s.radius_mm, s.z_mm, semi_of(s));
+        let hit = intersect(pos, dir, s.radius_mm, s.z_mm);
         if (!hit.ok) {
             rays[slot] = dead;
             return;
         }
         pos = hit.pos;
-        let semi_r = max(semi_of(s), 1e-6);
+        if (hit.missed) {
+            rrel2 = max(rrel2, 4.0);
+        }
+        // min(clear aperture, glass extent): see the CPU twin (K-264).
+        var semi_r = max(semi_of(s), 1e-6);
+        if (abs(s.radius_mm) >= 1e-6) {
+            semi_r = max(min(semi_r, abs(s.radius_mm)), 1e-6);
+        }
         rrel2 = max(rrel2, (pos.x * pos.x + pos.y * pos.y) / (semi_r * semi_r));
         let n2 = cauchy_ior(s.cauchy_a, s.cauchy_b, lambda);
         let cos_i = abs(dot(hit.normal, dir));
         let r = surface_refl(cos_i, current, n2, s.coating_layers, lambda);
         let refr = refract_dir(dir, hit.normal, current / n2);
         if (refr.w < 0.5) {
-            rays[slot] = dead;
-            return;
+            // TIR: continue straight, weight zero (K-264).
+            rrel2 = max(rrel2, 4.0);
+        } else {
+            dir = refr.xyz;
         }
-        dir = refr.xyz;
         weight = weight * (1.0 - r);
         current = n2;
     }
@@ -493,16 +535,74 @@ fn park_cell(out_base: u32) {
     }
 }
 
+// The cell's landed area from its four rays; negative-weight (dead)
+// corners make it 0. Shared by quad_area and, for the cell's own guard,
+// build_verts.
+fn cell_area_of(base: u32, qx: u32, qy: u32) -> f32 {
+    let c0 = rays[base + qy * tp.grid + qx];
+    let c1 = rays[base + qy * tp.grid + qx + 1u];
+    let c2 = rays[base + (qy + 1u) * tp.grid + qx + 1u];
+    let c3 = rays[base + (qy + 1u) * tp.grid + qx];
+    if (c0.weight < 0.0 || c1.weight < 0.0 || c2.weight < 0.0 || c3.weight < 0.0) {
+        return 0.0;
+    }
+    let p0 = vec2<f32>(c0.pos_x, c0.pos_y);
+    let p1 = vec2<f32>(c1.pos_x, c1.pos_y);
+    let p2 = vec2<f32>(c2.pos_x, c2.pos_y);
+    let p3 = vec2<f32>(c3.pos_x, c3.pos_y);
+    let a0 = edge_px(p0, p1, p2);
+    let a1 = edge_px(p0, p2, p3);
+    return abs((a0 + a1) / 2.0);
+}
+
+@compute @workgroup_size(64)
+fn quad_area(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let side = tp.grid - 1u;
+    if (gid.x >= tp.quad_stride || gid.y >= tp.combo_count || gid.z >= tp.light_count) {
+        return;
+    }
+    let slot = gid.z * tp.combo_count + gid.y;
+    let qx = gid.x % side;
+    let qy = gid.x / side;
+    areas[slot * tp.quad_stride + gid.x] = cell_area_of(slot * tp.ray_stride, qx, qy);
+}
+
+// Density at grid corner (cx, cy): launch cell area over the MEAN landed
+// area of the live cells touching the corner (K-264, [Hullin 2011]'s
+// per-vertex rule; the CPU twin is `corner_density` in cpu_flare). The
+// MIN_AREA_FRAC floor on the mean is still the caustic density cap.
+fn corner_mean_area(area_base: u32, side: u32, cx: u32, cy: u32) -> f32 {
+    var sum = 0.0;
+    var n = 0.0;
+    let qx0 = max(cx, 1u) - 1u;
+    let qy0 = max(cy, 1u) - 1u;
+    let qx1 = min(cx, side - 1u);
+    let qy1 = min(cy, side - 1u);
+    for (var qy = qy0; qy <= qy1; qy = qy + 1u) {
+        for (var qx = qx0; qx <= qx1; qx = qx + 1u) {
+            let a = areas[area_base + qy * side + qx];
+            if (a > 0.0) {
+                sum = sum + a;
+                n = n + 1.0;
+            }
+        }
+    }
+    if (n > 0.0) {
+        return sum / n;
+    }
+    return 0.0;
+}
+
+fn density_of(mean: f32) -> f32 {
+    return tp.cell_area_px / max(mean, 3e-3 * tp.cell_area_px);
+}
+
 @compute @workgroup_size(64)
 fn build_verts(@builtin(global_invocation_id) gid: vec3<u32>) {
     let side = tp.grid - 1u;
-    // Dispatched over THIS batch's cells (K-263). Through K-262 the scratch
-    // was strided by the widest grid in the whole frame and this pass ran over
-    // that stride to park the cells a narrower batch did not fill — so a frame
-    // holding one frame-filling ghost made every compact ghost pay that
-    // ghost's cell count. A batch is a run of combos at ONE grid, so the
-    // stride is now the batch's own and its cells are contiguous: nothing
-    // outside them is dispatched, written, or drawn.
+    // Dispatched over THIS batch's cells (K-263): a batch is a run of
+    // combos at ONE grid, so the stride is its own and its cells are
+    // contiguous — nothing outside them is dispatched, written, or drawn.
     if (gid.x >= tp.quad_stride || gid.y >= tp.combo_count || gid.z >= tp.light_count) {
         return;
     }
@@ -510,75 +610,113 @@ fn build_verts(@builtin(global_invocation_id) gid: vec3<u32>) {
     let out_base = (slot * tp.quad_stride + gid.x) * 4u;
     let qx = gid.x % side;
     let qy = gid.x / side;
+    let area_px = areas[slot * tp.quad_stride + gid.x];
+    if (area_px <= 0.0) {
+        park_cell(out_base);
+        return;
+    }
     let base = slot * tp.ray_stride;
     let c0 = rays[base + qy * tp.grid + qx];
     let c1 = rays[base + qy * tp.grid + qx + 1u];
     let c2 = rays[base + (qy + 1u) * tp.grid + qx + 1u];
     let c3 = rays[base + (qy + 1u) * tp.grid + qx];
-    if (c0.weight < 0.0 || c1.weight < 0.0 || c2.weight < 0.0 || c3.weight < 0.0) {
-        park_cell(out_base);
-        return;
-    }
     var p = array<vec2<f32>, 4>(
         vec2<f32>(c0.pos_x, c0.pos_y),
         vec2<f32>(c1.pos_x, c1.pos_y),
         vec2<f32>(c2.pos_x, c2.pos_y),
         vec2<f32>(c3.pos_x, c3.pos_y),
     );
-    // The cell's landed area, computed ONCE (K-263) and used for both the
-    // energy density and the sub-pixel guard below.
-    let a0 = edge_px(p[0], p[1], p[2]);
-    let a1 = edge_px(p[0], p[2], p[3]);
-    let area_px = abs((a0 + a1) / 2.0);
-    // MIN_AREA_FRAC (K-262): a cap on caustic density, not a formality —
-    // see the CPU twin's comment.
-    let landed = max(area_px, 3e-3 * tp.cell_area_px);
-    let e = tp.cell_area_px / landed;
-    if (e <= 0.0) {
-        park_cell(out_base);
-        return;
-    }
+    // Vertex-smoothed density (K-264): each corner's own neighbourhood
+    // mean, interpolated by the raster — continuous across cells, where the
+    // per-cell constant of K-263 jumped at every cell edge (the faceting).
+    let area_base = slot * tp.quad_stride;
+    var means = array<f32, 4>(
+        corner_mean_area(area_base, side, qx, qy),
+        corner_mean_area(area_base, side, qx + 1u, qy),
+        corner_mean_area(area_base, side, qx + 1u, qy + 1u),
+        corner_mean_area(area_base, side, qx, qy + 1u),
+    );
+    var d = array<f32, 4>(
+        density_of(means[0]),
+        density_of(means[1]),
+        density_of(means[2]),
+        density_of(means[3]),
+    );
     let combo = combos[tp.combo_offset + gid.y];
     let light = lights[tp.light_offset + gid.z];
     let tint = vec3<f32>(combo.rgb_r * light.r, combo.rgb_g * light.g, combo.rgb_b * light.b);
     var col = array<vec3<f32>, 4>(
-        tint * (e * max(c0.weight, 0.0)),
-        tint * (e * max(c1.weight, 0.0)),
-        tint * (e * max(c2.weight, 0.0)),
-        tint * (e * max(c3.weight, 0.0)),
+        tint * (d[0] * max(c0.weight, 0.0)),
+        tint * (d[1] * max(c1.weight, 0.0)),
+        tint * (d[2] * max(c2.weight, 0.0)),
+        tint * (d[3] * max(c3.weight, 0.0)),
     );
-    // Flux-conserving sub-pixel inflation (K-261, refined K-262 — the CPU
-    // `inflate_quad` twin). A sub-pixel quad would be dropped by the
-    // hardware raster as zero-coverage, so it inflates about its centroid
-    // with its colour scaled by true ÷ inflated area. But only if it is
-    // COMPACT: a fold-straddling sliver has near-zero area and large
-    // extent, and inflating that stretches it into a frame-crossing streak
-    // — such quads are dropped instead.
-    let min_quad_px = 4.0;
+    // Flux-conserving sub-pixel inflation (K-261, refined K-262/K-264 — the
+    // CPU `inflate_quad` twin). A sub-pixel COMPACT quad inflates about its
+    // centroid, colour scaled by true ÷ inflated area, so the raster cannot
+    // drop its caustic flux; a sub-pixel SLIVER parks (inflating one is the
+    // K-261 streak artefact; un-inflated it covers nothing). A long thin
+    // cell at drawable size DRAWS since K-264: its brightness is now its
+    // neighbourhood's, and parking it cut notches into every caustic rim.
+    let min_quad_px = 1.0;
     let max_inflate_edge_px = 6.0;
-    let streak_len_frac = 0.04;
-    let streak_aspect = 8.0;
-    var longest = 0.0;
+    // Rein in the unlit corners (K-264, the CPU cell loop's twin). A cell
+    // spanning from lit geometry to a mount-absorbed virtual continuation
+    // can be hundreds of px long; drawn it fans a faint line out of the
+    // ghost's bore, dropped it notches the bore's edge. The zero-weight
+    // corner carries no light — its only job is geometry — so it is pulled
+    // toward the lit corners' centroid to within a few cell-widths, and
+    // the fade to zero lands where the boundary is.
+    var w4 = array<f32, 4>(c0.weight, c1.weight, c2.weight, c3.weight);
+    var lit_n = 0.0;
+    var lit_c = vec2<f32>(0.0);
     for (var i = 0; i < 4; i = i + 1) {
-        let d = p[i] - p[(i + 1) % 4];
-        longest = max(longest, length(d));
+        if (w4[i] > 0.0) {
+            lit_n = lit_n + 1.0;
+            lit_c = lit_c + p[i];
+        }
     }
-    let diag_px = sqrt(tp.raster_w * tp.raster_w + tp.raster_h * tp.raster_h);
-    // Long AND thin at any size is a discontinuity-spanning cell: drop it
-    // (K-262). Rim cells are elongated too, but short.
-    let streak = longest > streak_len_frac * diag_px
-        && longest * longest > streak_aspect * area_px;
-    if (streak || (area_px < min_quad_px && longest > max_inflate_edge_px)) {
+    if (lit_n == 0.0) {
+        // No light anywhere in the cell: nothing to draw.
         park_cell(out_base);
         return;
     }
+    if (lit_n < 4.0) {
+        lit_c = lit_c / lit_n;
+        var min_mean = 1e30;
+        for (var i = 0; i < 4; i = i + 1) {
+            if (w4[i] > 0.0 && means[i] > 0.0) {
+                min_mean = min(min_mean, means[i]);
+            }
+        }
+        let reach = max(sqrt(min(min_mean, 1e12)), 1.0);
+        for (var i = 0; i < 4; i = i + 1) {
+            if (w4[i] > 0.0) {
+                continue;
+            }
+            let dd = p[i] - lit_c;
+            let dist = length(dd);
+            if (dist > reach) {
+                p[i] = lit_c + dd * (reach / dist);
+            }
+        }
+    }
     if (area_px < min_quad_px) {
+        var longest = 0.0;
+        for (var i = 0; i < 4; i = i + 1) {
+            let dd = p[i] - p[(i + 1) % 4];
+            longest = max(longest, length(dd));
+        }
+        if (longest > max_inflate_edge_px) {
+            park_cell(out_base);
+            return;
+        }
         let eps = min_quad_px * 1e-4;
-        let s = sqrt(min_quad_px / max(area_px, eps));
+        let scl = sqrt(min_quad_px / max(area_px, eps));
         let scale = max(area_px, eps) / min_quad_px;
         let centre = (p[0] + p[1] + p[2] + p[3]) / 4.0;
         for (var i = 0; i < 4; i = i + 1) {
-            p[i] = centre + (p[i] - centre) * s;
+            p[i] = centre + (p[i] - centre) * scl;
             col[i] = col[i] * scale;
         }
     }

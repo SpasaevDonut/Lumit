@@ -601,12 +601,11 @@ fn intersect(
     dir: [f32; 3],
     radius: f32,
     z_mm: f32,
-    semi_ap: f32,
-) -> Option<([f32; 3], [f32; 3])> {
+) -> Option<([f32; 3], [f32; 3], bool)> {
+    if dir[2].abs() < 1e-12 {
+        return None;
+    }
     if radius.abs() < 1e-6 {
-        if dir[2].abs() < 1e-12 {
-            return None;
-        }
         let t = (z_mm - pos[2]) / dir[2];
         if !(t > 1e-6) {
             return None;
@@ -616,16 +615,12 @@ fn intersect(
             pos[1] + dir[1] * t,
             pos[2] + dir[2] * t,
         ];
-        let skirt = semi_ap * 1.1;
-        if hit[0] * hit[0] + hit[1] * hit[1] > skirt * skirt {
-            return None;
-        }
         let n = if dir[2] > 0.0 {
             [0.0, 0.0, -1.0]
         } else {
             [0.0, 0.0, 1.0]
         };
-        return Some((hit, n));
+        return Some((hit, n, false));
     }
     let centre = [0.0, 0.0, z_mm + radius];
     let oc = [pos[0] - centre[0], pos[1] - centre[1], pos[2] - centre[2]];
@@ -633,37 +628,56 @@ fn intersect(
     let b = 2.0 * (oc[0] * dir[0] + oc[1] * dir[1] + oc[2] * dir[2]);
     let c = oc[0] * oc[0] + oc[1] * oc[1] + oc[2] * oc[2] - radius * radius;
     let disc = b * b - 4.0 * a * c;
-    if disc < 0.0 {
-        return None;
-    }
-    let sd = disc.sqrt();
-    let inv2a = 0.5 / a;
-    let t1 = (-b - sd) * inv2a;
-    let t2 = (-b + sd) * inv2a;
-    let t = if t1 > 1e-6 && t2 > 1e-6 {
-        let z1 = pos[2] + t1 * dir[2];
-        let z2 = pos[2] + t2 * dir[2];
-        if (z1 - z_mm).abs() < (z2 - z_mm).abs() {
-            t1
-        } else {
-            t2
+    let mut t = -1.0_f32;
+    if disc >= 0.0 {
+        let sd = disc.sqrt();
+        let inv2a = 0.5 / a;
+        let t1 = (-b - sd) * inv2a;
+        let t2 = (-b + sd) * inv2a;
+        if t1 > 1e-6 && t2 > 1e-6 {
+            let z1 = pos[2] + t1 * dir[2];
+            let z2 = pos[2] + t2 * dir[2];
+            t = if (z1 - z_mm).abs() < (z2 - z_mm).abs() {
+                t1
+            } else {
+                t2
+            };
+        } else if t1 > 1e-6 {
+            t = t1;
+        } else if t2 > 1e-6 {
+            t = t2;
         }
-    } else if t1 > 1e-6 {
-        t1
-    } else if t2 > 1e-6 {
-        t2
-    } else {
-        return None;
-    };
+    }
+    if t <= 0.0 {
+        // The ray misses the sphere (or it lies behind): continue VIRTUALLY
+        // through the surface's vertex plane instead of dying (K-264). A
+        // miss means the ray is outside the element's glass — physically it
+        // hits the mount and is absorbed, so its weight is forced to zero by
+        // the caller — but killing it also killed every grid cell touching
+        // it, and a ghost bounded by such misses wore its pupil grid as a
+        // staircase. The virtual hit keeps the cell geometry defined; the
+        // zero weight keeps the light honest.
+        let t = (z_mm - pos[2]) / dir[2];
+        if !(t > 1e-6) {
+            return None;
+        }
+        let hit = [
+            pos[0] + dir[0] * t,
+            pos[1] + dir[1] * t,
+            pos[2] + dir[2] * t,
+        ];
+        let n = if dir[2] > 0.0 {
+            [0.0, 0.0, -1.0]
+        } else {
+            [0.0, 0.0, 1.0]
+        };
+        return Some((hit, n, true));
+    }
     let hit = [
         pos[0] + dir[0] * t,
         pos[1] + dir[1] * t,
         pos[2] + dir[2] * t,
     ];
-    let skirt = semi_ap * 1.1;
-    if !(hit[0] * hit[0] + hit[1] * hit[1] <= skirt * skirt) {
-        return None;
-    }
     let inv_r = 1.0 / radius.abs();
     let mut n = [
         (hit[0] - centre[0]) * inv_r,
@@ -673,7 +687,7 @@ fn intersect(
     if n[0] * dir[0] + n[1] * dir[1] + n[2] * dir[2] > 0.0 {
         n = [-n[0], -n[1], -n[2]];
     }
-    Some((hit, n))
+    Some((hit, n, false))
 }
 
 /// The light direction for a light at `light` (raster fraction, y down) on
@@ -747,9 +761,26 @@ pub fn trace_splat(
     // Phase 1: forward through 0..=b, reflecting at b.
     for (s_idx, s) in surfs.iter().enumerate().take(b_idx + 1) {
         let semi = semi_of(s);
-        let (hit, norm) = intersect(pos, rdir, s.radius_mm, s.z_mm, semi)?;
+        let (hit, norm, missed) = intersect(pos, rdir, s.radius_mm, s.z_mm)?;
         pos = hit;
-        rrel2 = rrel2.max((pos[0] * pos[0] + pos[1] * pos[1]) / (semi.max(1e-6) * semi.max(1e-6)));
+        if missed {
+            // Outside the element's glass entirely: the mount absorbs it.
+            // Weight goes to zero through the housing feather; the ray
+            // itself continues so its grid cells stay whole (K-264).
+            rrel2 = rrel2.max(4.0);
+        }
+        // The feather's denominator is the smaller of the clear aperture
+        // and the glass's own lateral extent (K-264): a transcribed
+        // prescription can claim a clear aperture wider than the sphere it
+        // sits on, and rays then MISSED the glass while their feather still
+        // read "well inside" — a one-cell hard step at the ghost's bore
+        // edge. Clamped, the feather reaches zero before the miss can.
+        let semi_r = if s.radius_mm.abs() < 1e-6 {
+            semi.max(1e-6)
+        } else {
+            semi.min(s.radius_mm.abs()).max(1e-6)
+        };
+        rrel2 = rrel2.max((pos[0] * pos[0] + pos[1] * pos[1]) / (semi_r * semi_r));
         let n1 = current_ior;
         let n2 = ior_at(s);
         let cos_i = (norm[0] * rdir[0] + norm[1] * rdir[1] + norm[2] * rdir[2]).abs();
@@ -758,7 +789,15 @@ pub fn trace_splat(
             rdir = reflect3(rdir, norm);
             weight *= r;
         } else {
-            rdir = refract3(rdir, norm, n1 / n2)?;
+            match refract3(rdir, norm, n1 / n2) {
+                Some(d) => rdir = d,
+                // Total internal reflection: the transmitted energy is
+                // already ~0 (Fresnel reaches 1 smoothly on approach), so
+                // the ray continues STRAIGHT with its weight forced to
+                // zero (K-264) — the last cell-killer with no feather, and
+                // the stair-steps on hard vignetted ghost edges.
+                None => rrel2 = rrel2.max(4.0),
+            }
             weight *= 1.0 - r;
             current_ior = n2;
         }
@@ -768,9 +807,26 @@ pub fn trace_splat(
     for s_idx in (a_idx..b_idx).rev() {
         let s = &surfs[s_idx];
         let semi = semi_of(s);
-        let (hit, norm) = intersect(pos, rdir, s.radius_mm, s.z_mm, semi)?;
+        let (hit, norm, missed) = intersect(pos, rdir, s.radius_mm, s.z_mm)?;
         pos = hit;
-        rrel2 = rrel2.max((pos[0] * pos[0] + pos[1] * pos[1]) / (semi.max(1e-6) * semi.max(1e-6)));
+        if missed {
+            // Outside the element's glass entirely: the mount absorbs it.
+            // Weight goes to zero through the housing feather; the ray
+            // itself continues so its grid cells stay whole (K-264).
+            rrel2 = rrel2.max(4.0);
+        }
+        // The feather's denominator is the smaller of the clear aperture
+        // and the glass's own lateral extent (K-264): a transcribed
+        // prescription can claim a clear aperture wider than the sphere it
+        // sits on, and rays then MISSED the glass while their feather still
+        // read "well inside" — a one-cell hard step at the ghost's bore
+        // edge. Clamped, the feather reaches zero before the miss can.
+        let semi_r = if s.radius_mm.abs() < 1e-6 {
+            semi.max(1e-6)
+        } else {
+            semi.min(s.radius_mm.abs()).max(1e-6)
+        };
+        rrel2 = rrel2.max((pos[0] * pos[0] + pos[1] * pos[1]) / (semi_r * semi_r));
         let n1 = current_ior;
         let n2 = ior_before(s_idx);
         let cos_i = (norm[0] * rdir[0] + norm[1] * rdir[1] + norm[2] * rdir[2]).abs();
@@ -780,7 +836,11 @@ pub fn trace_splat(
             weight *= r;
             current_ior = ior_at(s);
         } else {
-            rdir = refract3(rdir, norm, n1 / n2)?;
+            match refract3(rdir, norm, n1 / n2) {
+                Some(d) => rdir = d,
+                // TIR: continue straight, weight zero — see phase 1.
+                None => rrel2 = rrel2.max(4.0),
+            }
             weight *= 1.0 - r;
             current_ior = n2;
         }
@@ -789,14 +849,35 @@ pub fn trace_splat(
     // Phase 3: forward through a+1..n.
     for s in surfs.iter().skip(a_idx + 1) {
         let semi = semi_of(s);
-        let (hit, norm) = intersect(pos, rdir, s.radius_mm, s.z_mm, semi)?;
+        let (hit, norm, missed) = intersect(pos, rdir, s.radius_mm, s.z_mm)?;
         pos = hit;
-        rrel2 = rrel2.max((pos[0] * pos[0] + pos[1] * pos[1]) / (semi.max(1e-6) * semi.max(1e-6)));
+        if missed {
+            // Outside the element's glass entirely: the mount absorbs it.
+            // Weight goes to zero through the housing feather; the ray
+            // itself continues so its grid cells stay whole (K-264).
+            rrel2 = rrel2.max(4.0);
+        }
+        // The feather's denominator is the smaller of the clear aperture
+        // and the glass's own lateral extent (K-264): a transcribed
+        // prescription can claim a clear aperture wider than the sphere it
+        // sits on, and rays then MISSED the glass while their feather still
+        // read "well inside" — a one-cell hard step at the ghost's bore
+        // edge. Clamped, the feather reaches zero before the miss can.
+        let semi_r = if s.radius_mm.abs() < 1e-6 {
+            semi.max(1e-6)
+        } else {
+            semi.min(s.radius_mm.abs()).max(1e-6)
+        };
+        rrel2 = rrel2.max((pos[0] * pos[0] + pos[1] * pos[1]) / (semi_r * semi_r));
         let n1 = current_ior;
         let n2 = ior_at(s);
         let cos_i = (norm[0] * rdir[0] + norm[1] * rdir[1] + norm[2] * rdir[2]).abs();
         let r = surface_reflectance(cos_i, n1, n2, s.coating_layers, lambda_nm, coating_mix);
-        rdir = refract3(rdir, norm, n1 / n2)?;
+        match refract3(rdir, norm, n1 / n2) {
+            Some(d) => rdir = d,
+            // TIR: continue straight, weight zero — see phase 1.
+            None => rrel2 = rrel2.max(4.0),
+        }
         weight *= 1.0 - r;
         current_ior = n2;
     }
@@ -886,17 +967,40 @@ pub fn effective_roundness(roundness: f32, fstop: f32, native_fstop: f32) -> f32
 /// and mix are frame-time inputs and deliberately absent — animating them
 /// never rebakes.
 pub fn bake_key(p: &LensFlareParams) -> u64 {
+    bake_key_with(p, None)
+}
+
+/// [`bake_key`] with a custom prescription in play (K-264): the `lens_file`
+/// override's content hash folds in, so editing the file (or clearing it)
+/// rebakes and two different files never share a cache slot.
+pub fn bake_key_with(p: &LensFlareParams, lens_text_hash: Option<u64>) -> u64 {
     let mut h = 0xcbf2_9ce4_8422_2325_u64; // FNV offset basis
-    let mut fold = |v: u32| {
-        h ^= v as u64;
+    let mut fold = |v: u64| {
+        h ^= v;
         h = h.wrapping_mul(0x0000_0100_0000_01b3);
     };
-    fold(p.lens);
-    fold(p.fstop.to_bits());
-    fold(p.blades);
-    fold(p.aperture_rotation_deg.to_bits());
-    fold(p.roundness.to_bits());
-    fold(p.aperture_softness.to_bits());
+    fold(p.lens as u64);
+    fold(p.fstop.to_bits() as u64);
+    fold(p.blades as u64);
+    fold(p.aperture_rotation_deg.to_bits() as u64);
+    fold(p.roundness.to_bits() as u64);
+    fold(p.aperture_softness.to_bits() as u64);
+    if let Some(text_hash) = lens_text_hash {
+        fold(1);
+        fold(text_hash);
+    }
+    h
+}
+
+/// FNV-1a of a custom .lens file's text — [`bake_key_with`]'s ingredient,
+/// computed by the caller that read the file (lumit-render, following the
+/// LUT pattern of doing the IO outside the engine-pure bake).
+pub fn lens_text_hash(text: &str) -> u64 {
+    let mut h = 0xcbf2_9ce4_8422_2325_u64;
+    for b in text.bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
     h
 }
 
@@ -1013,6 +1117,27 @@ pub fn bake_starburst(aperture: &[f32], res: u32) -> Vec<f32> {
     for v in out.iter_mut() {
         *v /= peak;
     }
+    // Fade the sprite to zero inside its own border (K-264). The
+    // diffraction halo's pedestal ran right to the texture edge, and the
+    // combine stamps the sprite as a quad — so on a dark scene every
+    // starburst sat in a hard-edged grey SQUARE. The window is RADIAL, not
+    // square: a square window only softened the seam and left a square
+    // halo, and light around a point source falls off in circles. The core
+    // and the spike bodies sit well inside r = 0.7 and keep their energy;
+    // only the pedestal's rim fades.
+    for y in 0..n {
+        let ny = 2.0 * (y as f32 / (n - 1) as f32) - 1.0;
+        for x in 0..n {
+            let nx = 2.0 * (x as f32 / (n - 1) as f32) - 1.0;
+            let r = nx.hypot(ny);
+            let t = ((r - 0.7) / 0.3).clamp(0.0, 1.0);
+            let window = 1.0 - t * t * (3.0 - 2.0 * t);
+            let i = (y * n + x) * 3;
+            out[i] *= window;
+            out[i + 1] *= window;
+            out[i + 2] *= window;
+        }
+    }
     out
 }
 
@@ -1027,49 +1152,67 @@ const TARGET_PROBE_MEAN: f32 = 0.010;
 /// measure per-pair defocus boosts, bake the starburst, close the exposure
 /// loop.
 pub fn bake(p: &LensFlareParams) -> FlareBaked {
+    bake_with(p, None)
+}
+
+/// [`bake`] with an optional custom .lens text (K-264, the `lens_file`
+/// parameter): parsed, it replaces the library pick entirely — its native
+/// f-number estimated from the geometry, since only the bundled collection
+/// carries one in its filename. Unparsable (or absent) degrades to the
+/// picked library lens: a labelled fallback, never a fault, and exactly
+/// what an unset parameter renders.
+pub fn bake_with(p: &LensFlareParams, lens_text: Option<&str>) -> FlareBaked {
     let entry = lens_entry(p.lens);
-    let lens = parse_lens(entry.text).unwrap_or_else(|| Prescription {
-        // A degenerate fallback biconvex singlet: the library is regression-
-        // tested to parse in full, so this exists only to keep the engine
-        // panic-free if a future import breaks a file.
-        focal_mm: 50.0,
-        surfaces: vec![
-            FlareSurface {
-                radius_mm: 50.0,
-                z_mm: 0.0,
-                semi_ap_mm: 15.0,
-                cauchy_a: 1.5,
-                cauchy_b: 0.004,
-                coating_layers: 0.0,
-                is_stop: 0.0,
-                _pad: 0.0,
-            },
-            FlareSurface {
-                radius_mm: 0.0,
-                z_mm: 4.0,
-                semi_ap_mm: 12.0,
-                cauchy_a: 1.0,
-                cauchy_b: 0.0,
-                coating_layers: 0.0,
-                is_stop: 1.0,
-                _pad: 0.0,
-            },
-            FlareSurface {
-                radius_mm: -50.0,
-                z_mm: 8.0,
-                semi_ap_mm: 15.0,
-                cauchy_a: 1.0,
-                cauchy_b: 0.0,
-                coating_layers: 0.0,
-                is_stop: 0.0,
-                _pad: 0.0,
-            },
-        ],
-        sensor_z_mm: 55.0,
-    });
-    let front_semi_ap = lens.surfaces[0].semi_ap_mm;
-    let native_fstop = if entry.native_fstop > 0.0 {
+    let custom = lens_text.and_then(parse_lens);
+    let entry_native = if custom.is_some() {
+        0.0
+    } else {
         entry.native_fstop
+    };
+    let lens = custom
+        .or_else(|| parse_lens(entry.text))
+        .unwrap_or_else(|| Prescription {
+            // A degenerate fallback biconvex singlet: the library is regression-
+            // tested to parse in full, so this exists only to keep the engine
+            // panic-free if a future import breaks a file.
+            focal_mm: 50.0,
+            surfaces: vec![
+                FlareSurface {
+                    radius_mm: 50.0,
+                    z_mm: 0.0,
+                    semi_ap_mm: 15.0,
+                    cauchy_a: 1.5,
+                    cauchy_b: 0.004,
+                    coating_layers: 0.0,
+                    is_stop: 0.0,
+                    _pad: 0.0,
+                },
+                FlareSurface {
+                    radius_mm: 0.0,
+                    z_mm: 4.0,
+                    semi_ap_mm: 12.0,
+                    cauchy_a: 1.0,
+                    cauchy_b: 0.0,
+                    coating_layers: 0.0,
+                    is_stop: 1.0,
+                    _pad: 0.0,
+                },
+                FlareSurface {
+                    radius_mm: -50.0,
+                    z_mm: 8.0,
+                    semi_ap_mm: 15.0,
+                    cauchy_a: 1.0,
+                    cauchy_b: 0.0,
+                    coating_layers: 0.0,
+                    is_stop: 0.0,
+                    _pad: 0.0,
+                },
+            ],
+            sensor_z_mm: 55.0,
+        });
+    let front_semi_ap = lens.surfaces[0].semi_ap_mm;
+    let native_fstop = if entry_native > 0.0 {
+        entry_native
     } else {
         (lens.focal_mm / (2.0 * front_semi_ap.max(0.1))).max(0.7)
     };
@@ -1149,30 +1292,52 @@ pub fn bake(p: &LensFlareParams) -> FlareBaked {
         .take(MAX_RENDERED_PAIRS)
         .copied()
         .collect();
+    // Two probe directions per pair (K-264): on-axis, and a representative
+    // off-axis beam (a light a third of the way into the frame). The K-262
+    // probe was on-axis only, and some designs land a COMPACT on-axis ghost
+    // that fills the frame the moment the light moves off-centre — those
+    // pairs were handed the half grid and rendered their wash as 9 px
+    // staircase blocks. The budget takes the larger of the two answers.
+    let off_axis = light_direction([0.33, 0.30], 0.5625, baked.focal_mm);
     for (pi, &pair) in probe_pairs.iter().enumerate() {
         const G: u32 = 8;
-        let (mut min_x, mut max_x) = (f32::MAX, f32::MIN);
-        let (mut min_y, mut max_y) = (f32::MAX, f32::MIN);
-        let mut seen = 0u32;
-        for gy in 0..G {
-            for gx in 0..G {
-                let u = ((gx as f32 + 0.5) / G as f32) * 2.0 - 1.0;
-                let v = ((gy as f32 + 0.5) / G as f32) * 2.0 - 1.0;
-                if u * u + v * v > 1.0 {
-                    continue;
-                }
-                let o = [u * baked.pupil_mm, v * baked.pupil_mm, baked.start_z_mm];
-                if let Some((pos, _)) = trace_splat(&baked, pair, 550.0, o, axis, 1.0, 1.0, 0.0) {
-                    min_x = min_x.min(pos[0]);
-                    max_x = max_x.max(pos[0]);
-                    min_y = min_y.min(pos[1]);
-                    max_y = max_y.max(pos[1]);
-                    seen += 1;
+        let mut spread = 0.0_f32;
+        for dir in [axis, off_axis] {
+            let (mut min_x, mut max_x) = (f32::MAX, f32::MIN);
+            let (mut min_y, mut max_y) = (f32::MAX, f32::MIN);
+            let mut seen = 0u32;
+            for gy in 0..G {
+                for gx in 0..G {
+                    let u = ((gx as f32 + 0.5) / G as f32) * 2.0 - 1.0;
+                    let v = ((gy as f32 + 0.5) / G as f32) * 2.0 - 1.0;
+                    if u * u + v * v > 1.0 {
+                        continue;
+                    }
+                    let o = [u * baked.pupil_mm, v * baked.pupil_mm, baked.start_z_mm];
+                    // Zero-weight rays are K-264's virtual continuations —
+                    // real geometry, no light — and must not widen the
+                    // measured image extent.
+                    if let Some((pos, wgt)) =
+                        trace_splat(&baked, pair, 550.0, o, dir, 1.0, 1.0, 0.0)
+                    {
+                        if wgt <= 1e-6 {
+                            continue;
+                        }
+                        min_x = min_x.min(pos[0]);
+                        max_x = max_x.max(pos[0]);
+                        min_y = min_y.min(pos[1]);
+                        max_y = max_y.max(pos[1]);
+                        seen += 1;
+                    }
                 }
             }
+            if seen >= 2 {
+                spread = spread
+                    .max(((max_x - min_x).hypot(max_y - min_y) / sensor_diag).clamp(0.0, 8.0));
+            }
         }
-        if seen >= 2 {
-            spreads[pi] = ((max_x - min_x).hypot(max_y - min_y) / sensor_diag).clamp(0.0, 8.0);
+        if spread > 0.0 {
+            spreads[pi] = spread;
         }
     }
     baked.spreads = spreads;
@@ -1304,13 +1469,21 @@ pub(crate) struct FlareVertex {
     pub rgb: [f32; 3],
 }
 
-/// Minimum screen area a drawn quad may have, px² (K-261). A caustic-folded
-/// quad shrinks below a pixel, and a rasteriser drops triangles that cover
-/// no pixel centre — deleting exactly the flux that makes a flare's bright
-/// rims and fold lines. Quads below this inflate about their centroid to
-/// this area with their colour scaled by (true / inflated) area, so the
-/// deposited flux is conserved and every quad reliably covers samples.
-pub const MIN_QUAD_PX: f32 = 4.0;
+/// Minimum screen area a drawn quad may have, px² (K-261, retuned K-264).
+/// A caustic-folded quad shrinks below a pixel, and a centre-sampled
+/// rasteriser drops triangles that cover no pixel centre — deleting exactly
+/// the flux that makes a flare's bright rims and fold lines. Quads below
+/// this inflate about their centroid to this area with their colour scaled
+/// by (true / inflated) area, so the deposited flux is conserved.
+///
+/// One px², down from K-261's four (K-264): the floor was sized for a
+/// raster that sampled once per pixel, and at four it also caught the
+/// MERELY SMALL — a defocused wash ghost rendered small (a Draft preview, a
+/// zoomed-out Viewer) has every cell at a couple of px², and inflating them
+/// all tiled the ghost with overlapping diamonds, a mosaic. With the 4×
+/// multisampled raster (and its coverage-sampling CPU twin) a one-px² quad
+/// reliably covers samples, so only truly sub-sample cells need rescuing.
+pub const MIN_QUAD_PX: f32 = 1.0;
 /// Longest screen edge a quad may have and still be *inflated* (K-262). A
 /// cell whose ray corners straddle a caustic fold or a housing clip lands
 /// as a SLIVER: near-zero area but large extent. Scaling such a quad up to
@@ -1319,16 +1492,6 @@ pub const MIN_QUAD_PX: f32 = 4.0;
 /// Slivers are dropped instead: their flux is genuinely smeared to nothing,
 /// and the neighbouring well-formed cells carry the ghost's light.
 pub const MAX_INFLATE_EDGE_PX: f32 = 6.0;
-/// A quad longer than this fraction of the frame diagonal AND thin for its
-/// length (see [`STREAK_ASPECT`]) is dropped at any size (K-262). Cells at
-/// a real caustic rim are legitimately elongated, but they are *short* —
-/// they tile into the rim. A cell that jumps the frame is one that spans a
-/// discontinuity, and drawing it is the streak artefact.
-pub const STREAK_LEN_FRAC: f32 = 0.04;
-/// How thin "thin" is: `longest² > STREAK_ASPECT × area` (a square scores
-/// 1, a 3:1 parallelogram ~3, a fold sliver hundreds).
-pub const STREAK_ASPECT: f32 = 8.0;
-
 /// Floor on a landed quad's area as a fraction of its launch cell — which
 /// is really a **cap on caustic density** (K-262). At a fold the density
 /// `cell ÷ landed` genuinely diverges, but the *integral* over a pixel is
@@ -1338,34 +1501,37 @@ pub const STREAK_ASPECT: f32 = 8.0;
 pub const MIN_AREA_FRAC: f32 = 3e-3;
 
 /// Flux-conserving screen-space floor on a quad's size (K-261, refined by
-/// K-262; mirrored by the WGSL build). Returns false when the quad must be
-/// dropped.
+/// K-262 and K-264; mirrored by the WGSL build). Returns false when the
+/// quad must be dropped.
 ///
-/// - Long and thin at ANY size: dropped (the streak test).
-/// - Area at or above [`MIN_QUAD_PX`]: drawn unchanged.
+/// - Area at or above [`MIN_QUAD_PX`]: drawn unchanged — including long
+///   thin fold cells, which K-262 dropped. The drop existed because a
+///   cell-flat density at the 333× cap painted such a cell as a hard
+///   chromatic line; with the K-264 vertex-smoothed density its brightness
+///   is its neighbourhood's, and dropping it is what cut the triangular
+///   notches out of every caustic rim the owner reported at Ultra.
 /// - Below it and COMPACT (longest edge within [`MAX_INFLATE_EDGE_PX`]):
 ///   inflated about its centroid to the floor, colour scaled by the true ÷
 ///   inflated area ratio — flux exact, and the rasteriser can no longer
-///   drop it for covering no pixel centre.
-/// - Below it and STRETCHED: dropped, same reason as the streak test.
-pub(crate) fn inflate_quad(v: &mut [FlareVertex; 4], diag_px: f32) -> bool {
+///   drop it for covering no sample.
+/// - Below it and STRETCHED (a sub-sample sliver): dropped. Inflating one
+///   multiplies its length — the K-261 "random lines" artefact — and
+///   un-inflated it covers nothing; its neighbours carry the rim.
+pub(crate) fn inflate_quad(v: &mut [FlareVertex; 4]) -> bool {
     let e = |a: [f32; 2], b: [f32; 2], c: [f32; 2]| {
         (a[0] - b[0]) * (c[1] - a[1]) - (a[1] - b[1]) * (c[0] - a[0])
     };
     let a0 = e(v[0].pos, v[1].pos, v[2].pos);
     let a1 = e(v[0].pos, v[2].pos, v[3].pos);
     let area_px = ((a0 + a1) / 2.0).abs();
+    if area_px >= MIN_QUAD_PX {
+        return true;
+    }
     let mut longest = 0.0_f32;
     for i in 0..4 {
         let a = v[i].pos;
         let b = v[(i + 1) % 4].pos;
         longest = longest.max((a[0] - b[0]).hypot(a[1] - b[1]));
-    }
-    if longest > STREAK_LEN_FRAC * diag_px && longest * longest > STREAK_ASPECT * area_px {
-        return false;
-    }
-    if area_px >= MIN_QUAD_PX {
-        return true;
     }
     if longest > MAX_INFLATE_EDGE_PX {
         return false;
@@ -1385,22 +1551,33 @@ pub(crate) fn inflate_quad(v: &mut [FlareVertex; 4], diag_px: f32) -> bool {
     true
 }
 
-/// Scanline-rasterise one triangle with barycentric colour interpolation
-/// into the additive RGB buffer — the CPU twin of the hardware fill
-/// (agreeing to the impl note perceptual bound, not per-pixel ULP).
+/// The 4× multisample positions inside a pixel, as offsets from its origin
+/// — the STANDARD sample locations every Vulkan/D3D device uses at count 4,
+/// which is what makes the CPU twin agree with the hardware resolve rather
+/// than merely resemble it (K-264).
+pub const MSAA_SAMPLES: [[f32; 2]; 4] = [
+    [0.375, 0.125],
+    [0.875, 0.375],
+    [0.125, 0.625],
+    [0.625, 0.875],
+];
+
+/// Rasterise one triangle with barycentric colour interpolation into the
+/// additive RGB buffer — the CPU twin of the hardware fill, INCLUDING its
+/// 4× multisampling (K-264): coverage is tested at the four standard sample
+/// positions, the colour is evaluated once at the pixel centre (the
+/// hardware's non-centroid interpolation, extrapolated when the centre is
+/// outside), and the pixel takes colour × covered/4 — exactly what the
+/// multisample resolve of an additively-blended fp16 target produces.
+/// Jagged silhouettes were one of the three Ultra artefacts the owner
+/// reported; sampling coverage instead of the centre alone is the fix.
 fn raster_triangle(out: &mut [f32], w: u32, h: u32, v: [FlareVertex; 3]) {
-    let min_x = v[0].pos[0]
-        .min(v[1].pos[0])
-        .min(v[2].pos[0])
-        .floor()
-        .max(0.0) as i64;
-    let max_x = (v[0].pos[0].max(v[1].pos[0]).max(v[2].pos[0]).ceil() as i64).min(w as i64 - 1);
-    let min_y = v[0].pos[1]
-        .min(v[1].pos[1])
-        .min(v[2].pos[1])
-        .floor()
-        .max(0.0) as i64;
-    let max_y = (v[0].pos[1].max(v[1].pos[1]).max(v[2].pos[1]).ceil() as i64).min(h as i64 - 1);
+    // The bounding box widens by one so pixels whose centre is outside but
+    // whose samples are covered still get their fraction.
+    let min_x = (v[0].pos[0].min(v[1].pos[0]).min(v[2].pos[0]).floor() as i64 - 1).max(0);
+    let max_x = (v[0].pos[0].max(v[1].pos[0]).max(v[2].pos[0]).ceil() as i64 + 1).min(w as i64 - 1);
+    let min_y = (v[0].pos[1].min(v[1].pos[1]).min(v[2].pos[1]).floor() as i64 - 1).max(0);
+    let max_y = (v[0].pos[1].max(v[1].pos[1]).max(v[2].pos[1]).ceil() as i64 + 1).min(h as i64 - 1);
     if min_x > max_x || min_y > max_y {
         return;
     }
@@ -1411,42 +1588,44 @@ fn raster_triangle(out: &mut [f32], w: u32, h: u32, v: [FlareVertex; 3]) {
     if area.abs() < 1e-9 {
         return;
     }
-    // The two edge functions with their constant terms lifted out of the
-    // loop, and the inside test done on their raw values (K-263). Dividing by
-    // the area does not change a sign, so a pixel outside the triangle is now
-    // rejected by two multiplies rather than by two multiplies AND two
-    // divisions — and most of a triangle's bounding box is outside it. The
-    // pixels that ARE covered go through the identical expressions as before,
-    // so the picture is unchanged down to the last bit.
+    // Edge functions with their constant terms lifted out of the loop
+    // (K-263); the sample-coverage test works on their raw signs, so a
+    // wholly-outside pixel costs multiplies, never divisions.
     let (e0_dx, e0_dy) = (v[2].pos[0] - v[1].pos[0], v[2].pos[1] - v[1].pos[1]);
     let (e1_dx, e1_dy) = (v[0].pos[0] - v[2].pos[0], v[0].pos[1] - v[2].pos[1]);
-    let positive = area > 0.0;
+    let (e2_dx, e2_dy) = (v[1].pos[0] - v[0].pos[0], v[1].pos[1] - v[0].pos[1]);
+    let sign = if area > 0.0 { 1.0 } else { -1.0 };
     for y in min_y..=max_y {
-        let py = y as f32 + 0.5;
         for x in min_x..=max_x {
-            let px = x as f32 + 0.5;
-            let e0 = e0_dx * (py - v[1].pos[1]) - e0_dy * (px - v[1].pos[0]);
-            let e1 = e1_dx * (py - v[2].pos[1]) - e1_dy * (px - v[2].pos[0]);
-            // `e / area < 0` without the divide, zero included: a barycentric
-            // of exactly zero sits ON the edge and has always been drawn.
-            let outside = if positive {
-                e0 < 0.0 || e1 < 0.0
-            } else {
-                e0 > 0.0 || e1 > 0.0
-            };
-            if outside {
+            let mut covered = 0u32;
+            for smp in MSAA_SAMPLES {
+                let px = x as f32 + smp[0];
+                let py = y as f32 + smp[1];
+                let e0 = e0_dx * (py - v[1].pos[1]) - e0_dy * (px - v[1].pos[0]);
+                let e1 = e1_dx * (py - v[2].pos[1]) - e1_dy * (px - v[2].pos[0]);
+                let e2 = e2_dx * (py - v[0].pos[1]) - e2_dy * (px - v[0].pos[0]);
+                if e0 * sign >= 0.0 && e1 * sign >= 0.0 && e2 * sign >= 0.0 {
+                    covered += 1;
+                }
+            }
+            if covered == 0 {
                 continue;
             }
+            // Colour at the pixel CENTRE, unclamped — extrapolated when the
+            // centre sits outside the triangle, as the hardware's
+            // non-centroid interpolation does.
+            let px = x as f32 + 0.5;
+            let py = y as f32 + 0.5;
+            let e0 = e0_dx * (py - v[1].pos[1]) - e0_dy * (px - v[1].pos[0]);
+            let e1 = e1_dx * (py - v[2].pos[1]) - e1_dy * (px - v[2].pos[0]);
             let w0 = e0 / area;
             let w1 = e1 / area;
             let w2 = 1.0 - w0 - w1;
-            if w2 < 0.0 {
-                continue;
-            }
+            let frac = covered as f32 / 4.0;
             let i = ((y as u32 * w + x as u32) * 3) as usize;
-            out[i] += w0 * v[0].rgb[0] + w1 * v[1].rgb[0] + w2 * v[2].rgb[0];
-            out[i + 1] += w0 * v[0].rgb[1] + w1 * v[1].rgb[1] + w2 * v[2].rgb[1];
-            out[i + 2] += w0 * v[0].rgb[2] + w1 * v[1].rgb[2] + w2 * v[2].rgb[2];
+            out[i] += frac * (w0 * v[0].rgb[0] + w1 * v[1].rgb[0] + w2 * v[2].rgb[0]);
+            out[i + 1] += frac * (w0 * v[0].rgb[1] + w1 * v[1].rgb[1] + w2 * v[2].rgb[1]);
+            out[i + 2] += frac * (w0 * v[0].rgb[2] + w1 * v[1].rgb[2] + w2 * v[2].rgb[2]);
         }
     }
 }
@@ -1481,7 +1660,6 @@ pub fn cpu_flare(
     let st = screen_transform(w);
     let gain = p.ghost_intensity * baked.energy_gain;
     let pair_count = baked.pairs.len().min(p.max_ghosts as usize);
-    let diag_px = ((w * w + h * h) as f32).sqrt();
 
     // Per-corner trace results for one (pair, λ): landing px and weight
     // (Fresnel × mask); None = dead. Sized for the widest grid in play.
@@ -1489,6 +1667,8 @@ pub fn cpu_flare(
     // The pair's iris mask per pupil corner — wavelength-independent, so it
     // is computed once a pair and read by every wavelength (K-263).
     let mut masks: Vec<f32> = Vec::new();
+    // Landed area per grid cell for the (pair, λ) being drawn; 0 = dead.
+    let mut areas: Vec<f32> = Vec::new();
     for light in lights {
         if light.rgb[0] <= 0.0 && light.rgb[1] <= 0.0 && light.rgb[2] <= 0.0 {
             continue;
@@ -1527,36 +1707,105 @@ pub fn cpu_flare(
                 for j in 0..side {
                     for i in 0..side {
                         let (u, v) = (unit(i), unit(j));
+                        // …unless it is so far outside the iris that no
+                        // cell touching it can hold ANY lit corner: the
+                        // mask is zero beyond radius 1, so corners past
+                        // one cell-diagonal beyond that never share a cell
+                        // with light, and tracing them would spend a fifth
+                        // of the frame's rays on the pupil square's dark
+                        // corners for bit-identical output.
+                        let spacing = 2.0 / (side - 1) as f32;
+                        if u * u + v * v > (1.0 + 1.5 * spacing).powi(2) {
+                            corners[j * side + i] = None;
+                            continue;
+                        }
+                        // A masked-out corner still TRACES (K-264): its
+                        // weight is zero but its geometry is real, so the
+                        // cell it belongs to draws and the iris edge fades
+                        // INSIDE the cell. Killing the ray instead killed
+                        // the whole cell, and every iris-shaped ghost edge
+                        // was quantised to the pupil grid.
                         let mask = masks[j * side + i];
-                        corners[j * side + i] = if mask <= 0.0 {
-                            None
-                        } else {
-                            let origin = [
-                                u * baked.pupil_mm * stop_scale,
-                                v * baked.pupil_mm * stop_scale,
-                                baked.start_z_mm,
-                            ];
-                            trace_splat(
-                                baked,
-                                *pair,
-                                nm,
-                                origin,
-                                dir,
-                                p.coating,
-                                stop_scale,
-                                sensor_shift,
+                        let origin = [
+                            u * baked.pupil_mm * stop_scale,
+                            v * baked.pupil_mm * stop_scale,
+                            baked.start_z_mm,
+                        ];
+                        corners[j * side + i] = trace_splat(
+                            baked,
+                            *pair,
+                            nm,
+                            origin,
+                            dir,
+                            p.coating,
+                            stop_scale,
+                            sensor_shift,
+                        )
+                        .map(|(pos, wt)| {
+                            (
+                                [pos[0] * st + w as f32 / 2.0, h as f32 / 2.0 - pos[1] * st],
+                                wt * mask,
                             )
-                            .map(|(pos, wt)| {
-                                (
-                                    [pos[0] * st + w as f32 / 2.0, h as f32 / 2.0 - pos[1] * st],
-                                    wt * mask,
-                                )
-                            })
-                        };
+                        });
                     }
                 }
-                for j in 0..side - 1 {
-                    for i in 0..side - 1 {
+                // Landed area per grid cell, 0 = dead (any corner dead) —
+                // the input to the K-264 vertex-smoothed density below.
+                let qs = side - 1;
+                areas.clear();
+                areas.resize(qs * qs, 0.0);
+                let e = |a: [f32; 2], b: [f32; 2], q: [f32; 2]| {
+                    (a[0] - b[0]) * (q[1] - a[1]) - (a[1] - b[1]) * (q[0] - a[0])
+                };
+                for j in 0..qs {
+                    for i in 0..qs {
+                        let c = [
+                            corners[j * side + i],
+                            corners[j * side + i + 1],
+                            corners[(j + 1) * side + i + 1],
+                            corners[(j + 1) * side + i],
+                        ];
+                        if let [Some(c0), Some(c1), Some(c2), Some(c3)] = c {
+                            let a0 = e(c0.0, c1.0, c2.0);
+                            let a1 = e(c0.0, c2.0, c3.0);
+                            areas[j * qs + i] = ((a0 + a1) / 2.0).abs();
+                        }
+                    }
+                }
+                // Density at a GRID CORNER: launch cell area over the mean
+                // of the live cells that touch the corner (K-264, the
+                // [Hullin 2011] rule — each vertex carries the average area
+                // of its surrounding quads). A per-CELL density is constant
+                // across the cell and jumps at its edge, which is exactly
+                // the faceting the owner saw at Ultra; averaged to the
+                // corners and interpolated by the raster it is continuous
+                // across the whole ghost. The [`MIN_AREA_FRAC`] floor on
+                // the mean is still the caustic density cap.
+                let corner_mean_area = |ci: usize, cj: usize| -> f32 {
+                    let (mut sum, mut n) = (0.0_f32, 0u32);
+                    for qj in cj.saturating_sub(1)..=cj.min(qs - 1) {
+                        for qi in ci.saturating_sub(1)..=ci.min(qs - 1) {
+                            let a = areas[qj * qs + qi];
+                            if a > 0.0 {
+                                sum += a;
+                                n += 1;
+                            }
+                        }
+                    }
+                    if n > 0 {
+                        sum / n as f32
+                    } else {
+                        0.0
+                    }
+                };
+                let corner_density = |ci: usize, cj: usize| -> f32 {
+                    cell_area_px / corner_mean_area(ci, cj).max(MIN_AREA_FRAC * cell_area_px)
+                };
+                for j in 0..qs {
+                    for i in 0..qs {
+                        if areas[j * qs + i] <= 0.0 {
+                            continue;
+                        }
                         let c = [
                             corners[j * side + i],
                             corners[j * side + i + 1],
@@ -1566,15 +1815,12 @@ pub fn cpu_flare(
                         let [Some(c0), Some(c1), Some(c2), Some(c3)] = c else {
                             continue;
                         };
-                        // Energy conservation: launch cell area ÷ landed
-                        // area (in px² both), floored against degeneracy.
-                        let e = |a: [f32; 2], b: [f32; 2], q: [f32; 2]| {
-                            (a[0] - b[0]) * (q[1] - a[1]) - (a[1] - b[1]) * (q[0] - a[0])
-                        };
-                        let a0 = e(c0.0, c1.0, c2.0);
-                        let a1 = e(c0.0, c2.0, c3.0);
-                        let landed = ((a0 + a1) / 2.0).abs().max(MIN_AREA_FRAC * cell_area_px);
-                        let density = cell_area_px / landed * gain;
+                        let density = [
+                            corner_density(i, j),
+                            corner_density(i + 1, j),
+                            corner_density(i + 1, j + 1),
+                            corner_density(i, j + 1),
+                        ];
                         let mut v: [FlareVertex; 4] = [
                             FlareVertex {
                                 pos: c0.0,
@@ -1593,15 +1839,73 @@ pub fn cpu_flare(
                                 rgb: [0.0; 3],
                             },
                         ];
-                        for (vert, corner) in v.iter_mut().zip([c0, c1, c2, c3]) {
-                            let b = density * corner.1;
+                        for ((vert, corner), d) in v.iter_mut().zip([c0, c1, c2, c3]).zip(density) {
+                            let b = d * gain * corner.1;
                             vert.rgb = [
                                 b * rgb_w[0] * light.rgb[0],
                                 b * rgb_w[1] * light.rgb[1],
                                 b * rgb_w[2] * light.rgb[2],
                             ];
                         }
-                        if !inflate_quad(&mut v, diag_px) {
+                        // Rein in the unlit corners (K-264). A cell that
+                        // spans from lit geometry to a mount-absorbed
+                        // virtual continuation can be hundreds of px long;
+                        // drawn it fans a faint line out of the ghost's
+                        // bore, dropped it notches the bore's edge (both
+                        // shipped, both reported). The zero-weight corner
+                        // carries no light — its only job is geometry — so
+                        // it is PULLED toward the lit corners' centroid to
+                        // within a few cell-widths, and the fade to zero
+                        // lands where the boundary is, smoothly.
+                        let corners4 = [c0, c1, c2, c3];
+                        let lit: Vec<usize> = (0..4).filter(|&k| corners4[k].1 > 0.0).collect();
+                        if lit.is_empty() {
+                            // No light anywhere in the cell: draw nothing
+                            // rather than rasterise an invisible quad that
+                            // may span the frame.
+                            continue;
+                        }
+                        if lit.len() < 4 {
+                            let mut cx = 0.0_f32;
+                            let mut cy = 0.0_f32;
+                            for &k in &lit {
+                                cx += corners4[k].0[0];
+                                cy += corners4[k].0[1];
+                            }
+                            cx /= lit.len() as f32;
+                            cy /= lit.len() as f32;
+                            // Densest lit neighbourhood sets the scale:
+                            // the true boundary lies within one cell of
+                            // the last lit corner, so one local cell-width
+                            // is the reach — further painted whiskers.
+                            let mut min_mean = f32::MAX;
+                            for &k in &lit {
+                                let (ci, cj) = match k {
+                                    0 => (i, j),
+                                    1 => (i + 1, j),
+                                    2 => (i + 1, j + 1),
+                                    _ => (i, j + 1),
+                                };
+                                let m = corner_mean_area(ci, cj);
+                                if m > 0.0 {
+                                    min_mean = min_mean.min(m);
+                                }
+                            }
+                            let reach = min_mean.min(1e12).sqrt().max(1.0);
+                            for (k, vert) in v.iter_mut().enumerate() {
+                                if corners4[k].1 > 0.0 {
+                                    continue;
+                                }
+                                let dx = vert.pos[0] - cx;
+                                let dy = vert.pos[1] - cy;
+                                let d = dx.hypot(dy);
+                                if d > reach {
+                                    let f = reach / d;
+                                    vert.pos = [cx + dx * f, cy + dy * f];
+                                }
+                            }
+                        }
+                        if !inflate_quad(&mut v) {
                             continue;
                         }
                         raster_triangle(&mut out, w, h, [v[0], v[1], v[2]]);

@@ -316,21 +316,21 @@ silently wrong. Pass the six domain floats through `LutParams`, or refuse
 non-default-domain cubes as a labelled no-op. The LUT caches also key by path
 alone - no mtime, no LRU bound (§4).
 
-**Lens flare follow-ups (K-256..K-263, [impl/lens-flare.md](impl/lens-flare.md))** — the
+**Lens flare follow-ups (K-256..K-264, [impl/lens-flare.md](impl/lens-flare.md))** — the
 shipped core is docs/08 §3.27 (FlareSim model + 1299-lens library, K-261; artefact and
-picker pass K-262; bounded-submission and batching pass K-263 — its two remaining
+picker pass K-262; bounded-submission and batching pass K-263; smooth-shading,
+curation and custom-file pass K-264 — the remaining
 performance items sit in **Now** above, being preview-responsiveness work);
 still owed, each stable against the shipped parameters: the
 **Lights source wiring** (the mode is in the
 dropdown and resolves as Manual until light layers can act as flare sources); aperture
-**dirt / scratches** overlays and an **image aperture** file parameter; **custom .lens
-file loading** — *owner-requested, 2026-08-03*: import or point at a `.lens` file
-from disk and have it join the Lens picker. The parser already reads the standard
-FlareSim / PhotonsToPhotos format and the bake is file-driven, so what is missing is
-the file-picker plumbing, a project-relative path on the parameter (the LUT's `File`
-kind is the precedent) and a "Custom" group in the picker — and the **lens designer** (a window building a prescription element
-by element with a live lens diagram); an **Occlusion layer** reference fading the flare
-when the light is covered. The panel side owes the pair row's dropper to
+**dirt / scratches** overlays and an **image aperture** file parameter; the **lens
+designer** (a window building a prescription element by element with a live lens
+diagram — the `lens_file` parameter landed in K-264, so the designer's output has a
+place to go); an **Occlusion layer** reference fading the flare when the light is
+covered; **adaptive grid refinement at vignette folds** — the K-264 known limit: a
+mild ripple on hard vignetted edges of extreme-defocus ghosts at Normal, resolved at
+Ultra. The panel side owes the pair row's dropper to
 **Transform's px@comp pairs** (the pixel-writing pick exists since K-260 — the flare's
 Light uses it; Transform's rows just aren't wired to it), **Radial blur's centre
 migration** from the grandfathered % of frame to px@comp (K-260 convention), and one-op

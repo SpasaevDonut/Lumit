@@ -2655,16 +2655,31 @@ pub const BUILTINS: &[EffectSchema] = &[
             ParamSchema {
                 id: "lens_model",
                 label: "Lens",
-                // The embedded prescription library (K-261): 1303 real
-                // lenses, transcribed patent data. Sorted by name; the
-                // default is the Master Prime 50 (the reference cine prime
-                // the effect was tuned against). The Coating-type preset
-                // dropdown of K-257 is gone — each prescription carries its
-                // own per-surface coating layers now.
+                // The embedded prescription library (K-261, curated to
+                // twenty K-264): real lenses, transcribed patent data,
+                // chosen for maximally different flare characters. Sorted
+                // by name; the default is the Master Prime 50 (the
+                // reference cine prime the effect was tuned against). A
+                // .lens file on `lens_file` overrides this pick entirely.
                 kind: ParamKind::Choice {
                     options: &crate::fx::lens_library::LENS_OPTIONS,
-                    default: 1247,
+                    default: 17,
                     dividers_after: &[],
+                },
+            },
+            ParamSchema {
+                id: "lens_file",
+                label: "Lens file",
+                // A user's own .lens prescription (K-264, the LUT File
+                // pattern): set, it overrides the Lens pick entirely — the
+                // twenty bundled lenses are a curated palette, and this is
+                // the door to everything else (the FlareSim /
+                // PhotonsToPhotos Optical Bench format the parser already
+                // reads). Unset, missing on disk or unparsable degrades to
+                // the picked lens — a labelled fallback, never a fault.
+                kind: ParamKind::File {
+                    filter: &["lens"],
+                    filter_name: "Lens prescription",
                 },
             },
             // --- Lens options group ---
@@ -2755,11 +2770,12 @@ pub const BUILTINS: &[EffectSchema] = &[
                 label: "Ghost softness",
                 // Box-blur radius as % of the frame diagonal (K-261,
                 // FlareSim's Ghost Blur): a touch of out-of-focus softness.
-                // Small by default since K-262 — the streak cull and the
-                // adaptive grid mean the ghosts no longer need blurring to
-                // hide artefacts, and 0 is now a usable, clean setting.
+                // 0.02 by default (owner-set, K-264) — with the
+                // vertex-smoothed density and the multisampled raster the
+                // geometry no longer needs hiding, so the default is taste,
+                // not cover, and 0 stays a usable, clean setting.
                 kind: ParamKind::Float {
-                    default: 0.05,
+                    default: 0.02,
                     slider: (0.0, 1.0),
                     hard: (Some(0.0), Some(2.0)),
                 },

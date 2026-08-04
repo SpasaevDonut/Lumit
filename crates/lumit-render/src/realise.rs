@@ -49,6 +49,27 @@ impl Realiser<'_> {
     /// `None` slot (a labelled no-op, never a fault — docs/impl/lut.md §8). The
     /// output is 1:1 and in order with `files`, so the k-th slot lines up with
     /// the k-th `Resolved::Lut` op.
+    /// Read a layer's `lens_file` paths into (content hash, text) slots,
+    /// 1:1 with the stack's `Resolved::LensFlare` ops (K-264). A `None`
+    /// slot (unset, missing on disk, unreadable) degrades to the picked
+    /// library lens inside the bake — a labelled fallback, never a fault.
+    /// No cache, deliberately: a .lens file is about a kilobyte, the read
+    /// is microseconds beside the frame it feeds, and the GPU bake cache
+    /// keys on the CONTENT hash — so an edited file takes effect on the
+    /// next frame instead of whenever a path-keyed cache is purged.
+    fn load_flare_lens(&self, files: &[Option<String>]) -> Vec<Option<(u64, String)>> {
+        files
+            .iter()
+            .map(|slot| {
+                slot.as_ref().and_then(|path| {
+                    std::fs::read_to_string(path)
+                        .ok()
+                        .map(|text| (lumit_core::fx::lens_flare::lens_text_hash(&text), text))
+                })
+            })
+            .collect()
+    }
+
     fn load_luts(&self, files: &[Option<String>]) -> Vec<Option<LoadedLut>> {
         let mut cache = self.lut_cache.borrow_mut();
         files
@@ -123,6 +144,7 @@ impl Realiser<'_> {
                         &luts,
                         &[],
                         &[],
+                        &[],
                     )
                 };
                 Some(crate::fxops::render_layer_input(
@@ -172,6 +194,7 @@ impl Realiser<'_> {
             let luts = self.load_luts(&l.lut_files);
             let layer_inputs = self.render_dof_inputs(&l.dof_inputs, tw, th);
             let flare_mattes = self.render_dof_inputs(&l.flare_mattes, tw, th);
+            let flare_lens = self.load_flare_lens(&l.flare_lens_files);
             // Posterize Time everything-below (docs/08 §3.25): the input this
             // adjustment's own effects run on is the below-stack held at the
             // posterised time, not the plain below-composite. The held draws and
@@ -204,6 +227,7 @@ impl Realiser<'_> {
                 &luts,
                 &layer_inputs,
                 &flare_mattes,
+                &flare_lens,
             );
             let coverage = self.coverage_texture(camera, width, height, l);
             acc = Some(self.fx.adjust_blend(
@@ -380,6 +404,7 @@ impl Realiser<'_> {
                 // (§3.22); the same render export runs (K-031).
                 let layer_inputs = self.render_dof_inputs(&l.dof_inputs, w, h);
                 let flare_mattes = self.render_dof_inputs(&l.flare_mattes, w, h);
+                let flare_lens = self.load_flare_lens(&l.flare_lens_files);
                 crate::fxops::run_ops(
                     self.fx,
                     &self.ctx,
@@ -392,6 +417,7 @@ impl Realiser<'_> {
                     &luts,
                     &layer_inputs,
                     &flare_mattes,
+                    &flare_lens,
                 )
             };
             linear_textures.push(tex);
@@ -463,6 +489,7 @@ impl Realiser<'_> {
                             &[],
                             None,
                             &luts,
+                            &[],
                             &[],
                             &[],
                         )

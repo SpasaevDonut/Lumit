@@ -618,6 +618,45 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   of eight, and forgets them one at a time instead of all at once; before, every
   ninth lens threw away the eight before it, so going back to one you had just
   looked at made you wait all over again.
+  The pass after that (K-264) went after what the owner saw at Ultra: triangles
+  in the ghost rims, blocky faceting, jagged edges. All three came from the same
+  root. The flare is drawn as a fine net of little four-cornered panels, and each
+  panel used to be given ONE brightness — so neighbouring panels disagreed at
+  their shared edge, and a smooth ghost became a mosaic of tiles. The fix is the
+  one the original research paper used: give the brightness to the CORNERS
+  (each corner averages the panels around it) and let the graphics card blend
+  smoothly across every panel — the seams simply cease to exist. The jagged
+  outlines got the standard cure, multisampling: the card checks four points
+  per pixel instead of one at the edges of shapes, which is how every game
+  smooths its edges. And the triangular notches in the bright rims turned out to
+  be panels the code was *throwing away* out of caution — an earlier bug made
+  long thin panels dangerous to draw, so they were dropped, and every dropped
+  one left a bite mark in a rim. They are safe to draw now that brightness is
+  smooth, so the rims are whole. A subtler family of the same disease: whenever
+  a ray of light "died" at some edge inside the lens — the iris, a lens
+  barrel, missing a glass surface — every panel touching it vanished, and the
+  ghost's edge was quantised into stair-steps. Rays never die now: they carry
+  on with their light set to zero, fading over a distance instead of stopping
+  at a panel boundary. Same maths, same energy, smooth reconstruction — the
+  before/after images that drove the work were rendered through the real
+  pipeline on a software graphics driver and compared by eye, and that little
+  harness stayed behind as a test anyone can run.
+  The same pass rebuilt the lens list around a decision of the owner's: twenty
+  lenses instead of 1299. A thousand entries is a search problem, not a choice;
+  the twenty were picked for maximally different characters — modern cinema
+  glass, uncoated lenses from the 1930s that flare bright and neutral, a tiny
+  four-element design that throws a sparse clean train, an f0.95 with huge
+  discs, a fisheye, a projection lens, a superzoom with a ghost for every one
+  of its many elements — and each was rendered through the pipeline into a
+  contact sheet and checked by eye for distinctness. For everything else there
+  is a new **Lens file** parameter: point it at a `.lens` prescription file
+  (the same public format the bundled ones use, and the parser already read)
+  and it replaces the picked lens entirely. The file's contents are hashed
+  into the effect's cache key, so editing the file shows up on the next frame;
+  a missing or broken file quietly falls back to the picked lens rather than
+  erroring. Ghost softness now defaults to 0.02 — with the smooth shading
+  there is nothing left for blur to hide, so the default is a taste, not a
+  bandage.
 - **RGB split gains a Wavelength mode** (K-090's quality-tier pattern: where the smooth
   look is optional, it hides behind a Bool next to the fast one). Off — the default —
   the split is three tinted samples: the first colour pulled one way, the third the

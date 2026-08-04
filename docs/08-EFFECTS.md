@@ -1440,18 +1440,25 @@ parameters are always authored in comp pixels, K-260),
 **Intensity** (0–4, open above), **F-stop** (0.7–32 — stops the iris down
 from the lens's native f-number; wide open the ghosts are big and round,
 stopped down small and bladed), **Lens** (the embedded prescription library,
-K-261: **1299 real lenses** transcribed from patents via the FlareSim /
-PhotonsToPhotos collection — every prescription carries its own per-surface
-anti-reflective coating layers, which is what replaced the K-257
-Coating-type presets. Labelled `Maker · Model` and grouped by maker in a
-**searchable picker** (K-262): type to filter, headings per manufacturer,
-and the list builds lazily — a plain dropdown of 1299 rows crashed the app
-in layout), then three folds and the tail:
+K-261, curated to **twenty real lenses** K-264: transcribed patent data via
+the FlareSim / PhotonsToPhotos collection, chosen for maximally different
+flare characters — modern multicoated cine glass, 1930s uncoated exotics, a
+four-element Tessar, an f0.95, fisheyes, process lenses, superzooms, long
+telephotos. Every prescription carries its own per-surface anti-reflective
+coating layers, which is what replaced the K-257 Coating-type presets;
+labels are `Maker · Model` and the default is the Master Prime 50),
+**Lens file** (K-264: a user's own `.lens` prescription in the same
+FlareSim / PhotonsToPhotos Optical Bench format — set, it overrides the
+Lens pick entirely, with the native f-number estimated from the geometry;
+unset, missing or unparsable degrades to the picked lens, a labelled
+fallback that never faults. Content-hashed into the bake key, so editing
+the file takes effect on the next rendered frame), then three folds and
+the tail:
 
 | Group | Parameters |
 |---|---|
 | *Lens options* (twirl) | Focus (m) (0.5–100 slider, hard min 0.2 — the focus distance; K-260, refocusing shifts the sensor plane and visibly rearranges the whole ghost train, the "same lens, different focus" look), Anamorphic squeeze (0.5–3), Blades (int 3–16), Rotation, Coating (0 uncoated → 1 fully coated), Roundness, Softness |
-| *Flare options* (twirl) | Ghost intensity (0–4), Ghost softness (0–1 slider, % of the frame diagonal — FlareSim's Ghost Blur, K-261: a touch of out-of-focus softness on the ghost train; default 0.05 since K-262, and **0 is a clean setting** now that the artefacts it used to hide are gone), Max ghosts (int 0–200 — the brightest survive), Dispersion (0–2), Starburst intensity (0–4), Scale (0.05–20 — the WHOLE flare about the optical centre, ghosts and starbursts together) |
+| *Flare options* (twirl) | Ghost intensity (0–4), Ghost softness (0–1 slider, % of the frame diagonal — FlareSim's Ghost Blur, K-261: a touch of out-of-focus softness on the ghost train; default 0.02 since K-264 — taste, not cover: the vertex-smoothed density and the multisampled raster leave nothing for it to hide, and **0 is a clean setting**), Max ghosts (int 0–200 — the brightest survive), Dispersion (0–2), Starburst intensity (0–4), Scale (0.05–20 — the WHOLE flare about the optical centre, ghosts and starbursts together) |
 | *Source* | Source type (Manual light / Matte / Lights); **Light tint** (a colour, with picker and eyedropper — multiplies every light in every mode); then, shown conditionally: **Use source colour** (Matte *and* Lights) and — Matte only — Matte layer (a layer reference), Threshold (linear luma, slider 0–1, open above), Threshold softness |
 
 and **Quality** (Draft / Normal / High / Ultra), **Background** (Transparent /
@@ -1514,15 +1521,17 @@ CPU degradation rung renders the effect as a labelled no-op, like the LUT (K-114
 precedent). Exact numbers in the impl note §8.
 
 **Status (core K-256..K-260; FlareSim model K-261; artefact and picker
-pass K-262, shipped):** everything above — the 1299-lens embedded library with per-surface coatings, the
-three-phase pupil-grid trace with energy-conserving quad raster and
-flux-exact caustic inflation, the Ghost softness blur, Focus distance, the
-point-pair light row with its Viewer dropper, the Matte source mode, quality
-ladder, anamorphic squeeze, Mix. Pinned follow-ups (TODO): aperture **dirt / scratches** overlays and an
-**image aperture**; **custom .lens file loading** (the parser already reads the
-standard format) and the **lens designer** window; the **Lights** source
-wiring (waits on light layers); an **Occlusion layer** reference. Every
-shipped parameter is stable when they land.
+pass K-262; smooth-shading, curation and custom-file pass K-264,
+shipped):** everything above — the curated library with per-surface
+coatings and the `.lens` file override, the three-phase pupil-grid trace
+with the vertex-smoothed energy-conserving quad raster (4× multisampled)
+and flux-exact caustic inflation, the Ghost softness blur, Focus distance,
+the point-pair light row with its Viewer dropper, the Matte source mode,
+quality ladder, anamorphic squeeze, Mix. Pinned follow-ups (TODO):
+aperture **dirt / scratches** overlays and an **image aperture**; the
+**lens designer** window; the **Lights** source wiring (waits on light
+layers); an **Occlusion layer** reference. Every shipped parameter is
+stable when they land.
 
 ---
 

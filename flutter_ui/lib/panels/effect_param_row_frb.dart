@@ -306,9 +306,11 @@ class EffectParamRowFrb extends StatelessWidget {
           final index = field0 < options.length ? field0.toInt() : 0;
           return SizedBox(
             width: effectCellWidth + 40,
-            // A long list (the Lens flare's 1299-lens library) gets the
-            // searchable, lazily-built picker: a plain dropdown builds
-            // every row eagerly and took the app down in layout (K-262).
+            // A long list gets the searchable, lazily-built picker: a
+            // plain dropdown builds every row eagerly, and at 1299 options
+            // (the K-262 lens library) that took the app down in layout.
+            // No shipped list is that long since the K-264 curation, but
+            // the guard stays for the next one.
             child: options.length >= searchableOptionThreshold
                 ? BareSearchDropdown(
                     key: ValueKey<String>('fx-choice-$id-${param.id}'),

@@ -99,7 +99,9 @@ pub fn render_layer_input(
 /// referenced layer rendered alone at comp size, or `None` (unset, missing or
 /// cyclic) for a passthrough, exactly like a missing LUT.
 /// `flare_mattes` is the parallel Lens flare Matte-source list (docs/08
-/// §3.27, K-257): the k-th `Resolved::LensFlare` op binds `flare_mattes[k]`
+/// §3.27, K-257), and `flare_lens` the parallel custom-prescription list
+/// (K-264, `lens_file` as content hash + text; None = use the picked
+/// library lens): the k-th `Resolved::LensFlare` op binds `flare_mattes[k]`
 /// — the referenced matte layer rendered alone at this raster, or `None`
 /// (unset, dangling, or not in Matte mode) which detects no sources, the
 /// LUT/DoF passthrough convention.
@@ -116,6 +118,7 @@ pub fn run_ops(
     luts: &[Option<LoadedLut>],
     layer_inputs: &[Option<Tex>],
     flare_mattes: &[Option<Tex>],
+    flare_lens: &[Option<(u64, String)>],
 ) -> Tex {
     let mut tex = tex;
     // The k-th Resolved::Lut op consumes the k-th `luts` slot (the whole
@@ -774,6 +777,7 @@ pub fn run_ops(
                 // the k-th `flare_mattes` slot (its Matte source).
                 use lumit_core::fx::lens_flare as lf;
                 let matte = flare_mattes.get(flare_i).and_then(|o| o.as_ref());
+                let custom = flare_lens.get(flare_i).and_then(|o| o.as_ref());
                 flare_i += 1;
                 let (grid, lambda_count, flare_div) = lf::quality_ladder(p.quality);
                 let energy = p.ghost_intensity;
@@ -809,11 +813,12 @@ pub fn run_ops(
                     use_source_colour: p.use_source_colour,
                     background: p.background,
                     mix: p.mix,
-                    bake_key: lf::bake_key(p),
+                    bake_key: lf::bake_key_with(p, custom.map(|(h, _)| *h)),
                 };
                 let params = *p;
+                let custom_text = custom.map(|(_, text)| text.clone());
                 tex = fx.lens_flare(ctx, &tex, w, h, &op, matte, &move || {
-                    let b = lf::bake(&params);
+                    let b = lf::bake_with(&params, custom_text.as_deref());
                     lumit_gpu::fx::FlareBakeData {
                         surfaces: b
                             .surfaces

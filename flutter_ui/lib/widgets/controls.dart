@@ -337,8 +337,9 @@ class BareDropdown<T> extends StatelessWidget {
 /// Options at or above this count get [BareSearchDropdown] instead of the
 /// plain [BareDropdown] (K-262). A plain dropdown builds every row eagerly
 /// inside an `IntrinsicWidth`, which walks all of them twice — fine for the
-/// handful of options every other parameter has, fatal for the Lens flare's
-/// 1299-lens library, which took the app down in layout.
+/// handful of options every parameter has today — and fatal for the
+/// K-262-era Lens flare library, whose 1299 rows took the app down in
+/// layout. The flare is a curated twenty since K-264; the guard stays.
 const int searchableOptionThreshold = 40;
 
 /// A dropdown for long option lists: a search field over a **lazily built**
@@ -346,7 +347,7 @@ const int searchableOptionThreshold = 40;
 ///
 /// The list is a `ListView.builder` inside a bounded box, so only the rows
 /// on screen are ever built no matter how many options there are — the
-/// difference between "1299 lenses" being a feature and being a crash.
+/// difference between a thousand-row list being a feature and a crash.
 class BareSearchDropdown extends StatelessWidget {
   final int value;
   final List<String> options;

@@ -727,6 +727,7 @@ pub fn build_comp_draws_at(
                     // with the stack's Resolved::Dof ops (docs/08 §3.22).
                     dof_inputs: dof_inputs_for(&layer.effects),
                     flare_mattes: flare_mattes_for(&layer.effects),
+                    flare_lens_files: flare_lens_files(&layer.effects, lt),
                     // An adjustment layer is a staging point, not a picture —
                     // motion blur has no image of its own to smear (docs/06 §4).
                     mb: Vec::new(),
@@ -920,6 +921,7 @@ pub fn build_comp_draws_at(
             // export does, so the two blur identically (K-031).
             dof_inputs: dof_inputs_for(&layer.effects),
             flare_mattes: flare_mattes_for(&layer.effects),
+            flare_lens_files: flare_lens_files(&layer.effects, lt),
             // Per-layer motion blur (docs/06 §4, K-120): the layer's own
             // transform sampled across the open shutter, empty unless it blurs.
             // Built the same way export does, so the two smear identically.
@@ -950,6 +952,22 @@ fn lut_files(effects: &[lumit_core::model::EffectInstance], lt: f64) -> Vec<Opti
                 && e.effect.match_name == "lut"
         })
         .map(|e| e.path_at("file", lt).map(str::to_owned))
+        .collect()
+}
+
+/// The `lens_file` paths of the enabled built-in `lens_flare` effects, 1:1
+/// and in order with the stack's `Resolved::LensFlare` ops (K-264) — the
+/// LUT-files pattern for the flare's custom prescription.
+fn flare_lens_files(effects: &[lumit_core::model::EffectInstance], lt: f64) -> Vec<Option<String>> {
+    use lumit_core::model::EffectNamespace;
+    effects
+        .iter()
+        .filter(|e| {
+            e.enabled
+                && e.effect.namespace == EffectNamespace::Builtin
+                && e.effect.match_name == "lens_flare"
+        })
+        .map(|e| e.path_at("lens_file", lt).map(str::to_owned))
         .collect()
 }
 

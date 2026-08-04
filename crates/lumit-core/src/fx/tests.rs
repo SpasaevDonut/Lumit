@@ -4778,15 +4778,29 @@ fn lens_flare_optics_match_the_textbook() {
     assert!((off - plain).abs() < 1e-6);
 }
 
-// §8.4 — the prescription library and pair ranking (K-261): every
-// bundled .lens file parses with a sane surface count, focal length and a
-// stop surface; the bake's pair list is deterministic, non-empty, and every
-// pair joins two genuine glass interfaces.
+// §8.4 — the prescription library and pair ranking (K-261, curated to
+// twenty K-264): every bundled .lens file parses with a sane surface count,
+// focal length and a stop surface; the bake's pair list is deterministic,
+// non-empty, and every pair joins two genuine glass interfaces.
 #[test]
 fn lens_flare_library_parses_and_pairs_rank_deterministically() {
     use crate::fx::lens_flare::*;
-    use crate::fx::lens_library::LENS_LIBRARY;
-    assert!(LENS_LIBRARY.len() > 1000, "the library shrank");
+    use crate::fx::lens_library::{LENS_LIBRARY, LENS_OPTIONS};
+    assert_eq!(LENS_LIBRARY.len(), 20, "the curated library is twenty");
+    assert_eq!(LENS_OPTIONS.len(), LENS_LIBRARY.len());
+    for (i, entry) in LENS_LIBRARY.iter().enumerate() {
+        assert_eq!(LENS_OPTIONS[i], entry.name, "options align with entries");
+    }
+    // Sorted by name, so the picker reads alphabetically and a saved index
+    // is reproducible from the name list alone.
+    for pair in LENS_LIBRARY.windows(2) {
+        assert!(
+            pair[0].name < pair[1].name,
+            "{} !< {}",
+            pair[0].name,
+            pair[1].name
+        );
+    }
     for entry in LENS_LIBRARY.iter() {
         let lens =
             parse_lens(entry.text).unwrap_or_else(|| panic!("{} failed to parse", entry.name));
@@ -4821,6 +4835,38 @@ fn lens_flare_library_parses_and_pairs_rank_deterministically() {
         assert!(pair[0] < pair[1]);
         assert!((pair[1] as usize) < a.surfaces.len());
     }
+}
+
+// The `lens_file` override (K-264): a custom .lens text replaces the
+// picked lens entirely, its bake key never collides with the library's or
+// with a different file's, and an unparsable file degrades to the pick.
+#[test]
+fn lens_flare_custom_lens_file_overrides_and_degrades() {
+    use crate::fx::lens_flare::*;
+    use crate::fx::lens_library::LENS_LIBRARY;
+    let p = default_flare_params();
+    // "Custom file" = the text of a DIFFERENT bundled lens, so the expected
+    // result is exactly what picking that lens produces (native f-number
+    // aside — a custom file estimates it from geometry).
+    let other = crate::fx::lens_flare::LensFlareParams { lens: 0, ..p };
+    let via_pick = bake(&other);
+    let via_file = bake_with(&p, Some(LENS_LIBRARY[0].text));
+    assert_eq!(via_file.surfaces.len(), via_pick.surfaces.len());
+    assert_eq!(via_file.pairs, via_pick.pairs, "same glass, same ghosts");
+    assert_eq!(via_file.focal_mm, via_pick.focal_mm);
+    // The key separates library, custom, and edited-custom.
+    let h = lens_text_hash(LENS_LIBRARY[0].text);
+    let k_lib = bake_key(&p);
+    let k_file = bake_key_with(&p, Some(h));
+    let k_edit = bake_key_with(&p, Some(lens_text_hash("name: edited\n")));
+    assert_ne!(k_lib, k_file);
+    assert_ne!(k_file, k_edit);
+    // Unparsable text degrades to the picked lens, bit-for-bit.
+    let fallback = bake_with(&p, Some("not a prescription"));
+    let picked = bake(&p);
+    assert_eq!(fallback.pairs, picked.pairs);
+    assert_eq!(fallback.starburst, picked.starburst);
+    assert_eq!(fallback.energy_gain, picked.energy_gain);
 }
 
 // §8.5 (CPU side) — the trace lands rays: at the default light the top
@@ -4959,7 +5005,7 @@ fn lens_flare_neutral_points_and_default_resolve() {
             assert!((rp.light[0] - 640.0).abs() < 1e-3);
             assert!((rp.light[1] - 360.0).abs() < 1e-3);
             assert_eq!(rp.intensity, 1.0);
-            assert_eq!(rp.lens, 1247, "default lens is the Master Prime 50");
+            assert_eq!(rp.lens, 17, "default lens is the Master Prime 50");
             assert_eq!(rp.blades, 8);
             assert_eq!(rp.max_ghosts, 60);
             assert_eq!(rp.quality, 1);
@@ -5141,7 +5187,6 @@ fn lens_flare_focus_shift_follows_the_thin_lens() {
 #[test]
 fn lens_flare_quad_guard_drops_slivers_and_keeps_ghosts() {
     use crate::fx::lens_flare::*;
-    let diag = 1000.0_f32;
     let quad = |pts: [[f32; 2]; 4]| -> [FlareVertex; 4] {
         [
             FlareVertex {
@@ -5174,13 +5219,14 @@ fn lens_flare_quad_guard_drops_slivers_and_keeps_ghosts() {
     // A big well-formed cell: drawn untouched.
     let mut big = quad([[0.0, 0.0], [50.0, 0.0], [50.0, 50.0], [0.0, 50.0]]);
     let before = big;
-    assert!(inflate_quad(&mut big, diag));
+    assert!(inflate_quad(&mut big));
     assert_eq!(big[2].pos, before[2].pos);
     assert_eq!(big[0].rgb, before[0].rgb);
 
-    // A compact sub-pixel cell: inflated, flux conserved, still compact.
-    let mut tiny = quad([[10.0, 10.0], [11.0, 10.0], [11.0, 11.0], [10.0, 11.0]]);
-    assert!(inflate_quad(&mut tiny, diag));
+    // A compact sub-sample cell (well under the 1 px² floor): inflated,
+    // flux conserved, still compact.
+    let mut tiny = quad([[10.0, 10.0], [10.4, 10.0], [10.4, 10.4], [10.0, 10.4]]);
+    assert!(inflate_quad(&mut tiny));
     assert!(
         longest(&tiny) <= MAX_INFLATE_EDGE_PX * 3.0,
         "{}",
@@ -5188,25 +5234,30 @@ fn lens_flare_quad_guard_drops_slivers_and_keeps_ghosts() {
     );
     assert!(tiny[0].rgb[0] < 1.0, "inflation must dim to conserve flux");
 
-    // THE BUG: a sub-pixel SLIVER — 40 px long, hair thin. K-261 stretched
-    // this to ~400 px; it must be dropped.
+    // THE K-262 BUG: a sub-pixel SLIVER — 40 px long, hair thin. K-261
+    // stretched this to ~400 px; it must be dropped, never inflated.
     let mut sliver = quad([[10.0, 10.0], [50.0, 10.02], [50.0, 10.03], [10.0, 10.01]]);
     assert!(
-        !inflate_quad(&mut sliver, diag),
+        !inflate_quad(&mut sliver),
         "a fold sliver must be dropped, never inflated"
     );
 
-    // A long thin quad ABOVE the area floor is a streak too (its area is
-    // 150 px², well past MIN_QUAD_PX) and must also go.
-    let mut streak = quad([[0.0, 0.0], [300.0, 0.0], [300.0, 0.5], [0.0, 0.5]]);
+    // THE K-264 REVERSAL: a long thin quad ABOVE the area floor (150 px²)
+    // is a fold-straddling cell and K-262 dropped it — which cut the
+    // triangular notches out of every caustic rim the owner reported at
+    // Ultra. With the vertex-smoothed density its brightness comes from its
+    // neighbourhood, so it DRAWS, untouched.
+    let mut fold = quad([[0.0, 0.0], [300.0, 0.0], [300.0, 0.5], [0.0, 0.5]]);
+    let before_fold = fold;
     assert!(
-        !inflate_quad(&mut streak, diag),
-        "a long thin quad must be dropped at any area"
+        inflate_quad(&mut fold),
+        "a drawable-area fold cell draws since K-264 — dropping it notches the rims"
     );
+    assert_eq!(fold[1].pos, before_fold[1].pos, "and it draws unmodified");
 
-    // …but an elongated cell that is SHORT is a real caustic rim: kept.
+    // An elongated cell that is short is a caustic rim cell: kept, always.
     let mut rim = quad([[0.0, 0.0], [12.0, 0.0], [12.0, 1.5], [0.0, 1.5]]);
-    assert!(inflate_quad(&mut rim, diag), "rim cells must survive");
+    assert!(inflate_quad(&mut rim), "rim cells must survive");
 }
 
 // Adaptive grid (K-262): the budget follows the ghost's image size, and a
@@ -5242,7 +5293,7 @@ fn default_flare_params() -> crate::fx::lens_flare::LensFlareParams {
         // manual_light, so any sane point works; this is 0.33/0.30 of 96×54.
         light: [31.7, 16.2],
         intensity: 1.0,
-        lens: 1247,
+        lens: 17,
         fstop: 2.8,
         focus_m: 100.0,
         blades: 8,

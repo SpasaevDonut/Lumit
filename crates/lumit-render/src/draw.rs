@@ -183,6 +183,12 @@ pub struct CompLayerDraw {
     /// the same shape the DoF depth inputs take (None = unset/dangling/not
     /// in Matte mode — the effect then detects nothing, never faults).
     pub flare_mattes: Vec<Option<DofInputDraw>>,
+    /// The `lens_file` paths of the layer's enabled built-in `lens_flare`
+    /// effects (K-264), 1:1 with the stack's `Resolved::LensFlare` ops —
+    /// None = unset. The caller reads and hashes each file and passes the
+    /// parallel `flare_lens` texts to `run_ops`; a missing or unreadable
+    /// file degrades to the picked library lens (labelled fallback).
+    pub flare_lens_files: Vec<Option<String>>,
     /// Per-layer motion-blur sub-frame placements (docs/06 §4, K-120): the
     /// layer's own transform re-evaluated across the open shutter. Empty unless
     /// the comp master and the layer switch are both on (and samples ≥ 2), in

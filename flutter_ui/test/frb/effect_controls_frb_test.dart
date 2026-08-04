@@ -466,41 +466,25 @@ void main() {
       expect(find.text('Matte layer'), findsNothing);
     });
 
-    // The Lens picker (K-262). The library is 1299 options, and the plain
-    // dropdown builds every row eagerly inside an IntrinsicWidth — which
-    // took the app down in a layout pass. The long-list picker must open
-    // with a search field and build only a screenful of rows.
-    testWidgets('the lens picker searches and builds lazily', (tester) async {
+    // The Lens picker (K-262, curated K-264). Twenty entries sit well
+    // under the searchable threshold, so the row is the PLAIN dropdown —
+    // the searchable picker's laziness is pinned in
+    // test/search_dropdown_test.dart against synthetic options. What the
+    // panel owes here: the curated default shows, and the custom Lens file
+    // row (K-264) is present for the prescriptions the palette leaves out.
+    testWidgets('the lens picker shows the curated default and the file row',
+        (tester) async {
       final p = withLayer();
       p.layer.addEffect(name: 'lens_flare');
       p.uiState.model.refresh();
       await mount(tester, p, transform: false);
 
-      // The row shows the default lens, and it is the searchable kind.
-      final picker = find.byType(BareSearchDropdown);
-      expect(picker, findsOneWidget);
-      expect(find.byType(BareDropdown<int>), findsWidgets); // Quality etc.
-
-      await tester.tap(picker);
-      await tester.pumpAndSettle();
-
-      // A search field opened, and only a screenful of rows exists — the
-      // whole point: 1299 eager rows is the crash.
-      expect(find.byType(HouseTextField), findsOneWidget);
-      final rows = tester.widgetList(find.byType(MenuRow)).length;
-      expect(rows, lessThan(80), reason: 'the picker must build lazily');
-
-      // Typing narrows it, and the maker headings are there to group by.
-      await tester.enterText(find.byType(HouseTextField), 'zeiss planar');
-      await tester.pumpAndSettle();
-      final narrowed = tester.widgetList(find.byType(MenuRow)).length;
-      expect(narrowed, lessThan(rows));
-      expect(narrowed, greaterThan(0));
-
-      // A query matching nothing says so rather than showing a blank sheet.
-      await tester.enterText(find.byType(HouseTextField), 'qqqzzz');
-      await tester.pumpAndSettle();
-      expect(find.text('No matches'), findsOneWidget);
+      expect(find.byType(BareSearchDropdown), findsNothing,
+          reason: 'twenty entries is a dropdown, not a search problem');
+      expect(find.text('Zeiss · Arri Master Prime T1.3 50mm'), findsOneWidget,
+          reason: 'the curated default is the reference cine prime');
+      expect(find.text('Lens file'), findsOneWidget,
+          reason: 'a user .lens file covers everything the palette leaves out');
     });
 
     // Without the built library there is nothing to test against; the harness
