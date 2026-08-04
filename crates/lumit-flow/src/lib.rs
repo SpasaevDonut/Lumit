@@ -21,6 +21,7 @@
 //! sight of a pixel (the documented graceful degradation).
 
 pub mod gpu;
+pub mod synth;
 
 /// Patch side in pixels (impl note §1: 8×8 patches).
 pub(crate) const PATCH: usize = 8;
@@ -1392,6 +1393,10 @@ pub fn interpolate(a: &[u8], b: &[u8], w: usize, h: usize, phi: f32) -> Vec<u8> 
 /// device trouble costs speed, not the frame).
 pub struct FlowEngine {
     gpu: Option<gpu::GpuFlow>,
+    /// GPU synthesis (K-256). Independent of `gpu`: the field could come from
+    /// the CPU oracle and still be painted on the card, and losing one does not
+    /// have to cost the other.
+    synth: Option<synth::GpuSynth>,
 }
 
 impl FlowEngine {
@@ -1403,25 +1408,35 @@ impl FlowEngine {
         }
     }
 
+    /// True when synthesis runs on the card.
+    pub fn gpu_synthesis(&self) -> bool {
+        self.synth.is_some()
+    }
+
     /// Share an existing device (the app's). Falls back to CPU if the flow
     /// pipelines cannot be built on it.
     pub fn with_context(ctx: &lumit_gpu::GpuContext) -> Self {
         FlowEngine {
             gpu: gpu::GpuFlow::new(ctx).ok(),
+            synth: synth::GpuSynth::new(ctx).ok(),
         }
     }
 
     /// CPU only (tests, or by explicit choice).
     pub fn cpu() -> Self {
-        FlowEngine { gpu: None }
+        FlowEngine {
+            gpu: None,
+            synth: None,
+        }
     }
 
     /// Which backend this engine currently uses.
     pub fn backend(&self) -> &'static str {
-        if self.gpu.is_some() {
-            "dis-gpu"
-        } else {
-            "dis-cpu"
+        match (self.gpu.is_some(), self.synth.is_some()) {
+            (true, true) => "dis-gpu",
+            (true, false) => "dis-gpu/cpu-synth",
+            (false, true) => "dis-cpu/gpu-synth",
+            (false, false) => "dis-cpu",
         }
     }
 
@@ -1470,6 +1485,15 @@ impl FlowEngine {
         }
         let (ga, gb, reduced) = grays_at(a, b, w, h, set);
         let (fwd, bwd) = self.flow_pair_with(&ga, &gb, set);
+        // The card paints straight from the working-resolution field: no
+        // upsample, no per-pixel CPU, no round trip (K-256). A failure here
+        // costs speed, never the frame.
+        if let Some(s) = self.synth.as_ref() {
+            match s.synthesize(a, b, w, h, &fwd, &bwd, phi, set) {
+                Ok(px) => return px,
+                Err(_) => self.synth = None, // degrade for the rest of this engine
+            }
+        }
         let hud = set.hud_guard.then(|| hud_weights(&ga, &fwd));
         let (fwd, bwd) = if reduced {
             (upsample_field(&fwd, w, h), upsample_field(&bwd, w, h))
@@ -2083,6 +2107,59 @@ mod tests {
         assert!(
             frac > 0.9,
             "a clean translation should be almost entirely explained: {frac}"
+        );
+    }
+
+    /// GPU synthesis agrees with the CPU oracle to within a few 8-bit steps.
+    ///
+    /// Not bit-equality, on purpose: docs/08 §3.1 pins the contract as
+    /// "vector-field tolerance, then bit-tolerant synthesis". The GPU path
+    /// samples the working-resolution field directly where the CPU upsamples it
+    /// first, which is the whole reason it is fast, and the two orders of
+    /// bilinear interpolation differ in the last digit rather than in what they
+    /// mean. What must hold is that they are the same *picture*.
+    #[test]
+    fn gpu_synthesis_matches_the_cpu_within_tolerance() {
+        let Some(_) = gpu_flow() else { return };
+        let ctx = match lumit_gpu::GpuContext::headless() {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let Ok(gs) = synth::GpuSynth::new(&ctx) else {
+            return;
+        };
+        let (w, h) = (128, 96);
+        let to_rgba = |g: &Gray| -> Vec<u8> {
+            let mut f = vec![0u8; w * h * 4];
+            for i in 0..w * h {
+                let v = (g.data[i] * 255.0).round().clamp(0.0, 255.0) as u8;
+                f[i * 4] = v;
+                f[i * 4 + 1] = v.wrapping_add(20);
+                f[i * 4 + 2] = v.wrapping_sub(15);
+                f[i * 4 + 3] = 255;
+            }
+            f
+        };
+        let ga = render(w, h, |x, y| perlin(x, y, 51));
+        let gb = render(w, h, |x, y| perlin(x - 4.0, y - 2.0, 51));
+        let (a, b) = (to_rgba(&ga), to_rgba(&gb));
+        let set = FlowSettings::default();
+        let (fwd, bwd) = flow_pair_with(&ga, &gb, &set);
+        let gpu = gs
+            .synthesize(&a, &b, w, h, &fwd, &bwd, 0.5, &set)
+            .expect("gpu synthesis");
+        let hud = hud_weights(&ga, &fwd);
+        let cpu = synthesize_with(&a, &b, w, h, &fwd, &bwd, 0.5, &set, Some(&hud));
+        let (mut worst, mut sum) = (0i32, 0i64);
+        for (g, c) in gpu.iter().zip(&cpu) {
+            let d = (i32::from(*g) - i32::from(*c)).abs();
+            worst = worst.max(d);
+            sum += i64::from(d);
+        }
+        let mean = sum as f64 / cpu.len() as f64;
+        assert!(
+            mean < 2.0,
+            "gpu and cpu synthesis differ by {mean} on average (worst {worst})"
         );
     }
 
