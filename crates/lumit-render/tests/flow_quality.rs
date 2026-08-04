@@ -65,7 +65,16 @@ fn psnr(a: &[u8], b: &[u8]) -> f64 {
 /// error by size and not by shape, so a soft crossfade (many small errors) can
 /// out-score a sharp warp (few large ones) even when the warp is the thing that
 /// looks broken. SSIM compares local structure, which is where tearing lives.
-fn ssim(a: &[u8], b: &[u8], w: usize, h: usize) -> f64 {
+/// Mean SSIM and the **5th-percentile block** — the worst twentieth of the
+/// picture.
+///
+/// The mean is the wrong instrument on its own for the failure being chased.
+/// Optical flow does not go uniformly slightly wrong; it goes badly wrong in a
+/// few places — a torn edge, a warped line — and stays right everywhere else.
+/// Averaged over a 1080p frame that is a rounding error, which is how a clip a
+/// person calls unusable scores level with a crossfade. The worst blocks are
+/// where the artefact lives, so they are what has to be measured to be improved.
+fn ssim_blocks(a: &[u8], b: &[u8], w: usize, h: usize) -> (f64, f64) {
     let luma = |p: &[u8]| -> Vec<f64> {
         p.chunks_exact(4)
             .map(|c| 0.2126 * f64::from(c[0]) + 0.7152 * f64::from(c[1]) + 0.0722 * f64::from(c[2]))
@@ -74,6 +83,7 @@ fn ssim(a: &[u8], b: &[u8], w: usize, h: usize) -> f64 {
     let (x, y) = (luma(a), luma(b));
     let (c1, c2) = (6.5025, 58.5225); // (0.01·255)², (0.03·255)²
     let (mut total, mut count) = (0f64, 0usize);
+    let mut scores: Vec<f64> = Vec::new();
     let win = 8;
     for by in (0..h.saturating_sub(win - 1)).step_by(win) {
         for bx in (0..w.saturating_sub(win - 1)).step_by(win) {
@@ -104,13 +114,16 @@ fn ssim(a: &[u8], b: &[u8], w: usize, h: usize) -> f64 {
             let s = ((2.0 * mx * my + c1) * (2.0 * cov + c2))
                 / ((mx * mx + my * my + c1) * (vx + vy + c2));
             total += s;
+            scores.push(s);
             count += 1;
         }
     }
     if count == 0 {
-        return 1.0;
+        return (1.0, 1.0);
     }
-    total / count as f64
+    scores.sort_by(|p, q| p.partial_cmp(q).unwrap_or(std::cmp::Ordering::Equal));
+    let p5 = scores[(scores.len() / 20).min(scores.len() - 1)];
+    (total / count as f64, p5)
 }
 
 /// Crossfade, the Blend baseline.
@@ -124,22 +137,26 @@ fn blend(a: &[u8], b: &[u8]) -> Vec<u8> {
 struct Score {
     psnr: f64,
     ssim: f64,
+    worst: f64,
 }
 
 impl Score {
     fn of(got: &[u8], truth: &[u8], w: usize, h: usize) -> Self {
+        let (ssim, worst) = ssim_blocks(got, truth, w, h);
         Score {
             psnr: psnr(got, truth),
-            ssim: ssim(got, truth, w, h),
+            ssim,
+            worst,
         }
     }
 }
 
-fn mean(v: &[Score]) -> (f64, f64) {
+fn mean(v: &[Score]) -> (f64, f64, f64) {
     let n = v.len().max(1) as f64;
     (
         v.iter().map(|s| s.psnr).sum::<f64>() / n,
         v.iter().map(|s| s.ssim).sum::<f64>() / n,
+        v.iter().map(|s| s.worst).sum::<f64>() / n,
     )
 }
 
@@ -269,8 +286,8 @@ fn score_flow_against_its_baselines_on_real_clips() {
             eprintln!("{name}: no usable triplets ({identical} were duplicates)");
             continue;
         }
-        let (np, ns) = mean(&nearest);
-        let (bp, bs) = mean(&blended);
+        let (np, ns, nw) = mean(&nearest);
+        let (bp, bs, bw) = mean(&blended);
         println!(
             "\n=== {name}  {w}x{h}  stride {stride}  {} triplets{} ===",
             nearest.len(),
@@ -281,14 +298,21 @@ fn score_flow_against_its_baselines_on_real_clips() {
             }
         );
         println!(
-            "  {:<22} {:>8} {:>8}   {:>10}",
-            "method", "PSNR dB", "SSIM", "vs blend"
+            "  {:<22} {:>8} {:>8} {:>9}   {:>8} {:>9}",
+            "method", "PSNR dB", "SSIM", "worst 5%", "vs blend", "worst d"
         );
-        println!("  {:<22} {np:>8.2} {ns:>8.4}", "nearest (hold)");
-        println!("  {:<22} {bp:>8.2} {bs:>8.4}", "blend (crossfade)");
+        println!("  {:<22} {np:>8.2} {ns:>8.4} {nw:>9.4}", "nearest (hold)");
+        println!(
+            "  {:<22} {bp:>8.2} {bs:>8.4} {bw:>9.4}",
+            "blend (crossfade)"
+        );
         for (vi, (label, _)) in variants().iter().enumerate() {
-            let (fp, fs) = mean(&flows[vi]);
-            println!("  {label:<22} {fp:>8.2} {fs:>8.4}   {:>+9.2}", fp - bp);
+            let (fp, fs, fw) = mean(&flows[vi]);
+            println!(
+                "  {label:<22} {fp:>8.2} {fs:>8.4} {fw:>9.4}   {:>+8.2} {:>+9.4}",
+                fp - bp,
+                fw - bw
+            );
         }
         println!(
             "  backend: {}   (a flow row below blend is a net loss: dearer AND worse)",
