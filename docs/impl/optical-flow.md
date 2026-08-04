@@ -210,14 +210,17 @@ cannot translate the same parameters into two different measurements.
 | `fallback` | Fallback | §3's both-occluded branch: crossfade or the nearer endpoint |
 | `hud_guard` | HUD guard | Runs §3.1 step 5's `hud_weights` and mixes synthesis back toward the plain blend by it |
 
-**GPU limitation (interim).** `dis.wgsl` still carries the iteration cap, the pyramid floor
-and the smoothing sigma as shader constants, and has **no variational-refinement pass at all**,
-so `GpuFlow::flow_pair_with` returns `FlowError::Unsupported` for a non-default Vector detail or
-Smoothness *and for any `refine_iters > 0`* — which is every default — and the caller runs the
-CPU oracle. Refusing is deliberate: a field measured to different rules than the settings
-asked for would make the picture depend on which backend was alive, which is the
-preview-≠-export fault K-256 exists to remove. These move into the per-level `Params` uniform
-when the GPU relocation lands, and the refusal goes with them.
+**Every setting has a GPU path.** The iteration cap and the smoothing sigma ride in the
+per-level `Params` uniform; the pyramid floor shapes the plan, which is rebuilt when the
+settings change (`Plan::set`). The refinement is seven kernels — `vr_warp`, `vr_init_duv`,
+`vr_deriv`, `vr_sor_red`/`vr_sor_black`, `vr_apply`, `vr_validity` — reusing the existing
+eight-binding layout: `duv` packs `(du, dv, u, v)` into one vec4 so the solver needs no fifth
+read slot, the increment travelling with the flow it is an increment of. `FlowError::Unsupported`
+therefore no longer fires for any real setting, and the parity test covers all three parts of
+the algorithm again.
+
+**Measured (960×540 pair, dev machine):** GPU parts 1–2 4.3 ms, all three **8.9 ms**; CPU all
+three 1.9 s. The refinement roughly doubles GPU cost and is comfortably inside budget.
 
 ## 6. Test plan
 

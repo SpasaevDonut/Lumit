@@ -12,7 +12,7 @@
 //! Failure is always an `Err`, never a fault: callers (`FlowEngine`) degrade
 //! to the CPU path.
 
-use crate::{patch_count, FlowField, Gray, MIN_LEVEL_DIM, PATCH};
+use crate::{patch_count, FlowField, Gray, PATCH};
 use lumit_gpu::GpuContext;
 use thiserror::Error;
 
@@ -42,6 +42,12 @@ struct Params {
     ch: u32,
     npx: u32,
     npy: u32,
+    /// Inverse-search iteration cap (Vector detail) — was a shader constant.
+    iters: u32,
+    /// Smoothing flow-range sigma² (Smoothness) — was a shader constant.
+    flow_sigma2: f32,
+    pad0: u32,
+    pad1: u32,
 }
 
 struct Pipelines {
@@ -51,6 +57,14 @@ struct Pipelines {
     inverse_search: wgpu::ComputePipeline,
     densify: wgpu::ComputePipeline,
     smooth: wgpu::ComputePipeline,
+    // Variational refinement (K-257).
+    vr_warp: wgpu::ComputePipeline,
+    vr_init_duv: wgpu::ComputePipeline,
+    vr_deriv: wgpu::ComputePipeline,
+    vr_sor_red: wgpu::ComputePipeline,
+    vr_sor_black: wgpu::ComputePipeline,
+    vr_apply: wgpu::ComputePipeline,
+    vr_validity: wgpu::ComputePipeline,
 }
 
 /// Per-level GPU resources (both directions share lumas and gradients).
@@ -74,10 +88,20 @@ struct LevelBinds {
     search: wgpu::BindGroup,
     densify: wgpu::BindGroup,
     smooth: wgpu::BindGroup,
+    /// The refinement passes (K-257), in dispatch order.
+    vr_warp: wgpu::BindGroup,
+    vr_init_duv: wgpu::BindGroup,
+    vr_deriv: wgpu::BindGroup,
+    vr_sor: wgpu::BindGroup,
+    vr_apply: wgpu::BindGroup,
+    vr_validity: wgpu::BindGroup,
     w: usize,
     h: usize,
     npx: usize,
     npy: usize,
+    /// Fixed-point iterations at this level: `refine_iters × (levels − lvl)`,
+    /// so finer levels get more, exactly as the oracle does.
+    vr_outer: usize,
 }
 
 /// Everything prebuilt for one resolution; rebuilt when the size changes.
@@ -86,6 +110,9 @@ struct LevelBinds {
 struct Plan {
     w: usize,
     h: usize,
+    /// The settings this plan was built for. A change to any of them reshapes
+    /// the pyramid or the uniforms, so the plan is rebuilt rather than reused.
+    set: crate::FlowSettings,
     levels: Vec<Level>,
     /// Init-field scratch, shared across levels and directions (sized for
     /// L0; cleared per direction for the coarsest level). The other scratch
@@ -185,6 +212,13 @@ impl GpuFlow {
             inverse_search: make("inverse_search"),
             densify: make("densify"),
             smooth: make("smooth_flow"),
+            vr_warp: make("vr_warp"),
+            vr_init_duv: make("vr_init_duv"),
+            vr_deriv: make("vr_deriv"),
+            vr_sor_red: make("vr_sor_red"),
+            vr_sor_black: make("vr_sor_black"),
+            vr_apply: make("vr_apply"),
+            vr_validity: make("vr_validity"),
         };
         let mk_dummy = |label: &str| {
             ctx.device.create_buffer(&wgpu::BufferDescriptor {
@@ -236,26 +270,18 @@ impl GpuFlow {
         b: &Gray,
         set: &crate::FlowSettings,
     ) -> Result<(FlowField, FlowField), FlowError> {
-        let default = crate::FlowSettings::default();
-        if set.iterations != default.iterations
-            || set.min_level_dim != default.min_level_dim
-            || set.flow_sigma2() != default.flow_sigma2()
-            // The shader has no variational-refinement pass yet (K-257), so a
-            // GPU field would be the two-part DIS the owner reported as
-            // artefact-ridden. Until the WGSL lands, correct and slow beats
-            // fast and wrong.
-            || set.refine_iters > 0
-        {
-            return Err(FlowError::Unsupported);
-        }
         if a.w != b.w || a.h != b.h {
             return Err(FlowError::DimensionMismatch);
         }
         if a.w < PATCH || a.h < PATCH {
             return Ok((FlowField::zeroed(a.w, a.h), FlowField::zeroed(b.w, b.h)));
         }
-        if self.plan.as_ref().is_none_or(|p| p.w != a.w || p.h != a.h) {
-            self.plan = Some(self.build_plan(a.w, a.h)?);
+        if self
+            .plan
+            .as_ref()
+            .is_none_or(|p| p.w != a.w || p.h != a.h || p.set != *set)
+        {
+            self.plan = Some(self.build_plan(a.w, a.h, set)?);
         }
         let Some(plan) = self.plan.as_ref() else {
             return Err(FlowError::Pipeline("plan missing".into()));
@@ -317,6 +343,37 @@ impl GpuFlow {
                 pass.set_pipeline(&self.pipelines.smooth);
                 pass.set_bind_group(0, &lb.smooth, &[]);
                 pass.dispatch_workgroups(wg(lb.w), wg(lb.h), 1);
+                // DIS part three (K-257). Each fixed-point iteration
+                // re-linearises about the current warp, then sweeps the
+                // increment red-then-black VR_SOR times — the two colours are
+                // what make a sequential solver a parallel one.
+                for _ in 0..lb.vr_outer {
+                    pass.set_pipeline(&self.pipelines.vr_warp);
+                    pass.set_bind_group(0, &lb.vr_warp, &[]);
+                    pass.dispatch_workgroups(wg(lb.w), wg(lb.h), 1);
+                    pass.set_pipeline(&self.pipelines.vr_init_duv);
+                    pass.set_bind_group(0, &lb.vr_init_duv, &[]);
+                    pass.dispatch_workgroups(wg(lb.w), wg(lb.h), 1);
+                    pass.set_pipeline(&self.pipelines.vr_deriv);
+                    pass.set_bind_group(0, &lb.vr_deriv, &[]);
+                    pass.dispatch_workgroups(wg(lb.w), wg(lb.h), 1);
+                    for _ in 0..crate::VR_SOR {
+                        pass.set_pipeline(&self.pipelines.vr_sor_red);
+                        pass.set_bind_group(0, &lb.vr_sor, &[]);
+                        pass.dispatch_workgroups(wg(lb.w), wg(lb.h), 1);
+                        pass.set_pipeline(&self.pipelines.vr_sor_black);
+                        pass.set_bind_group(0, &lb.vr_sor, &[]);
+                        pass.dispatch_workgroups(wg(lb.w), wg(lb.h), 1);
+                    }
+                    pass.set_pipeline(&self.pipelines.vr_apply);
+                    pass.set_bind_group(0, &lb.vr_apply, &[]);
+                    pass.dispatch_workgroups(wg(lb.w), wg(lb.h), 1);
+                }
+                if lb.vr_outer > 0 {
+                    pass.set_pipeline(&self.pipelines.vr_validity);
+                    pass.set_bind_group(0, &lb.vr_validity, &[]);
+                    pass.dispatch_workgroups(wg(lb.w), wg(lb.h), 1);
+                }
             }
         }
         let n = (plan.w * plan.h * 16) as u64;
@@ -386,7 +443,7 @@ impl GpuFlow {
             })
     }
 
-    fn build_plan(&self, w: usize, h: usize) -> Result<Plan, FlowError> {
+    fn build_plan(&self, w: usize, h: usize, set: &crate::FlowSettings) -> Result<Plan, FlowError> {
         self.ctx
             .device
             .push_error_scope(wgpu::ErrorFilter::OutOfMemory);
@@ -394,11 +451,12 @@ impl GpuFlow {
             .device
             .push_error_scope(wgpu::ErrorFilter::Validation);
         // The same level dims the CPU pyramid produces.
+        let floor = (set.min_level_dim as usize).max(PATCH);
         let mut dims = vec![(w, h)];
         loop {
             let (lw, lh) = dims[dims.len() - 1];
             let next = ((lw / 2).max(1), (lh / 2).max(1));
-            if next.0.min(next.1) < MIN_LEVEL_DIM {
+            if next.0.min(next.1) < floor {
                 break;
             }
             dims.push(next);
@@ -431,6 +489,10 @@ impl GpuFlow {
                 ch: ch as u32,
                 npx: npx as u32,
                 npy: npy as u32,
+                iters: set.iterations,
+                flow_sigma2: set.flow_sigma2(),
+                pad0: 0,
+                pad1: 0,
             };
             let pbuf = self.ctx.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("dis-params"),
@@ -459,6 +521,12 @@ impl GpuFlow {
         let init = buf("dis-init", w * h * 16);
         let tmp = buf("dis-tmp", w * h * 16);
         let patch = buf("dis-patch", np0 * 16);
+        // Refinement scratch, sized for L0 and reused at every level and in
+        // both directions — a level only ever uses its own w×h prefix, and the
+        // levels run one at a time.
+        let warp = buf("dis-vr-warp", w * h * 16);
+        let warp2 = buf("dis-vr-warp2", w * h * 16);
+        let duv = buf("dis-vr-duv", w * h * 16);
         let staging = self.ctx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("dis-staging"),
             size: (w * h * 16 * 2) as u64,
@@ -498,10 +566,10 @@ impl GpuFlow {
             let mut per_level = Vec::with_capacity(levels.len());
             for l in (0..levels.len()).rev() {
                 let lv = &levels[l];
-                let (luma_t, luma_o, grad_t) = if dir_ab {
-                    (&lv.luma_a, &lv.luma_b, &lv.grad_a)
+                let (luma_t, luma_o, grad_t, grad_o) = if dir_ab {
+                    (&lv.luma_a, &lv.luma_b, &lv.grad_a, &lv.grad_b)
                 } else {
-                    (&lv.luma_b, &lv.luma_a, &lv.grad_b)
+                    (&lv.luma_b, &lv.luma_a, &lv.grad_b, &lv.grad_a)
                 };
                 let dense = if dir_ab { &lv.dense_ab } else { &lv.dense_ba };
                 let upsample = if l + 1 < levels.len() {
@@ -532,10 +600,35 @@ impl GpuFlow {
                         &[(1, luma_t), (2, luma_o), (4, &init), (5, &patch), (6, &tmp)],
                     ),
                     smooth: self.bind(&lv.params, &[(1, luma_t), (4, &tmp), (6, dense)]),
+                    // Refinement (K-257). `grad_o` is the *other* frame's
+                    // Sobel, which is what vr_warp samples along the flow;
+                    // every later pass wants the template's instead.
+                    vr_warp: self.bind(
+                        &lv.params,
+                        &[
+                            (1, luma_t),
+                            (2, luma_o),
+                            (3, grad_o),
+                            (4, dense),
+                            (6, &warp),
+                        ],
+                    ),
+                    vr_init_duv: self.bind(&lv.params, &[(4, dense), (6, &duv)]),
+                    vr_deriv: self.bind(&lv.params, &[(4, &warp), (6, &warp2)]),
+                    vr_sor: self.bind(
+                        &lv.params,
+                        &[(3, grad_t), (4, &warp), (5, &warp2), (6, &duv)],
+                    ),
+                    vr_apply: self.bind(&lv.params, &[(4, &duv), (6, dense)]),
+                    vr_validity: self.bind(&lv.params, &[(1, luma_t), (2, luma_o), (6, dense)]),
                     w: lv.w,
                     h: lv.h,
                     npx: lv.npx,
                     npy: lv.npy,
+                    // The oracle scales the iteration count by depth from the
+                    // coarsest level; `per_level` is built coarse-first, so
+                    // that is simply how many levels have been pushed already.
+                    vr_outer: set.refine_iters as usize * (per_level.len() + 1),
                 });
             }
             dir_binds.push(per_level);
@@ -543,6 +636,7 @@ impl GpuFlow {
         let plan = Plan {
             w,
             h,
+            set: *set,
             levels,
             init,
             staging,

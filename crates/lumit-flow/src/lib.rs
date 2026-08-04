@@ -2208,19 +2208,12 @@ mod tests {
                 }),
             ),
         ];
-        // The shader implements DIS parts one and two; the variational
-        // refinement of K-257 has no WGSL pass yet, and `flow_pair_with`
-        // refuses rather than return a differently-measured field. Parity is
-        // therefore measured on the two-part path both backends do implement —
-        // when the refinement lands in WGSL, this `refine_iters: 0` comes out
-        // and the test covers the whole algorithm again.
-        let two_part = FlowSettings {
-            refine_iters: 0,
-            ..FlowSettings::default()
-        };
+        // All three parts of DIS, both backends (K-257): the shader now has
+        // the refinement, and the oracle's red-black sweeps mean the two can
+        // agree step for step rather than merely in spirit.
         for (i, (a, b)) in scenes.iter().enumerate() {
-            let (cf, cg) = flow_pair_with(a, b, &two_part);
-            let (gf, gg) = g.flow_pair_with(a, b, &two_part).unwrap();
+            let (cf, cg) = flow_pair(a, b);
+            let (gf, gg) = g.flow_pair(a, b).unwrap();
             let (df, dg) = (mean_abs_diff(&cf, &gf), mean_abs_diff(&cg, &gg));
             assert!(df < 1e-3, "scene {i}: fwd CPU/GPU diff {df}");
             assert!(dg < 1e-3, "scene {i}: bwd CPU/GPU diff {dg}");
@@ -2244,12 +2237,8 @@ mod tests {
         let (w, h) = (160, 128);
         let a = render(w, h, |x, y| perlin(x, y, 9));
         let b = render(w, h, |x, y| perlin(x - 5.2, y + 3.4, 9));
-        let two_part = FlowSettings {
-            refine_iters: 0,
-            ..FlowSettings::default()
-        };
-        let (f1, g1) = g.flow_pair_with(&a, &b, &two_part).unwrap();
-        let (f2, g2) = g.flow_pair_with(&a, &b, &two_part).unwrap();
+        let (f1, g1) = g.flow_pair(&a, &b).unwrap();
+        let (f2, g2) = g.flow_pair(&a, &b).unwrap();
         assert_eq!(f1.u, f2.u);
         assert_eq!(f1.v, f2.v);
         assert_eq!(f1.valid, f2.valid);
@@ -2308,6 +2297,18 @@ mod tests {
         }
         let per_pair = t0.elapsed() / runs;
         eprintln!("gpu flow pair, parts 1-2 (960x540): {per_pair:?}");
+
+        for _ in 0..3 {
+            let _ = g.flow_pair(&a, &b); // warm the refined plan
+        }
+        let t0 = std::time::Instant::now();
+        for _ in 0..runs {
+            let _ = g.flow_pair(&a, &b).expect("refined GPU path");
+        }
+        eprintln!(
+            "gpu flow pair, all three parts (960x540): {:?}",
+            t0.elapsed() / runs
+        );
 
         let t0 = std::time::Instant::now();
         let _ = flow_pair_with(&a, &b, &two_part);
