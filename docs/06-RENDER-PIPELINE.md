@@ -368,6 +368,15 @@ Playback reads VRAM first, promotes RAM→VRAM, and promotes disk→RAM→VRAM a
 (never plays directly from disk). Writes are write-behind on background IO threads; a disk
 write never blocks a render.
 
+**A write-behind queue MUST be bounded and de-duplicated (K-277).** Its entries are whole
+frames, so its depth is a memory budget: at most eight frames may be waiting to be written,
+and a frame already on its way down is never handed over a second time. A frame counts as
+parked only when its write has *finished*, so anything deciding what to copy down MUST ask
+"is it on its way?" as well as "is it there?" — asking only the second is how the idle
+backup re-queued the same frames every few milliseconds until the application held tens of
+gigabytes. A refused park costs that frame its place on disk and nothing else: it is still
+on the card and in memory, and it is offered again later.
+
 **Shipped (K-214).** All three tiers run. The VRAM tier holds finished display textures
 (K-187), the RAM tier holds their bytes, and the disk tier parks them in a folder that
 outlives the session. The rungs between them are built both ways: a frame evicted from VRAM

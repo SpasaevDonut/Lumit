@@ -3157,6 +3157,19 @@ When you stop interacting, an idle pass fills the tiers around the playhead
 rather than sitting still — rendering neighbours it does not have, and copying
 held frames down to disk. It never re-renders a frame it already holds somewhere.
 
+**Writing to disk happens behind your back, and that had a sting in it (K-277).**
+A frame is handed to the disk thread and forgotten, and that thread has to
+convert, compress and write it — slower than the graphics card can hand frames
+over. A frame only counts as *on disk* once its write has finished, so the idle
+pass, which asks that question every few milliseconds, saw every frame still in
+the queue as one it had never copied, and handed it over again. And again. Each
+copy is a whole frame of memory (8 MB at 1080p) sitting in a queue nobody
+counted, and on a Mac left running the application reached 81 GB. Two rules fix
+it and are now the only way a frame reaches the disk thread: a frame already on
+its way is not sent again, and at most eight may be waiting at once. Past that
+the copy is simply skipped — the frame is still on the card and in memory, and it
+will be offered again later.
+
 **The cache bar** under the time ruler shows what is held: mint at the current
 preview resolution, dimmed mint only at a coarser one, steel-blue on disk,
 nothing for absent. The render worker computes the strip and publishes it; the
@@ -3199,6 +3212,11 @@ own picture cost in the frame at the playhead, and twirling a layer open puts th
 same kind of number on each effect's heading; the Effect controls panel shows it
 on the effect's title row too. So "why is this comp slow" is answered with names
 and numbers rather than guesses.
+
+**Finding the column.** With nothing being measured the column shows a dimmed
+dash on every row rather than sitting blank — a blank column looks broken —
+and clicking any of those dashes starts the measuring. The stopwatch in the
+column's header does the same, and switches it back off.
 
 **A measured frame is a re-made frame.** Lumit keeps finished frames — on the
 graphics card, in memory, on disk — so returning to one costs a copy rather

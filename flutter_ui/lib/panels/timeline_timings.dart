@@ -14,8 +14,10 @@
 // means the work rather than the paperwork — and not free: that wait is the
 // overlap a brisk preview lives on. So the column's header carries a stopwatch,
 // nothing is measured until it is pressed, and playback is never measured
-// whatever it says. Off, the column shows dashes and the engine does exactly
-// what it did before this existed.
+// whatever it says. Off, the column shows dimmed dashes — and a click on any of
+// them starts measuring, so the column is its own switch and cannot read as a
+// feature that does not work — and the engine does exactly what it did before
+// this existed.
 
 import 'package:flutter/widgets.dart';
 import 'package:provider/provider.dart';
@@ -34,7 +36,8 @@ class TimingsHeaderCell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    final timings = Provider.of<LumitUiState>(context, listen: false).renderTimings;
+    final timings =
+        Provider.of<LumitUiState>(context, listen: false).renderTimings;
     return ListenableBuilder(
       listenable: timings,
       builder: (context, _) {
@@ -76,9 +79,17 @@ class TimingsHeaderCell extends StatelessWidget {
 /// One measured cost, right-aligned so a column of them reads as numbers.
 ///
 /// [layerId] and [effectId] are alternatives — a layer row gives the first, an
-/// effect's heading the second. A dash means the last measured frame had no
-/// such row (it was hidden, outside its span, or inside a Precomp), and a
-/// blank means nothing is being measured at all.
+/// effect's heading the second.
+///
+/// **A dash, never a blank.** The first version drew nothing at all while the
+/// column was idle, and the column was reported as broken within the day: a
+/// header called Time over a row per layer and nothing in any of them looks
+/// exactly like a feature that does not work, and the switch that would fill it
+/// was a glyph in the header nobody had reason to press. So an idle cell shows
+/// a dimmed dash and **a click on it starts measuring** — the column is its own
+/// switch, wherever you reach for it. A dash at full strength means the
+/// opposite: measuring is on and the last measured frame had no such row (it
+/// was hidden, outside its span, or inside a Precomp).
 class TimingsCell extends StatelessWidget {
   final String? layerId;
   final String? effectId;
@@ -88,27 +99,38 @@ class TimingsCell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    final timings = Provider.of<LumitUiState>(context, listen: false).renderTimings;
+    final timings =
+        Provider.of<LumitUiState>(context, listen: false).renderTimings;
     return ListenableBuilder(
       listenable: timings,
       builder: (context, _) {
-        if (!timings.measuring) return const SizedBox.shrink();
+        final on = timings.measuring;
         final id = layerId ?? effectId;
-        final ms = id == null
+        final ms = !on || id == null
             ? null
             : layerId != null
                 ? timings.layerMs(id)
                 : timings.effectMs(id);
-        return Align(
+        final cell = Align(
           alignment: Alignment.centerRight,
           child: Padding(
             padding: const EdgeInsets.only(right: 4),
             child: Text(
               ms == null ? '—' : formatRenderMs(ms),
-              style: t.small,
+              style: on ? t.small : t.small.copyWith(color: t.textDisabled),
               maxLines: 1,
               overflow: TextOverflow.clip,
             ),
+          ),
+        );
+        if (on) return cell;
+        return LumitTooltip(
+          message: 'Render time — click to measure what this costs '
+              '(it slows the frames it measures)',
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => timings.setMeasuring(true),
+            child: cell,
           ),
         );
       },

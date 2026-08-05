@@ -497,7 +497,21 @@ class _EffectSection extends StatelessWidget {
         // itself and clips rather than pushing anything.
         Expanded(child: TimingsCell(effectId: '$id')),
       ],
-      // Right-click is where reordering lives now (K-276): the two arrows that
+      // Drag the heading to move the effect (docs/07 §6): the gesture the rest
+      // of the application already uses to reorder a list, and the one the
+      // owner asked for.
+      dragIndex: index,
+      onDropped: (from) {
+        final stack = layer.getEffects();
+        if (from < 0 || from >= stack.length) return;
+        try {
+          layer.reorderEffect(effect: stack[from], newIndex: index);
+        } catch (_) {
+          // The stack changed under the drag; re-reading is the recovery.
+        }
+        onStackChanged();
+      },
+      // Right-click is where the rest of the reordering lives (K-276): the two arrows that
       // used to sit here spent permanent space on a rare act, and the render
       // time — read constantly while a comp is being made faster — earns that
       // space instead. Nothing is lost: the menu moves an effect a step, and

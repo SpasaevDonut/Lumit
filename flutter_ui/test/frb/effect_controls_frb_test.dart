@@ -270,6 +270,35 @@ void main() {
       expect(p.layer.getEffects(), hasLength(1));
     });
 
+    /// Dragging an effect's name to another effect's name moves it there — the
+    /// gesture the owner asked for and the one every other list in the
+    /// application already uses (docs/07 §6).
+    testWidgets('an effect is reordered by dragging its heading',
+        (tester) async {
+      final p = withLayer();
+      p.layer.addEffect(name: 'blur');
+      p.layer.addEffect(name: 'sharpen');
+      await mount(tester, p);
+
+      final before = p.layer.getEffects().map((e) => e.name()).toList();
+      expect(before, ['blur', 'sharpen']);
+
+      // The second heading onto the first: sharpen takes blur's place.
+      final from = find.text(effectLabelOf('sharpen'));
+      final onto = find.text(effectLabelOf('blur'));
+      final drag = await tester.startGesture(tester.getCenter(from));
+      // Past the drag threshold in steps, so the Draggable starts and the
+      // target under the pointer is entered before the release.
+      await tester.pump(const Duration(milliseconds: 20));
+      await drag.moveTo(tester.getCenter(onto));
+      await tester.pump(const Duration(milliseconds: 20));
+      await drag.up();
+      await tester.pumpAndSettle();
+
+      expect(p.layer.getEffects().map((e) => e.name()).toList(),
+          ['sharpen', 'blur']);
+    });
+
     testWidgets('the top card is offered no way up, and the bottom none down',
         (tester) async {
       final p = withLayer();

@@ -841,8 +841,11 @@ layer row opens the **layer menu** — duplicate, reorder, delete.
 **The render-time column (K-276, [13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md) §7.1)**
 shows what each layer's own picture cost in the frame at the playhead, and — on a layer
 twirled open — what each effect in its stack cost, on that effect's heading row and in the
-same column. It MUST carry its own switch (a stopwatch in the header) and MUST measure
-nothing until that switch is on, because measuring makes the engine wait for the graphics
+same column. An idle column MUST show a dimmed dash per row rather than nothing, and a
+click on any of them MUST start measuring: a column of blanks reads as a broken feature,
+and a switch only in the header is a switch nobody finds. It MUST carry its own switch (a
+stopwatch in the header, which also switches it back off) and MUST measure nothing until
+that switch is on, because measuring makes the engine wait for the graphics
 card at every node: an honest millisecond, at the price of the overlap a brisk preview lives
 on, and a measured frame MUST be composited rather than served from a cache — a held
 frame cost a copy and has no per-layer cost to report, so the column would otherwise stay
@@ -1185,6 +1188,10 @@ Shows the **effect stack** of the selected layer (tab per recently viewed layer,
   appear in Effects & Presets (§7) and serialise per [10-FILE-FORMAT.md](10-FILE-FORMAT.md)
   for sharing (K-065).
 
+  **Shipped: drag-to-reorder** (K-276) — dragging an effect's heading onto another's moves
+  it to that place, the same "take hold of the name" gesture the Timeline and the Project
+  panel use; the heading under the pointer marks itself so the place being taken is clear.
+
   **Shipped: the panel's layout.** The panel is **one list, not a stack of cards** — the same
   reading as the Timeline's twirl-down (§4.3), which is where the same parameters also appear.
   Each section (Source, Transform, and one per effect) is a **heading bar that twirls**, with a
@@ -1217,8 +1224,7 @@ Shows the **effect stack** of the selected layer (tab per recently viewed layer,
   itself, so the first one does not become a special case in the middle of the layout. Nothing
   claims a display yet.
 
-  Still to build here: drag-to-reorder by the effect's name, solo, rename, and the expression
-  toggle.
+  Still to build here: solo, rename, and the expression toggle.
 
 ### 6.1 The colour picker and the dropper (K-210)
 

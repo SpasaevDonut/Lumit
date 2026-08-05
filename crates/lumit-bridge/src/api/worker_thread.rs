@@ -370,18 +370,24 @@ fn drain_demotions(state: &mut WorkerState) {
         // the same time, and it is 8 MB at 1080p, thus a copy for each tier was
         // the most costly part of a demotion.
         let bytes = std::sync::Arc::new(std::mem::take(&mut demoted.rgba));
-        _ = state.disk.tx.send(lumit_render::diskio::Cmd::Store {
-            hash: demoted.key,
-            width: demoted.width,
-            height: demoted.height,
-            bgra: demoted.bgra,
-            bytes: bytes.clone(),
-            // What it cost and what size it was made at, so the disk tier's cap
-            // can weigh it against its neighbours rather than taking whatever
-            // was written first (docs/06 §5.3).
-            cost_ms: demoted.cost_ms,
-            scale_q: demoted.provenance.scale_q,
-        });
+        // `park` rather than a bare send: it refuses a frame already on its way
+        // down and refuses everything once the queue is full, which is what
+        // keeps a write-behind queue from becoming a memory leak (K-277). A
+        // refusal costs this frame its place on disk and nothing else — it is
+        // still on the card and in memory, and it will be offered again.
+        //
+        // What it cost and what size it was made at go with it, so the disk
+        // tier's cap can weigh it against its neighbours rather than taking
+        // whatever was written first (docs/06 §5.3).
+        _ = state.disk.park(
+            demoted.key,
+            demoted.width,
+            demoted.height,
+            demoted.bgra,
+            bytes.clone(),
+            demoted.cost_ms,
+            demoted.provenance.scale_q,
+        );
         crate::framecache::put_demoted(demoted.key, &demoted, bytes);
     }
 }
@@ -1018,8 +1024,19 @@ fn idle_backup(state: &mut WorkerState) {
     }
     // Two disjoint borrows of the worker's state: the renderer walks its held
     // frames, the disk mirror answers which of them are already parked.
+    //
+    // **Already parked OR already on its way** (K-277). A frame counts as
+    // parked only once the write has finished, so asking `contains` alone made
+    // every frame in the write queue look like one that had never been
+    // offered: this loop wakes every couple of milliseconds, so it read the
+    // same frames off the card and queued them again and again, each copy a
+    // whole frame of memory behind a thread already behind. That is how the
+    // application reached tens of gigabytes while sitting idle.
     let disk = &state.disk;
-    if !state.renderer.start_backup(&|hash| disk.contains(hash)) {
+    if !state
+        .renderer
+        .start_backup(&|hash| disk.contains(hash) || disk.is_pending(hash))
+    {
         state.backup_exhausted = true;
     }
 }

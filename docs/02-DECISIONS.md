@@ -5749,4 +5749,34 @@ cost of asking, which is what the switch is for. **(5) The effect heading's two 
 arrows give up their place to the render time.** Moving an effect is a handful of acts
 in a session and read-what-it-costs is continuous while a comp is being made faster, so
 the arrows become a right-click menu on the heading — which can also send an effect
-straight to the top or the bottom, and lists only the moves that effect can make.
+straight to the top or the bottom, and lists only the moves that effect can make — and
+the heading itself **drags to reorder** (docs/07 §6's owed gesture, and the one every
+other list in the application already uses: the name is what you take hold of, the
+heading under the pointer lights up to say which place is being taken). **(6) A column
+that is idle says so.** Reported the same day as (4), and the more instructive half of
+it: the column drew *nothing* until measuring was switched on, so a header called Time
+over a row per layer and nothing in any of them read exactly like a feature that did not
+work — and the switch was a glyph in a header nobody had reason to press. An idle cell
+now shows a dimmed dash, and **a click on any of them starts measuring**: the column is
+its own switch, wherever the user reaches for it, and the header keeps its stopwatch for
+switching back off. A discoverability bug is a bug; a feature nobody can find is not
+shipped.
+
+**K-277 · DECIDED · The disk tier's write queue is bounded and de-duplicated, because a
+write-behind queue nobody counts is a memory leak.** Reported from a Mac: the system ran
+out of memory with Lumit holding 81 GB, while the editor sat idle. The idle backup
+(docs/06 §5.5, K-215) copies held frames down to disk, and it decides what to copy by
+asking the disk mirror "is this frame parked?" — a question that only turns true once the
+*write has finished*. Parking is write-behind by design, so between handing a frame over
+and the write landing, that frame looked to the backup exactly like one that had never
+been offered. The loop wakes every couple of milliseconds: it read the same frames off the
+card and handed them over again, and again, each copy a whole frame (8 MB at 1080p)
+queued behind an IO thread that had to swizzle, compress and write — so the queue grew as
+fast as the graphics card could read back, for as long as the editor was left alone. The
+fix is two rules, in one place (`diskio::ParkQueue`, the only route to `Cmd::Store`): a
+frame already on its way down is not offered again (`DiskIo::is_pending`, asked beside
+`contains`), and at most **eight** frames may be waiting at once — past that a park is
+refused, which costs that frame its place on disk and nothing else, since it is still on
+the card and in memory and will be offered again. This is the docs/14 §5 decision the
+unbounded channel needed and never had: `Cmd::Store` carries whole frames, so its depth
+*is* a memory budget, and 64 MB is the ceiling now written down.
