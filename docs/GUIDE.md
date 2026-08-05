@@ -3200,6 +3200,14 @@ same kind of number on each effect's heading; the Effect controls panel shows it
 on the effect's title row too. So "why is this comp slow" is answered with names
 and numbers rather than guesses.
 
+**A measured frame is a re-made frame.** Lumit keeps finished frames — on the
+graphics card, in memory, on disk — so returning to one costs a copy rather
+than a render. A copy has nothing to say about what the layers cost, so while
+the stopwatch is on the engine steps over all of that and composites the frame
+properly. That is why switching it on also re-asks for the frame you are looking
+at: otherwise the column would sit empty until you happened to scrub somewhere
+nothing had been made yet.
+
 **Why it has a switch.** Work for the graphics card is *handed over*, not
 performed: the call that blurs a layer returns long before the card has blurred
 anything. Timing that call would therefore time the paperwork. So a measured

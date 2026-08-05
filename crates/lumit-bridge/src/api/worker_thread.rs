@@ -901,7 +901,17 @@ fn prepare_frame(
     let name = cacheable
         .then(|| state.renderer.frame_key(document, comp, frame, quality))
         .flatten();
-    if let Some(key) = name.filter(|key| !state.renderer.has_frame_texture(*key, bgra)) {
+    // While the render-time column is measuring, the ladder is stepped over
+    // entirely: a frame promoted from memory or read off disk cost a copy, not
+    // a composite, so it has no per-layer numbers to give — and a column that
+    // only ever fills in on frames the cache has not already made is a column
+    // that looks broken (docs/13 §7.1). The renderer skips its own held
+    // textures for the same reason.
+    let measuring = state.renderer.measuring();
+    if let Some(key) = name
+        .filter(|_| !measuring)
+        .filter(|key| !state.renderer.has_frame_texture(*key, bgra))
+    {
         let provenance = lumit_render::FrameProvenance {
             comp,
             frame,

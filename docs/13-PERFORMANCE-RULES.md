@@ -222,7 +222,9 @@ A built-in profiler, surfaced in the UI — After Effects' composition profiler 
   *submitted* rather than performed and an unfenced span would time the paperwork. That is a
   true per-node number at the cost of the processor/card overlap for the frame measured, so
   it is opt-in (the Timeline column's stopwatch), never on during playback, and off by
-  default. Timestamp queries are what would make it continuous and free; TODO tracks the
+  default. A measured frame is also a **composited** frame: while the switch is on the
+  cache ladder is stepped over, because a frame served from a tier costs a copy and so
+  has nothing to say about what its layers cost. Timestamp queries are what would make it continuous and free; TODO tracks the
   upgrade, and until then the honest description of this rung is "measured when asked".
 - Timeline column: per-layer render time for the current frame, sortable, with effect-level
   drill-down in a profiler panel ([07-UI-SPEC.md](07-UI-SPEC.md)). **Built (K-276):** the

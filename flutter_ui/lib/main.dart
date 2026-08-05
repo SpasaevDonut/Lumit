@@ -517,7 +517,13 @@ class LumitUiState extends ChangeNotifier {
   /// The last measured frame's per-layer and per-effect render times
   /// (docs/13 §7.1). Empty — and the engine not measuring — until a column or
   /// a panel that shows the numbers asks for them.
-  final RenderTimings renderTimings = RenderTimings();
+  ///
+  /// Switching it on asks for the frame under the playhead again, because
+  /// numbers only exist for a frame the engine actually composites: without
+  /// this the column sat empty until something else happened to want a render,
+  /// which on a comp the idle fill had already made could be for ever.
+  late final RenderTimings renderTimings =
+      RenderTimings(onMeasuringStarted: requestFrame);
 
   /// Whether the engine is playing.
   ///
@@ -1026,7 +1032,7 @@ class LumitUiState extends ChangeNotifier {
         case WorkerResponse_RenderProgress(:final field0):
           previewProgress.report(field0);
         // What the frame just made cost. Only sent while something is showing
-        // the numbers (`RenderTimings.watch`).
+        // the numbers (`RenderTimings.setMeasuring`).
         case WorkerResponse_FrameProfile(:final field0):
           renderTimings.report(field0);
       }

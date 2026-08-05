@@ -542,6 +542,21 @@ impl HeadlessRenderer {
         self.measuring = measuring;
     }
 
+    /// Whether the frames from here on are being measured **and** there is
+    /// somewhere for the numbers to go.
+    ///
+    /// The caller that owns the tiers above this renderer asks, because a
+    /// measured frame has to be a *composited* one: a frame served from a cache
+    /// costs nothing and therefore reveals nothing, and the whole point of the
+    /// switch is to find out what the composite costs. Without this a warm
+    /// composition — one the idle fill has already made — showed no numbers at
+    /// all however long you looked at it (found on macOS, and it is every
+    /// platform).
+    #[must_use]
+    pub fn measuring(&self) -> bool {
+        self.measuring && self.profile.is_some()
+    }
+
     /// The recorder for one frame, or `None` when this frame is neither
     /// watched nor measured — in which case the render walks exactly as it did
     /// before the profiler existed.
@@ -1032,7 +1047,12 @@ impl HeadlessRenderer {
         name: Option<u128>,
     ) -> Result<PreparedFrame, String> {
         let key = name.map(|k| (k, bgra));
-        if let Some(key) = key {
+        // A measured frame is composited even when one is already held: a cache
+        // hit is free, so it has nothing to say about what the layers cost, and
+        // a column of numbers that only fills in on frames nobody has visited
+        // is worse than no column. The re-render is the price of asking, and
+        // the switch is off unless somebody is (see [`Self::measuring`]).
+        if let Some(key) = key.filter(|_| !self.measuring()) {
             if let Some(held) = self.frame_textures.get(&key) {
                 self.frame_texture_hits += 1;
                 return Ok(PreparedFrame {

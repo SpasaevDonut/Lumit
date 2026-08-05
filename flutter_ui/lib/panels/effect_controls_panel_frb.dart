@@ -497,44 +497,22 @@ class _EffectSection extends StatelessWidget {
         // itself and clips rather than pushing anything.
         Expanded(child: TimingsCell(effectId: '$id')),
       ],
-      trailing: Row(
-        children: [
-          _markButton(
-            context,
-            mark: '▲',
-            tip: 'Move up the stack',
-            enabled: index > 0,
-            key: 'fx-up-$id',
-            onPressed: () {
-              _withHandle(
-                  (e) => layer.reorderEffect(effect: e, newIndex: index - 1));
-              onStackChanged();
-            },
-          ),
-          _markButton(
-            context,
-            mark: '▼',
-            tip: 'Move down the stack',
-            enabled: index < count - 1,
-            key: 'fx-down-$id',
-            onPressed: () {
-              _withHandle(
-                  (e) => layer.reorderEffect(effect: e, newIndex: index + 1));
-              onStackChanged();
-            },
-          ),
-          _markButton(
-            context,
-            mark: '×',
-            tip: 'Remove this effect',
-            enabled: true,
-            key: 'fx-remove-$id',
-            onPressed: () {
-              _withHandle((e) => layer.removeEffect(effect: e));
-              onStackChanged();
-            },
-          ),
-        ],
+      // Right-click is where reordering lives now (K-276): the two arrows that
+      // used to sit here spent permanent space on a rare act, and the render
+      // time — read constantly while a comp is being made faster — earns that
+      // space instead. Nothing is lost: the menu moves an effect a step, and
+      // to either end.
+      onContextMenu: (at) => _stackMenu(context, at),
+      trailing: _markButton(
+        context,
+        mark: '×',
+        tip: 'Remove this effect',
+        enabled: true,
+        key: 'fx-remove-$id',
+        onPressed: () {
+          _withHandle((e) => layer.removeEffect(effect: e));
+          onStackChanged();
+        },
       ),
       // An effect with its own display draws that instead of a row per
       // parameter; nothing claims one yet.
@@ -684,6 +662,80 @@ class _EffectSection extends StatelessWidget {
   /// A small text mark rather than an icon, matching v0's × for Remove — the
   /// icon set has no caret or close glyph, and three marks do not earn three
   /// new ones.
+  /// The effect heading's right-click menu: where it sits in the stack, and
+  /// removing it. Reordering is a handful of acts in a session, so it lives
+  /// here rather than in two buttons on every heading — and unlike the arrows
+  /// it can send an effect to the top or the bottom in one go.
+  void _stackMenu(BuildContext context, Offset at) {
+    final id = info.id;
+    void move(int to) {
+      _withHandle((e) => layer.reorderEffect(effect: e, newIndex: to));
+      onStackChanged();
+    }
+
+    showLumitPopup<void>(
+      context: context,
+      position: at,
+      builder: (close) => FloatSurface(
+        width: 190,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          // Only the moves this effect can actually make are listed: a menu of
+          // dead rows tells you what you cannot do, which is not what a menu
+          // is for (docs/15 §no punishment UI).
+          children: [
+            if (index > 0) ...[
+              MenuRow(
+                key: ValueKey<String>('fx-menu-up-$id'),
+                onPressed: () {
+                  close(null);
+                  move(index - 1);
+                },
+                child: const Text('Move up'),
+              ),
+              MenuRow(
+                key: ValueKey<String>('fx-menu-top-$id'),
+                onPressed: () {
+                  close(null);
+                  move(0);
+                },
+                child: const Text('Move to top'),
+              ),
+            ],
+            if (index < count - 1) ...[
+              MenuRow(
+                key: ValueKey<String>('fx-menu-down-$id'),
+                onPressed: () {
+                  close(null);
+                  move(index + 1);
+                },
+                child: const Text('Move down'),
+              ),
+              MenuRow(
+                key: ValueKey<String>('fx-menu-bottom-$id'),
+                onPressed: () {
+                  close(null);
+                  move(count - 1);
+                },
+                child: const Text('Move to bottom'),
+              ),
+            ],
+            MenuRow(
+              key: ValueKey<String>('fx-menu-remove-$id'),
+              onPressed: () {
+                close(null);
+                _withHandle((e) => layer.removeEffect(effect: e));
+                onStackChanged();
+              },
+              child: const Text('Remove effect'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _markButton(
     BuildContext context, {
     required String mark,

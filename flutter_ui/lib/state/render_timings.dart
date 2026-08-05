@@ -26,8 +26,17 @@ class RenderTimings extends ChangeNotifier {
   /// the real call and every caller in the application uses it.
   final void Function(bool on) _askEngine;
 
-  RenderTimings({void Function(bool on)? askEngine})
-      : _askEngine = askEngine ?? ((on) => setRenderProfiling(on_: on));
+  /// Called when measuring starts, to ask for the frame under the playhead
+  /// again. A number only exists for a frame the engine *composites*, and the
+  /// frame on screen has already been made — so without a fresh ask the column
+  /// would stay empty until something else happened to want a render.
+  final void Function()? _onMeasuringStarted;
+
+  RenderTimings({
+    void Function(bool on)? askEngine,
+    void Function()? onMeasuringStarted,
+  })  : _askEngine = askEngine ?? ((on) => setRenderProfiling(on_: on)),
+        _onMeasuringStarted = onMeasuringStarted;
 
   bool _measuring = false;
 
@@ -60,7 +69,9 @@ class RenderTimings extends ChangeNotifier {
     if (_measuring == on) return;
     _measuring = on;
     _askEngine(on);
-    if (!on) {
+    if (on) {
+      _onMeasuringStarted?.call();
+    } else {
       _frame = null;
       _totalMs = null;
       _layers = const {};

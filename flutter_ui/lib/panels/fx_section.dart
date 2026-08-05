@@ -48,6 +48,11 @@ class FxSection extends StatelessWidget {
   /// Hard right — the close mark.
   final Widget? trailing;
 
+  /// A right-click on the heading, with the pointer's global position — where
+  /// the actions that are not worth a permanent button live (an effect's
+  /// reordering, K-276). Null leaves the secondary click unclaimed.
+  final void Function(Offset at)? onContextMenu;
+
   /// The rows under the heading, drawn only while [open].
   final List<Widget> rows;
 
@@ -60,6 +65,7 @@ class FxSection extends StatelessWidget {
     this.leading,
     this.actions = const [],
     this.trailing,
+    this.onContextMenu,
   });
 
   @override
@@ -98,6 +104,9 @@ class FxSection extends StatelessWidget {
   Widget _heading(LumitTheme t) => GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: onToggle,
+        onSecondaryTapUp: onContextMenu == null
+            ? null
+            : (details) => onContextMenu!(details.globalPosition),
         child: Container(
           color: t.surface2,
           padding: const EdgeInsets.fromLTRB(4, 4, 6, 4),

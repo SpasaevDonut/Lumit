@@ -5736,4 +5736,17 @@ carries a stopwatch switch, nothing is measured until it is pressed, playback is
 measured whatever it says, and turning it off drops the numbers rather than leaving
 stale ones on screen. §7.1's "continuously, at negligible cost" wants GPU timestamp
 queries and stays the recorded follow-up in TODO; what ships is honest about which of
-the two it is.
+the two it is. **(4) A measured frame is a composited frame.** Found on macOS the day
+this landed: the column drew nothing, ever. Numbers exist only for a frame the engine
+actually composites, and a frame the cache already holds is served without one — so on
+any composition warm enough to be worth profiling (which is every composition a moment
+after it opens, the idle fill seeing to that) every render was a cache hit and reported
+nothing. While measuring, the whole ladder is therefore stepped over — the renderer's
+own held textures, the RAM tier, the disk tier — and switching the column on asks for
+the frame under the playhead again, so the numbers appear where the user is looking
+rather than at the next place they happen to scrub to. Re-rendering held frames is the
+cost of asking, which is what the switch is for. **(5) The effect heading's two reorder
+arrows give up their place to the render time.** Moving an effect is a handful of acts
+in a session and read-what-it-costs is continuous while a comp is being made faster, so
+the arrows become a right-click menu on the heading — which can also send an effect
+straight to the top or the bottom, and lists only the moves that effect can make.

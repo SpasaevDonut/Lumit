@@ -844,7 +844,11 @@ twirled open — what each effect in its stack cost, on that effect's heading ro
 same column. It MUST carry its own switch (a stopwatch in the header) and MUST measure
 nothing until that switch is on, because measuring makes the engine wait for the graphics
 card at every node: an honest millisecond, at the price of the overlap a brisk preview lives
-on. Playback MUST never be measured whatever the switch says, and switching off MUST drop
+on, and a measured frame MUST be composited rather than served from a cache — a held
+frame cost a copy and has no per-layer cost to report, so the column would otherwise stay
+empty on exactly the compositions worth profiling. Switching the column on MUST ask for
+the frame under the playhead again, so the numbers appear where the user is looking.
+Playback MUST never be measured whatever the switch says, and switching off MUST drop
 the numbers rather than leave a stale frame's costs on screen. The same per-effect number
 appears on the effect's title row in the Effect controls panel (§6), from the same
 measurement — the panel shows the numbers, it does not turn them on.
@@ -1196,8 +1200,13 @@ Shows the **effect stack** of the selected layer (tab per recently viewed layer,
   The **heading row** runs: twirl, the effect's enable switch, the effect's name — all in the
   name column — then **Reset** at the top of the value column, because that is what it acts
   on. Reset writes every parameter's declared default and so drops any curve on it, as one op
-  and therefore one undo step. The stack arrows and the close mark sit hard right, away from
-  Reset: removing an effect is not an adjustment to it.
+  and therefore one undo step. Hard right sit the effect's **render time** (§4.2's column,
+  the same measurement) and the close mark, away from Reset: removing an effect is not an
+  adjustment to it. **Reordering is a right-click on the heading** (K-276) — move up, move
+  down, to the top, to the bottom, remove — rather than the pair of arrows that used to hold
+  that space: moving an effect is a handful of acts in a session, and what it costs is read
+  continuously while a comp is being made faster. The menu lists only the moves that effect
+  can make.
 
   **Round shape keeps its bubble** (K-092): the same rows, wrapped in floating-card chrome.
   The two shapes differ in chrome, not in layout.

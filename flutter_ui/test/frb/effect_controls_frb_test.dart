@@ -8,11 +8,13 @@
 //
 // Every document operation is genuine; see frb_test_support.dart.
 
+import 'package:flutter/gestures.dart' show kSecondaryButton;
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/widgets/controls.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/panels/effect_controls_panel_frb.dart';
+import 'package:lumit_flutter/panels/effect_param_row_frb.dart' show effectLabelOf;
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 
@@ -246,11 +248,18 @@ void main() {
       expect(p.layer.getEffects().first.enabled(), isFalse,
           reason: 'bypassing an effect is a document edit, not a view state');
 
-      // Reorder: the second card's up arrow swaps the pair.
+      // Reorder: right-click the second card's heading and move it up (K-276
+      // put the two arrows' rare job in a menu and gave their space to the
+      // render time, which is read constantly).
       final before = p.layer.getEffects().map((e) => e.name()).toList();
       final second = p.layer.getEffects()[1];
-      await tester.tap(find.byKey(ValueKey<String>('fx-up-${second.id()}')));
-      await tester.pump();
+      await tester.tapAt(
+        tester.getCenter(find.text(effectLabelOf(second.name()))),
+        buttons: kSecondaryButton,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(ValueKey<String>('fx-menu-up-${second.id()}')));
+      await tester.pumpAndSettle();
       expect(p.layer.getEffects().map((e) => e.name()).toList(),
           before.reversed.toList());
 
@@ -261,7 +270,7 @@ void main() {
       expect(p.layer.getEffects(), hasLength(1));
     });
 
-    testWidgets('the top card cannot move up and the bottom cannot move down',
+    testWidgets('the top card is offered no way up, and the bottom none down',
         (tester) async {
       final p = withLayer();
       p.layer.addEffect(name: 'blur');
@@ -269,18 +278,23 @@ void main() {
       await mount(tester, p);
 
       final effects = p.layer.getEffects();
-      final order = effects.map((e) => e.name()).toList();
 
-      // Both are present but inert, so the row's shape does not shift.
-      await tester
-          .tap(find.byKey(ValueKey<String>('fx-up-${effects[0].id()}')));
-      await tester.pump();
-      await tester
-          .tap(find.byKey(ValueKey<String>('fx-down-${effects[1].id()}')));
-      await tester.pump();
-
-      expect(p.layer.getEffects().map((e) => e.name()).toList(), order,
-          reason: 'a disabled arrow does nothing rather than wrapping around');
+      // The topmost effect's menu offers the moves it can make and not the
+      // ones it cannot — a dead row tells you what you cannot do, which is not
+      // what a menu is for.
+      await tester.tapAt(
+        tester.getCenter(find.text(effectLabelOf(effects[0].name()))),
+        buttons: kSecondaryButton,
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(ValueKey<String>('fx-menu-up-${effects[0].id()}')),
+          findsNothing);
+      expect(find.byKey(ValueKey<String>('fx-menu-top-${effects[0].id()}')),
+          findsNothing);
+      expect(find.byKey(ValueKey<String>('fx-menu-down-${effects[0].id()}')),
+          findsOneWidget);
+      expect(find.byKey(ValueKey<String>('fx-menu-bottom-${effects[0].id()}')),
+          findsOneWidget);
     });
 
     testWidgets('an effect twirls shut, and its rows go with it',

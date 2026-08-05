@@ -300,7 +300,10 @@ colour individually; only the two Timeline tokens default from the mode.
 - **Volume keyframes draw no lane diamonds and no graph curve** - volume is not
     in the comp read model; fold it into `BridgeLayerInfo` if either matters.
 
-**Render-time indicator follow-ups (K-276 landed the column).** What ships measures
+**Render-time indicator follow-ups (K-276 landed the column).** Measuring re-renders held
+frames (it must: a cache hit has no cost to report), so a measured scrub is slower than an
+unmeasured one by a whole composite per frame — worth revisiting once timestamp queries make
+the numbers free, since then a frame could carry its costs without being re-made. What ships measures
 by *fencing* — the render waits for the graphics card at each layer and each
 effect before reading the clock, which is why it is opt-in (the column's stopwatch)
 and never runs during playback. The §7.1 target is continuous collection at
