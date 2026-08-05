@@ -290,8 +290,6 @@ colour individually; only the two Timeline tokens default from the mode.
     suspend mid-drag).
 - **Volume keyframes draw no lane diamonds and no graph curve** - volume is not
     in the comp read model; fold it into `BridgeLayerInfo` if either matters.
-- **Effects on a Null are accepted and never run** - either refuse the drop or
-    say plainly that the stack is inert.
 
 **Layer and effect render-time indicator.** Per-layer total render time in ms on
 the layer row, and per-effect time on each effect's title row, both as a Timeline
@@ -324,12 +322,13 @@ migration** from the grandfathered % of frame to px@comp (K-260 convention), and
 writes for a paired keyframe toggle (two ops today).
 
 **Anti-aliasing in the renderer.** Edges of transformed layers, shape strokes and
-text stair-step, worst on a slow rotation. Two questions decide where the setting
-lives: whether the sample count is a **project** property (it changes what a comp
-looks like, so it must match on another machine and in export) or a
-**preference** (it trades quality for speed on this machine), and whether preview
-and export share one value. Sample counts must be checked against the adapter
-rather than assumed.
+text stair-step, worst on a slow rotation. **Decided (owner, 2026-08-05, K-274): a
+project property, on by default, one value shared by preview and export** — it
+changes what a comp looks like, so it must travel with the file and match on
+another machine. Still to build: the MSAA render targets and resolve in the
+composite pass, the project setting through the bridge and its Settings row, and
+the adapter capability check (a sample count must be asked for, never assumed —
+the flare's pooled MSAA in K-265 is the nearest existing shape).
 
 **The stale-fd race on a Linux Viewer resize** (`lumit-render/src/headless.rs`'s
 `shared_dmabuf` re-create, with `lumit-gpu/src/shared_linux.rs`'s `Drop`). The
