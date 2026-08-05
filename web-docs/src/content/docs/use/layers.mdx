@@ -38,6 +38,20 @@ Audio layers and Light layers are specified but not built. See [Audio](/use/audi
 Drag a layer up or down to change what draws over what. Select several layers to apply
 an effect or a command to all of them at once.
 
+Selection is one thing across the application: picking a layer in the Viewer, the
+Timeline, or the Hierarchy panel selects it everywhere.
+
+## Copy and paste
+
+**Edit ▸ Cut / Copy / Paste** carry whole layers between compositions. A copied layer
+keeps everything it owns — transform, keyframes, masks, paint, effects, switches,
+markers, and its retime.
+
+A paste lands the layer's in point at the playhead. A parent or matte reference
+survives only when the target composition still contains that layer. To paste at the
+copied time instead, turn on *Paste layers at their original time* in
+[Settings ▸ Interface](/use/settings/).
+
 ## Switches
 
 <Shot file="layer-switches.png" caption="The switches on a layer's row." />

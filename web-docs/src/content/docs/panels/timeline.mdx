@@ -64,6 +64,17 @@ Twirl a layer open to reach its transform, masks, effects, and their keyframes.
 
 A [Sequence layer](/use/sequence-layers/) shows its clips on one row.
 
+## Render times
+
+A stopwatch switch on the Timeline's bottom strip turns on measuring: each layer's row
+then shows what that layer cost in milliseconds on the last measured frame, each
+effect's heading shows its own cost, and the column header carries the whole frame's.
+A Precomp layer's number includes everything inside it.
+
+Measuring is honest, so it is opt-in: it waits for the graphics card, which costs some
+speed while it is on. Playback is never measured, and switching it off takes the
+numbers with it.
+
 ## Snapping
 
 Dragged keyframes snap to frame boundaries. Snapping to edit points, markers, the

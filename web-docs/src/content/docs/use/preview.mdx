@@ -32,6 +32,13 @@ There are three tiers: VRAM, RAM, and disk.
 Lower the preview resolution to get more speed: full, half, third, quarter, or auto.
 This is real downsampling, and it applies per composition. It never affects export.
 
+## The progress bar
+
+When a frame you are waiting on — a scrub, a playhead move, a value drag — takes
+longer than a moment, a thin bar appears and fills as the frame passes through
+decoding, building, and compositing. Ordinary frames stay silent, and playback never
+shows it: the bar exists to separate a slow frame from a stuck one.
+
 ## Adaptive degradation
 
 Under load, Lumit reduces quality on its own to keep responding — it may drop
