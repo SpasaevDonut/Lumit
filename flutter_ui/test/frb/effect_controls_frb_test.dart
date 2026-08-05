@@ -113,6 +113,65 @@ void main() {
           reason: 'a row per declared parameter, labelled from the schema');
     });
 
+    testWidgets(
+        'a null layer says its effects change no picture, and keeps their values',
+        (tester) async {
+      // K-274: effects on a null are ACCEPTED and labelled inert rather than
+      // refused. A null draws nothing, so nothing here changes a picture — but
+      // the parameters are real, animatable values, which is the whole point
+      // of putting a control on a null.
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      final nul = comp.addNullLayer();
+      p.uiState
+        ..setSelectedComp(comp)
+        ..selectedLayer.value = nul;
+
+      await tester.pumpWidget(hostPanel(
+        child: const EffectControlsPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('fx-null-inert')), findsNothing,
+          reason: 'nothing to say about a stack that is empty');
+
+      nul.addEffect(name: 'blur');
+      p.uiState.model.refresh();
+      await tester.pump();
+      expect(find.byKey(const ValueKey('fx-null-inert')), findsOneWidget,
+          reason: 'the drop is accepted, and the panel says what it does');
+
+      // And the effect is genuinely on the layer, with a readable value — the
+      // difference between "inert" and "refused". (That those values stay
+      // live and animatable is pinned engine-side, where the commit is:
+      // `an_effect_on_a_null_layer_keeps_its_animated_value`.)
+      expect(nul.getEffects().length, 1);
+      expect(find.text('Gaussian blur'), findsOneWidget,
+          reason: 'the stack draws as it does on any other layer');
+    });
+
+    testWidgets('a selection made in the Viewer switches the panel to it',
+        (tester) async {
+      // The Viewer picks a layer by calling `setSelection` on the shell — it
+      // never goes through the Timeline — so this panel must follow the shell,
+      // not the panel that happens to be next to it (K-275).
+      final p = withLayer();
+      p.layer.addEffect(name: 'blur');
+      final other = p.uiState.selectedComp!.addSolidLayer();
+      other.addEffect(name: 'invert');
+      await mount(tester, p);
+      expect(find.text('Gaussian blur'), findsOneWidget);
+
+      p.uiState.setSelection([other]);
+      await tester.pump();
+
+      expect(find.text('Invert'), findsOneWidget,
+          reason: "the panel shows the newly selected layer's stack");
+      expect(find.text('Gaussian blur'), findsNothing,
+          reason: 'and not the one it was showing before');
+    });
+
     testWidgets('a parameter edit commits, and reading it back is exact',
         (tester) async {
       final p = withLayer();

@@ -128,7 +128,7 @@ void main() {
       await tester.pump();
       // Near its left end, not its centre: a fold row spans the whole outline,
       // and the outline is wider than this panel (the render-time column
-      // widened it again, K-268), so the row's centre is off screen.
+      // widened it again, K-276), so the row's centre is off screen.
       await tapNearLeft(
           tester, find.byKey(ValueKey<String>('tl-group-$id/transform')));
       await tester.pump();

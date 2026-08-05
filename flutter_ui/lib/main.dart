@@ -30,6 +30,7 @@ import 'package:lumit_flutter/src/rust/api/project_item.dart';
 import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:lumit_flutter/src/rust/frb_generated.dart';
 import 'package:lumit_flutter/state/comp_model.dart';
+import 'package:lumit_flutter/state/clipboard.dart';
 import 'package:lumit_flutter/state/comp_time.dart';
 import 'package:lumit_flutter/state/dock.dart';
 import 'package:lumit_flutter/state/dropper.dart';
@@ -707,6 +708,27 @@ class LumitUiState extends ChangeNotifier {
   /// The layer everything single-layer works on: Effect controls, the keyboard
   /// commands, the Timeline's fold-out. The *primary* of the selection below.
   ValueNotifier<LayerReference?> selectedLayer = ValueNotifier(null);
+
+  /// What Copy put down, for Paste to pick up (K-275). One tray for the
+  /// session, shared by the Edit menu and the panels.
+  ///
+  /// Read directly; **written through the two methods below**, because Paste is
+  /// greyed out while it is empty and a menu that never hears about the copy
+  /// stays greyed until something else happens to repaint it. That is exactly
+  /// how it behaved before those methods existed.
+  final LumitClipboard clipboard = LumitClipboard();
+
+  /// Copy a layer, and tell the interface so Paste ungreys.
+  void copyLayerToClipboard(String text) {
+    clipboard.putLayer(text);
+    notifyListeners();
+  }
+
+  /// Copy one effect or a whole stack, same repaint.
+  void copyEffectsToClipboard(String text) {
+    clipboard.putEffects(text);
+    notifyListeners();
+  }
 
   /// The whole selection, primary first (K-217).
   ///

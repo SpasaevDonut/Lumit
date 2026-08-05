@@ -18,7 +18,7 @@ import 'solid.dart';
 import 'state.dart';
 
 // These functions are ignored because they are not marked as `pub`: `clip_under`, `clips_and_index`, `commit_clips_with_offset`, `commit_clips`, `commit_masks`, `commit_paint`, `commit`, `comp_time`, `composition`, `core`, `item`, `map_end_value`, `project`, `rational_of`, `read_at`, `read_layer_info`, `read`, `read`, `read`, `reanchored_span`, `source_length`, `unretime_op`, `with_effects`, `write_at`, `write_item`, `write`, `write`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `comp_id`, `id`, `new`, `project_id`
 
 /// A footage layer's waveform peaks: the whole source bucketed to a fixed
@@ -981,6 +981,32 @@ class LayerReference {
         that: this,
       );
 
+  /// This layer's effects as a `.lumfx` document, for [`Self::paste_effects`]
+  /// (K-275). `effect` copies that one; `None` copies the whole stack.
+  ///
+  /// Deliberately the **same document a preset is**, so an effect copied from
+  /// one layer can be saved as a preset and a preset can be pasted as an
+  /// effect — one shape, not two that drift.
+  String copyEffects({UuidValue? effect}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceCopyEffects(that: this, effect: effect);
+
+  /// This layer as text, for [`crate::api::composition::CompositionReference::
+  /// paste_layer`] — the clipboard's payload (K-275).
+  ///
+  /// The whole layer: its kind and source, its transform with every keyframe,
+  /// its masks, paint, effects, switches, markers and retime. It is the
+  /// document's own `Layer`, serialised, so anything the file format carries
+  /// travels — including fields a newer Lumit added, which ride in the
+  /// `extra` maps exactly as they do through a save (docs/10 §1.1).
+  ///
+  /// A *reference* it holds to another layer — its parent, its track matte —
+  /// is copied as it stands and resolved at the paste, which is the only end
+  /// that knows whether the layer being pointed at is there.
+  String copyLayer() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceCopyLayer(
+        that: this,
+      );
+
   /// The shape of this Sequence layer — where its cuts fall and how each
   /// piece is ramped — as text, for [`Self::paste_sequence_shape`] (K-248).
   ///
@@ -1250,6 +1276,23 @@ class LayerReference {
   /// additions. Only text that is not a preset at all is refused.
   void loadPreset({required String text}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceLoadPreset(that: this, text: text);
+
+  /// Append copied effects to this layer's stack, **timed to the playhead**
+  /// (K-275): whatever the earliest keyframe among them was, it lands at
+  /// `at_frame` and the rest keep their spacing.
+  ///
+  /// The owner's rule, and the one that makes a copied animation useful: an
+  /// effect copied from a layer that flashes at 4 s and pasted while the
+  /// playhead sits at 12 s flashes at 12 s, not off the end of the comp.
+  /// Effects with no keyframes at all paste unchanged — there is no timing to
+  /// place. Each arrives with a fresh instance id, exactly as a preset does.
+  ///
+  /// `at_frame` is a **comp** frame; the shift is worked out in the target
+  /// layer's own local time, so pasting onto a layer that starts later does
+  /// not double-count its offset.
+  void pasteEffects({required String text, required PlatformInt64 atFrame}) =>
+      BridgeLib.instance.api.crateApiLayerLayerReferencePasteEffects(
+          that: this, text: text, atFrame: atFrame);
 
   /// Cut and ramp this Sequence layer to the shape in `text`, keeping its
   /// own media (K-248).

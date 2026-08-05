@@ -5497,7 +5497,211 @@ contributor and reads exactly as before; the owner's white-circle precomp now ca
 the flux of every tile it lights. Position stays the anchor pixel; sub-tile centroid
 positioning would be the next refinement if ever needed.
 
-**K-268 · DECIDED · The Viewer says how far a slow frame has got, and the Timeline can
+**K-268 · DECIDED · A precomp gates as a track matte, and an effect on a Precomp layer
+keeps its pixels under a reduced preview.** Two holes on the same seam — what a Precomp
+layer *is* to the code that consumes it — found by reading K-266's own recorded
+boundary. **(1) A precomp set as a TRACK matte gated nothing at all.** K-266 fixed the
+layer-input mattes (a flare's Matte source, a DoF depth pass) by giving them an optional
+nested draw list; the track matte — `Layer::matte`, the row everyone actually reaches for
+— still ran through `pixels_for`, which has no pixels for a comp, so the matte silently
+became "no matte" and the consumer drew everywhere. `MatteDraw` now carries the same
+`nested` draw list, built by the shared `nested_comp_draw` helper (one ancestor-path
+cycle guard for both kinds of reference) and realised recursively exactly as a Precomp
+layer's picture is. The source-mode toggles (None / Masks / Effects and masks) do not
+apply to a comp reference — a comp already carries its layers' own masks and effects —
+which is the K-266 boundary, unchanged and now shared. **(2) K-266's recorded boundary
+was on the wrong side.** "Footage inside a matte-only precomp needs the decode planner
+taught" — the planner was already teaching it: `collect_comp_jobs` puts a matte source
+and a layer-input reference into `wanted` whether or not the layer is visible, and a
+Precomp among them recurses. Pinned now by a test over both shapes of reference, so the
+next reader gets a passing test rather than a note to re-derive. **(3) The Precomp twin
+of K-266's px@comp drift.** Effects ON a Precomp layer resolved px@comp parameters at
+factor 1 against the nested comp's width while running on the nested comp's *preview*
+raster, so a Transform's offset, a flare's light or a blur radius drifted by exactly the
+preview factor — preview only, full resolution always correct. The Nested arm now carries
+`fx_ref_width` (the nested comp's own width) and the realise walk applies
+`raster_width / ref_width` through `fx::rescale_px` before running the stack, which is
+the identical correction the adjustment path has taken since K-266. Both fixes land with
+end-to-end GPU regression tests (a matte that must gate, a shift that must stay a quarter
+of the frame at Full and at Half); both fail on the code as it stood.
+
+**K-269 · DECIDED · A skipped GPU test is a failure where an adapter was installed, and
+the no-hex rule follows the widgets into Dart.** Two CI gates that read as coverage and
+were not. **(1) `LUMIT_REQUIRE_GPU`.** Every kernel test skips itself without a graphics
+adapter — the friendly behaviour on a developer's machine, and the reason a Linux job that
+*installs* Mesa's lavapipe could lose its Vulkan driver, run none of about ninety shader
+oracles, and still report green. `lumit_gpu::no_adapter()` is now the one skip site
+(89 call sites converted from a bare `eprintln!`), and with `LUMIT_REQUIRE_GPU` set to
+anything but `0` it panics instead. The Linux job sets it; macOS and Windows deliberately
+do not, because nobody has confirmed those runners enumerate an adapter and a gate is only
+worth having where it has been verified — flipping them on is a TODO with a one-run test.
+The rule itself (unset/empty/`0` skip, anything else demand) is unit-tested rather than
+living only in a workflow file. **(2) The design-token lint greps Rust, where no widget has
+lived since K-182.** All the colours are in Dart now, so the same rule runs over
+`flutter_ui/lib` outside `theme/`: hex `Color(0x…)` literals, Material's `Colors.*` palette,
+and `Color.fromARGB`/`fromRGBO` calls built entirely from number literals. It found three:
+a modal scrim spelled out as `0x99000000`, and `Colors.red`/`Colors.amber` standing in for
+the theme's error and warning roles. The scrim becomes a **token** (`LumitTheme.scrim`),
+defaulting from the mode in the K-202 manner rather than being restated by all seven
+schemes — translucent black in both families, lighter on a light scheme where the same
+opacity reads as a blackout. Two shapes stay legal and are documented in the job: fully
+transparent `0x00000000` (the absence of a colour, not a choice of one) and a colour
+rebuilt from stored numbers (data, not a design decision).
+
+**K-270 · DECIDED · A marker write-back merges onto the marker that is already there.**
+The panel writes its whole marker list back through `set_markers`, and a `BridgeMarker`
+carries the three fields a panel can edit: id, time, label. Each one was then rebuilt from
+those three alone, which silently reset the three the engine owns — the **kind** (a
+detected beat's provenance and its confidence), a spanning marker's **duration**, and the
+**`extra`** map that keeps fields a newer Lumit wrote (docs/10 §1.1). So dragging a beat
+marker one frame turned it into an ordinary cue, and *Clear beat markers* then walked past
+it; K-254's ruler markers put that one drag away. Fixed by merging rather than converting:
+each incoming marker is matched by id against the list the document holds and keeps that
+marker's kind, duration and extra; an id the document has never seen is a plain user
+marker, which is exactly what a marker the panel just made is. **Deliberately not** by
+adding the kind to the frb struct (the TODO's own suggestion): the panel has no control for
+a kind, no use for one it cannot edit, and inventing a UI to fix a data-loss bug is the
+wrong order — while the merge also saves the duration and the forward-compatibility fields,
+which no widening of `BridgeMarker` was going to cover. Both the composition's list and
+every layer's own (K-254) go through the one helper. Also recorded: the TODO entry claiming
+installed RAM is read only on Windows was stale — K-204 answers it on all three desktops;
+only `video_memory_bytes` is still Windows-only, and the entry now says that instead.
+
+**K-271 · DECIDED · The LUT kernel remaps through the cube's own domain, and the cube
+cache notices the file changing.** Both halves of [impl/lut.md](impl/lut.md)'s recorded
+K-114 gaps, closed together because they are the same effect's two ways of showing the
+wrong grade. **(1) The domain.** `fx_lut.wgsl` assumed the default `0..1` input domain and
+skipped the `(c - lo) / (hi - lo)` remap `Lut3d::sample` applies, so a `.cube` declaring a
+`DOMAIN_MIN`/`DOMAIN_MAX` — the log and display-referred cubes a grading tool exports —
+rendered silently wrong on the GPU while the CPU oracle was right. `LutParams` now carries
+the six floats (two padded `vec4`s; a uniform `vec3` is 16-byte aligned regardless) and the
+shader remaps operation for operation, including the zero-span guard: a `DOMAIN_MIN` equal
+to its `DOMAIN_MAX` reads as 0 on both paths rather than dividing. Chosen over the recorded
+alternative (refusing such cubes as a labelled no-op) because the maths was already written
+down in §2 and the file is not wrong — Lumit was. The oracle test gains an asymmetric
+non-default-domain cube and a degenerate zero-span one; the old shader misses the first by
+23684 fp16 ULP. **(2) The cache.** One `LutCache` keyed by `(path, mtime)` and bounded to
+eight entries, most recently used first, replacing the unbounded path-only map. Grading is
+iterative — export the cube, look, adjust, export again over the same path — and keyed by
+path alone the second export never appeared until the application restarted, with nothing
+on screen to say the file and the picture had parted company. A stale entry for a path is
+replaced rather than kept beside the new one; a path that cannot be stat'd keys as `None`,
+which still matches itself, so it is cached by path exactly as before instead of being
+re-read every frame.
+
+**K-272 · DECIDED · The toolchain is pinned and dependency hygiene is a CI job.** Two of
+[14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md) §9's owed tools, which are the same
+promise from two directions: what this repository is built *with*, and what it is built
+*from*. **(1) `rust-toolchain.toml` pins 1.97.1** (with rustfmt and clippy) — the version the
+repository was already building on. **A pin must name the version the repository is already
+on**: the first attempt here named an older one, which is a downgrade in disguise, and CI
+said so twice — an `objc` macro tripped `unexpected_cfgs` in the macOS-only Metal path, and
+the bridge's generated code came out naming a different derive-expansion helper
+(`assert_receiver_is_total_eq` for `assert_fields_are_eq`), so two jobs failed for reasons
+that had nothing to do with what was being pinned. Without the pin at all,
+"stable" means whatever each machine happens to have, and `-D warnings` turns a compiler
+released mid-week into a red build on a commit that changed nothing. Every CI job installs
+stable and then lets the file decide, so there is one place to raise it — deliberately,
+with the suite run and the changelog written, never incidentally. **(2) `cargo deny check`
+runs on every push** over licences, advisories, wildcards and sources, through the upstream
+action (it ships the binary and caches the advisory database, so the job is seconds rather
+than a three-minute build of a tool that reads a lock file). The allowed-licence list is the
+GPLv3-compatible permissive set plus Lumit's own GPL-3.0-only, so a dependency with any
+other licence stops the build until someone decides deliberately — which is exactly the
+conversation §9 already asks for in the pull request. Three unmaintained-crate advisories
+are ignored **by id, each with what it would take to leave it** (`ttf-parser` via fontdue
+wants the `skrifa` migration; `bincode` 1.x and `paste` leave when their parents update):
+failing every build over a transitive dependency nobody here can update trains people to
+ignore the job, and an unmaintained crate is a different question from a vulnerable one —
+`yanked` and real advisories still deny. Duplicate versions warn rather than fail (wgpu and
+rsmpeg each bring their own stack). Every workspace crate gains `publish = false`, which is
+both true — they are the application, not libraries — and what lets the wildcard rule see a
+`path` dependency between our own crates as the non-problem it is.
+
+**K-273 · DECIDED · The feature-less build builds, and an observer attaches to a store that
+is already shared.** Two of the bridge's recorded rough edges. **(1)
+`cargo build -p lumit_bridge --no-default-features` builds and tests again.** The rule was
+already written down (docs/17 §Feature gates: the API surface is one shape whatever the
+features, so the generated Dart is one shape everywhere) and the code had drifted from it in
+three places: `api::beats` was gated *away* — so the checked-in generated code called a
+function that did not exist — while `prefetch` and the thumbnail cache leaked
+`lumit_media` types past their gates. Beats is now always compiled and its detection asks
+the audio pipeline, answering `NoAudioPipeline` where a build has none, which is the shape
+every other feature-sensitive call already uses. The decode-ahead thread still exists and
+still drains its queue without the decoder; a build with the feature off is one that does not
+*decode*, not one with a different scheduler. **What it is not**, and what the first version
+of this entry wrongly claimed: a build without FFmpeg. `lumit-render` and `lumit-audio`
+depend on `lumit-media` unconditionally and the bridge depends on both, so FFmpeg is still
+linked — the feature governs the bridge's own decode paths, not the dependency tree. CI
+caught the overstatement immediately, on a runner deliberately given no FFmpeg. Making the
+tree genuinely media-optional is its own piece of work, TODO'd rather than implied. Chosen over the recorded alternative — dropping
+the pretence that the features are independent — because the contract's promise is the
+valuable half and only the code had lapsed. One behaviour change fell out of it: a footage
+item whose file is not on disk now reports **Missing** in a media-less build too. Whether a
+file exists is a question for the filesystem, not the decoder; it used to answer "ready".
+**(2) `DocumentStore::set_callback` takes `&self`.** The observer had to be registered
+before the store went into its `Arc`, which no type enforced and which fights the natural
+shape of the thing: an observer usually wants to refer back to the object that owns the
+store, and that object does not exist yet at that point. The callback lives behind a
+`parking_lot::Mutex`, locked only to clone the `Arc` out or swap it and never across the
+call itself — the existing no-locks-across-FFI and re-entrancy rules (docs/14 §3) are
+unchanged, and their tests still pass.
+
+**K-274 · DECIDED · An effect on a Null is labelled inert, never refused — and
+anti-aliasing is a project property, on by default.** Two owner decisions on open
+questions (2026-08-05). **(1) Effects on a Null layer.** The recorded choice was "either
+refuse the drop or say plainly that the stack is inert"; the owner chose *inert*, with the
+reason that decides the shape of it: **a Null is where a control lives when it is meant to
+drive something else.** A Slider (or any parameter) on a Null is how a value gets published
+for another layer's expression to read, so refusing the drop would remove a feature rather
+than prevent a mistake — and this holds for every effect, not just the expression-control
+family. So: the drop is accepted, the stack is stored, keyframed and sampled exactly as on
+any other layer (pinned by `an_effect_on_a_null_layer_keeps_its_animated_value`), nothing
+strips it, and the Effect controls panel says once, calmly, that a Null draws nothing so an
+effect here changes no picture while its parameters stay live. When expressions land
+(Phase 4, [12-PLUGINS.md](12-PLUGINS.md)) they read those parameters like any other; nothing
+about this decision is deferred to them. **(2) Anti-aliasing** is a **project property, on
+by default, with one value shared by preview and export** — it changes what a comp looks
+like, so it must travel with the file and match on another machine, and a preview that
+anti-aliases differently from the export would break the K-031 identity. That answers both
+of the recorded open questions; the work itself (MSAA targets and resolve in the composite
+pass, the setting through the bridge, and an adapter capability check — a sample count is
+asked for, never assumed) stays in [TODO.md](TODO.md).
+
+**K-275 · DECIDED · Selecting a layer means the same thing wherever it happens, and
+layers and effects copy as documents.** Two owner requests (2026-08-05). **(1) The
+selection is the shell's, and the Timeline must follow it.** Picking a layer on the
+picture already replaced the whole selection, but the Timeline kept its *own* per-layer
+state — the property selection, the graph's key selection, the row highlight — and cleared
+it only in its own click path. So a pick in the Viewer left the previous layer's rows lit:
+two layers appearing chosen at once, the exact ambiguity K-203 set out to remove. The panel
+now listens to `selectedLayer` and drops that state wherever the choosing happened, through
+the one helper its own click path uses. The Effect controls panel already followed the
+shell; a test now pins that a Viewer-shaped selection change switches it, so it cannot
+quietly stop. **(2) Copy and paste carry the document, not a summary.** A copied layer is
+the model's own `Layer`, serialised — transform and keyframes, masks, paint, effects,
+switches, markers, retime, and any field a newer Lumit added riding in `extra` — because a
+paste that dropped a property would be found much later, on a shot that looked almost
+right. The paste gives fresh layer and effect ids, and keeps a parent or track matte
+reference **only when it still names a layer in the target comp**: pasting back where it
+came from keeps both, pasting elsewhere keeps neither rather than leaving a dangling
+pointer. Time: `at_frame` lands the in point there and moves in point, out point and
+`start_offset` together (`edit_layer_span`'s `MoveIn`, the `[` key's own rule), so
+keyframes and source frames travel with the layer; `None` keeps the copied time, which is
+the owner's setting for rebuilding a moment in a second composition — **default at the
+playhead**, the other behind a preference. Effects copy as the **same `.lumfx` document a
+preset is**, so a copied effect can be saved as a preset and a preset pasted as an effect,
+and they always paste with their **first keyframe at the playhead** whatever the layer
+setting says: what is being placed is an animation, not a position. An effect with no
+keyframes pastes unmoved — there is no timing to place. The panel wiring landed with it: a session clipboard on
+`LumitUiState` (written through methods that notify, because Paste greys out while it is
+empty and a menu that never hears about the copy stays greyed — which is how it behaved
+before those methods existed), **Edit → Cut / Copy / Paste**, and the *Paste layers at
+their original time* row in Settings → Interface. Still owed, and TODO'd: **Copy effect**
+on an effect's heading in the Effect controls panel and on its Timeline row, which is
+where an effect is picked rather than a layer.
+
+**K-276 · DECIDED · The Viewer says how far a slow frame has got, and the Timeline can
 be asked what each layer and effect cost.** Two halves of the same instrumentation
 (docs/13 §7.1's first visible piece), both driven from one recorder in `lumit-render`
 (`profile.rs`) that the headless renderer builds per frame and hands to the realise

@@ -37,6 +37,52 @@ pub struct GpuContext {
     pub software: bool,
 }
 
+/// The environment variable that turns "no GPU adapter" from a skip into a
+/// failure. Set it on any machine that is *supposed* to have one.
+pub const REQUIRE_ADAPTER_ENV: &str = "LUMIT_REQUIRE_GPU";
+
+/// What a GPU test does when [`GpuContext::headless`] finds no adapter
+/// (docs/16-ROADMAP.md standing rules: verification beats assertion).
+///
+/// Every kernel test in the workspace is written to skip itself on a machine
+/// with no graphics adapter, which is what lets the suite run on a laptop with
+/// nothing installed — and is also how a CI job with no adapter went green
+/// while proving nothing at all about the shaders. Mesa's software Vulkan
+/// driver (`mesa-vulkan-drivers`, the `lvp` ICD) is enough to make every one of
+/// them run, so a job that installs it and then silently skips is reporting a
+/// broken *runner*, not a passing suite.
+///
+/// So: with `LUMIT_REQUIRE_GPU` set to anything but `0`, a missing adapter is a
+/// panic — the CI jobs that should have one set it, and a developer's machine
+/// leaves it unset and keeps the friendly skip.
+///
+/// Call it at the skip site and return:
+/// ```ignore
+/// let Ok(ctx) = GpuContext::headless() else {
+///     lumit_gpu::no_adapter();
+///     return;
+/// };
+/// ```
+pub fn no_adapter() {
+    let set = std::env::var(REQUIRE_ADAPTER_ENV).ok();
+    assert!(
+        !adapter_is_required(set.as_deref()),
+        "no GPU adapter, but {REQUIRE_ADAPTER_ENV} is set — this machine is \
+         supposed to have one (install mesa-vulkan-drivers for the lavapipe \
+         software rasteriser, or unset the variable to skip)"
+    );
+    eprintln!("skipping: no GPU adapter");
+}
+
+/// Whether [`REQUIRE_ADAPTER_ENV`]'s value demands an adapter. Unset, empty and
+/// `0` all mean "skip politely"; anything else means "this machine has one, and
+/// not finding it is the bug". Split out from [`no_adapter`] so the rule can be
+/// tested without a process-global environment variable in a parallel suite.
+#[must_use]
+fn adapter_is_required(value: Option<&str>) -> bool {
+    matches!(value, Some(v) if !v.is_empty() && v != "0")
+}
+
 impl GpuContext {
     /// Wrap an existing device/queue (eframe's render state — wgpu handles
     /// are internally reference-counted, so cloning shares the one device).
@@ -741,13 +787,29 @@ impl ColourEngine {
 mod tests {
     use super::*;
 
+    /// **A machine that is supposed to have an adapter must fail, not skip.**
+    ///
+    /// Every kernel test here skips itself without an adapter, which is how a
+    /// Linux job that already installs Mesa's software Vulkan driver could go
+    /// green while running none of them: a skip and a pass look identical in
+    /// the summary. `LUMIT_REQUIRE_GPU` is what tells the difference, so the
+    /// rule it encodes is pinned here rather than only in a workflow file.
+    #[test]
+    fn requiring_an_adapter_is_opt_in_and_zero_still_means_skip() {
+        assert!(!adapter_is_required(None), "a laptop keeps the polite skip");
+        assert!(!adapter_is_required(Some("")), "an empty value is unset");
+        assert!(!adapter_is_required(Some("0")), "0 turns it off explicitly");
+        assert!(adapter_is_required(Some("1")), "CI sets 1");
+        assert!(adapter_is_required(Some("yes")));
+    }
+
     /// The gpu-foundation §7 golden: every 8-bit value survives
     /// sRGB → linear fp16 → sRGB within 1 LSB. This is the test that makes
     /// double-gamma bugs impossible to reintroduce silently (K-031).
     #[test]
     fn colour_round_trip_is_within_one_lsb() {
         let Ok(ctx) = GpuContext::headless() else {
-            eprintln!("skipping: no GPU adapter available");
+            crate::no_adapter();
             return;
         };
         let engine = ColourEngine::new(&ctx);
@@ -784,7 +846,7 @@ mod tests {
     #[test]
     fn dark_end_precision_survives_fp16() {
         let Ok(ctx) = GpuContext::headless() else {
-            eprintln!("skipping: no GPU adapter available");
+            crate::no_adapter();
             return;
         };
         let engine = ColourEngine::new(&ctx);

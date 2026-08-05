@@ -415,7 +415,7 @@ impl LumitBridgeState {
         let document = Document::new();
         let journal = journal_for(&document);
         let store = DocumentStore::new(document);
-        let mut state = LumitBridgeState {
+        let state = LumitBridgeState {
             saved_revision: store.revision(),
             store,
             path: None,
@@ -524,7 +524,7 @@ impl LumitBridgeState {
 
         let journal = journal_for(&doc);
         let store = DocumentStore::new(doc);
-        let mut state = LumitBridgeState {
+        let state = LumitBridgeState {
             saved_revision: store.revision(),
             store,
             path: Some(path),

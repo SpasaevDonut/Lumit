@@ -47,6 +47,16 @@ pub struct MatteDraw {
     /// Lut` ops in `fx` (as for a layer's own `lut_files`). Empty unless the
     /// source mode is `EffectsAndMasks` and the matte source has a LUT.
     pub lut_files: Vec<Option<String>>,
+    /// Set when the matte source is a **Precomp** (K-268): the nested comp's
+    /// own draw list, realised recursively exactly as a Precomp layer's
+    /// picture is — `rgba` is then empty and `tex_w`/`tex_h` are the nested
+    /// comp's size. A comp has no pixels until it is rendered, so `pixels_for`
+    /// answers None for one, and a track matte set to a precomp silently
+    /// gated nothing at all until this field existed (the layer-input twin of
+    /// the same hole was K-266's `DofInputDraw::nested`). The source-mode
+    /// masks/effects toggles do not apply to a comp reference — the comp
+    /// renders as itself, its layers' own masks and effects included.
+    pub nested: Option<Box<NestedInputDraw>>,
 }
 
 /// A depth-of-field depth input packaged for the compositor (docs/impl/

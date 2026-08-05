@@ -1367,6 +1367,60 @@ void main() {
           reason: "and so does the property's layer");
     });
 
+    /// **Picking a layer on the picture reaches the Timeline** (K-275).
+    ///
+    /// The Viewer's click goes straight to the shell's selection
+    /// (`setSelection`), never through this panel's own click path — so the
+    /// property selection, the graph's keys and the row highlight, all of which
+    /// belong to the layer that *was* chosen, stayed behind. The previous
+    /// layer's rows kept their fill while a different layer was selected: two
+    /// layers appearing chosen at once, which is what K-203 set out to remove.
+    testWidgets('a selection made outside the panel clears the property one',
+        (tester) async {
+      final p = withComp();
+      final first = p.comp.addSolidLayer();
+      first.addEffect(name: 'blur');
+      final second = p.comp.addSolidLayer();
+      await mount(tester, p);
+      final id = first.internallayerId;
+
+      // Select a property on the first layer, the ordinary way.
+      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
+      await tester.pump();
+      await tester.tap(find.text('Effects'));
+      await tester.pump();
+      await tester.tap(find.text('Gaussian blur'));
+      await tester.pump();
+      await tester.tap(find.text('Radius'));
+      await tester.pump();
+
+      final t = LumitTheme.dark();
+      Color? fillOver(String text) {
+        final box = find.ancestor(
+            of: find.text(text), matching: find.byType(Container));
+        return (tester.widget<Container>(box.first).decoration as BoxDecoration)
+            .color;
+      }
+      expect(fillOver('Radius'), t.selectionFill, reason: 'picked to start');
+
+      // Now the Viewer's path: the shell's selection changes under the panel.
+      p.uiState.setSelection([second]);
+      await tester.pump();
+
+      expect(fillOver('Radius'), isNull,
+          reason: 'the property belonged to the layer that was let go of');
+      expect(fillOver('Gaussian blur'), isNull,
+          reason: 'and so did the mark on the effect holding it');
+      expect(
+          (tester
+                  .widget<Container>(
+                      find.byKey(ValueKey<String>('tl-rowbody-$id')))
+                  .decoration as BoxDecoration)
+              .color,
+          isNot(t.selectionFill.withValues(alpha: 0.45)),
+          reason: 'the old layer stops looking chosen');
+    });
+
     /// **The highlight with nowhere to sit (K-203).** A selected property
     /// stayed selected when its layer was twirled shut — invisible, but still
     /// the selection — so it came back lit when the layer reopened, and it

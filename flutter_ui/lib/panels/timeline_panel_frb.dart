@@ -496,13 +496,12 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
           {List<BridgeLayerEntry> among = const []}) =>
       setState(() {
         if (ui.selectedLayer.value?.internallayerId != layer?.internallayerId) {
-          _selectedProperties.clear();
-          _graphKeySelection.clear();
-          // The highlight belongs to the property selection just cleared, so
-          // it goes with it. Left behind, the previous layer's row stayed lit
-          // after a click on a different layer — two layers appearing chosen
-          // at once, which is the ambiguity K-203 set out to remove.
-          _highlighted = null;
+          // The one place this is decided, shared with the listener that
+          // catches a selection made in the Viewer (K-275). The highlight goes
+          // with the property selection it belongs to: left behind, the
+          // previous layer's row stayed lit after a click on a different
+          // layer.
+          _dropLayerLocalSelection();
         }
         if (layer == null) {
           ui.clearSelection();
@@ -973,6 +972,37 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     // deactivated, where an ancestor lookup is no longer safe.
     _ui = Provider.of<LumitUiState>(context, listen: false);
     _ui!.deleteClaim = _deleteSelectedMasks;
+    // The selection can change from outside this panel — a click on the
+    // picture in the Viewer is the everyday case (K-275). The property
+    // selection, the graph's key selection and the row highlight all belong to
+    // whichever layer was chosen, so they are cleared wherever the choosing
+    // happened rather than only in this panel's own click path. Without this,
+    // picking a different layer on the picture left the *previous* layer's
+    // rows lit in the Timeline: two layers appearing chosen at once, which is
+    // the ambiguity K-203 set out to remove.
+    _primary = _ui!.selectedLayer.value?.internallayerId;
+    _ui!.selectedLayer.addListener(_onPrimaryChanged);
+  }
+
+  /// The layer the panel's local selections belong to, so a change of primary
+  /// can be told from a rebuild.
+  UuidValue? _primary;
+
+  void _onPrimaryChanged() {
+    final now = _ui?.selectedLayer.value?.internallayerId;
+    if (now == _primary) return;
+    _primary = now;
+    if (!mounted) return;
+    setState(_dropLayerLocalSelection);
+  }
+
+  /// Everything the panel holds that belongs to one layer. Called whenever the
+  /// primary changes, from here or from anywhere else.
+  void _dropLayerLocalSelection() {
+    _selectedProperties.clear();
+    _graphKeySelection.clear();
+    _laneKeySelection.clear();
+    _highlighted = null;
   }
 
   /// The shell state this panel claimed Delete on, so the claim can be dropped
@@ -1307,6 +1337,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_onKey);
+    _ui?.selectedLayer.removeListener(_onPrimaryChanged);
     if (_ui?.deleteClaim == _deleteSelectedMasks) _ui!.deleteClaim = null;
     _boundTools?.removeListener(_onToolChanged);
     _barDrag.dispose();
