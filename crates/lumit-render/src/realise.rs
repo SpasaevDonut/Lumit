@@ -425,13 +425,27 @@ impl Realiser<'_> {
                 let layer_inputs = self.render_dof_inputs(&l.dof_inputs, w, h);
                 let flare_mattes = self.render_dof_inputs(&l.flare_mattes, w, h);
                 let flare_lens = self.load_flare_lens(&l.flare_lens_files);
+                // A stack resolved against a raster wider than the one it is
+                // about to run on (a Precomp layer's, under reduced-resolution
+                // preview) has its px@comp parameters rescaled to this raster,
+                // the same correction the adjustment path applies (K-266,
+                // K-268). `None` — every other kind — resolved at its own
+                // decode scale already, so nothing moves.
+                let fx_ops = match l.fx_ref_width {
+                    Some(ref_w) if ref_w > 0.0 => {
+                        let mut ops = l.fx.clone();
+                        lumit_core::fx::rescale_px(&mut ops, w as f32 / ref_w);
+                        ops
+                    }
+                    _ => l.fx.clone(),
+                };
                 crate::fxops::run_ops(
                     self.fx,
                     &self.ctx,
                     tex,
                     w,
                     h,
-                    &l.fx,
+                    &fx_ops,
                     &neighbours,
                     flow.as_ref(),
                     &luts,
@@ -486,10 +500,17 @@ impl Realiser<'_> {
             .iter()
             .map(|l| {
                 l.matte.as_ref().map(|m| {
-                    let src = self
-                        .engine
-                        .upload_srgb8(&self.ctx, &m.rgba, m.tex_w, m.tex_h);
-                    let linear = self.engine.linearise(&self.ctx, &src);
+                    // A Precomp matte realises its nested comp exactly as a
+                    // Precomp layer's picture does (K-268, the K-266 layer-input
+                    // shape); anything else is the uploaded source pixels.
+                    let linear = if let Some(n) = &m.nested {
+                        self.realise(n.camera, n.width, n.height, n.background, &n.draws)
+                    } else {
+                        let src = self
+                            .engine
+                            .upload_srgb8(&self.ctx, &m.rgba, m.tex_w, m.tex_h);
+                        self.engine.linearise(&self.ctx, &src)
+                    };
                     // After-effects matte (K-decision): run the matte source's own
                     // stack on its texture before it gates the consumer, so a keyed
                     // or blurred matte works. Temporal inputs stay empty in v1 — the

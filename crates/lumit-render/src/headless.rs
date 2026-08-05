@@ -3111,4 +3111,143 @@ mod tests {
             println!("PREVIEW {label:>10} scale={scale:<5} {each:>7.2} ms/frame");
         }
     }
+
+    /// **A precomp set as a track matte must actually gate the layer** (K-268).
+    ///
+    /// The regression: a comp has no pixels until it is rendered, so the draw
+    /// builder's `pixels_for` answered None for a Precomp matte source and the
+    /// whole matte quietly disappeared — the consumer drew everywhere, as if
+    /// no matte had been set. K-266 fixed the same hole for the *layer-input*
+    /// mattes (a flare source, a DoF depth pass); the track matte, which is
+    /// how everyone actually reaches for a precomp matte, still had it.
+    ///
+    /// The scene: a full-frame red solid matted by a hidden precomp layer whose
+    /// own 16×16 blue solid covers the LEFT half of a 32×16 comp. Red survives
+    /// where the precomp has alpha and nowhere else.
+    #[test]
+    fn a_precomp_track_matte_gates_the_layer() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!("skipping: no GPU adapter");
+                return;
+            }
+        };
+        let (cw, ch) = (32u32, 16u32);
+        let (mut doc, comp_id, _) = matrix_base(cw, ch, LinearColour([0.8, 0.1, 0.1, 1.0]));
+        let (child_doc, child_id, _) = matrix_base(16, 16, LinearColour([0.1, 0.2, 0.9, 1.0]));
+        for item in child_doc.items {
+            doc.items.push(item);
+        }
+        // The matte itself is hidden, as a matte source always is.
+        let mut matte = matrix_layer("Matte", LayerKind::Precomp { comp: child_id }, 16, 16);
+        matte.switches.visible = false;
+        let matte_id = matte.id;
+        {
+            let comp = doc.comp_mut(comp_id).unwrap();
+            comp.layers[0].matte = Some(lumit_core::model::MatteRef {
+                layer: matte_id,
+                channel: lumit_core::model::MatteChannel::Alpha,
+                inverted: false,
+                source: lumit_core::model::LayerInputSource::default(),
+            });
+            comp.layers.push(matte);
+        }
+
+        let (rgba, w, h) = r.render_rgba(&doc, comp_id, 0, 1.0).expect("render");
+        assert_eq!((w, h), (cw, ch));
+        let at = |x: u32, y: u32| {
+            let i = ((y * w + x) * 4) as usize;
+            (rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3])
+        };
+        // Left half: inside the precomp's opaque square, so the red shows.
+        let (lr, _lg, _lb, la) = at(8, 8);
+        assert!(lr > 150, "red should survive under the matte, got {lr}");
+        assert_eq!(la, 255, "and it should be opaque there");
+        // Right half: the precomp is transparent there, so nothing is drawn —
+        // this is the pixel that stayed red while the matte was being dropped.
+        let (rr, rg, rb, _ra) = at(24, 8);
+        assert!(
+            rr < 30 && rg < 30 && rb < 30,
+            "outside the precomp matte the layer must be gated out, got {:?}",
+            (rr, rg, rb)
+        );
+    }
+
+    /// **An effect ON a Precomp layer must keep its px@comp parameters where
+    /// they were put when the preview renders at a reduced resolution**
+    /// (K-268, the twin of K-266's adjustment-layer fix).
+    ///
+    /// The regression: the stack of a Precomp layer resolves against the nested
+    /// comp's full width (factor 1) but runs on the nested comp's *preview*
+    /// raster, so every px@comp parameter — a Transform's offset here, a
+    /// flare's light or a blur radius in the wild — landed further across the
+    /// picture the coarser the preview got. Preview-only drift: full resolution
+    /// was always right.
+    ///
+    /// The scene: a 32×32 precomp of solid white, offset 8 px right by a
+    /// Transform effect on the precomp layer. Eight of thirty-two is a quarter
+    /// of the frame at every resolution, so the same fractions are empty and
+    /// filled at Full and at Half.
+    #[test]
+    fn an_effect_on_a_precomp_layer_keeps_its_pixels_under_half_preview() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!("skipping: no GPU adapter");
+                return;
+            }
+        };
+        let (cw, ch) = (32u32, 32u32);
+        let white = LinearColour([1.0, 1.0, 1.0, 1.0]);
+        let (mut doc, comp_id, _) = matrix_base(cw, ch, LinearColour([0.0, 0.0, 0.0, 1.0]));
+        let (child_doc, child_id, _) = matrix_base(cw, ch, white);
+        for item in child_doc.items {
+            doc.items.push(item);
+        }
+        // The base black solid only exists to give matrix_base a comp; the
+        // precomp layer covers it entirely, so what is measured is the
+        // precomp's own white, shifted.
+        let mut nested = matrix_layer("Nested", LayerKind::Precomp { comp: child_id }, cw, ch);
+        let mut fx = lumit_core::fx::instantiate("transform").unwrap();
+        for p in &mut fx.params {
+            let v = match p.id.as_str() {
+                "position_x" => 8.0,
+                "anchor_x" | "anchor_y" | "position_y" | "rotation" => 0.0,
+                _ => continue,
+            };
+            p.value = lumit_core::model::EffectValue::Float(Property::fixed(v));
+        }
+        nested.effects.push(fx);
+        // Index 0 is the top of the stack, over the black base.
+        doc.comp_mut(comp_id).unwrap().layers.insert(0, nested);
+
+        // The white starts a quarter of the way across, at both resolutions.
+        for (label, scale) in [("full", 1.0f32), ("half", 0.5f32)] {
+            let quality = Quality {
+                auto_res: scale < 1.0,
+                display_scale: scale,
+                ..Quality::default()
+            };
+            let (rgba, w, h) = r
+                .render_preview(&doc, comp_id, 0, quality, scale)
+                .expect("render");
+            let at = |fx: f32| {
+                let x = ((w as f32 * fx) as u32).min(w - 1);
+                let y = h / 2;
+                let i = ((y * w + x) * 4) as usize;
+                rgba[i]
+            };
+            assert!(
+                at(0.125) < 40,
+                "{label}: the first eighth is behind the offset, got {}",
+                at(0.125)
+            );
+            assert!(
+                at(0.375) > 200,
+                "{label}: three eighths across is inside the shifted picture, got {}",
+                at(0.375)
+            );
+        }
+    }
 }

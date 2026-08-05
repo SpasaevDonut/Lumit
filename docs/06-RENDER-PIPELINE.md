@@ -148,6 +148,12 @@ the AE 2023 model). Four combinations: alpha or luma, normal or inverted.
   before blending.
 - A matte layer keeps its own visibility switch; being a matte does not disable it. A layer MAY
   matte a layer that is itself matted; cycles are rejected at compile time.
+- A **Precomp** matte source has no pixels of its own: its nested comp is rendered (the same
+  recursion §1.4 performs for a Precomp layer's picture, under the same cycle guard) and that
+  render is the matte signal (K-268). The matte **source mode** (§none/masks/effects, K-142)
+  does not apply to a comp reference — a comp already carries its own layers' masks and
+  effects. Footage inside such a comp decodes with the rest of the frame: the decode plan
+  follows matte and layer-input references whether or not the referenced layer is visible.
 
 ## 2. ROI and DoD
 
