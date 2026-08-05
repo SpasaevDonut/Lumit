@@ -885,6 +885,99 @@ impl LayerReference {
         Ok(())
     }
 
+    /// This layer as text, for [`crate::api::composition::CompositionReference::
+    /// paste_layer`] — the clipboard's payload (K-275).
+    ///
+    /// The whole layer: its kind and source, its transform with every keyframe,
+    /// its masks, paint, effects, switches, markers and retime. It is the
+    /// document's own `Layer`, serialised, so anything the file format carries
+    /// travels — including fields a newer Lumit added, which ride in the
+    /// `extra` maps exactly as they do through a save (docs/10 §1.1).
+    ///
+    /// A *reference* it holds to another layer — its parent, its track matte —
+    /// is copied as it stands and resolved at the paste, which is the only end
+    /// that knows whether the layer being pointed at is there.
+    #[frb(sync)]
+    pub fn copy_layer(&self) -> Result<String, BridgeError> {
+        let layer = self.item()?;
+        serde_json::to_string(&serde_json::json!({
+            "format": 1,
+            "kind": "layer",
+            // Informational: which comp it left, so a paste into that same comp
+            // can keep a parent or matte reference that would otherwise dangle.
+            "comp": self.comp_id,
+            "layer": layer,
+        }))
+        .map_err(|_| BridgeError::InvalidItem)
+    }
+
+    /// This layer's effects as a `.lumfx` document, for [`Self::paste_effects`]
+    /// (K-275). `effect` copies that one; `None` copies the whole stack.
+    ///
+    /// Deliberately the **same document a preset is**, so an effect copied from
+    /// one layer can be saved as a preset and a preset can be pasted as an
+    /// effect — one shape, not two that drift.
+    #[frb(sync)]
+    pub fn copy_effects(&self, effect: Option<Uuid>) -> Result<String, BridgeError> {
+        let stack = self.item()?.effects;
+        let taken: Vec<_> = match effect {
+            Some(id) => stack.into_iter().filter(|e| e.id == id).collect(),
+            None => stack,
+        };
+        if taken.is_empty() {
+            return Err(BridgeError::InvalidEffect);
+        }
+        let name = taken
+            .first()
+            .map(|e| e.effect.match_name.clone())
+            .unwrap_or_default();
+        lumit_core::preset::to_json(&name, &taken).map_err(|_| BridgeError::InvalidPreset)
+    }
+
+    /// Append copied effects to this layer's stack, **timed to the playhead**
+    /// (K-275): whatever the earliest keyframe among them was, it lands at
+    /// `at_frame` and the rest keep their spacing.
+    ///
+    /// The owner's rule, and the one that makes a copied animation useful: an
+    /// effect copied from a layer that flashes at 4 s and pasted while the
+    /// playhead sits at 12 s flashes at 12 s, not off the end of the comp.
+    /// Effects with no keyframes at all paste unchanged — there is no timing to
+    /// place. Each arrives with a fresh instance id, exactly as a preset does.
+    ///
+    /// `at_frame` is a **comp** frame; the shift is worked out in the target
+    /// layer's own local time, so pasting onto a layer that starts later does
+    /// not double-count its offset.
+    #[frb(sync)]
+    pub fn paste_effects(&self, text: String, at_frame: i64) -> Result<(), BridgeError> {
+        let preset =
+            lumit_core::preset::from_json(&text).map_err(|_| BridgeError::InvalidPreset)?;
+        let mut fresh = lumit_core::preset::instantiated(&preset);
+
+        // Comp frame -> the layer's own clock, the space keyframes live in.
+        let comp = self.composition()?;
+        let layer = self.item()?;
+        let at_comp = comp
+            .frame_rate
+            .time_of_frame(at_frame.max(0))
+            .map_err(|_| BridgeError::InvalidTime)?;
+        let at_local = at_comp
+            .delta(layer.start_offset)
+            .map_err(|_| BridgeError::InvalidTime)?;
+
+        if let Some(first) = lumit_core::preset::first_key_time(&fresh) {
+            let delta = at_local
+                .0
+                .checked_sub(first)
+                .map_err(|_| BridgeError::InvalidTime)?;
+            lumit_core::preset::shift_keys(&mut fresh, delta);
+        }
+
+        self.with_effects(move |effects| {
+            effects.extend(fresh);
+            Ok(())
+        })
+    }
+
     /// Serialise this layer's whole effect stack to `.lumfx` JSON.
     ///
     /// Returns the text rather than writing a file: choosing where something

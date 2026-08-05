@@ -1543,6 +1543,194 @@ fn an_effect_on_a_null_layer_keeps_its_animated_value() {
     );
 }
 
+/// **A copied layer arrives whole, and lands where the playhead is** (K-275).
+///
+/// Copy and paste is the one edit that has to carry *everything* — the transform
+/// with its keyframes, the effects with theirs, the switches, the name — because
+/// a paste that quietly dropped a property would be found much later, on a shot
+/// that looked almost right. So the payload is the document's own `Layer`, and
+/// this checks the pieces most likely to be lost by a hand-written conversion.
+#[test]
+fn a_copied_layer_pastes_whole_and_lands_at_the_playhead() {
+    use crate::api::effect::{BridgeEffectValue, BridgeRational, BridgeScalar};
+
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let source = comp.add_solid_layer().expect("a layer to copy");
+    source.rename("Hero".into()).expect("named");
+    source.add_effect("blur".into()).expect("an effect on it");
+
+    // An animated parameter, so the keyframes have something to lose.
+    let mut staged = source.get_effects().expect("effects");
+    let key = |num: i64, value: f64| crate::api::effect::BridgeKeyframe {
+        time: BridgeRational { num, den: 1 },
+        value,
+        interp_in: crate::api::effect::BridgeSideInterp::Linear,
+        interp_out: crate::api::effect::BridgeSideInterp::Linear,
+    };
+    staged[0]
+        .set_value(
+            "radius".into(),
+            BridgeEffectValue::Float(BridgeScalar::Keyframed(vec![key(0, 0.0), key(2, 40.0)])),
+        )
+        .expect("animated");
+    source.set_effects(staged).expect("committed");
+
+    let text = source.copy_layer().expect("copied");
+
+    // Pasted into the same comp at frame 30 (one second at 30 fps).
+    let pasted = comp.paste_layer(text.clone(), Some(30)).expect("pasted");
+    assert_ne!(
+        pasted.layer_id, source.layer_id,
+        "a paste is a new layer, not a second name for the old one"
+    );
+    assert_eq!(pasted.get_name().expect("name"), "Hero", "the name travels");
+
+    let span = pasted.get_span().expect("span");
+    assert_eq!(
+        (span.in_point.num, span.in_point.den),
+        (1, 1),
+        "the in point lands on the playhead — frame 30 of a 30 fps comp is 1 s"
+    );
+
+    // The effect came too, animated, with an id of its own.
+    let fx = pasted.get_effects().expect("effects");
+    assert_eq!(fx.len(), 1, "the stack travels");
+    assert_ne!(
+        fx[0].id(),
+        source.get_effects().expect("effects")[0].id(),
+        "with a fresh instance id, so no op is ambiguous"
+    );
+    let Ok(BridgeEffectValue::Float(BridgeScalar::Keyframed(keys))) =
+        fx[0].get_value("radius".into())
+    else {
+        panic!("the animation must survive the round trip");
+    };
+    assert_eq!(keys.len(), 2, "both keys, unshifted — a layer moves as one");
+
+    // And the original is untouched by any of it.
+    assert_eq!(
+        source.get_span().expect("span").in_point,
+        BridgeRational { num: 0, den: 1 }
+    );
+}
+
+/// A layer pasted into **another** composition keeps everything that is its own
+/// and drops what pointed at the comp it left (K-275).
+#[test]
+fn a_layer_pasted_into_another_comp_drops_the_references_it_left_behind() {
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let parent = comp.add_null_layer().expect("a parent");
+    let source = comp.add_solid_layer().expect("a layer to copy");
+    source.set_parent(Some(parent.layer_id)).expect("parented");
+
+    let text = source.copy_layer().expect("copied");
+
+    // Back into its own comp: the parent is still there, so it is kept.
+    let same = comp.paste_layer(text.clone(), None).expect("pasted");
+    assert_eq!(
+        same.get_parent().expect("parent"),
+        Some(parent.layer_id),
+        "pasting where the parent lives keeps the parenting"
+    );
+    assert_eq!(
+        same.get_span().expect("span").in_point,
+        source.get_span().expect("span").in_point,
+        "None keeps the time it was copied at"
+    );
+
+    // Into a different comp: the parent means nothing there, so it goes.
+    let elsewhere = project
+        .new_composition("Second".into(), None)
+        .expect("another comp");
+    let there = elsewhere.paste_layer(text, Some(0)).expect("pasted");
+    assert_eq!(
+        there.get_parent().expect("parent"),
+        None,
+        "a parent from another comp is dropped, not left dangling"
+    );
+    assert_eq!(
+        elsewhere.get_layers().expect("layers").len(),
+        1,
+        "and the layer itself did arrive"
+    );
+}
+
+/// **A pasted effect lands with its first keyframe under the playhead** (K-275,
+/// the owner's rule). An effect copied from a layer that flashes at 4 s and
+/// pasted while the playhead sits at 12 s must flash at 12 s.
+#[test]
+fn a_pasted_effect_starts_its_animation_at_the_playhead() {
+    use crate::api::effect::{BridgeEffectValue, BridgeRational, BridgeScalar};
+
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let source = comp.add_solid_layer().expect("a layer");
+    source.add_effect("blur".into()).expect("an effect");
+
+    let key = |num: i64, value: f64| crate::api::effect::BridgeKeyframe {
+        time: BridgeRational { num, den: 1 },
+        value,
+        interp_in: crate::api::effect::BridgeSideInterp::Linear,
+        interp_out: crate::api::effect::BridgeSideInterp::Linear,
+    };
+    let mut staged = source.get_effects().expect("effects");
+    staged[0]
+        .set_value(
+            "radius".into(),
+            // Two keys a second apart, starting at 4 s.
+            BridgeEffectValue::Float(BridgeScalar::Keyframed(vec![key(4, 0.0), key(5, 40.0)])),
+        )
+        .expect("animated");
+    source.set_effects(staged).expect("committed");
+
+    let text = source.copy_effects(None).expect("copied");
+    let target = comp.add_solid_layer().expect("somewhere to paste");
+    // 12 seconds at 30 fps.
+    target.paste_effects(text, 360).expect("pasted");
+
+    let fx = target.get_effects().expect("effects");
+    assert_eq!(fx.len(), 1);
+    let Ok(BridgeEffectValue::Float(BridgeScalar::Keyframed(keys))) =
+        fx[0].get_value("radius".into())
+    else {
+        panic!("the pasted effect must still be animated");
+    };
+    assert_eq!(
+        keys[0].time,
+        BridgeRational { num: 12, den: 1 },
+        "the first key sits under the playhead"
+    );
+    assert_eq!(
+        keys[1].time,
+        BridgeRational { num: 13, den: 1 },
+        "and the rest keep their spacing"
+    );
+}
+
+/// An effect with no animation at all pastes unchanged — there is no timing to
+/// place, and inventing one would move a look that was never in motion (K-275).
+#[test]
+fn a_pasted_effect_with_no_keyframes_is_left_where_it_is() {
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let source = comp.add_solid_layer().expect("a layer");
+    source.add_effect("blur".into()).expect("an effect");
+    let before = source.get_effects().expect("effects")[0]
+        .get_value("radius".into())
+        .expect("radius");
+
+    let text = source.copy_effects(None).expect("copied");
+    let target = comp.add_solid_layer().expect("somewhere to paste");
+    target.paste_effects(text, 120).expect("pasted");
+
+    let after = target.get_effects().expect("effects")[0]
+        .get_value("radius".into())
+        .expect("radius");
+    assert_eq!(format!("{before:?}"), format!("{after:?}"));
+}
+
 /// Each switch is its own op, so a click is one undo step and toggling one
 /// switch never disturbs another.
 #[test]

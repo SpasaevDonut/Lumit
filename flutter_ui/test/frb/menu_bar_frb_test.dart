@@ -159,6 +159,67 @@ void main() {
       expect(find.text('Composition settings…'), findsOneWidget);
     });
 
+    testWidgets('Copy and Paste carry a layer, landing it at the playhead',
+        (tester) async {
+      // K-275: Copy takes the selected layer whole and Paste puts it in the
+      // comp on screen, at the playhead. The engine does the carrying; what is
+      // tested here is that the menu is wired to it and to the setting.
+      final p = await mount(tester);
+      await makeComp(tester);
+      final comp = p.uiState.selectedComp!;
+      final source = comp.addSolidLayer();
+      source.rename(name: 'Hero');
+      source.addEffect(name: 'blur');
+      p.uiState.setSelection([source]);
+      await tester.pump();
+
+      await choose(tester, 'Edit', 'Copy');
+      p.uiState.playheadFrame.value = 30;
+      await choose(tester, 'Edit', 'Paste');
+      await tester.pump();
+
+      final layers = comp.getLayers();
+      expect(layers.length, 2, reason: 'the paste made a second layer');
+      final pasted = p.uiState.selectedLayer.value!;
+      expect(pasted.internallayerId, isNot(source.internallayerId),
+          reason: 'and selected it, as every editor does');
+      expect(pasted.getName(), 'Hero', reason: 'the name travels');
+      expect(pasted.getEffects().length, 1, reason: 'and so does the stack');
+      // Frame 30 in seconds, on whatever rate the comp actually runs at.
+      final settings = comp.getSettings();
+      final atFrame30 = 30 * settings.fpsDen / settings.fpsNum;
+      final span = pasted.getSpan();
+      expect(span.inPoint.num / span.inPoint.den, closeTo(atFrame30, 1e-9),
+          reason: 'the in point lands on the playhead');
+
+      // The setting sends it to the time it was copied from instead.
+      p.uiState.workspace.interface.pasteLayersAtOriginalTime = true;
+      p.uiState.playheadFrame.value = 60;
+      await choose(tester, 'Edit', 'Paste');
+      await tester.pump();
+      final atOriginal = p.uiState.selectedLayer.value!.getSpan();
+      expect(atOriginal.inPoint.num, 0,
+          reason: 'with the setting on it keeps the time it was copied at');
+    });
+
+    testWidgets('Cut copies the layer before removing it', (tester) async {
+      final p = await mount(tester);
+      await makeComp(tester);
+      final comp = p.uiState.selectedComp!;
+      final source = comp.addSolidLayer();
+      p.uiState.setSelection([source]);
+      await tester.pump();
+
+      await choose(tester, 'Edit', 'Cut');
+      await tester.pump();
+      expect(comp.getLayers(), isEmpty, reason: 'the layer went');
+
+      await choose(tester, 'Edit', 'Paste');
+      await tester.pump();
+      expect(comp.getLayers().length, 1,
+          reason: 'and came back, so Cut did copy before deleting');
+    });
+
     testWidgets('New composition creates one, fronts it, and names it for you',
         (tester) async {
       final p = await mount(tester);

@@ -426,6 +426,23 @@ class _SettingsWindowState extends State<_SettingsWindow> {
         ),
         _row(
           t,
+          'Paste layers at their original time',
+          'A pasted layer keeps the timecode it was copied at, instead of '
+              'starting at the playhead. For rebuilding the same moment in a '
+              'second composition; leave it off for the everyday "put one '
+              'here". Effects always paste with their first keyframe at the '
+              'playhead, whichever way this is set.',
+          HouseCheckbox(
+            key: const ValueKey('settings-paste-at-original-time'),
+            value: settings.pasteLayersAtOriginalTime,
+            onChanged: (on) => setState(() {
+              settings.pasteLayersAtOriginalTime = on;
+              ui.workspace.settingsChanged();
+            }),
+          ),
+        ),
+        _row(
+          t,
           'Playhead stays where playback stopped',
           'Leave the playhead on the frame that was on screen when playback '
               'stopped, instead of putting it back where playing started. '
