@@ -11,6 +11,13 @@
 # Raising it is a deliberate act: bump the version, run the full suite, and say
 # so in the changelog. The CI workflows install stable and then let this file
 # govern, so there is one place to change.
+#
+# It must name the version the repository is ALREADY on, not merely one that
+# works: pinning below it is a downgrade in disguise, and the first attempt here
+# did exactly that. On the older compiler an `objc` macro tripped
+# `unexpected_cfgs` in the macOS-only Metal path, and the bridge's generated
+# code came out naming a different derive-expansion helper, so two jobs failed
+# for reasons that had nothing to do with what was being pinned.
 [toolchain]
-channel = "1.94.1"
+channel = "1.97.1"
 components = ["rustfmt", "clippy"]

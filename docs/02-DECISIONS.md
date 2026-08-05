@@ -5592,7 +5592,13 @@ re-read every frame.
 **K-272 · DECIDED · The toolchain is pinned and dependency hygiene is a CI job.** Two of
 [14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md) §9's owed tools, which are the same
 promise from two directions: what this repository is built *with*, and what it is built
-*from*. **(1) `rust-toolchain.toml` pins 1.94.1** (with rustfmt and clippy). Without it,
+*from*. **(1) `rust-toolchain.toml` pins 1.97.1** (with rustfmt and clippy) — the version the
+repository was already building on. **A pin must name the version the repository is already
+on**: the first attempt here named an older one, which is a downgrade in disguise, and CI
+said so twice — an `objc` macro tripped `unexpected_cfgs` in the macOS-only Metal path, and
+the bridge's generated code came out naming a different derive-expansion helper
+(`assert_receiver_is_total_eq` for `assert_fields_are_eq`), so two jobs failed for reasons
+that had nothing to do with what was being pinned. Without the pin at all,
 "stable" means whatever each machine happens to have, and `-D warnings` turns a compiler
 released mid-week into a red build on a commit that changed nothing. Every CI job installs
 stable and then lets the file decide, so there is one place to raise it — deliberately,
