@@ -24,6 +24,8 @@ pub mod comp {
         }
     }
 
+    /// get the name of a composition
+    #[rhai_fn(get = "name")]
     pub fn name(context: NativeCallContext, this: &mut Comp) -> String {
         let tag = context.engine().default_tag();
         let context = tag.clone_cast::<Arc<ExpressionContext>>();

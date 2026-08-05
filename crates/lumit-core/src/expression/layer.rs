@@ -104,6 +104,7 @@ pub mod layers {
     }
 
     /// get the name of a layer
+    #[rhai_fn(get = "name")]
     pub fn name(context: NativeCallContext, this: &mut Layer) -> String {
         if let Some(layer) = get_layer(&context, this) {
             return layer.name;
@@ -118,7 +119,7 @@ pub mod layers {
         _time(&context, this)
     }
 
-    /// x coordinate of the layers position
+    /// x coordinate of the layer's position
     #[rhai_fn(get = "x")]
     pub fn x(context: NativeCallContext, this: &mut Layer) -> f64 {
         if let Some(layer) = get_layer(&context, this) {
@@ -141,6 +142,7 @@ pub mod layers {
         -1.0
     }
 
+    /// y coordinate of the layer's position
     #[rhai_fn(get = "y")]
     pub fn y(context: NativeCallContext, this: &mut Layer) -> f64 {
         if let Some(layer) = get_layer(&context, this) {
@@ -162,6 +164,7 @@ pub mod layers {
         -1.0
     }
 
+    /// value of the layer's rotation
     #[rhai_fn(get = "rotation")]
     pub fn rotation(context: NativeCallContext, this: &mut Layer) -> f64 {
         if let Some(layer) = get_layer(&context, this) {
@@ -180,6 +183,7 @@ pub mod layers {
         -1.0
     }
 
+    /// x component of the layer's scale
     #[rhai_fn(get = "scale_x")]
     pub fn scale_x(context: NativeCallContext, this: &mut Layer) -> f64 {
         if let Some(layer) = get_layer(&context, this) {
@@ -198,6 +202,7 @@ pub mod layers {
         -1.0
     }
 
+    /// y component of the layer's scale
     #[rhai_fn(get = "scale_y")]
     pub fn scale_y(context: NativeCallContext, this: &mut Layer) -> f64 {
         if let Some(layer) = get_layer(&context, this) {
@@ -216,6 +221,7 @@ pub mod layers {
         -1.0
     }
 
+    /// x coordinate of the layer's anchor
     #[rhai_fn(get = "anchor_x")]
     pub fn anchor_x(context: NativeCallContext, this: &mut Layer) -> f64 {
         if let Some(layer) = get_layer(&context, this) {
@@ -234,6 +240,7 @@ pub mod layers {
         -1.0
     }
 
+    /// y coordinate of the layer's position
     #[rhai_fn(get = "anchor_y")]
     pub fn anchor_y(context: NativeCallContext, this: &mut Layer) -> f64 {
         if let Some(layer) = get_layer(&context, this) {
@@ -252,6 +259,7 @@ pub mod layers {
         -1.0
     }
 
+    /// layer's current opacity
     #[rhai_fn(get = "opacity")]
     pub fn opacity(context: NativeCallContext, this: &mut Layer) -> f64 {
         if let Some(layer) = get_layer(&context, this) {
