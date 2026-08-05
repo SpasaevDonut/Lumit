@@ -1815,6 +1815,7 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
               },
               onSecondaryTapDown: (d) =>
                   _showKeyMenu(channel, i, d.globalPosition),
+              supportedDevices: dragDevices,
               onPanStart: (_) {
                 if (widget.lens == GraphLens.value) {
                   _startKeyDrag(id);
@@ -1915,6 +1916,7 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
               key: ValueKey<String>(
                   'graph-handle-${channel.id}#$i-${isOut ? 'out' : 'in'}'),
               behavior: HitTestBehavior.opaque,
+              supportedDevices: dragDevices,
               onPanStart: (_) =>
                   _startHandleDrag(channel, i, isOut, false, range, height),
               onPanUpdate: (d) {

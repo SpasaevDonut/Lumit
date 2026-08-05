@@ -8,11 +8,13 @@
 //
 // Every document operation is genuine; see frb_test_support.dart.
 
+import 'package:flutter/gestures.dart' show kSecondaryButton;
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/widgets/controls.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/panels/effect_controls_panel_frb.dart';
+import 'package:lumit_flutter/panels/effect_param_row_frb.dart' show effectLabelOf;
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 
@@ -113,6 +115,65 @@ void main() {
           reason: 'a row per declared parameter, labelled from the schema');
     });
 
+    testWidgets(
+        'a null layer says its effects change no picture, and keeps their values',
+        (tester) async {
+      // K-274: effects on a null are ACCEPTED and labelled inert rather than
+      // refused. A null draws nothing, so nothing here changes a picture — but
+      // the parameters are real, animatable values, which is the whole point
+      // of putting a control on a null.
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      final nul = comp.addNullLayer();
+      p.uiState
+        ..setSelectedComp(comp)
+        ..selectedLayer.value = nul;
+
+      await tester.pumpWidget(hostPanel(
+        child: const EffectControlsPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('fx-null-inert')), findsNothing,
+          reason: 'nothing to say about a stack that is empty');
+
+      nul.addEffect(name: 'blur');
+      p.uiState.model.refresh();
+      await tester.pump();
+      expect(find.byKey(const ValueKey('fx-null-inert')), findsOneWidget,
+          reason: 'the drop is accepted, and the panel says what it does');
+
+      // And the effect is genuinely on the layer, with a readable value — the
+      // difference between "inert" and "refused". (That those values stay
+      // live and animatable is pinned engine-side, where the commit is:
+      // `an_effect_on_a_null_layer_keeps_its_animated_value`.)
+      expect(nul.getEffects().length, 1);
+      expect(find.text('Gaussian blur'), findsOneWidget,
+          reason: 'the stack draws as it does on any other layer');
+    });
+
+    testWidgets('a selection made in the Viewer switches the panel to it',
+        (tester) async {
+      // The Viewer picks a layer by calling `setSelection` on the shell — it
+      // never goes through the Timeline — so this panel must follow the shell,
+      // not the panel that happens to be next to it (K-275).
+      final p = withLayer();
+      p.layer.addEffect(name: 'blur');
+      final other = p.uiState.selectedComp!.addSolidLayer();
+      other.addEffect(name: 'invert');
+      await mount(tester, p);
+      expect(find.text('Gaussian blur'), findsOneWidget);
+
+      p.uiState.setSelection([other]);
+      await tester.pump();
+
+      expect(find.text('Invert'), findsOneWidget,
+          reason: "the panel shows the newly selected layer's stack");
+      expect(find.text('Gaussian blur'), findsNothing,
+          reason: 'and not the one it was showing before');
+    });
+
     testWidgets('a parameter edit commits, and reading it back is exact',
         (tester) async {
       final p = withLayer();
@@ -187,11 +248,18 @@ void main() {
       expect(p.layer.getEffects().first.enabled(), isFalse,
           reason: 'bypassing an effect is a document edit, not a view state');
 
-      // Reorder: the second card's up arrow swaps the pair.
+      // Reorder: right-click the second card's heading and move it up (K-276
+      // put the two arrows' rare job in a menu and gave their space to the
+      // render time, which is read constantly).
       final before = p.layer.getEffects().map((e) => e.name()).toList();
       final second = p.layer.getEffects()[1];
-      await tester.tap(find.byKey(ValueKey<String>('fx-up-${second.id()}')));
-      await tester.pump();
+      await tester.tapAt(
+        tester.getCenter(find.text(effectLabelOf(second.name()))),
+        buttons: kSecondaryButton,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(ValueKey<String>('fx-menu-up-${second.id()}')));
+      await tester.pumpAndSettle();
       expect(p.layer.getEffects().map((e) => e.name()).toList(),
           before.reversed.toList());
 
@@ -202,7 +270,36 @@ void main() {
       expect(p.layer.getEffects(), hasLength(1));
     });
 
-    testWidgets('the top card cannot move up and the bottom cannot move down',
+    /// Dragging an effect's name to another effect's name moves it there — the
+    /// gesture the owner asked for and the one every other list in the
+    /// application already uses (docs/07 §6).
+    testWidgets('an effect is reordered by dragging its heading',
+        (tester) async {
+      final p = withLayer();
+      p.layer.addEffect(name: 'blur');
+      p.layer.addEffect(name: 'sharpen');
+      await mount(tester, p);
+
+      final before = p.layer.getEffects().map((e) => e.name()).toList();
+      expect(before, ['blur', 'sharpen']);
+
+      // The second heading onto the first: sharpen takes blur's place.
+      final from = find.text(effectLabelOf('sharpen'));
+      final onto = find.text(effectLabelOf('blur'));
+      final drag = await tester.startGesture(tester.getCenter(from));
+      // Past the drag threshold in steps, so the Draggable starts and the
+      // target under the pointer is entered before the release.
+      await tester.pump(const Duration(milliseconds: 20));
+      await drag.moveTo(tester.getCenter(onto));
+      await tester.pump(const Duration(milliseconds: 20));
+      await drag.up();
+      await tester.pumpAndSettle();
+
+      expect(p.layer.getEffects().map((e) => e.name()).toList(),
+          ['sharpen', 'blur']);
+    });
+
+    testWidgets('the top card is offered no way up, and the bottom none down',
         (tester) async {
       final p = withLayer();
       p.layer.addEffect(name: 'blur');
@@ -210,18 +307,23 @@ void main() {
       await mount(tester, p);
 
       final effects = p.layer.getEffects();
-      final order = effects.map((e) => e.name()).toList();
 
-      // Both are present but inert, so the row's shape does not shift.
-      await tester
-          .tap(find.byKey(ValueKey<String>('fx-up-${effects[0].id()}')));
-      await tester.pump();
-      await tester
-          .tap(find.byKey(ValueKey<String>('fx-down-${effects[1].id()}')));
-      await tester.pump();
-
-      expect(p.layer.getEffects().map((e) => e.name()).toList(), order,
-          reason: 'a disabled arrow does nothing rather than wrapping around');
+      // The topmost effect's menu offers the moves it can make and not the
+      // ones it cannot — a dead row tells you what you cannot do, which is not
+      // what a menu is for.
+      await tester.tapAt(
+        tester.getCenter(find.text(effectLabelOf(effects[0].name()))),
+        buttons: kSecondaryButton,
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(ValueKey<String>('fx-menu-up-${effects[0].id()}')),
+          findsNothing);
+      expect(find.byKey(ValueKey<String>('fx-menu-top-${effects[0].id()}')),
+          findsNothing);
+      expect(find.byKey(ValueKey<String>('fx-menu-down-${effects[0].id()}')),
+          findsOneWidget);
+      expect(find.byKey(ValueKey<String>('fx-menu-bottom-${effects[0].id()}')),
+          findsOneWidget);
     });
 
     testWidgets('an effect twirls shut, and its rows go with it',

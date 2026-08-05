@@ -11,15 +11,23 @@
 // index order (x=r, y=g, z=b) matches the red-fastest flat index the cube is
 // uploaded with (r + g*N + b*N*N), so there is no transpose.
 //
-// Domain is assumed 0..1 (a domain remap is a documented follow-up,
-// docs/impl/lut.md §2). Out-of-domain input clamps to the edge (it does not
-// wrap). `mix == 0` reproduces the input bit-exactly.
+// The cube's DOMAIN_MIN/DOMAIN_MAX remap is applied here exactly as the CPU
+// reference's `axis()` applies it (docs/impl/lut.md §2): `(c - lo) / (hi - lo)`,
+// with a zero span reading as 0 rather than dividing. Almost every creative
+// `.cube` uses the default 0..1 domain, where this is the identity — but a cube
+// that does not used to render with the domain silently ignored on the GPU
+// while the CPU oracle remapped it (K-271). Out-of-domain input clamps to the
+// edge (it does not wrap). `mix == 0` reproduces the input bit-exactly.
 
 struct Params {
     size: u32,     // LUT edge length N (the cube holds N³ samples)
     mix: f32,      // 0..1, blended against the unprocessed input
     _pad0: f32,
     _pad1: f32,
+    // The cube's input domain, per channel, in .xyz (.w is padding: a uniform
+    // vec3 is 16-byte aligned anyway, so the pad is free).
+    domain_min: vec4<f32>,
+    domain_max: vec4<f32>,
 };
 
 @group(0) @binding(0) var src: texture_2d<f32>;
@@ -59,12 +67,16 @@ fn lut_apply(@builtin(global_invocation_id) gid: vec3<u32>) {
     let o = textureLoad(src, xy, 0);
     let u = unpremult(o);
 
-    // Map each channel onto the grid and clamp (out-of-domain clamps to the
-    // edge). Domain 0..1, so the coordinate is `c * (N - 1)` == the CPU
-    // reference's `axis()` with lo=0, hi=1 (docs/impl/lut.md §2).
+    // Map each channel through its domain onto the grid and clamp
+    // (out-of-domain clamps to the edge) — the CPU reference's `axis()`,
+    // operation for operation, including the zero-span guard (a DOMAIN_MIN
+    // equal to its DOMAIN_MAX reads as 0, not as a division by zero).
     let maxi = i32(p.size) - 1;
     let maxf = f32(maxi);
-    let g = clamp(u * maxf, vec3<f32>(0.0), vec3<f32>(maxf));
+    let lo = p.domain_min.xyz;
+    let span = p.domain_max.xyz - lo;
+    let t = select(vec3<f32>(0.0), (u - lo) / span, span != vec3<f32>(0.0));
+    let g = clamp(t * maxf, vec3<f32>(0.0), vec3<f32>(maxf));
     let base = floor(g);
     let f = g - base;
     let x0 = i32(base.x);

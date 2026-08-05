@@ -61,7 +61,7 @@ fn worst_f16_ulp(a: &[f32], b: &[f32]) -> i32 {
 #[test]
 fn wgsl_blur_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -130,7 +130,7 @@ fn wgsl_blur_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_sharpen_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -183,7 +183,7 @@ fn wgsl_sharpen_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_sharpen_simple_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -227,7 +227,7 @@ fn wgsl_sharpen_simple_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_rgb_split_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -283,7 +283,7 @@ fn wgsl_rgb_split_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_spectral_split_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -348,7 +348,7 @@ fn wgsl_spectral_split_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_chromatic_aberration_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -403,7 +403,7 @@ fn wgsl_chromatic_aberration_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_flash_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -447,7 +447,7 @@ fn wgsl_flash_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_colour_balance_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -502,7 +502,7 @@ fn wgsl_colour_balance_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_saturation_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -576,7 +576,7 @@ fn wgsl_saturation_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_vibrancy_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -646,7 +646,7 @@ fn wgsl_vibrancy_matches_the_cpu_oracle() {
 fn wgsl_matte_key_matches_the_cpu_oracle() {
     use lumit_core::fx::MatteKeyParams;
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -783,7 +783,7 @@ fn wgsl_matte_key_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_vignette_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -896,7 +896,7 @@ fn wgsl_vignette_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_exposure_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -971,7 +971,7 @@ fn wgsl_exposure_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_temperature_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1070,7 +1070,7 @@ fn corpus_with_partials(w: u32, h: u32) -> Vec<f32> {
 #[test]
 fn wgsl_invert_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1111,7 +1111,7 @@ fn wgsl_invert_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_tint_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1182,7 +1182,7 @@ fn wgsl_tint_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_contrast_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1242,7 +1242,7 @@ fn wgsl_contrast_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_gamma_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1329,7 +1329,7 @@ fn wgsl_gamma_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_hue_shift_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1383,7 +1383,7 @@ fn wgsl_hue_shift_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_transform_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1459,7 +1459,7 @@ fn wgsl_transform_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_shake_matches_the_cpu_oracle_through_the_transform_kernel() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1530,7 +1530,7 @@ fn wgsl_shake_motion_blur_matches_the_cpu_oracle() {
     assert_eq!(SHAKE_MB_SAMPLES, lumit_core::fx::SHAKE_MB_SAMPLES);
 
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1669,7 +1669,7 @@ fn wgsl_shake_motion_blur_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_glow_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1745,7 +1745,7 @@ fn wgsl_glow_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_block_glitch_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1857,7 +1857,7 @@ fn wgsl_block_glitch_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_scanlines_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1945,7 +1945,7 @@ fn wgsl_scanlines_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_dir_blur_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1996,7 +1996,7 @@ fn wgsl_dir_blur_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_radial_blur_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -2053,7 +2053,7 @@ fn wgsl_radial_blur_matches_the_cpu_oracle() {
 #[test]
 fn adjust_blend_lerps_by_coverage_times_opacity() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -2142,7 +2142,7 @@ fn adjust_blend_lerps_by_coverage_times_opacity() {
 #[test]
 fn wgsl_echo_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -2281,7 +2281,7 @@ fn wgsl_echo_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_motion_blur_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -2428,7 +2428,7 @@ fn wgsl_motion_blur_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_datamosh_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -2541,19 +2541,34 @@ fn wgsl_datamosh_matches_the_cpu_oracle() {
 /// pushed **red-fastest** (index `r + g*size + b*size*size`) — the layout
 /// `upload_lut_3d` and the shader assume.
 fn build_lut(size: usize, f: impl Fn([f32; 3]) -> [f32; 3]) -> lumit_core::lut::Lut3d {
+    build_lut_over(size, [0.0; 3], [1.0; 3], f)
+}
+
+/// The same, over an explicit `DOMAIN_MIN`/`DOMAIN_MAX` (K-271): the grid
+/// points are the domain's own even spacing, so a cube built here says the
+/// same thing as one exported by a grading tool that declares a domain.
+fn build_lut_over(
+    size: usize,
+    domain_min: [f32; 3],
+    domain_max: [f32; 3],
+    f: impl Fn([f32; 3]) -> [f32; 3],
+) -> lumit_core::lut::Lut3d {
     let maxf = (size - 1) as f32;
+    let at = |i: usize, ch: usize| {
+        domain_min[ch] + (domain_max[ch] - domain_min[ch]) * (i as f32 / maxf)
+    };
     let mut data = Vec::with_capacity(size * size * size);
     for b in 0..size {
         for g in 0..size {
             for r in 0..size {
-                data.push(f([r as f32 / maxf, g as f32 / maxf, b as f32 / maxf]));
+                data.push(f([at(r, 0), at(g, 1), at(b, 2)]));
             }
         }
     }
     lumit_core::lut::Lut3d {
         size,
-        domain_min: [0.0; 3],
-        domain_max: [1.0; 3],
+        domain_min,
+        domain_max,
         data,
     }
 }
@@ -2571,7 +2586,7 @@ fn build_lut(size: usize, f: impl Fn([f32; 3]) -> [f32; 3]) -> lumit_core::lut::
 #[test]
 fn wgsl_lut_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -2627,12 +2642,29 @@ fn wgsl_lut_matches_the_cpu_oracle() {
     // A non-separable swap of red and blue: out = [b, g, r].
     let swap = build_lut(2, |c| [c[2], c[1], c[0]]);
 
-    let cases: [(&str, &lumit_core::lut::Lut3d, f32); 5] = [
+    // A cube over a NON-DEFAULT domain (K-271): the shipped shader assumed
+    // 0..1 and skipped the `(c - lo) / (hi - lo)` remap the CPU applies, so a
+    // cube like this rendered silently wrong on the GPU while the oracle was
+    // right. Asymmetric per channel, and one axis deliberately narrower than
+    // 0..1 so mid-grey lands in a different cell on each path if the remap is
+    // missing.
+    let domained = build_lut_over(4, [-0.25, 0.0, 0.1], [1.5, 0.75, 1.0], |c| {
+        [c[2], c[0], c[1]]
+    });
+    // The degenerate domain a malformed file can declare: DOMAIN_MIN equal to
+    // DOMAIN_MAX. The CPU reads a zero span as 0 rather than dividing; the
+    // shader must do the same and not produce NaN.
+    let zero_span = build_lut_over(3, [0.5; 3], [0.5; 3], |c| [c[1], c[2], c[0]]);
+
+    let cases: [(&str, &lumit_core::lut::Lut3d, f32); 8] = [
         ("identity-full", &identity, 1.0),
         ("identity-mix0", &identity, 0.0),
         ("gamma-full", &gamma, 1.0),
         ("gamma-mixed", &gamma, 0.5),
         ("swap-rb", &swap, 1.0),
+        ("domained-full", &domained, 1.0),
+        ("domained-mixed", &domained, 0.5),
+        ("zero-span-domain", &zero_span, 1.0),
     ];
 
     for (name, lut, mix) in cases {
@@ -2652,7 +2684,17 @@ fn wgsl_lut_matches_the_cpu_oracle() {
 
         let tex = upload_linear_f32(&ctx, &img, w, h);
         let lut_tex = upload_lut_3d(&ctx, lut.size as u32, &lut.data);
-        let out = fx.lut(&ctx, &tex, w, h, &lut_tex, lut.size as u32, mix);
+        let out = fx.lut(
+            &ctx,
+            &tex,
+            w,
+            h,
+            &lut_tex,
+            lut.size as u32,
+            mix,
+            lut.domain_min,
+            lut.domain_max,
+        );
         let gpu = readback_linear_f32(&ctx, &out, w, h).unwrap();
 
         let worst = worst_f16_ulp(&cpu, &gpu);
@@ -2665,7 +2707,17 @@ fn wgsl_lut_matches_the_cpu_oracle() {
         }
 
         // Determinism: a second run is bit-identical to the first (§2.4).
-        let out2 = fx.lut(&ctx, &tex, w, h, &lut_tex, lut.size as u32, mix);
+        let out2 = fx.lut(
+            &ctx,
+            &tex,
+            w,
+            h,
+            &lut_tex,
+            lut.size as u32,
+            mix,
+            lut.domain_min,
+            lut.domain_max,
+        );
         let gpu2 = readback_linear_f32(&ctx, &out2, w, h).unwrap();
         assert_eq!(gpu, gpu2, "{name}: GPU LUT must be bit-stable");
     }
@@ -2678,7 +2730,17 @@ fn wgsl_lut_matches_the_cpu_oracle() {
     let tex = upload_linear_f32(&ctx, &img, w, h);
     let gpu = readback_linear_f32(
         &ctx,
-        &fx.lut(&ctx, &tex, w, h, &lut_tex, identity.size as u32, 1.0),
+        &fx.lut(
+            &ctx,
+            &tex,
+            w,
+            h,
+            &lut_tex,
+            identity.size as u32,
+            1.0,
+            identity.domain_min,
+            identity.domain_max,
+        ),
         w,
         h,
     )
@@ -2805,7 +2867,7 @@ fn dof_reference(
 #[test]
 fn wgsl_dof_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -3180,7 +3242,7 @@ fn lens_flare_dump_frame() {
         return;
     };
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -3271,7 +3333,7 @@ fn lens_flare_dump_frame() {
 #[ignore = "a measurement, not a gate: prints a time, asserts nothing"]
 fn lens_flare_frame_cost() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -3331,7 +3393,7 @@ fn lens_flare_frame_cost() {
 #[test]
 fn wgsl_lens_flare_ghost_blur_matches_the_cpu_reference() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -3483,7 +3545,7 @@ fn lens_flare_bake_cache_evicts_the_oldest_not_everything() {
 #[test]
 fn wgsl_lens_flare_trace_matches_the_cpu_reference() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -3645,7 +3707,7 @@ fn wgsl_lens_flare_trace_matches_the_cpu_reference() {
 #[test]
 fn wgsl_lens_flare_matches_the_cpu_frame_reference_and_neutrals() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -3756,7 +3818,7 @@ fn wgsl_lens_flare_matches_the_cpu_frame_reference_and_neutrals() {
 #[test]
 fn wgsl_lens_flare_padded_anamorphic_matches_and_fills_the_edge() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -3845,7 +3907,7 @@ fn wgsl_lens_flare_matte_mode_matches_the_cpu_reference() {
     assert_eq!(MAX_LIGHTS as usize, lumit_core::fx::lens_flare::MAX_LIGHTS);
 
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);

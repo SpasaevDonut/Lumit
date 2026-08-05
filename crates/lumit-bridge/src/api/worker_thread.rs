@@ -370,18 +370,24 @@ fn drain_demotions(state: &mut WorkerState) {
         // the same time, and it is 8 MB at 1080p, thus a copy for each tier was
         // the most costly part of a demotion.
         let bytes = std::sync::Arc::new(std::mem::take(&mut demoted.rgba));
-        _ = state.disk.tx.send(lumit_render::diskio::Cmd::Store {
-            hash: demoted.key,
-            width: demoted.width,
-            height: demoted.height,
-            bgra: demoted.bgra,
-            bytes: bytes.clone(),
-            // What it cost and what size it was made at, so the disk tier's cap
-            // can weigh it against its neighbours rather than taking whatever
-            // was written first (docs/06 §5.3).
-            cost_ms: demoted.cost_ms,
-            scale_q: demoted.provenance.scale_q,
-        });
+        // `park` rather than a bare send: it refuses a frame already on its way
+        // down and refuses everything once the queue is full, which is what
+        // keeps a write-behind queue from becoming a memory leak (K-277). A
+        // refusal costs this frame its place on disk and nothing else — it is
+        // still on the card and in memory, and it will be offered again.
+        //
+        // What it cost and what size it was made at go with it, so the disk
+        // tier's cap can weigh it against its neighbours rather than taking
+        // whatever was written first (docs/06 §5.3).
+        _ = state.disk.park(
+            demoted.key,
+            demoted.width,
+            demoted.height,
+            demoted.bgra,
+            bytes.clone(),
+            demoted.cost_ms,
+            demoted.provenance.scale_q,
+        );
         crate::framecache::put_demoted(demoted.key, &demoted, bytes);
     }
 }
@@ -901,7 +907,17 @@ fn prepare_frame(
     let name = cacheable
         .then(|| state.renderer.frame_key(document, comp, frame, quality))
         .flatten();
-    if let Some(key) = name.filter(|key| !state.renderer.has_frame_texture(*key, bgra)) {
+    // While the render-time column is measuring, the ladder is stepped over
+    // entirely: a frame promoted from memory or read off disk cost a copy, not
+    // a composite, so it has no per-layer numbers to give — and a column that
+    // only ever fills in on frames the cache has not already made is a column
+    // that looks broken (docs/13 §7.1). The renderer skips its own held
+    // textures for the same reason.
+    let measuring = state.renderer.measuring();
+    if let Some(key) = name
+        .filter(|_| !measuring)
+        .filter(|key| !state.renderer.has_frame_texture(*key, bgra))
+    {
         let provenance = lumit_render::FrameProvenance {
             comp,
             frame,
@@ -1008,8 +1024,19 @@ fn idle_backup(state: &mut WorkerState) {
     }
     // Two disjoint borrows of the worker's state: the renderer walks its held
     // frames, the disk mirror answers which of them are already parked.
+    //
+    // **Already parked OR already on its way** (K-277). A frame counts as
+    // parked only once the write has finished, so asking `contains` alone made
+    // every frame in the write queue look like one that had never been
+    // offered: this loop wakes every couple of milliseconds, so it read the
+    // same frames off the card and queued them again and again, each copy a
+    // whole frame of memory behind a thread already behind. That is how the
+    // application reached tens of gigabytes while sitting idle.
     let disk = &state.disk;
-    if !state.renderer.start_backup(&|hash| disk.contains(hash)) {
+    if !state
+        .renderer
+        .start_backup(&|hash| disk.contains(hash) || disk.is_pending(hash))
+    {
         state.backup_exhausted = true;
     }
 }
@@ -1801,13 +1828,48 @@ fn worker_loop(
 
     // No renderer means no Viewer, but the editor itself stays usable — the
     // worker just stops instead of taking the process down with it.
-    let renderer = match HeadlessRenderer::new() {
+    let mut renderer = match HeadlessRenderer::new() {
         Ok(renderer) => renderer,
         Err(err) => {
             eprintln!("Could not create the renderer, stopping the worker: {err}");
             return;
         }
     };
+    // The two profiler sinks (docs/13 §7.1), installed for the session and fed
+    // from inside a render — which is why they take a *clone* of the reply
+    // stream rather than borrowing the one the loop below writes through: a
+    // report is raised while the render still holds the thread, long before
+    // control returns to a place that could hand it the borrow.
+    //
+    // Which frames actually use them is decided per request (`watch_frames` /
+    // `measure_frames`): a scrub describes itself, a playing frame does not.
+    {
+        let progress_stream = stream.clone();
+        renderer.set_progress_sink(Some(std::sync::Arc::new(
+            move |p: lumit_render::FrameProgress| {
+                _ = progress_stream.add(WorkerResponse::RenderProgress(
+                    crate::api::state::BridgeRenderProgress {
+                        frame: p.frame,
+                        stage: p.stage.code(),
+                        fraction: f64::from(p.fraction),
+                        // The engine never sends the last word: a frame that faults
+                        // would then leave a bar standing for ever. The worker ends
+                        // every bar it started, below.
+                        done: false,
+                    },
+                ));
+            },
+        )));
+        let profile_stream = stream.clone();
+        renderer.set_profile_sink(Some(std::sync::Arc::new(
+            move |p: lumit_render::FrameProfile| {
+                // One line per switching on, never per frame — see
+                // `profiling::announce_first`.
+                crate::profiling::announce_first(p.frame, p.layers.len(), p.total_ms);
+                _ = profile_stream.add(WorkerResponse::FrameProfile(profile_of(&p)));
+            },
+        )));
+    }
 
     let mut state = WorkerState {
         project,
@@ -2532,6 +2594,67 @@ fn drain_to_newest<T>(
     (kept, scope, sample, superseded)
 }
 
+/// Translate one measured frame for the frontend (docs/13 §7.1). Ids cross as
+/// strings because that is how every other reference does — the frontend
+/// matches them against the ids its read model already holds.
+#[frb(ignore)]
+fn profile_of(p: &lumit_render::FrameProfile) -> crate::api::state::BridgeFrameProfile {
+    crate::api::state::BridgeFrameProfile {
+        frame: p.frame,
+        total_ms: f64::from(p.total_ms),
+        layers: p
+            .layers
+            .iter()
+            .map(|l| crate::api::state::BridgeLayerTiming {
+                layer: l.layer.to_string(),
+                ms: f64::from(l.ms),
+                effects: l
+                    .effects
+                    .iter()
+                    .map(|e| crate::api::state::BridgeEffectTiming {
+                        effect: e.effect.to_string(),
+                        ms: f64::from(e.ms),
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }
+}
+
+/// Render the one frame the user is waiting for, with the bar running.
+///
+/// The switches are turned on for this frame and off again straight after, so
+/// **nothing else the worker renders is watched or measured** — not playback,
+/// not the idle cache fill, not a scope trace. That is the whole rule
+/// (docs/07 §2.5: the bar never appears during playback), and keeping it here
+/// rather than in each render path is what stops a later caller forgetting it.
+///
+/// The closing report is sent whatever happened inside, including a frame that
+/// faulted or one served straight from the cache with no report at all: a bar
+/// that was started must always be ended.
+#[frb(ignore)]
+fn watched<R>(
+    state: &mut WorkerState,
+    stream: &mut WorkerResponseStream,
+    frame: u64,
+    render: impl FnOnce(&mut WorkerState, &mut WorkerResponseStream) -> R,
+) -> R {
+    state.renderer.watch_frames(true);
+    state.renderer.measure_frames(crate::profiling::wanted());
+    let out = render(state, stream);
+    state.renderer.watch_frames(false);
+    state.renderer.measure_frames(false);
+    _ = stream.add(WorkerResponse::RenderProgress(
+        crate::api::state::BridgeRenderProgress {
+            frame,
+            stage: lumit_render::RenderStage::Presenting.code(),
+            fraction: 1.0,
+            done: true,
+        },
+    ));
+    out
+}
+
 fn render_comp(
     req: RenderCompRequest,
     state: &mut WorkerState,
@@ -2546,17 +2669,19 @@ fn render_comp(
     // The user is looking here now: anchor the idle fill on it, and wake it.
     state.last_shown = Some((req.comp.clone(), req.frame, req.scale));
     state.fill_exhausted = false;
-    publish_frame(
-        state,
-        req.comp.id,
-        req.frame,
-        req.scale,
-        &document,
-        stream,
-        req.mode,
-        // A committed document: cacheable, and a held frame serves the scrub.
-        true,
-    );
+    watched(state, stream, req.frame, |state, stream| {
+        publish_frame(
+            state,
+            req.comp.id,
+            req.frame,
+            req.scale,
+            &document,
+            stream,
+            req.mode,
+            // A committed document: cacheable, and a held frame serves the scrub.
+            true,
+        );
+    });
     Ok(())
 }
 
@@ -2654,17 +2779,20 @@ fn render_comp_with_preview(
     // A drag is not playback: full resolution (EveryFrame skips the adaptive
     // tier), and NOT cacheable — these pixels are of provisional values the
     // document never committed, so they must neither be served back later nor
-    // displace honest frames.
-    publish_frame(
-        state,
-        req.comp.id,
-        req.frame,
-        req.scale,
-        &document,
-        stream,
-        BridgePlaybackMode::EveryFrame,
-        false,
-    );
+    // displace honest frames. It IS the case the bar exists for, though: a
+    // dragged value on a heavy comp is exactly where the picture goes quiet.
+    watched(state, stream, req.frame, |state, stream| {
+        publish_frame(
+            state,
+            req.comp.id,
+            req.frame,
+            req.scale,
+            &document,
+            stream,
+            BridgePlaybackMode::EveryFrame,
+            false,
+        );
+    });
     Ok(())
 }
 

@@ -184,7 +184,9 @@ impl Default for PreviewEngine {
                         media_epoch,
                         ..
                     } => pool
-                        .decode_comp(comp, frame, &jobs, media_epoch)
+                        // Nobody watches a background decode's progress: the
+                        // bar belongs to the frame the Viewer is waiting for.
+                        .decode_comp(comp, frame, &jobs, media_epoch, &|_| {})
                         .map(PreviewResult::Comp),
                     Message::SetCacheBudget(_) => continue, // handled above
                 };
@@ -306,13 +308,17 @@ impl DecodePool {
     }
 
     /// Decode every layer of one comp frame from its plan — the pixels
-    /// [`crate::build`] then turns into a draw list.
+    /// [`crate::build`] then turns into a draw list. `progress` is called with
+    /// the number of jobs finished as each one lands, which is what lets a
+    /// Viewer draw an honest bar through the slowest stage of a frame; pass
+    /// `&|_| {}` where nobody is watching.
     pub fn decode_comp(
         &mut self,
         comp: Uuid,
         frame: usize,
         jobs: &[CompJob],
         media_epoch: u64,
+        progress: &dyn Fn(usize),
     ) -> Result<CompFrame, String> {
         self.comp_decodes += 1;
         decode_comp(
@@ -323,6 +329,7 @@ impl DecodePool {
             frame,
             jobs,
             media_epoch,
+            progress,
         )
     }
 }
@@ -432,6 +439,7 @@ impl PreviewEngine {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn decode_comp(
     decoders: &mut HashMap<Uuid, lumit_media::VideoDecoder>,
     cache: &mut lumit_cache::ByteLru<(Uuid, usize, Option<u32>), CachedFrame>,
@@ -440,6 +448,7 @@ fn decode_comp(
     frame: usize,
     jobs: &[CompJob],
     media_epoch: u64,
+    progress: &dyn Fn(usize),
 ) -> Result<CompFrame, String> {
     let decode_started = std::time::Instant::now();
     let mut layers = Vec::with_capacity(jobs.len());
@@ -557,6 +566,9 @@ fn decode_comp(
             temporal,
             flow_field,
         });
+        // One more source frame in hand. Reported after the layer is filed, so
+        // "n of m done" is true of what has actually been decoded.
+        progress(layers.len());
     }
     Ok(CompFrame {
         comp,

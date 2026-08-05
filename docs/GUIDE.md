@@ -702,6 +702,8 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   guarded, and hands the picture to the light detector. One honest edge
   remains written down: footage inside a matte-only precomp needs the
   decode planner taught before it appears there.
+  (K-268 closed that edge, and it turned out to be smaller than feared —
+  see *Precomps, in the two places they used to fall through* below.)
   A fifth pass (K-267) closed the next round. The choppy ghost edges that
   survived at corner lights turned out to be a measuring problem, not a
   drawing one: the effect sizes each ghost's ray budget from a once-per-lens
@@ -1048,6 +1050,32 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   knowing (unchanged): "Effects and masks" applies the layer's *look* effects (keys, blurs, colour)
   but not its *time-based* ones — an Echo or motion-blur-from-movement on the referenced layer is
   treated as a still frame; the everyday cases are exact.
+- **Precomps, in the two places they used to fall through (K-268).** Every other kind of layer
+  has *pixels*: a solid is a colour, footage is a decoded frame, text is rasterised type. A
+  **precomp** has none — its picture only exists once it has been rendered, which is a job in
+  itself. Anywhere the code reached for "this layer's pixels" and got a precomp, it had to be
+  taught to render one instead, and two such places had been missed.
+  - **A precomp used as a track matte gated nothing.** Set a layer's matte to a precomp and
+    the matte quietly did not exist: the layer drew everywhere, exactly as if the row had been
+    left unset. (The sibling case — a precomp as a lens flare's Matte source or a depth-of-field
+    depth pass — was fixed in K-266; the track matte, which is the row you actually reach for,
+    was still asking for pixels that a comp does not have.) It now renders the nested comp the
+    same way a precomp *layer* is rendered, loops guarded, and gates with the result. Because
+    a comp already contains its own layers' masks and effects, the None / Masks / Effects and
+    masks combobox above has nothing left to decide for one, and is ignored there.
+  - **An effect ON a precomp layer drifted in reduced-resolution preview.** Parameters measured
+    in comp pixels — a Transform's offset, a flare's light position, a blur radius — are worked
+    out for a full-size frame and then have to be scaled down when preview renders smaller. That
+    correction was being applied to adjustment layers (K-266) and to ordinary layers, but not to
+    a precomp layer, so an effect on one landed further across the picture the coarser the
+    preview got, and snapped back at Full. Preview and export were never wrong at full
+    resolution; now they agree at every resolution, which is the whole point of a preview.
+
+  While closing the first of those, a note K-266 left behind — "footage inside a matte-only
+  precomp won't decode" — turned out to be about a bridge that was already built: the part of
+  the engine that decides which video frames to read (the *decode plan*) follows matte and
+  layer-input references whether or not the layer is visible. It is now pinned by a test rather
+  than by a warning in a document.
 - **Colour picker and dropper (K-210).** Every effect **Colour** parameter — a Flash tint, a
   Colour balance wheel, the Matte key's Key colour, and so on — shows a **clickable swatch**.
   Click it and Lumit's own picker opens: the **red, green and blue numbers across the top**,
@@ -1129,6 +1157,19 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   texture adds a third dimension (depth), so the card can look a colour up by its red, green and
   blue coordinates in one fetch — the first effect in Lumit to need one. The preview and the
   export load and apply the LUT the same way, so an exported file matches what you saw.
+
+  Two things about LUTs were quietly wrong until K-271. A `.cube` file may declare the *range
+  of input colours it was built for* — most say "nought to one", but a cube meant for log
+  footage might say "−0.25 to 1.5". Lumit's plain-Rust reference honoured that; the version
+  running on the graphics card ignored it and assumed nought-to-one, so such a cube came out
+  with the wrong colours and nothing said so. The card now does the same conversion, and the
+  test that compares the two paths includes a cube with an odd range, which the old shader
+  missed by a mile. Separately, Lumit remembered a `.cube` **by its filename only** — so the
+  loop everyone actually works in (export a grade, look at it, adjust, export again over the
+  same file) showed you the *first* version until you restarted the application. It now
+  remembers the file's last-changed time as well, so a re-exported grade appears on the next
+  frame, and it keeps only the eight most recently used cubes rather than every one the
+  session ever touched.
 - `crates/lumit-core/src/lut.rs` — **reading a colour LUT (`.cube` file).** A LUT
   (look-up table) is a colour recipe a colourist bakes elsewhere: feed it a red/green/blue
   and it hands back a graded red/green/blue. The common `.cube` text format stores that as a
@@ -1524,6 +1565,19 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   never your hand-placed cues). The markers show as clay ticks on the timeline ruler — faint
   or bright by confidence — and scrubbing the playhead snaps to a nearby marker, so you land
   on the beat.
+
+  One thing worth knowing about how the panel and the engine share a marker (K-270). The
+  panel can see and change three things about one: where it is, what it is called, and which
+  marker it is. The engine knows three more: whether it was detected or placed by hand (and
+  how confident the detector was), how long it lasts if it spans time, and any fields a
+  *newer* version of Lumit wrote that this one has never heard of. When you drag a marker,
+  the panel sends the whole list back — and it used to send back only the three things it
+  knows, which quietly reset the other three. Move a detected beat by one frame and it
+  stopped being a beat: **Clear beat markers** would then leave it behind, because nothing
+  was left to say where it came from. Now the write-back is a *merge* — each marker is
+  matched up with the one already there by its id, and everything the panel cannot see is
+  carried straight over. A marker you have just made has nothing to carry over, so it is a
+  plain user marker, which is what it is.
 - **The timeline waveform** — a strip under the ruler draws the composition's mixed audio as
   a min/max envelope on the same time axis, so the beats sit right above the transients that
   made them. It's built by `waveform_peaks` (in `lumit-audio::mix`), which buckets the mono
@@ -2086,7 +2140,16 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   (it emits no node, so it costs no drawing pass), the renderer returns no pixels for it,
   and it answers "no" when asked whether it has a picture — so it is never offered as a
   matte source or as a layer-valued effect parameter, where picking it would have quietly
-  produced nothing. It is *not* invisible to the frame cache, though, and that distinction
+  produced nothing.
+
+  You *can* still drop an effect on a null, and Lumit deliberately lets you (K-274). Nothing
+  is drawn — there is no picture for an effect to change — so the Effect controls panel says
+  so once, quietly, rather than refusing the drop. The reason is that an effect is not only
+  a picture operation: its parameters are values, animatable like any other, and a null is
+  the natural home for a value that is meant to drive *other* layers. Put a slider on a null,
+  animate it, and point another layer's expression at it, and the fact that the null itself
+  renders nothing is exactly the point. So the stack on a null is stored, keyframed and
+  sampled like any other; only the drawing is absent. It is *not* invisible to the frame cache, though, and that distinction
   matters: the transform still feeds the key that decides which cached frames are still
   good, so nudging a null correctly throws away the cached frames of everything hanging off
   it. A null draws a grabbable 100×100 wireframe box in the Viewer (K-230 — After Effects'
@@ -2899,6 +2962,63 @@ stayed green for weeks while nobody could actually clone the repository on Linux
 it. The jobs now leave that route alone and let the build find FFmpeg the ordinary way. If
 a step exists purely to make CI work, ask who else has to run it.
 
+Two of those checks were quietly weaker than they looked, and K-269 fixed both.
+
+**A skipped test looks exactly like a passing one.** Every test that needs a graphics card
+is written to *skip itself* when there isn't one — that is what lets the suite run on a
+laptop with nothing installed. But it also means a machine whose graphics driver went
+missing runs none of them and still reports a green tick: about ninety checks of the actual
+shader maths, silently not run. So there is now an environment variable,
+`LUMIT_REQUIRE_GPU`, that turns "no adapter" from a polite skip into a failure, and the
+Linux job — the one that deliberately installs lavapipe — sets it. Your own machine leaves
+it unset and keeps the friendly skip. The macOS and Windows jobs deliberately do not set it
+yet: nobody has confirmed those runners offer an adapter at all, and a gate is only worth
+having where it has been checked.
+
+**A build with no FFmpeg is a real build again (K-273).** Lumit can be compiled without the
+video decoder — useful for anyone who wants to work on the editing model without installing
+FFmpeg first, and it is why the Windows job used to be quick. Nobody had built it that way
+for a while, and it had stopped compiling. The rule it broke is worth knowing, because it is
+easy to break again: **the list of functions Dart can call is the same in every build.** The
+Dart side of the bridge is generated from that list, so a function that *vanishes* when a
+feature is off leaves generated code calling something that is not there. What may change is
+what a function *does*: beat detection is always present and simply answers "this build has
+no audio pipeline". A media-less build loses decoding — no probing, no thumbnails, no
+waveform peaks, and the decode-ahead thread quietly does nothing — never a call that is
+missing. CI now builds and tests it on every push, so it cannot rot again.
+
+One honest correction, because the first version of this said otherwise: turning the
+feature off does **not** give you a build with no FFmpeg in it. Two other parts of the
+engine — the renderer and the audio mixer — depend on the decoder unconditionally, and the
+bridge depends on both, so FFmpeg is still linked either way. What the feature governs is
+the bridge's *own* decode paths. Making the whole dependency tree media-optional is a
+separate job, and it is written down as one rather than implied by a feature flag.
+
+**Two more robots joined in K-272, both about things nobody here writes.** The first is a
+*pinned compiler*: "stable Rust" means whatever version your machine last downloaded, and
+because Lumit treats every compiler warning as an error, a new Rust released on a Tuesday
+could turn a build red on a commit that changed nothing. A small file at the top of the
+repository (`rust-toolchain.toml`) names the one version everything is built with, and Rust
+fetches exactly that on every machine including CI. Raising it is then a deliberate act
+rather than a surprise. The second is a *dependency check* (`cargo deny`): Lumit is GPLv3,
+which means it may only carry libraries whose licences the GPL can absorb, and it should
+not quietly pick up one with a published security hole or one whose author has stopped
+maintaining it. Four hundred-odd libraries arrive indirectly, so `deny.toml` writes the
+rules down and CI checks them — including three abandoned libraries we knowingly live with
+for now, each recorded with what it would take to leave it, because pretending they are not
+there would be worse than saying so.
+
+**The no-hex rule was being enforced on the wrong language.** Every colour is supposed to
+come from the theme, so the schemes and any custom theme actually reach every pixel — and
+CI was grepping for stray colour values in the *Rust* code, which is where the old frontend
+lived. All the widgets are Dart now. The same grep now runs over `flutter_ui/lib` outside
+`theme/`, and it found three real ones: a modal window's dimming wash spelled out in hex,
+and Material's own red and amber standing in for the theme's error and warning colours. The
+wash became a proper token (`scrim`), so it follows the scheme like everything else. Two
+things deliberately still pass: fully transparent (`0x00000000`), which is the *absence* of
+a colour rather than a choice of one, and rebuilding a colour from numbers that came out of
+a saved file, which is data rather than a design decision.
+
 ### How Lumit knows how much memory your machine has (K-194, K-204)
 
 Settings → Performance lets you type a cache size in megabytes, which means the engine
@@ -3037,6 +3157,19 @@ When you stop interacting, an idle pass fills the tiers around the playhead
 rather than sitting still — rendering neighbours it does not have, and copying
 held frames down to disk. It never re-renders a frame it already holds somewhere.
 
+**Writing to disk happens behind your back, and that had a sting in it (K-277).**
+A frame is handed to the disk thread and forgotten, and that thread has to
+convert, compress and write it — slower than the graphics card can hand frames
+over. A frame only counts as *on disk* once its write has finished, so the idle
+pass, which asks that question every few milliseconds, saw every frame still in
+the queue as one it had never copied, and handed it over again. And again. Each
+copy is a whole frame of memory (8 MB at 1080p) sitting in a queue nobody
+counted, and on a Mac left running the application reached 81 GB. Two rules fix
+it and are now the only way a frame reaches the disk thread: a frame already on
+its way is not sent again, and at most eight may be waiting at once. Past that
+the copy is simply skipped — the frame is still on the card and in memory, and it
+will be offered again later.
+
 **The cache bar** under the time ruler shows what is held: mint at the current
 preview resolution, dimmed mint only at a coarser one, steel-blue on disk,
 nothing for absent. The render worker computes the strip and publishes it; the
@@ -3058,6 +3191,63 @@ shows the newest frame the clock has reached, stops the sound after one late
 picture and restarts it after eight on-time ones. Stopping returns the playhead
 to where playback began (K-254); a scrub is the exception.
 
+### Telling how long a frame is taking, and where the time went (K-276)
+
+Two readouts, one mechanism. Both come from a small recorder the engine builds
+for a frame — `crates/lumit-render/src/profile.rs`. The progress bar reports only
+for frames somebody is waiting on; the render times are measured unless the clock
+in the bottom strip is switched off.
+
+**The preview progress bar.** Most frames arrive too quickly to mention. Some do
+not: a heavy composition under a dragged value, or a scrub onto a frame nothing
+has made before. The engine now reports how far such a frame has got — planning,
+reading media (per file), reading the composition, compositing (per layer),
+showing — and the Viewer draws a slim bar across the bottom of the picture with
+the stage in words. It never appears during playback (a frame due in sixteen
+milliseconds has no use for one) and never for a frame that arrives within about
+150 ms, so ordinary work stays silent. The percentage is an estimate from fixed
+stage weights — "roughly how much longer" — not a measurement.
+
+**The render-time column.** The Timeline's last column shows what each layer's
+own picture cost in the frame at the playhead, and twirling a layer open puts the
+same kind of number on each effect's heading; the Effect controls panel shows it
+on the effect's title row too. So "why is this comp slow" is answered with names
+and numbers rather than guesses.
+
+**Where the switch is, and what the column is telling you.** Measuring is on by
+default, and the clock in the **bottom strip** — just after the cache meters —
+turns it off for the session. (It began life as a glyph in the column's own
+header, which is where nobody found it: the column looked broken instead.) While
+measuring, the header stops saying "Time" and shows what the *whole frame* cost:
+an ellipsis until a measured frame has come back, then the number. So the three
+things that can be true read differently — not measuring, measuring and waiting,
+measured — instead of one dash meaning all three. Switch it off and the column
+goes altogether — header, cells and width — as do the figures on the effect
+headings in the Effect controls panel; a dash while it *is* measuring means that
+row was not in the last measured frame. If the engine refuses the switch, the status line says so, and
+the console carries one line per switching on and one more on the first frame
+actually measured.
+
+**A measured frame is a re-made frame.** Lumit keeps finished frames — on the
+graphics card, in memory, on disk — so returning to one costs a copy rather
+than a render. A copy has nothing to say about what the layers cost, so while
+the stopwatch is on the engine steps over all of that and composites the frame
+properly. That is why switching it on also re-asks for the frame you are looking
+at: otherwise the column would sit empty until you happened to scrub somewhere
+nothing had been made yet.
+
+**Why it has a switch.** Work for the graphics card is *handed over*, not
+performed: the call that blurs a layer returns long before the card has blurred
+anything. Timing that call would therefore time the paperwork. So a measured
+frame *waits* for the card at each layer and each effect before reading the
+clock, which makes the millisecond true and costs the overlap between the
+processor and the card for that frame. That is a fine price to pay while you are
+reading the numbers and a silly one to pay when you are not — hence the stopwatch
+in the column's header, off by default, never applied to playback, and the
+numbers dropped when it goes off so nothing stale is left on screen. Doing this
+continuously and for free needs *GPU timestamp queries*, which is written down as
+the follow-up in TODO.
+
 ### The panels
 
 `state/comp_model.dart` is the read model: **one** bridge call returns the whole
@@ -3073,7 +3263,9 @@ memoises frame↔time conversions the same way, and `timecode.dart` is the singl
   tool overlay. It watches the playhead and re-renders whenever it moves,
   whoever moved it.
 - **Timeline** — two linked columns (outline left, lanes right, shared vertical
-  scroll, independent horizontal), the ruler with markers and the work-area band,
+  scroll, independent horizontal — and the outline reserves the height of the
+  lane side's bottom bar so neither half can scroll further than the other),
+  the ruler with markers and the work-area band,
   layer bars with snapping, and per-layer fold-outs: Contents, Masks, Paint,
   Effects, Transform, Audio. The graph editor lives here as a lens over the
   lanes, with value, speed and Time views.
@@ -3087,6 +3279,14 @@ memoises frame↔time conversions the same way, and `timecode.dart` is the singl
 Panels can be popped out into their own desktop window (`desktop_multi_window`);
 each gets its own Flutter engine but opens a handle to the *same* engine state,
 so edits share one undo history.
+
+**Scrolling it, and why a trackpad needed its own answer (K-278).** Dragging in
+the lanes draws a selection box round keyframes, so the panel switches off
+drag-to-scroll — which on a Mac also switched off the trackpad, because a
+two-finger scroll there is a *drag gesture* and not the wheel's signal. The panel
+now admits exactly the trackpad as a scrolling device and every drag handler over
+those surfaces refuses it, so two fingers scroll and a click-drag still draws the
+box. Clicking and dragging with a mouse is unaffected either way.
 
 ### Tools and the on-picture overlay
 

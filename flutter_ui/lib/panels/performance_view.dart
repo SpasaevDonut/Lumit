@@ -161,11 +161,11 @@ class _PerformanceMonitorState extends State<PerformanceMonitor> {
     final theme = ThemeScope.of(context).theme;
 
     if (ms > 30) {
-      return Colors.red;
+      return theme.error;
     }
 
     if (ms > 17) {
-      return Colors.amber;
+      return theme.warning;
     }
 
     return theme.textMuted;

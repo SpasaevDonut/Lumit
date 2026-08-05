@@ -315,6 +315,7 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onSecondaryTapDown: (d) => _clipMenu(clip, d.globalPosition),
+          supportedDevices: dragDevices,
           onHorizontalDragStart: (d) => setState(() {
             final where = d.localPosition.dx;
             _drag = (
@@ -504,6 +505,7 @@ class _GraphDividerState extends State<_GraphDivider> {
       child: GestureDetector(
         key: const ValueKey('seq-graph-divider'),
         behavior: HitTestBehavior.opaque,
+        supportedDevices: dragDevices,
         onVerticalDragStart: (_) {
           _from = widget.height;
           _travelled = 0;

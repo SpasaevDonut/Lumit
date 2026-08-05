@@ -63,6 +63,7 @@ pub struct ScopedChange {
 }
 
 #[frb(non_opaque)]
+#[derive(Clone)]
 pub struct BridgeSharedFrameInfoLinux {
     pub fd: i32,
     /// Which frame of the composition this is. The frontend does not track this
@@ -93,6 +94,7 @@ pub struct BridgeSharedFrameInfoLinux {
 /// boundary. The handle is stable for the session and changes only when the
 /// comp's dimensions do. The format is always RGBA8, so it is not carried.
 #[frb(non_opaque)]
+#[derive(Clone)]
 pub struct BridgeSharedFrameInfo {
     /// The NT `HANDLE` value. `u64` because a Windows handle is 64-bit; it
     /// reaches Dart as a `BigInt`.
@@ -120,6 +122,7 @@ pub struct BridgeSharedFrameInfo {
 /// bridge are these thumbnails and the scope traces, both small by
 /// construction.
 #[frb(non_opaque)]
+#[derive(Clone)]
 pub struct BridgeRenderedFrame {
     /// Which frame of the source this is (0 for a thumbnail's poster frame).
     pub frame: u64,
@@ -137,6 +140,7 @@ pub struct BridgeRenderedFrame {
 /// serialises a `Vec<u8>` one byte at a time, measured at 8.8 ms for a 1080p
 /// frame, which is why the read-back frame transport was deleted.
 #[frb(non_opaque)]
+#[derive(Clone)]
 pub struct BridgeScopeTrace {
     pub rgba: Vec<u8>,
 }
@@ -155,6 +159,7 @@ pub struct BridgeScopeTrace {
 /// that *frames* only ever cross as GPU handles. It is the answer to a question
 /// about a few pixels, not a picture to display.
 #[frb(non_opaque)]
+#[derive(Clone)]
 pub struct BridgeSampledPixels {
     /// The window's side length in pixels: `window × window`, always odd, so
     /// there is a single centre pixel.
@@ -183,12 +188,78 @@ pub struct BridgeSampledPixels {
     pub layer_alone: bool,
 }
 
+/// How far the frame the user is waiting for has got (docs/13 §7.1).
+///
+/// Sent only for a frame somebody is *waiting on* — a scrub, a value drag, a
+/// playhead move — and never during playback, where a frame due in 16 ms has
+/// neither the need for a bar nor the time to describe itself. A frame served
+/// from the cache reports nothing at all, because there was nothing to wait
+/// for: it simply arrives.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BridgeRenderProgress {
+    /// Which frame this is about, so a report that arrives after the playhead
+    /// has moved on can be recognised as stale rather than drawn.
+    pub frame: u64,
+    /// The stage's wire code — 0 planning, 1 decoding, 2 building, 3
+    /// compositing, 4 presenting ([`lumit_render::RenderStage::code`]).
+    pub stage: u32,
+    /// How much of the whole frame is done, 0..=1. An estimate built from
+    /// fixed stage weights, which is what a progress bar needs and all it can
+    /// honestly claim.
+    pub fraction: f64,
+    /// True on the last report of a frame — the render is finished (or was
+    /// abandoned) and the bar should go. Sent by the worker rather than the
+    /// engine, so a frame that failed still ends its own bar.
+    pub done: bool,
+}
+
+/// One effect's measured cost within its layer, in milliseconds.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeEffectTiming {
+    /// The effect *instance* id, as a string — the row in the layer's stack.
+    pub effect: String,
+    pub ms: f64,
+}
+
+/// One layer's measured cost for the frame just made.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeLayerTiming {
+    pub layer: String,
+    /// The layer's own picture: its source (a Precomp's whole comp included)
+    /// and its effect stack. The final composite is one pass over the whole
+    /// stack rather than a per-layer act, so it lands in `total_ms` and on no
+    /// row — see `lumit_render::profile`.
+    pub ms: f64,
+    pub effects: Vec<BridgeEffectTiming>,
+}
+
+/// What one measured frame cost, per layer and per effect — the Timeline's
+/// render-time column and the Effect controls panel's readouts (docs/13 §7.1).
+///
+/// Published only while the frontend has asked to be measuring
+/// (`set_render_profiling`), because measuring is not free: it fences the
+/// graphics card at each node so a millisecond means the work rather than the
+/// paperwork.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeFrameProfile {
+    pub frame: u64,
+    /// The whole frame, wall-clock, including the stages no layer owns.
+    pub total_ms: f64,
+    /// The composition's top-level layers, bottom-most first.
+    pub layers: Vec<BridgeLayerTiming>,
+}
+
 /// What the render worker publishes for one frame. Which frame variant a build
 /// can actually produce is decided at compile time by the zero-copy features —
 /// see `worker_thread::publish_frame` — but both are always declared, so the
 /// generated Dart is identical on every platform and the Viewer holds one
 /// `switch` over the lot.
 #[frb(non_opaque)]
+#[derive(Clone)]
 pub enum WorkerResponse {
     /// Linux, `shared-texture-linux`.
     RenderedDMABuf(BridgeSharedFrameInfoLinux),
@@ -212,6 +283,12 @@ pub enum WorkerResponse {
     /// `cached_frames` itself. Without this the fill worked invisibly — the
     /// bar only redrew when a frame arrived, and a fill shows no frame.
     CacheFilled,
+    /// How far the frame being waited for has got — the Viewer's preview
+    /// progress bar (docs/07 §2.5).
+    RenderProgress(BridgeRenderProgress),
+    /// What the frame just made cost, layer by layer and effect by effect —
+    /// the render-time indicators (docs/13 §7.1).
+    FrameProfile(BridgeFrameProfile),
 }
 
 type CallbackStream = StreamSink<ScopedChange>;
@@ -338,7 +415,7 @@ impl LumitBridgeState {
         let document = Document::new();
         let journal = journal_for(&document);
         let store = DocumentStore::new(document);
-        let mut state = LumitBridgeState {
+        let state = LumitBridgeState {
             saved_revision: store.revision(),
             store,
             path: None,
@@ -447,7 +524,7 @@ impl LumitBridgeState {
 
         let journal = journal_for(&doc);
         let store = DocumentStore::new(doc);
-        let mut state = LumitBridgeState {
+        let state = LumitBridgeState {
             saved_revision: store.revision(),
             store,
             path: Some(path),

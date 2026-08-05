@@ -64,6 +64,7 @@ import 'viewer_shape_layer.dart';
 import 'viewer_tool_cursor.dart';
 import 'viewer_camera.dart';
 import 'viewer_paint.dart';
+import 'viewer_progress_bar.dart';
 import 'viewer_type.dart';
 import 'viewer_zoom.dart';
 
@@ -314,8 +315,15 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
       ),
     );
 
+    // The picture, with the preview progress bar over the bottom of it
+    // (docs/07 §2.5). An overlay rather than a row of its own: a bar that only
+    // sometimes exists must not change where the picture sits, or every slow
+    // frame would nudge the composition up and down.
     final stage = Expanded(
-      child: LayoutBuilder(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          LayoutBuilder(
         builder: (context, constraints) {
           final size = facts.size;
           final fitted = _fittedRect(constraints, size);
@@ -401,6 +409,14 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
             ),
           );
         },
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: ViewerProgressBar(tracker: ui.previewProgress),
+          ),
+        ],
       ),
     );
 

@@ -46,7 +46,7 @@ struct Parts {
     colour: lumit_gpu::ColourEngine,
     compositor: lumit_gpu::Compositor,
     fx: lumit_gpu::fx::FxEngine,
-    lut_cache: std::cell::RefCell<HashMap<String, crate::fxops::LoadedLut>>,
+    lut_cache: std::cell::RefCell<crate::fxops::LutCache>,
 }
 
 /// One footage item's probe result, cached so a scrub does not re-probe. Slate
@@ -131,24 +131,71 @@ pub struct HeadlessRenderer {
     frame_texture_hits: u64,
     /// Bumped whenever the held set changes — see [`Self::frame_texture_version`].
     frame_texture_version: u64,
-    /// The Windows zero-copy Viewer target (K-177), held for the session and
-    /// re-created only when the comp's dimensions change. `None` until the first
-    /// `render_to_shared` call. Present only in the opt-in shared-texture build.
+    /// Where "this frame is such-and-such far along" reports go, when the owner
+    /// has asked for them ([`Self::watch_frames`]). `None` — the default — is a
+    /// renderer that reports nothing, which is what playback wants: a frame due
+    /// in 16 ms has no use for a progress bar and no time to describe itself.
+    progress: Option<crate::profile::ProgressSink>,
+    /// Where a finished frame's per-layer and per-effect timings go, when they
+    /// have been asked for ([`Self::measure_frames`]). Separate from `progress`
+    /// because measuring costs real time (it fences the graphics card at each
+    /// node) while reporting progress does not — so the Timeline's render-time
+    /// column turns this on, and turning it off costs nothing to have had.
+    profile: Option<crate::profile::ProfileSink>,
+    /// Whether the *next* frame is watched, and whether it is measured. Set per
+    /// render by the owner, because the same renderer serves both a scrub (a
+    /// frame worth describing) and playback (a frame that must not be slowed).
+    watching: bool,
+    measuring: bool,
+    /// The Windows zero-copy Viewer targets (K-177): **one per size, kept and
+    /// reused**, most recently used last.
+    ///
+    /// This was a single texture re-created whenever the size changed, and that
+    /// is a handle churn the frontend cannot survive. Dart registers a texture
+    /// with the platform runner and identifies it by its handle, so a new handle
+    /// means a new registration and a round trip during which the outgoing
+    /// texture is still on screen. One size change is fine. The case that is not
+    /// is **alternation** — and creating a comp inside an existing project
+    /// produces exactly that, because renders for the outgoing comp are still in
+    /// flight while the new one starts, so present is called alternately at two
+    /// sizes and a re-created texture hands out a fresh handle every frame. The
+    /// registrations pile up, the compositor is asked to bind handles faster
+    /// than it can, and it dies with "Binding D3D surface failed". An empty
+    /// project has no outgoing comp, so no alternation and no crash — which is
+    /// exactly the difference the bug report drew.
+    ///
+    /// Held per size, alternation costs nothing after the first frame at each:
+    /// the same handle comes back, and Dart recognises it and does not
+    /// re-register at all. It also means a texture is never freed under a
+    /// compositor still drawing it, which is a second way the old shape could
+    /// fail and this one cannot.
+    ///
+    /// Bounded and least-recently-used, because sizes are unbounded in
+    /// principle: dragging the Viewer walks through a great many.
     #[cfg(all(windows, feature = "shared-texture"))]
-    shared: Option<lumit_gpu::shared::SharedTexture>,
-    /// The Linux zero-copy Viewer target (K-177), the DMA-BUF sibling of
-    /// [`Self::shared`]. Held for the session and re-created only when the comp's
-    /// dimensions change. `None` until the first `render_to_shared_dmabuf` call.
-    /// Present only in the opt-in shared-texture-linux build.
+    shared: Vec<lumit_gpu::shared::SharedTexture>,
+    /// The Linux DMA-BUF sibling of [`Self::shared`], same reasoning — one Dart
+    /// controller serves all three platforms.
     #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
-    shared_dmabuf: Option<lumit_gpu::shared_linux::SharedDmabuf>,
-    /// The macOS zero-copy Viewer target (K-195), the IOSurface sibling of
-    /// [`Self::shared`]. Held for the session and re-created only when the comp's
-    /// dimensions change. `None` until the first `render_to_shared` call.
-    /// Present only in the opt-in shared-texture-macos build.
+    shared_dmabuf: Vec<lumit_gpu::shared_linux::SharedDmabuf>,
+    /// The macOS IOSurface sibling of [`Self::shared`] (K-195).
     #[cfg(all(target_os = "macos", feature = "shared-texture-macos"))]
-    shared_iosurface: Option<lumit_gpu::shared_metal::SharedIoSurface>,
+    shared_iosurface: Vec<lumit_gpu::shared_metal::SharedIoSurface>,
 }
+
+/// How many differently-sized Viewer targets to keep alive at once.
+///
+/// Enough that the sizes actually in play — the outgoing comp, the incoming
+/// one, and a resolution tier either side — all stay resident, so switching
+/// between them re-uses handles instead of minting them. Small enough that a
+/// slow drag through many sizes does not accumulate: each is roughly two
+/// textures' worth of video memory.
+#[cfg(any(
+    all(windows, feature = "shared-texture"),
+    all(target_os = "linux", feature = "shared-texture-linux"),
+    all(target_os = "macos", feature = "shared-texture-macos")
+))]
+const SHARED_TARGET_POOL: usize = 4;
 
 /// One frame's decoded per-layer pixels, kept alongside the decode plan that
 /// asked for them, so the next render can tell at a glance whether it needs new
@@ -431,7 +478,7 @@ impl HeadlessRenderer {
             colour: lumit_gpu::ColourEngine::new(&gpu),
             compositor: lumit_gpu::Compositor::new(&gpu),
             fx: lumit_gpu::fx::FxEngine::new(&gpu),
-            lut_cache: std::cell::RefCell::new(HashMap::new()),
+            lut_cache: std::cell::RefCell::new(crate::fxops::LutCache::default()),
         };
         let scope = lumit_gpu::scope::ScopeEngine::new(&gpu);
         Ok(Self {
@@ -454,12 +501,75 @@ impl HeadlessRenderer {
             upload_pool: Vec::new(),
             frame_texture_version: 0,
             frame_texture_hits: 0,
+            progress: None,
+            profile: None,
+            watching: false,
+            measuring: false,
             #[cfg(all(windows, feature = "shared-texture"))]
-            shared: None,
+            shared: Vec::new(),
             #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
-            shared_dmabuf: None,
+            shared_dmabuf: Vec::new(),
             #[cfg(all(target_os = "macos", feature = "shared-texture-macos"))]
-            shared_iosurface: None,
+            shared_iosurface: Vec::new(),
+        })
+    }
+
+    /// Install (or remove) the sink that hears how far each frame has got —
+    /// the Viewer's progress bar (docs/13 §7.1). Installed once for the
+    /// session; which frames actually report is [`Self::watch_frames`].
+    pub fn set_progress_sink(&mut self, sink: Option<crate::profile::ProgressSink>) {
+        self.progress = sink;
+    }
+
+    /// Install (or remove) the sink that hears what each measured frame cost,
+    /// per layer and per effect — the render-time indicators.
+    pub fn set_profile_sink(&mut self, sink: Option<crate::profile::ProfileSink>) {
+        self.profile = sink;
+    }
+
+    /// Should the frames from here on report their progress? Off during
+    /// playback, on for a scrub or a value drag — the renderer cannot tell
+    /// which it is being driven for, so the driver says.
+    pub fn watch_frames(&mut self, watching: bool) {
+        self.watching = watching;
+    }
+
+    /// Should the frames from here on be measured? This one is not free: a
+    /// measured frame fences the graphics card at every node (see
+    /// `crate::profile`), so it is on only while something is showing the
+    /// numbers, and never during playback.
+    pub fn measure_frames(&mut self, measuring: bool) {
+        self.measuring = measuring;
+    }
+
+    /// Whether the frames from here on are being measured **and** there is
+    /// somewhere for the numbers to go.
+    ///
+    /// The caller that owns the tiers above this renderer asks, because a
+    /// measured frame has to be a *composited* one: a frame served from a cache
+    /// costs nothing and therefore reveals nothing, and the whole point of the
+    /// switch is to find out what the composite costs. Without this a warm
+    /// composition — one the idle fill has already made — showed no numbers at
+    /// all however long you looked at it (found on macOS, and it is every
+    /// platform).
+    #[must_use]
+    pub fn measuring(&self) -> bool {
+        self.measuring && self.profile.is_some()
+    }
+
+    /// The recorder for one frame, or `None` when this frame is neither
+    /// watched nor measured — in which case the render walks exactly as it did
+    /// before the profiler existed.
+    fn profiler_for(&self, comp: Uuid, frame: u64) -> Option<crate::profile::FrameProfiler> {
+        let watching = self.watching && self.progress.is_some();
+        let measuring = self.measuring && self.profile.is_some();
+        (watching || measuring).then(|| {
+            crate::profile::FrameProfiler::new(
+                comp,
+                frame,
+                watching.then(|| self.progress.clone()).flatten(),
+                measuring,
+            )
         })
     }
 
@@ -583,7 +693,13 @@ impl HeadlessRenderer {
         let fps = comp.frame_rate.fps().max(1.0);
         let t = frame as f64 / fps;
 
+        // The frame's recorder: absent unless somebody is drawing a bar for
+        // this frame or reading its numbers (docs/13 §7.1).
+        let watcher = self.profiler_for(comp_id, frame);
         let jobs = plan_comp_frame(doc, comp, t, quality, &ProbeView(&self.probe_cache));
+        if let Some(w) = &watcher {
+            w.planned();
+        }
         // The whole point: decode only when the wanted pixels actually differ.
         let reusable = matches!(
             &self.retained,
@@ -592,9 +708,14 @@ impl HeadlessRenderer {
                 && crate::plan::same_decode(&r.jobs, &jobs)
         );
         if !reusable {
+            let total = jobs.len() as u32;
             let pixels = self
                 .pool
-                .decode_comp(comp_id, frame as usize, &jobs, 0)
+                .decode_comp(comp_id, frame as usize, &jobs, 0, &|done| {
+                    if let Some(w) = &watcher {
+                        w.decoded(done as u32, total);
+                    }
+                })
                 .map_err(|e| format!("headless preview: {e}"))?;
             self.retained = Some(Retained {
                 comp: comp_id,
@@ -621,6 +742,7 @@ impl HeadlessRenderer {
                 fx: &parts.fx,
                 lut_cache: &parts.lut_cache,
                 render_scale: composite_scale(quality),
+                profiler: watcher.as_ref(),
             };
             let pixels_by_layer: HashMap<Uuid, &crate::decode::CompLayerPixels> = retained
                 .pixels
@@ -629,10 +751,19 @@ impl HeadlessRenderer {
                 .map(|lp| (lp.layer, lp))
                 .collect();
             let mut visited = vec![comp_id];
+            if let Some(w) = &watcher {
+                w.building();
+            }
             let draws =
                 crate::build::build_comp_draws(doc, comp, t, &pixels_by_layer, &mut visited);
             let background = comp.background.0.map(f64::from);
+            if let Some(w) = &watcher {
+                w.compositing(draws.len() as u32);
+            }
             let linear = realiser.realise(comp.camera_pose(t), cw, ch, background, &draws);
+            if let Some(w) = &watcher {
+                w.presenting();
+            }
             Ok(if bgra {
                 parts.colour.display_bgra(&self.gpu, &linear)
             } else {
@@ -642,6 +773,15 @@ impl HeadlessRenderer {
         // Return the engines to the pool even on error, so one failed frame does
         // not discard the compiled shaders.
         self.parts = Some(parts);
+        // A frame that faulted is not published as a measurement: half a walk's
+        // numbers would read as a comp that got cheaper.
+        if out.is_ok() {
+            if let (Some(profile), Some(sink)) =
+                (watcher.and_then(|w| w.finish()), self.profile.as_ref())
+            {
+                sink(profile);
+            }
+        }
         out.map(|shown| (shown, cw, ch))
     }
 
@@ -907,7 +1047,12 @@ impl HeadlessRenderer {
         name: Option<u128>,
     ) -> Result<PreparedFrame, String> {
         let key = name.map(|k| (k, bgra));
-        if let Some(key) = key {
+        // A measured frame is composited even when one is already held: a cache
+        // hit is free, so it has nothing to say about what the layers cost, and
+        // a column of numbers that only fills in on frames nobody has visited
+        // is worse than no column. The re-render is the price of asking, and
+        // the switch is off unless somebody is (see [`Self::measuring`]).
+        if let Some(key) = key.filter(|_| !self.measuring()) {
             if let Some(held) = self.frame_textures.get(&key) {
                 self.frame_texture_hits += 1;
                 return Ok(PreparedFrame {
@@ -1292,16 +1437,31 @@ impl HeadlessRenderer {
         // Re-create the shared texture when it is missing or the size changed
         // (a comp resize or a tier change) — a new handle is reported then,
         // which the bridge relays so Dart re-registers.
-        let needs_new = match self.shared.as_ref() {
-            Some(sh) => sh.width != aw || sh.height != ah,
-            None => true,
-        };
-        if needs_new {
-            self.shared = Some(lumit_gpu::shared::SharedTexture::new(&self.gpu, aw, ah)?);
+        // Reuse the target for this size when we already hold one — the same
+        // handle comes back, so Dart does not re-register and nothing has to be
+        // bound afresh. Only a size never seen (or long unused) mints one.
+        let found = self
+            .shared
+            .iter()
+            .position(|sh| sh.width == aw && sh.height == ah);
+        match found {
+            Some(i) => {
+                // Most recently used last, so the eviction below takes the
+                // size that has gone longest without a frame.
+                let sh = self.shared.remove(i);
+                self.shared.push(sh);
+            }
+            None => {
+                let made = lumit_gpu::shared::SharedTexture::new(&self.gpu, aw, ah)?;
+                self.shared.push(made);
+                while self.shared.len() > SHARED_TARGET_POOL {
+                    self.shared.remove(0);
+                }
+            }
         }
         let target = self
             .shared
-            .as_ref()
+            .last()
             .ok_or_else(|| "headless render: shared texture missing after create".to_string())?;
         target.present(&self.gpu, shown);
         Ok(SharedFrameInfo {
@@ -1352,18 +1512,28 @@ impl HeadlessRenderer {
         // Re-create the DMA-BUF texture when it is missing or the size changed
         // (a comp resize or a tier change) — a new fd is reported then, which
         // the bridge relays so Dart re-registers.
-        let needs_new = match self.shared_dmabuf.as_ref() {
-            Some(sh) => sh.width != aw || sh.height != ah,
-            None => true,
-        };
-        if needs_new {
-            self.shared_dmabuf = Some(lumit_gpu::shared_linux::SharedDmabuf::new(
-                &self.gpu, aw, ah,
-            )?);
+        // Per size and reused — see `shared` for why re-creating churns
+        // handles the frontend cannot keep up with.
+        let found = self
+            .shared_dmabuf
+            .iter()
+            .position(|sh| sh.width == aw && sh.height == ah);
+        match found {
+            Some(i) => {
+                let sh = self.shared_dmabuf.remove(i);
+                self.shared_dmabuf.push(sh);
+            }
+            None => {
+                let made = lumit_gpu::shared_linux::SharedDmabuf::new(&self.gpu, aw, ah)?;
+                self.shared_dmabuf.push(made);
+                while self.shared_dmabuf.len() > SHARED_TARGET_POOL {
+                    self.shared_dmabuf.remove(0);
+                }
+            }
         }
         let target = self
             .shared_dmabuf
-            .as_ref()
+            .last()
             .ok_or_else(|| "headless render: dmabuf texture missing after create".to_string())?;
         target.present(&self.gpu, shown);
         let info = target.info();
@@ -1420,18 +1590,27 @@ impl HeadlessRenderer {
         // Re-create the surface when it is missing or the size changed (a comp
         // resize or a tier change) — a new id is reported then, which the bridge
         // relays so Dart re-registers.
-        let needs_new = match self.shared_iosurface.as_ref() {
-            Some(sh) => sh.width != aw || sh.height != ah,
-            None => true,
-        };
-        if needs_new {
-            self.shared_iosurface = Some(lumit_gpu::shared_metal::SharedIoSurface::new(
-                &self.gpu, aw, ah,
-            )?);
+        // Per size and reused — see `shared`.
+        let found = self
+            .shared_iosurface
+            .iter()
+            .position(|sh| sh.width == aw && sh.height == ah);
+        match found {
+            Some(i) => {
+                let sh = self.shared_iosurface.remove(i);
+                self.shared_iosurface.push(sh);
+            }
+            None => {
+                let made = lumit_gpu::shared_metal::SharedIoSurface::new(&self.gpu, aw, ah)?;
+                self.shared_iosurface.push(made);
+                while self.shared_iosurface.len() > SHARED_TARGET_POOL {
+                    self.shared_iosurface.remove(0);
+                }
+            }
         }
         let target = self
             .shared_iosurface
-            .as_ref()
+            .last()
             .ok_or_else(|| "headless render: iosurface missing after create".to_string())?;
         target.present(&self.gpu, &prepared.texture);
         Ok(SharedFrameInfo {
@@ -1440,6 +1619,44 @@ impl HeadlessRenderer {
             height: ah,
             format: "rgba8888",
         })
+    }
+
+    /// Acquire (or reuse) the Viewer target for `w × h` and report its handle,
+    /// without rendering anything into it.
+    ///
+    /// Exists for the tests that pin the *handle churn* — how many distinct
+    /// handles a run of presents hands out — which is the thing that crashed
+    /// the compositor and is invisible to any assertion about pixels.
+    #[cfg(all(windows, feature = "shared-texture"))]
+    pub fn present_probe_size(&mut self, w: u32, h: u32) -> Result<u64, String> {
+        let found = self
+            .shared
+            .iter()
+            .position(|sh| sh.width == w && sh.height == h);
+        match found {
+            Some(i) => {
+                let sh = self.shared.remove(i);
+                self.shared.push(sh);
+            }
+            None => {
+                let made = lumit_gpu::shared::SharedTexture::new(&self.gpu, w, h)?;
+                self.shared.push(made);
+                while self.shared.len() > SHARED_TARGET_POOL {
+                    self.shared.remove(0);
+                }
+            }
+        }
+        self.shared
+            .last()
+            .map(lumit_gpu::shared::SharedTexture::handle)
+            .ok_or_else(|| "shared target missing after acquire".to_string())
+    }
+
+    /// How many differently-sized Viewer targets are being held.
+    #[cfg(all(windows, feature = "shared-texture"))]
+    #[must_use]
+    pub fn shared_target_count(&self) -> usize {
+        self.shared.len()
     }
 
     /// Rebuild the `ItemInfo` map from the document's footage, probing any item
@@ -1831,7 +2048,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -1859,7 +2076,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -1884,7 +2101,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -1924,7 +2141,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -1987,7 +2204,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -2024,7 +2241,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -2107,7 +2324,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -2131,7 +2348,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -2191,7 +2408,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -2242,7 +2459,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -2292,7 +2509,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -2350,7 +2567,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -2453,7 +2670,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -2534,7 +2751,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -2596,7 +2813,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -2624,7 +2841,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -2713,7 +2930,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -2860,7 +3077,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -3058,7 +3275,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -3085,7 +3302,7 @@ mod tests {
     #[ignore = "timing, not correctness"]
     fn preview_cost() {
         let Ok(mut renderer) = HeadlessRenderer::new() else {
-            eprintln!("skipping: no GPU adapter");
+            lumit_gpu::no_adapter();
             return;
         };
         let (store, comp_id) = doc_with_solid(LinearColour([0.2, 0.4, 0.8, 1.0]), 1920, 1080);
@@ -3109,6 +3326,268 @@ mod tests {
             }
             let each = started.elapsed().as_secs_f64() * 1000.0 / f64::from(n);
             println!("PREVIEW {label:>10} scale={scale:<5} {each:>7.2} ms/frame");
+        }
+    }
+
+    /// The profiler's two promises at the seam the Viewer actually drives
+    /// (docs/13 §7.1): an unwatched render says nothing at all, and a watched
+    /// one reports progress that only ever moves forwards and ends at the
+    /// presenting stage.
+    #[test]
+    fn a_watched_render_reports_its_progress_and_an_unwatched_one_says_nothing() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!("skipping: no GPU adapter");
+                return;
+            }
+        };
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<crate::profile::FrameProgress>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let into = std::sync::Arc::clone(&seen);
+        r.set_progress_sink(Some(std::sync::Arc::new(move |p| {
+            if let Ok(mut seen) = into.lock() {
+                seen.push(p);
+            }
+        })));
+        let (store, comp_id) = doc_with_solid(LinearColour([1.0, 0.0, 0.0, 1.0]), 8, 8);
+        let doc = store.snapshot();
+
+        // Playback's case: a sink is installed but this frame is not watched.
+        let _ = r.render_rgba(&doc, comp_id, 0, 1.0).expect("render");
+        assert!(
+            seen.lock().expect("reports").is_empty(),
+            "an unwatched frame — every frame of playback — reports nothing"
+        );
+
+        r.watch_frames(true);
+        let _ = r.render_rgba(&doc, comp_id, 1, 1.0).expect("render");
+        r.watch_frames(false);
+        let reports = seen.lock().expect("reports");
+        assert!(!reports.is_empty(), "a watched frame describes itself");
+        assert!(
+            reports.iter().all(|p| p.frame == 1),
+            "every report names the frame it is about"
+        );
+        let mut last = -1.0_f32;
+        for report in reports.iter() {
+            assert!(
+                report.fraction >= last,
+                "progress went backwards: {last} then {}",
+                report.fraction
+            );
+            last = report.fraction;
+        }
+        assert!(matches!(
+            reports.last().map(|p| p.stage),
+            Some(crate::profile::RenderStage::Presenting)
+        ));
+    }
+
+    /// A measured frame lands its milliseconds on the right rows: the layer
+    /// that was drawn, and the effect instance inside it that ran. Without the
+    /// ids threaded from the resolve through the draw list, this is where a
+    /// wrong (or absent) attribution shows.
+    #[test]
+    fn a_measured_frame_names_the_layer_and_the_effect_it_timed() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!("skipping: no GPU adapter");
+                return;
+            }
+        };
+        let (store, comp_id) = doc_with_solid(LinearColour([1.0, 0.0, 0.0, 1.0]), 16, 16);
+        // One real effect on the one layer, so there is something to attribute.
+        let blur = lumit_core::fx::instantiate("blur").expect("blur exists");
+        let (layer_id, effect_id) = {
+            let doc = store.snapshot();
+            let comp = doc.comp(comp_id).expect("comp");
+            (comp.layers[0].id, blur.id)
+        };
+        store
+            .commit(lumit_core::Op::SetLayerEffects {
+                comp: comp_id,
+                layer: layer_id,
+                effects: vec![blur],
+            })
+            .expect("the effect goes on the layer");
+
+        let profiles: std::sync::Arc<std::sync::Mutex<Vec<crate::profile::FrameProfile>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let into = std::sync::Arc::clone(&profiles);
+        r.set_profile_sink(Some(std::sync::Arc::new(move |p| {
+            if let Ok(mut got) = into.lock() {
+                got.push(p);
+            }
+        })));
+
+        let doc = store.snapshot();
+        // Unmeasured first: a sink alone must not start costing anything.
+        let _ = r.render_rgba(&doc, comp_id, 0, 1.0).expect("render");
+        assert!(profiles.lock().expect("profiles").is_empty());
+
+        r.measure_frames(true);
+        let _ = r.render_rgba(&doc, comp_id, 2, 1.0).expect("render");
+        r.measure_frames(false);
+
+        let got = profiles.lock().expect("profiles");
+        let profile = got.last().expect("the measured frame reported");
+        assert_eq!(profile.frame, 2);
+        assert_eq!(profile.layers.len(), 1, "one layer in the comp, one row");
+        let layer = &profile.layers[0];
+        assert_eq!(layer.layer, layer_id, "the row is the layer that drew");
+        assert_eq!(
+            layer.effects.iter().map(|e| e.effect).collect::<Vec<_>>(),
+            vec![effect_id],
+            "the effect's own instance id carries its cost"
+        );
+        assert!(
+            profile.total_ms >= layer.ms,
+            "the frame cannot cost less than the layer inside it"
+        );
+        assert!(
+            layer.ms >= 0.0 && layer.effects[0].ms >= 0.0,
+            "measured times are real durations"
+        );
+    }
+
+    /// **A precomp set as a track matte must actually gate the layer** (K-268).
+    ///
+    /// The regression: a comp has no pixels until it is rendered, so the draw
+    /// builder's `pixels_for` answered None for a Precomp matte source and the
+    /// whole matte quietly disappeared — the consumer drew everywhere, as if
+    /// no matte had been set. K-266 fixed the same hole for the *layer-input*
+    /// mattes (a flare source, a DoF depth pass); the track matte, which is
+    /// how everyone actually reaches for a precomp matte, still had it.
+    ///
+    /// The scene: a full-frame red solid matted by a hidden precomp layer whose
+    /// own 16×16 blue solid covers the LEFT half of a 32×16 comp. Red survives
+    /// where the precomp has alpha and nowhere else.
+    #[test]
+    fn a_precomp_track_matte_gates_the_layer() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                lumit_gpu::no_adapter();
+                return;
+            }
+        };
+        let (cw, ch) = (32u32, 16u32);
+        let (mut doc, comp_id, _) = matrix_base(cw, ch, LinearColour([0.8, 0.1, 0.1, 1.0]));
+        let (child_doc, child_id, _) = matrix_base(16, 16, LinearColour([0.1, 0.2, 0.9, 1.0]));
+        for item in child_doc.items {
+            doc.items.push(item);
+        }
+        // The matte itself is hidden, as a matte source always is.
+        let mut matte = matrix_layer("Matte", LayerKind::Precomp { comp: child_id }, 16, 16);
+        matte.switches.visible = false;
+        let matte_id = matte.id;
+        {
+            let comp = doc.comp_mut(comp_id).unwrap();
+            comp.layers[0].matte = Some(lumit_core::model::MatteRef {
+                layer: matte_id,
+                channel: lumit_core::model::MatteChannel::Alpha,
+                inverted: false,
+                source: lumit_core::model::LayerInputSource::default(),
+            });
+            comp.layers.push(matte);
+        }
+
+        let (rgba, w, h) = r.render_rgba(&doc, comp_id, 0, 1.0).expect("render");
+        assert_eq!((w, h), (cw, ch));
+        let at = |x: u32, y: u32| {
+            let i = ((y * w + x) * 4) as usize;
+            (rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3])
+        };
+        // Left half: inside the precomp's opaque square, so the red shows.
+        let (lr, _lg, _lb, la) = at(8, 8);
+        assert!(lr > 150, "red should survive under the matte, got {lr}");
+        assert_eq!(la, 255, "and it should be opaque there");
+        // Right half: the precomp is transparent there, so nothing is drawn —
+        // this is the pixel that stayed red while the matte was being dropped.
+        let (rr, rg, rb, _ra) = at(24, 8);
+        assert!(
+            rr < 30 && rg < 30 && rb < 30,
+            "outside the precomp matte the layer must be gated out, got {:?}",
+            (rr, rg, rb)
+        );
+    }
+
+    /// **An effect ON a Precomp layer must keep its px@comp parameters where
+    /// they were put when the preview renders at a reduced resolution**
+    /// (K-268, the twin of K-266's adjustment-layer fix).
+    ///
+    /// The regression: the stack of a Precomp layer resolves against the nested
+    /// comp's full width (factor 1) but runs on the nested comp's *preview*
+    /// raster, so every px@comp parameter — a Transform's offset here, a
+    /// flare's light or a blur radius in the wild — landed further across the
+    /// picture the coarser the preview got. Preview-only drift: full resolution
+    /// was always right.
+    ///
+    /// The scene: a 32×32 precomp of solid white, offset 8 px right by a
+    /// Transform effect on the precomp layer. Eight of thirty-two is a quarter
+    /// of the frame at every resolution, so the same fractions are empty and
+    /// filled at Full and at Half.
+    #[test]
+    fn an_effect_on_a_precomp_layer_keeps_its_pixels_under_half_preview() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                lumit_gpu::no_adapter();
+                return;
+            }
+        };
+        let (cw, ch) = (32u32, 32u32);
+        let white = LinearColour([1.0, 1.0, 1.0, 1.0]);
+        let (mut doc, comp_id, _) = matrix_base(cw, ch, LinearColour([0.0, 0.0, 0.0, 1.0]));
+        let (child_doc, child_id, _) = matrix_base(cw, ch, white);
+        for item in child_doc.items {
+            doc.items.push(item);
+        }
+        // The base black solid only exists to give matrix_base a comp; the
+        // precomp layer covers it entirely, so what is measured is the
+        // precomp's own white, shifted.
+        let mut nested = matrix_layer("Nested", LayerKind::Precomp { comp: child_id }, cw, ch);
+        let mut fx = lumit_core::fx::instantiate("transform").unwrap();
+        for p in &mut fx.params {
+            let v = match p.id.as_str() {
+                "position_x" => 8.0,
+                "anchor_x" | "anchor_y" | "position_y" | "rotation" => 0.0,
+                _ => continue,
+            };
+            p.value = lumit_core::model::EffectValue::Float(Property::fixed(v));
+        }
+        nested.effects.push(fx);
+        // Index 0 is the top of the stack, over the black base.
+        doc.comp_mut(comp_id).unwrap().layers.insert(0, nested);
+
+        // The white starts a quarter of the way across, at both resolutions.
+        for (label, scale) in [("full", 1.0f32), ("half", 0.5f32)] {
+            let quality = Quality {
+                auto_res: scale < 1.0,
+                display_scale: scale,
+                ..Quality::default()
+            };
+            let (rgba, w, h) = r
+                .render_preview(&doc, comp_id, 0, quality, scale)
+                .expect("render");
+            let at = |fx: f32| {
+                let x = ((w as f32 * fx) as u32).min(w - 1);
+                let y = h / 2;
+                let i = ((y * w + x) * 4) as usize;
+                rgba[i]
+            };
+            assert!(
+                at(0.125) < 40,
+                "{label}: the first eighth is behind the offset, got {}",
+                at(0.125)
+            );
+            assert!(
+                at(0.375) > 200,
+                "{label}: three eighths across is inside the shifted picture, got {}",
+                at(0.375)
+            );
         }
     }
 }

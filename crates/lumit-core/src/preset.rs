@@ -56,6 +56,107 @@ pub fn instantiated(preset: &EffectPreset) -> Vec<EffectInstance> {
         .collect()
 }
 
+/// The earliest keyframe time across `effects`, in **layer-local** seconds, or
+/// `None` when nothing in them is animated (K-275).
+///
+/// Copying an effect and pasting it somewhere else is copying a piece of
+/// *timing* as much as a look, so the paste has to know where that timing
+/// starts before it can land it under the playhead.
+#[must_use]
+pub fn first_key_time(effects: &[EffectInstance]) -> Option<crate::time::Rational> {
+    let mut earliest: Option<crate::time::Rational> = None;
+    for_each_property(effects, &mut |property| {
+        if let crate::anim::Animation::Keyframed(keys) = &property.animation {
+            if let Some(first) = keys.first() {
+                earliest = Some(match earliest {
+                    Some(held) if held <= first.time => held,
+                    _ => first.time,
+                });
+            }
+        }
+    });
+    earliest
+}
+
+/// Shift every keyframe in `effects` by `delta` layer-local seconds (K-275).
+///
+/// A key whose time cannot be moved without overflowing is left where it is
+/// rather than wrapping — an engine crate does not panic, and a paste that
+/// silently misplaced one key would be worse than one that refused to move it.
+pub fn shift_keys(effects: &mut [EffectInstance], delta: crate::time::Rational) {
+    if delta.is_zero() {
+        return;
+    }
+    for_each_property_mut(effects, &mut |property| {
+        if let crate::anim::Animation::Keyframed(keys) = &mut property.animation {
+            for key in keys.iter_mut() {
+                if let Ok(moved) = key.time.checked_add(delta) {
+                    key.time = moved;
+                }
+            }
+        }
+    });
+}
+
+/// Visit every animatable [`crate::anim::Property`] in `effects`.
+///
+/// **Exhaustive on purpose**, like `fx::rescale_px`: a new `EffectValue`
+/// variant must decide here whether it carries animation, so a parameter added
+/// later cannot quietly stop being shifted by a paste.
+fn for_each_property(effects: &[EffectInstance], visit: &mut impl FnMut(&crate::anim::Property)) {
+    for effect in effects {
+        for param in &effect.params {
+            match &param.value {
+                crate::model::EffectValue::Float(p) => visit(p),
+                crate::model::EffectValue::Point(x, y) => {
+                    visit(x);
+                    visit(y);
+                }
+                crate::model::EffectValue::Colour(channels) => {
+                    for channel in channels {
+                        visit(channel);
+                    }
+                }
+                crate::model::EffectValue::File(f) => visit(&f.index),
+                // Carry no animation: a bool, a dropdown choice, a random
+                // seed and a layer reference are all static in v1 (docs/03 §8).
+                crate::model::EffectValue::Bool(_)
+                | crate::model::EffectValue::Choice(_)
+                | crate::model::EffectValue::Seed(_)
+                | crate::model::EffectValue::Layer(_) => {}
+            }
+        }
+    }
+}
+
+/// The mutable twin of [`for_each_property`], same exhaustive match.
+fn for_each_property_mut(
+    effects: &mut [EffectInstance],
+    visit: &mut impl FnMut(&mut crate::anim::Property),
+) {
+    for effect in effects {
+        for param in &mut effect.params {
+            match &mut param.value {
+                crate::model::EffectValue::Float(p) => visit(p),
+                crate::model::EffectValue::Point(x, y) => {
+                    visit(x);
+                    visit(y);
+                }
+                crate::model::EffectValue::Colour(channels) => {
+                    for channel in channels {
+                        visit(channel);
+                    }
+                }
+                crate::model::EffectValue::File(f) => visit(&mut f.index),
+                crate::model::EffectValue::Bool(_)
+                | crate::model::EffectValue::Choice(_)
+                | crate::model::EffectValue::Seed(_)
+                | crate::model::EffectValue::Layer(_) => {}
+            }
+        }
+    }
+}
+
 /// One preset shown in the Effects & Presets browser (docs/07-UI-SPEC.md §7):
 /// its file path and the name to display — the preset's own `name` when the
 /// file parses, otherwise the file stem, so a hand-copied or partly written

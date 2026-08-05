@@ -148,6 +148,12 @@ the AE 2023 model). Four combinations: alpha or luma, normal or inverted.
   before blending.
 - A matte layer keeps its own visibility switch; being a matte does not disable it. A layer MAY
   matte a layer that is itself matted; cycles are rejected at compile time.
+- A **Precomp** matte source has no pixels of its own: its nested comp is rendered (the same
+  recursion §1.4 performs for a Precomp layer's picture, under the same cycle guard) and that
+  render is the matte signal (K-268). The matte **source mode** (§none/masks/effects, K-142)
+  does not apply to a comp reference — a comp already carries its own layers' masks and
+  effects. Footage inside such a comp decodes with the rest of the frame: the decode plan
+  follows matte and layer-input references whether or not the referenced layer is visible.
 
 ## 2. ROI and DoD
 
@@ -361,6 +367,15 @@ share one sample-time derivation and one averaging helper, so K-031 holds.
 Playback reads VRAM first, promotes RAM→VRAM, and promotes disk→RAM→VRAM ahead of the playhead
 (never plays directly from disk). Writes are write-behind on background IO threads; a disk
 write never blocks a render.
+
+**A write-behind queue MUST be bounded and de-duplicated (K-277).** Its entries are whole
+frames, so its depth is a memory budget: at most eight frames may be waiting to be written,
+and a frame already on its way down is never handed over a second time. A frame counts as
+parked only when its write has *finished*, so anything deciding what to copy down MUST ask
+"is it on its way?" as well as "is it there?" — asking only the second is how the idle
+backup re-queued the same frames every few milliseconds until the application held tens of
+gigabytes. A refused park costs that frame its place on disk and nothing else: it is still
+on the card and in memory, and it is offered again later.
 
 **Shipped (K-214).** All three tiers run. The VRAM tier holds finished display textures
 (K-187), the RAM tier holds their bytes, and the disk tier parks them in a folder that

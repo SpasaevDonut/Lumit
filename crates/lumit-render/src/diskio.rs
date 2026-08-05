@@ -79,6 +79,20 @@ pub struct LoadedFrame {
     pub bgra: bool,
 }
 
+/// How many frames may be waiting to be written at once.
+///
+/// **A queue with a hard limit, because the alternative was measured in tens of
+/// gigabytes (K-277).** Parking is write-behind: the frame's bytes are handed
+/// over and forgotten, and the bytes sit in the channel until this thread has
+/// swizzled, compressed and written them. Compressing is slower than reading a
+/// frame back off the card, so a producer that never checks can hand over
+/// frames faster than they leave — and every one of them is a full frame in
+/// memory (8 MB at 1080p). Eight is a comfortable working depth and 64 MB of
+/// ceiling; past it a park is *refused*, which costs a frame its place on disk
+/// and nothing else (it is still on the card and in memory, and it will be
+/// offered again).
+pub const MAX_PENDING_PARKS: usize = 8;
+
 pub struct DiskIo {
     pub tx: Sender<Cmd>,
     pub loaded: Receiver<LoadedFrame>,
@@ -87,6 +101,45 @@ pub struct DiskIo {
     pub known: Arc<Mutex<HashSet<u128>>>,
     /// Bytes stored, as the IO thread last accounted them — the meter's number.
     pub used_bytes: Arc<AtomicU64>,
+    /// Hashes handed over for parking and not yet dealt with — see
+    /// [`Self::park`]. The IO thread removes each one when it has finished with
+    /// it, written or dropped.
+    pending: Arc<Mutex<ParkQueue>>,
+}
+
+/// The bookkeeping behind [`DiskIo::park`]: which frames are on their way to
+/// disk, and how many may be at once. Its own type so the two rules that keep
+/// the write-behind queue bounded — **never the same frame twice**, **never
+/// more than [`MAX_PENDING_PARKS`]** — can be read and tested in one place
+/// rather than inferred from a lock and a length check (K-277).
+#[derive(Default)]
+pub(crate) struct ParkQueue {
+    on_the_way: HashSet<u128>,
+}
+
+impl ParkQueue {
+    /// Claim a place for `hash`. False when it already has one or the queue is
+    /// full — in both cases the caller does not send.
+    pub(crate) fn take(&mut self, hash: u128) -> bool {
+        if self.on_the_way.len() >= MAX_PENDING_PARKS {
+            return false;
+        }
+        self.on_the_way.insert(hash)
+    }
+
+    /// The IO thread has finished with `hash`, written or dropped: its place is
+    /// free and it may be offered again.
+    pub(crate) fn done(&mut self, hash: u128) {
+        self.on_the_way.remove(&hash);
+    }
+
+    pub(crate) fn holds(&self, hash: u128) -> bool {
+        self.on_the_way.contains(&hash)
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.on_the_way.len()
+    }
 }
 
 impl DiskIo {
@@ -99,6 +152,78 @@ impl DiskIo {
             .try_lock()
             .map(|k| k.contains(&hash))
             .unwrap_or(false)
+    }
+
+    /// Whether `hash` has been handed over for parking and not yet written.
+    ///
+    /// **The question the runaway was missing.** A frame counts as parked only
+    /// once the write has finished, so between handing it over and the write
+    /// landing it looks to every caller exactly like a frame that has never
+    /// been offered — and the idle backup, which asks that question every few
+    /// milliseconds, read it off the card and handed it over again, and again,
+    /// each copy another full frame queued behind a thread already behind. Ask
+    /// this as well as [`Self::contains`] and a frame is offered once.
+    #[must_use]
+    pub fn is_pending(&self, hash: u128) -> bool {
+        self.pending
+            .try_lock()
+            .map(|p| p.holds(hash))
+            .unwrap_or(false)
+    }
+
+    /// Hand a frame over to be written, unless it is already on its way or the
+    /// queue is full ([`MAX_PENDING_PARKS`]). Returns whether it was taken.
+    ///
+    /// This is the only way to send [`Cmd::Store`]: the bookkeeping that keeps
+    /// the queue bounded lives here, so a caller cannot bypass it by accident.
+    #[allow(clippy::too_many_arguments)]
+    pub fn park(
+        &self,
+        hash: u128,
+        width: u32,
+        height: u32,
+        bgra: bool,
+        bytes: Arc<Vec<u8>>,
+        cost_ms: u32,
+        scale_q: u16,
+    ) -> bool {
+        {
+            // A contended queue means "cannot tell", and the safe answer to
+            // "cannot tell" is to not hand over another copy.
+            let Ok(mut pending) = self.pending.try_lock() else {
+                return false;
+            };
+            if !pending.take(hash) {
+                return false;
+            }
+        }
+        if self
+            .tx
+            .send(Cmd::Store {
+                hash,
+                width,
+                height,
+                bgra,
+                bytes,
+                cost_ms,
+                scale_q,
+            })
+            .is_err()
+        {
+            // The thread is gone; nothing will ever clear this entry.
+            if let Ok(mut pending) = self.pending.try_lock() {
+                pending.done(hash);
+            }
+            return false;
+        }
+        true
+    }
+
+    /// How many frames are waiting to be written — the meter behind
+    /// [`MAX_PENDING_PARKS`], and what the tests assert on.
+    #[must_use]
+    pub fn pending_parks(&self) -> usize {
+        self.pending.try_lock().map(|p| p.len()).unwrap_or(0)
     }
 
     /// How many frames are parked, and how many bytes they take.
@@ -123,8 +248,10 @@ pub fn spawn() -> DiskIo {
     let (loaded_tx, loaded) = std::sync::mpsc::channel();
     let known: Arc<Mutex<HashSet<u128>>> = Arc::default();
     let used_bytes: Arc<AtomicU64> = Arc::default();
+    let pending: Arc<Mutex<ParkQueue>> = Arc::default();
     let known_worker = known.clone();
     let used_worker = used_bytes.clone();
+    let pending_worker = pending.clone();
     std::thread::Builder::new()
         .name("nebula-disk".into())
         .spawn(move || {
@@ -178,7 +305,21 @@ pub fn spawn() -> DiskIo {
                         cost_ms,
                         scale_q,
                     } => {
-                        let Some(c) = &mut cache else { continue };
+                        // Whatever happens below — written, dropped for want of
+                        // a folder, or the cap taking it straight back out —
+                        // this frame is no longer on its way, and the producer
+                        // is free to offer it again. Cleared before the work so
+                        // an early return cannot leak the entry (a leaked one
+                        // would stop that frame ever being parked again).
+                        let done = |hash: u128| {
+                            if let Ok(mut p) = pending_worker.lock() {
+                                p.done(hash);
+                            }
+                        };
+                        let Some(c) = &mut cache else {
+                            done(hash);
+                            continue;
+                        };
                         // One order on disk (see the module note); the swizzle is
                         // this thread's to pay, never the renderer's. The bytes
                         // are shared with the memory tier, thus a swizzle needs
@@ -205,6 +346,10 @@ pub fn spawn() -> DiskIo {
                             k.clear();
                             k.extend(c.known_hashes());
                         }
+                        // After the mirror, so a producer that sees the frame
+                        // leave the queue also sees it on disk — never a moment
+                        // where it is in neither and gets offered again.
+                        done(hash);
                     }
                     Cmd::Load { hash, bgra } => {
                         let frame = cache.as_mut().and_then(|c| c.load(hash));
@@ -244,6 +389,7 @@ pub fn spawn() -> DiskIo {
         loaded,
         known,
         used_bytes,
+        pending,
     }
 }
 
@@ -254,6 +400,106 @@ mod tests {
 
     fn frame(w: u32, h: u32) -> Vec<u8> {
         (0..(w * h * 4)).map(|i| (i % 251) as u8).collect()
+    }
+
+    /// **The runaway (K-277).** Parking is write-behind, so a frame is not on
+    /// disk — and so does not answer `contains` — until the write lands. The
+    /// idle backup asks that question every couple of milliseconds, so without
+    /// a second question every frame in the queue looked like one that had
+    /// never been offered: it was read off the card and handed over again, and
+    /// again, each copy a whole frame of memory queued behind a thread already
+    /// behind. The application reached 81 GB sitting idle on a Mac.
+    ///
+    /// The two rules that stop it, tested where they live rather than through
+    /// a thread whose timing no test may depend on.
+    #[test]
+    fn a_frame_is_only_ever_on_its_way_down_once() {
+        let mut queue = ParkQueue::default();
+        assert!(queue.take(1), "the first offer is taken");
+        assert!(!queue.take(1), "the same frame is not queued twice");
+        assert!(queue.holds(1));
+        assert_eq!(queue.len(), 1);
+
+        queue.done(1);
+        assert!(!queue.holds(1));
+        assert!(queue.take(1), "and once written it may be offered again");
+    }
+
+    #[test]
+    fn the_write_queue_has_a_hard_ceiling() {
+        let mut queue = ParkQueue::default();
+        for hash in 0..MAX_PENDING_PARKS as u128 {
+            assert!(queue.take(hash), "room for {hash}");
+        }
+        assert_eq!(queue.len(), MAX_PENDING_PARKS);
+        assert!(
+            !queue.take(999),
+            "past the ceiling a park is refused — the frame keeps its place on \
+             the card and in memory, and is offered again later"
+        );
+        // One leaves, one may enter: the queue is a queue, not a one-shot.
+        queue.done(0);
+        assert!(queue.take(999));
+        assert_eq!(queue.len(), MAX_PENDING_PARKS);
+    }
+
+    /// And the same two rules through the real thread: a parked frame's place
+    /// is given back once it is written (a leaked place would stop that frame
+    /// ever being parked again), and a frame already on its way is refused.
+    #[test]
+    fn a_written_frame_gives_its_place_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let io = spawn();
+        io.tx
+            .send(Cmd::SetRoot(Some(dir.path().to_path_buf())))
+            .unwrap();
+        let bytes = Arc::new(frame(8, 4));
+
+        assert!(io.park(7, 8, 4, false, bytes.clone(), 5, 1000));
+        // Offered again before the write can have landed: refused, because it
+        // is already on its way. (If the thread has already finished it, the
+        // mirror says so instead — either answer keeps the frame out of the
+        // queue twice over.)
+        assert!(
+            io.is_pending(7) || io.contains(7),
+            "the frame is accounted for somewhere at every moment"
+        );
+
+        // Wait for the write, then check the place came back.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !io.contains(7) && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(io.contains(7), "the frame reached the disk");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while io.pending_parks() > 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(io.pending_parks(), 0, "the queue emptied as it wrote");
+        assert!(!io.is_pending(7));
+    }
+
+    /// A park with nowhere to put it (no folder yet) must still give its place
+    /// back, or the queue fills with frames that never leave and parking stops
+    /// for the session the moment a project is opened later.
+    #[test]
+    fn a_park_with_no_folder_still_frees_its_place() {
+        let io = spawn();
+        let bytes = Arc::new(frame(4, 4));
+        for hash in 0..(MAX_PENDING_PARKS as u128 * 2) {
+            // Not asserted true: the queue may briefly be full while the thread
+            // catches up, which is the ceiling doing its job.
+            let _ = io.park(hash, 4, 4, false, bytes.clone(), 1, 1000);
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while io.pending_parks() > 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(
+            io.pending_parks(),
+            0,
+            "every dropped store hands its place back"
+        );
     }
 
     /// The tier end to end on its own thread: park a frame, see it appear in the

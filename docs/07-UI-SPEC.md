@@ -601,6 +601,24 @@ the transport (§11) and cache system. During scrubs the Viewer shows latest-win
 results (K-017); stale frames MUST never be presented as current without the degradation
 indicator lit.
 
+**Preview progress (K-276).** A frame the user is waiting on — a scrub, a playhead move, a
+dragged value — MUST be able to say how far it has got: a slim bar across the bottom of the
+picture, filling as the engine works through the frame, labelled with the stage it is in
+(preparing, reading media, reading the composition, compositing, showing). Three rules make
+it a help rather than noise:
+
+- It MUST NOT appear during playback. A frame due in sixteen milliseconds has no use for a
+  progress bar, and one blinking per frame would be the busiest thing on screen.
+- It MUST NOT appear for a frame that arrives quickly: nothing is drawn until a render has
+  been outstanding for ~150 ms, so ordinary work stays silent.
+- The fill MUST animate towards each report rather than jumping, and MUST carry a moving
+  sheen while it waits, so "working" reads apart from "stuck" at a glance. Both respect the
+  animation level (K-092).
+
+The fraction is an estimate built from fixed stage weights and is described as such; a
+progress bar's job is "roughly how much longer", and a decimal point would not make that
+truer. A frame served from the cache reports nothing at all — there was nothing to wait for.
+
 ### 2.6 Viewer locks
 
 Each Viewer MAY be locked to a specific item (padlock on its tab). A locked Viewer MUST NOT
@@ -801,10 +819,10 @@ is drawn with the accent edge, and `Enter` presses it.
 6. **Parent** dropdown + pick-whip.
 7. Optional columns: in, out, duration, stretch.
 
-**Shipped arrangement (K-188, superseding K-168's):** the columns sit in FOUR groups,
-left to right — 1 visibility · audio · solo · lock · shy; 2 twirl · label-colour chip ·
-layer number · name; 3 flow-or-collapse · fx bypass · motion blur · 3D; 4 matte · blend ·
-parent (dropdowns; the pick-whips are a follow-up). **Dragging a group's header moves the
+**Shipped arrangement (K-188, superseding K-168's; extended by K-276):** the columns sit in
+FIVE groups, left to right — 1 visibility · audio · solo · lock · shy; 2 twirl ·
+label-colour chip · layer number · name; 3 flow-or-collapse · fx bypass · motion blur · 3D;
+4 matte · blend · parent (dropdowns; the pick-whips are a follow-up); 5 **render time**. **Dragging a group's header moves the
 whole group**, which is how the column order is changed, and **dragging the seam after a
 group resizes it** (K-192) — every other group keeps its width, so the outline grows or
 shrinks by what the drag moved, and what sits inside a group grows with it: the fold-out's
@@ -819,6 +837,33 @@ shows collapse there and other kinds leave it empty. Quality and
 preserve-underlying-transparency still await their backing machinery (K-168);
 hide-per-workspace and the optional in/out/duration columns remain open. Right-clicking a
 layer row opens the **layer menu** — duplicate, reorder, delete.
+
+**The render-time column (K-276, [13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md) §7.1)**
+shows what each layer's own picture cost in the frame at the playhead, and — on a layer
+twirled open — what each effect in its stack cost, on that effect's heading row and in the
+same column — an effect's figure MUST sit in the same column as its layer's, or the two
+cannot be read against each other. Measuring is **on by default**, and its switch is the
+**clock in the bottom strip**, after the cache meters: the column header MUST be a plain
+readout, because a header that says Time over a column of dashes gives no hint that it is a
+button, and a switch nobody can find is a feature that does not work. Switched off, the
+column MUST disappear from the outline entirely — no header, no cells, no width — and the
+per-effect figures in the Effect controls panel with it: a column of blanks is not a column,
+and the outline's width is worth more than an indicator nobody has asked for. The header MUST report the whole frame's
+cost while measuring — `…` until a measured frame has arrived, the number once one has — so
+the three states (not measuring, measuring with nothing back, measured) read differently
+rather than all showing a dash; and an engine that refuses the switch MUST say so in the
+status line rather than leaving a lit clock over a column that will never fill.
+
+Measuring makes the engine wait for the graphics card at every node: an honest millisecond,
+at the price of the overlap a brisk preview lives on, and a measured frame MUST be
+composited rather than served from a cache — a held frame cost a copy and has no per-layer
+cost to report, so the column would otherwise stay empty on exactly the compositions worth
+profiling. Switching measuring on MUST ask for the frame under the playhead again, so the
+numbers appear where the user is looking.
+Playback MUST never be measured whatever the switch says, and switching off MUST drop
+the numbers rather than leave a stale frame's costs on screen. The same per-effect number
+appears on the effect's title row in the Effect controls panel (§6), from the same
+measurement — the panel shows the numbers, it does not turn them on.
 
 ### 4.3 Layer lanes and property twirl-down
 
@@ -964,6 +1009,16 @@ edit point near a beat marker lands exactly on it.
 
 - Plain wheel scrolls vertically. `Shift+wheel` scrolls horizontally. `Ctrl+wheel` zooms
   time about the pointer. The wheel MUST never zoom without a modifier (no scroll hijack).
+- **A trackpad's two-finger scroll MUST scroll the panel** (K-278). It arrives as a pan
+  *gesture* rather than as the wheel's signal, so the panel — which otherwise gives drags to
+  the keyframe marquee — MUST admit exactly the trackpad as a drag-scroll device, and every
+  editing recogniser laid over a scrollable surface MUST exclude it in turn so it cannot be
+  taken back in the gesture arena. A click-drag is a pointer drag, not a pan-zoom, so it
+  still draws the marquee.
+- **The outline and the lanes MUST scroll exactly as far as each other** (K-278): they are
+  one table. The lane side's bottom bar is therefore reserved under the outline as well —
+  without it the lanes have the shorter viewport, scroll further, and the two halves come
+  apart at the bottom of a long stack.
 - `=`/`-` zoom time in/out; `Shift+=` zooms to the work area; `\` toggles between full-comp
   zoom and the previous zoom (AE-compatible).
 - Dragging in the ruler scrubs the playhead. Scrubbing previews video always; holding
@@ -1152,6 +1207,10 @@ Shows the **effect stack** of the selected layer (tab per recently viewed layer,
   appear in Effects & Presets (§7) and serialise per [10-FILE-FORMAT.md](10-FILE-FORMAT.md)
   for sharing (K-065).
 
+  **Shipped: drag-to-reorder** (K-276) — dragging an effect's heading onto another's moves
+  it to that place, the same "take hold of the name" gesture the Timeline and the Project
+  panel use; the heading under the pointer marks itself so the place being taken is clear.
+
   **Shipped: the panel's layout.** The panel is **one list, not a stack of cards** — the same
   reading as the Timeline's twirl-down (§4.3), which is where the same parameters also appear.
   Each section (Source, Transform, and one per effect) is a **heading bar that twirls**, with a
@@ -1167,8 +1226,13 @@ Shows the **effect stack** of the selected layer (tab per recently viewed layer,
   The **heading row** runs: twirl, the effect's enable switch, the effect's name — all in the
   name column — then **Reset** at the top of the value column, because that is what it acts
   on. Reset writes every parameter's declared default and so drops any curve on it, as one op
-  and therefore one undo step. The stack arrows and the close mark sit hard right, away from
-  Reset: removing an effect is not an adjustment to it.
+  and therefore one undo step. Hard right sit the effect's **render time** (§4.2's column,
+  the same measurement) and the close mark, away from Reset: removing an effect is not an
+  adjustment to it. **Reordering is a right-click on the heading** (K-276) — move up, move
+  down, to the top, to the bottom, remove — rather than the pair of arrows that used to hold
+  that space: moving an effect is a handful of acts in a session, and what it costs is read
+  continuously while a comp is being made faster. The menu lists only the moves that effect
+  can make.
 
   **Round shape keeps its bubble** (K-092): the same rows, wrapped in floating-card chrome.
   The two shapes differ in chrome, not in layout.
@@ -1179,8 +1243,7 @@ Shows the **effect stack** of the selected layer (tab per recently viewed layer,
   itself, so the first one does not become a special case in the middle of the layout. Nothing
   claims a display yet.
 
-  Still to build here: drag-to-reorder by the effect's name, solo, rename, and the expression
-  toggle.
+  Still to build here: solo, rename, and the expression toggle.
 
 ### 6.1 The colour picker and the dropper (K-210)
 

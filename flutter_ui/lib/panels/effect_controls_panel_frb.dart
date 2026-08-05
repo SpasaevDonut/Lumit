@@ -51,6 +51,7 @@ import 'transform_rows_frb.dart';
 import '../state/drag_payloads.dart';
 import 'placeholder.dart';
 import 'source_rows_frb.dart';
+import 'timeline_timings.dart';
 
 class EffectControlsPanelFrb extends StatefulWidget {
   const EffectControlsPanelFrb({super.key});
@@ -210,6 +211,24 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
                       onToggle: () => _toggle('transform'),
                     ),
                   ],
+                  // A null layer has no picture, so nothing here changes one
+                  // — but the parameters are real, animatable values, which is
+                  // exactly what a null is for once expressions can read them
+                  // (K-274). Said plainly, once, rather than refusing the drop.
+                  if (info.kind == BridgeLayerKind.nullLayer &&
+                      info.effects.isNotEmpty)
+                    Padding(
+                      key: const ValueKey('fx-null-inert'),
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                      child: Text(
+                        'A null layer draws nothing, so an effect here changes '
+                        'no picture. Its parameters stay live — a null is '
+                        'where a control lives when it is meant to drive other '
+                        'layers.',
+                        style: t.small.copyWith(color: t.textMuted),
+                      ),
+                    ),
                   if (info.effects.isEmpty)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 18),
@@ -468,45 +487,46 @@ class _EffectSection extends StatelessWidget {
           keyName: 'fx-reset-$id',
           onPressed: _reset,
         ),
+        // What this effect cost in the last measured frame — the same number
+        // its row in the Timeline shows, from the same measurement (docs/13
+        // §7.1). Blank unless the Timeline's render-time column is measuring,
+        // so this panel neither turns the cost on nor shows a stale figure.
+        // Expanded rather than a fixed box after a Spacer: the value column is
+        // as wide as the panel leaves it, and a readout that insisted on its
+        // own width overflowed the heading in a narrow panel. It right-aligns
+        // itself and clips rather than pushing anything.
+        Expanded(child: TimingsCell(effectId: '$id')),
       ],
-      trailing: Row(
-        children: [
-          _markButton(
-            context,
-            mark: '▲',
-            tip: 'Move up the stack',
-            enabled: index > 0,
-            key: 'fx-up-$id',
-            onPressed: () {
-              _withHandle(
-                  (e) => layer.reorderEffect(effect: e, newIndex: index - 1));
-              onStackChanged();
-            },
-          ),
-          _markButton(
-            context,
-            mark: '▼',
-            tip: 'Move down the stack',
-            enabled: index < count - 1,
-            key: 'fx-down-$id',
-            onPressed: () {
-              _withHandle(
-                  (e) => layer.reorderEffect(effect: e, newIndex: index + 1));
-              onStackChanged();
-            },
-          ),
-          _markButton(
-            context,
-            mark: '×',
-            tip: 'Remove this effect',
-            enabled: true,
-            key: 'fx-remove-$id',
-            onPressed: () {
-              _withHandle((e) => layer.removeEffect(effect: e));
-              onStackChanged();
-            },
-          ),
-        ],
+      // Drag the heading to move the effect (docs/07 §6): the gesture the rest
+      // of the application already uses to reorder a list, and the one the
+      // owner asked for.
+      dragIndex: index,
+      onDropped: (from) {
+        final stack = layer.getEffects();
+        if (from < 0 || from >= stack.length) return;
+        try {
+          layer.reorderEffect(effect: stack[from], newIndex: index);
+        } catch (_) {
+          // The stack changed under the drag; re-reading is the recovery.
+        }
+        onStackChanged();
+      },
+      // Right-click is where the rest of the reordering lives (K-276): the two arrows that
+      // used to sit here spent permanent space on a rare act, and the render
+      // time — read constantly while a comp is being made faster — earns that
+      // space instead. Nothing is lost: the menu moves an effect a step, and
+      // to either end.
+      onContextMenu: (at) => _stackMenu(context, at),
+      trailing: _markButton(
+        context,
+        mark: '×',
+        tip: 'Remove this effect',
+        enabled: true,
+        key: 'fx-remove-$id',
+        onPressed: () {
+          _withHandle((e) => layer.removeEffect(effect: e));
+          onStackChanged();
+        },
       ),
       // An effect with its own display draws that instead of a row per
       // parameter; nothing claims one yet.
@@ -656,6 +676,80 @@ class _EffectSection extends StatelessWidget {
   /// A small text mark rather than an icon, matching v0's × for Remove — the
   /// icon set has no caret or close glyph, and three marks do not earn three
   /// new ones.
+  /// The effect heading's right-click menu: where it sits in the stack, and
+  /// removing it. Reordering is a handful of acts in a session, so it lives
+  /// here rather than in two buttons on every heading — and unlike the arrows
+  /// it can send an effect to the top or the bottom in one go.
+  void _stackMenu(BuildContext context, Offset at) {
+    final id = info.id;
+    void move(int to) {
+      _withHandle((e) => layer.reorderEffect(effect: e, newIndex: to));
+      onStackChanged();
+    }
+
+    showLumitPopup<void>(
+      context: context,
+      position: at,
+      builder: (close) => FloatSurface(
+        width: 190,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          // Only the moves this effect can actually make are listed: a menu of
+          // dead rows tells you what you cannot do, which is not what a menu
+          // is for (docs/15 §no punishment UI).
+          children: [
+            if (index > 0) ...[
+              MenuRow(
+                key: ValueKey<String>('fx-menu-up-$id'),
+                onPressed: () {
+                  close(null);
+                  move(index - 1);
+                },
+                child: const Text('Move up'),
+              ),
+              MenuRow(
+                key: ValueKey<String>('fx-menu-top-$id'),
+                onPressed: () {
+                  close(null);
+                  move(0);
+                },
+                child: const Text('Move to top'),
+              ),
+            ],
+            if (index < count - 1) ...[
+              MenuRow(
+                key: ValueKey<String>('fx-menu-down-$id'),
+                onPressed: () {
+                  close(null);
+                  move(index + 1);
+                },
+                child: const Text('Move down'),
+              ),
+              MenuRow(
+                key: ValueKey<String>('fx-menu-bottom-$id'),
+                onPressed: () {
+                  close(null);
+                  move(count - 1);
+                },
+                child: const Text('Move to bottom'),
+              ),
+            ],
+            MenuRow(
+              key: ValueKey<String>('fx-menu-remove-$id'),
+              onPressed: () {
+                close(null);
+                _withHandle((e) => layer.removeEffect(effect: e));
+                onStackChanged();
+              },
+              child: const Text('Remove effect'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _markButton(
     BuildContext context, {
     required String mark,

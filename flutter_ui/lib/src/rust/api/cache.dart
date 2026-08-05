@@ -79,6 +79,21 @@ BridgeDiskCacheStats clearDiskCache() =>
 BridgeViewerTransport viewerTransport() =>
     BridgeLib.instance.api.crateApiCacheViewerTransport();
 
+/// Ask the render worker to measure what each frame costs, per layer and per
+/// effect (docs/13 §7.1), or to stop.
+///
+/// **Not free, which is why it is a switch.** A measured frame waits for the
+/// graphics card at every node, so a millisecond on a Timeline row means the
+/// work rather than the paperwork — and that wait is exactly the overlap a
+/// brisk preview lives on. So the numbers are collected while something is
+/// showing them and not otherwise, and playback is never measured whatever
+/// this says.
+///
+/// Takes effect from the next frame; frames already in flight finish as they
+/// started.
+void setRenderProfiling({required bool on_}) =>
+    BridgeLib.instance.api.crateApiCacheSetRenderProfiling(on_: on_);
+
 /// Where the disk tier keeps its frames (docs/07-UI-SPEC.md §15).
 enum BridgeCacheLocation {
   /// Under the application's own cache folder, keyed by document id — the

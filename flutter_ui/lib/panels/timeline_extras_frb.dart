@@ -1001,6 +1001,7 @@ class _TimelineRulerState extends State<TimelineRuler> {
                     child: GestureDetector(
                       key: ValueKey('tl-work-${isStart ? 'start' : 'end'}'),
                       behavior: HitTestBehavior.opaque,
+                      supportedDevices: dragDevices,
                       onHorizontalDragStart: (_) =>
                           setState(() => _dragIsStart = isStart),
                       onHorizontalDragUpdate: (d) {
@@ -1071,6 +1072,7 @@ class _TimelineRulerState extends State<TimelineRuler> {
                     behavior: HitTestBehavior.opaque,
                     onSecondaryTapUp: (d) =>
                         _markerMenu(context, marker, d.globalPosition),
+                    supportedDevices: dragDevices,
                     onHorizontalDragStart: (d) => setState(() {
                       _dragMarker = marker.id;
                       _dragMarkerFrame = null;

@@ -41,16 +41,6 @@ These sit above everything else: they are what the editor feels like in the hand
     Same shape of win in Matte mode from skipping dead light slots with an
     indirect dispatch: eight slots are always dispatched, however many sources
     the detection actually found.
-- **Mattes that decode footage.** A precomp referenced ONLY as a matte
-    renders solids/text/shapes but not footage: the decode planner never
-    visits it (K-266 boundary in `pixels_for`) — teach `collect_comp_jobs`
-    to walk matte references. (Area sources themselves landed in K-267:
-    per-tile flux onto the nearest of up to sixteen anchors.)
-- **The Precomp-layer twin of the K-266 adjustment fix.** Effects ON a
-    Precomp layer also resolve px@comp with factor 1 (`DrawSource::Nested`'s
-    arm in build.rs) while running on whatever raster the nested comp
-    realises at — same preview-only drift `fx::rescale_px` fixed for
-    Adjust; wire the same factor through the nested arm.
 - **Replace `poll(Maintain::Wait)` with a keyed mutex** - every present waits for
     the card to go idle before handing the texture over (`shared.rs`,
     `shared_linux.rs`, `shared_metal.rs`; find it by the call, not a line number).
@@ -188,8 +178,6 @@ The Timeline matters most - it is zoomed constantly while cutting.
 - **`ProjectReference::state()` hands the raw `Arc<RwLock<…>>` out**, so a caller
     can hold a project lock as long as it likes and in any order. The order is
     written down and tested; nothing enforces it at the type level.
-- **`DocumentStore::set_callback` takes `&mut self`**, so the observer can only be
-    attached before the store is shared.
 - **The macOS IOSurface Viewer path is unproven** - CI links the bundle but
     nobody has launched the .app (K-033).
 - **The macOS .app is not relocatable** - the podspec links keg-only FFmpeg by
@@ -214,11 +202,6 @@ The Timeline matters most - it is zoomed constantly while cutting.
 - **The Linux DMA-BUF path has never run on a Linux machine with a GPU** (K-033).
     It fails calmly on the adapter-less CI runner, which proves the failure is
     calm and nothing about the path working.
-- **`cargo build -p lumit_bridge --no-default-features` does not build** - the
-    render worker is part of the API surface, which is deliberately one shape
-    whatever the features ([17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md) §Feature
-    gates). Either make the worker feature-clean or drop the pretence that the
-    features are independent.
 - **frb's SSE codec encodes `Vec<u8>` one byte at a time** - now taxes only
     thumbnails and scope traces, but worth the bulk codec if traces feel late.
 - **Engine subsystems with no frb API** - masks (`add_mask`,
@@ -228,15 +211,28 @@ The Timeline matters most - it is zoomed constantly while cutting.
 - **The audio mix is rebuilt from scratch** whenever the comp's audio signature
     changes, rather than patched.
 
+**Copy and paste: the effect-header commands are still to wire (K-275).** Layers copy
+and paste from the **Edit** menu (Cut/Copy/Paste, with *Paste layers at their original
+time* in Settings → Interface), and the engine takes one effect or a whole stack
+(`copy_effects`/`paste_effects`). What is owed is the two places an effect is *picked*:
+**Copy effect** on an effect's heading in the Effect controls panel and on its row in the
+Timeline, both calling `copy_effects(Some(id))` and putting it on the same clipboard.
+Copying between two running Lumit windows wants the system clipboard rather than the
+in-app one; decide when it is asked for.
+
 **Retime follow-up after K-249.** **The eased ramp shapes are gone from
 clips** — `Clip::with_ramp` takes two speeds and runs straight between them,
 which is what the envelope authors. Slow/Fast/Smooth/Sharp come back with the
 preset-shelf rework above, rebuilt on the property like everything else K-249
 moved.
 
-**System memory is only read on Windows.** `system_memory_bytes` and
-`video_memory_bytes` answer 0 elsewhere and the settings fall back to a 16 GB
-ceiling. macOS/Linux want `sysctl hw.memsize` and `/proc/meminfo` (K-033).
+**Video memory is only read on Windows.** `video_memory_bytes` answers the
+first DXGI adapter's dedicated memory there and 0 everywhere else, so the GPU
+cache ceiling falls back to the frontend's documented figure on macOS and
+Linux. Wants Metal's `recommendedMaxWorkingSetSize` and the Vulkan adapter's
+device-local heap (K-033). *Installed RAM is answered on all three already
+(K-204: `GlobalMemoryStatusEx`, `/proc/meminfo`, `hw.memsize`) — this entry
+used to claim otherwise.*
 
 **Bound keys with nothing behind them.** The **Tools**, **Project**, **Panels**
 and **Effects** keymap contexts have real bindings and no commands. Either build
@@ -294,11 +290,6 @@ colour individually; only the two Timeline tokens default from the mode.
     shared engine (audio device, render worker) across test *files*. Give those
     files a serial marker or make the engine per-file - the serial run is a
     mitigation, not the fix, and it costs wall-clock.
-- **`set_markers` flattens every marker to `MarkerKind::User`** - so dragging or
-    renaming one on the ruler turns detected beats into ordinary cues and *Clear
-    beat markers* stops finding them (`crates/lumit-bridge/src/api/composition.rs`).
-    Carry the kind across the bridge (`BridgeMarker`) and map it back. Pre-dates
-    K-254's ruler markers, which made it far easier to hit.
 - **Beat tap has no key left** - [07-UI-SPEC.md](07-UI-SPEC.md) §10 wants `8`
     during playback to tap a beat, and K-254 gave the bare digits to the numbered
     markers. Needs its own chord or a modal reading.
@@ -308,23 +299,35 @@ colour individually; only the two Timeline tokens default from the mode.
     suspend mid-drag).
 - **Volume keyframes draw no lane diamonds and no graph curve** - volume is not
     in the comp read model; fold it into `BridgeLayerInfo` if either matters.
-- **Effects on a Null are accepted and never run** - either refuse the drop or
-    say plainly that the stack is inert.
 
-**Layer and effect render-time indicator.** Per-layer total render time in ms on
-the layer row, and per-effect time on each effect's title row, both as a Timeline
-sub-column like the other sub-columns; the same per-effect value on its title row
-in the Effect controls panel ([13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md)
-§7.1).
+**Render-time indicator follow-ups (K-276 landed the column).** Measuring re-renders held
+frames (it must: a cache hit has no cost to report), so a measured scrub is slower than an
+unmeasured one by a whole composite per frame — worth revisiting once timestamp queries make
+the numbers free, since then a frame could carry its costs without being re-made. What ships measures
+by *fencing* — the render waits for the graphics card at each layer and each
+effect before reading the clock, which is why it is opt-in (the column's stopwatch)
+and never runs during playback. The §7.1 target is continuous collection at
+negligible cost, and that wants **GPU timestamp queries**: a query set per frame,
+timestamps written around each node's own submission (every effect kernel already
+submits its own command buffer, so this needs no change inside `lumit-gpu`'s
+kernels), resolved and read back a frame later. With those in, the switch could go
+and every frame could carry its numbers. Also owed from §7.1: **sorting** the
+Timeline column, a **profiler panel** with the recording mode (totals, percentiles,
+cache hit rates, time per degradation-ladder step), and per-layer numbers for the
+layers *inside* a Precomp (today a Precomp's row carries its whole comp, and the
+rows inside it are another composition's).
+
+**The preview progress bar's fractions are stage weights, not measurements**
+(K-276). Decode is assumed the long pole and each top-level layer an equal share of
+the composite; a comp whose one adjustment layer costs more than the twenty layers
+below it fills the bar unevenly. The profiler above already knows what each node
+cost *last* time — feeding those measured costs back as the weights would make the
+bar's estimate a real one. Also unbuilt: nothing shows progress for the frames the
+**idle cache fill** is making in the background (deliberate for now — it is not a
+frame anyone is waiting for), and an **export**'s progress still has its own path
+([07-UI-SPEC.md](07-UI-SPEC.md) §14) rather than sharing this one.
 
 ## Next - engine/bridge follow-ups
-
-**The LUT effect's GPU path ignores a non-default domain**
-([impl/lut.md](impl/lut.md) §3 status): `fx_lut.wgsl` skips the
-`DOMAIN_MIN`/`DOMAIN_MAX` remap the CPU oracle applies, so such a cube renders
-silently wrong. Pass the six domain floats through `LutParams`, or refuse
-non-default-domain cubes as a labelled no-op. The LUT caches also key by path
-alone - no mtime, no LRU bound (§4).
 
 **Lens flare follow-ups (K-256..K-264, [impl/lens-flare.md](impl/lens-flare.md))** — the
 shipped core is docs/08 §3.27 (FlareSim model + 1299-lens library, K-261; artefact and
@@ -349,12 +352,17 @@ migration** from the grandfathered % of frame to px@comp (K-260 convention), and
 writes for a paired keyframe toggle (two ops today).
 
 **Anti-aliasing in the renderer.** Edges of transformed layers, shape strokes and
-text stair-step, worst on a slow rotation. Two questions decide where the setting
-lives: whether the sample count is a **project** property (it changes what a comp
-looks like, so it must match on another machine and in export) or a
-**preference** (it trades quality for speed on this machine), and whether preview
-and export share one value. Sample counts must be checked against the adapter
-rather than assumed.
+text stair-step, worst on a slow rotation. **Decided (owner, 2026-08-05, K-274): a
+project property, on by default, one value shared by preview and export** — it
+changes what a comp looks like, so it must travel with the file and match on
+another machine. **How** is pinned in
+[impl/anti-aliasing.md](impl/anti-aliasing.md) (written before the code, per the
+impl-note rule): MSAA on the composite target rather than supersampling, one
+persistent multisample texture resolving per pass, the four traps in the composite
+loop (the seed copy cannot cross sample counts; pipelines carry their count; every
+reader wants the resolved texture; motion blur and coverage draw geometry too), the
+adapter capability check, and the test plan. Still to build: all of it, plus the
+project field through the bridge and its Settings row.
 
 **The stale-fd race on a Linux Viewer resize** (`lumit-render/src/headless.rs`'s
 `shared_dmabuf` re-create, with `lumit-gpu/src/shared_linux.rs`'s `Drop`). The
@@ -413,30 +421,43 @@ plugins/decoder page; autosave interval/keep; export defaults (preset + filename
 template). Each lands wired to the engine through the bridge, not as a Dart-side
 setting nothing reads.
 
-**The no-hex lint only greps Rust** ([15-DESIGN.md](15-DESIGN.md) §4.1) - a Dart-side gate
-over `flutter_ui/lib` outside `theme/` would catch the literals where widgets actually live.
-
 **Engineering-rules tooling still owed** ([14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md)):
-`cargo deny` in CI (§9); fuzz targets for the `.lum` deserialiser and journal replayer (§6);
-a `rust-toolchain.toml` pin and the edition-2024 move (§9); the `indexing_slicing` /
-`arithmetic_side_effects` clippy denies after a hot-path sweep (§4); `clippy::pedantic`
-with curated allows (§7); the golden-frame EXR export corpus (§6).
+fuzz targets for the `.lum` deserialiser and journal replayer (§6); the **edition-2024
+move** (§9 - the toolchain pin landed in K-272, the edition did not); the
+`indexing_slicing` / `arithmetic_side_effects` clippy denies after a hot-path sweep (§4);
+`clippy::pedantic` with curated allows (§7); the golden-frame EXR export corpus (§6).
+
+**Three unmaintained dependencies are deliberately ignored in `deny.toml`** (K-272).
+`ttf-parser` (via fontdue, via `lumit-text`) is the one with a real successor: moving
+the rasteriser to `skrifa` is its own piece of work with its own glyph-metric tests.
+`bincode` 1.x and `paste` leave when the dependencies that pull them update.
+
+**A genuinely FFmpeg-free build is not possible yet (K-273).** `lumit_bridge
+--no-default-features` compiles the bridge's own decode paths out, but `lumit-render` and
+`lumit-audio` depend on `lumit-media` unconditionally, so the library is still linked and
+the build still needs it installed. Making those two deps optional — and the render/audio
+paths that use them — is what "builds without FFmpeg" would actually take.
+
+**The three-tier cache's remaining sharp edges.** K-277 bounded the disk tier's write
+queue after it reached 81 GB on an idle Mac; the same shape of question is worth asking of
+the *other* unbounded `mpsc` channels the worker owns (the loaded-frame return, the
+prefetcher's results) — none carries whole frames as freely as the park queue did, but none
+counts its depth either. Also owed from that hunt: nothing reports how deep the park queue
+is running, so a machine whose disk cannot keep up degrades silently (frames simply stop
+reaching disk).
 
 **The performance harness and its CI gates are not built**
 ([13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md) §7.3): no reference comp in the
 repository, no headless benchmark scenarios, no budget gates per merge. The per-node
-profiler (§7.1) is likewise unbuilt - the render-time indicator entry above is its first
-visible piece.
+profiler (§7.1) now has its first visible piece - the render-time column (K-276) - and the
+rest of it (continuous timestamp-query collection, the recording mode, the panel) is in the
+entry above.
 
 **CI coverage the Flutter port left thin:**
-- **The WGSL/CPU-oracle parity tests skip silently without an adapter** - they
-    print "no GPU adapter; skipping" and the run still goes green, so a job
-    without one proves nothing about the kernels. Installing Mesa's software
-    Vulkan driver (`mesa-vulkan-drivers`, the `lvp` ICD) is enough to make them
-    all run: verified 2026-08-03 on a container with no graphics hardware, where
-    the whole `lumit-gpu` suite passed in about five seconds. Worth adding to any
-    Linux job, and worth making the skip loud (an env var that turns "no adapter"
-    into a failure on the machines that should have one).
+- **macOS and Windows CI do not require an adapter.** `LUMIT_REQUIRE_GPU` turns
+    a "no adapter" skip into a failure and the Linux job sets it (K-269); the
+    other two do not, because nobody has confirmed those runners enumerate one.
+    One run with the variable set says whether they can.
 - **Nothing in CI proves a Viewer frame arrives.** The Linux job is the only one
     running the Flutter suite and has no GPU, so the six Viewer tests that wait
     for a frame skip there on `LUMIT_NO_ZERO_COPY_VIEWER=1`. They still fail on a

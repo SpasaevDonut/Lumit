@@ -213,15 +213,37 @@ path, documented beside the types in
     trace and a patch are three different questions, and none may supersede
     another — only its own kind, where the newest wins (a pointer that has moved
     on makes the previous position worthless).
+- **Instrumentation rides it too (K-276).** Two further messages come back on the
+    same stream, both small and both about a frame rather than being one:
+    `WorkerResponse::RenderProgress` (`BridgeRenderProgress`: frame, stage code,
+    0..1 fraction, and a `done` flag) says how far the frame the user is waiting
+    on has got, and `WorkerResponse::FrameProfile` (`BridgeFrameProfile`: the
+    frame, its total, and per-layer/per-effect milliseconds with ids as strings)
+    says what a measured frame cost. Two rules bound them. **Progress is sent
+    only for a frame someone is waiting on** — the worker turns it on around the
+    interactive render paths and off again, so playback, the idle cache fill and
+    scope traces are silent — and the *worker*, not the engine, sends the closing
+    `done`, so a frame that faults or is served from the cache still ends its
+    own bar. **Timings are sent only while the frontend has asked for them**
+    (`api::cache::set_render_profiling`, read per frame): measuring fences the
+    graphics card at each node, so an unasked-for frame costs exactly what it
+    did before this existed.
 
 ## Feature gates
 
 - **`media`** (default on) pulls `lumit-media` (FFmpeg) for probing and decoding.
     Without it, footage does not probe and thumbnails are absent.
-- **Note.** `--no-default-features` does **not** currently build: the render
-    worker is part of the API surface, which is deliberately identical whatever
-    the features are so the generated Dart is one shape everywhere. Recorded in
-    [TODO.md](TODO.md).
+- **Note.** `--no-default-features` builds and tests (K-273). It is **not** a
+    build without FFmpeg: `lumit-render` and `lumit-audio` depend on
+    `lumit-media` unconditionally and the bridge depends on both, so the library
+    is still linked. The feature governs the bridge's own decode paths. The API surface is
+    identical whatever the features are — the generated Dart is one shape
+    everywhere — so a function never *disappears* with a feature: it stays
+    compiled and its body degrades. Beat detection is the shape to copy: always
+    present, and `NoAudioPipeline` on a build with no audio pipeline. What a
+    media-less build actually loses is decoding — no probe, no thumbnails, no
+    waveform peaks, and the decode-ahead thread drains its queue without
+    producing anything — never a call that is not there.
 - **`render`** (default on) enables the composited-comp Viewer path and export
 through the headless seam.
 - **`shared-texture`**, **`shared-texture-linux`**, **`shared-texture-macos`**

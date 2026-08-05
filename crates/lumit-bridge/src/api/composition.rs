@@ -21,9 +21,12 @@ use crate::api::{
 
 /// One timeline marker (docs/03 §11): a cue on the comp's timebase.
 ///
-/// The engine's marker also carries a duration and a kind; neither has a
-/// control yet, so they are not carried across — a marker written back keeps
-/// what the panel can actually edit and does not pretend to round-trip the rest.
+/// The engine's marker also carries a duration, a kind and any unknown fields
+/// a newer Lumit wrote (docs/10 §1.1); none of the three has a control, so none
+/// of them crosses. They are **not** lost on a write-back: [`core_markers`]
+/// merges each incoming marker onto the one the document already holds under
+/// that id, so the panel edits what it can see and the rest survives untouched
+/// (K-270).
 #[frb(non_opaque)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BridgeMarker {
@@ -48,18 +51,58 @@ pub(crate) fn bridge_marker(m: &lumit_core::markers::Marker) -> BridgeMarker {
     }
 }
 
+/// A whole marker list coming back from the panel, merged onto the list the
+/// document holds (K-270).
+///
+/// **Why a merge and not a conversion.** The bridge marker carries the three
+/// fields a panel can edit — id, time, label — and the engine's marker carries
+/// three more it cannot: the *kind* (a detected beat's provenance, plus its
+/// confidence), a spanning marker's *duration*, and the `extra` map that keeps
+/// fields a newer Lumit wrote (docs/10 §1.1's forward-compatibility promise).
+/// Rebuilding each marker from the bridge's three fields alone flattened all
+/// three to their defaults, so **dragging or renaming a beat marker on the
+/// ruler turned it into an ordinary cue** — and then *Clear beat markers* could
+/// no longer find it, because there was nothing left to say it had ever been
+/// one. K-254's ruler markers made that a click away.
+///
+/// So each incoming marker is matched by id against what the document already
+/// holds: found, and it keeps that marker's kind, duration and extra; new, and
+/// it is a plain user marker, which is exactly what a marker the panel just
+/// created is. Nothing about the frb surface changes — the panel has no use for
+/// a kind it cannot edit, and inventing a control for one to fix a data-loss
+/// bug would be the wrong order.
 #[frb(ignore)]
-pub(crate) fn core_marker(m: BridgeMarker) -> Result<lumit_core::markers::Marker, BridgeError> {
+pub(crate) fn core_markers(
+    incoming: Vec<BridgeMarker>,
+    existing: &[lumit_core::markers::Marker],
+) -> Result<Vec<lumit_core::markers::Marker>, BridgeError> {
+    incoming
+        .into_iter()
+        .map(|m| {
+            let was = existing.iter().find(|e| e.id == m.id);
+            core_marker(m, was)
+        })
+        .collect()
+}
+
+#[frb(ignore)]
+pub(crate) fn core_marker(
+    m: BridgeMarker,
+    existing: Option<&lumit_core::markers::Marker>,
+) -> Result<lumit_core::markers::Marker, BridgeError> {
     use lumit_core::time::{CompTime, Rational};
     Ok(lumit_core::markers::Marker {
         id: m.id,
         time: CompTime(
             Rational::new(m.time.num, m.time.den).map_err(|_| BridgeError::InvalidTime)?,
         ),
-        duration: None,
+        // Everything the panel cannot edit is carried from the marker that was
+        // already there; a marker it has just made has nothing to carry, and
+        // takes the plain-user defaults.
+        duration: existing.and_then(|e| e.duration),
         label: m.label,
-        kind: lumit_core::markers::MarkerKind::default(),
-        extra: serde_json::Map::new(),
+        kind: existing.map(|e| e.kind).unwrap_or_default(),
+        extra: existing.map(|e| e.extra.clone()).unwrap_or_default(),
     })
 }
 
@@ -974,15 +1017,86 @@ impl CompositionReference {
     /// also how beat detection commits a regenerated set.
     #[frb(sync)]
     pub fn set_markers(&self, markers: Vec<BridgeMarker>) -> Result<(), BridgeError> {
-        let markers = markers
-            .into_iter()
-            .map(core_marker)
-            .collect::<Result<Vec<_>, BridgeError>>()?;
+        // Merged onto what the comp already holds, so a dragged or renamed beat
+        // marker stays a beat marker (K-270).
+        let markers = core_markers(markers, &self.composition()?.markers)?;
 
         self.commit(lumit_core::Op::SetCompMarkers {
             comp: self.id,
             markers,
         })
+    }
+
+    /// Paste a layer copied by [`crate::api::layer::LayerReference::copy_layer`]
+    /// into this composition, at the top of the stack (K-275).
+    ///
+    /// `at_frame` is where the layer's **in point** lands: the playhead, in the
+    /// ordinary case. `None` keeps the time it was copied at, which is the
+    /// setting for putting the same layer at the same moment in a second comp —
+    /// the two paste behaviours the owner asked for, decided by the caller
+    /// rather than by a mode this end has to remember.
+    ///
+    /// Whichever is chosen, the layer moves as one: in point, out point and
+    /// `start_offset` all shift together (`lumit_core::edit_layer_span`'s
+    /// `MoveIn`, the same rule the `[` key follows), so its keyframes and the
+    /// source frames it shows travel with it rather than sliding against it.
+    ///
+    /// **What is not copied is a reference to something that is not here.** The
+    /// pasted layer gets a fresh id and fresh effect ids — two layers sharing an
+    /// id would make every op that names one ambiguous — and its parent and
+    /// track matte are kept only when they still name a layer in *this* comp.
+    /// A parent that came from another composition is dropped rather than left
+    /// dangling: a layer parented to nothing visible would be a puzzle, and
+    /// re-parenting is one drag.
+    #[frb(sync)]
+    pub fn paste_layer(
+        &self,
+        text: String,
+        at_frame: Option<i64>,
+    ) -> Result<LayerReference, BridgeError> {
+        #[derive(serde::Deserialize)]
+        struct Copied {
+            comp: Uuid,
+            layer: lumit_core::model::Layer,
+        }
+        let copied: Copied = serde_json::from_str(&text).map_err(|_| BridgeError::InvalidItem)?;
+        let mut layer = copied.layer;
+        let comp = self.composition()?;
+
+        layer.id = Uuid::now_v7();
+        for effect in &mut layer.effects {
+            effect.id = Uuid::now_v7();
+        }
+        // A reference only survives if what it names is here. Pasting back into
+        // the comp it was copied from keeps both; pasting elsewhere keeps
+        // neither, because neither id means anything there.
+        let here = |id: Uuid| copied.comp == self.id && comp.layers.iter().any(|l| l.id == id);
+        if layer.parent.is_some_and(|p| !here(p)) {
+            layer.parent = None;
+        }
+        if layer.matte.as_ref().is_some_and(|m| !here(m.layer)) {
+            layer.matte = None;
+        }
+
+        if let Some(frame) = at_frame {
+            let at = comp
+                .frame_rate
+                .time_of_frame(frame.max(0))
+                .map_err(|_| BridgeError::InvalidTime)?;
+            let (in_point, out_point, start_offset) = lumit_core::ops::edit_layer_span(
+                layer.in_point,
+                layer.out_point,
+                layer.start_offset,
+                at,
+                lumit_core::ops::SpanEdit::MoveIn,
+            )
+            .ok_or(BridgeError::InvalidTime)?;
+            layer.in_point = in_point;
+            layer.out_point = out_point;
+            layer.start_offset = start_offset;
+        }
+
+        self.add_at_top(layer)
     }
 
     /// Insert `layer` at the top of the stack.

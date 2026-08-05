@@ -575,4 +575,156 @@ mod tests {
         wide.target_width = Some(640);
         assert!(!same_decode(&[job(l, i, 5)], &[wide]));
     }
+
+    /// **Footage inside a precomp that is referenced only as a matte still gets
+    /// decoded** (K-268).
+    ///
+    /// K-266 recorded this as an open boundary — "the decode planner never
+    /// visits a matte-only precomp" — and taught the draw builder to render the
+    /// nested comp anyway. The planner turned out to walk the reference
+    /// already: a matte source and a layer-input reference are both `wanted`
+    /// whether or not the layer is visible, and a Precomp among them recurses.
+    /// So the boundary was the *draw* side, which K-266 and K-268 have now
+    /// closed at both ends — and this test is what keeps the planner honest, so
+    /// nobody has to re-derive it from a black matte.
+    ///
+    /// Both shapes of reference are checked: the track matte (`Layer::matte`)
+    /// and the layer-input parameter a flare's Matte source or a DoF depth pass
+    /// uses.
+    #[test]
+    fn a_matte_only_precomp_still_decodes_its_footage() {
+        use lumit_core::model::{
+            Composition, Document, EffectInstance, EffectKey, EffectNamespace, EffectParam,
+            EffectValue, FootageItem, Layer, LayerKind, LinearColour, MatteChannel, MatteRef,
+            MediaRef, Switches, TransformGroup,
+        };
+        use lumit_core::time::{CompTime, Duration, FrameRate, Rational};
+        use std::collections::HashMap;
+
+        let layer = |kind: LayerKind| Layer {
+            markers: Vec::new(),
+            id: Uuid::now_v7(),
+            name: "l".into(),
+            kind,
+            in_point: CompTime(Rational::ZERO),
+            out_point: CompTime(Rational::new(10, 1).unwrap()),
+            start_offset: CompTime(Rational::ZERO),
+            transform: TransformGroup::default(),
+            matte: None,
+            parent: None,
+            label: 0,
+            volume_db: lumit_core::anim::Property::zero(),
+            retime: None,
+            interpolation: lumit_core::retime::Interpolation::default(),
+            blend: lumit_core::model::BlendMode::default(),
+            masks: Vec::new(),
+            paint: Vec::new(),
+            effects: Vec::new(),
+            switches: Switches::default(),
+            extra: serde_json::Map::new(),
+        };
+        let comp = |layers: Vec<Layer>| Composition {
+            id: Uuid::now_v7(),
+            name: "c".into(),
+            width: 64,
+            height: 64,
+            frame_rate: FrameRate::new(60, 1).unwrap(),
+            duration: Duration(Rational::new(10, 1).unwrap()),
+            background: LinearColour::BLACK,
+            work_area: None,
+            layers,
+            markers: Vec::new(),
+            motion_blur: lumit_core::model::MotionBlur::default(),
+            extra: serde_json::Map::new(),
+        };
+
+        // Two ways of pointing at the same hidden precomp, one per case.
+        for track_matte in [true, false] {
+            let mut doc = Document::new();
+            let item = Uuid::now_v7();
+            doc.items.push(ProjectItem::Footage(FootageItem {
+                id: item,
+                name: "f".into(),
+                media: MediaRef {
+                    relative_path: "f.mp4".into(),
+                    absolute_path: "/f.mp4".into(),
+                    fingerprint: None,
+                    extra: serde_json::Map::new(),
+                },
+                extra: serde_json::Map::new(),
+            }));
+            let inner = comp(vec![layer(LayerKind::Footage { item })]);
+            let inner_id = inner.id;
+            doc.items.push(ProjectItem::Composition(inner));
+
+            // The precomp is hidden — a matte source always is.
+            let mut matte_layer = layer(LayerKind::Precomp { comp: inner_id });
+            matte_layer.switches.visible = false;
+            let mut consumer = layer(LayerKind::Solid {
+                def: Uuid::now_v7(),
+            });
+            if track_matte {
+                consumer.matte = Some(MatteRef {
+                    layer: matte_layer.id,
+                    channel: MatteChannel::Alpha,
+                    inverted: false,
+                    source: lumit_core::model::LayerInputSource::default(),
+                });
+            } else {
+                consumer.effects.push(EffectInstance {
+                    id: Uuid::now_v7(),
+                    effect: EffectKey {
+                        namespace: EffectNamespace::Builtin,
+                        match_name: "lens_flare".into(),
+                        version: 1,
+                        extra: serde_json::Map::new(),
+                    },
+                    enabled: true,
+                    params: vec![
+                        EffectParam {
+                            id: "source_type".into(),
+                            value: EffectValue::Choice(1),
+                            extra: serde_json::Map::new(),
+                        },
+                        EffectParam {
+                            id: "matte".into(),
+                            value: EffectValue::Layer(Some(matte_layer.id)),
+                            extra: serde_json::Map::new(),
+                        },
+                    ],
+                    sample_temporally: true,
+                    extra: serde_json::Map::new(),
+                });
+            }
+            let outer = comp(vec![consumer, matte_layer]);
+            let outer_id = outer.id;
+            doc.items.push(ProjectItem::Composition(outer));
+
+            let probes: HashMap<Uuid, crate::SourceProbe> = [(
+                item,
+                crate::SourceProbe::Video {
+                    fps: 60.0,
+                    width: 64,
+                    height: 64,
+                    frames: 600,
+                    audio: false,
+                },
+            )]
+            .into_iter()
+            .collect();
+            let outer = doc.comp(outer_id).unwrap();
+            let jobs = plan_comp_frame(&doc, outer, 0.0, Quality::default(), &probes);
+            let how = if track_matte {
+                "a track matte"
+            } else {
+                "a layer-input matte"
+            };
+            assert_eq!(
+                jobs.len(),
+                1,
+                "{how} onto a precomp must plan the one decode its footage needs"
+            );
+            assert_eq!(jobs[0].item, item);
+        }
+    }
 }

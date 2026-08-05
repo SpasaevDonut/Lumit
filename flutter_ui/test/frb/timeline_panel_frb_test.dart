@@ -1367,6 +1367,60 @@ void main() {
           reason: "and so does the property's layer");
     });
 
+    /// **Picking a layer on the picture reaches the Timeline** (K-275).
+    ///
+    /// The Viewer's click goes straight to the shell's selection
+    /// (`setSelection`), never through this panel's own click path — so the
+    /// property selection, the graph's keys and the row highlight, all of which
+    /// belong to the layer that *was* chosen, stayed behind. The previous
+    /// layer's rows kept their fill while a different layer was selected: two
+    /// layers appearing chosen at once, which is what K-203 set out to remove.
+    testWidgets('a selection made outside the panel clears the property one',
+        (tester) async {
+      final p = withComp();
+      final first = p.comp.addSolidLayer();
+      first.addEffect(name: 'blur');
+      final second = p.comp.addSolidLayer();
+      await mount(tester, p);
+      final id = first.internallayerId;
+
+      // Select a property on the first layer, the ordinary way.
+      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
+      await tester.pump();
+      await tester.tap(find.text('Effects'));
+      await tester.pump();
+      await tester.tap(find.text('Gaussian blur'));
+      await tester.pump();
+      await tester.tap(find.text('Radius'));
+      await tester.pump();
+
+      final t = LumitTheme.dark();
+      Color? fillOver(String text) {
+        final box = find.ancestor(
+            of: find.text(text), matching: find.byType(Container));
+        return (tester.widget<Container>(box.first).decoration as BoxDecoration)
+            .color;
+      }
+      expect(fillOver('Radius'), t.selectionFill, reason: 'picked to start');
+
+      // Now the Viewer's path: the shell's selection changes under the panel.
+      p.uiState.setSelection([second]);
+      await tester.pump();
+
+      expect(fillOver('Radius'), isNull,
+          reason: 'the property belonged to the layer that was let go of');
+      expect(fillOver('Gaussian blur'), isNull,
+          reason: 'and so did the mark on the effect holding it');
+      expect(
+          (tester
+                  .widget<Container>(
+                      find.byKey(ValueKey<String>('tl-rowbody-$id')))
+                  .decoration as BoxDecoration)
+              .color,
+          isNot(t.selectionFill.withValues(alpha: 0.45)),
+          reason: 'the old layer stops looking chosen');
+    });
+
     /// **The highlight with nowhere to sit (K-203).** A selected property
     /// stayed selected when its layer was twirled shut — invisible, but still
     /// the selection — so it came back lit when the layer reopened, and it
@@ -1879,12 +1933,12 @@ void main() {
       const g = TimelineGroup.values;
       expect(
         reorderedGroups(defaultGroupOrder, g[0], g[3]),
-        [g[1], g[2], g[3], g[0]],
+        [g[1], g[2], g[3], g[0], g[4]],
         reason: 'dragged right, it lands after the target',
       );
       expect(
         reorderedGroups(defaultGroupOrder, g[3], g[0]),
-        [g[3], g[0], g[1], g[2]],
+        [g[3], g[0], g[1], g[2], g[4]],
         reason: 'dragged left, it lands before the target',
       );
       expect(reorderedGroups(defaultGroupOrder, g[1], g[1]), defaultGroupOrder);
@@ -1893,10 +1947,14 @@ void main() {
     /// The value column sits under the render group: everything right of it
     /// in the order contributes its fixed width to the inset.
     test('valueColumnFor measures what sits right of the render group', () {
-      expect(valueColumnFor(defaultGroupOrder, defaultGroupWidths).rightInset,
-          groupDividerWidth + composeGroupWidth);
+      expect(
+          valueColumnFor(defaultGroupOrder, defaultGroupWidths).rightInset,
+          groupDividerWidth +
+              composeGroupWidth +
+              groupDividerWidth +
+              timingsGroupWidth);
       final renderLast = reorderedGroups(
-          defaultGroupOrder, TimelineGroup.render, TimelineGroup.compose);
+          defaultGroupOrder, TimelineGroup.render, TimelineGroup.timings);
       expect(valueColumnFor(renderLast, defaultGroupWidths).rightInset, 0);
 
       // The value cells span the render group as it stands, so dragging that
@@ -1907,6 +1965,28 @@ void main() {
       };
       expect(valueColumnFor(defaultGroupOrder, wider).width,
           renderGroupWidth + 60);
+    });
+
+    /// The render-time readout on a twirled-open effect's heading has to sit
+    /// under the same header the layer rows' numbers do, wherever that column
+    /// has been dragged (docs/13 §7.1) — so a fold row measures its own inset
+    /// rather than assuming the column is last.
+    test('timingsColumnFor follows the render-time column', () {
+      expect(timingsColumnFor(defaultGroupOrder, defaultGroupWidths).rightInset,
+          0,
+          reason: 'shipped last, nothing sits to its right');
+      expect(timingsColumnFor(defaultGroupOrder, defaultGroupWidths).width,
+          timingsGroupWidth);
+      final timingsFirst = reorderedGroups(
+          defaultGroupOrder, TimelineGroup.timings, TimelineGroup.switches);
+      expect(
+        timingsColumnFor(timingsFirst, defaultGroupWidths).rightInset,
+        rightInsetOf(
+            timingsFirst, defaultGroupWidths, TimelineGroup.timings),
+        reason: 'dragged to the front, the inset is everything after it',
+      );
+      expect(timingsColumnFor(timingsFirst, defaultGroupWidths).rightInset,
+          greaterThan(0));
     });
 
     /// The ruler's label spacing thins as the comp zooms out, and its labels
