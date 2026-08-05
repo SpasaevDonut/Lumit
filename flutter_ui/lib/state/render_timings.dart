@@ -32,11 +32,19 @@ class RenderTimings extends ChangeNotifier {
   /// would stay empty until something else happened to want a render.
   final void Function()? _onMeasuringStarted;
 
+  /// Called when the engine refuses the switch. Nothing about a failed call
+  /// used to be visible: the flag went on, the interface lit its stopwatch, and
+  /// nothing was ever measured — a switch that looks on and does nothing is the
+  /// hardest kind of fault to report, so this says so out loud instead.
+  final void Function(Object error)? _onEngineError;
+
   RenderTimings({
     void Function(bool on)? askEngine,
     void Function()? onMeasuringStarted,
+    void Function(Object error)? onEngineError,
   })  : _askEngine = askEngine ?? ((on) => setRenderProfiling(on_: on)),
-        _onMeasuringStarted = onMeasuringStarted;
+        _onMeasuringStarted = onMeasuringStarted,
+        _onEngineError = onEngineError;
 
   bool _measuring = false;
 
@@ -48,7 +56,10 @@ class RenderTimings extends ChangeNotifier {
   /// The frame these numbers are of, or null before the first measured frame.
   int? get frame => _frame;
 
-  /// The whole frame's cost, including the stages no layer owns.
+  /// The whole frame's cost, including the stages no layer owns. Null while
+  /// measuring is on but no measured frame has arrived yet — which the column's
+  /// header shows as `…`, so "the engine is not reporting" and "the engine
+  /// reported, but not about this row" are different things on screen.
   double? get totalMs => _totalMs;
 
   /// True while the engine is measuring — what the indicators read to tell
@@ -67,8 +78,16 @@ class RenderTimings extends ChangeNotifier {
   /// would be the one reading worse than none at all.
   void setMeasuring(bool on) {
     if (_measuring == on) return;
+    // The engine first, and the flag only if it agreed: a switch that says it
+    // is measuring while the engine never heard the ask is exactly the state
+    // that reads as "this feature does not work".
+    try {
+      _askEngine(on);
+    } catch (error) {
+      _onEngineError?.call(error);
+      return;
+    }
     _measuring = on;
-    _askEngine(on);
     if (on) {
       _onMeasuringStarted?.call();
     } else {

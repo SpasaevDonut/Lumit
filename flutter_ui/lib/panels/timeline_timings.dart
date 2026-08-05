@@ -27,9 +27,16 @@ import '../main.dart';
 import '../state/render_timings.dart';
 import '../widgets/controls.dart';
 
-/// The column header: the stopwatch that turns measuring on, and the word for
-/// what the column is. Pressed, it is lit in the accent; unpressed it is as
-/// quiet as any other header glyph.
+/// The column header: the stopwatch that turns measuring on, and — while it is
+/// on — **what the whole frame cost**, which is the number the rows below add
+/// up to. Pressed, the glyph is lit in the accent; unpressed it is as quiet as
+/// any other header glyph and the header reads "Time".
+///
+/// The frame total is here because it is worth knowing and because it makes the
+/// column say which of three things is happening, rather than showing the same
+/// dash for all of them: `Time` (idle, nothing measured), `…` (measuring, and
+/// no measured frame has come back yet), or a number (measured — so a dash on a
+/// row below genuinely means "not in that frame").
 class TimingsHeaderCell extends StatelessWidget {
   const TimingsHeaderCell({super.key});
 
@@ -44,8 +51,8 @@ class TimingsHeaderCell extends StatelessWidget {
         final on = timings.measuring;
         return LumitTooltip(
           message: on
-              ? 'Render time — measuring. Click to stop; measuring slows each '
-                  'frame it measures'
+              ? 'Render time — the whole frame, with each layer below. Click to '
+                  'stop; measuring slows each frame it measures'
               : 'Render time — click to measure what each layer and effect '
                   'costs (it slows the frames it measures)',
           child: GestureDetector(
@@ -62,7 +69,11 @@ class TimingsHeaderCell extends StatelessWidget {
                 const SizedBox(width: 4),
                 Flexible(
                   child: Text(
-                    'Time',
+                    !on
+                        ? 'Time'
+                        : timings.totalMs == null
+                            ? '…'
+                            : formatRenderMs(timings.totalMs!),
                     style: t.small,
                     overflow: TextOverflow.ellipsis,
                   ),

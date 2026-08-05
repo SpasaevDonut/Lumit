@@ -3213,10 +3213,17 @@ same kind of number on each effect's heading; the Effect controls panel shows it
 on the effect's title row too. So "why is this comp slow" is answered with names
 and numbers rather than guesses.
 
-**Finding the column.** With nothing being measured the column shows a dimmed
-dash on every row rather than sitting blank — a blank column looks broken —
-and clicking any of those dashes starts the measuring. The stopwatch in the
-column's header does the same, and switches it back off.
+**Finding the column, and telling what it is doing.** With nothing being
+measured the column shows a dimmed dash on every row rather than sitting blank —
+a blank column looks broken — and clicking any of those dashes starts the
+measuring. The stopwatch in the column's header does the same, and switches it
+back off. While measuring, the header stops saying "Time" and shows what the
+*whole frame* cost: an ellipsis until a measured frame has come back, then the
+number. So the three things that can be true are three different readings —
+nothing asked for, asked for and waiting, measured — instead of one dash meaning
+all three. If the engine refuses the switch at all, the status line says so, and
+the console carries one line per switching on and one more on the first frame
+actually measured.
 
 **A measured frame is a re-made frame.** Lumit keeps finished frames — on the
 graphics card, in memory, on disk — so returning to one costs a copy rather

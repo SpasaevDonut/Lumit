@@ -65,6 +65,30 @@ void main() {
     expect(asked, [true, false]);
   });
 
+  test('an engine that refuses the switch leaves it off, and says so', () {
+    // The state that reads as "this feature does not work": a lit switch over a
+    // column that will never fill, because the engine never heard the ask.
+    final errors = <Object>[];
+    final timings = RenderTimings(
+      askEngine: (on) => throw StateError('no such call'),
+      onEngineError: errors.add,
+    );
+
+    timings.setMeasuring(true);
+    expect(timings.measuring, isFalse,
+        reason: 'the flag follows the engine, not the click');
+    expect(errors, hasLength(1));
+  });
+
+  test('the frame total is null until a measured frame arrives', () {
+    final timings = RenderTimings(askEngine: (_) {});
+    timings.setMeasuring(true);
+    expect(timings.totalMs, isNull,
+        reason: 'the header shows … rather than a number it does not have');
+    timings.report(_profile());
+    expect(timings.totalMs, closeTo(31.5, 1e-9));
+  });
+
   test('the readout stays the same width and never lies about precision', () {
     expect(formatRenderMs(0), '0.0 ms');
     expect(formatRenderMs(8.24), '8.2 ms');

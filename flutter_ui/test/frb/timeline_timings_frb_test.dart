@@ -64,6 +64,11 @@ void main() {
       await tester.tap(find.byType(TimingsHeaderCell));
       await tester.pump();
       expect(p.uiState.renderTimings.measuring, isTrue);
+      // Measuring: the header stops reading "Time" and starts reporting the
+      // frame — `…` until one has been measured, a number once one has. Which
+      // of the two is a race against the engine, and either is the point: the
+      // header says whether anything is coming.
+      expect(find.text('Time'), findsNothing);
 
       await tester.tap(find.byType(TimingsHeaderCell));
       await tester.pump();
@@ -117,6 +122,9 @@ void main() {
 
       expect(find.text('8.5 ms'), findsOneWidget,
           reason: 'the layer row shows what its picture cost');
+      expect(find.text('12.5 ms'), findsOneWidget,
+          reason: 'and the header shows what the whole frame cost, so a dash '
+              'on a row below can be told from an engine saying nothing');
 
       p.uiState.renderTimings.setMeasuring(false);
       await tester.pump();

@@ -20,9 +20,30 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// change is a correct answer to a question about a moving picture.
 static WANTED: AtomicBool = AtomicBool::new(false);
 
+/// Whether the first measured frame since the switch went on has been announced
+/// — see [`announce_first`].
+static ANNOUNCED: AtomicBool = AtomicBool::new(false);
+
 /// Ask for (or stop asking for) per-layer and per-effect timings.
 pub(crate) fn set_wanted(on: bool) {
     WANTED.store(on, Ordering::Relaxed);
+    ANNOUNCED.store(false, Ordering::Relaxed);
+    println!("Render profiling {}", if on { "on" } else { "off" });
+}
+
+/// Say — **once** per switching on — that a frame really was measured, and what
+/// came out of it.
+///
+/// Two lines in a session's console, and they answer the question that took a
+/// day of guessing to answer without them: the column shows numbers only if the
+/// engine measures a frame *and* the frontend recognises the rows it names, and
+/// from the outside those two failures look identical. One line on the switch,
+/// one on the first measured frame: no second line means the engine never
+/// measured, and a second line with layers in it means the numbers left here.
+pub(crate) fn announce_first(frame: u64, layers: usize, total_ms: f32) {
+    if !ANNOUNCED.swap(true, Ordering::Relaxed) {
+        println!("Render profiling: measured frame {frame} — {layers} layer(s), {total_ms:.1} ms");
+    }
 }
 
 /// Whether the next frame should be measured.

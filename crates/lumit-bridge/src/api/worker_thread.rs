@@ -1863,6 +1863,9 @@ fn worker_loop(
         let profile_stream = stream.clone();
         renderer.set_profile_sink(Some(std::sync::Arc::new(
             move |p: lumit_render::FrameProfile| {
+                // One line per switching on, never per frame — see
+                // `profiling::announce_first`.
+                crate::profiling::announce_first(p.frame, p.layers.len(), p.total_ms);
                 _ = profile_stream.add(WorkerResponse::FrameProfile(profile_of(&p)));
             },
         )));

@@ -522,8 +522,15 @@ class LumitUiState extends ChangeNotifier {
   /// numbers only exist for a frame the engine actually composites: without
   /// this the column sat empty until something else happened to want a render,
   /// which on a comp the idle fill had already made could be for ever.
-  late final RenderTimings renderTimings =
-      RenderTimings(onMeasuringStarted: requestFrame);
+  late final RenderTimings renderTimings = RenderTimings(
+    onMeasuringStarted: requestFrame,
+    // An engine that refuses the switch says so in the status line rather than
+    // leaving a lit stopwatch over a column that will never fill.
+    onEngineError: (error) => _app.postNotice(
+      'Could not measure render times: $error',
+      error: true,
+    ),
+  );
 
   /// Whether the engine is playing.
   ///

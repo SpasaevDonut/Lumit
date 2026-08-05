@@ -5760,7 +5760,23 @@ work — and the switch was a glyph in a header nobody had reason to press. An i
 now shows a dimmed dash, and **a click on any of them starts measuring**: the column is
 its own switch, wherever the user reaches for it, and the header keeps its stopwatch for
 switching back off. A discoverability bug is a bug; a feature nobody can find is not
-shipped.
+shipped. **(7) The column reports its own state, and so does the engine.** The follow-up
+report — "I see a dash but no values" — could have meant three different faults, and the
+interface showed the same dash for all of them. So: the header carries the **whole frame's
+cost** while measuring (an ellipsis until one has been measured), which separates "nothing
+is coming back" from "something came back but not about this row"; a refusal from the
+engine posts a notice instead of leaving a lit switch over an empty column; and the engine
+prints **one line per switching on** and one more on the first frame it measures, so a
+session's console answers "did the engine measure anything at all" without a debugger.
+Diagnosing a report should not need the reporter to be a developer. **(7) The column reports its own state, and so does the engine.** The follow-up
+report — "I see a dash but no values" — could have meant three different faults, and the
+interface showed the same dash for all of them. So: the header carries the **whole frame's
+cost** while measuring (`…` until one has been measured), which separates "nothing is
+coming back" from "something came back but not about this row"; a refusal from the engine
+posts a notice instead of leaving a lit switch over an empty column; and the engine prints
+**one line per switching on** and one more on the first frame it measures, so a session's
+console answers "did the engine measure anything at all" without a debugger. Diagnosing a
+report should not need the reporter to be a developer.
 
 **K-277 · DECIDED · The disk tier's write queue is bounded and de-duplicated, because a
 write-behind queue nobody counts is a memory leak.** Reported from a Mac: the system ran
