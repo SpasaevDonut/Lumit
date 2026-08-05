@@ -1,0 +1,49 @@
+---
+title: Paint
+description: Brush, clone stamp, and eraser strokes painted onto a layer.
+sidebar:
+  order: 12.5
+---
+
+import Shot from "../../../components/Shot.astro";
+
+**Paint** puts strokes straight onto a layer's pixels. Three tools sit on the toolbar:
+
+<Shot file="paint.png" caption="Brush strokes on a layer, with the Paint heading open in the Timeline." />
+
+| Tool | Does |
+| --- | --- |
+| **Brush** | Paints the fill colour. |
+| **Clone stamp** | Copies pixels from elsewhere on the same layer. `Alt`-click sets the point it copies from, then paint. |
+| **Eraser** | Rubs the layer through to transparent. |
+
+Brush **size**, **hardness**, and **opacity** sit in the tool options while a paint tool
+is armed.
+
+## Strokes are gestures, not pixels
+
+Lumit stores the drag itself — the path, colour, size, hardness, opacity — and stamps it
+into the layer every time the frame renders. So painting at a quarter-resolution
+preview still exports at full quality, and changing a stroke's colour later is an edit,
+not a repaint.
+
+Strokes are stamped **before masks and effects**: a mask gates the painted picture, and
+effects see it.
+
+## Editing strokes
+
+- Each layer's strokes are listed under a **Paint** heading in the Timeline when the
+  layer is twirled open.
+- Each stroke is one undo step.
+- An erase can be weakened later by lowering that stroke's opacity — the pixels
+  underneath were never destroyed.
+
+:::note[Not built yet]
+Tablet pressure and tilt, brush shapes other than round, write-on animation (a stroke's
+own start and end times), per-stroke blend modes, and painting on a Precomp layer.
+:::
+
+## Related
+
+- [Masks](/use/masks/)
+- [Layers](/use/layers/)

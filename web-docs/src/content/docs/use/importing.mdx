@@ -5,8 +5,12 @@ sidebar:
   order: 2
 ---
 
+import Shot from "../../../components/Shot.astro";
+
 Everything you import becomes an **asset** in the Project panel. An asset that points
 at a media file is a **footage item**.
+
+<Shot file="interpretation.png" caption="A footage item's interpretation settings." />
 
 Lumit never modifies the file on disk. The project stores a reference to the path,
 plus how to interpret it.

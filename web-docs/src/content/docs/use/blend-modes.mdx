@@ -1,0 +1,40 @@
+---
+title: Blend modes
+description: How a layer combines with everything below it.
+sidebar:
+  order: 10.5
+---
+
+import Shot from "../../../components/Shot.astro";
+
+A **blend mode** is the per-layer operator that combines the layer's pixels with the
+composite below it. Set it in the Timeline outline, in the matte and blend-mode column;
+the layer starts on Normal.
+
+<Shot file="blend-modes.png" caption="The blend-mode dropdown in the Timeline outline." />
+
+The full After Effects colour-blend set ships. Effects with a Mode parameter list the
+same modes.
+
+## The modes
+
+| Modes | Note |
+| --- | --- |
+| Normal | Straight compositing. |
+| Add, Subtract, Multiply | Add is physically additive; Subtract darkens the same way, clamped at black; Multiply behaves like a filter or shadow. |
+| Darken, Lighten | Per-channel minimum and maximum. |
+| Screen | |
+| Overlay, Soft light, Hard light | |
+| Linear light, Vivid light, Pin light, Hard mix | The contrast group. |
+| Colour dodge, Colour burn, Linear burn | |
+| Darker colour, Lighter colour | Keep the whole winning pixel, judged by brightness, rather than working per channel. |
+| Difference, Exclusion, Divide | |
+| Hue, Saturation, Colour, Luminosity | Take one component from the layer and the rest from below. |
+
+Dissolve, the legacy "Classic" variants, and the alpha operators (Stencil, Silhouette,
+Alpha add, Luminescent premul) are not in this release.
+
+## Related
+
+- [Layers](/use/layers/)
+- [Mattes](/use/mattes/)

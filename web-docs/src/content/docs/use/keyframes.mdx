@@ -5,7 +5,11 @@ sidebar:
   order: 5
 ---
 
+import Shot from "../../../components/Shot.astro";
+
 A **keyframe** anchors a value to a time. Lumit works out the values in between.
+
+<Shot file="keyframes-lane.png" caption="Keyframes on a property lane." />
 
 ## Animate a property
 
@@ -43,13 +47,8 @@ Lumit matches After Effects' keyframe maths, so imported animation keeps its sha
 ## Markers
 
 A **marker** is a labelled point on a composition, a layer, or an asset. Use markers to
-note where something should happen.
-
-**Beat markers** are markers generated from audio onset detection.
-
-:::note[Partly built]
-Beat detection is specified but not finished.
-:::
+note where something should happen. **Beat markers** are markers generated from audio
+onset detection — see [Markers](/use/markers/).
 
 ## Related
 

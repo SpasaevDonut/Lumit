@@ -8,7 +8,28 @@ application at; the page scales it down, so oversized shots only cost bytes.
 
 | File | Page | Shows |
 | --- | --- | --- |
+| `blend-modes.png` | [/use/blend-modes/](/use/blend-modes/) | The blend-mode dropdown in the Timeline outline. |
+| `cache-bar.png` | [/use/preview/](/use/preview/) | The cache bar filling above the Timeline. |
+| `camera.png` | [/use/camera/](/use/camera/) | A camera layer over 3D layers. |
 | `effect-controls.png` | [/panels/effect-controls/](/panels/effect-controls/) | Effect Controls, with two effects on one layer. |
+| `effect-menu.png` | [/use/effects/](/use/effects/) | The Effect menu, category by category. |
+| `export-queue.png` | [/use/export/](/use/export/) | The export queue: one item writing, one waiting. |
+| `hierarchy.png` | [/panels/hierarchy/](/panels/hierarchy/) | The Hierarchy panel, with a precomp twirled open. |
+| `interpretation.png` | [/use/importing/](/use/importing/) | A footage item's interpretation settings. |
+| `keyframes-lane.png` | [/use/keyframes/](/use/keyframes/) | Keyframes on a property lane. |
+| `keymap.png` | [/reference/shortcuts/](/reference/shortcuts/) | The keymap editor in Settings. |
+| `markers-ruler.png` | [/use/markers/](/use/markers/) | Comp markers and beat markers on the Timeline ruler. |
+| `matte.png` | [/use/mattes/](/use/mattes/) | A layer matted by the alpha of another. |
+| `paint.png` | [/use/paint/](/use/paint/) | Brush strokes on a layer, with the Paint heading open in the Timeline. |
+| `presets.png` | [/use/presets/](/use/presets/) | Saved presets at the top of the Effects and presets panel. |
+| `recovery-dialog.png` | [/use/projects/](/use/projects/) | The crash-recovery dialogue. |
+| `sequence-layer.png` | [/use/sequence-layers/](/use/sequence-layers/) | A Sequence layer: clips cut back-to-back on one row. |
+| `settings.png` | [/use/settings/](/use/settings/) | The settings window, on the Appearance page. |
+| `shape-layer.png` | [/use/shapes/](/use/shapes/) | A shape layer's contents in the Timeline. |
+| `text-layer.png` | [/use/text/](/use/text/) | A text layer being edited in the Viewer. |
+| `transform.png` | [/use/transform/](/use/transform/) | A layer's transform properties in the Timeline. |
+| `waveform.png` | [/use/audio/](/use/audio/) | A footage layer's waveform in its lane. |
+| `workspace.png` | [/use/workspaces/](/use/workspaces/) | A workspace: Viewer, Timeline, and Project docked together. |
 | `effects-presets.png` | [/panels/effects-presets/](/panels/effects-presets/) | The Effects & Presets panel. |
 | `export.png` | [/start/first-composition/](/start/first-composition/) | The export settings. |
 | `graph-editor.png` | [/panels/graph-editor/](/panels/graph-editor/) | The graph editor, showing the value graph. |

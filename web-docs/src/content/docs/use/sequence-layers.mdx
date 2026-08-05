@@ -5,8 +5,12 @@ sidebar:
   order: 8
 ---
 
+import Shot from "../../../components/Shot.astro";
+
 A **Sequence layer** holds an ordered run of **clips** cut back-to-back on one row. It
 is Lumit's editing surface, and it behaves the way Vegas does.
+
+<Shot file="sequence-layer.png" caption="A Sequence layer: clips cut back-to-back on one row." />
 
 The word **clip** only means something inside a Sequence layer. Everywhere else, the
 word is [layer](/use/layers/).
@@ -26,7 +30,14 @@ run of shots, so the timeline stays short.
 
 - Drag a clip's edge to trim it.
 - Drag a clip along the row to move it.
-- Use the razor to split a clip at the playhead.
+- Use the razor to split a clip at the playhead. A cut between two clips is an
+  **edit point**.
+
+Editing a clip's retime never moves an edit point.
+
+:::note[Known limit]
+The razor refuses to cut through a clip's eased speed ramp. Cut first, then ramp.
+:::
 
 ## What applies to the whole layer
 

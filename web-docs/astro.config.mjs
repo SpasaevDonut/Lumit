@@ -13,6 +13,13 @@ export default defineConfig({
       logo: { src: "./src/assets/lumit-mark.svg", alt: "Lumit" },
       favicon: "/lumit-mark.svg",
       customCss: ["./src/styles/theme.css"],
+      // Git-based per-page dates, shown under the title by the PageTitle
+      // override. CI must clone full history or every page shows deploy day.
+      lastUpdated: true,
+      components: {
+        PageTitle: "./src/components/PageTitle.astro",
+        LastUpdated: "./src/components/LastUpdated.astro",
+      },
       social: [
         { icon: "github", label: "GitHub", href: "https://github.com/luminalmvm/Lumit" },
       ],

@@ -5,8 +5,12 @@ sidebar:
   order: 9
 ---
 
+import Shot from "../../../components/Shot.astro";
+
 An **effect** is one operation in a layer's **effect stack**. The stack runs
 top-to-bottom.
+
+<Shot file="effect-menu.png" caption="The Effect menu, category by category." />
 
 ## Apply an effect
 
@@ -40,19 +44,20 @@ Thirty-three effects ship today.
 **Blur and sharpen** — Gaussian blur, Directional blur, Radial blur, Sharpen, Unsharp
 mask, Depth of field.
 
-**Motion** — Motion blur, Fast motion blur, Echo, Posterize time.
+**Colour** — Colour balance, Contrast, Exposure, Gamma, Hue shift, Invert, LUT,
+Saturation, Temperature, Tint, Vibrancy, Vignette.
 
-**Colour** — Colour balance, Contrast, Exposure, Gamma, Hue shift, Invert, Saturation,
-Temperature, Tint, Vibrancy, LUT.
+**Distortion** — Block glitch, Chromatic aberration, Datamosh, RGB split, Scanlines,
+Shake.
 
-**Stylise** — Glow, Flash, Vignette, Scanlines.
+**Stylise** — Flash, Glow, Lens flare.
 
-**Distort and damage** — Chromatic aberration, RGB split, Block glitch, Datamosh, Shake,
-Transform.
+**Temporal** — Echo, Fast motion blur, Motion blur, Posterize time.
 
-**Matte** — Screen matte.
+**Utility** — Matte key, Transform.
 
-**Lens** — Lens options.
+**Matte key** is Lumit's keyer: pull a greenscreen or a chosen colour to
+transparency, with threshold and softness controls.
 
 ### The three kinds of motion blur
 

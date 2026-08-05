@@ -5,7 +5,11 @@ sidebar:
   order: 19
 ---
 
+import Shot from "../../../components/Shot.astro";
+
 Lumit's panels dock, split, and float. An arrangement of panels is a **workspace**.
+
+<Shot file="workspace.png" caption="A workspace: Viewer, Timeline, and Project docked together." />
 
 ## The panels
 
@@ -18,6 +22,7 @@ Lumit's panels dock, split, and float. An arrangement of panels is a **workspace
 | **Effect Controls** | The selected layer's effect parameters. |
 | **Effects & Presets** | The roster you drag from. |
 | **Scopes** | Waveform and vectorscope readouts. |
+| **Hierarchy** | The open comp's layers as a tree, precomps expandable. |
 
 ## Rearrange
 
@@ -31,8 +36,16 @@ arrangement. Toggle one to add or drop it. The last remaining panel cannot be hi
 
 ## Workspaces
 
-Save an arrangement as a workspace and switch between them. Your arrangement persists
-between sessions; it belongs to you, not to the project.
+Lumit ships with workspace presets — Edit, Effects, Colour, Audio — and your current
+arrangement persists between sessions. It belongs to you, not to the project.
+
+Saving your own named workspaces is not built yet.
+
+## The command palette
+
+`Ctrl+Shift+P` opens the command palette: type a few letters of any command and run
+it. Where a command has a shortcut, the palette shows it, so the palette also teaches
+the keyboard.
 
 ## The menu bar
 

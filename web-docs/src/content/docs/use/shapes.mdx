@@ -5,7 +5,11 @@ sidebar:
   order: 13
 ---
 
+import Shot from "../../../components/Shot.astro";
+
 A **Shape layer** holds vector shape groups with fills, strokes, and path operations.
+
+<Shot file="shape-layer.png" caption="A shape layer's contents in the Timeline." />
 
 ## Draw a shape
 
@@ -19,6 +23,12 @@ This catches everyone once.
 ## Fills and strokes
 
 Each shape group carries its own fill and stroke. Both can be animated.
+
+:::note[Not built yet]
+Shape modifiers (repeater, trim paths, offset), gradient fills, dashed strokes,
+animated paths, and reshaping a drawn path on the picture are specified but not
+built. Redraw a shape to change it for now.
+:::
 
 ## Related
 

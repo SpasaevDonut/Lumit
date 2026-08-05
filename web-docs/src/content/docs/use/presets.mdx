@@ -1,0 +1,44 @@
+---
+title: Effect presets
+description: Save an effect stack as a .lumfx file and apply it anywhere.
+sidebar:
+  order: 9.5
+---
+
+import Shot from "../../../components/Shot.astro";
+
+A **preset** is a saved configuration of effects and their parameters — a whole effect
+stack in one shareable file. Keyframes ride along when the preset is saved as animated.
+
+<Shot file="presets.png" caption="Saved presets at the top of the Effects and presets panel." />
+
+## The .lumfx file
+
+A preset is a single `.lumfx` file: plain JSON, machine-independent, safe to share. The
+Windows installer registers the extension, so double-clicking one opens Lumit.
+
+A preset that uses effects your Lumit does not know still loads: the unknown effects
+come in as inert placeholders with their parameters preserved.
+
+## Save a preset
+
+1. Select the layer whose effect stack you want to keep.
+2. In the Effects and presets panel, choose **Save preset…**.
+3. Name the file. The save dialogue starts in the preset library folder, so a plain
+   save lands where the library will list it.
+
+## Apply a preset
+
+- Double-click a preset under **Saved presets** at the top of the Effects and presets
+  panel. Its whole stack is applied to the selected layer.
+- Or choose **Load preset…** to apply a `.lumfx` file from anywhere on disk.
+
+:::note[Not built yet]
+Loading a file from outside the library folder applies it but does not add it to the
+library. To keep it, copy the file into the presets folder yourself.
+:::
+
+## Related
+
+- [Effects](/use/effects/)
+- [Layers](/use/layers/)

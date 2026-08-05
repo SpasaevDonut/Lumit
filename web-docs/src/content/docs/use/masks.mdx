@@ -12,7 +12,7 @@ part of a layer and hide the rest.
 
 ## Draw a mask
 
-<Shot file="mask.png" caption="A mask on a layer, with its feather showing." />
+<Shot file="mask.png" caption="A mask on a layer, gating its alpha." />
 
 1. Select the layer.
 2. Pick a shape tool or the pen tool.
@@ -25,17 +25,15 @@ make a [shape layer](/use/shapes/) instead.
 
 | Property | What it does |
 | --- | --- |
-| **Path** | The bezier path itself. Animatable. |
-| **Feather** | Softens the edge. |
+| **Path** | The bezier path itself. Drag its points in the Viewer. |
 | **Expansion** | Grows or shrinks the mask from its path. |
 | **Opacity** | How strongly the mask gates. |
 
-## Combine modes
-
-A layer can carry several masks. Each has a combine mode that says how it joins the
-ones above it, such as add, subtract, or intersect.
-
-Order matters, because each mode acts on the result so far.
+:::note[Not built yet]
+Mask **feather**, animating the path with keyframes, and combine **modes**
+(add, subtract, intersect) are specified but not built. A layer can carry several
+masks, and today each one adds.
+:::
 
 ## Related
 

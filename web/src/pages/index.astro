@@ -2,18 +2,33 @@
 import Base from "../layouts/Base.astro";
 import Wordmark from "../components/Wordmark.astro";
 
+// Each feature can carry a short clip in /public/clips/. Missing files are fine:
+// the media block removes itself if the video fails to load.
 const features = [
   {
     h: "Playback is the product",
-    p: "A GPU-resident pipeline with content-hash caching and adaptive degradation. The UI thread never renders a frame, so the app answers input in every state — including mid-export.",
+    p: "A GPU-first pipeline with content-hash caching and adaptive degradation. The interface never renders a frame itself, so the app stays responsive whatever the project is doing — including mid-export.",
+    clip: "/clips/playback.webm",
   },
   {
-    h: "Retiming you don't fight",
-    p: "Ramp-and-cut retiming with the feel editors go back to Vegas for, solved on exact rational time so a speed ramp lands on the frame you asked for.",
+    h: "One retime, both instincts",
+    p: "Retime is a single system with two views: a value graph for those who think in After Effects' time remapping, and a speed graph for those raised on Vegas-style velocity. Same data, edit in whichever feels like home.",
+    clip: "/clips/retime.webm",
   },
   {
-    h: "Everything After Effects has, eventually",
-    p: "Its own version of each AE feature, an AE project importer, and OFX plugin hosting so the tools you already own come with you.",
+    h: "Cut like an NLE, inside a comp",
+    p: "Sequence layers hold a run of clips cut back-to-back on one row — Vegas-style cutting and per-clip retiming, living inside an After Effects-style layer stack. Editing a ramp never moves a cut.",
+    clip: "/clips/sequence.webm",
+  },
+  {
+    h: "A graph editor worth living in",
+    p: "Value and speed views of the same curves, AE-compatible bezier maths, and easing built to be judged by feel. This style of editing is named after interpolation quality; the graph editor is where Lumit earns it.",
+    clip: "/clips/graph.webm",
+  },
+  {
+    h: "The effects you actually use",
+    p: "Glow, flow motion blur, camera shake, RGB split, smooth zoom, grades with a LUT loader — the stacked-look staples, built in and GPU-rendered. OFX hosting and After Effects import are on the roadmap.",
+    clip: "/clips/effects.webm",
   },
   {
     h: "Open source, GPLv3",
@@ -21,45 +36,58 @@ const features = [
   },
 ];
 
+// Blick-style staging: what is being built now, what v1.0 needs, what comes after.
 const roadmap = [
   {
-    h: "Working now",
-    items: [
-      "Compositing and the layer pipeline",
-      "Keyframes and the graph editor",
-      "Retiming and speed ramps",
-      "Sequence layers",
-      "Built-in effects, including lens flare",
-      "Text layers",
-      "Export",
+    label: "Next up",
+    tags: [
+      { t: "Optical-flow retiming", major: true },
+      { t: "Beat detection and snapping", major: true },
+      { t: "Mask modes and feather" },
+      { t: "Audio panel and level meters" },
+      { t: "Anti-aliasing" },
+      { t: "Motion paths in the Viewer" },
+      { t: "Proxy generation" },
+      { t: "Colour management" },
+      { t: "Smooth zooming everywhere" },
+      { t: "Per-layer render times" },
+      { t: "The macOS pass" },
     ],
   },
   {
-    h: "In progress",
-    items: [
-      "Expressions",
-      "Optical-flow retiming",
-      "OFX plugin hosting",
-      "Beat detection",
-      "Masks and mattes",
-      "The macOS pass",
+    label: "1.0",
+    tags: [
+      { t: "Preset save and sharing" },
+      { t: "Per-layer motion blur", major: true },
+      { t: "Beat-triggered camera shake" },
+      { t: "GPU scopes" },
+      { t: "First-run setup" },
+      { t: "Signed installers" },
     ],
   },
   {
-    h: "Later",
-    items: [
-      "After Effects project import",
-      "3D camera and layers",
-      "Scripting",
-      "Collaborative review",
+    label: "Future",
+    tags: [
+      { t: "Expressions", major: true },
+      { t: "OFX plugin hosting", major: true },
+      { t: "After Effects import", major: true },
+      { t: "3D cameras and lights" },
+      { t: "Tracker and stabiliser" },
+      { t: "Rotoscoping" },
+      { t: "Keying" },
+      { t: "Particles" },
+      { t: "Text animators" },
+      { t: "Composer audio workspace" },
+      { t: "Node view" },
+      { t: "Scripting" },
     ],
   },
 ];
 ---
 
 <Base
-  title="Lumit — motion graphics that play back at speed"
-  description="A native motion-graphics and compositing editor. GPU-first, open source, and built to stay responsive at thousands of layers."
+  title="Lumit"
+  description="A native compositing and motion-graphics editor. GPU-first, open source, and built to stay responsive with thousands of layers."
 >
   {/* ---------- hero ---------- */}
   <div class="relative overflow-hidden py-16 sm:py-24 lg:py-32">
@@ -78,12 +106,11 @@ const roadmap = [
       <h1
         class="mt-6 max-w-[15ch] text-[clamp(38px,6.4vw,72px)] leading-[1.02] tracking-[-0.042em]"
       >
-        Motion graphics that play back at speed.
+        Compositing at the speed of playback.
       </h1>
       <p class="mt-6 max-w-[56ch] text-[clamp(16px,2vw,18.5px)] leading-relaxed">
-        A native compositing and motion-graphics editor built first for the editors After
-        Effects forgot. GPU-first, open source, and built to stay responsive in projects with
-        thousands of layers.
+        A native compositing and motion-graphics editor, built for editors first.
+        GPU-first, open source, and responsive in projects with thousands of layers.
       </p>
       <div class="mt-9 flex flex-wrap gap-3">
         <a class="btn" href="/download" data-dl>Download</a>
@@ -97,7 +124,7 @@ const roadmap = [
         </a>
       </div>
       <p class="mt-4 text-[13.5px] text-fg-3" data-platnote>
-        Windows, Linux and macOS · GPLv3 · free forever
+        Windows, Linux, and macOS · GPLv3 · free forever
       </p>
     </div>
   </div>
@@ -105,15 +132,15 @@ const roadmap = [
   {/* ---------- features ---------- */}
   <section id="features" class="border-t border-line py-16 sm:py-24">
     <div class="wrap">
-      <p class="kicker">Why it exists</p>
+      <p class="kicker">Why Lumit exists</p>
       <h2 class="mt-4 text-[clamp(26px,3.6vw,40px)] leading-[1.1]">
-        The gaming-edit scene runs on a stack that fights back.
+        The editing stack should not fight back.
       </h2>
       <p class="mt-4 max-w-[620px]">
-        Preview lag, RAM exhaustion, render-time blackmail on blur and retiming, and projects
-        that grow until the app is barely usable — plus an external tool chain bolted around
-        the gaps. Lumit is one application that covers it: After Effects' compositing model,
-        Vegas' retiming soul, GPU-first throughout.
+        Preview lag, RAM exhaustion, interfaces that stop answering, and a chain of
+        external tools taped on to compensate. Lumit is one application in their place:
+        After Effects-style compositing, Vegas-style cutting and retiming, GPU-first
+        throughout.
       </p>
 
       <div
@@ -122,6 +149,24 @@ const roadmap = [
         {
           features.map((f) => (
             <div class="bg-ink p-7">
+              {f.clip && (
+                <div class="feature-media relative mb-5 overflow-hidden rounded-[10px] border border-line bg-ink-2">
+                  <video
+                    class="block aspect-video w-full object-cover"
+                    src={f.clip}
+                    muted
+                    loop
+                    playsinline
+                    preload="metadata"
+                  />
+                  <span
+                    class="pointer-events-none absolute bottom-2 right-2 rounded-full border border-line bg-ink/80 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-fg-3 transition-opacity"
+                    data-hint
+                  >
+                    Hover to play
+                  </span>
+                </div>
+              )}
               <h3 class="text-[18px] tracking-[-0.02em]">{f.h}</h3>
               <p class="mt-2.5 text-[15px]">{f.p}</p>
             </div>
@@ -135,23 +180,32 @@ const roadmap = [
   <section id="roadmap" class="border-t border-line bg-ink-2 py-16 sm:py-24">
     <div class="wrap">
       <p class="kicker">Roadmap</p>
-      <h2 class="mt-4 text-[clamp(26px,3.6vw,40px)] leading-[1.1]">Where it goes next.</h2>
+      <h2 class="mt-4 text-[clamp(26px,3.6vw,40px)] leading-[1.1]">What we are building.</h2>
       <p class="mt-4 max-w-[620px]">
-        Lumit is in public beta. This is the honest state of things — what works today, what
-        is being built, and what is further out.
+        Lumit is in public beta. Here is what is coming next, what 1.0 needs, and what
+        follows it.
       </p>
 
-      <div class="mt-12 grid gap-8 sm:grid-cols-3">
+      <div class="roadmap mt-14">
         {
-          roadmap.map((col) => (
-            <div>
-              <p class="kicker">{col.h}</p>
-              <ul class="mt-3.5 list-none p-0">
-                {col.items.map((i) => (
-                  <li class="border-b border-line py-1.5 text-[14.5px] last:border-0">{i}</li>
-                ))}
-              </ul>
-            </div>
+          roadmap.map((stage) => (
+            <>
+              <div class="stage">
+                <h3 class="stage-label kicker">{stage.label}</h3>
+                <div class="flex flex-wrap gap-2.5">
+                  {stage.tags.map((tag) => (
+                    <span class:list={["tag", tag.major && "tag-major"]}>{tag.t}</span>
+                  ))}
+                </div>
+              </div>
+              {stage.label === "1.0" && (
+                <div class="milestone" aria-hidden="true">
+                  <span class="milestone-line" />
+                  <span class="milestone-label">v1.0 release</span>
+                  <span class="milestone-line" />
+                </div>
+              )}
+            </>
           ))
         }
       </div>
@@ -161,10 +215,10 @@ const roadmap = [
   {/* ---------- close ---------- */}
   <section class="border-t border-line py-16 text-center sm:py-24">
     <div class="wrap">
-      <h2 class="text-[clamp(26px,3.6vw,40px)] leading-[1.1]">Built for the flow.</h2>
+      <h2 class="text-[clamp(26px,3.6vw,40px)] leading-[1.1]">Built for flow.</h2>
       <p class="mx-auto mt-4 max-w-[620px]">
-        Free, open source, and yours to keep. Windows and Linux builds are ready now; macOS
-        is close behind.
+        Free, open source, and yours to keep. Windows and Linux builds are ready now;
+        macOS is close behind.
       </p>
       <div class="mt-9 flex flex-wrap justify-center gap-3">
         <a class="btn" href="/download">Download Lumit</a>
@@ -173,6 +227,92 @@ const roadmap = [
     </div>
   </section>
 </Base>
+
+<style>
+  /* Blick-style timeline: a vertical rule down the left with a dot per stage. */
+  .roadmap {
+    position: relative;
+    max-width: 860px;
+    padding-left: 28px;
+  }
+  .roadmap::before {
+    content: "";
+    position: absolute;
+    left: 4px;
+    top: 6px;
+    bottom: 6px;
+    width: 1px;
+    background: linear-gradient(180deg, var(--color-line-2), var(--color-line));
+  }
+  .stage {
+    position: relative;
+    margin-bottom: 40px;
+  }
+  .stage:last-child {
+    margin-bottom: 0;
+  }
+  .stage::before {
+    content: "";
+    position: absolute;
+    left: -28px;
+    top: 1px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--color-ink-2);
+    border: 1px solid var(--color-fg-3);
+  }
+  .stage-label {
+    margin-bottom: 16px;
+  }
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 7px 14px;
+    border-radius: 20px;
+    border: 1px solid var(--color-line-2);
+    background: var(--color-ink);
+    color: var(--color-fg-2);
+    font-size: 13.5px;
+    line-height: 1.3;
+    transition:
+      border-color 0.15s,
+      color 0.15s;
+  }
+  .tag:hover {
+    border-color: var(--color-fg-3);
+    color: var(--color-fg);
+  }
+  .tag-major {
+    color: var(--color-fg);
+    font-weight: 500;
+  }
+  .milestone {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin: 0 0 40px -28px;
+    padding-left: 28px;
+  }
+  .milestone-line {
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--color-key-vi));
+  }
+  .milestone-line:last-child {
+    background: linear-gradient(90deg, var(--color-key-vi), transparent);
+  }
+  .milestone-label {
+    padding: 6px 16px;
+    border-radius: 20px;
+    border: 1px solid var(--color-line-2);
+    background: var(--color-ink);
+    color: var(--color-fg);
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+</style>
 
 <script>
   // Name the visitor's OS on the hero button. Pure enhancement: the button already
@@ -193,5 +333,26 @@ const roadmap = [
       if (note)
         note.textContent = "macOS build is unsigned — see the download page. GPLv3 · free forever";
     }
+  }
+
+  // Feature clips play on hover. A clip that fails to load takes its whole media
+  // block with it, so cards degrade to plain text until the file exists.
+  for (const media of document.querySelectorAll<HTMLElement>(".feature-media")) {
+    const video = media.querySelector("video");
+    if (!video) continue;
+    video.addEventListener("error", () => media.remove());
+    if (video.error) {
+      media.remove();
+      continue;
+    }
+    const hint = media.querySelector("[data-hint]");
+    media.addEventListener("mouseenter", () => {
+      video.play().catch(() => {});
+      hint?.classList.add("opacity-0");
+    });
+    media.addEventListener("mouseleave", () => {
+      video.pause();
+      hint?.classList.remove("opacity-0");
+    });
   }
 </script>

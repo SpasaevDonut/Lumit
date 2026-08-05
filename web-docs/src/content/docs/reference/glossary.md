@@ -26,7 +26,7 @@ vocabularies. One word means one thing here.
 | **Clip** | One entry in a Sequence layer's row. Only means this there. |
 | **Property** | A named animatable value. |
 | **Keyframe** | A value anchored to a time. |
-| **Retime** | The map from composition time to source time. |
+| **Retime** | The map from layer time (or clip time) to source time. |
 | **Speed** | The rate the retime map runs at. |
 | **Freeze** | A region of speed 0. |
 | **Overrun** | A request for source time outside the media. |
@@ -54,6 +54,7 @@ vocabularies. One word means one thing here.
 | CTI | Playhead | |
 | Render *(meaning export)* | Export | Render is what the engine does, not what you do. |
 | Event | Clip | A Vegas word. |
+| Pre-render | Cache, or bake | Reserved for the engine's own cache warming. |
 
 ## Related
 

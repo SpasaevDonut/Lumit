@@ -1,0 +1,67 @@
+---
+title: Exporting
+description: Write a finished file.
+sidebar:
+  order: 18
+---
+
+import Shot from "../../../components/Shot.astro";
+
+**Export** writes a deliverable file. Lumit says *export* for what you produce, and
+*render* only for what the engine does internally.
+
+<Shot file="export-queue.png" caption="The export queue: one item writing, one waiting." />
+
+## Export a composition
+
+1. Select the composition.
+2. Choose **File ▸ Export**, or press `Ctrl+M` to add it to the export queue.
+3. Set the preset and destination.
+4. Start it.
+
+The range defaults to the [work area](/use/preview/); you can widen it to the full
+comp or set a custom in and out.
+
+## The export queue
+
+Exports run through a queue. Queue several items and let them run — each item keeps
+its own range, preset, output folder, and filename. An item snapshots the composition
+when it is queued, so edits you make afterwards do not change what it writes.
+
+## Export does not block you
+
+Export runs away from the interface. You can keep editing while the queue writes.
+
+## Presets
+
+| Preset | For |
+| --- | --- |
+| **YouTube 1080p60** | H.264, high bitrate. |
+| **YouTube 1440p60** | HEVC; the scene's quality trick. |
+| **Vertical 1080×1920** | Shorts, TikTok, Reels. |
+| **PNG sequence** | One lossless still per frame, with alpha. |
+
+## Codecs and encoders
+
+Video exports as **H.264** or **HEVC**. Lumit probes for a hardware encoder — NVENC,
+AMF, or QSV — and picks one automatically, with a software fallback that is always
+available. Audio is AAC. A PNG sequence carries no audio and no bitrate; it is
+lossless.
+
+## Export is always full quality
+
+[Adaptive degradation](/use/preview/) and preview resolution affect preview only. An
+export always renders at full quality.
+
+Export may **bake** internally — flattening retimes, rasterising, pre-compositing — to
+go faster. Baking happens inside the export pipeline and never alters your project.
+
+:::note[Not built yet]
+ProRes and DNxHR intermediate codecs, free width and height (sizes are preset-driven
+today), and an export priority control are planned but not built.
+:::
+
+## Related
+
+- [Preview and playback](/use/preview/)
+- [Compositions](/use/compositions/)
