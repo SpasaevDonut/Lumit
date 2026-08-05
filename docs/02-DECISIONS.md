@@ -5496,3 +5496,31 @@ order, CPU and GPU op-for-op). A one-tile point source is its own anchor's only
 contributor and reads exactly as before; the owner's white-circle precomp now carries
 the flux of every tile it lights. Position stays the anchor pixel; sub-tile centroid
 positioning would be the next refinement if ever needed.
+
+**K-268 · DECIDED · A precomp gates as a track matte, and an effect on a Precomp layer
+keeps its pixels under a reduced preview.** Two holes on the same seam — what a Precomp
+layer *is* to the code that consumes it — found by reading K-266's own recorded
+boundary. **(1) A precomp set as a TRACK matte gated nothing at all.** K-266 fixed the
+layer-input mattes (a flare's Matte source, a DoF depth pass) by giving them an optional
+nested draw list; the track matte — `Layer::matte`, the row everyone actually reaches for
+— still ran through `pixels_for`, which has no pixels for a comp, so the matte silently
+became "no matte" and the consumer drew everywhere. `MatteDraw` now carries the same
+`nested` draw list, built by the shared `nested_comp_draw` helper (one ancestor-path
+cycle guard for both kinds of reference) and realised recursively exactly as a Precomp
+layer's picture is. The source-mode toggles (None / Masks / Effects and masks) do not
+apply to a comp reference — a comp already carries its layers' own masks and effects —
+which is the K-266 boundary, unchanged and now shared. **(2) K-266's recorded boundary
+was on the wrong side.** "Footage inside a matte-only precomp needs the decode planner
+taught" — the planner was already teaching it: `collect_comp_jobs` puts a matte source
+and a layer-input reference into `wanted` whether or not the layer is visible, and a
+Precomp among them recurses. Pinned now by a test over both shapes of reference, so the
+next reader gets a passing test rather than a note to re-derive. **(3) The Precomp twin
+of K-266's px@comp drift.** Effects ON a Precomp layer resolved px@comp parameters at
+factor 1 against the nested comp's width while running on the nested comp's *preview*
+raster, so a Transform's offset, a flare's light or a blur radius drifted by exactly the
+preview factor — preview only, full resolution always correct. The Nested arm now carries
+`fx_ref_width` (the nested comp's own width) and the realise walk applies
+`raster_width / ref_width` through `fx::rescale_px` before running the stack, which is
+the identical correction the adjustment path has taken since K-266. Both fixes land with
+end-to-end GPU regression tests (a matte that must gate, a shift that must stay a quarter
+of the frame at Full and at Half); both fail on the code as it stood.

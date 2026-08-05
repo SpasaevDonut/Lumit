@@ -702,6 +702,8 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   guarded, and hands the picture to the light detector. One honest edge
   remains written down: footage inside a matte-only precomp needs the
   decode planner taught before it appears there.
+  (K-268 closed that edge, and it turned out to be smaller than feared —
+  see *Precomps, in the two places they used to fall through* below.)
   A fifth pass (K-267) closed the next round. The choppy ghost edges that
   survived at corner lights turned out to be a measuring problem, not a
   drawing one: the effect sizes each ghost's ray budget from a once-per-lens
@@ -1048,6 +1050,32 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   knowing (unchanged): "Effects and masks" applies the layer's *look* effects (keys, blurs, colour)
   but not its *time-based* ones — an Echo or motion-blur-from-movement on the referenced layer is
   treated as a still frame; the everyday cases are exact.
+- **Precomps, in the two places they used to fall through (K-268).** Every other kind of layer
+  has *pixels*: a solid is a colour, footage is a decoded frame, text is rasterised type. A
+  **precomp** has none — its picture only exists once it has been rendered, which is a job in
+  itself. Anywhere the code reached for "this layer's pixels" and got a precomp, it had to be
+  taught to render one instead, and two such places had been missed.
+  - **A precomp used as a track matte gated nothing.** Set a layer's matte to a precomp and
+    the matte quietly did not exist: the layer drew everywhere, exactly as if the row had been
+    left unset. (The sibling case — a precomp as a lens flare's Matte source or a depth-of-field
+    depth pass — was fixed in K-266; the track matte, which is the row you actually reach for,
+    was still asking for pixels that a comp does not have.) It now renders the nested comp the
+    same way a precomp *layer* is rendered, loops guarded, and gates with the result. Because
+    a comp already contains its own layers' masks and effects, the None / Masks / Effects and
+    masks combobox above has nothing left to decide for one, and is ignored there.
+  - **An effect ON a precomp layer drifted in reduced-resolution preview.** Parameters measured
+    in comp pixels — a Transform's offset, a flare's light position, a blur radius — are worked
+    out for a full-size frame and then have to be scaled down when preview renders smaller. That
+    correction was being applied to adjustment layers (K-266) and to ordinary layers, but not to
+    a precomp layer, so an effect on one landed further across the picture the coarser the
+    preview got, and snapped back at Full. Preview and export were never wrong at full
+    resolution; now they agree at every resolution, which is the whole point of a preview.
+
+  While closing the first of those, a note K-266 left behind — "footage inside a matte-only
+  precomp won't decode" — turned out to be about a bridge that was already built: the part of
+  the engine that decides which video frames to read (the *decode plan*) follows matte and
+  layer-input references whether or not the layer is visible. It is now pinned by a test rather
+  than by a warning in a document.
 - **Colour picker and dropper (K-210).** Every effect **Colour** parameter — a Flash tint, a
   Colour balance wheel, the Matte key's Key colour, and so on — shows a **clickable swatch**.
   Click it and Lumit's own picker opens: the **red, green and blue numbers across the top**,
