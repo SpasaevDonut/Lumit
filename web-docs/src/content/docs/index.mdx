@@ -2,6 +2,11 @@
 title: Lumit docs
 description: Documentation for Lumit, the native motion-graphics and compositing editor.
 template: splash
+# Without this the tab reads "Lumit docs | Lumit docs" — the page title and the
+# site title are the same string, and Starlight joins them.
+head:
+  - tag: title
+    content: Lumit docs — motion graphics and compositing
 hero:
   tagline: A native motion-graphics and compositing editor. GPU-first, open source, GPLv3.
   image:
