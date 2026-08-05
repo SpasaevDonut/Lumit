@@ -1552,6 +1552,19 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   never your hand-placed cues). The markers show as clay ticks on the timeline ruler — faint
   or bright by confidence — and scrubbing the playhead snaps to a nearby marker, so you land
   on the beat.
+
+  One thing worth knowing about how the panel and the engine share a marker (K-270). The
+  panel can see and change three things about one: where it is, what it is called, and which
+  marker it is. The engine knows three more: whether it was detected or placed by hand (and
+  how confident the detector was), how long it lasts if it spans time, and any fields a
+  *newer* version of Lumit wrote that this one has never heard of. When you drag a marker,
+  the panel sends the whole list back — and it used to send back only the three things it
+  knows, which quietly reset the other three. Move a detected beat by one frame and it
+  stopped being a beat: **Clear beat markers** would then leave it behind, because nothing
+  was left to say where it came from. Now the write-back is a *merge* — each marker is
+  matched up with the one already there by its id, and everything the panel cannot see is
+  carried straight over. A marker you have just made has nothing to carry over, so it is a
+  plain user marker, which is what it is.
 - **The timeline waveform** — a strip under the ruler draws the composition's mixed audio as
   a min/max envelope on the same time axis, so the beats sit right above the transients that
   made them. It's built by `waveform_peaks` (in `lumit-audio::mix`), which buckets the mono
