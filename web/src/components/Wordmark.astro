@@ -4,25 +4,23 @@
 // The mark reads as two chevrons either side of a white core, so that is what
 // these paths are — the icon's own silhouette, six corners each. An L is also six
 // corners and they correspond one for one, so the letter is a straight
-// interpolation of the keyframe rather than a crossfade. The t is the L turned 180
-// degrees, which is free: ">" is "<" turned 180.
+// interpolation of the keyframe. The t is the L turned 180 degrees, which is free:
+// ">" is "<" turned 180.
 //
-// Beats. The core breathes: it swells, and as it goes the letters open from the
-// middle outward — m first, already there before the light has finished leaving.
-// Inside the swell three coloured blobs drift and beat against each other, the two
-// keyframe gradients mixing in the middle. The keyframes launch fast and level,
-// thinning to the L's stem without their silhouette changing, carry past the
-// landing, and at the top of that overshoot turn 45 degrees and hammer down into
-// place.
+// Beats. The pair throw apart and return on ONE curve — easeOutBack passes through
+// zero velocity at its peak, so the return starts the instant they stop and there
+// is no seam where two eased halves would meet. At that peak the turn begins, on a
+// quart in-out: precise and mechanical rather than springy. The white between them
+// is pulled out as they go, its tips tracking their inner edges, then fades to
+// leave the letters it was covering.
 //
 // The turn pivots on the chevron corner that BECOMES the letter corner — top-left
-// on the left, bottom-right on the right. That point is mathematically fixed for
-// the whole snap (asserted at build time), so the shape swings around a real nail
-// while its y drops in underneath it.
+// on the left, bottom-right on the right. That point is fixed for the whole snap
+// (asserted at build time), so the shape swings around a real nail.
 //
-// Driven from script rather than CSS on purpose. `d` is animatable in CSS on
-// paper, but iOS Safari does not do it. Without script, or under reduced motion,
-// the markup already holds the finished wordmark standing still.
+// Driven from script rather than CSS: `d` is animatable in CSS on paper, but iOS
+// Safari does not do it. Without script, or under reduced motion, the markup is
+// already the finished wordmark standing still.
 interface Props { class?: string }
 const { class: klass } = Astro.props;
 ---
@@ -35,19 +33,12 @@ const { class: klass } = Astro.props;
     <linearGradient id="wm-b" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#8a70ff" /><stop offset="1" stop-color="#ff4f9e" />
     </linearGradient>
-    <radialGradient id="wm-core">
-      <stop offset="0" stop-color="#fff" /><stop offset="0.5" stop-color="#fff" stop-opacity="0.8" />
-      <stop offset="1" stop-color="#eaf4ff" stop-opacity="0" />
-    </radialGradient>
     <filter id="wm-soft" x="-70%" y="-70%" width="240%" height="240%">
       <feGaussianBlur stdDeviation="7" />
     </filter>
-    <radialGradient id="wm-rev">
-      <stop offset="0" stop-color="#fff" /><stop offset="0.62" stop-color="#fff" />
-      <stop offset="1" stop-color="#000" />
-    </radialGradient>
+    <clipPath id="wm-dia"><path class="diaclip" d="M135.0 -50.0 L154.7 -35.0 L135.0 -20.0 L115.3 -35.0 Z" /></clipPath>
     <mask id="wm-reveal" maskUnits="userSpaceOnUse" x="-14" y="-92" width="294" height="106">
-      <ellipse class="rev" cx="135.0" cy="-35.0" rx="0" ry="0" fill="url(#wm-rev)" />
+      <path class="diamask" d="M135.0 -435.0 L735.0 -35.0 L135.0 365.0 L-465.0 -35.0 Z" fill="#fff" />
     </mask>
   </defs>
 
@@ -62,12 +53,13 @@ const { class: klass } = Astro.props;
   <path class="key" data-key="b" d="M197.80 -60.80 L150.20 -13.20 L143.37 -20.03 L183.46 -60.11 L159.16 -84.41 L166.67 -91.92 Z" fill="url(#wm-b)" stroke="url(#wm-b)"
         stroke-width="3" stroke-linejoin="round" />
 
-  <g class="swirl" filter="url(#wm-soft)" opacity="0">
-    <ellipse data-blob="0" cx="135.0" cy="-35.0" rx="20" ry="18" fill="#5ad7ff" style="mix-blend-mode:screen" />
-    <ellipse data-blob="1" cx="135.0" cy="-35.0" rx="20" ry="18" fill="#8a70ff" style="mix-blend-mode:screen" />
-    <ellipse data-blob="2" cx="135.0" cy="-35.0" rx="20" ry="18" fill="#ff4f9e" style="mix-blend-mode:screen" />
+  <path class="core" d="M135.0 -50.0 L154.7 -35.0 L135.0 -20.0 L115.3 -35.0 Z" fill="#fff" stroke="#fff" stroke-width="6"
+        stroke-linejoin="round" opacity="0" />
+  <g class="swirl" clip-path="url(#wm-dia)" filter="url(#wm-soft)" opacity="0">
+    <ellipse data-blob="0" cx="135.0" cy="-35.0" rx="20" ry="18" fill="#5ad7ff" />
+    <ellipse data-blob="1" cx="135.0" cy="-35.0" rx="20" ry="18" fill="#8a70ff" />
+    <ellipse data-blob="2" cx="135.0" cy="-35.0" rx="20" ry="18" fill="#ff4f9e" />
   </g>
-  <ellipse class="core" cx="135.0" cy="-35.0" rx="34" ry="32" fill="url(#wm-core)" opacity="0" />
 </svg>
 
 <script is:inline>
@@ -80,71 +72,77 @@ const { class: klass } = Astro.props;
     if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
 
     var keys = {a: svg.querySelector('[data-key="a"]'), b: svg.querySelector('[data-key="b"]')};
-    var rev = svg.querySelector(".rev");
     var core = svg.querySelector(".core"), swirl = svg.querySelector(".swirl");
+    var diaclip = svg.querySelector(".diaclip"), diamask = svg.querySelector(".diamask");
     var blobs = [].slice.call(svg.querySelectorAll("[data-blob]"));
     if (!keys.a || !keys.b || !core) return;
 
-    var HOLD = 0.04, OUT = 0.28, SNAP = 0.58, OVER = 0.22, DUR = 2200;
-    var BREATHE = 0.26, GONE = 0.5, MORPH_END = 0.37;
-    var REVEAL = [0.14, 0.46];
-    var CX = 135.0, CY = -35.0;
+    var CX = 135.0, CY = -35.0, C1 = 2.2, C3 = 3.2;
+    var HOLD = 0.04, TRAVEL = 0.62, DUR = 2200;
+    var T_PEAK = 0.3542, SNAP_END = 0.6, MORPH_END = 0.4402;
+    var FADE0 = 0.37, FADE1 = 0.6;
+    var HW0 = 19.71, REACH = 108.73, PEAK_F = 1.1541;
 
-    function poly(p) {
+    function pl(p) {
       var d = "M", i;
       for (i = 0; i < p.length; i++) d += (i ? " L" : "") + p[i][0].toFixed(2) + " " + p[i][1].toFixed(2);
       return d + " Z";
     }
-    function mix(a, b, u) {
+    function mixp(a, b, u) {
       var o = [], i;
       for (i = 0; i < a.length; i++) o.push([a[i][0]+(b[i][0]-a[i][0])*u, a[i][1]+(b[i][1]-a[i][1])*u]);
       return o;
     }
-    var oQ = function (u) { return 1 - Math.pow(1-u, 5); };
-    var oC = function (u) { return 1 - Math.pow(1-u, 3); };
+    var oC = function (u) { return 1-Math.pow(1-u, 3); };
     var sp = function (t, a, b) { return t <= a ? 0 : t >= b ? 1 : (t-a)/(b-a); };
+    // one curve out and back: velocity passes through zero at the peak, so the
+    // return begins the instant it stops and there is no seam
+    var back = function (u) { var k = u-1; return 1 + C3*k*k*k + C1*k*k; };
+    // machine-like: quart in and out, precise rather than springy
+    var mech = function (u) { return u < 0.5 ? 8*u*u*u*u : 1-Math.pow(-2*u+2, 4)/2; };
+    function dia(hw, hh) {
+      return "M"+CX+" "+(CY-hh).toFixed(1)+" L"+(CX+hw).toFixed(1)+" "+CY+
+             " L"+CX+" "+(CY+hh).toFixed(1)+" L"+(CX-hw).toFixed(1)+" "+CY+" Z";
+    }
 
     function apply(t) {
-      var fly = oQ(sp(t, HOLD, OUT));
-      var turn = oQ(sp(t, OUT, SNAP));          // the rotation, unchanged
-      var snap = oQ(sp(t, OUT, MORPH_END));     // the morph, much quicker
+      var fly = back(sp(t, HOLD, TRAVEL));
+      var turn = mech(sp(t, T_PEAK, SNAP_END));
+      var snap = mech(sp(t, T_PEAK, MORPH_END));
 
       ["a", "b"].forEach(function (k) {
         var d = D[k];
-        var reach = fly*(1+OVER) - turn*OVER;      // out is x only, dead level
-        var x = d.t[0]*reach, y = d.t[1]*turn;     // y belongs entirely to the hammer
-        var shape = snap > 0 ? mix(d.thin, d.to, snap) : mix(d.fat, d.thin, fly);
-        keys[k].setAttribute("d", poly(shape));
+        var x = d.t[0]*fly;          // out and back, level
+        var y = d.t[1]*turn;         // y belongs entirely to the turn
+        var shape = snap > 0 ? mixp(d.thin, d.to, snap) : mixp(d.fat, d.thin, Math.min(1, fly));
+        keys[k].setAttribute("d", pl(shape));
         keys[k].setAttribute("transform",
-          "translate(" + x.toFixed(2) + " " + y.toFixed(2) + ") rotate(" +
-          (-45*turn).toFixed(2) + " " + d.p[0] + " " + d.p[1] + ")");
-        keys[k].style.strokeWidth = (12 - 9*fly).toFixed(2);
+          "translate("+x.toFixed(2)+" "+y.toFixed(2)+") rotate("+
+          (-45*turn).toFixed(2)+" "+d.p[0]+" "+d.p[1]+")");
+        keys[k].style.strokeWidth = (12 - 9*Math.min(1, fly)).toFixed(2);
       });
 
-      // breathe in, then out
-      var inhale = oC(sp(t, 0, BREATHE)), exhale = sp(t, BREATHE, GONE);
-      var s = 1 + 2.0*inhale + 0.7*exhale;            // a much bigger breath
-      core.setAttribute("rx", (30*s).toFixed(1));
-      core.setAttribute("ry", (28*s).toFixed(1));
-      core.setAttribute("opacity", ((0.9 + 0.1*inhale) * (1-exhale)).toFixed(3));
+      // the white is pulled out between the pair, its tips tracking their inner
+      // edges. It holds the reach rather than being squeezed back as they return.
+      var pull = oC(sp(t, HOLD, T_PEAK))*PEAK_F;
+      var spread = fly > pull ? fly : pull;
+      var gone = sp(t, FADE0, FADE1);
+      var hw = HW0 + spread*REACH, hh = 15 + spread*24;
+      core.setAttribute("d", dia(hw, hh));
+      core.setAttribute("opacity", (1-gone).toFixed(3));
+      diaclip.setAttribute("d", dia(hw, hh));
+      // the mask outruns the white so the letters are not left clipped to it
+      diamask.setAttribute("d", dia(hw*(1+2*gone), hh*(1+2*gone)));
 
-      // the keyframe gradients turning over each other, spilling out past the
-      // white so the colour actually reads
-      swirl.setAttribute("opacity", (1.0*inhale*(1-exhale)).toFixed(3));
+      swirl.setAttribute("opacity", (0.5*Math.min(1, spread*1.6)*(1-gone)).toFixed(3));
       blobs.forEach(function (b, i) {
         var ang = SW[i][0] + t*SW[i][1]*6.2831853;
-        var orb = 30*s*0.26;                      // orbit + blob stays < the core radius
-        b.setAttribute("cx", (CX + Math.cos(ang)*orb).toFixed(1));
-        b.setAttribute("cy", (CY + Math.sin(ang)*orb*0.66).toFixed(1));
-        b.setAttribute("rx", (30*s*0.38).toFixed(1));
-        b.setAttribute("ry", (28*s*0.38).toFixed(1));
+        var orb = hw*0.34;
+        b.setAttribute("cx", (CX+Math.cos(ang)*orb).toFixed(1));
+        b.setAttribute("cy", (CY+Math.sin(ang)*orb*0.30).toFixed(1));
+        b.setAttribute("rx", (hw*0.34).toFixed(1));
+        b.setAttribute("ry", (hh*0.62).toFixed(1));
       });
-
-      // a radius opening from the centre uncovers the letters, so what lights up
-      // is decided by position rather than by which glyph it belongs to
-      var r = oC(sp(t, REVEAL[0], REVEAL[1])) * 235;
-      rev.setAttribute("rx", r.toFixed(1));
-      rev.setAttribute("ry", (r*0.52).toFixed(1));
     }
 
     apply(0);
@@ -157,7 +155,7 @@ const { class: klass } = Astro.props;
       else {
         keys.a.style.strokeWidth = ""; keys.b.style.strokeWidth = "";
         core.setAttribute("opacity", "0"); swirl.setAttribute("opacity", "0");
-        rev.setAttribute("rx", "400"); rev.setAttribute("ry", "400");
+        diamask.setAttribute("d", dia(600, 400));
       }
     }
     requestAnimationFrame(frame);
