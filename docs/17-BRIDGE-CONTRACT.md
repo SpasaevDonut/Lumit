@@ -218,10 +218,14 @@ path, documented beside the types in
 
 - **`media`** (default on) pulls `lumit-media` (FFmpeg) for probing and decoding.
     Without it, footage does not probe and thumbnails are absent.
-- **Note.** `--no-default-features` does **not** currently build: the render
-    worker is part of the API surface, which is deliberately identical whatever
-    the features are so the generated Dart is one shape everywhere. Recorded in
-    [TODO.md](TODO.md).
+- **Note.** `--no-default-features` builds and tests (K-273). The API surface is
+    identical whatever the features are — the generated Dart is one shape
+    everywhere — so a function never *disappears* with a feature: it stays
+    compiled and its body degrades. Beat detection is the shape to copy: always
+    present, and `NoAudioPipeline` on a build with no audio pipeline. What a
+    media-less build actually loses is decoding — no probe, no thumbnails, no
+    waveform peaks, and the decode-ahead thread drains its queue without
+    producing anything — never a call that is not there.
 - **`render`** (default on) enables the composited-comp Viewer path and export
 through the headless seam.
 - **`shared-texture`**, **`shared-texture-linux`**, **`shared-texture-macos`**

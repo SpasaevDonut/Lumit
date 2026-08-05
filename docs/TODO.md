@@ -178,8 +178,6 @@ The Timeline matters most - it is zoomed constantly while cutting.
 - **`ProjectReference::state()` hands the raw `Arc<RwLock<…>>` out**, so a caller
     can hold a project lock as long as it likes and in any order. The order is
     written down and tested; nothing enforces it at the type level.
-- **`DocumentStore::set_callback` takes `&mut self`**, so the observer can only be
-    attached before the store is shared.
 - **The macOS IOSurface Viewer path is unproven** - CI links the bundle but
     nobody has launched the .app (K-033).
 - **The macOS .app is not relocatable** - the podspec links keg-only FFmpeg by
@@ -204,11 +202,6 @@ The Timeline matters most - it is zoomed constantly while cutting.
 - **The Linux DMA-BUF path has never run on a Linux machine with a GPU** (K-033).
     It fails calmly on the adapter-less CI runner, which proves the failure is
     calm and nothing about the path working.
-- **`cargo build -p lumit_bridge --no-default-features` does not build** - the
-    render worker is part of the API surface, which is deliberately one shape
-    whatever the features ([17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md) §Feature
-    gates). Either make the worker feature-clean or drop the pretence that the
-    features are independent.
 - **frb's SSE codec encodes `Vec<u8>` one byte at a time** - now taxes only
     thumbnails and scope traces, but worth the bulk codec if traces feel late.
 - **Engine subsystems with no frb API** - masks (`add_mask`,

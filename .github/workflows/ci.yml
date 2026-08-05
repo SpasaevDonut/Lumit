@@ -550,6 +550,29 @@ jobs:
   # No FFmpeg or desktop libraries are installed here on purpose: cargo-deny
   # reads Cargo.lock and the crate manifests, never the C libraries a build
   # would link, so this job stays a fast one.
+  # The media-less build, proven on a runner with no FFmpeg at all (K-273).
+  # That absence is the point: `--no-default-features` exists so the bridge can
+  # be built without a decoder, and a job that had FFmpeg installed anyway
+  # could not tell whether the feature gates still held. It went un-run for
+  # long enough to stop building, so it is a job now rather than a note.
+  bridge-no-media:
+    name: bridge builds and tests without FFmpeg (--no-default-features)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      # ALSA only: cpal is not behind the media feature. No FFmpeg, no LLVM —
+      # if either turns out to be needed, this job is the one that says so.
+      - name: Install the one system library a media-less build needs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy -p lumit_bridge --no-default-features --all-targets -- -D warnings
+      - run: cargo test -p lumit_bridge --no-default-features
+
   cargo-deny:
     name: dependency hygiene (licences, advisories, sources)
     runs-on: ubuntu-latest

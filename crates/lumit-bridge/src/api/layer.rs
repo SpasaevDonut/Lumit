@@ -2247,7 +2247,10 @@ impl LayerReference {
 
         #[cfg(not(feature = "media"))]
         {
-            let _ = buckets;
+            // Nothing decodes without FFmpeg, so the peaks are empty and the
+            // lane draws a flat line — the documented shape of a media-less
+            // build, not a failure (docs/17 §Feature gates).
+            let _ = (buckets, footage);
             Ok(empty)
         }
     }

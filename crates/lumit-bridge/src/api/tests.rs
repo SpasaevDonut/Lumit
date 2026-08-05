@@ -282,6 +282,9 @@ fn a_footage_item_pointing_at_nothing_reports_missing() {
         .expect("imported");
 
     let status = footage.get_status().expect("status");
+    // The same answer in every build: whether a file is on disk is a question
+    // for the filesystem, not for the decoder (K-273). Before that, a
+    // media-less build called this path Ready.
     assert!(matches!(status, LumitMediaStatus::Missing));
 }
 
