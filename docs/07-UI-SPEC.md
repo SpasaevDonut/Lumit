@@ -845,8 +845,10 @@ same column — an effect's figure MUST sit in the same column as its layer's, o
 cannot be read against each other. Measuring is **on by default**, and its switch is the
 **clock in the bottom strip**, after the cache meters: the column header MUST be a plain
 readout, because a header that says Time over a column of dashes gives no hint that it is a
-button, and a switch nobody can find is a feature that does not work. An idle column MUST
-show a dimmed dash per row rather than nothing. The header MUST report the whole frame's
+button, and a switch nobody can find is a feature that does not work. Switched off, the
+column MUST disappear from the outline entirely — no header, no cells, no width — and the
+per-effect figures in the Effect controls panel with it: a column of blanks is not a column,
+and the outline's width is worth more than an indicator nobody has asked for. The header MUST report the whole frame's
 cost while measuring — `…` until a measured frame has arrived, the number once one has — so
 the three states (not measuring, measuring with nothing back, measured) read differently
 rather than all showing a dash; and an engine that refuses the switch MUST say so in the

@@ -5778,7 +5778,10 @@ being looked for; the column header becomes a plain readout; and both sides now 
 measuring* (the engine's flag starts true, so no startup call is needed to agree). The cost
 — a fence per node, and a measured frame composited rather than served from a cache — is
 now paid by default, which is the owner's call, made knowing it: the toggle is one obvious
-click away. **(9) An effect's number shares its layer's column.** A `Flexible` label beside
+click away — and turning it off takes the **whole column** away (header, cells and width)
+along with the figures on the Effect controls headings, rather than leaving a row of dashes:
+a column of blanks is not a column, and the outline's width is worth more than an indicator
+nobody has asked for. **(9) An effect's number shares its layer's column.** A `Flexible` label beside
 a `Spacer` splits the free space between them rather than queueing, so the effect heading's
 figure landed halfway across the row instead of in the column. One `Expanded` label and no
 Spacer puts it exactly where the layer rows' numbers are, pinned by a test that compares

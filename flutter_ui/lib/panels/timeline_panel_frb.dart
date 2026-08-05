@@ -993,6 +993,14 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     // the ambiguity K-203 set out to remove.
     _primary = _ui!.selectedLayer.value?.internallayerId;
     _ui!.selectedLayer.addListener(_onPrimaryChanged);
+    // Switching measuring off takes the render-time column away entirely, and
+    // the outline is that much narrower for it — a layout change, so the panel
+    // has to hear about it rather than only the cells inside the column.
+    _ui!.renderTimings.addListener(_onTimingsChanged);
+  }
+
+  void _onTimingsChanged() {
+    if (mounted) setState(() {});
   }
 
   /// The layer the panel's local selections belong to, so a change of primary
@@ -1349,6 +1357,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_onKey);
     _ui?.selectedLayer.removeListener(_onPrimaryChanged);
+    _ui?.renderTimings.removeListener(_onTimingsChanged);
     if (_ui?.deleteClaim == _deleteSelectedMasks) _ui!.deleteClaim = null;
     _boundTools?.removeListener(_onToolChanged);
     _barDrag.dispose();
@@ -1475,6 +1484,26 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   Widget _body(
       BuildContext context, LumitUiState ui, CompositionReference comp) {
     final t = ThemeScope.of(context).theme;
+    // The columns actually drawn. The render-time column is only there while
+    // something is being measured (K-276): switched off it takes no width, no
+    // header and no cells — a column of blanks is not a column, and the outline
+    // is short of room as it is. Everything downstream — the header, the rows,
+    // the fold-out's value and render-time cells, the outline's own width —
+    // works from these rather than from the stored order, so the geometry
+    // follows in one place.
+    final measuring = ui.renderTimings.measuring;
+    final groupOrder = measuring
+        ? _groupOrder
+        : [
+            for (final group in _groupOrder)
+              if (group != TimelineGroup.timings) group
+          ];
+    final groupWidths = measuring
+        ? _groupWidths
+        : {
+            for (final entry in _groupWidths.entries)
+              if (entry.key != TimelineGroup.timings) entry.key: entry.value
+          };
     final frames = ui.model.durationFrames;
     final (fpsNum, fpsDen) = ui.model.fpsExact;
     final needle = _search.trim().toLowerCase();
@@ -1595,7 +1624,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                   // The outline is as wide as its groups make it, and counts
                   // its own scroll gutter so the columns keep their places
                   // when the view changes.
-                  final outlineWidth = outlineWidthOf(_groupWidths);
+                  final outlineWidth = outlineWidthOf(groupWidths);
                   final outlineViewport = (constraints.maxWidth - 120)
                       .clamp(120.0, outlineWidth + scrollGutterWidth);
                   // The axis spans the lane viewport times the zoom: at 1 the
@@ -1695,8 +1724,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                               onChanged: ui.model.refresh,
                                             ),
                                             _ColumnHeader(
-                                              order: _groupOrder,
-                                              widths: _groupWidths,
+                                              order: groupOrder,
+                                              widths: groupWidths,
                                               onResize: _resizeGroup,
                                               onReorder: (dragged, target) =>
                                                   setState(
@@ -1735,8 +1764,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                     renameRequest:
                                                         _renameRequest,
                                                     blockHeights: blockHeights,
-                                                    groupOrder: _groupOrder,
-                                                    widths: _groupWidths,
+                                                    groupOrder: groupOrder,
+                                                    widths: groupWidths,
                                                     selectedIds:
                                                         ui.selectedLayerIds,
                                                     highlighted: _highlighted,
@@ -2370,7 +2399,8 @@ class _FoldRow extends StatelessWidget {
               // flex children share, they do not queue. One Expanded label
               // takes the space, and the cell that follows lands hard right —
               // where the layer rows' numbers are.
-              if (effectIdOfPath(path) case final String effectId) ...[
+              if (effectIdOfPath(path) case final String effectId
+                  when timingsColumn.width > 0) ...[
                 Expanded(
                   child: Text(label,
                       style: t.body, overflow: TextOverflow.ellipsis),

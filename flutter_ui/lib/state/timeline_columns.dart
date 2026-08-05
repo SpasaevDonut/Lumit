@@ -188,6 +188,10 @@ ValueColumn valueColumnFor(
 /// (docs/13 §7.1).
 ValueColumn timingsColumnFor(
     List<TimelineGroup> order, Map<TimelineGroup, double> widths) {
+  // Width zero when the column is not being drawn at all (nothing is being
+  // measured): a fold row asks this before it reserves any space, so an effect
+  // heading goes back to its old shape rather than keeping an empty cell.
+  if (!order.contains(TimelineGroup.timings)) return const ValueColumn(0, 0);
   return ValueColumn(widths[TimelineGroup.timings] ?? timingsGroupWidth,
       rightInsetOf(order, widths, TimelineGroup.timings));
 }

@@ -3221,9 +3221,10 @@ header, which is where nobody found it: the column looked broken instead.) While
 measuring, the header stops saying "Time" and shows what the *whole frame* cost:
 an ellipsis until a measured frame has come back, then the number. So the three
 things that can be true read differently — not measuring, measuring and waiting,
-measured — instead of one dash meaning all three; a dimmed dash on a row means
-nothing is being measured, a full-strength one means that row was not in the last
-measured frame. If the engine refuses the switch, the status line says so, and
+measured — instead of one dash meaning all three. Switch it off and the column
+goes altogether — header, cells and width — as do the figures on the effect
+headings in the Effect controls panel; a dash while it *is* measuring means that
+row was not in the last measured frame. If the engine refuses the switch, the status line says so, and
 the console carries one line per switching on and one more on the first frame
 actually measured.
 

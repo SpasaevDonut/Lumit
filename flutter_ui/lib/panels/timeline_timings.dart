@@ -14,8 +14,10 @@
 // millisecond then means the work rather than the paperwork — and a measured
 // frame is composited rather than served from a cache. It is on by default,
 // because numbers are what the column is for; the clock in the bottom strip,
-// beside the cache meters, turns it off for the session. Playback is never
-// measured whatever the clock says.
+// beside the cache meters, turns it off for the session — and turning it off
+// takes the column away entirely rather than leaving a row of dashes, so the
+// Timeline gets its width back and the effect headings read as they did before
+// this existed. Playback is never measured whatever the clock says.
 
 import 'package:flutter/widgets.dart';
 import 'package:provider/provider.dart';
@@ -126,11 +128,10 @@ class RenderTimingsToggle extends StatelessWidget {
 /// [layerId] and [effectId] are alternatives — a layer row gives the first, an
 /// effect's heading the second.
 ///
-/// **A dash, never a blank.** The first version drew nothing at all while the
-/// column was idle, and it read as a feature that did not work. A dimmed dash
-/// means nothing is being measured (the clock in the bottom strip is off); a
-/// dash at full strength means measuring is on and the last measured frame had
-/// no such row — it was hidden, outside its span, or inside a Precomp.
+/// Nothing at all while the clock in the bottom strip is off: the Timeline drops
+/// the whole column then, and an effect's heading goes back to the shape it had
+/// before this existed. A dash *while measuring* means the last measured frame
+/// had no such row — it was hidden, outside its span, or inside a Precomp.
 class TimingsCell extends StatelessWidget {
   final String? layerId;
   final String? effectId;
@@ -152,13 +153,18 @@ class TimingsCell extends StatelessWidget {
             : layerId != null
                 ? timings.layerMs(id)
                 : timings.effectMs(id);
+        // Switched off, the column is not there at all — no cell, no dash, and
+        // (in the Timeline) no column: an indicator nobody has asked for should
+        // take no space and say nothing, which is also what makes the Effect
+        // controls heading read as it did before this existed.
+        if (!on) return const SizedBox.shrink();
         final cell = Align(
           alignment: Alignment.centerRight,
           child: Padding(
             padding: const EdgeInsets.only(right: 4),
             child: Text(
               ms == null ? '—' : formatRenderMs(ms),
-              style: on ? t.small : t.small.copyWith(color: t.textDisabled),
+              style: t.small,
               maxLines: 1,
               overflow: TextOverflow.clip,
             ),
