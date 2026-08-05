@@ -46,7 +46,7 @@ struct Parts {
     colour: lumit_gpu::ColourEngine,
     compositor: lumit_gpu::Compositor,
     fx: lumit_gpu::fx::FxEngine,
-    lut_cache: std::cell::RefCell<HashMap<String, crate::fxops::LoadedLut>>,
+    lut_cache: std::cell::RefCell<crate::fxops::LutCache>,
 }
 
 /// One footage item's probe result, cached so a scrub does not re-probe. Slate
@@ -462,7 +462,7 @@ impl HeadlessRenderer {
             colour: lumit_gpu::ColourEngine::new(&gpu),
             compositor: lumit_gpu::Compositor::new(&gpu),
             fx: lumit_gpu::fx::FxEngine::new(&gpu),
-            lut_cache: std::cell::RefCell::new(HashMap::new()),
+            lut_cache: std::cell::RefCell::new(crate::fxops::LutCache::default()),
         };
         let scope = lumit_gpu::scope::ScopeEngine::new(&gpu);
         Ok(Self {

@@ -308,13 +308,6 @@ in the Effect controls panel ([13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md)
 
 ## Next - engine/bridge follow-ups
 
-**The LUT effect's GPU path ignores a non-default domain**
-([impl/lut.md](impl/lut.md) §3 status): `fx_lut.wgsl` skips the
-`DOMAIN_MIN`/`DOMAIN_MAX` remap the CPU oracle applies, so such a cube renders
-silently wrong. Pass the six domain floats through `LutParams`, or refuse
-non-default-domain cubes as a labelled no-op. The LUT caches also key by path
-alone - no mtime, no LRU bound (§4).
-
 **Lens flare follow-ups (K-256..K-264, [impl/lens-flare.md](impl/lens-flare.md))** — the
 shipped core is docs/08 §3.27 (FlareSim model + 1299-lens library, K-261; artefact and
 picker pass K-262; bounded-submission and batching pass K-263; smooth-shading,

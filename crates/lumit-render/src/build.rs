@@ -1438,7 +1438,7 @@ mod render_below_at_tests {
         let engine = lumit_gpu::ColourEngine::new(&ctx);
         let compositor = lumit_gpu::Compositor::new(&ctx);
         let fx = lumit_gpu::fx::FxEngine::new(&ctx);
-        let lut_cache = std::cell::RefCell::new(HashMap::new());
+        let lut_cache = std::cell::RefCell::new(crate::fxops::LutCache::default());
         let realiser = Realiser {
             ctx: lumit_gpu::GpuContext::from_parts(ctx.device.clone(), ctx.queue.clone()),
             engine: &engine,
@@ -1762,7 +1762,7 @@ mod render_below_at_tests {
         let engine = lumit_gpu::ColourEngine::new(&ctx);
         let compositor = lumit_gpu::Compositor::new(&ctx);
         let fx = lumit_gpu::fx::FxEngine::new(&ctx);
-        let lut_cache = std::cell::RefCell::new(HashMap::new());
+        let lut_cache = std::cell::RefCell::new(crate::fxops::LutCache::default());
         let realiser = Realiser {
             ctx: lumit_gpu::GpuContext::from_parts(ctx.device.clone(), ctx.queue.clone()),
             engine: &engine,
@@ -1907,7 +1907,7 @@ mod render_below_at_tests {
         let engine = lumit_gpu::ColourEngine::new(&ctx);
         let compositor = lumit_gpu::Compositor::new(&ctx);
         let fx = lumit_gpu::fx::FxEngine::new(&ctx);
-        let lut_cache = std::cell::RefCell::new(HashMap::new());
+        let lut_cache = std::cell::RefCell::new(crate::fxops::LutCache::default());
         let realiser = Realiser {
             ctx: lumit_gpu::GpuContext::from_parts(ctx.device.clone(), ctx.queue.clone()),
             engine: &engine,

@@ -1157,6 +1157,19 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   texture adds a third dimension (depth), so the card can look a colour up by its red, green and
   blue coordinates in one fetch — the first effect in Lumit to need one. The preview and the
   export load and apply the LUT the same way, so an exported file matches what you saw.
+
+  Two things about LUTs were quietly wrong until K-271. A `.cube` file may declare the *range
+  of input colours it was built for* — most say "nought to one", but a cube meant for log
+  footage might say "−0.25 to 1.5". Lumit's plain-Rust reference honoured that; the version
+  running on the graphics card ignored it and assumed nought-to-one, so such a cube came out
+  with the wrong colours and nothing said so. The card now does the same conversion, and the
+  test that compares the two paths includes a cube with an odd range, which the old shader
+  missed by a mile. Separately, Lumit remembered a `.cube` **by its filename only** — so the
+  loop everyone actually works in (export a grade, look at it, adjust, export again over the
+  same file) showed you the *first* version until you restarted the application. It now
+  remembers the file's last-changed time as well, so a re-exported grade appears on the next
+  frame, and it keeps only the eight most recently used cubes rather than every one the
+  session ever touched.
 - `crates/lumit-core/src/lut.rs` — **reading a colour LUT (`.cube` file).** A LUT
   (look-up table) is a colour recipe a colourist bakes elsewhere: feed it a red/green/blue
   and it hands back a graded red/green/blue. The common `.cube` text format stores that as a
