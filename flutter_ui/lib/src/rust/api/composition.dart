@@ -512,6 +512,31 @@ class CompositionReference {
         that: this,
       );
 
+  /// Paste a layer copied by [`crate::api::layer::LayerReference::copy_layer`]
+  /// into this composition, at the top of the stack (K-275).
+  ///
+  /// `at_frame` is where the layer's **in point** lands: the playhead, in the
+  /// ordinary case. `None` keeps the time it was copied at, which is the
+  /// setting for putting the same layer at the same moment in a second comp —
+  /// the two paste behaviours the owner asked for, decided by the caller
+  /// rather than by a mode this end has to remember.
+  ///
+  /// Whichever is chosen, the layer moves as one: in point, out point and
+  /// `start_offset` all shift together (`lumit_core::edit_layer_span`'s
+  /// `MoveIn`, the same rule the `[` key follows), so its keyframes and the
+  /// source frames it shows travel with it rather than sliding against it.
+  ///
+  /// **What is not copied is a reference to something that is not here.** The
+  /// pasted layer gets a fresh id and fresh effect ids — two layers sharing an
+  /// id would make every op that names one ambiguous — and its parent and
+  /// track matte are kept only when they still name a layer in *this* comp.
+  /// A parent that came from another composition is dropped rather than left
+  /// dangling: a layer parented to nothing visible would be a puzzle, and
+  /// re-parenting is one drag.
+  LayerReference pasteLayer({required String text, PlatformInt64? atFrame}) =>
+      BridgeLib.instance.api.crateApiCompositionCompositionReferencePasteLayer(
+          that: this, text: text, atFrame: atFrame);
+
   /// Play from `from` at this comp's own rate, with sound.
   ///
   /// The frontend calls this and then paints whatever frames arrive: each one

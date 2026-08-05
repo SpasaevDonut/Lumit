@@ -211,25 +211,14 @@ The Timeline matters most - it is zoomed constantly while cutting.
 - **The audio mix is rebuilt from scratch** whenever the comp's audio signature
     changes, rather than patched.
 
-**Copy and paste: the panels' half is still to wire (K-275).** The engine side is
-built and tested — `LayerReference::copy_layer`, `CompositionReference::paste_layer`
-(at a frame, or `None` to keep the copied time), `copy_effects` (one effect or the
-whole stack, in the `.lumfx` shape a preset already uses) and `paste_effects` (first
-keyframe lands on the playhead). What is owed is Dart, and it needs
-`flutter_rust_bridge_codegen generate` run on a machine with the Flutter toolchain
-before any of it compiles:
-- a session clipboard holding the copied text and its kind, on `LumitUiState`;
-- **Edit → Cut / Copy / Paste** wired to it (they are `MenuEntry.todo` today,
-    K-244), pasting a layer into the comp on screen and effects onto the selected
-    layer, and selecting what was just pasted;
-- **Copy effect** on an effect's heading in the Effect controls panel and on its
-    row in the Timeline — both call `copy_effects(Some(id))`;
-- a **Settings → Interface** toggle, *Paste layers at their original time*
-    (default off — paste lands at the playhead; on is for rebuilding a moment in a
-    second comp). Effects ignore it by design: a copied animation is placed by its
-    first keyframe, always.
-- Copying between two running Lumit windows wants the system clipboard rather
-    than the in-app one; decide when it is asked for.
+**Copy and paste: the effect-header commands are still to wire (K-275).** Layers copy
+and paste from the **Edit** menu (Cut/Copy/Paste, with *Paste layers at their original
+time* in Settings → Interface), and the engine takes one effect or a whole stack
+(`copy_effects`/`paste_effects`). What is owed is the two places an effect is *picked*:
+**Copy effect** on an effect's heading in the Effect controls panel and on its row in the
+Timeline, both calling `copy_effects(Some(id))` and putting it on the same clipboard.
+Copying between two running Lumit windows wants the system clipboard rather than the
+in-app one; decide when it is asked for.
 
 **Retime follow-up after K-249.** **The eased ramp shapes are gone from
 clips** — `Clip::with_ramp` takes two speeds and runs straight between them,

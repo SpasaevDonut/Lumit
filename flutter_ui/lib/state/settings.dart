@@ -150,6 +150,16 @@ class InterfaceSettings {
   /// from the default rather than a choice between two equals.
   bool playheadStaysOnStop;
 
+  /// Whether a pasted layer keeps the time it was copied at, rather than
+  /// starting at the playhead (K-275).
+  ///
+  /// Off by default: pasting is nearly always "put one here", and the playhead
+  /// is where *here* is. On is for the other job — rebuilding the same moment
+  /// in a second composition, where a layer that landed anywhere but its own
+  /// timecode would have to be dragged back by hand every time. Effects ignore
+  /// it either way: a copied animation is placed by its first keyframe.
+  bool pasteLayersAtOriginalTime;
+
   InterfaceSettings({
     this.uiScale = 1.0,
     this.showTooltips = true,
@@ -157,6 +167,7 @@ class InterfaceSettings {
     this.retimeOpensToSpeed = false,
     this.videoAsSequenceLayer = false,
     this.playheadStaysOnStop = false,
+    this.pasteLayersAtOriginalTime = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -166,6 +177,7 @@ class InterfaceSettings {
         'retime_opens_to_speed': retimeOpensToSpeed,
         'video_as_sequence_layer': videoAsSequenceLayer,
         'playhead_stays_on_stop': playheadStaysOnStop,
+        'paste_layers_at_original_time': pasteLayersAtOriginalTime,
       };
   factory InterfaceSettings.fromJson(Map<String, dynamic> j) =>
       InterfaceSettings(
@@ -183,5 +195,9 @@ class InterfaceSettings {
         // before this field existed adopts it rather than being pinned to the
         // old behaviour by its own silence.
         playheadStaysOnStop: j['playhead_stays_on_stop'] as bool? ?? false,
+        // Absent means off: a paste lands at the playhead, which is what a
+        // settings file written before this field existed already did.
+        pasteLayersAtOriginalTime:
+            j['paste_layers_at_original_time'] as bool? ?? false,
       );
 }

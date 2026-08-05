@@ -32,6 +32,7 @@ import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 
 import '../panels/timeline_extras_frb.dart';
+import '../state/clipboard.dart';
 import '../state/dock.dart';
 import '../state/file_dialogs.dart';
 import '../state/keymap.dart';
@@ -364,9 +365,28 @@ List<MenuSection> lumitMenus(
           action: 'edit.redo'),
       const MenuEntry.todo('History'),
       const MenuEntry.divider(),
-      const MenuEntry.todo('Cut'),
-      const MenuEntry.todo('Copy'),
-      const MenuEntry.todo('Paste'),
+      // Copy takes the selected layer whole — transform, keyframes, masks,
+      // paint, effects and switches — as the document text the engine hands
+      // back (K-275). Cut is that plus the delete, so the two can never
+      // disagree about what "the selection" was.
+      MenuEntry(
+          'Cut',
+          onLayer((l) {
+            ui.copyLayerToClipboard(l.copyLayer());
+            l.delete();
+            ui.clearSelection();
+            app.notifyDocumentChanged();
+          }),
+          action: 'edit.cut'),
+      MenuEntry('Copy', onLayer((l) => ui.copyLayerToClipboard(l.copyLayer())),
+          action: 'edit.copy'),
+      // Paste puts a layer at the playhead — or at the time it was copied
+      // from, for the person rebuilding a moment in a second comp (Settings →
+      // Interface). An effect always lands with its first keyframe at the
+      // playhead, whichever way that setting is: what is being placed is an
+      // animation rather than a position.
+      MenuEntry('Paste', _pasteAction(app, ui, comp, layer),
+          action: 'edit.paste'),
       MenuEntry(
           'Delete',
           layers.isEmpty
@@ -728,6 +748,47 @@ void undoFrb(LumitState app) {
 void redoFrb(LumitState app) {
   app.project?.redo();
   app.notifyDocumentChanged();
+}
+
+/// What Paste does with whatever is on the clipboard (K-275), or `null` when
+/// there is nothing to paste — or nowhere to put it.
+///
+/// A layer goes into the composition on screen: at the playhead by default, or
+/// at the time it was copied from when Settings → Interface says so. An effect
+/// goes onto the selected layer, always with its first keyframe at the
+/// playhead.
+VoidCallback? _pasteAction(
+  LumitState app,
+  LumitUiState ui,
+  CompositionReference? comp,
+  LayerReference? layer,
+) {
+  final text = ui.clipboard.text;
+  if (text == null) return null;
+  switch (ui.clipboard.kind) {
+    case ClipboardKind.layer:
+      if (comp == null) return null;
+      return () {
+        final pasted = comp.pasteLayer(
+          text: text,
+          atFrame: ui.workspace.interface.pasteLayersAtOriginalTime
+              ? null
+              : ui.playheadFrame.value,
+        );
+        // Selecting what was just pasted is what every editor does, and it is
+        // also what makes a second paste land somewhere you can see.
+        ui.setSelection([pasted]);
+        app.notifyDocumentChanged();
+      };
+    case ClipboardKind.effects:
+      if (layer == null) return null;
+      return () {
+        layer.pasteEffects(text: text, atFrame: ui.playheadFrame.value);
+        app.notifyDocumentChanged();
+      };
+    case null:
+      return null;
+  }
 }
 
 /// Razor the selected layer at the playhead. Only Sequence layers hold clips,

@@ -5693,6 +5693,10 @@ playhead**, the other behind a preference. Effects copy as the **same `.lumfx` d
 preset is**, so a copied effect can be saved as a preset and a preset pasted as an effect,
 and they always paste with their **first keyframe at the playhead** whatever the layer
 setting says: what is being placed is an animation, not a position. An effect with no
-keyframes pastes unmoved — there is no timing to place. The panels' wiring (the clipboard,
-the Edit menu, the copy-effect commands, the settings row) is TODO'd: it needs the bridge
-bindings regenerated, which needs a Flutter toolchain.
+keyframes pastes unmoved — there is no timing to place. The panel wiring landed with it: a session clipboard on
+`LumitUiState` (written through methods that notify, because Paste greys out while it is
+empty and a menu that never hears about the copy stays greyed — which is how it behaved
+before those methods existed), **Edit → Cut / Copy / Paste**, and the *Paste layers at
+their original time* row in Settings → Interface. Still owed, and TODO'd: **Copy effect**
+on an effect's heading in the Effect controls panel and on its Timeline row, which is
+where an effect is picked rather than a layer.
