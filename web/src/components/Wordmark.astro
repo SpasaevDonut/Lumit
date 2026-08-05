@@ -77,8 +77,9 @@ const { class: klass } = Astro.props;
     var CX = 135.0, CY = -35.0, C1 = 2.2, C3 = 3.2;
     var HOLD = 0.04, TRAVEL = 0.62, DUR = 2200;
     var T_PEAK = 0.3542, SNAP_END = 0.6, MORPH_END = 0.4402;
-    var IN0 = 0.04, IN1 = 0.3, OUT0 = 0.3, OUT1 = 0.46;
-    var TX0 = 0.32, TX1 = 0.54, DIA_MAX = 3.0;
+    var IN0 = 0.0400, IN1 = 0.2900;
+    var OUT0 = 0.2900, OUT1 = 0.4264;
+    var TX0 = 0.3100, TX1 = 0.4864, DIA_MAX = 3.0;
     var HW0 = 19.71;
 
     function pl(p) {
@@ -120,11 +121,10 @@ const { class: klass } = Astro.props;
         keys[k].style.strokeWidth = (12 - 9*Math.min(1, fly)).toFixed(2);
       });
 
-      // the white breathes in place: it opens smoothly, then collapses quickly,
-      // and the letters arrive as it goes
-      var open = 1 + (DIA_MAX-1)*oC(sp(t, IN0, IN1));
-      var shut = 1 - Math.pow(sp(t, OUT0, OUT1), 3);   // slow to let go, then quick
-      var g = open*shut;
+      // the white breathes in place. Growth is even and the collapse runs at one
+      // constant rate the whole way down, so nothing catches at the 0.1s mark.
+      var open = 1 + (DIA_MAX-1)*sp(t, IN0, IN1);
+      var g = open * (1 - sp(t, OUT0, OUT1));
       var hw = HW0*g, hh = 15*g;
       core.setAttribute("d", dia(hw, hh));
       core.setAttribute("opacity", (g > 0.02 ? 1 : 0) + "");
