@@ -32,7 +32,7 @@ pub struct Realiser<'a> {
     pub engine: &'a lumit_gpu::ColourEngine,
     pub compositor: &'a lumit_gpu::Compositor,
     pub fx: &'a lumit_gpu::fx::FxEngine,
-    pub lut_cache: &'a std::cell::RefCell<std::collections::HashMap<String, LoadedLut>>,
+    pub lut_cache: &'a std::cell::RefCell<crate::fxops::LutCache>,
     /// The preview render scale (the K-185 follow-up): every composite this
     /// walk performs allocates its target at [`lumit_gpu::scaled_size`] of the
     /// comp dims while all geometry stays in logical comp pixels. A field
@@ -43,12 +43,6 @@ pub struct Realiser<'a> {
 }
 
 impl Realiser<'_> {
-    /// Turn a layer's ordered `lut_files` into the parallel `luts` list
-    /// `run_ops` binds (docs/08 §3.11): each `Some(path)` is parsed and
-    /// uploaded once (cached by path), a 1D or unreadable/absent file yields a
-    /// `None` slot (a labelled no-op, never a fault — docs/impl/lut.md §8). The
-    /// output is 1:1 and in order with `files`, so the k-th slot lines up with
-    /// the k-th `Resolved::Lut` op.
     /// Read a layer's `lens_file` paths into (content hash, text) slots,
     /// 1:1 with the stack's `Resolved::LensFlare` ops (K-264). A `None`
     /// slot (unset, missing on disk, unreadable) degrades to the picked
@@ -70,35 +64,18 @@ impl Realiser<'_> {
             .collect()
     }
 
+    /// Turn a layer's ordered `lut_files` into the parallel `luts` list
+    /// `run_ops` binds (docs/08 §3.11): each `Some(path)` is parsed and
+    /// uploaded once — cached by path *and* last-modified time, bounded and
+    /// LRU-evicted (K-271, docs/impl/lut.md §4) — and a 1D or unreadable/absent
+    /// file yields a `None` slot (a labelled no-op, never a fault). The output
+    /// is 1:1 and in order with `files`, so the k-th slot lines up with the
+    /// k-th `Resolved::Lut` op.
     fn load_luts(&self, files: &[Option<String>]) -> Vec<Option<LoadedLut>> {
         let mut cache = self.lut_cache.borrow_mut();
         files
             .iter()
-            .map(|slot| {
-                let path = slot.as_ref()?;
-                if !cache.contains_key(path) {
-                    // Any IO/parse error, or a 1D LUT, leaves the slot empty:
-                    // the effect is a passthrough, never a panic (§3.11).
-                    if let Some(loaded) = std::fs::read_to_string(path)
-                        .ok()
-                        .and_then(|text| lumit_core::lut::parse_cube(&text).ok())
-                        .and_then(|lut| match lut {
-                            lumit_core::lut::Lut::Cube3d(l) => Some(LoadedLut {
-                                texture: lumit_gpu::fx::upload_lut_3d(
-                                    &self.ctx,
-                                    l.size as u32,
-                                    &l.data,
-                                ),
-                                size: l.size as u32,
-                            }),
-                            lumit_core::lut::Lut::Cube1d(_) => None,
-                        })
-                    {
-                        cache.insert(path.clone(), loaded);
-                    }
-                }
-                cache.get(path).cloned()
-            })
+            .map(|slot| cache.get_or_load(&self.ctx, slot.as_ref()?))
             .collect()
     }
 

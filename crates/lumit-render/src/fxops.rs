@@ -14,14 +14,96 @@ use lumit_gpu::GpuContext;
 type Tex = wgpu::Texture;
 
 /// A parsed-and-uploaded `.cube` LUT ready to bind (docs/08 §3.11,
-/// docs/impl/lut.md): the 3D cube texture plus its per-axis size `N`. Held by
-/// the caller's path-keyed cache and cloned into a `run_ops` `luts` slot;
-/// `wgpu::Texture` is an `Arc` handle, so the clone is cheap and shares the one
-/// upload.
+/// docs/impl/lut.md): the 3D cube texture, its per-axis size `N`, and the input
+/// domain the file declared. Held by [`LutCache`] and cloned into a `run_ops`
+/// `luts` slot; `wgpu::Texture` is an `Arc` handle, so the clone is cheap and
+/// shares the one upload.
 #[derive(Clone)]
 pub struct LoadedLut {
     pub texture: Tex,
     pub size: u32,
+    /// `DOMAIN_MIN` / `DOMAIN_MAX` from the file (default `0..1`), carried to
+    /// the kernel so the GPU remaps exactly as the CPU oracle does (K-271).
+    pub domain_min: [f32; 3],
+    pub domain_max: [f32; 3],
+}
+
+/// How many distinct `.cube` files stay uploaded at once. A comp references a
+/// handful at most (docs/impl/lut.md §4); past that the least recently used one
+/// is dropped, which releases its GPU texture. Small on purpose: an unbounded
+/// cache turned every path a session ever touched into a permanent upload.
+const LUT_CACHE_MAX: usize = 8;
+
+/// The parsed-and-uploaded `.cube` files a render can bind, keyed by **path and
+/// last-modified time** and bounded to [`LUT_CACHE_MAX`] entries, most recently
+/// used first (docs/impl/lut.md §4).
+///
+/// **Why the mtime is part of the key.** Grading is iterative: export a cube
+/// from the grading tool, look at it in Lumit, adjust, export again over the
+/// same path. Keyed by path alone, the second export never appeared — Lumit
+/// kept showing the first grade until the application was restarted, with
+/// nothing on screen to say so (K-271). A file whose mtime has moved is a
+/// different entry, so it is parsed and uploaded again.
+///
+/// A path the filesystem will not stat (it vanished, or the platform has no
+/// mtime for it) keys as `None`, which still matches itself: such a file is
+/// cached by path exactly as before rather than being re-read every frame.
+#[derive(Default)]
+pub struct LutCache {
+    /// Most recently used first. A `Vec` rather than a map because the bound is
+    /// eight: a linear scan of eight strings is faster than hashing one, and
+    /// the ordering the LRU needs is the `Vec`'s own.
+    entries: Vec<(String, Option<std::time::SystemTime>, LoadedLut)>,
+}
+
+impl LutCache {
+    /// The cube at `path`, parsed and uploaded on a miss. `None` for anything
+    /// that is not a usable 3D cube — an unreadable file, a parse error, or a
+    /// 1D LUT — which leaves the effect a labelled passthrough rather than a
+    /// render failure (docs/08 §3.11, the never-crash rule).
+    pub fn get_or_load(&mut self, ctx: &GpuContext, path: &str) -> Option<LoadedLut> {
+        let mtime = std::fs::metadata(path).ok().and_then(|m| m.modified().ok());
+        if let Some(i) = self
+            .entries
+            .iter()
+            .position(|(p, t, _)| p == path && *t == mtime)
+        {
+            // Touch: this entry is now the most recently used.
+            let hit = self.entries.remove(i);
+            let lut = hit.2.clone();
+            self.entries.insert(0, hit);
+            return Some(lut);
+        }
+        // A stale entry for this path (the file was edited) is replaced, not
+        // kept alongside: the old grade is exactly what nobody wants back.
+        self.entries.retain(|(p, _, _)| p != path);
+        let text = std::fs::read_to_string(path).ok()?;
+        let lumit_core::lut::Lut::Cube3d(l) = lumit_core::lut::parse_cube(&text).ok()? else {
+            return None;
+        };
+        let loaded = LoadedLut {
+            texture: lumit_gpu::fx::upload_lut_3d(ctx, l.size as u32, &l.data),
+            size: l.size as u32,
+            domain_min: l.domain_min,
+            domain_max: l.domain_max,
+        };
+        self.entries
+            .insert(0, (path.to_owned(), mtime, loaded.clone()));
+        self.entries.truncate(LUT_CACHE_MAX);
+        Some(loaded)
+    }
+
+    /// How many cubes are held — the bound's test hook, and a number worth
+    /// having when a profile asks where the video memory went.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 }
 
 /// Render one referenced layer alone into the depth input a depth-of-field
@@ -729,7 +811,17 @@ pub fn run_ops(
                 let loaded = luts.get(lut_i).and_then(|o| o.as_ref());
                 lut_i += 1;
                 if let Some(l) = loaded {
-                    tex = fx.lut(ctx, &tex, w, h, &l.texture, l.size, *mix);
+                    tex = fx.lut(
+                        ctx,
+                        &tex,
+                        w,
+                        h,
+                        &l.texture,
+                        l.size,
+                        *mix,
+                        l.domain_min,
+                        l.domain_max,
+                    );
                 }
             }
             Resolved::Dof {
@@ -888,4 +980,158 @@ pub fn run_ops(
         }
     }
     tex
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+
+    /// A tiny valid `.cube` of `size`, with an optional declared domain.
+    fn cube_text(size: usize, domain: Option<([f32; 3], [f32; 3])>) -> String {
+        let mut s = format!("LUT_3D_SIZE {size}\n");
+        if let Some((lo, hi)) = domain {
+            s += &format!("DOMAIN_MIN {} {} {}\n", lo[0], lo[1], lo[2]);
+            s += &format!("DOMAIN_MAX {} {} {}\n", hi[0], hi[1], hi[2]);
+        }
+        let maxf = (size - 1) as f32;
+        for b in 0..size {
+            for g in 0..size {
+                for r in 0..size {
+                    s += &format!(
+                        "{} {} {}\n",
+                        r as f32 / maxf,
+                        g as f32 / maxf,
+                        b as f32 / maxf
+                    );
+                }
+            }
+        }
+        s
+    }
+
+    /// **A `.cube` edited on disk must be re-read** (K-271, docs/impl/lut.md §4).
+    ///
+    /// The regression: the cache keyed by path alone, so exporting a new grade
+    /// over the same filename — the whole loop of grading — kept showing the
+    /// first one until the application was restarted, with nothing on screen to
+    /// say the file on disk and the picture had parted company.
+    #[test]
+    fn an_edited_cube_is_read_again() {
+        let Ok(ctx) = lumit_gpu::GpuContext::headless() else {
+            lumit_gpu::no_adapter();
+            return;
+        };
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let path = dir.path().join("grade.cube");
+        std::fs::write(&path, cube_text(2, None)).expect("written");
+        let name = path.to_string_lossy().to_string();
+
+        let mut cache = LutCache::default();
+        let first = cache.get_or_load(&ctx, &name).expect("loaded");
+        assert_eq!(first.size, 2);
+        assert_eq!(cache.len(), 1);
+
+        // Re-asking without touching the file is a cache hit: still one entry,
+        // still the cube that was parsed the first time.
+        let again = cache.get_or_load(&ctx, &name).expect("loaded");
+        assert_eq!(cache.len(), 1, "an untouched file is not read twice");
+        assert_eq!(again.size, first.size);
+
+        // Now edit it. The sleep is the point of the test, not laziness: two
+        // writes inside one filesystem timestamp tick are indistinguishable,
+        // and the cache is keyed on that tick.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&path, cube_text(3, None)).expect("re-written");
+        let edited = cache.get_or_load(&ctx, &name).expect("loaded");
+        assert_eq!(edited.size, 3, "the new grade is the one that renders");
+        assert_eq!(
+            cache.len(),
+            1,
+            "and the stale entry is replaced, not kept beside it"
+        );
+    }
+
+    /// The declared domain travels with the cube, so the kernel can remap
+    /// through it exactly as the CPU oracle does (K-271). A default-domain file
+    /// still reads 0..1.
+    #[test]
+    fn the_declared_domain_travels_with_the_cube() {
+        let Ok(ctx) = lumit_gpu::GpuContext::headless() else {
+            lumit_gpu::no_adapter();
+            return;
+        };
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let mut cache = LutCache::default();
+
+        let plain = dir.path().join("plain.cube");
+        std::fs::write(&plain, cube_text(2, None)).expect("written");
+        let loaded = cache
+            .get_or_load(&ctx, &plain.to_string_lossy())
+            .expect("loaded");
+        assert_eq!(loaded.domain_min, [0.0; 3]);
+        assert_eq!(loaded.domain_max, [1.0; 3]);
+
+        let log = dir.path().join("log.cube");
+        std::fs::write(
+            &log,
+            cube_text(2, Some(([-0.25, 0.0, 0.1], [1.5, 0.75, 1.0]))),
+        )
+        .expect("written");
+        let loaded = cache
+            .get_or_load(&ctx, &log.to_string_lossy())
+            .expect("loaded");
+        assert_eq!(loaded.domain_min, [-0.25, 0.0, 0.1]);
+        assert_eq!(loaded.domain_max, [1.5, 0.75, 1.0]);
+    }
+
+    /// The cache is bounded and evicts the least recently used, so a long
+    /// session that touches many `.cube` files does not accumulate uploads
+    /// (docs/impl/lut.md §4). Re-asking for an old file *keeps it alive*, which
+    /// is what "least recently used" has to mean.
+    #[test]
+    fn the_cache_is_bounded_and_keeps_what_is_used() {
+        let Ok(ctx) = lumit_gpu::GpuContext::headless() else {
+            lumit_gpu::no_adapter();
+            return;
+        };
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let mut cache = LutCache::default();
+        let path = |i: usize| dir.path().join(format!("cube{i}.cube"));
+        for i in 0..=LUT_CACHE_MAX {
+            std::fs::write(path(i), cube_text(2, None)).expect("written");
+        }
+
+        // Fill it exactly, then keep the first one fresh by asking for it again.
+        for i in 0..LUT_CACHE_MAX {
+            cache
+                .get_or_load(&ctx, &path(i).to_string_lossy())
+                .expect("loaded");
+        }
+        assert_eq!(cache.len(), LUT_CACHE_MAX);
+        cache
+            .get_or_load(&ctx, &path(0).to_string_lossy())
+            .expect("still there");
+
+        // One more file evicts the least recently used — which is now cube1,
+        // not cube0.
+        cache
+            .get_or_load(&ctx, &path(LUT_CACHE_MAX).to_string_lossy())
+            .expect("loaded");
+        assert_eq!(cache.len(), LUT_CACHE_MAX, "the bound holds");
+        assert!(
+            cache
+                .entries
+                .iter()
+                .any(|(p, _, _)| p == &*path(0).to_string_lossy()),
+            "the one that was used again survived"
+        );
+        assert!(
+            !cache
+                .entries
+                .iter()
+                .any(|(p, _, _)| p == &*path(1).to_string_lossy()),
+            "and the least recently used went"
+        );
+    }
 }

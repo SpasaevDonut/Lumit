@@ -5566,3 +5566,25 @@ which no widening of `BridgeMarker` was going to cover. Both the composition's l
 every layer's own (K-254) go through the one helper. Also recorded: the TODO entry claiming
 installed RAM is read only on Windows was stale — K-204 answers it on all three desktops;
 only `video_memory_bytes` is still Windows-only, and the entry now says that instead.
+
+**K-271 · DECIDED · The LUT kernel remaps through the cube's own domain, and the cube
+cache notices the file changing.** Both halves of [impl/lut.md](impl/lut.md)'s recorded
+K-114 gaps, closed together because they are the same effect's two ways of showing the
+wrong grade. **(1) The domain.** `fx_lut.wgsl` assumed the default `0..1` input domain and
+skipped the `(c - lo) / (hi - lo)` remap `Lut3d::sample` applies, so a `.cube` declaring a
+`DOMAIN_MIN`/`DOMAIN_MAX` — the log and display-referred cubes a grading tool exports —
+rendered silently wrong on the GPU while the CPU oracle was right. `LutParams` now carries
+the six floats (two padded `vec4`s; a uniform `vec3` is 16-byte aligned regardless) and the
+shader remaps operation for operation, including the zero-span guard: a `DOMAIN_MIN` equal
+to its `DOMAIN_MAX` reads as 0 on both paths rather than dividing. Chosen over the recorded
+alternative (refusing such cubes as a labelled no-op) because the maths was already written
+down in §2 and the file is not wrong — Lumit was. The oracle test gains an asymmetric
+non-default-domain cube and a degenerate zero-span one; the old shader misses the first by
+23684 fp16 ULP. **(2) The cache.** One `LutCache` keyed by `(path, mtime)` and bounded to
+eight entries, most recently used first, replacing the unbounded path-only map. Grading is
+iterative — export the cube, look, adjust, export again over the same path — and keyed by
+path alone the second export never appeared until the application restarted, with nothing
+on screen to say the file and the picture had parted company. A stale entry for a path is
+replaced rather than kept beside the new one; a path that cannot be stat'd keys as `None`,
+which still matches itself, so it is cached by path exactly as before instead of being
+re-read every frame.
