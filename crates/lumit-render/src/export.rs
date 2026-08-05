@@ -763,7 +763,7 @@ mod tests {
         let cancel = AtomicBool::new(false);
         match run(doc, comp, &[], path, spec, &tx, &cancel) {
             Err(e) if e.starts_with("export renderer:") => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 None
             }
             other => Some(other),

@@ -2927,6 +2927,30 @@ stayed green for weeks while nobody could actually clone the repository on Linux
 it. The jobs now leave that route alone and let the build find FFmpeg the ordinary way. If
 a step exists purely to make CI work, ask who else has to run it.
 
+Two of those checks were quietly weaker than they looked, and K-269 fixed both.
+
+**A skipped test looks exactly like a passing one.** Every test that needs a graphics card
+is written to *skip itself* when there isn't one — that is what lets the suite run on a
+laptop with nothing installed. But it also means a machine whose graphics driver went
+missing runs none of them and still reports a green tick: about ninety checks of the actual
+shader maths, silently not run. So there is now an environment variable,
+`LUMIT_REQUIRE_GPU`, that turns "no adapter" from a polite skip into a failure, and the
+Linux job — the one that deliberately installs lavapipe — sets it. Your own machine leaves
+it unset and keeps the friendly skip. The macOS and Windows jobs deliberately do not set it
+yet: nobody has confirmed those runners offer an adapter at all, and a gate is only worth
+having where it has been checked.
+
+**The no-hex rule was being enforced on the wrong language.** Every colour is supposed to
+come from the theme, so the schemes and any custom theme actually reach every pixel — and
+CI was grepping for stray colour values in the *Rust* code, which is where the old frontend
+lived. All the widgets are Dart now. The same grep now runs over `flutter_ui/lib` outside
+`theme/`, and it found three real ones: a modal window's dimming wash spelled out in hex,
+and Material's own red and amber standing in for the theme's error and warning colours. The
+wash became a proper token (`scrim`), so it follows the scheme like everything else. Two
+things deliberately still pass: fully transparent (`0x00000000`), which is the *absence* of
+a colour rather than a choice of one, and rebuilding a colour from numbers that came out of
+a saved file, which is data rather than a design decision.
+
 ### How Lumit knows how much memory your machine has (K-194, K-204)
 
 Settings → Performance lets you type a cache size in megabytes, which means the engine

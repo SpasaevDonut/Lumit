@@ -1647,7 +1647,7 @@ mod tests {
     #[test]
     fn blending_happens_in_linear_light() {
         let Ok(ctx) = GpuContext::headless() else {
-            eprintln!("skipping: no GPU adapter");
+            crate::no_adapter();
             return;
         };
         let colour = ColourEngine::new(&ctx);
@@ -1701,7 +1701,7 @@ mod tests {
     #[test]
     fn matte_gates_a_layer_per_pixel() {
         let Ok(ctx) = GpuContext::headless() else {
-            eprintln!("skipping: no GPU adapter");
+            crate::no_adapter();
             return;
         };
         let colour = ColourEngine::new(&ctx);
@@ -1798,7 +1798,7 @@ mod tests {
     #[test]
     fn luma_matte_uses_perceptual_encoded_luminance() {
         let Ok(ctx) = GpuContext::headless() else {
-            eprintln!("skipping: no GPU adapter");
+            crate::no_adapter();
             return;
         };
         let colour = ColourEngine::new(&ctx);
@@ -1874,7 +1874,7 @@ mod tests {
     #[test]
     fn camera_perspective_scales_by_depth() {
         let Ok(ctx) = GpuContext::headless() else {
-            eprintln!("skipping: no GPU adapter");
+            crate::no_adapter();
             return;
         };
         let colour = ColourEngine::new(&ctx);
@@ -1926,7 +1926,7 @@ mod tests {
     #[test]
     fn screen_blend_matches_the_perceptual_formula() {
         let Ok(ctx) = GpuContext::headless() else {
-            eprintln!("skipping: no GPU adapter");
+            crate::no_adapter();
             return;
         };
         let colour = ColourEngine::new(&ctx);
@@ -1977,7 +1977,7 @@ mod tests {
     #[test]
     fn perceptual_blend_modes_match_the_reference_formula() {
         let Ok(ctx) = GpuContext::headless() else {
-            eprintln!("skipping: no GPU adapter");
+            crate::no_adapter();
             return;
         };
         let colour = ColourEngine::new(&ctx);
@@ -2200,7 +2200,7 @@ mod tests {
     #[test]
     fn layer_mask_texture_gates_alpha() {
         let Ok(ctx) = GpuContext::headless() else {
-            eprintln!("skipping: no GPU adapter");
+            crate::no_adapter();
             return;
         };
         let colour = ColourEngine::new(&ctx);
@@ -2247,7 +2247,7 @@ mod tests {
     #[test]
     fn snapshot_blends_match_their_formulas() {
         let Ok(ctx) = GpuContext::headless() else {
-            eprintln!("skipping: no GPU adapter");
+            crate::no_adapter();
             return;
         };
         let colour = ColourEngine::new(&ctx);
@@ -2332,7 +2332,7 @@ mod tests {
     #[test]
     fn add_blend_adds_light_linearly() {
         let Ok(ctx) = GpuContext::headless() else {
-            eprintln!("skipping: no GPU adapter");
+            crate::no_adapter();
             return;
         };
         let colour = ColourEngine::new(&ctx);
@@ -2380,7 +2380,7 @@ mod tests {
     #[test]
     fn subtract_blend_removes_light_linearly() {
         let Ok(ctx) = GpuContext::headless() else {
-            eprintln!("skipping: no GPU adapter");
+            crate::no_adapter();
             return;
         };
         let colour = ColourEngine::new(&ctx);
@@ -2438,7 +2438,7 @@ mod tests {
     #[test]
     fn a_seeded_composite_continues_the_accumulation() {
         let Ok(ctx) = GpuContext::headless() else {
-            eprintln!("skipping: no GPU adapter");
+            crate::no_adapter();
             return;
         };
         let colour = ColourEngine::new(&ctx);
@@ -2500,7 +2500,7 @@ mod tests {
     #[test]
     fn a_render_scale_shrinks_the_target_but_not_the_geometry() {
         let Ok(ctx) = GpuContext::headless() else {
-            eprintln!("skipping: no GPU adapter");
+            crate::no_adapter();
             return;
         };
         let colour = ColourEngine::new(&ctx);
@@ -2555,7 +2555,7 @@ mod tests {
     #[test]
     fn motion_blur_average_widens_coverage_and_preserves_static_alpha() {
         let Ok(ctx) = GpuContext::headless() else {
-            eprintln!("skipping: no GPU adapter");
+            crate::no_adapter();
             return;
         };
         let colour = ColourEngine::new(&ctx);
@@ -2643,7 +2643,7 @@ mod tests {
     #[test]
     fn accumulate_averages_premultiplied_frames() {
         let Ok(ctx) = GpuContext::headless() else {
-            eprintln!("skipping: no GPU adapter");
+            crate::no_adapter();
             return;
         };
         let colour = ColourEngine::new(&ctx);
@@ -2725,7 +2725,7 @@ mod tests {
     #[test]
     fn accumulate_is_bit_exact_at_fractional_coverage() {
         let Ok(ctx) = GpuContext::headless() else {
-            eprintln!("skipping: no GPU adapter");
+            crate::no_adapter();
             return;
         };
         let colour = ColourEngine::new(&ctx);
@@ -2783,7 +2783,7 @@ mod tests {
     #[test]
     fn transforms_place_layers_in_comp_pixels() {
         let Ok(ctx) = GpuContext::headless() else {
-            eprintln!("skipping: no GPU adapter");
+            crate::no_adapter();
             return;
         };
         let colour = ColourEngine::new(&ctx);

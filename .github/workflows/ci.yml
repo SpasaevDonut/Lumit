@@ -96,6 +96,16 @@ jobs:
       # three platforms link an identical FFmpeg. The distro's own is 6.x,
       # which the crate's `ffmpeg7_1` feature does not match.
       FFMPEG_ASSET: ffmpeg-n7.1-latest-linux64-gpl-shared-7.1
+      # This runner installs Mesa's lavapipe below, so every GPU test MUST run
+      # here: a missing adapter is a broken runner, not a machine without a
+      # graphics card, and `lumit_gpu::no_adapter` turns the polite skip into a
+      # failure when this is set. Without it a job that lost its Vulkan driver
+      # would skip ~90 kernel oracles and still report green — which is exactly
+      # what the suite looked like before this line existed. The macOS and
+      # Windows jobs deliberately do NOT set it yet: nobody has confirmed those
+      # runners enumerate an adapter, and a gate is only worth having where it
+      # has been verified. Flip it on there the day a run proves they do.
+      LUMIT_REQUIRE_GPU: 1
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -147,8 +157,10 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace --exclude lumit-gpu
       # The GPU oracles single-threaded (the project convention), so a software
-      # rasteriser neither races nor thrashes. They skip themselves when no
-      # adapter is present, so this can only fail on a real regression.
+      # rasteriser neither races nor thrashes. With LUMIT_REQUIRE_GPU set (see
+      # the job env) they can no longer skip themselves here: on this runner a
+      # missing lavapipe adapter fails the job instead of quietly proving
+      # nothing about the kernels.
       - name: GPU oracle tests (lavapipe software Vulkan)
         run: cargo test -p lumit-gpu -- --test-threads=1
       - name: Release-mode compile check
@@ -480,6 +492,33 @@ jobs:
           if [ -n "$hits" ]; then
             echo "Colour values outside the theme (docs/15-DESIGN.md):"
             echo "$hits"
+            exit 1
+          fi
+      # The Rust grep above guarded a frontend that no longer exists (K-182):
+      # every widget now lives in Dart, so that is where a stray hex actually
+      # gets written. flutter_ui/lib/theme/ is the one place colours may be
+      # spelled out (its own header says so); everywhere else must read a token
+      # off LumitTheme, or the seven colour schemes and any custom theme simply
+      # do not reach that pixel.
+      #
+      # Three shapes are caught: a hex Color(0x...) literal, Material's Colors.*
+      # palette (a named hex by another route), and a Color.fromARGB/fromRGBO
+      # built entirely from number literals. A fromARGB whose channels come from
+      # variables is how a *stored* colour is rebuilt — that is data, not a
+      # design decision, so it passes. Fully transparent (0x00000000) passes
+      # too: it is the absence of a colour, not a choice of one.
+      - name: Dart-side design-token lint (flutter_ui/lib outside theme/)
+        run: |
+          hits=$(
+            grep -rnP "Color\(0x(?!00000000)[0-9a-fA-F]{8}\)|\bColors\.[a-zA-Z]|Color\.from(ARGB|RGBO)\( *[0-9][^,]*, *[0-9][^,]*, *[0-9]" \
+              flutter_ui/lib --include='*.dart' \
+            | grep -v '^flutter_ui/lib/theme/' || true
+          )
+          if [ -n "$hits" ]; then
+            echo "Colour values outside flutter_ui/lib/theme/ (docs/15-DESIGN.md §4.1):"
+            echo "$hits"
+            echo
+            echo "Read the colour off LumitTheme instead; add a token if none fits."
             exit 1
           fi
 

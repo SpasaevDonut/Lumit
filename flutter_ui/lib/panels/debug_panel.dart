@@ -56,11 +56,11 @@ class _DebugPanelState extends State<DebugPanel> {
     final theme = ThemeScope.of(context).theme;
 
     if (ms > 8) {
-      return Colors.red;
+      return theme.error;
     }
 
     if (ms > 3) {
-      return Colors.amber;
+      return theme.warning;
     }
 
     return theme.textMuted;
@@ -145,7 +145,7 @@ class _DebugPanelState extends State<DebugPanel> {
             HouseButton(
               child: Text(
                 "$len in last second",
-                style: theme.body.copyWith(color: len > 20 ? Colors.red : null),
+                style: theme.body.copyWith(color: len > 20 ? theme.error : null),
               ),
             ),
             HouseButton(
