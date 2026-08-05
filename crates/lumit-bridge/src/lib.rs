@@ -34,6 +34,8 @@
 //!   valid. It also holds the cross-thread controls and mirrors for the two tiers
 //!   the worker owns (the textures on the graphics card and the frames parked on
 //!   disk), which back the Settings cache controls and the Timeline's cache bar.
+//! - `profiling` — whether the worker is measuring per-layer and per-effect
+//!   render times for the indicators (docs/13 §7.1).
 //! - [`realtime`] — the adaptive playback tier decision core (K-171).
 //! - [`audio`] — comp audio playback and the sample clock (`media` feature).
 //! - [`export`] — the export runner and its progress reporting.
@@ -64,6 +66,7 @@ mod media;
 mod names;
 mod playback;
 mod prefetch;
+mod profiling;
 mod realtime;
 mod render;
 

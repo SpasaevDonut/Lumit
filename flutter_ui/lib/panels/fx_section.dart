@@ -48,6 +48,21 @@ class FxSection extends StatelessWidget {
   /// Hard right — the close mark.
   final Widget? trailing;
 
+  /// A right-click on the heading, with the pointer's global position — where
+  /// the actions that are not worth a permanent button live (an effect's
+  /// reordering, K-276). Null leaves the secondary click unclaimed.
+  final void Function(Offset at)? onContextMenu;
+
+  /// This section's place in its list, when the heading may be **dragged** to
+  /// another place in it (docs/07 §6's drag-to-reorder). Null — Source,
+  /// Transform, anything that does not sit in a reorderable stack — leaves the
+  /// heading undraggable and accepting nothing.
+  final int? dragIndex;
+
+  /// A heading dropped on this one: the place it came from. Called only when
+  /// [dragIndex] is set and the two differ.
+  final void Function(int from)? onDropped;
+
   /// The rows under the heading, drawn only while [open].
   final List<Widget> rows;
 
@@ -60,6 +75,9 @@ class FxSection extends StatelessWidget {
     this.leading,
     this.actions = const [],
     this.trailing,
+    this.onContextMenu,
+    this.dragIndex,
+    this.onDropped,
   });
 
   @override
@@ -68,7 +86,7 @@ class FxSection extends StatelessWidget {
     final column = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _heading(t),
+        _draggableHeading(t),
         if (open)
           for (final row in rows)
             Container(
@@ -95,9 +113,50 @@ class FxSection extends StatelessWidget {
     );
   }
 
+  /// The heading, wrapped in the drag-and-drop that reorders the stack when
+  /// this section has a place in one. Dragging the *name* is how a stack is
+  /// reordered everywhere else in the application (layers in the Timeline,
+  /// items in the Project panel), so an effect stack reorders the same way; the
+  /// heading also stays a drop target, and the one under the pointer lights up
+  /// so it is clear which place is being taken.
+  Widget _draggableHeading(LumitTheme t) {
+    final index = dragIndex;
+    if (index == null || onDropped == null) return _heading(t);
+    return DragTarget<int>(
+      onWillAcceptWithDetails: (d) => d.data != index,
+      onAcceptWithDetails: (d) => onDropped!(d.data),
+      builder: (context, candidate, _) => Draggable<int>(
+        data: index,
+        // The pointer carries the effect's name and nothing else: a full-width
+        // card under the cursor hides the stack it is being placed into.
+        feedback: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: t.surface2,
+            borderRadius: BorderRadius.circular(t.tokens.controlRadius),
+            border: Border.all(color: t.accent),
+          ),
+          child: Text(title, style: t.small),
+        ),
+        childWhenDragging: Opacity(opacity: 0.4, child: _heading(t)),
+        child: candidate.isEmpty
+            ? _heading(t)
+            : DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border(top: BorderSide(color: t.accent, width: 2)),
+                ),
+                child: _heading(t),
+              ),
+      ),
+    );
+  }
+
   Widget _heading(LumitTheme t) => GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: onToggle,
+        onSecondaryTapUp: onContextMenu == null
+            ? null
+            : (details) => onContextMenu!(details.globalPosition),
         child: Container(
           color: t.surface2,
           padding: const EdgeInsets.fromLTRB(4, 4, 6, 4),

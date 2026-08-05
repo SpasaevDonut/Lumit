@@ -215,14 +215,19 @@ machine". Exceptions require a decision entry in [02-DECISIONS.md](02-DECISIONS.
 
 - New workspace dependencies require justification in the PR description: what it does, why
   not std/an existing dep, licence (GPLv3-compatible), maintenance signal. `cargo deny`
-  for licences, advisories, and duplicate versions is intended for CI but not yet wired
-  ([TODO.md](TODO.md)).
+  runs in CI over licences, advisories, wildcards and sources (K-272); `deny.toml` carries
+  the allowed-licence list and the reasoning, including every deliberately ignored
+  unmaintained-crate advisory and what it would take to leave it. Duplicate versions warn
+  rather than fail — wgpu and rsmpeg each bring their own stack — so the count stays
+  visible without failing builds nobody here can fix.
 - FFI-heavy and slow-to-compile crates (wgpu, rsmpeg, cudarc, QuickJS bindings) stay in
   their one owning leaf crate ([05-ARCHITECTURE.md](05-ARCHITECTURE.md) §1.1) so incremental
   builds of app-level crates stay in seconds.
-- The workspace is edition 2021 today; a `rust-toolchain.toml` pin and the edition-2024
-  move are owed ([TODO.md](TODO.md)). MSRV bumps are deliberate, logged in the changelog,
-  never incidental.
+- The workspace is edition 2021 today; the edition-2024 move is still owed
+  ([TODO.md](TODO.md)). The toolchain **is** pinned: `rust-toolchain.toml` names the one
+  version every machine and every CI job builds with (K-272), so a compiler released
+  mid-week cannot turn a new warning into a red build on a commit that changed nothing.
+  Raising it is deliberate — bump the file, run the full suite, log it in the changelog.
 
 ## 10. Definition of done
 

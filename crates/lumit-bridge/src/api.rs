@@ -4,7 +4,11 @@ use lumit_core::OpError;
 
 pub mod assets;
 pub mod audio;
-#[cfg(feature = "media")]
+// Always compiled, feature or no feature: the generated Dart is one shape
+// whatever the build (docs/17 §Feature gates), so an API function that
+// disappears with a feature breaks `--no-default-features` at the generated
+// call site rather than at anything a person wrote (K-273). Detection itself
+// needs the audio pipeline and says so calmly when the build has none.
 pub mod beats;
 pub mod cache;
 pub mod composition;

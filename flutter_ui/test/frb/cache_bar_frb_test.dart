@@ -573,6 +573,12 @@ void main() {
     testWidgets('the idle fill warms frames around the playhead',
         (tester) async {
       final p = freshProject();
+      // Nothing measured here: a measured frame is deliberately composited
+      // rather than served from a tier (K-276), which is the opposite of what
+      // this test is about and enough extra work under a loaded runner to eat
+      // the fill's window.
+      p.uiState.renderTimings.setMeasuring(false);
+      addTearDown(() => p.uiState.renderTimings.setMeasuring(true));
       final comp = p.state.project!.newComposition(name: 'Scene');
       // A postage-stamp comp, because the question is whether the fill *banks*
       // frames, not how fast a machine can composite one. At the default

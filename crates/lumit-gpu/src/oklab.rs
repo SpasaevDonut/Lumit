@@ -209,7 +209,7 @@ mod tests {
     #[test]
     fn wgsl_twin_compiles() {
         let Ok(ctx) = crate::GpuContext::headless() else {
-            eprintln!("skipping: no GPU adapter");
+            crate::no_adapter();
             return;
         };
         let _module = ctx

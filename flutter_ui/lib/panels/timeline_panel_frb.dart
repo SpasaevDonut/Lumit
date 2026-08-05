@@ -58,6 +58,7 @@ import 'timeline_razor.dart';
 import 'effect_param_row_frb.dart';
 import 'keyframe_controls_frb.dart';
 import 'layer_fold_frb.dart';
+import 'timeline_timings.dart';
 import 'transform_rows_frb.dart';
 
 /// The blend-mode names, fetched once per session: the list is static for the
@@ -70,6 +71,17 @@ const double _rowHeight = 22;
 /// The outline's two header rows: the toolbar (timecode, search, the view
 /// buttons) and the column-group header under it.
 const double _toolbarHeight = 26;
+
+/// The lane side's bottom bar (zoom, magnet, the horizontal scrollbar).
+///
+/// **The outline reserves the same height below its rows**, and that is not
+/// decoration: the two halves are one table, and a viewport that is shorter on
+/// one side can be scrolled further than the other. The lanes could run past the
+/// outline's last row by exactly this bar's height, and the halves came apart at
+/// the bottom of a long stack — reported as "the lane area can scroll up more
+/// than the layer area". Reserving it keeps both viewports the same height,
+/// which is what keeps `maxScrollExtent` the same on both.
+const double _laneBottomBarHeight = 20;
 const double _headerHeight = 20;
 
 /// The time ruler's height: the toolbar and column header stay inside the
@@ -495,13 +507,12 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
           {List<BridgeLayerEntry> among = const []}) =>
       setState(() {
         if (ui.selectedLayer.value?.internallayerId != layer?.internallayerId) {
-          _selectedProperties.clear();
-          _graphKeySelection.clear();
-          // The highlight belongs to the property selection just cleared, so
-          // it goes with it. Left behind, the previous layer's row stayed lit
-          // after a click on a different layer — two layers appearing chosen
-          // at once, which is the ambiguity K-203 set out to remove.
-          _highlighted = null;
+          // The one place this is decided, shared with the listener that
+          // catches a selection made in the Viewer (K-275). The highlight goes
+          // with the property selection it belongs to: left behind, the
+          // previous layer's row stayed lit after a click on a different
+          // layer.
+          _dropLayerLocalSelection();
         }
         if (layer == null) {
           ui.clearSelection();
@@ -972,6 +983,45 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     // deactivated, where an ancestor lookup is no longer safe.
     _ui = Provider.of<LumitUiState>(context, listen: false);
     _ui!.deleteClaim = _deleteSelectedMasks;
+    // The selection can change from outside this panel — a click on the
+    // picture in the Viewer is the everyday case (K-275). The property
+    // selection, the graph's key selection and the row highlight all belong to
+    // whichever layer was chosen, so they are cleared wherever the choosing
+    // happened rather than only in this panel's own click path. Without this,
+    // picking a different layer on the picture left the *previous* layer's
+    // rows lit in the Timeline: two layers appearing chosen at once, which is
+    // the ambiguity K-203 set out to remove.
+    _primary = _ui!.selectedLayer.value?.internallayerId;
+    _ui!.selectedLayer.addListener(_onPrimaryChanged);
+    // Switching measuring off takes the render-time column away entirely, and
+    // the outline is that much narrower for it — a layout change, so the panel
+    // has to hear about it rather than only the cells inside the column.
+    _ui!.renderTimings.addListener(_onTimingsChanged);
+  }
+
+  void _onTimingsChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// The layer the panel's local selections belong to, so a change of primary
+  /// can be told from a rebuild.
+  UuidValue? _primary;
+
+  void _onPrimaryChanged() {
+    final now = _ui?.selectedLayer.value?.internallayerId;
+    if (now == _primary) return;
+    _primary = now;
+    if (!mounted) return;
+    setState(_dropLayerLocalSelection);
+  }
+
+  /// Everything the panel holds that belongs to one layer. Called whenever the
+  /// primary changes, from here or from anywhere else.
+  void _dropLayerLocalSelection() {
+    _selectedProperties.clear();
+    _graphKeySelection.clear();
+    _laneKeySelection.clear();
+    _highlighted = null;
   }
 
   /// The shell state this panel claimed Delete on, so the claim can be dropped
@@ -1306,6 +1356,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_onKey);
+    _ui?.selectedLayer.removeListener(_onPrimaryChanged);
+    _ui?.renderTimings.removeListener(_onTimingsChanged);
     if (_ui?.deleteClaim == _deleteSelectedMasks) _ui!.deleteClaim = null;
     _boundTools?.removeListener(_onToolChanged);
     _barDrag.dispose();
@@ -1432,6 +1484,26 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   Widget _body(
       BuildContext context, LumitUiState ui, CompositionReference comp) {
     final t = ThemeScope.of(context).theme;
+    // The columns actually drawn. The render-time column is only there while
+    // something is being measured (K-276): switched off it takes no width, no
+    // header and no cells — a column of blanks is not a column, and the outline
+    // is short of room as it is. Everything downstream — the header, the rows,
+    // the fold-out's value and render-time cells, the outline's own width —
+    // works from these rather than from the stored order, so the geometry
+    // follows in one place.
+    final measuring = ui.renderTimings.measuring;
+    final groupOrder = measuring
+        ? _groupOrder
+        : [
+            for (final group in _groupOrder)
+              if (group != TimelineGroup.timings) group
+          ];
+    final groupWidths = measuring
+        ? _groupWidths
+        : {
+            for (final entry in _groupWidths.entries)
+              if (entry.key != TimelineGroup.timings) entry.key: entry.value
+          };
     final frames = ui.model.durationFrames;
     final (fpsNum, fpsDen) = ui.model.fpsExact;
     final needle = _search.trim().toLowerCase();
@@ -1552,7 +1624,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                   // The outline is as wide as its groups make it, and counts
                   // its own scroll gutter so the columns keep their places
                   // when the view changes.
-                  final outlineWidth = outlineWidthOf(_groupWidths);
+                  final outlineWidth = outlineWidthOf(groupWidths);
                   final outlineViewport = (constraints.maxWidth - 120)
                       .clamp(120.0, outlineWidth + scrollGutterWidth);
                   // The axis spans the lane viewport times the zoom: at 1 the
@@ -1582,19 +1654,41 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                   // playhead is: the line itself, and the razor (which reads it
                   // when clicked). Both listen for themselves now.
                   //
-                  // Dragging never scrolls the timeline — the wheel and the
-                  // scrollbars do (docs/07 §4.6). A drag on empty lane space
-                  // is the keyframe marquee, and a scrollable competing for
-                  // it in the gesture arena would win and eat the box.
+                  // Dragging never scrolls the timeline — the wheel, the
+                  // trackpad and the scrollbars do (docs/07 §4.6). A drag on
+                  // empty lane space is the keyframe marquee, and a scrollable
+                  // competing for it in the gesture arena would win and eat the
+                  // box.
+                  //
+                  // **The trackpad is the exception, and it has to be**: a
+                  // two-finger scroll on a Mac arrives as a pan *gesture*, not
+                  // as the wheel's pointer signal, so an empty `dragDevices`
+                  // set — which is what this was — left the panel unscrollable
+                  // by trackpad while the wheel worked perfectly. Nobody with a
+                  // mouse could see it. Allowing exactly `trackpad` here scrolls
+                  // on two fingers and still leaves a click-drag to the marquee
+                  // (a click-drag is a pointer drag, not a pan-zoom); the
+                  // editing recognisers over these surfaces exclude the
+                  // trackpad in turn, so they cannot take it back
+                  // (`dragDevices` in widgets/controls.dart).
                   return ScrollConfiguration(
-                    behavior: ScrollConfiguration.of(context)
-                        .copyWith(dragDevices: const {}, scrollbars: false),
+                    behavior: ScrollConfiguration.of(context).copyWith(
+                        dragDevices: const {PointerDeviceKind.trackpad},
+                        scrollbars: false),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         SizedBox(
                           width: outlineViewport,
-                          child: Stack(
+                          // A column, to match the lane side's: rows, then a
+                          // block the height of the lane bottom bar, so both
+                          // halves give their rows the same viewport and scroll
+                          // the same distance ([_laneBottomBarHeight]).
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Expanded(
+                                  child: Stack(
                             children: [
                               Row(
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1630,8 +1724,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                               onChanged: ui.model.refresh,
                                             ),
                                             _ColumnHeader(
-                                              order: _groupOrder,
-                                              widths: _groupWidths,
+                                              order: groupOrder,
+                                              widths: groupWidths,
                                               onResize: _resizeGroup,
                                               onReorder: (dragged, target) =>
                                                   setState(
@@ -1670,8 +1764,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                     renameRequest:
                                                         _renameRequest,
                                                     blockHeights: blockHeights,
-                                                    groupOrder: _groupOrder,
-                                                    widths: _groupWidths,
+                                                    groupOrder: groupOrder,
+                                                    widths: groupWidths,
                                                     selectedIds:
                                                         ui.selectedLayerIds,
                                                     highlighted: _highlighted,
@@ -1765,6 +1859,12 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                     ),
                                   ),
                                 ),
+                              ),
+                            ],
+                              )),
+                              Container(
+                                height: _laneBottomBarHeight,
+                                color: t.surface1,
                               ),
                             ],
                           ),
@@ -2194,6 +2294,10 @@ class _FoldRow extends StatelessWidget {
   /// whatever order the groups are dragged into (docs/07 §4.3).
   final ValueColumn valueColumn;
 
+  /// Where the render-time readout goes, so an effect's measured cost sits
+  /// under the same header its layer's does (docs/13 §7.1).
+  final ValueColumn timingsColumn;
+
   /// Where the identity group starts in the current order — the fold-out
   /// hangs off the layer's own twirl, so a group's twirl sits just inside it
   /// rather than at the row's far left.
@@ -2223,6 +2327,7 @@ class _FoldRow extends StatelessWidget {
     required this.layer,
     required this.row,
     required this.valueColumn,
+    required this.timingsColumn,
     required this.baseIndent,
     required this.path,
     required this.selectedProperties,
@@ -2283,10 +2388,35 @@ class _FoldRow extends StatelessWidget {
                 color: open ? t.textPrimary : t.textMuted,
               ),
               const SizedBox(width: 4),
-              Flexible(
-                child:
-                    Text(label, style: t.body, overflow: TextOverflow.ellipsis),
-              ),
+              // An effect's own heading carries what that effect cost, in the
+              // render-time column with the layer totals (docs/13 §7.1). Every
+              // other heading — Transform, Effects, Audio — is a grouping
+              // rather than a thing that renders, so it carries nothing.
+              //
+              // **Expanded, and no Spacer.** A `Flexible` label beside a
+              // `Spacer` splits the free space between them, which put the
+              // number halfway across the row instead of in the column: two
+              // flex children share, they do not queue. One Expanded label
+              // takes the space, and the cell that follows lands hard right —
+              // where the layer rows' numbers are.
+              if (effectIdOfPath(path) case final String effectId
+                  when timingsColumn.width > 0) ...[
+                Expanded(
+                  child: Text(label,
+                      style: t.body, overflow: TextOverflow.ellipsis),
+                ),
+                Padding(
+                  padding: EdgeInsets.only(right: timingsColumn.rightInset),
+                  child: SizedBox(
+                    width: timingsColumn.width,
+                    child: TimingsCell(effectId: effectId),
+                  ),
+                ),
+              ] else
+                Flexible(
+                  child: Text(label,
+                      style: t.body, overflow: TextOverflow.ellipsis),
+                ),
             ],
           ),
         ),
@@ -3960,6 +4090,7 @@ class _ColumnHeader extends StatelessWidget {
         TimelineGroup.identity => 'Layer',
         TimelineGroup.render => 'Switches',
         TimelineGroup.compose => 'Matte · Blend · Parent',
+        TimelineGroup.timings => 'Render time',
       };
 
   /// The header cells, in the same widths the rows use, so each icon stands
@@ -4020,6 +4151,8 @@ class _ColumnHeader extends StatelessWidget {
             cell(LumitIcon.cube3d, '3D layer'),
           ],
         ),
+      // The render-time column's header is its switch — see timeline_timings.
+      TimelineGroup.timings => const TimingsHeaderCell(),
       TimelineGroup.compose => () {
           final (matte, blend, parent) = composeCellWidths(width);
           return Row(
@@ -4231,6 +4364,7 @@ class _Outline extends StatelessWidget {
                   layer: layers[i].layer,
                   row: row,
                   valueColumn: valueColumn,
+                  timingsColumn: timingsColumnFor(groupOrder, widths),
                   baseIndent: identityStart(groupOrder, widths),
                   path: foldRowPath(
                       layers[i].layer.internallayerId.toString(), row),
@@ -4486,6 +4620,12 @@ class _OutlineRowState extends State<_OutlineRow> {
                     _ownClick(_renderCells(context, info)),
                   TimelineGroup.compose => _ownClick(_composeCells(context, t,
                       info, widget.widths[TimelineGroup.compose] ?? 0)),
+                  // What this layer's own picture cost in the last measured
+                  // frame (docs/13 §7.1). A readout, not a control: it neither
+                  // selects the layer nor claims the click.
+                  TimelineGroup.timings => TimingsCell(
+                      layerId: layer.internallayerId.toString(),
+                    ),
                 },
               ),
             ],
@@ -4593,6 +4733,7 @@ class _OutlineRowState extends State<_OutlineRow> {
               ? _name(t, id, info)
               : GestureDetector(
                   behavior: HitTestBehavior.opaque,
+                  supportedDevices: dragDevices,
                   onVerticalDragStart: (_) {
                     _dragTravel = 0;
                     widget.layerDrag.value = LayerDrag(index, index);
@@ -5674,6 +5815,7 @@ class _KeyLaneState extends State<_KeyLane> {
                 // marquee could fill the lane catch, so easing one key from
                 // the lanes (F9, the bottom bar's buttons) had nothing to act
                 // on and looked like it did nothing.
+                supportedDevices: dragDevices,
                 onHorizontalDragStart: (_) {
                   final keyboard = HardwareKeyboard.instance;
                   widget.onSelectKey(
@@ -5873,7 +6015,7 @@ class _LaneBottomBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
     return Container(
-      height: 20,
+      height: _laneBottomBarHeight,
       color: t.surface1,
       padding: const EdgeInsets.symmetric(horizontal: 4),
       child: LayoutBuilder(
@@ -6217,6 +6359,7 @@ class _BarState extends State<_Bar> {
                 onHorizontalDragDown: widget.razor || held
                     ? null
                     : (d) => _downDx = d.localPosition.dx,
+                supportedDevices: dragDevices,
                 onHorizontalDragStart: widget.razor || held
                     ? null
                     // No select here: every drag begins with the down, and the

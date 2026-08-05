@@ -43,7 +43,7 @@ The engine is a Cargo workspace under `crates/` per `docs/05-ARCHITECTURE.md` (e
 crates never depend on the UI or the bridge). The Flutter frontend is under `flutter_ui/`
 and talks to the engine through `crates/lumit-bridge` (`docs/17-BRIDGE-CONTRACT.md`).
 `web/` (lumitlab.com) and `web-docs/` (docs.lumitlab.com) are the public site — two small
-Astro projects, outside the Cargo workspace and depended on by nothing (K-268).
+Astro projects, outside the Cargo workspace and depended on by nothing (K-279).
 
 ## Design
 

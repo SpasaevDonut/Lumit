@@ -208,6 +208,13 @@ class LumitTheme {
   /// work-area band either way.
   final Color marker;
 
+  /// The wash a modal window lays over the app behind it (K-269). Its own
+  /// token because it is not a surface: it is the *absence* of attention, a
+  /// translucent black that dims whatever it covers rather than a colour the
+  /// ramp could supply. Translucent black under a light scheme too — dimming
+  /// is dimming, and a pale scrim over pale panels would say nothing.
+  final Color scrim;
+
   /// The three Timeline tokens default from the mode rather than being spelled
   /// out by every scheme: they are a *relationship* to the surface ramp (a
   /// shade beyond `surface1`, a fill that out-contrasts it, a grey that reads
@@ -241,10 +248,12 @@ class LumitTheme {
     Color? timelineOutOfRange,
     Color? selectionFill,
     Color? marker,
+    Color? scrim,
   })  : timelineOutOfRange =
             timelineOutOfRange ?? defaultOutOfRange(mode, surface1),
         selectionFill = selectionFill ?? defaultSelectionFill(mode, surface2),
-        marker = marker ?? defaultMarker(mode);
+        marker = marker ?? defaultMarker(mode),
+        scrim = scrim ?? defaultScrim(mode);
 
   /// The ground outside the work area: a step *away* from the surface ramp's
   /// direction — darker under a dark scheme, and darker again under a light
@@ -270,6 +279,18 @@ class LumitTheme {
   static Color defaultMarker(ThemeMode2 mode) => mode == ThemeMode2.dark
       ? _rgb(0xc4, 0xc4, 0xc4)
       : _rgb(0x56, 0x56, 0x56);
+
+  /// The modal scrim. Black either way — a scrim dims, and on a light scheme
+  /// there is nothing above white to dim *with* — but a shade lighter over a
+  /// light one, where the same opacity would read as a blackout rather than a
+  /// hush (§calm voice: the window in front is louder, the app behind is not
+  /// being punished).
+  static Color defaultScrim(ThemeMode2 mode) => Color.fromARGB(
+        mode == ThemeMode2.dark ? 0x99 : 0x66,
+        0,
+        0,
+        0,
+      );
 
   /// Shift every channel by [by], clamped — the one place the theme nudges a
   /// colour, so "a shade darker" means the same thing wherever it is said.
@@ -353,6 +374,7 @@ class LumitTheme {
         timelineOutOfRange: timelineOutOfRange,
         selectionFill: selectionFill,
         marker: marker,
+        scrim: scrim,
       );
 
   /// The full composition a scheme + shape (+ accent override) resolves to —

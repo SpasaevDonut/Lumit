@@ -373,42 +373,50 @@ pub fn build_comp_draws_at(
     // planner (app_state::collect_comp_jobs) decodes layer-input references
     // exactly like matte sources, and export applies the same in-span-only
     // gate (K-031).
-    // A layer-input reference to a PRECOMP (K-266): its picture exists only
-    // as a render, so package the nested comp's draw list for realise to
-    // run recursively — the DrawSource::Nested shape, on the input slot.
+    // A reference to a PRECOMP — as a layer input (K-266) or as a track matte
+    // (K-268): its picture exists only as a render, so package the nested
+    // comp's draw list for realise to run recursively — the DrawSource::Nested
+    // shape, on the referencing slot.
     // `visited_path` is a snapshot of the ancestor chain at this comp's
     // entry, so a matte that (transitively) contains its own comp stops at
-    // the cycle instead of recursing forever; a fresh clone per input keeps
-    // the closure borrow-free. Footage INSIDE such a precomp only has
-    // pixels when the decode planner visited it as a placed layer too —
-    // solids, text, shapes and nested renders always work (docs boundary).
+    // the cycle instead of recursing forever; a fresh clone per reference keeps
+    // the closure borrow-free. Footage INSIDE such a precomp decodes with the
+    // rest of the frame: the decode planner walks matte and layer-input
+    // references (plan::collect_comp_jobs) whether or not the referenced
+    // layer is visible.
     let visited_path: Vec<uuid::Uuid> = visited.clone();
-    let nested_input_for = |src: &lumit_core::model::Layer| -> Option<DofInputDraw> {
-        let lumit_core::model::LayerKind::Precomp { comp: nested_id } = &src.kind else {
-            return None;
+    let nested_comp_draw =
+        |src: &lumit_core::model::Layer| -> Option<Box<crate::draw::NestedInputDraw>> {
+            let lumit_core::model::LayerKind::Precomp { comp: nested_id } = &src.kind else {
+                return None;
+            };
+            if visited_path.contains(nested_id) {
+                return None;
+            }
+            let nested = doc.comp(*nested_id)?;
+            let slt = t_comp - src.start_offset.0.to_f64();
+            let frame_slt = frame_t - src.start_offset.0.to_f64();
+            let mut path = visited_path.clone();
+            path.push(*nested_id);
+            let draws =
+                build_comp_draws_at(doc, nested, slt, frame_slt, pixels_by_layer, &mut path);
+            Some(Box::new(crate::draw::NestedInputDraw {
+                width: nested.width,
+                height: nested.height,
+                background: [0.0, 0.0, 0.0, 0.0],
+                draws,
+                camera: nested.camera_pose(slt),
+            }))
         };
-        if visited_path.contains(nested_id) {
-            return None;
-        }
-        let nested = doc.comp(*nested_id)?;
-        let slt = t_comp - src.start_offset.0.to_f64();
-        let frame_slt = frame_t - src.start_offset.0.to_f64();
-        let mut path = visited_path.clone();
-        path.push(*nested_id);
-        let draws = build_comp_draws_at(doc, nested, slt, frame_slt, pixels_by_layer, &mut path);
+    let nested_input_for = |src: &lumit_core::model::Layer| -> Option<DofInputDraw> {
+        let nested = nested_comp_draw(src)?;
         Some(DofInputDraw {
             rgba: Vec::new(),
             tex_w: nested.width,
             tex_h: nested.height,
             fx: Vec::new(),
             lut_files: Vec::new(),
-            nested: Some(Box::new(crate::draw::NestedInputDraw {
-                width: nested.width,
-                height: nested.height,
-                background: [0.0, 0.0, 0.0, 0.0],
-                draws,
-                camera: nested.camera_pose(slt),
-            })),
+            nested: Some(nested),
         })
     };
 
@@ -676,13 +684,14 @@ pub fn build_comp_draws_at(
                 // blends back by coverage — masks × opacity, placed by the
                 // transform. A dead stack contributes nothing at all.
                 let comp_diag = ((comp.width as f32).powi(2) + (comp.height as f32).powi(2)).sqrt();
-                let fx = if layer.switches.fx {
+                let (fx_ids, fx): (Vec<Uuid>, Vec<lumit_core::fx::Resolved>) = if layer.switches.fx
+                {
                     // The §1.4 marker context, built by the same shared
                     // constructor export uses (K-031). Effects flagged
                     // sample_temporally == false resolve at the frame time in a
                     // held re-render (§5); equal to `lt` on an ordinary render.
                     let markers = lumit_core::fx::MarkerContext::for_layer(comp, layer);
-                    lumit_core::fx::resolve_stack_temporal(
+                    lumit_core::fx::resolve_stack_temporal_named(
                         &layer.effects,
                         effect_lt,
                         frame_lt,
@@ -690,8 +699,10 @@ pub fn build_comp_draws_at(
                         1.0,
                         &markers,
                     )
+                    .into_iter()
+                    .unzip()
                 } else {
-                    Vec::new()
+                    (Vec::new(), Vec::new())
                 };
                 // Posterize Time everything-below (docs/08 §3.25): the below
                 // stack re-rendered at the held time, built by the shared
@@ -727,6 +738,7 @@ pub fn build_comp_draws_at(
                     continue;
                 }
                 draws.push(CompLayerDraw {
+                    layer: layer.id,
                     source: DrawSource::Adjust,
                     natural_size: (comp.width as f32, comp.height as f32),
                     position: (
@@ -766,6 +778,7 @@ pub fn build_comp_draws_at(
                     }),
                     pre: parent_world_placement(comp, layer, t_comp),
                     fx,
+                    fx_ids,
                     // Adjustment layers process the composite below, not
                     // footage frames — no neighbours or flow field here.
                     neighbours: Vec::new(),
@@ -807,10 +820,25 @@ pub fn build_comp_draws_at(
 
         let matte = layer.matte.as_ref().and_then(|mr| {
             let src = comp.layers.iter().find(|l| l.id == mr.layer)?;
+            // A Precomp matte renders its comp (K-268): a comp has no pixels
+            // until it is rendered, so `pixels_for` gives up on one and the
+            // matte silently gated nothing — a layer set to a precomp matte
+            // simply vanished. The nested render stands in for the source
+            // texture; the source-mode toggles below do not apply to it,
+            // because a comp already carries its layers' own masks and
+            // effects (the K-266 layer-input boundary, unchanged).
+            let nested = in_span(src).then(|| nested_comp_draw(src)).flatten();
             // Matte source mode (K-142). None reads the source's raw pixels —
             // clear its masks so `pixels_for` skips them; Masks and Effects and
             // masks keep them.
-            let (m_rgba, m_w, m_h, m_nat) = if mr.source.applies_masks() {
+            let (m_rgba, m_w, m_h, m_nat) = if let Some(n) = &nested {
+                (
+                    Vec::new(),
+                    n.width,
+                    n.height,
+                    (n.width as f32, n.height as f32),
+                )
+            } else if mr.source.applies_masks() {
                 pixels_for(src)?
             } else {
                 let mut bare = src.clone();
@@ -825,7 +853,10 @@ pub fn build_comp_draws_at(
             // (its px@comp radii stay honest under reduced-res preview), the same
             // §1.4 markers and the same resolve export uses (K-031). Empty for
             // None / Masks or when the source's fx switch is off.
-            let (fx, lut_files) = if mr.source.folds_effects() && src.switches.fx {
+            let (fx, lut_files) = if nested.is_some() {
+                // The nested render already ran every layer's own stack.
+                (Vec::new(), Vec::new())
+            } else if mr.source.folds_effects() && src.switches.fx {
                 let comp_diag = ((comp.width as f32).powi(2) + (comp.height as f32).powi(2)).sqrt();
                 let scale = m_w as f32 / m_nat.0.max(1.0);
                 let markers = lumit_core::fx::MarkerContext::for_layer(comp, src);
@@ -869,13 +900,14 @@ pub fn build_comp_draws_at(
                 inverted: mr.inverted,
                 fx,
                 lut_files,
+                nested,
             })
         });
 
         // Radius units are % of the comp diagonal (docs/08 §2.3); the effect
         // runs on the layer's decoded texture, so scale the diagonal by
         // decode/natural to stay honest under reduced-resolution preview.
-        let fx = {
+        let (fx_ids, fx): (Vec<Uuid>, Vec<lumit_core::fx::Resolved>) = {
             let comp_diag = ((comp.width as f32).powi(2) + (comp.height as f32).powi(2)).sqrt();
             let scale = match &source {
                 DrawSource::Pixels { tex_w, .. } => *tex_w as f32 / natural.0.max(1.0),
@@ -892,7 +924,7 @@ pub fn build_comp_draws_at(
                 // at the frame time `frame_lt` (§5); on an ordinary render
                 // `frame_lt == lt`, so this is the plain resolve.
                 let markers = lumit_core::fx::MarkerContext::for_layer(comp, layer);
-                lumit_core::fx::resolve_stack_temporal(
+                lumit_core::fx::resolve_stack_temporal_named(
                     &layer.effects,
                     effect_lt,
                     frame_lt,
@@ -900,9 +932,22 @@ pub fn build_comp_draws_at(
                     scale,
                     &markers,
                 )
+                .into_iter()
+                .unzip()
             } else {
-                Vec::new()
+                (Vec::new(), Vec::new())
             }
+        };
+        // Effects ON a Precomp layer run on the nested comp's raster, and that
+        // raster shrinks with the preview scale while the stack above resolved
+        // px@comp parameters at factor 1 — the K-266 disease on the nested arm
+        // (K-268). Hand realise the width the stack was resolved against (the
+        // nested comp's own width) and it rescales to whatever it renders at,
+        // exactly as it does for an adjustment layer. `None` for every other
+        // kind: a Pixels stack already resolved at its decode scale above.
+        let fx_ref_width = match &source {
+            DrawSource::Nested { width, .. } => Some(*width as f32),
+            DrawSource::Pixels { .. } | DrawSource::Adjust => None,
         };
         // Decoded neighbour frames for a temporal effect (echo), carried from
         // the layer's decode job; empty for a plain stack.
@@ -923,6 +968,7 @@ pub fn build_comp_draws_at(
                 .map(|(u, v, conf)| (u.clone(), v.clone(), conf.clone(), lp.width, lp.height))
         });
         draws.push(CompLayerDraw {
+            layer: layer.id,
             source,
             natural_size: natural,
             position: (
@@ -964,6 +1010,7 @@ pub fn build_comp_draws_at(
             },
             pre: parent_world_placement(comp, layer, t_comp),
             fx,
+            fx_ids,
             neighbours,
             flow_field,
             // Ordered file paths of the enabled built-in `lut` effects, 1:1
@@ -976,7 +1023,7 @@ pub fn build_comp_draws_at(
             dof_inputs: dof_inputs_for(&layer.effects),
             flare_mattes: flare_mattes_for(&layer.effects),
             flare_lens_files: flare_lens_files(&layer.effects, lt),
-            fx_ref_width: None,
+            fx_ref_width,
             // Per-layer motion blur (docs/06 §4, K-120): the layer's own
             // transform sampled across the open shutter, empty unless it blurs.
             // Built the same way export does, so the two smear identically.
@@ -1400,7 +1447,7 @@ mod render_below_at_tests {
         let engine = lumit_gpu::ColourEngine::new(&ctx);
         let compositor = lumit_gpu::Compositor::new(&ctx);
         let fx = lumit_gpu::fx::FxEngine::new(&ctx);
-        let lut_cache = std::cell::RefCell::new(HashMap::new());
+        let lut_cache = std::cell::RefCell::new(crate::fxops::LutCache::default());
         let realiser = Realiser {
             ctx: lumit_gpu::GpuContext::from_parts(ctx.device.clone(), ctx.queue.clone()),
             engine: &engine,
@@ -1408,6 +1455,7 @@ mod render_below_at_tests {
             fx: &fx,
             lut_cache: &lut_cache,
             render_scale: 1.0,
+            profiler: None,
         };
         let comp = Composition {
             id: Uuid::now_v7(),
@@ -1724,7 +1772,7 @@ mod render_below_at_tests {
         let engine = lumit_gpu::ColourEngine::new(&ctx);
         let compositor = lumit_gpu::Compositor::new(&ctx);
         let fx = lumit_gpu::fx::FxEngine::new(&ctx);
-        let lut_cache = std::cell::RefCell::new(HashMap::new());
+        let lut_cache = std::cell::RefCell::new(crate::fxops::LutCache::default());
         let realiser = Realiser {
             ctx: lumit_gpu::GpuContext::from_parts(ctx.device.clone(), ctx.queue.clone()),
             engine: &engine,
@@ -1732,6 +1780,7 @@ mod render_below_at_tests {
             fx: &fx,
             lut_cache: &lut_cache,
             render_scale: 1.0,
+            profiler: None,
         };
         let comp = posterize_comp();
         let doc = Document::new();
@@ -1869,7 +1918,7 @@ mod render_below_at_tests {
         let engine = lumit_gpu::ColourEngine::new(&ctx);
         let compositor = lumit_gpu::Compositor::new(&ctx);
         let fx = lumit_gpu::fx::FxEngine::new(&ctx);
-        let lut_cache = std::cell::RefCell::new(HashMap::new());
+        let lut_cache = std::cell::RefCell::new(crate::fxops::LutCache::default());
         let realiser = Realiser {
             ctx: lumit_gpu::GpuContext::from_parts(ctx.device.clone(), ctx.queue.clone()),
             engine: &engine,
@@ -1877,6 +1926,7 @@ mod render_below_at_tests {
             fx: &fx,
             lut_cache: &lut_cache,
             render_scale: 1.0,
+            profiler: None,
         };
         let doc = Document::new();
         let pixels: HashMap<Uuid, &CompLayerPixels> = HashMap::new();

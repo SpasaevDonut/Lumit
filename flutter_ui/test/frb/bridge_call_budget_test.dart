@@ -66,6 +66,12 @@ class CountingHandler extends BaseHandler {
   }
 }
 
+/// Tap a widget near its left end rather than at its centre. A Timeline
+/// fold-out row spans the whole outline, which is wider than the panels these
+/// tests mount, so `tap` — which aims at the centre — lands off screen.
+Future<void> tapNearLeft(WidgetTester tester, Finder finder) =>
+    tester.tapAt(tester.getTopLeft(finder) + const Offset(5, 8));
+
 void main() {
   final counter = CountingHandler();
 
@@ -120,7 +126,11 @@ void main() {
       final id = target.internallayerId.toString();
       await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
       await tester.pump();
-      await tester.tap(find.byKey(ValueKey<String>('tl-group-$id/transform')));
+      // Near its left end, not its centre: a fold row spans the whole outline,
+      // and the outline is wider than this panel (the render-time column
+      // widened it again, K-276), so the row's centre is off screen.
+      await tapNearLeft(
+          tester, find.byKey(ValueKey<String>('tl-group-$id/transform')));
       await tester.pump();
       await settleFrb(tester, minRounds: 4, maxRounds: 8);
 
@@ -320,7 +330,8 @@ void main() {
       await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
       await tester.pump();
       await settleFrb(tester, minRounds: 2, maxRounds: 6);
-      await tester.tap(find.byKey(ValueKey<String>('tl-group-$id/transform')));
+      await tapNearLeft(
+          tester, find.byKey(ValueKey<String>('tl-group-$id/transform')));
       await tester.pump();
       await settleFrb(tester, minRounds: 2, maxRounds: 6);
       counter.counting = false;
@@ -377,8 +388,8 @@ void main() {
         final id = layer.internallayerId.toString();
         await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
         await tester.pump();
-        await tester
-            .tap(find.byKey(ValueKey<String>('tl-group-$id/transform')));
+        await tapNearLeft(
+            tester, find.byKey(ValueKey<String>('tl-group-$id/transform')));
         await tester.pump();
       }
       await settleFrb(tester, minRounds: 4, maxRounds: 8);

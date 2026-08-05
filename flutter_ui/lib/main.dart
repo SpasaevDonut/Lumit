@@ -30,12 +30,15 @@ import 'package:lumit_flutter/src/rust/api/project_item.dart';
 import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:lumit_flutter/src/rust/frb_generated.dart';
 import 'package:lumit_flutter/state/comp_model.dart';
+import 'package:lumit_flutter/state/clipboard.dart';
 import 'package:lumit_flutter/state/comp_time.dart';
 import 'package:lumit_flutter/state/dock.dart';
 import 'package:lumit_flutter/state/dropper.dart';
 import 'package:lumit_flutter/state/keymap.dart';
 import 'package:lumit_flutter/src/rust/api/keymap.dart';
 import 'package:lumit_flutter/state/layer_bounds.dart';
+import 'package:lumit_flutter/state/preview_progress.dart';
+import 'package:lumit_flutter/state/render_timings.dart';
 import 'package:lumit_flutter/state/settings.dart';
 import 'package:lumit_flutter/state/tools.dart';
 import 'package:lumit_flutter/state/workspace.dart';
@@ -506,6 +509,29 @@ class LumitUiState extends ChangeNotifier {
   /// for a number that only a new frame can change.
   final ValueNotifier<int> previewTier = ValueNotifier(1);
 
+  /// How far the frame the Viewer is waiting for has got, when that is worth
+  /// drawing (docs/07 §2.5). Fed from the worker stream below; the Viewer's
+  /// progress bar listens to it and nothing else does.
+  final PreviewProgressTracker previewProgress = PreviewProgressTracker();
+
+  /// The last measured frame's per-layer and per-effect render times
+  /// (docs/13 §7.1). Empty — and the engine not measuring — until a column or
+  /// a panel that shows the numbers asks for them.
+  ///
+  /// Switching it on asks for the frame under the playhead again, because
+  /// numbers only exist for a frame the engine actually composites: without
+  /// this the column sat empty until something else happened to want a render,
+  /// which on a comp the idle fill had already made could be for ever.
+  late final RenderTimings renderTimings = RenderTimings(
+    onMeasuringStarted: requestFrame,
+    // An engine that refuses the switch says so in the status line rather than
+    // leaving a lit stopwatch over a column that will never fill.
+    onEngineError: (error) => _app.postNotice(
+      'Could not measure render times: $error',
+      error: true,
+    ),
+  );
+
   /// Whether the engine is playing.
   ///
   /// Mirrored, not decided: it goes true when [play] is called and false when
@@ -534,6 +560,11 @@ class LumitUiState extends ChangeNotifier {
             end: comp.frameAtTime(time: set.outPoint)
           );
     _playedFrom = playheadFrame.value;
+    // Whatever the scrub before this was waiting for, it is not what the user
+    // is watching now: playback draws no progress bar (docs/07 §2.5), and one
+    // left standing from the frame that started the run would be the only bar
+    // that ever appeared during playback.
+    previewProgress.stop();
     _playFrom(comp, playheadFrame.value);
     playing.value = true;
   }
@@ -690,6 +721,27 @@ class LumitUiState extends ChangeNotifier {
   /// The layer everything single-layer works on: Effect controls, the keyboard
   /// commands, the Timeline's fold-out. The *primary* of the selection below.
   ValueNotifier<LayerReference?> selectedLayer = ValueNotifier(null);
+
+  /// What Copy put down, for Paste to pick up (K-275). One tray for the
+  /// session, shared by the Edit menu and the panels.
+  ///
+  /// Read directly; **written through the two methods below**, because Paste is
+  /// greyed out while it is empty and a menu that never hears about the copy
+  /// stays greyed until something else happens to repaint it. That is exactly
+  /// how it behaved before those methods existed.
+  final LumitClipboard clipboard = LumitClipboard();
+
+  /// Copy a layer, and tell the interface so Paste ungreys.
+  void copyLayerToClipboard(String text) {
+    clipboard.putLayer(text);
+    notifyListeners();
+  }
+
+  /// Copy one effect or a whole stack, same repaint.
+  void copyEffectsToClipboard(String text) {
+    clipboard.putEffects(text);
+    notifyListeners();
+  }
 
   /// The whole selection, primary first (K-217).
   ///
@@ -981,6 +1033,15 @@ class LumitUiState extends ChangeNotifier {
         // picks reads it from here.
         case WorkerResponse_Sampled(:final field0):
           dropperPatch.value = field0;
+        // How far the frame being waited on has got. The engine sends these
+        // only for a frame somebody is waiting on — never during playback —
+        // and the tracker decides whether it is slow enough to draw.
+        case WorkerResponse_RenderProgress(:final field0):
+          previewProgress.report(field0);
+        // What the frame just made cost. Only sent while something is showing
+        // the numbers (`RenderTimings.setMeasuring`).
+        case WorkerResponse_FrameProfile(:final field0):
+          renderTimings.report(field0);
       }
     });
   }

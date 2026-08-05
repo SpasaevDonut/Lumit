@@ -47,6 +47,16 @@ pub struct MatteDraw {
     /// Lut` ops in `fx` (as for a layer's own `lut_files`). Empty unless the
     /// source mode is `EffectsAndMasks` and the matte source has a LUT.
     pub lut_files: Vec<Option<String>>,
+    /// Set when the matte source is a **Precomp** (K-268): the nested comp's
+    /// own draw list, realised recursively exactly as a Precomp layer's
+    /// picture is — `rgba` is then empty and `tex_w`/`tex_h` are the nested
+    /// comp's size. A comp has no pixels until it is rendered, so `pixels_for`
+    /// answers None for one, and a track matte set to a precomp silently
+    /// gated nothing at all until this field existed (the layer-input twin of
+    /// the same hole was K-266's `DofInputDraw::nested`). The source-mode
+    /// masks/effects toggles do not apply to a comp reference — the comp
+    /// renders as itself, its layers' own masks and effects included.
+    pub nested: Option<Box<NestedInputDraw>>,
 }
 
 /// A depth-of-field depth input packaged for the compositor (docs/impl/
@@ -144,6 +154,13 @@ pub struct AccumulationBelow {
 }
 
 pub struct CompLayerDraw {
+    /// Which layer of the composition this draw is, so a measured cost can be
+    /// put on the right Timeline row (docs/13 §7.1). Nothing about the picture
+    /// depends on it — the compositor never reads it — and it is carried
+    /// rather than inferred because the draw list is flattened: a collapsed
+    /// Precomp splices its children in beside their neighbours, so a draw's
+    /// position in the list is not its layer's position in the comp.
+    pub layer: uuid::Uuid,
     pub source: DrawSource,
     /// The layer's natural pixel size — transforms act in comp pixels even
     /// when the texture was decoded at a reduced preview resolution.
@@ -170,6 +187,11 @@ pub struct CompLayerDraw {
     /// frame (docs/08; radius already in texture pixels). Applied to the
     /// linear source texture after masks, before the transform.
     pub fx: Vec<lumit_core::fx::Resolved>,
+    /// The effect *instance* id behind each op in `fx`, 1:1 and in order
+    /// (`lumit_core::fx::resolve_stack_temporal_named`). Only the profiler
+    /// reads it: a measured millisecond has to land on the row of the stack
+    /// that spent it, and a `Resolved` op has forgotten where it came from.
+    pub fx_ids: Vec<uuid::Uuid>,
     /// Decoded neighbour source frames for a temporal effect (echo etc.),
     /// keyed by frame offset — same sRGB8 form and decoded size as a Pixels
     /// source. Empty unless the stack is temporal.

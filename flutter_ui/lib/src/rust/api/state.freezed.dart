@@ -57,6 +57,8 @@ extension WorkerResponsePatterns on WorkerResponse {
     TResult Function(WorkerResponse_Sampled value)? sampled,
     TResult Function(WorkerResponse_PlaybackEnded value)? playbackEnded,
     TResult Function(WorkerResponse_CacheFilled value)? cacheFilled,
+    TResult Function(WorkerResponse_RenderProgress value)? renderProgress,
+    TResult Function(WorkerResponse_FrameProfile value)? frameProfile,
     required TResult orElse(),
   }) {
     final _that = this;
@@ -74,6 +76,10 @@ extension WorkerResponsePatterns on WorkerResponse {
         return playbackEnded(_that);
       case WorkerResponse_CacheFilled() when cacheFilled != null:
         return cacheFilled(_that);
+      case WorkerResponse_RenderProgress() when renderProgress != null:
+        return renderProgress(_that);
+      case WorkerResponse_FrameProfile() when frameProfile != null:
+        return frameProfile(_that);
       case _:
         return orElse();
     }
@@ -102,6 +108,9 @@ extension WorkerResponsePatterns on WorkerResponse {
     required TResult Function(WorkerResponse_Sampled value) sampled,
     required TResult Function(WorkerResponse_PlaybackEnded value) playbackEnded,
     required TResult Function(WorkerResponse_CacheFilled value) cacheFilled,
+    required TResult Function(WorkerResponse_RenderProgress value)
+        renderProgress,
+    required TResult Function(WorkerResponse_FrameProfile value) frameProfile,
   }) {
     final _that = this;
     switch (_that) {
@@ -117,6 +126,10 @@ extension WorkerResponsePatterns on WorkerResponse {
         return playbackEnded(_that);
       case WorkerResponse_CacheFilled():
         return cacheFilled(_that);
+      case WorkerResponse_RenderProgress():
+        return renderProgress(_that);
+      case WorkerResponse_FrameProfile():
+        return frameProfile(_that);
     }
   }
 
@@ -141,6 +154,8 @@ extension WorkerResponsePatterns on WorkerResponse {
     TResult? Function(WorkerResponse_Sampled value)? sampled,
     TResult? Function(WorkerResponse_PlaybackEnded value)? playbackEnded,
     TResult? Function(WorkerResponse_CacheFilled value)? cacheFilled,
+    TResult? Function(WorkerResponse_RenderProgress value)? renderProgress,
+    TResult? Function(WorkerResponse_FrameProfile value)? frameProfile,
   }) {
     final _that = this;
     switch (_that) {
@@ -157,6 +172,10 @@ extension WorkerResponsePatterns on WorkerResponse {
         return playbackEnded(_that);
       case WorkerResponse_CacheFilled() when cacheFilled != null:
         return cacheFilled(_that);
+      case WorkerResponse_RenderProgress() when renderProgress != null:
+        return renderProgress(_that);
+      case WorkerResponse_FrameProfile() when frameProfile != null:
+        return frameProfile(_that);
       case _:
         return null;
     }
@@ -182,6 +201,8 @@ extension WorkerResponsePatterns on WorkerResponse {
     TResult Function(BridgeSampledPixels field0)? sampled,
     TResult Function()? playbackEnded,
     TResult Function()? cacheFilled,
+    TResult Function(BridgeRenderProgress field0)? renderProgress,
+    TResult Function(BridgeFrameProfile field0)? frameProfile,
     required TResult orElse(),
   }) {
     final _that = this;
@@ -199,6 +220,10 @@ extension WorkerResponsePatterns on WorkerResponse {
         return playbackEnded();
       case WorkerResponse_CacheFilled() when cacheFilled != null:
         return cacheFilled();
+      case WorkerResponse_RenderProgress() when renderProgress != null:
+        return renderProgress(_that.field0);
+      case WorkerResponse_FrameProfile() when frameProfile != null:
+        return frameProfile(_that.field0);
       case _:
         return orElse();
     }
@@ -226,6 +251,8 @@ extension WorkerResponsePatterns on WorkerResponse {
     required TResult Function(BridgeSampledPixels field0) sampled,
     required TResult Function() playbackEnded,
     required TResult Function() cacheFilled,
+    required TResult Function(BridgeRenderProgress field0) renderProgress,
+    required TResult Function(BridgeFrameProfile field0) frameProfile,
   }) {
     final _that = this;
     switch (_that) {
@@ -241,6 +268,10 @@ extension WorkerResponsePatterns on WorkerResponse {
         return playbackEnded();
       case WorkerResponse_CacheFilled():
         return cacheFilled();
+      case WorkerResponse_RenderProgress():
+        return renderProgress(_that.field0);
+      case WorkerResponse_FrameProfile():
+        return frameProfile(_that.field0);
     }
   }
 
@@ -264,6 +295,8 @@ extension WorkerResponsePatterns on WorkerResponse {
     TResult? Function(BridgeSampledPixels field0)? sampled,
     TResult? Function()? playbackEnded,
     TResult? Function()? cacheFilled,
+    TResult? Function(BridgeRenderProgress field0)? renderProgress,
+    TResult? Function(BridgeFrameProfile field0)? frameProfile,
   }) {
     final _that = this;
     switch (_that) {
@@ -280,6 +313,10 @@ extension WorkerResponsePatterns on WorkerResponse {
         return playbackEnded();
       case WorkerResponse_CacheFilled() when cacheFilled != null:
         return cacheFilled();
+      case WorkerResponse_RenderProgress() when renderProgress != null:
+        return renderProgress(_that.field0);
+      case WorkerResponse_FrameProfile() when frameProfile != null:
+        return frameProfile(_that.field0);
       case _:
         return null;
     }
@@ -588,6 +625,138 @@ class WorkerResponse_CacheFilled extends WorkerResponse {
   @override
   String toString() {
     return 'WorkerResponse.cacheFilled()';
+  }
+}
+
+/// @nodoc
+
+class WorkerResponse_RenderProgress extends WorkerResponse {
+  const WorkerResponse_RenderProgress(this.field0) : super._();
+
+  final BridgeRenderProgress field0;
+
+  /// Create a copy of WorkerResponse
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $WorkerResponse_RenderProgressCopyWith<WorkerResponse_RenderProgress>
+      get copyWith => _$WorkerResponse_RenderProgressCopyWithImpl<
+          WorkerResponse_RenderProgress>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is WorkerResponse_RenderProgress &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode => Object.hash(runtimeType, field0);
+
+  @override
+  String toString() {
+    return 'WorkerResponse.renderProgress(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $WorkerResponse_RenderProgressCopyWith<$Res>
+    implements $WorkerResponseCopyWith<$Res> {
+  factory $WorkerResponse_RenderProgressCopyWith(
+          WorkerResponse_RenderProgress value,
+          $Res Function(WorkerResponse_RenderProgress) _then) =
+      _$WorkerResponse_RenderProgressCopyWithImpl;
+  @useResult
+  $Res call({BridgeRenderProgress field0});
+}
+
+/// @nodoc
+class _$WorkerResponse_RenderProgressCopyWithImpl<$Res>
+    implements $WorkerResponse_RenderProgressCopyWith<$Res> {
+  _$WorkerResponse_RenderProgressCopyWithImpl(this._self, this._then);
+
+  final WorkerResponse_RenderProgress _self;
+  final $Res Function(WorkerResponse_RenderProgress) _then;
+
+  /// Create a copy of WorkerResponse
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(WorkerResponse_RenderProgress(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as BridgeRenderProgress,
+    ));
+  }
+}
+
+/// @nodoc
+
+class WorkerResponse_FrameProfile extends WorkerResponse {
+  const WorkerResponse_FrameProfile(this.field0) : super._();
+
+  final BridgeFrameProfile field0;
+
+  /// Create a copy of WorkerResponse
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $WorkerResponse_FrameProfileCopyWith<WorkerResponse_FrameProfile>
+      get copyWith => _$WorkerResponse_FrameProfileCopyWithImpl<
+          WorkerResponse_FrameProfile>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is WorkerResponse_FrameProfile &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode => Object.hash(runtimeType, field0);
+
+  @override
+  String toString() {
+    return 'WorkerResponse.frameProfile(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $WorkerResponse_FrameProfileCopyWith<$Res>
+    implements $WorkerResponseCopyWith<$Res> {
+  factory $WorkerResponse_FrameProfileCopyWith(
+          WorkerResponse_FrameProfile value,
+          $Res Function(WorkerResponse_FrameProfile) _then) =
+      _$WorkerResponse_FrameProfileCopyWithImpl;
+  @useResult
+  $Res call({BridgeFrameProfile field0});
+}
+
+/// @nodoc
+class _$WorkerResponse_FrameProfileCopyWithImpl<$Res>
+    implements $WorkerResponse_FrameProfileCopyWith<$Res> {
+  _$WorkerResponse_FrameProfileCopyWithImpl(this._self, this._then);
+
+  final WorkerResponse_FrameProfile _self;
+  final $Res Function(WorkerResponse_FrameProfile) _then;
+
+  /// Create a copy of WorkerResponse
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(WorkerResponse_FrameProfile(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as BridgeFrameProfile,
+    ));
   }
 }
 

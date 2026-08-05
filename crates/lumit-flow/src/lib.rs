@@ -1315,7 +1315,7 @@ mod tests {
 
     fn gpu_flow() -> Option<gpu::GpuFlow> {
         let Ok(ctx) = lumit_gpu::GpuContext::headless() else {
-            eprintln!("skipping: no GPU adapter available");
+            lumit_gpu::no_adapter();
             return None;
         };
         match gpu::GpuFlow::new(&ctx) {

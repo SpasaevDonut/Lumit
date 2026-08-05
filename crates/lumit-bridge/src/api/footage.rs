@@ -295,18 +295,25 @@ impl FootageReference {
             lumit_core::model::ProjectItem::Footage(footage_item) => {
                 // An unresolvable path is missing media, same as one that
                 // resolves but no longer decodes.
-                let Some(_path) = Self::resolve_path(&proj, footage_item) else {
+                let Some(path) = Self::resolve_path(&proj, footage_item) else {
                     return Ok(LumitMediaStatus::Missing);
                 };
+                // Whether a file is *there* is not a question for the decoder,
+                // and a media-less build used to answer "ready" for a path that
+                // plainly was not on disk (K-273). Asking the filesystem costs
+                // one stat and gives both builds the same answer.
+                if !path.exists() {
+                    return Ok(LumitMediaStatus::Missing);
+                }
 
-                // The file is there; whether it *decodes* takes a prober. A
-                // build without one answers that it resolved, because reporting
+                // It is there; whether it *decodes* takes a prober. A build
+                // without one answers that it resolved, because reporting
                 // "missing" for a file plainly on disk would send the user to
                 // relink something that is not lost.
                 #[cfg(not(feature = "media"))]
                 let probe: Result<(), ()> = Ok(());
                 #[cfg(feature = "media")]
-                let probe = lumit_media::probe::probe(&_path);
+                let probe = lumit_media::probe::probe(&path);
 
                 match probe {
                     Ok(_) => Ok(LumitMediaStatus::Ready),
