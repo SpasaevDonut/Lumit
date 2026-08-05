@@ -40,9 +40,61 @@ pub struct Realiser<'a> {
     /// inherit it with no signature ripple. Export always builds with 1.0, so
     /// the K-031 preview == export identity is untouched at full scale.
     pub render_scale: f32,
+    /// The frame's recorder, when this render is being watched (docs/13 §7.1):
+    /// it counts finished layers for the Viewer's progress bar and measures
+    /// each layer and effect for the render-time indicators. `None` — every
+    /// frame of playback, and every unwatched render — walks exactly as it did
+    /// before this existed: no clocks, no fences, no extra allocations.
+    pub profiler: Option<&'a crate::profile::FrameProfiler>,
 }
 
 impl Realiser<'_> {
+    /// Start one layer's measurement: the clock, and the list its effect stack
+    /// writes a millisecond into per op. Both `None` unless this render is
+    /// being measured, which is what keeps an ordinary frame free of them.
+    #[allow(clippy::type_complexity)]
+    fn layer_clock(&self) -> (Option<std::time::Instant>, Option<Vec<f32>>) {
+        match self.profiler {
+            Some(p) if p.timing() => (Some(std::time::Instant::now()), Some(Vec::new())),
+            _ => (None, None),
+        }
+    }
+
+    /// Close one layer's measurement and hand it to the profiler: the fence
+    /// (see `crate::profile` on why the clock cannot be read without one), the
+    /// per-effect list paired back up with the ids the draw carries, and the
+    /// layer counted towards the progress bar.
+    fn layer_done(
+        &self,
+        l: &CompLayerDraw,
+        started: Option<std::time::Instant>,
+        fx_ms: Option<Vec<f32>>,
+    ) {
+        let Some(p) = self.profiler else {
+            return;
+        };
+        let ms = match started {
+            Some(started) => {
+                self.ctx.device.poll(wgpu::Maintain::Wait);
+                started.elapsed().as_secs_f32() * 1000.0
+            }
+            // Progress is being reported but nothing is being measured: the
+            // layer still counts towards the bar, it just has no number.
+            None => 0.0,
+        };
+        let effects = fx_ms
+            .map(|ms| {
+                l.fx_ids
+                    .iter()
+                    .copied()
+                    .zip(ms)
+                    .map(|(effect, ms)| crate::profile::EffectTiming { effect, ms })
+                    .collect()
+            })
+            .unwrap_or_default();
+        p.layer_done(l.layer, ms, effects);
+    }
+
     /// Turn a layer's ordered `lut_files` into the parallel `luts` list
     /// `run_ops` binds (docs/08 §3.11): each `Some(path)` is parsed and
     /// uploaded once (cached by path), a 1D or unreadable/absent file yields a
@@ -152,6 +204,10 @@ impl Realiser<'_> {
                         &[],
                         &[],
                         &[],
+                        // A depth or flare-matte input's own stack is part of
+                        // the effect that reads it, not a row of its own: its
+                        // cost is inside that layer's span already.
+                        None,
                     )
                 };
                 Some(crate::fxops::render_layer_input(
@@ -173,6 +229,28 @@ impl Realiser<'_> {
     /// runs on that, and the two blend by coverage; the draws after
     /// composite straight onto the blended result (seeded, no resample).
     pub fn realise(
+        &self,
+        camera: Option<lumit_core::model::CameraPose>,
+        width: u32,
+        height: u32,
+        background: [f64; 4],
+        layers: &[CompLayerDraw],
+    ) -> wgpu::Texture {
+        // Depth is what tells the profiler which layers are rows of the
+        // composition being rendered and which are inside a Precomp (see
+        // crate::profile). Paired around the whole walk, recursion included, so
+        // a nested comp's layers can never be mistaken for this comp's.
+        if let Some(p) = self.profiler {
+            p.enter_comp();
+        }
+        let out = self.realise_at_depth(camera, width, height, background, layers);
+        if let Some(p) = self.profiler {
+            p.leave_comp();
+        }
+        out
+    }
+
+    fn realise_at_depth(
         &self,
         camera: Option<lumit_core::model::CameraPose>,
         width: u32,
@@ -225,6 +303,11 @@ impl Realiser<'_> {
             // Accumulation motion blur (docs/08 §3.26) takes precedence: it
             // renders N sub-frame below-stacks and averages them; else Posterize
             // holds one below-stack; else the plain below-composite.
+            // An adjustment layer's own cost starts here: everything below it
+            // has been composited (and timed as its own layers), and what
+            // follows — the held or accumulated below-stack, this stack, the
+            // coverage and the blend — is what this row is spending.
+            let (started, mut fx_ms) = self.layer_clock();
             let fx_input = if let Some(ab) = &l.accumulation_below {
                 self.accumulate_below(width, height, background, ab, &below)
             } else if let Some(tb) = &l.temporal_below {
@@ -248,6 +331,7 @@ impl Realiser<'_> {
                 &layer_inputs,
                 &flare_mattes,
                 &flare_lens,
+                fx_ms.as_mut(),
             );
             let coverage = self.coverage_texture(camera, width, height, l);
             acc = Some(self.fx.adjust_blend(
@@ -259,6 +343,7 @@ impl Realiser<'_> {
                 th,
                 (l.opacity / 100.0).clamp(0.0, 1.0),
             ));
+            self.layer_done(l, started, fx_ms);
             start = i + 1;
         }
         self.realise_segment(camera, width, height, background, &layers[start..], &acc)
@@ -373,6 +458,12 @@ impl Realiser<'_> {
     ) -> wgpu::Texture {
         let mut linear_textures: Vec<wgpu::Texture> = Vec::with_capacity(layers.len());
         for l in layers {
+            // One row's own cost: its source uploaded and linearised (or its
+            // Precomp realised entire) and then its effect stack. The composite
+            // that follows is one pass over the whole segment rather than a
+            // per-layer act, so it lands in the frame total instead
+            // (crate::profile).
+            let (started, mut fx_ms) = self.layer_clock();
             let tex = match &l.source {
                 DrawSource::Pixels { rgba, tex_w, tex_h } => {
                     let src = self.engine.upload_srgb8(&self.ctx, rgba, *tex_w, *tex_h);
@@ -438,8 +529,10 @@ impl Realiser<'_> {
                     &layer_inputs,
                     &flare_mattes,
                     &flare_lens,
+                    fx_ms.as_mut(),
                 )
             };
+            self.layer_done(l, started, fx_ms);
             linear_textures.push(tex);
         }
         let cam_mat = camera.map(|pose| crate::export::camera_mat(width, height, pose));
@@ -512,6 +605,9 @@ impl Realiser<'_> {
                             &[],
                             &[],
                             &[],
+                            // A matte's own stack is part of the layer it
+                            // gates, not a row of its own.
+                            None,
                         )
                     };
                     self.compositor.composite_with_camera(

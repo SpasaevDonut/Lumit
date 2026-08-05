@@ -87,7 +87,7 @@ class BridgeLib
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -1395644184;
+  int get rustContentHash => -121422994;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -753,6 +753,8 @@ abstract class BridgeLibApi extends BaseApi {
 
   BridgeDiskCacheStats crateApiCacheSetDiskCacheLocation(
       {required BridgeCacheLocation location, required String folder});
+
+  void crateApiCacheSetRenderProfiling({required bool on_});
 
   BridgeVramCacheStats crateApiCacheSetVramCacheBudget({required BigInt bytes});
 
@@ -6211,13 +6213,37 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       );
 
   @override
+  void crateApiCacheSetRenderProfiling({required bool on_}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_bool(on_, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 200)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: null,
+      ),
+      constMeta: kCrateApiCacheSetRenderProfilingConstMeta,
+      argValues: [on_],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiCacheSetRenderProfilingConstMeta =>
+      const TaskConstMeta(
+        debugName: "set_render_profiling",
+        argNames: ["on_"],
+      );
+
+  @override
   BridgeVramCacheStats crateApiCacheSetVramCacheBudget(
       {required BigInt bytes}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_u_64(bytes, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 200)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 201)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_bridge_vram_cache_stats,
@@ -6242,7 +6268,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_box_autoadd_solid_reference(that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 201)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 202)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_bridge_solid_def,
@@ -6269,7 +6295,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_box_autoadd_solid_reference(that, serializer);
         sse_encode_box_autoadd_bridge_solid_def(definition, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 202)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 203)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -6293,7 +6319,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 203)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 204)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_u_64,
@@ -6316,7 +6342,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 204)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 205)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -6338,7 +6364,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 205)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 206)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_u_64,
@@ -6361,7 +6387,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 206)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 207)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_bridge_viewer_transport,
@@ -6384,7 +6410,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 207)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 208)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_bridge_vram_cache_stats,
@@ -6571,6 +6597,12 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  BridgeFrameProfile dco_decode_box_autoadd_bridge_frame_profile(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_bridge_frame_profile(raw);
+  }
+
+  @protected
   BridgeMask dco_decode_box_autoadd_bridge_mask(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_bridge_mask(raw);
@@ -6605,6 +6637,13 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   BridgeRational dco_decode_box_autoadd_bridge_rational(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_bridge_rational(raw);
+  }
+
+  @protected
+  BridgeRenderProgress dco_decode_box_autoadd_bridge_render_progress(
+      dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_bridge_render_progress(raw);
   }
 
   @protected
@@ -6942,6 +6981,18 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  BridgeEffectTiming dco_decode_bridge_effect_timing(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return BridgeEffectTiming(
+      effect: dco_decode_String(arr[0]),
+      ms: dco_decode_f_64(arr[1]),
+    );
+  }
+
+  @protected
   BridgeEffectValue dco_decode_bridge_effect_value(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     switch (raw[0]) {
@@ -7051,6 +7102,19 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     return BridgeFileParam(
       paths: dco_decode_list_String(arr[0]),
       index: dco_decode_bridge_scalar(arr[1]),
+    );
+  }
+
+  @protected
+  BridgeFrameProfile dco_decode_bridge_frame_profile(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return BridgeFrameProfile(
+      frame: dco_decode_u_64(arr[0]),
+      totalMs: dco_decode_f_64(arr[1]),
+      layers: dco_decode_list_bridge_layer_timing(arr[2]),
     );
   }
 
@@ -7213,6 +7277,19 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       motionBlur: dco_decode_bool(arr[6]),
       collapse: dco_decode_bool(arr[7]),
       shy: dco_decode_bool(arr[8]),
+    );
+  }
+
+  @protected
+  BridgeLayerTiming dco_decode_bridge_layer_timing(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return BridgeLayerTiming(
+      layer: dco_decode_String(arr[0]),
+      ms: dco_decode_f_64(arr[1]),
+      effects: dco_decode_list_bridge_effect_timing(arr[2]),
     );
   }
 
@@ -7445,6 +7522,20 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     return BridgeRecovery(
       found: dco_decode_u_32(arr[0]),
       replayed: dco_decode_u_32(arr[1]),
+    );
+  }
+
+  @protected
+  BridgeRenderProgress dco_decode_bridge_render_progress(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return BridgeRenderProgress(
+      frame: dco_decode_u_64(arr[0]),
+      stage: dco_decode_u_32(arr[1]),
+      fraction: dco_decode_f_64(arr[2]),
+      done: dco_decode_bool(arr[3]),
     );
   }
 
@@ -7895,6 +7986,12 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  List<BridgeEffectTiming> dco_decode_list_bridge_effect_timing(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_bridge_effect_timing).toList();
+  }
+
+  @protected
   List<BridgeKeyBinding> dco_decode_list_bridge_key_binding(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_bridge_key_binding).toList();
@@ -7928,6 +8025,12 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   List<BridgeLayerMarker> dco_decode_list_bridge_layer_marker(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_bridge_layer_marker).toList();
+  }
+
+  @protected
+  List<BridgeLayerTiming> dco_decode_list_bridge_layer_timing(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_bridge_layer_timing).toList();
   }
 
   @protected
@@ -8264,6 +8367,14 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         return WorkerResponse_PlaybackEnded();
       case 5:
         return WorkerResponse_CacheFilled();
+      case 6:
+        return WorkerResponse_RenderProgress(
+          dco_decode_box_autoadd_bridge_render_progress(raw[1]),
+        );
+      case 7:
+        return WorkerResponse_FrameProfile(
+          dco_decode_box_autoadd_bridge_frame_profile(raw[1]),
+        );
       default:
         throw Exception("unreachable");
     }
@@ -8432,6 +8543,13 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  BridgeFrameProfile sse_decode_box_autoadd_bridge_frame_profile(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_bridge_frame_profile(deserializer));
+  }
+
+  @protected
   BridgeMask sse_decode_box_autoadd_bridge_mask(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_bridge_mask(deserializer));
@@ -8471,6 +8589,13 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_bridge_rational(deserializer));
+  }
+
+  @protected
+  BridgeRenderProgress sse_decode_box_autoadd_bridge_render_progress(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_bridge_render_progress(deserializer));
   }
 
   @protected
@@ -8808,6 +8933,15 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  BridgeEffectTiming sse_decode_bridge_effect_timing(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_effect = sse_decode_String(deserializer);
+    var var_ms = sse_decode_f_64(deserializer);
+    return BridgeEffectTiming(effect: var_effect, ms: var_ms);
+  }
+
+  @protected
   BridgeEffectValue sse_decode_bridge_effect_value(
       SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -8918,6 +9052,17 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     var var_paths = sse_decode_list_String(deserializer);
     var var_index = sse_decode_bridge_scalar(deserializer);
     return BridgeFileParam(paths: var_paths, index: var_index);
+  }
+
+  @protected
+  BridgeFrameProfile sse_decode_bridge_frame_profile(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_frame = sse_decode_u_64(deserializer);
+    var var_totalMs = sse_decode_f_64(deserializer);
+    var var_layers = sse_decode_list_bridge_layer_timing(deserializer);
+    return BridgeFrameProfile(
+        frame: var_frame, totalMs: var_totalMs, layers: var_layers);
   }
 
   @protected
@@ -9092,6 +9237,17 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         motionBlur: var_motionBlur,
         collapse: var_collapse,
         shy: var_shy);
+  }
+
+  @protected
+  BridgeLayerTiming sse_decode_bridge_layer_timing(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_layer = sse_decode_String(deserializer);
+    var var_ms = sse_decode_f_64(deserializer);
+    var var_effects = sse_decode_list_bridge_effect_timing(deserializer);
+    return BridgeLayerTiming(
+        layer: var_layer, ms: var_ms, effects: var_effects);
   }
 
   @protected
@@ -9305,6 +9461,21 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     var var_found = sse_decode_u_32(deserializer);
     var var_replayed = sse_decode_u_32(deserializer);
     return BridgeRecovery(found: var_found, replayed: var_replayed);
+  }
+
+  @protected
+  BridgeRenderProgress sse_decode_bridge_render_progress(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_frame = sse_decode_u_64(deserializer);
+    var var_stage = sse_decode_u_32(deserializer);
+    var var_fraction = sse_decode_f_64(deserializer);
+    var var_done = sse_decode_bool(deserializer);
+    return BridgeRenderProgress(
+        frame: var_frame,
+        stage: var_stage,
+        fraction: var_fraction,
+        done: var_done);
   }
 
   @protected
@@ -9808,6 +9979,19 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  List<BridgeEffectTiming> sse_decode_list_bridge_effect_timing(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <BridgeEffectTiming>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_bridge_effect_timing(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   List<BridgeKeyBinding> sse_decode_list_bridge_key_binding(
       SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -9881,6 +10065,19 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     var ans_ = <BridgeLayerMarker>[];
     for (var idx_ = 0; idx_ < len_; ++idx_) {
       ans_.add(sse_decode_bridge_layer_marker(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<BridgeLayerTiming> sse_decode_list_bridge_layer_timing(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <BridgeLayerTiming>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_bridge_layer_timing(deserializer));
     }
     return ans_;
   }
@@ -10408,6 +10605,14 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         return WorkerResponse_PlaybackEnded();
       case 5:
         return WorkerResponse_CacheFilled();
+      case 6:
+        var var_field0 =
+            sse_decode_box_autoadd_bridge_render_progress(deserializer);
+        return WorkerResponse_RenderProgress(var_field0);
+      case 7:
+        var var_field0 =
+            sse_decode_box_autoadd_bridge_frame_profile(deserializer);
+        return WorkerResponse_FrameProfile(var_field0);
       default:
         throw UnimplementedError('');
     }
@@ -10592,6 +10797,13 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  void sse_encode_box_autoadd_bridge_frame_profile(
+      BridgeFrameProfile self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_bridge_frame_profile(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_bridge_mask(
       BridgeMask self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -10631,6 +10843,13 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       BridgeRational self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_bridge_rational(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_bridge_render_progress(
+      BridgeRenderProgress self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_bridge_render_progress(self, serializer);
   }
 
   @protected
@@ -10926,6 +11145,14 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  void sse_encode_bridge_effect_timing(
+      BridgeEffectTiming self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.effect, serializer);
+    sse_encode_f_64(self.ms, serializer);
+  }
+
+  @protected
   void sse_encode_bridge_effect_value(
       BridgeEffectValue self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -11015,6 +11242,15 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_list_String(self.paths, serializer);
     sse_encode_bridge_scalar(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_bridge_frame_profile(
+      BridgeFrameProfile self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_64(self.frame, serializer);
+    sse_encode_f_64(self.totalMs, serializer);
+    sse_encode_list_bridge_layer_timing(self.layers, serializer);
   }
 
   @protected
@@ -11144,6 +11380,15 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     sse_encode_bool(self.motionBlur, serializer);
     sse_encode_bool(self.collapse, serializer);
     sse_encode_bool(self.shy, serializer);
+  }
+
+  @protected
+  void sse_encode_bridge_layer_timing(
+      BridgeLayerTiming self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.layer, serializer);
+    sse_encode_f_64(self.ms, serializer);
+    sse_encode_list_bridge_effect_timing(self.effects, serializer);
   }
 
   @protected
@@ -11337,6 +11582,16 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_u_32(self.found, serializer);
     sse_encode_u_32(self.replayed, serializer);
+  }
+
+  @protected
+  void sse_encode_bridge_render_progress(
+      BridgeRenderProgress self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_64(self.frame, serializer);
+    sse_encode_u_32(self.stage, serializer);
+    sse_encode_f_64(self.fraction, serializer);
+    sse_encode_bool(self.done, serializer);
   }
 
   @protected
@@ -11711,6 +11966,16 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  void sse_encode_list_bridge_effect_timing(
+      List<BridgeEffectTiming> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_bridge_effect_timing(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_bridge_key_binding(
       List<BridgeKeyBinding> self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -11767,6 +12032,16 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     sse_encode_i_32(self.length, serializer);
     for (final item in self) {
       sse_encode_bridge_layer_marker(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_bridge_layer_timing(
+      List<BridgeLayerTiming> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_bridge_layer_timing(item, serializer);
     }
   }
 
@@ -12226,6 +12501,12 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         sse_encode_i_32(4, serializer);
       case WorkerResponse_CacheFilled():
         sse_encode_i_32(5, serializer);
+      case WorkerResponse_RenderProgress(field0: final field0):
+        sse_encode_i_32(6, serializer);
+        sse_encode_box_autoadd_bridge_render_progress(field0, serializer);
+      case WorkerResponse_FrameProfile(field0: final field0):
+        sse_encode_i_32(7, serializer);
+        sse_encode_box_autoadd_bridge_frame_profile(field0, serializer);
     }
   }
 }

@@ -25,6 +25,13 @@ enum TimelineGroup {
 
   /// Matte · blend · parent.
   compose,
+
+  /// Render time — what this layer's picture cost in the frame the playhead is
+  /// on, and, on a twirled-open effect's heading, what that effect cost
+  /// (docs/13 §7.1). One narrow cell, and empty until the column's own switch
+  /// asks the engine to measure: the measuring is not free, so a column nobody
+  /// is reading costs nothing.
+  timings,
 }
 
 /// The order shipped: switches, identity, render, compose — the After Effects
@@ -34,6 +41,7 @@ const List<TimelineGroup> defaultGroupOrder = [
   TimelineGroup.identity,
   TimelineGroup.render,
   TimelineGroup.compose,
+  TimelineGroup.timings,
 ];
 
 /// One switch cell's width, shared by the header and the rows so the icons
@@ -63,6 +71,11 @@ const double parentCellWidth = 96;
 const double composeGroupWidth =
     matteCellWidth + cellGap + blendCellWidth + cellGap + parentCellWidth;
 
+/// The render-time cell: wide enough for "1234 ms" and its switch, and no
+/// wider — it is a readout beside the work, not a column of the outline that
+/// earns its space when nothing is being measured.
+const double timingsGroupWidth = 74;
+
 /// The seam between two adjacent groups: a hairline in the header with a
 /// margin each side, plain space in the rows (the header's rule is enough to
 /// read the grouping by; repeating it down every row is noise). Part of the
@@ -88,6 +101,7 @@ const Map<TimelineGroup, double> defaultGroupWidths = {
   TimelineGroup.identity: 250,
   TimelineGroup.render: renderGroupWidth,
   TimelineGroup.compose: composeGroupWidth,
+  TimelineGroup.timings: timingsGroupWidth,
 };
 
 /// How narrow a group may be dragged: enough for the cells that cannot
@@ -97,6 +111,8 @@ double minGroupWidth(TimelineGroup group) => switch (group) {
       TimelineGroup.identity => 120,
       TimelineGroup.render => 4 * switchCellWidth,
       TimelineGroup.compose => 180,
+      // Enough for the widest number the readout writes ("12.34 s").
+      TimelineGroup.timings => 56,
     };
 
 /// The outline's total width for a set of group widths: the groups, the seam
@@ -143,19 +159,37 @@ class ValueColumn {
   const ValueColumn(this.width, this.rightInset);
 }
 
+/// The fixed width of everything to the right of [group] in the current order,
+/// seams included. The flexible identity group counts as whatever width it was
+/// last given — see [valueColumnFor] on why that is near enough.
+double rightInsetOf(List<TimelineGroup> order,
+    Map<TimelineGroup, double> widths, TimelineGroup group) {
+  var right = 0.0;
+  for (var i = order.indexOf(group) + 1; i < order.length; i++) {
+    right += groupDividerWidth + (widths[order[i]] ?? 0);
+  }
+  return right;
+}
+
 /// The value column for a group order. If the identity group has been dragged
 /// to the right of the render group its flexible width cannot be measured
 /// here, so it counts as zero — the values sit near enough until a real
 /// measurement is worth its plumbing.
 ValueColumn valueColumnFor(
     List<TimelineGroup> order, Map<TimelineGroup, double> widths) {
-  var right = 0.0;
-  for (var i = order.indexOf(TimelineGroup.render) + 1; i < order.length; i++) {
-    right += groupDividerWidth + (widths[order[i]] ?? 0);
-  }
   // The value cells span the render group *as it is now*, so dragging that
   // group wider widens the fields under it.
-  return ValueColumn(widths[TimelineGroup.render] ?? renderGroupWidth, right);
+  return ValueColumn(widths[TimelineGroup.render] ?? renderGroupWidth,
+      rightInsetOf(order, widths, TimelineGroup.render));
+}
+
+/// Where a fold-out row puts its render-time readout so it sits under the
+/// timings column's header, whatever order the groups have been dragged into
+/// (docs/13 §7.1).
+ValueColumn timingsColumnFor(
+    List<TimelineGroup> order, Map<TimelineGroup, double> widths) {
+  return ValueColumn(widths[TimelineGroup.timings] ?? timingsGroupWidth,
+      rightInsetOf(order, widths, TimelineGroup.timings));
 }
 
 /// Where the identity group (and so the layer's own twirl) starts, in the

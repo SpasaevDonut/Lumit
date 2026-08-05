@@ -1,6 +1,7 @@
 use super::markers::flash_nth;
 use super::*;
 use crate::model::{EffectInstance, EffectNamespace, EffectValue};
+use uuid::Uuid;
 
 /// The Fast motion blur output view (docs/08 §3.2, FX-19): the finished blurred
 /// picture, or a diagnostic look at the motion field or the confidence that
@@ -779,6 +780,31 @@ pub fn resolve_stack_temporal(
     px_scale: f32,
     markers: &MarkerContext,
 ) -> Vec<Resolved> {
+    resolve_stack_temporal_named(effects, sample_lt, frame_lt, diag_px, px_scale, markers)
+        .into_iter()
+        .map(|(_, op)| op)
+        .collect()
+}
+
+/// [`resolve_stack_temporal`] with each op paired with the id of the effect
+/// instance it came from.
+///
+/// **Why the ids matter.** A [`Resolved`] op is a flat bag of numbers: by
+/// design it has forgotten which effect wrote it, because the kernels do not
+/// care. The render-time indicator does care — a measured millisecond has to
+/// land on the right row of the effect stack — and the mapping cannot be
+/// reconstructed afterwards by filtering the effect list, because
+/// [`resolve_one`] also drops placeholders, unknown names and the
+/// orchestration-only effects. So the one walk that knows both answers reports
+/// both, and everything else stays 1:1 by construction.
+pub fn resolve_stack_temporal_named(
+    effects: &[EffectInstance],
+    sample_lt: f64,
+    frame_lt: f64,
+    diag_px: f32,
+    px_scale: f32,
+    markers: &MarkerContext,
+) -> Vec<(Uuid, Resolved)> {
     effects
         .iter()
         .filter(|e| e.enabled && e.effect.namespace == EffectNamespace::Builtin)
@@ -788,7 +814,7 @@ pub fn resolve_stack_temporal(
             } else {
                 frame_lt
             };
-            resolve_one(e, lt, diag_px, px_scale, markers)
+            resolve_one(e, lt, diag_px, px_scale, markers).map(|op| (e.id, op))
         })
         .collect()
 }

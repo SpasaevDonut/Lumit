@@ -277,6 +277,40 @@ fn resolve_stack_evaluates_converts_and_skips_dead_effects() {
     );
 }
 
+// The render-time indicator (docs/13 §7.1) puts a measured millisecond on the
+// row of the effect stack that spent it, and the only thing that can say which
+// row an op came from is the walk that resolved it: `resolve_one` drops
+// placeholders, unknown names and the orchestration-only effects, so filtering
+// the effect list afterwards would misalign the moment a stack held one of
+// those. The named walk must therefore stay op-for-op identical to the plain
+// one, and carry the id beside each op.
+#[test]
+fn the_named_resolve_is_the_plain_one_with_the_ids_kept() {
+    let blur = instantiate("blur").unwrap();
+    let mut off = instantiate("glow").unwrap();
+    off.enabled = false;
+    // Posterize Time is an orchestration-only effect: it is enabled, built in,
+    // and resolves to no op at all — the case a list filter would get wrong.
+    let posterize = instantiate("posterize_time").unwrap();
+    let glow = instantiate("glow").unwrap();
+    let stack = [blur.clone(), off, posterize, glow.clone()];
+
+    let plain = resolve_stack(&stack, 0.0, 1000.0, 1.0, &MarkerContext::NONE);
+    let named = resolve_stack_temporal_named(&stack, 0.0, 0.0, 1000.0, 1.0, &MarkerContext::NONE);
+
+    assert_eq!(
+        named.iter().map(|(_, op)| *op).collect::<Vec<_>>(),
+        plain,
+        "the same ops, in the same order"
+    );
+    assert_eq!(
+        named.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+        vec![blur.id, glow.id],
+        "each op carries the id of the effect that wrote it, disabled and \
+         orchestration-only effects skipped"
+    );
+}
+
 // docs/impl/temporal-rerender.md §5: in a held/sub-frame re-render an effect
 // flagged sample_temporally == false resolves at the true frame time, while the
 // rest of the stack samples the held time. resolve_stack_temporal is the

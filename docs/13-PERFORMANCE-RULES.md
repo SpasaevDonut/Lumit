@@ -207,17 +207,31 @@ Full API contract in [08-EFFECTS.md](08-EFFECTS.md).
 
 **v1 status:** this section is the target. What runs in CI today is fmt, clippy, the full
 test suites on macOS/Windows/Linux, the engine-crate coverage gate and the no-hex lint
-(`.github/workflows/ci.yml`); the per-node profiler (§7.1) and the headless benchmark
-harness with budget gates (§7.3) are not built — [TODO.md](TODO.md) tracks them.
+(`.github/workflows/ci.yml`); the per-node profiler's first visible piece is built (§7.1's
+per-layer and per-effect indicators, K-268) and the rest of it — continuous collection, the
+recording mode, the profiler panel — and the headless benchmark harness with budget gates
+(§7.3) are not — [TODO.md](TODO.md) tracks them.
 
 ### 7.1 Per-node profiler
 
 A built-in profiler, surfaced in the UI — After Effects' composition profiler done properly:
 
 - Per-node CPU spans and GPU timestamp queries collected continuously at negligible cost,
-  not only in a special mode.
+  not only in a special mode. **Not what is built (K-268):** the shipped measurement fences —
+  it waits for the graphics card at each node before reading the clock, because GPU work is
+  *submitted* rather than performed and an unfenced span would time the paperwork. That is a
+  true per-node number at the cost of the processor/card overlap for the frame measured, so
+  it is opt-in (the Timeline column's stopwatch), never on during playback, and off by
+  default. Timestamp queries are what would make it continuous and free; TODO tracks the
+  upgrade, and until then the honest description of this rung is "measured when asked".
 - Timeline column: per-layer render time for the current frame, sortable, with effect-level
-  drill-down in a profiler panel ([07-UI-SPEC.md](07-UI-SPEC.md)).
+  drill-down in a profiler panel ([07-UI-SPEC.md](07-UI-SPEC.md)). **Built (K-268):** the
+  column shows each layer's own picture (its source — a Precomp's whole comp included — and
+  its effect stack), and each effect's cost on its heading row in the fold-out and on its
+  title row in the Effect controls panel. Only the top-level layers of the composition being
+  rendered are timed, and the final composite — one pass over the whole stack, not a
+  per-layer act — lands in the frame total rather than on a row. Sorting by the column, and
+  the profiler panel proper, are not built.
 - Recording mode: capture over a playback or export run, then report per-node totals,
   percentiles, cache hit rates, and time spent per degradation-ladder step — answering "why is
   this comp slow" with names and numbers, not vibes.

@@ -119,6 +119,7 @@ pub fn run_ops(
     layer_inputs: &[Option<Tex>],
     flare_mattes: &[Option<Tex>],
     flare_lens: &[Option<(u64, String)>],
+    mut timings: Option<&mut Vec<f32>>,
 ) -> Tex {
     let mut tex = tex;
     // The k-th Resolved::Lut op consumes the k-th `luts` slot (the whole
@@ -130,6 +131,10 @@ pub fn run_ops(
     let mut dof_i = 0usize;
     let mut flare_i = 0usize;
     for op in ops {
+        // Only a *profiled* render reads a clock here, and it reads it either
+        // side of a fence — see crate::profile on why an unfenced span would
+        // time the paperwork rather than the work.
+        let started = timings.as_ref().map(|_| std::time::Instant::now());
         match op {
             Resolved::Blur {
                 radius_px,
@@ -885,6 +890,10 @@ pub fn run_ops(
                     &probe,
                 );
             }
+        }
+        if let (Some(started), Some(into)) = (started, timings.as_mut()) {
+            ctx.device.poll(wgpu::Maintain::Wait);
+            into.push(started.elapsed().as_secs_f32() * 1000.0);
         }
     }
     tex

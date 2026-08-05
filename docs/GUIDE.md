@@ -3058,6 +3058,40 @@ shows the newest frame the clock has reached, stops the sound after one late
 picture and restarts it after eight on-time ones. Stopping returns the playhead
 to where playback began (K-254); a scrub is the exception.
 
+### Telling how long a frame is taking, and where the time went (K-268)
+
+Two readouts, one mechanism. Both come from a small recorder the engine builds
+for a frame — `crates/lumit-render/src/profile.rs` — and both are off unless
+something is actually looking.
+
+**The preview progress bar.** Most frames arrive too quickly to mention. Some do
+not: a heavy composition under a dragged value, or a scrub onto a frame nothing
+has made before. The engine now reports how far such a frame has got — planning,
+reading media (per file), reading the composition, compositing (per layer),
+showing — and the Viewer draws a slim bar across the bottom of the picture with
+the stage in words. It never appears during playback (a frame due in sixteen
+milliseconds has no use for one) and never for a frame that arrives within about
+150 ms, so ordinary work stays silent. The percentage is an estimate from fixed
+stage weights — "roughly how much longer" — not a measurement.
+
+**The render-time column.** The Timeline's last column shows what each layer's
+own picture cost in the frame at the playhead, and twirling a layer open puts the
+same kind of number on each effect's heading; the Effect controls panel shows it
+on the effect's title row too. So "why is this comp slow" is answered with names
+and numbers rather than guesses.
+
+**Why it has a switch.** Work for the graphics card is *handed over*, not
+performed: the call that blurs a layer returns long before the card has blurred
+anything. Timing that call would therefore time the paperwork. So a measured
+frame *waits* for the card at each layer and each effect before reading the
+clock, which makes the millisecond true and costs the overlap between the
+processor and the card for that frame. That is a fine price to pay while you are
+reading the numbers and a silly one to pay when you are not — hence the stopwatch
+in the column's header, off by default, never applied to playback, and the
+numbers dropped when it goes off so nothing stale is left on screen. Doing this
+continuously and for free needs *GPU timestamp queries*, which is written down as
+the follow-up in TODO.
+
 ### The panels
 
 `state/comp_model.dart` is the read model: **one** bridge call returns the whole

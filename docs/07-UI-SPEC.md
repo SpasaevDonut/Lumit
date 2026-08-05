@@ -601,6 +601,24 @@ the transport (§11) and cache system. During scrubs the Viewer shows latest-win
 results (K-017); stale frames MUST never be presented as current without the degradation
 indicator lit.
 
+**Preview progress (K-268).** A frame the user is waiting on — a scrub, a playhead move, a
+dragged value — MUST be able to say how far it has got: a slim bar across the bottom of the
+picture, filling as the engine works through the frame, labelled with the stage it is in
+(preparing, reading media, reading the composition, compositing, showing). Three rules make
+it a help rather than noise:
+
+- It MUST NOT appear during playback. A frame due in sixteen milliseconds has no use for a
+  progress bar, and one blinking per frame would be the busiest thing on screen.
+- It MUST NOT appear for a frame that arrives quickly: nothing is drawn until a render has
+  been outstanding for ~150 ms, so ordinary work stays silent.
+- The fill MUST animate towards each report rather than jumping, and MUST carry a moving
+  sheen while it waits, so "working" reads apart from "stuck" at a glance. Both respect the
+  animation level (K-092).
+
+The fraction is an estimate built from fixed stage weights and is described as such; a
+progress bar's job is "roughly how much longer", and a decimal point would not make that
+truer. A frame served from the cache reports nothing at all — there was nothing to wait for.
+
 ### 2.6 Viewer locks
 
 Each Viewer MAY be locked to a specific item (padlock on its tab). A locked Viewer MUST NOT
@@ -801,10 +819,10 @@ is drawn with the accent edge, and `Enter` presses it.
 6. **Parent** dropdown + pick-whip.
 7. Optional columns: in, out, duration, stretch.
 
-**Shipped arrangement (K-188, superseding K-168's):** the columns sit in FOUR groups,
-left to right — 1 visibility · audio · solo · lock · shy; 2 twirl · label-colour chip ·
-layer number · name; 3 flow-or-collapse · fx bypass · motion blur · 3D; 4 matte · blend ·
-parent (dropdowns; the pick-whips are a follow-up). **Dragging a group's header moves the
+**Shipped arrangement (K-188, superseding K-168's; extended by K-268):** the columns sit in
+FIVE groups, left to right — 1 visibility · audio · solo · lock · shy; 2 twirl ·
+label-colour chip · layer number · name; 3 flow-or-collapse · fx bypass · motion blur · 3D;
+4 matte · blend · parent (dropdowns; the pick-whips are a follow-up); 5 **render time**. **Dragging a group's header moves the
 whole group**, which is how the column order is changed, and **dragging the seam after a
 group resizes it** (K-192) — every other group keeps its width, so the outline grows or
 shrinks by what the drag moved, and what sits inside a group grows with it: the fold-out's
@@ -819,6 +837,17 @@ shows collapse there and other kinds leave it empty. Quality and
 preserve-underlying-transparency still await their backing machinery (K-168);
 hide-per-workspace and the optional in/out/duration columns remain open. Right-clicking a
 layer row opens the **layer menu** — duplicate, reorder, delete.
+
+**The render-time column (K-268, [13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md) §7.1)**
+shows what each layer's own picture cost in the frame at the playhead, and — on a layer
+twirled open — what each effect in its stack cost, on that effect's heading row and in the
+same column. It MUST carry its own switch (a stopwatch in the header) and MUST measure
+nothing until that switch is on, because measuring makes the engine wait for the graphics
+card at every node: an honest millisecond, at the price of the overlap a brisk preview lives
+on. Playback MUST never be measured whatever the switch says, and switching off MUST drop
+the numbers rather than leave a stale frame's costs on screen. The same per-effect number
+appears on the effect's title row in the Effect controls panel (§6), from the same
+measurement — the panel shows the numbers, it does not turn them on.
 
 ### 4.3 Layer lanes and property twirl-down
 

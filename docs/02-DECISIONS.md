@@ -5496,3 +5496,40 @@ order, CPU and GPU op-for-op). A one-tile point source is its own anchor's only
 contributor and reads exactly as before; the owner's white-circle precomp now carries
 the flux of every tile it lights. Position stays the anchor pixel; sub-tile centroid
 positioning would be the next refinement if ever needed.
+
+**K-268 · DECIDED · The Viewer says how far a slow frame has got, and the Timeline can
+be asked what each layer and effect cost.** Two halves of the same instrumentation
+(docs/13 §7.1's first visible piece), both driven from one recorder in `lumit-render`
+(`profile.rs`) that the headless renderer builds per frame and hands to the realise
+walk. **(1) The preview progress bar** (docs/07 §2.5): the engine reports a stage and a
+0..1 fraction as a frame passes through planning, decoding (per source job), building,
+compositing (per top-level layer) and presenting; the bridge forwards each as
+`WorkerResponse::RenderProgress` and always closes with `done`, so a frame that faults
+or is served from the cache still ends its own bar. Reporting is turned on **per
+request** — only for the frame a user is waiting on (a scrub, a playhead move, a
+value drag), never for playback, the idle fill or a scope trace — and the frontend
+shows nothing until a render has been outstanding for 150 ms, so ordinary frames stay
+silent and only a genuine wait speaks. The fractions are fixed stage weights, not
+measurements: a bar's job is "how much longer, roughly", and claiming more would be a
+lie with a decimal point. **(2) The render-time indicators**: per-layer and per-effect
+milliseconds, published as `WorkerResponse::FrameProfile`, shown in a new Timeline
+column (`TimelineGroup.timings`) on each layer row and on each effect's heading in the
+fold-out, and on the effect's title row in the Effect controls panel. Attribution is
+carried, not inferred: `CompLayerDraw` gains the layer id and `fx_ids`, and
+`fx::resolve_stack_temporal_named` returns each op beside the effect instance that
+wrote it — a `Resolved` op has forgotten where it came from, and re-deriving it by
+filtering the effect list misaligns the moment a stack holds a placeholder or an
+orchestration-only effect. Two boundaries, both deliberate: only the top-level layers
+of the composition being rendered are timed (a Precomp's number therefore includes
+everything inside it — the layers inside are rows of another comp), and a layer's
+number is its own picture (source, effects), because the final composite is one pass
+over the whole stack rather than a per-layer act and so lands in the frame total.
+**(3) Measuring is opt-in and it fences.** GPU work is submitted, not performed, so a
+wall-clock span around a kernel call would time the paperwork; a measured node
+therefore waits for the card before the clock is read. That is a true measurement and
+it costs the processor/card overlap for the frame measured — so the Timeline column
+carries a stopwatch switch, nothing is measured until it is pressed, playback is never
+measured whatever it says, and turning it off drops the numbers rather than leaving
+stale ones on screen. §7.1's "continuously, at negligible cost" wants GPU timestamp
+queries and stays the recorded follow-up in TODO; what ships is honest about which of
+the two it is.

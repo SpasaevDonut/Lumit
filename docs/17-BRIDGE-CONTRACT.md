@@ -213,6 +213,21 @@ path, documented beside the types in
     trace and a patch are three different questions, and none may supersede
     another — only its own kind, where the newest wins (a pointer that has moved
     on makes the previous position worthless).
+- **Instrumentation rides it too (K-268).** Two further messages come back on the
+    same stream, both small and both about a frame rather than being one:
+    `WorkerResponse::RenderProgress` (`BridgeRenderProgress`: frame, stage code,
+    0..1 fraction, and a `done` flag) says how far the frame the user is waiting
+    on has got, and `WorkerResponse::FrameProfile` (`BridgeFrameProfile`: the
+    frame, its total, and per-layer/per-effect milliseconds with ids as strings)
+    says what a measured frame cost. Two rules bound them. **Progress is sent
+    only for a frame someone is waiting on** — the worker turns it on around the
+    interactive render paths and off again, so playback, the idle cache fill and
+    scope traces are silent — and the *worker*, not the engine, sends the closing
+    `done`, so a frame that faults or is served from the cache still ends its
+    own bar. **Timings are sent only while the frontend has asked for them**
+    (`api::cache::set_render_profiling`, read per frame): measuring fences the
+    graphics card at each node, so an unasked-for frame costs exactly what it
+    did before this existed.
 
 ## Feature gates
 

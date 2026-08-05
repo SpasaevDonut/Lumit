@@ -41,7 +41,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1395644184;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -121422994;
 
 // Section: executor
 
@@ -6699,6 +6699,38 @@ fn wire__crate__api__cache__set_disk_cache_location_impl(
         },
     )
 }
+fn wire__crate__api__cache__set_render_profiling_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "set_render_profiling",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_on = <bool>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Result::<_, ()>::Ok({
+                    crate::api::cache::set_render_profiling(api_on);
+                })?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
 fn wire__crate__api__cache__set_vram_cache_budget_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -7306,6 +7338,18 @@ impl SseDecode for crate::api::effect::BridgeEffectInstanceInfo {
     }
 }
 
+impl SseDecode for crate::api::state::BridgeEffectTiming {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_effect = <String>::sse_decode(deserializer);
+        let mut var_ms = <f64>::sse_decode(deserializer);
+        return crate::api::state::BridgeEffectTiming {
+            effect: var_effect,
+            ms: var_ms,
+        };
+    }
+}
+
 impl SseDecode for crate::api::effect::BridgeEffectValue {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -7438,6 +7482,20 @@ impl SseDecode for crate::api::effect::BridgeFileParam {
         return crate::api::effect::BridgeFileParam {
             paths: var_paths,
             index: var_index,
+        };
+    }
+}
+
+impl SseDecode for crate::api::state::BridgeFrameProfile {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_frame = <u64>::sse_decode(deserializer);
+        let mut var_totalMs = <f64>::sse_decode(deserializer);
+        let mut var_layers = <Vec<crate::api::state::BridgeLayerTiming>>::sse_decode(deserializer);
+        return crate::api::state::BridgeFrameProfile {
+            frame: var_frame,
+            total_ms: var_totalMs,
+            layers: var_layers,
         };
     }
 }
@@ -7677,6 +7735,21 @@ impl SseDecode for crate::api::layer::BridgeLayerSwitches {
             motion_blur: var_motionBlur,
             collapse: var_collapse,
             shy: var_shy,
+        };
+    }
+}
+
+impl SseDecode for crate::api::state::BridgeLayerTiming {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_layer = <String>::sse_decode(deserializer);
+        let mut var_ms = <f64>::sse_decode(deserializer);
+        let mut var_effects =
+            <Vec<crate::api::state::BridgeEffectTiming>>::sse_decode(deserializer);
+        return crate::api::state::BridgeLayerTiming {
+            layer: var_layer,
+            ms: var_ms,
+            effects: var_effects,
         };
     }
 }
@@ -7961,6 +8034,22 @@ impl SseDecode for crate::api::shell::BridgeRecovery {
         return crate::api::shell::BridgeRecovery {
             found: var_found,
             replayed: var_replayed,
+        };
+    }
+}
+
+impl SseDecode for crate::api::state::BridgeRenderProgress {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_frame = <u64>::sse_decode(deserializer);
+        let mut var_stage = <u32>::sse_decode(deserializer);
+        let mut var_fraction = <f64>::sse_decode(deserializer);
+        let mut var_done = <bool>::sse_decode(deserializer);
+        return crate::api::state::BridgeRenderProgress {
+            frame: var_frame,
+            stage: var_stage,
+            fraction: var_fraction,
+            done: var_done,
         };
     }
 }
@@ -8547,6 +8636,20 @@ impl SseDecode for Vec<crate::api::effect::BridgeEffectInstanceInfo> {
     }
 }
 
+impl SseDecode for Vec<crate::api::state::BridgeEffectTiming> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::state::BridgeEffectTiming>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<crate::api::keymap::BridgeKeyBinding> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -8624,6 +8727,20 @@ impl SseDecode for Vec<crate::api::layer::BridgeLayerMarker> {
         let mut ans_ = Vec::with_capacity(len_ as usize);
         for idx_ in 0..len_ {
             ans_.push(<crate::api::layer::BridgeLayerMarker>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::state::BridgeLayerTiming> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::state::BridgeLayerTiming>::sse_decode(
                 deserializer,
             ));
         }
@@ -9216,6 +9333,16 @@ impl SseDecode for crate::api::state::WorkerResponse {
             5 => {
                 return crate::api::state::WorkerResponse::CacheFilled;
             }
+            6 => {
+                let mut var_field0 =
+                    <crate::api::state::BridgeRenderProgress>::sse_decode(deserializer);
+                return crate::api::state::WorkerResponse::RenderProgress(var_field0);
+            }
+            7 => {
+                let mut var_field0 =
+                    <crate::api::state::BridgeFrameProfile>::sse_decode(deserializer);
+                return crate::api::state::WorkerResponse::FrameProfile(var_field0);
+            }
             _ => {
                 unimplemented!("");
             }
@@ -9485,14 +9612,15 @@ fn pde_ffi_dispatcher_sync_impl(
 197 => wire__crate__api__cache__set_cache_budget_impl(ptr, rust_vec_len, data_len),
 198 => wire__crate__api__cache__set_disk_cache_budget_impl(ptr, rust_vec_len, data_len),
 199 => wire__crate__api__cache__set_disk_cache_location_impl(ptr, rust_vec_len, data_len),
-200 => wire__crate__api__cache__set_vram_cache_budget_impl(ptr, rust_vec_len, data_len),
-201 => wire__crate__api__solid__solid_reference_get_definition_impl(ptr, rust_vec_len, data_len),
-202 => wire__crate__api__solid__solid_reference_set_definition_impl(ptr, rust_vec_len, data_len),
-203 => wire__crate__api__system__system_memory_bytes_impl(ptr, rust_vec_len, data_len),
-204 => wire__crate__api__system__thaw_cursor_impl(ptr, rust_vec_len, data_len),
-205 => wire__crate__api__system__video_memory_bytes_impl(ptr, rust_vec_len, data_len),
-206 => wire__crate__api__cache__viewer_transport_impl(ptr, rust_vec_len, data_len),
-207 => wire__crate__api__cache__vram_cache_stats_impl(ptr, rust_vec_len, data_len),
+200 => wire__crate__api__cache__set_render_profiling_impl(ptr, rust_vec_len, data_len),
+201 => wire__crate__api__cache__set_vram_cache_budget_impl(ptr, rust_vec_len, data_len),
+202 => wire__crate__api__solid__solid_reference_get_definition_impl(ptr, rust_vec_len, data_len),
+203 => wire__crate__api__solid__solid_reference_set_definition_impl(ptr, rust_vec_len, data_len),
+204 => wire__crate__api__system__system_memory_bytes_impl(ptr, rust_vec_len, data_len),
+205 => wire__crate__api__system__thaw_cursor_impl(ptr, rust_vec_len, data_len),
+206 => wire__crate__api__system__video_memory_bytes_impl(ptr, rust_vec_len, data_len),
+207 => wire__crate__api__cache__viewer_transport_impl(ptr, rust_vec_len, data_len),
+208 => wire__crate__api__cache__vram_cache_stats_impl(ptr, rust_vec_len, data_len),
                         _ => unreachable!(),
                     }
 }
@@ -9890,6 +10018,27 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::effect::BridgeEffectInstanceI
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::state::BridgeEffectTiming {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.effect.into_into_dart().into_dart(),
+            self.ms.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::state::BridgeEffectTiming
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::state::BridgeEffectTiming>
+    for crate::api::state::BridgeEffectTiming
+{
+    fn into_into_dart(self) -> crate::api::state::BridgeEffectTiming {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::effect::BridgeEffectValue {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         match self {
@@ -10044,6 +10193,28 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::effect::BridgeFileParam>
     for crate::api::effect::BridgeFileParam
 {
     fn into_into_dart(self) -> crate::api::effect::BridgeFileParam {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::state::BridgeFrameProfile {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.frame.into_into_dart().into_dart(),
+            self.total_ms.into_into_dart().into_dart(),
+            self.layers.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::state::BridgeFrameProfile
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::state::BridgeFrameProfile>
+    for crate::api::state::BridgeFrameProfile
+{
+    fn into_into_dart(self) -> crate::api::state::BridgeFrameProfile {
         self
     }
 }
@@ -10367,6 +10538,28 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::layer::BridgeLayerSwitches>
     for crate::api::layer::BridgeLayerSwitches
 {
     fn into_into_dart(self) -> crate::api::layer::BridgeLayerSwitches {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::state::BridgeLayerTiming {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.layer.into_into_dart().into_dart(),
+            self.ms.into_into_dart().into_dart(),
+            self.effects.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::state::BridgeLayerTiming
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::state::BridgeLayerTiming>
+    for crate::api::state::BridgeLayerTiming
+{
+    fn into_into_dart(self) -> crate::api::state::BridgeLayerTiming {
         self
     }
 }
@@ -10776,6 +10969,29 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::shell::BridgeRecovery>
     for crate::api::shell::BridgeRecovery
 {
     fn into_into_dart(self) -> crate::api::shell::BridgeRecovery {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::state::BridgeRenderProgress {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.frame.into_into_dart().into_dart(),
+            self.stage.into_into_dart().into_dart(),
+            self.fraction.into_into_dart().into_dart(),
+            self.done.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::state::BridgeRenderProgress
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::state::BridgeRenderProgress>
+    for crate::api::state::BridgeRenderProgress
+{
+    fn into_into_dart(self) -> crate::api::state::BridgeRenderProgress {
         self
     }
 }
@@ -11506,6 +11722,12 @@ impl flutter_rust_bridge::IntoDart for crate::api::state::WorkerResponse {
             }
             crate::api::state::WorkerResponse::PlaybackEnded => [4.into_dart()].into_dart(),
             crate::api::state::WorkerResponse::CacheFilled => [5.into_dart()].into_dart(),
+            crate::api::state::WorkerResponse::RenderProgress(field0) => {
+                [6.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::state::WorkerResponse::FrameProfile(field0) => {
+                [7.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+            }
             _ => {
                 unimplemented!("");
             }
@@ -11787,6 +12009,14 @@ impl SseEncode for crate::api::effect::BridgeEffectInstanceInfo {
     }
 }
 
+impl SseEncode for crate::api::state::BridgeEffectTiming {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.effect, serializer);
+        <f64>::sse_encode(self.ms, serializer);
+    }
+}
+
 impl SseEncode for crate::api::effect::BridgeEffectValue {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -11894,6 +12124,15 @@ impl SseEncode for crate::api::effect::BridgeFileParam {
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <Vec<String>>::sse_encode(self.paths, serializer);
         <crate::api::effect::BridgeScalar>::sse_encode(self.index, serializer);
+    }
+}
+
+impl SseEncode for crate::api::state::BridgeFrameProfile {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <u64>::sse_encode(self.frame, serializer);
+        <f64>::sse_encode(self.total_ms, serializer);
+        <Vec<crate::api::state::BridgeLayerTiming>>::sse_encode(self.layers, serializer);
     }
 }
 
@@ -12080,6 +12319,15 @@ impl SseEncode for crate::api::layer::BridgeLayerSwitches {
         <bool>::sse_encode(self.motion_blur, serializer);
         <bool>::sse_encode(self.collapse, serializer);
         <bool>::sse_encode(self.shy, serializer);
+    }
+}
+
+impl SseEncode for crate::api::state::BridgeLayerTiming {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.layer, serializer);
+        <f64>::sse_encode(self.ms, serializer);
+        <Vec<crate::api::state::BridgeEffectTiming>>::sse_encode(self.effects, serializer);
     }
 }
 
@@ -12303,6 +12551,16 @@ impl SseEncode for crate::api::shell::BridgeRecovery {
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <u32>::sse_encode(self.found, serializer);
         <u32>::sse_encode(self.replayed, serializer);
+    }
+}
+
+impl SseEncode for crate::api::state::BridgeRenderProgress {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <u64>::sse_encode(self.frame, serializer);
+        <u32>::sse_encode(self.stage, serializer);
+        <f64>::sse_encode(self.fraction, serializer);
+        <bool>::sse_encode(self.done, serializer);
     }
 }
 
@@ -12751,6 +13009,16 @@ impl SseEncode for Vec<crate::api::effect::BridgeEffectInstanceInfo> {
     }
 }
 
+impl SseEncode for Vec<crate::api::state::BridgeEffectTiming> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::state::BridgeEffectTiming>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<crate::api::keymap::BridgeKeyBinding> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -12807,6 +13075,16 @@ impl SseEncode for Vec<crate::api::layer::BridgeLayerMarker> {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
             <crate::api::layer::BridgeLayerMarker>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::state::BridgeLayerTiming> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::state::BridgeLayerTiming>::sse_encode(item, serializer);
         }
     }
 }
@@ -13290,6 +13568,14 @@ impl SseEncode for crate::api::state::WorkerResponse {
             }
             crate::api::state::WorkerResponse::CacheFilled => {
                 <i32>::sse_encode(5, serializer);
+            }
+            crate::api::state::WorkerResponse::RenderProgress(field0) => {
+                <i32>::sse_encode(6, serializer);
+                <crate::api::state::BridgeRenderProgress>::sse_encode(field0, serializer);
+            }
+            crate::api::state::WorkerResponse::FrameProfile(field0) => {
+                <i32>::sse_encode(7, serializer);
+                <crate::api::state::BridgeFrameProfile>::sse_encode(field0, serializer);
             }
             _ => {
                 unimplemented!("");

@@ -51,6 +51,7 @@ import 'transform_rows_frb.dart';
 import '../state/drag_payloads.dart';
 import 'placeholder.dart';
 import 'source_rows_frb.dart';
+import 'timeline_timings.dart';
 
 class EffectControlsPanelFrb extends StatefulWidget {
   const EffectControlsPanelFrb({super.key});
@@ -468,6 +469,15 @@ class _EffectSection extends StatelessWidget {
           keyName: 'fx-reset-$id',
           onPressed: _reset,
         ),
+        // What this effect cost in the last measured frame — the same number
+        // its row in the Timeline shows, from the same measurement (docs/13
+        // §7.1). Blank unless the Timeline's render-time column is measuring,
+        // so this panel neither turns the cost on nor shows a stale figure.
+        // Expanded rather than a fixed box after a Spacer: the value column is
+        // as wide as the panel leaves it, and a readout that insisted on its
+        // own width overflowed the heading in a narrow panel. It right-aligns
+        // itself and clips rather than pushing anything.
+        Expanded(child: TimingsCell(effectId: '$id')),
       ],
       trailing: Row(
         children: [

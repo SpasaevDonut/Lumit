@@ -676,13 +676,14 @@ pub fn build_comp_draws_at(
                 // blends back by coverage — masks × opacity, placed by the
                 // transform. A dead stack contributes nothing at all.
                 let comp_diag = ((comp.width as f32).powi(2) + (comp.height as f32).powi(2)).sqrt();
-                let fx = if layer.switches.fx {
+                let (fx_ids, fx): (Vec<Uuid>, Vec<lumit_core::fx::Resolved>) = if layer.switches.fx
+                {
                     // The §1.4 marker context, built by the same shared
                     // constructor export uses (K-031). Effects flagged
                     // sample_temporally == false resolve at the frame time in a
                     // held re-render (§5); equal to `lt` on an ordinary render.
                     let markers = lumit_core::fx::MarkerContext::for_layer(comp, layer);
-                    lumit_core::fx::resolve_stack_temporal(
+                    lumit_core::fx::resolve_stack_temporal_named(
                         &layer.effects,
                         effect_lt,
                         frame_lt,
@@ -690,8 +691,10 @@ pub fn build_comp_draws_at(
                         1.0,
                         &markers,
                     )
+                    .into_iter()
+                    .unzip()
                 } else {
-                    Vec::new()
+                    (Vec::new(), Vec::new())
                 };
                 // Posterize Time everything-below (docs/08 §3.25): the below
                 // stack re-rendered at the held time, built by the shared
@@ -727,6 +730,7 @@ pub fn build_comp_draws_at(
                     continue;
                 }
                 draws.push(CompLayerDraw {
+                    layer: layer.id,
                     source: DrawSource::Adjust,
                     natural_size: (comp.width as f32, comp.height as f32),
                     position: (
@@ -766,6 +770,7 @@ pub fn build_comp_draws_at(
                     }),
                     pre: parent_world_placement(comp, layer, t_comp),
                     fx,
+                    fx_ids,
                     // Adjustment layers process the composite below, not
                     // footage frames — no neighbours or flow field here.
                     neighbours: Vec::new(),
@@ -875,7 +880,7 @@ pub fn build_comp_draws_at(
         // Radius units are % of the comp diagonal (docs/08 §2.3); the effect
         // runs on the layer's decoded texture, so scale the diagonal by
         // decode/natural to stay honest under reduced-resolution preview.
-        let fx = {
+        let (fx_ids, fx): (Vec<Uuid>, Vec<lumit_core::fx::Resolved>) = {
             let comp_diag = ((comp.width as f32).powi(2) + (comp.height as f32).powi(2)).sqrt();
             let scale = match &source {
                 DrawSource::Pixels { tex_w, .. } => *tex_w as f32 / natural.0.max(1.0),
@@ -892,7 +897,7 @@ pub fn build_comp_draws_at(
                 // at the frame time `frame_lt` (§5); on an ordinary render
                 // `frame_lt == lt`, so this is the plain resolve.
                 let markers = lumit_core::fx::MarkerContext::for_layer(comp, layer);
-                lumit_core::fx::resolve_stack_temporal(
+                lumit_core::fx::resolve_stack_temporal_named(
                     &layer.effects,
                     effect_lt,
                     frame_lt,
@@ -900,8 +905,10 @@ pub fn build_comp_draws_at(
                     scale,
                     &markers,
                 )
+                .into_iter()
+                .unzip()
             } else {
-                Vec::new()
+                (Vec::new(), Vec::new())
             }
         };
         // Decoded neighbour frames for a temporal effect (echo), carried from
@@ -923,6 +930,7 @@ pub fn build_comp_draws_at(
                 .map(|(u, v, conf)| (u.clone(), v.clone(), conf.clone(), lp.width, lp.height))
         });
         draws.push(CompLayerDraw {
+            layer: layer.id,
             source,
             natural_size: natural,
             position: (
@@ -964,6 +972,7 @@ pub fn build_comp_draws_at(
             },
             pre: parent_world_placement(comp, layer, t_comp),
             fx,
+            fx_ids,
             neighbours,
             flow_field,
             // Ordered file paths of the enabled built-in `lut` effects, 1:1
@@ -1408,6 +1417,7 @@ mod render_below_at_tests {
             fx: &fx,
             lut_cache: &lut_cache,
             render_scale: 1.0,
+            profiler: None,
         };
         let comp = Composition {
             id: Uuid::now_v7(),
@@ -1732,6 +1742,7 @@ mod render_below_at_tests {
             fx: &fx,
             lut_cache: &lut_cache,
             render_scale: 1.0,
+            profiler: None,
         };
         let comp = posterize_comp();
         let doc = Document::new();
@@ -1877,6 +1888,7 @@ mod render_below_at_tests {
             fx: &fx,
             lut_cache: &lut_cache,
             render_scale: 1.0,
+            profiler: None,
         };
         let doc = Document::new();
         let pixels: HashMap<Uuid, &CompLayerPixels> = HashMap::new();

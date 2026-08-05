@@ -58,6 +58,7 @@ import 'timeline_razor.dart';
 import 'effect_param_row_frb.dart';
 import 'keyframe_controls_frb.dart';
 import 'layer_fold_frb.dart';
+import 'timeline_timings.dart';
 import 'transform_rows_frb.dart';
 
 /// The blend-mode names, fetched once per session: the list is static for the
@@ -2194,6 +2195,10 @@ class _FoldRow extends StatelessWidget {
   /// whatever order the groups are dragged into (docs/07 §4.3).
   final ValueColumn valueColumn;
 
+  /// Where the render-time readout goes, so an effect's measured cost sits
+  /// under the same header its layer's does (docs/13 §7.1).
+  final ValueColumn timingsColumn;
+
   /// Where the identity group starts in the current order — the fold-out
   /// hangs off the layer's own twirl, so a group's twirl sits just inside it
   /// rather than at the row's far left.
@@ -2223,6 +2228,7 @@ class _FoldRow extends StatelessWidget {
     required this.layer,
     required this.row,
     required this.valueColumn,
+    required this.timingsColumn,
     required this.baseIndent,
     required this.path,
     required this.selectedProperties,
@@ -2287,6 +2293,20 @@ class _FoldRow extends StatelessWidget {
                 child:
                     Text(label, style: t.body, overflow: TextOverflow.ellipsis),
               ),
+              // An effect's own heading carries what that effect cost, in the
+              // render-time column with the layer totals (docs/13 §7.1). Every
+              // other heading — Transform, Effects, Audio — is a grouping
+              // rather than a thing that renders, so it carries nothing.
+              if (effectIdOfPath(path) case final String effectId) ...[
+                const Spacer(),
+                Padding(
+                  padding: EdgeInsets.only(right: timingsColumn.rightInset),
+                  child: SizedBox(
+                    width: timingsColumn.width,
+                    child: TimingsCell(effectId: effectId),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -3960,6 +3980,7 @@ class _ColumnHeader extends StatelessWidget {
         TimelineGroup.identity => 'Layer',
         TimelineGroup.render => 'Switches',
         TimelineGroup.compose => 'Matte · Blend · Parent',
+        TimelineGroup.timings => 'Render time',
       };
 
   /// The header cells, in the same widths the rows use, so each icon stands
@@ -4020,6 +4041,8 @@ class _ColumnHeader extends StatelessWidget {
             cell(LumitIcon.cube3d, '3D layer'),
           ],
         ),
+      // The render-time column's header is its switch — see timeline_timings.
+      TimelineGroup.timings => const TimingsHeaderCell(),
       TimelineGroup.compose => () {
           final (matte, blend, parent) = composeCellWidths(width);
           return Row(
@@ -4231,6 +4254,7 @@ class _Outline extends StatelessWidget {
                   layer: layers[i].layer,
                   row: row,
                   valueColumn: valueColumn,
+                  timingsColumn: timingsColumnFor(groupOrder, widths),
                   baseIndent: identityStart(groupOrder, widths),
                   path: foldRowPath(
                       layers[i].layer.internallayerId.toString(), row),
@@ -4486,6 +4510,12 @@ class _OutlineRowState extends State<_OutlineRow> {
                     _ownClick(_renderCells(context, info)),
                   TimelineGroup.compose => _ownClick(_composeCells(context, t,
                       info, widget.widths[TimelineGroup.compose] ?? 0)),
+                  // What this layer's own picture cost in the last measured
+                  // frame (docs/13 §7.1). A readout, not a control: it neither
+                  // selects the layer nor claims the click.
+                  TimelineGroup.timings => TimingsCell(
+                      layerId: layer.internallayerId.toString(),
+                    ),
                 },
               ),
             ],

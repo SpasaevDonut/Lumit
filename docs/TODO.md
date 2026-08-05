@@ -311,11 +311,29 @@ colour individually; only the two Timeline tokens default from the mode.
 - **Effects on a Null are accepted and never run** - either refuse the drop or
     say plainly that the stack is inert.
 
-**Layer and effect render-time indicator.** Per-layer total render time in ms on
-the layer row, and per-effect time on each effect's title row, both as a Timeline
-sub-column like the other sub-columns; the same per-effect value on its title row
-in the Effect controls panel ([13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md)
-§7.1).
+**Render-time indicator follow-ups (K-268 landed the column).** What ships measures
+by *fencing* — the render waits for the graphics card at each layer and each
+effect before reading the clock, which is why it is opt-in (the column's stopwatch)
+and never runs during playback. The §7.1 target is continuous collection at
+negligible cost, and that wants **GPU timestamp queries**: a query set per frame,
+timestamps written around each node's own submission (every effect kernel already
+submits its own command buffer, so this needs no change inside `lumit-gpu`'s
+kernels), resolved and read back a frame later. With those in, the switch could go
+and every frame could carry its numbers. Also owed from §7.1: **sorting** the
+Timeline column, a **profiler panel** with the recording mode (totals, percentiles,
+cache hit rates, time per degradation-ladder step), and per-layer numbers for the
+layers *inside* a Precomp (today a Precomp's row carries its whole comp, and the
+rows inside it are another composition's).
+
+**The preview progress bar's fractions are stage weights, not measurements**
+(K-268). Decode is assumed the long pole and each top-level layer an equal share of
+the composite; a comp whose one adjustment layer costs more than the twenty layers
+below it fills the bar unevenly. The profiler above already knows what each node
+cost *last* time — feeding those measured costs back as the weights would make the
+bar's estimate a real one. Also unbuilt: nothing shows progress for the frames the
+**idle cache fill** is making in the background (deliberate for now — it is not a
+frame anyone is waiting for), and an **export**'s progress still has its own path
+([07-UI-SPEC.md](07-UI-SPEC.md) §14) rather than sharing this one.
 
 ## Next - engine/bridge follow-ups
 
@@ -425,8 +443,9 @@ with curated allows (§7); the golden-frame EXR export corpus (§6).
 **The performance harness and its CI gates are not built**
 ([13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md) §7.3): no reference comp in the
 repository, no headless benchmark scenarios, no budget gates per merge. The per-node
-profiler (§7.1) is likewise unbuilt - the render-time indicator entry above is its first
-visible piece.
+profiler (§7.1) now has its first visible piece - the render-time column (K-268) - and the
+rest of it (continuous timestamp-query collection, the recording mode, the panel) is in the
+entry above.
 
 **CI coverage the Flutter port left thin:**
 - **The WGSL/CPU-oracle parity tests skip silently without an adapter** - they

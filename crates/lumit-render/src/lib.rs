@@ -57,6 +57,7 @@ pub mod export;
 pub mod fxops;
 pub mod headless;
 pub mod plan;
+pub mod profile;
 pub mod realise;
 pub mod source;
 
@@ -74,5 +75,8 @@ pub use headless::{
     Promotion, DEFAULT_VRAM_CACHE_BYTES,
 };
 pub use plan::{plan_comp_frame, Quality};
+pub use profile::{
+    EffectTiming, FrameProfile, FrameProgress, LayerTiming, ProfileSink, ProgressSink, RenderStage,
+};
 pub use realise::Realiser;
 pub use source::{SourceProbe, SourceProbes};

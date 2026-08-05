@@ -131,6 +131,22 @@ pub struct HeadlessRenderer {
     frame_texture_hits: u64,
     /// Bumped whenever the held set changes — see [`Self::frame_texture_version`].
     frame_texture_version: u64,
+    /// Where "this frame is such-and-such far along" reports go, when the owner
+    /// has asked for them ([`Self::watch_frames`]). `None` — the default — is a
+    /// renderer that reports nothing, which is what playback wants: a frame due
+    /// in 16 ms has no use for a progress bar and no time to describe itself.
+    progress: Option<crate::profile::ProgressSink>,
+    /// Where a finished frame's per-layer and per-effect timings go, when they
+    /// have been asked for ([`Self::measure_frames`]). Separate from `progress`
+    /// because measuring costs real time (it fences the graphics card at each
+    /// node) while reporting progress does not — so the Timeline's render-time
+    /// column turns this on, and turning it off costs nothing to have had.
+    profile: Option<crate::profile::ProfileSink>,
+    /// Whether the *next* frame is watched, and whether it is measured. Set per
+    /// render by the owner, because the same renderer serves both a scrub (a
+    /// frame worth describing) and playback (a frame that must not be slowed).
+    watching: bool,
+    measuring: bool,
     /// The Windows zero-copy Viewer target (K-177), held for the session and
     /// re-created only when the comp's dimensions change. `None` until the first
     /// `render_to_shared` call. Present only in the opt-in shared-texture build.
@@ -454,12 +470,60 @@ impl HeadlessRenderer {
             upload_pool: Vec::new(),
             frame_texture_version: 0,
             frame_texture_hits: 0,
+            progress: None,
+            profile: None,
+            watching: false,
+            measuring: false,
             #[cfg(all(windows, feature = "shared-texture"))]
             shared: None,
             #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
             shared_dmabuf: None,
             #[cfg(all(target_os = "macos", feature = "shared-texture-macos"))]
             shared_iosurface: None,
+        })
+    }
+
+    /// Install (or remove) the sink that hears how far each frame has got —
+    /// the Viewer's progress bar (docs/13 §7.1). Installed once for the
+    /// session; which frames actually report is [`Self::watch_frames`].
+    pub fn set_progress_sink(&mut self, sink: Option<crate::profile::ProgressSink>) {
+        self.progress = sink;
+    }
+
+    /// Install (or remove) the sink that hears what each measured frame cost,
+    /// per layer and per effect — the render-time indicators.
+    pub fn set_profile_sink(&mut self, sink: Option<crate::profile::ProfileSink>) {
+        self.profile = sink;
+    }
+
+    /// Should the frames from here on report their progress? Off during
+    /// playback, on for a scrub or a value drag — the renderer cannot tell
+    /// which it is being driven for, so the driver says.
+    pub fn watch_frames(&mut self, watching: bool) {
+        self.watching = watching;
+    }
+
+    /// Should the frames from here on be measured? This one is not free: a
+    /// measured frame fences the graphics card at every node (see
+    /// `crate::profile`), so it is on only while something is showing the
+    /// numbers, and never during playback.
+    pub fn measure_frames(&mut self, measuring: bool) {
+        self.measuring = measuring;
+    }
+
+    /// The recorder for one frame, or `None` when this frame is neither
+    /// watched nor measured — in which case the render walks exactly as it did
+    /// before the profiler existed.
+    fn profiler_for(&self, comp: Uuid, frame: u64) -> Option<crate::profile::FrameProfiler> {
+        let watching = self.watching && self.progress.is_some();
+        let measuring = self.measuring && self.profile.is_some();
+        (watching || measuring).then(|| {
+            crate::profile::FrameProfiler::new(
+                comp,
+                frame,
+                watching.then(|| self.progress.clone()).flatten(),
+                measuring,
+            )
         })
     }
 
@@ -583,7 +647,13 @@ impl HeadlessRenderer {
         let fps = comp.frame_rate.fps().max(1.0);
         let t = frame as f64 / fps;
 
+        // The frame's recorder: absent unless somebody is drawing a bar for
+        // this frame or reading its numbers (docs/13 §7.1).
+        let watcher = self.profiler_for(comp_id, frame);
         let jobs = plan_comp_frame(doc, comp, t, quality, &ProbeView(&self.probe_cache));
+        if let Some(w) = &watcher {
+            w.planned();
+        }
         // The whole point: decode only when the wanted pixels actually differ.
         let reusable = matches!(
             &self.retained,
@@ -592,9 +662,14 @@ impl HeadlessRenderer {
                 && crate::plan::same_decode(&r.jobs, &jobs)
         );
         if !reusable {
+            let total = jobs.len() as u32;
             let pixels = self
                 .pool
-                .decode_comp(comp_id, frame as usize, &jobs, 0)
+                .decode_comp(comp_id, frame as usize, &jobs, 0, &|done| {
+                    if let Some(w) = &watcher {
+                        w.decoded(done as u32, total);
+                    }
+                })
                 .map_err(|e| format!("headless preview: {e}"))?;
             self.retained = Some(Retained {
                 comp: comp_id,
@@ -621,6 +696,7 @@ impl HeadlessRenderer {
                 fx: &parts.fx,
                 lut_cache: &parts.lut_cache,
                 render_scale: composite_scale(quality),
+                profiler: watcher.as_ref(),
             };
             let pixels_by_layer: HashMap<Uuid, &crate::decode::CompLayerPixels> = retained
                 .pixels
@@ -629,10 +705,19 @@ impl HeadlessRenderer {
                 .map(|lp| (lp.layer, lp))
                 .collect();
             let mut visited = vec![comp_id];
+            if let Some(w) = &watcher {
+                w.building();
+            }
             let draws =
                 crate::build::build_comp_draws(doc, comp, t, &pixels_by_layer, &mut visited);
             let background = comp.background.0.map(f64::from);
+            if let Some(w) = &watcher {
+                w.compositing(draws.len() as u32);
+            }
             let linear = realiser.realise(comp.camera_pose(t), cw, ch, background, &draws);
+            if let Some(w) = &watcher {
+                w.presenting();
+            }
             Ok(if bgra {
                 parts.colour.display_bgra(&self.gpu, &linear)
             } else {
@@ -642,6 +727,15 @@ impl HeadlessRenderer {
         // Return the engines to the pool even on error, so one failed frame does
         // not discard the compiled shaders.
         self.parts = Some(parts);
+        // A frame that faulted is not published as a measurement: half a walk's
+        // numbers would read as a comp that got cheaper.
+        if out.is_ok() {
+            if let (Some(profile), Some(sink)) =
+                (watcher.and_then(|w| w.finish()), self.profile.as_ref())
+            {
+                sink(profile);
+            }
+        }
         out.map(|shown| (shown, cw, ch))
     }
 
@@ -3110,5 +3204,128 @@ mod tests {
             let each = started.elapsed().as_secs_f64() * 1000.0 / f64::from(n);
             println!("PREVIEW {label:>10} scale={scale:<5} {each:>7.2} ms/frame");
         }
+    }
+
+    /// The profiler's two promises at the seam the Viewer actually drives
+    /// (docs/13 §7.1): an unwatched render says nothing at all, and a watched
+    /// one reports progress that only ever moves forwards and ends at the
+    /// presenting stage.
+    #[test]
+    fn a_watched_render_reports_its_progress_and_an_unwatched_one_says_nothing() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!("skipping: no GPU adapter");
+                return;
+            }
+        };
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<crate::profile::FrameProgress>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let into = std::sync::Arc::clone(&seen);
+        r.set_progress_sink(Some(std::sync::Arc::new(move |p| {
+            if let Ok(mut seen) = into.lock() {
+                seen.push(p);
+            }
+        })));
+        let (store, comp_id) = doc_with_solid(LinearColour([1.0, 0.0, 0.0, 1.0]), 8, 8);
+        let doc = store.snapshot();
+
+        // Playback's case: a sink is installed but this frame is not watched.
+        let _ = r.render_rgba(&doc, comp_id, 0, 1.0).expect("render");
+        assert!(
+            seen.lock().expect("reports").is_empty(),
+            "an unwatched frame — every frame of playback — reports nothing"
+        );
+
+        r.watch_frames(true);
+        let _ = r.render_rgba(&doc, comp_id, 1, 1.0).expect("render");
+        r.watch_frames(false);
+        let reports = seen.lock().expect("reports");
+        assert!(!reports.is_empty(), "a watched frame describes itself");
+        assert!(
+            reports.iter().all(|p| p.frame == 1),
+            "every report names the frame it is about"
+        );
+        let mut last = -1.0_f32;
+        for report in reports.iter() {
+            assert!(
+                report.fraction >= last,
+                "progress went backwards: {last} then {}",
+                report.fraction
+            );
+            last = report.fraction;
+        }
+        assert!(matches!(
+            reports.last().map(|p| p.stage),
+            Some(crate::profile::RenderStage::Presenting)
+        ));
+    }
+
+    /// A measured frame lands its milliseconds on the right rows: the layer
+    /// that was drawn, and the effect instance inside it that ran. Without the
+    /// ids threaded from the resolve through the draw list, this is where a
+    /// wrong (or absent) attribution shows.
+    #[test]
+    fn a_measured_frame_names_the_layer_and_the_effect_it_timed() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!("skipping: no GPU adapter");
+                return;
+            }
+        };
+        let (store, comp_id) = doc_with_solid(LinearColour([1.0, 0.0, 0.0, 1.0]), 16, 16);
+        // One real effect on the one layer, so there is something to attribute.
+        let blur = lumit_core::fx::instantiate("blur").expect("blur exists");
+        let (layer_id, effect_id) = {
+            let doc = store.snapshot();
+            let comp = doc.comp(comp_id).expect("comp");
+            (comp.layers[0].id, blur.id)
+        };
+        store
+            .commit(lumit_core::Op::SetLayerEffects {
+                comp: comp_id,
+                layer: layer_id,
+                effects: vec![blur],
+            })
+            .expect("the effect goes on the layer");
+
+        let profiles: std::sync::Arc<std::sync::Mutex<Vec<crate::profile::FrameProfile>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let into = std::sync::Arc::clone(&profiles);
+        r.set_profile_sink(Some(std::sync::Arc::new(move |p| {
+            if let Ok(mut got) = into.lock() {
+                got.push(p);
+            }
+        })));
+
+        let doc = store.snapshot();
+        // Unmeasured first: a sink alone must not start costing anything.
+        let _ = r.render_rgba(&doc, comp_id, 0, 1.0).expect("render");
+        assert!(profiles.lock().expect("profiles").is_empty());
+
+        r.measure_frames(true);
+        let _ = r.render_rgba(&doc, comp_id, 2, 1.0).expect("render");
+        r.measure_frames(false);
+
+        let got = profiles.lock().expect("profiles");
+        let profile = got.last().expect("the measured frame reported");
+        assert_eq!(profile.frame, 2);
+        assert_eq!(profile.layers.len(), 1, "one layer in the comp, one row");
+        let layer = &profile.layers[0];
+        assert_eq!(layer.layer, layer_id, "the row is the layer that drew");
+        assert_eq!(
+            layer.effects.iter().map(|e| e.effect).collect::<Vec<_>>(),
+            vec![effect_id],
+            "the effect's own instance id carries its cost"
+        );
+        assert!(
+            profile.total_ms >= layer.ms,
+            "the frame cannot cost less than the layer inside it"
+        );
+        assert!(
+            layer.ms >= 0.0 && layer.effects[0].ms >= 0.0,
+            "measured times are real durations"
+        );
     }
 }

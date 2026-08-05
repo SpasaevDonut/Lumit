@@ -1879,12 +1879,12 @@ void main() {
       const g = TimelineGroup.values;
       expect(
         reorderedGroups(defaultGroupOrder, g[0], g[3]),
-        [g[1], g[2], g[3], g[0]],
+        [g[1], g[2], g[3], g[0], g[4]],
         reason: 'dragged right, it lands after the target',
       );
       expect(
         reorderedGroups(defaultGroupOrder, g[3], g[0]),
-        [g[3], g[0], g[1], g[2]],
+        [g[3], g[0], g[1], g[2], g[4]],
         reason: 'dragged left, it lands before the target',
       );
       expect(reorderedGroups(defaultGroupOrder, g[1], g[1]), defaultGroupOrder);
@@ -1893,10 +1893,14 @@ void main() {
     /// The value column sits under the render group: everything right of it
     /// in the order contributes its fixed width to the inset.
     test('valueColumnFor measures what sits right of the render group', () {
-      expect(valueColumnFor(defaultGroupOrder, defaultGroupWidths).rightInset,
-          groupDividerWidth + composeGroupWidth);
+      expect(
+          valueColumnFor(defaultGroupOrder, defaultGroupWidths).rightInset,
+          groupDividerWidth +
+              composeGroupWidth +
+              groupDividerWidth +
+              timingsGroupWidth);
       final renderLast = reorderedGroups(
-          defaultGroupOrder, TimelineGroup.render, TimelineGroup.compose);
+          defaultGroupOrder, TimelineGroup.render, TimelineGroup.timings);
       expect(valueColumnFor(renderLast, defaultGroupWidths).rightInset, 0);
 
       // The value cells span the render group as it stands, so dragging that
@@ -1907,6 +1911,28 @@ void main() {
       };
       expect(valueColumnFor(defaultGroupOrder, wider).width,
           renderGroupWidth + 60);
+    });
+
+    /// The render-time readout on a twirled-open effect's heading has to sit
+    /// under the same header the layer rows' numbers do, wherever that column
+    /// has been dragged (docs/13 §7.1) — so a fold row measures its own inset
+    /// rather than assuming the column is last.
+    test('timingsColumnFor follows the render-time column', () {
+      expect(timingsColumnFor(defaultGroupOrder, defaultGroupWidths).rightInset,
+          0,
+          reason: 'shipped last, nothing sits to its right');
+      expect(timingsColumnFor(defaultGroupOrder, defaultGroupWidths).width,
+          timingsGroupWidth);
+      final timingsFirst = reorderedGroups(
+          defaultGroupOrder, TimelineGroup.timings, TimelineGroup.switches);
+      expect(
+        timingsColumnFor(timingsFirst, defaultGroupWidths).rightInset,
+        rightInsetOf(
+            timingsFirst, defaultGroupWidths, TimelineGroup.timings),
+        reason: 'dragged to the front, the inset is everything after it',
+      );
+      expect(timingsColumnFor(timingsFirst, defaultGroupWidths).rightInset,
+          greaterThan(0));
     });
 
     /// The ruler's label spacing thins as the comp zooms out, and its labels
