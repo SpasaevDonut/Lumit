@@ -496,8 +496,7 @@ class _HouseTextFieldState extends State<HouseTextField>
         return KeyEventResult.ignored;
       }
 
-      if (event.logicalKey == LogicalKeyboardKey.tab ||
-          event.logicalKey == LogicalKeyboardKey.arrowDown) {
+      if (event.logicalKey == LogicalKeyboardKey.tab) {
         setState(() {
           if (highlightedSuggestion == null) {
             highlightedSuggestion = 0;
