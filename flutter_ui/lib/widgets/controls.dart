@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
+import 'package:lumit_flutter/widgets/autofill.dart';
 
 import '../theme/theme.dart';
 
@@ -423,8 +424,7 @@ class HouseTextField extends StatefulWidget {
   final ValueChanged<String>? onSubmitted;
   final bool submitOnLostFocus;
   final TextStyle? style;
-  final List<AutofillSuggestion> Function(String text)? getSuggestions;
-  final Widget Function(AutofillSuggestion suggestion)? suggestionBuilder;
+  final AutofillGenerator? autofill;
 
   /// Grab focus on first build — for fields that appear in response to a
   /// gesture (an inline rename), where a second click to focus would be
@@ -441,8 +441,7 @@ class HouseTextField extends StatefulWidget {
     this.width = 200,
     this.onSubmitted,
     this.submitOnLostFocus = false,
-    this.getSuggestions,
-    this.suggestionBuilder,
+    this.autofill,
     this.autofocus = false,
     this.style,
     this.hint,
@@ -467,24 +466,18 @@ class _HouseTextFieldState extends State<HouseTextField>
     widget.controller.addListener(_changed);
   }
 
-  List<AutofillSuggestion> suggestions = List.empty();
+  List<dynamic> suggestions = List.empty();
   int? highlightedSuggestion = null;
 
   void _changed() {
-    if (widget.getSuggestions == null) {
+    if (widget.autofill == null) {
       setState(() {});
       return;
     }
 
-    var current = getCurrentWord(widget.controller);
-    var word = current.$1;
-
     setState(() {
-      if (word.isNotEmpty) {
-        suggestions = widget.getSuggestions!.call(word);
-      } else {
-        suggestions = [];
-      }
+      suggestions = widget.autofill!.getSuggestions(
+          widget.controller.text, widget.controller.selection.baseOffset);
     });
 
     if (suggestions.isEmpty) {
@@ -497,50 +490,14 @@ class _HouseTextFieldState extends State<HouseTextField>
     }
   }
 
-  (String, int, int) getCurrentWord(TextEditingController controller) {
-    final text = controller.text;
-    final offset = controller.selection.baseOffset;
-
-    if (offset < 0 || offset > text.length) {
-      return ('', 0, 0);
-    }
-
-    final isWordChar = RegExp(r'[A-Za-z_]');
-
-    if (offset < text.length && !isWordChar.hasMatch(text[offset])) {
-      if (offset == 0 || !isWordChar.hasMatch(text[offset - 1])) {
-        return ('', 0, 0);
-      }
-    }
-
-    int start = offset;
-    int end = offset;
-
-    if (start > 0 &&
-        (start == text.length || !isWordChar.hasMatch(text[start])) &&
-        isWordChar.hasMatch(text[start - 1])) {
-      start--;
-      end--;
-    }
-
-    while (start > 0 && isWordChar.hasMatch(text[start - 1])) {
-      start--;
-    }
-
-    while (end < text.length && isWordChar.hasMatch(text[end])) {
-      end++;
-    }
-
-    return (text.substring(start, end), start, end);
-  }
-
   KeyEventResult onKeyEvent(FocusNode node, KeyEvent event) {
     if (suggestions.isNotEmpty) {
       if (event is! KeyDownEvent) {
         return KeyEventResult.ignored;
       }
 
-      if (event.logicalKey == LogicalKeyboardKey.tab) {
+      if (event.logicalKey == LogicalKeyboardKey.tab ||
+          event.logicalKey == LogicalKeyboardKey.arrowDown) {
         setState(() {
           if (highlightedSuggestion == null) {
             highlightedSuggestion = 0;
@@ -557,26 +514,18 @@ class _HouseTextFieldState extends State<HouseTextField>
 
       if (event.logicalKey == LogicalKeyboardKey.enter) {
         if (highlightedSuggestion != null) {
-          print("Apply suggestion: ${suggestions[highlightedSuggestion!]}");
-
-          var area = getCurrentWord(widget.controller);
-
           setState(() {
-            var item = suggestions[highlightedSuggestion!];
-            widget.controller.text = widget.controller.text
-                .replaceRange(area.$2, area.$3, item.word);
-
-            var caret = area.$2 + item.word.length;
-            widget.controller.selection =
-                TextSelection(baseOffset: caret, extentOffset: caret);
-
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              textFieldKey.currentState!
-                  .bringIntoView(TextPosition(offset: caret));
-            });
+            widget.autofill!.applySuggestion(
+                suggestions[highlightedSuggestion!], widget.controller);
 
             highlightedSuggestion = null;
           });
+
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            textFieldKey.currentState!.bringIntoView(
+                TextPosition(offset: widget.controller.selection.baseOffset));
+          });
+
           hideOverlay();
           return KeyEventResult.handled;
         }
@@ -596,44 +545,47 @@ class _HouseTextFieldState extends State<HouseTextField>
     _overlay = null;
     _overlay = OverlayEntry(
       canSizeOverlay: true,
-      builder: (context) {
+      builder: (c) {
         return Stack(
           children: [
-            ThemeScope(
-                theme: t.theme,
-                animationLevel: t.animationLevel,
-                showTooltips: t.showTooltips,
-                child: CompositedTransformFollower(
-                  link: layerLink,
-                  offset: const Offset(-5, 16),
-                  child: Container(
-                    decoration: BoxDecoration(
-                        color: t.theme.surface0,
-                        border: BoxBorder.fromLTRB(
-                            left: BorderSide(color: t.theme.selectionFill),
-                            right: BorderSide(color: t.theme.selectionFill),
-                            bottom: BorderSide(color: t.theme.selectionFill)),
-                        borderRadius: t.theme.shape == ThemeShape.round
-                            ? BorderRadius.only(
-                                bottomLeft: Radius.circular(8),
-                                bottomRight: Radius.circular(8))
-                            : null),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        for (int i = 0; i < suggestions.length; i++)
-                          HouseButton(
-                            frameless: i != highlightedSuggestion,
-                            onPressed: () {},
-                            child: widget.suggestionBuilder
-                                    ?.call(suggestions[i]) ??
-                                Text(suggestions[i].word),
-                          )
-                      ],
+            Material(
+              color: Colors.transparent,
+              child: ThemeScope(
+                  theme: t.theme,
+                  animationLevel: t.animationLevel,
+                  showTooltips: t.showTooltips,
+                  child: CompositedTransformFollower(
+                    link: layerLink,
+                    offset: const Offset(-5, 16),
+                    child: Container(
+                      decoration: BoxDecoration(
+                          color: t.theme.surface0,
+                          border: BoxBorder.fromLTRB(
+                              left: BorderSide(color: t.theme.selectionFill),
+                              right: BorderSide(color: t.theme.selectionFill),
+                              bottom: BorderSide(color: t.theme.selectionFill)),
+                          borderRadius: t.theme.shape == ThemeShape.round
+                              ? BorderRadius.only(
+                                  bottomLeft: Radius.circular(8),
+                                  bottomRight: Radius.circular(8))
+                              : null),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          for (int i = 0; i < suggestions.length; i++)
+                            HouseButton(
+                              frameless: i != highlightedSuggestion,
+                              onPressed: () {},
+                              child: widget.autofill?.buildSuggestion(
+                                      suggestions[i], t.theme) ??
+                                  Text(suggestions[i].word),
+                            )
+                        ],
+                      ),
                     ),
-                  ),
-                )),
+                  )),
+            ),
           ],
         );
       },
@@ -658,6 +610,7 @@ class _HouseTextFieldState extends State<HouseTextField>
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
     final hint = widget.hint;
+
     return Container(
       width: widget.width,
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),

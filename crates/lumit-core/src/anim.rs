@@ -9,6 +9,8 @@
 //! note's bracketed-Newton method: fast like Newton, and mathematically
 //! incapable of escaping the valid range like plain Newton can.
 
+use std::{eprintln, sync::Arc};
+
 use crate::{expression::ExpressionContext, time::Rational};
 use serde::{Deserialize, Serialize};
 
@@ -315,12 +317,11 @@ impl Property {
         }
     }
 
-    pub fn value_at_with_context(&self, t: f64, context: &ExpressionContext) -> f64 {
+    pub fn value_at_with_context(&self, t: f64, context: Arc<ExpressionContext>) -> f64 {
         match &self.animation {
             Animation::Static(v) => *v,
             Animation::Keyframed(keys) => evaluate(keys, t).unwrap_or(0.0),
             Animation::Expression(expression) => {
-
                 crate::expression::evaluate(expression, Some(context))
             }
         }

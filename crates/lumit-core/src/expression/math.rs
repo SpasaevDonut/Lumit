@@ -27,6 +27,7 @@ fn noise1d(x: f64) -> f64 {
     n0 * (1.0 - t) + n1 * t
 }
 
+
 #[export_module]
 pub mod math {
 

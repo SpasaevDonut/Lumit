@@ -21,6 +21,8 @@
 //! - **Algorithm version** (`ALGO_VERSION`) is bumped whenever rendering
 //!   output changes, invalidating every old entry by construction.
 
+use std::sync::Arc;
+
 use lumit_core::{expression::ExpressionContext, model::{Composition, Document, LayerKind, MatteChannel}};
 use uuid::Uuid;
 
@@ -390,27 +392,28 @@ fn feed_layer(
     h.update(b"layer/");
     feed_source(h, doc, comp, layer, lt, t, quality, stamper, visited)?;
 
-    let context = ExpressionContext {
-        document: doc,
+    let context = Arc::new(ExpressionContext {
+        document: Arc::new(doc.clone()),
         comp: Some(comp.id),
         layer: Some(layer.id),
-        time: t,
-    };
+        comp_time: t,
+        current_depth: 0,
+    });
 
     // Evaluated transform at the layer's local time — never keyframe data.
     let tr = &layer.transform;
     for v in [
-        tr.position_x.value_at_with_context(lt, &context),
-        tr.position_y.value_at_with_context(lt, &context),
-        tr.position_z.value_at_with_context(lt, &context),
-        tr.anchor_x.value_at_with_context(lt, &context),
-        tr.anchor_y.value_at_with_context(lt, &context),
-        tr.scale_x.value_at_with_context(lt, &context),
-        tr.scale_y.value_at_with_context(lt, &context),
-        tr.rotation.value_at_with_context(lt, &context),
-        tr.rotation_x.value_at_with_context(lt, &context),
-        tr.rotation_y.value_at_with_context(lt, &context),
-        tr.opacity.value_at_with_context(lt, &context),
+        tr.position_x.value_at_with_context(lt, context.clone()),
+        tr.position_y.value_at_with_context(lt, context.clone()),
+        tr.position_z.value_at_with_context(lt, context.clone()),
+        tr.anchor_x.value_at_with_context(lt, context.clone()),
+        tr.anchor_y.value_at_with_context(lt, context.clone()),
+        tr.scale_x.value_at_with_context(lt, context.clone()),
+        tr.scale_y.value_at_with_context(lt, context.clone()),
+        tr.rotation.value_at_with_context(lt, context.clone()),
+        tr.rotation_x.value_at_with_context(lt, context.clone()),
+        tr.rotation_y.value_at_with_context(lt, context.clone()),
+        tr.opacity.value_at_with_context(lt, context.clone()),
     ] {
         feed_f64(h, v);
     }
@@ -699,12 +702,13 @@ fn feed_source(
             // stored text would key them all the same and freeze the first
             // frame it rendered on screen for the rest of the comp.
             let context = ExpressionContext {
-                document: doc,
+                document: Arc::new(doc.clone()),
                 comp: Some(owner.id),
                 layer: Some(layer.id),
-                time: comp_time,
+                comp_time,
+                current_depth: 0,
             };
-            h.update(document.resolved_text(&context).as_bytes());
+            h.update(document.resolved_text(Arc::new(context)).as_bytes());
             h.update(&[0]); // length delimiter: text then size never collide
             feed_f64(h, document.size);
             for c in document.fill.0 {

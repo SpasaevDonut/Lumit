@@ -3,31 +3,37 @@ import 'dart:convert';
 import 'package:lumit_flutter/src/rust/api/expressions.dart';
 
 class ExpressionsMetadata {
-
   // Empty until [load] has run, rather than uninitialised: anything that offers
   // completions is built before the engine has answered, and an empty list is a
   // field with no suggestions yet, not a crash.
   static ExpressionsApi api = ExpressionsApi(functions: []);
 
-
-
   static Future<void> load() async {
     var data = await Expressions.getExpressionsMetadata();
     final parsed = jsonDecode(data);
     var a = ExpressionsApi.fromJson(parsed);
-  final regExp = RegExp(
-    r'[\^$*.\[\]{}()?\-"!@#%&/\,><:;_~`+=' // <-- Notice the escaped symbols
-    "'" // <-- ' is added to the expression
-    ']'
-  );
+    final regExp = RegExp(
+        r'[\^$*.\[\]{}()?\-"!@#%&/\,><:;_~`+=' // <-- Notice the escaped symbols
+        "'" // <-- ' is added to the expression
+        ']');
+
+
+    for(var f in a.functions) {
+      if(f.name.startsWith("get\$")) {
+
+        final type = f.params[0].type.replaceAll("&mut ", "");
+
+        f.name = f.name.replaceAll("get\$", "$type.");
+        f.signature = f.signature.replaceAll("get\$", "");
+        f.isGetter = true;
+      }
+    }
 
     a.functions.removeWhere((i) => i.name.startsWith(regExp));
 
     api = a;
     print(api);
   }
-
-
 }
 
 class ExpressionsApi {
@@ -47,18 +53,19 @@ class ExpressionsApi {
 }
 
 class FunctionDef {
-  final int baseHash;
-  final int fullHash;
-  final String namespace;
-  final String access;
-  final String name;
-  final bool isAnonymous;
-  final String type;
-  final int numParams;
-  final List<Parameter> params;
-  final String? returnType;
-  final List<String> docComments;
-  final String signature;
+  int baseHash;
+  int fullHash;
+  String namespace;
+  String access;
+  String name;
+  bool isAnonymous;
+  String type;
+  int numParams;
+  List<Parameter> params;
+  String? returnType;
+  List<String> docComments;
+  String signature;
+  bool isGetter;
 
   FunctionDef({
     required this.baseHash,
@@ -73,6 +80,7 @@ class FunctionDef {
     required this.docComments,
     required this.returnType,
     required this.signature,
+    this.isGetter = false,
   });
 
   factory FunctionDef.fromJson(Map<String, dynamic> json) {
@@ -91,8 +99,12 @@ class FunctionDef {
               .toList()
           : [],
       returnType: json['returnType'],
-      docComments: (json['docComments'] as List<dynamic>? ?? []).map((i) => i.toString()).toList(),
-      signature: (json['signature'] as String).replaceAll(": Dynamic", ""), // dont show types for dynamic args
+      docComments: (json['docComments'] as List<dynamic>? ?? [])
+          .map((i) => i.toString())
+          .toList(),
+      signature: (json['signature'] as String)
+          .replaceAll(": Dynamic", "") // dont show types for dynamic args
+          .replaceAll("&mut ", ""), // expression users dont care about mutability
     );
   }
 }
@@ -108,8 +120,8 @@ class Parameter {
 
   factory Parameter.fromJson(Map<String, dynamic> json) {
     return Parameter(
-      name: json['name'],
-      type: json['type'],
+      name: json['name'] ?? "",
+      type: json['type'] ?? "",
     );
   }
 }

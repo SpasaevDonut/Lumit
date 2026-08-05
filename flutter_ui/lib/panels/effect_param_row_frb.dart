@@ -16,6 +16,7 @@
 // Getting this wrong is what stopped effect parameters being draggable at all:
 // the first preview tick killed the handles and the rest of the gesture threw.
 
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/data/expressions_metadata.dart';
 import 'package:lumit_flutter/main.dart';
@@ -23,7 +24,9 @@ import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/state.dart';
+import 'package:lumit_flutter/widgets/autofill.dart';
 import 'package:provider/provider.dart';
+import 'package:syntax_highlight/syntax_highlight.dart';
 import 'package:uuid/uuid.dart';
 
 import '../state/comp_time.dart';
@@ -678,6 +681,52 @@ class EffectParamRowExpression extends StatefulWidget {
       _EffectParamRowExpressionState();
 }
 
+const _defaultLightThemeFiles = [
+  'packages/syntax_highlight/themes/light_vs.json',
+  'packages/syntax_highlight/themes/light_plus.json',
+];
+
+const _defaultDarkThemeFiles = [
+  'packages/syntax_highlight/themes/dark_vs.json',
+  'packages/syntax_highlight/themes/dark_plus.json',
+];
+
+class ExpressionTextEditingController extends TextEditingController {
+  static HighlighterTheme? darkTheme;
+  static HighlighterTheme? lightTheme;
+
+  static Future<void> initSyntaxHighlighting() async {
+    await Highlighter.initialize(["dart"]);
+
+    darkTheme = await HighlighterTheme.loadFromAssets(
+        _defaultDarkThemeFiles, LumitTheme.dark().mono);
+
+    lightTheme = await HighlighterTheme.loadFromAssets(
+        _defaultLightThemeFiles, LumitTheme.light().mono);
+  }
+
+  ExpressionTextEditingController({super.text});
+
+  @override
+  TextSpan buildTextSpan(
+      {required BuildContext context,
+      TextStyle? style,
+      required bool withComposing}) {
+
+        final theme = ThemeScope.of(context).theme.mode == ThemeMode2.dark ? darkTheme! : lightTheme!;
+
+    var highlighter = Highlighter(
+      language: 'dart',
+      theme: theme,
+    );
+
+
+
+    var span = highlighter.highlight(text);
+    return span;
+  }
+}
+
 class _EffectParamRowExpressionState extends State<EffectParamRowExpression> {
   late TextEditingController controller;
 
@@ -696,7 +745,7 @@ class _EffectParamRowExpressionState extends State<EffectParamRowExpression> {
 
     playhead.addListener(onFrameChanged);
 
-    controller = TextEditingController(text: widget.value.field0);
+    controller = ExpressionTextEditingController(text: widget.value.field0);
     controller.addListener(onTextChanged);
     lastText = controller.text;
 
@@ -805,38 +854,7 @@ class _EffectParamRowExpressionState extends State<EffectParamRowExpression> {
             width: double.infinity,
             style: t.mono,
             submitOnLostFocus: true,
-            getSuggestions: (text) {
-              var items = ExpressionsMetadata.api.functions
-                  .map((i) => AutofillSuggestion(i, i.name));
-
-              return items.where((i) => i.word.startsWith(text)).toList();
-            },
-            suggestionBuilder: (suggestion) {
-              var data = suggestion.value as FunctionDef;
-              return Row(
-                spacing: 8,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    children: [
-                      Text(
-                        data.name,
-                        style: t.mono.copyWith(color: t.accent),
-                      ),
-                      Text(
-                        data.signature.replaceFirst(data.name, ""),
-                        style: t.mono,
-                      ),
-                    ],
-                  ),
-                  Column(
-                      children: data.docComments
-                          .map((i) =>
-                              Text(i.replaceFirst("///", ""), style: t.small))
-                          .toList()),
-                ],
-              );
-            },
+            autofill: ExpressionAutofillGenerator(),
             onSubmitted: (value) {
               print("Expression committed: $value");
               widget

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::*;
 use crate::anim::{Animation, Property};
 use crate::expression::ExpressionContext;
@@ -20,7 +22,7 @@ fn resolve_stack(
         diag_px,
         px_scale,
         markers,
-        &ExpressionContext::detached(),
+        Arc::new(ExpressionContext::detached()),
     )
 }
 
@@ -39,7 +41,7 @@ fn resolve_stack_temporal(
         diag_px,
         px_scale,
         markers,
-        &ExpressionContext::detached(),
+        Arc::new(ExpressionContext::detached()),
     )
 }
 

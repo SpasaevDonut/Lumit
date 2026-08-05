@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:lumit_flutter/data/expressions_metadata.dart';
+import 'package:lumit_flutter/panels/effect_param_row_frb.dart';
 import 'package:lumit_flutter/panels/panels_frb.dart';
 import 'package:lumit_flutter/panels/timeline_extras_frb.dart';
 import 'package:lumit_flutter/panels/viewer_texture_controller.dart';
@@ -157,6 +158,7 @@ Future<void> main(List<String> args) async {
 
   await BridgeLib.init(handler: CustomHandler());
   await ExpressionsMetadata.load();
+  await ExpressionTextEditingController.initSyntaxHighlighting();
   final state = LumitState();
   // Start with an empty project rather than nothing at all. Every document
   // command — import, new composition, save — is disabled while there is no

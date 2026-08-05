@@ -17,7 +17,7 @@
 //! unchanged. That is what lets the panel treat "read the value, change one
 //! field, write it" as safe — the ordinary way every control in it works.
 
-use std::{println, todo};
+use std::{println, sync::Arc, todo};
 
 use flutter_rust_bridge::frb;
 pub use lumit_core::model::EffectInstance;
@@ -216,14 +216,15 @@ pub fn sample_scalar_with_context(
 
             lumit_core::expression::evaluate(
                 &expr,
-                Some(&ExpressionContext {
-                    document: &doc,
+                Some(Arc::new(ExpressionContext {
+                    document: doc.clone(),
                     comp: Some(layer.comp_id),
                     layer: Some(layer.layer_id),
-                    time: Rational::new(time.num, time.den)
+                    comp_time: Rational::new(time.num, time.den)
                         .unwrap_or(Rational::ZERO)
                         .to_f64(),
-                }),
+                        current_depth: 0,
+                })),
             )
         }
     }
@@ -259,10 +260,11 @@ pub fn sample_scalar_range_with_context(
             lumit_core::expression::evaluate_range(
                 &expr,
                 Some(&ExpressionContext {
-                    document: &doc,
+                    document: doc.clone(),
                     comp: Some(layer.comp_id),
                     layer: Some(layer.layer_id),
-                    time: 0.0 // this time will be overwritten internally
+                    comp_time: 0.0, // this time will be overwritten internally,
+                    current_depth: 0,
                 }),
                 start,
                 end,

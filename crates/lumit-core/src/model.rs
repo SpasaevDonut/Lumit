@@ -4,6 +4,8 @@
 //! layers with spans — no properties/keyframes yet (slice arrives in Phase 1).
 //! All mutation goes through operations (ops.rs); this module is data + queries.
 
+use std::sync::Arc;
+
 use crate::anim::Property;
 use crate::expression::ExpressionContext;
 use crate::time::{CompTime, Duration, FrameRate, Rational};
@@ -590,7 +592,7 @@ impl EffectInstance {
         }
     }
     
-    pub fn float_at_with_context(&self, id: &str, lt: f64, context: &ExpressionContext) -> Option<f64> {
+    pub fn float_at_with_context(&self, id: &str, lt: f64, context: Arc<ExpressionContext>) -> Option<f64> {
         match self.param(id)? {
             EffectValue::Float(p) => Some(p.value_at_with_context(lt, context)),
             _ => None,
@@ -613,13 +615,13 @@ impl EffectInstance {
         }
     }
 
-    pub fn colour_at_with_context(&self, id: &str, lt: f64, context: &ExpressionContext) -> Option<[f64; 4]> {
+    pub fn colour_at_with_context(&self, id: &str, lt: f64, context: Arc<ExpressionContext>) -> Option<[f64; 4]> {
         match self.param(id)? {
             EffectValue::Colour(ch) => Some([
-                ch[0].value_at_with_context(lt, context),
-                ch[1].value_at_with_context(lt, context),
-                ch[2].value_at_with_context(lt, context),
-                ch[3].value_at_with_context(lt, context),
+                ch[0].value_at_with_context(lt, context.clone()),
+                ch[1].value_at_with_context(lt, context.clone()),
+                ch[2].value_at_with_context(lt, context.clone()),
+                ch[3].value_at_with_context(lt, context.clone()),
             ]),
             _ => None,
         }
@@ -905,7 +907,7 @@ impl TextDocument {
     /// **Every reader of a text layer's content goes through here**, so the
     /// rasteriser and the cache key can never disagree about what the layer
     /// says — a disagreement that would serve a cached frame of the old words.
-    pub fn resolved_text(&self, context: &ExpressionContext) -> std::borrow::Cow<'_, str> {
+    pub fn resolved_text(&self, context: Arc<ExpressionContext>) -> std::borrow::Cow<'_, str> {
         match &self.expression {
             None => std::borrow::Cow::Borrowed(&self.text),
             Some(e) => {

@@ -12,12 +12,14 @@
 
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/data/expressions_metadata.dart';
+import 'package:lumit_flutter/panels/effect_param_row_frb.dart';
 import 'package:lumit_flutter/src/rust/api/assets.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/project_item.dart';
 import 'package:lumit_flutter/src/rust/api/retime.dart';
 import 'package:lumit_flutter/src/rust/api/solid.dart';
+import 'package:lumit_flutter/widgets/autofill.dart';
 
 import '../theme/theme.dart';
 import '../widgets/colour_picker.dart';
@@ -99,7 +101,7 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
     if (_expression == null ||
         (_expression!.text != expression && !_expression!.selection.isValid)) {
       _expression?.dispose();
-      _expression = TextEditingController(text: expression);
+      _expression = ExpressionTextEditingController(text: expression);
     }
 
     void write({
@@ -143,31 +145,14 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
         t,
         'Expression',
         SizedBox(
-          width: _cellWidth + 60,
+          //width: _cellWidth + 60,
           child: HouseTextField(
             key: const ValueKey('src-text-expression'),
             controller: _expression!,
-            width: _cellWidth + 60,
+            width: double.infinity,
             style: t.mono,
             submitOnLostFocus: true,
-            getSuggestions: (text) => ExpressionsMetadata.api.functions
-                .map((f) => AutofillSuggestion(f, f.name))
-                .where((s) => s.word.startsWith(text))
-                .toList(),
-            suggestionBuilder: (suggestion) {
-              final data = suggestion.value as FunctionDef;
-              return Row(
-                spacing: 8,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(data.name, style: t.mono.copyWith(color: t.accent)),
-                  Text(
-                    data.signature.replaceFirst(data.name, ''),
-                    style: t.mono,
-                  ),
-                ],
-              );
-            },
+            autofill: ExpressionAutofillGenerator(),
             onSubmitted: (value) => write(expression: value),
           ),
         ),
