@@ -13,7 +13,7 @@ import 'layer.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:uuid/uuid.dart';
 
-// These functions are ignored because they are not marked as `pub`: `add_at_top`, `bridge_marker`, `commit`, `composition`, `core_marker`, `dispatch`, `document`, `footage_span_and_size`, `project`, `runs_as_video`, `to_engine`
+// These functions are ignored because they are not marked as `pub`: `add_at_top`, `bridge_marker`, `commit`, `composition`, `core_marker`, `core_markers`, `dispatch`, `document`, `footage_span_and_size`, `project`, `runs_as_video`, `to_engine`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `id`, `new`, `project_id`
 
@@ -185,9 +185,12 @@ class BridgeLayerEntry {
 
 /// One timeline marker (docs/03 §11): a cue on the comp's timebase.
 ///
-/// The engine's marker also carries a duration and a kind; neither has a
-/// control yet, so they are not carried across — a marker written back keeps
-/// what the panel can actually edit and does not pretend to round-trip the rest.
+/// The engine's marker also carries a duration, a kind and any unknown fields
+/// a newer Lumit wrote (docs/10 §1.1); none of the three has a control, so none
+/// of them crosses. They are **not** lost on a write-back: [`core_markers`]
+/// merges each incoming marker onto the one the document already holds under
+/// that id, so the panel edits what it can see and the rest survives untouched
+/// (K-270).
 class BridgeMarker {
   final UuidValue id;
   final BridgeRational time;
