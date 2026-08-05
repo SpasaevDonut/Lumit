@@ -2966,6 +2966,25 @@ it unset and keeps the friendly skip. The macOS and Windows jobs deliberately do
 yet: nobody has confirmed those runners offer an adapter at all, and a gate is only worth
 having where it has been checked.
 
+**A build with no FFmpeg is a real build again (K-273).** Lumit can be compiled without the
+video decoder — useful for anyone who wants to work on the editing model without installing
+FFmpeg first, and it is why the Windows job used to be quick. Nobody had built it that way
+for a while, and it had stopped compiling. The rule it broke is worth knowing, because it is
+easy to break again: **the list of functions Dart can call is the same in every build.** The
+Dart side of the bridge is generated from that list, so a function that *vanishes* when a
+feature is off leaves generated code calling something that is not there. What may change is
+what a function *does*: beat detection is always present and simply answers "this build has
+no audio pipeline". A media-less build loses decoding — no probing, no thumbnails, no
+waveform peaks, and the decode-ahead thread quietly does nothing — never a call that is
+missing. CI now builds and tests it on every push, so it cannot rot again.
+
+One honest correction, because the first version of this said otherwise: turning the
+feature off does **not** give you a build with no FFmpeg in it. Two other parts of the
+engine — the renderer and the audio mixer — depend on the decoder unconditionally, and the
+bridge depends on both, so FFmpeg is still linked either way. What the feature governs is
+the bridge's *own* decode paths. Making the whole dependency tree media-optional is a
+separate job, and it is written down as one rather than implied by a feature flag.
+
 **Two more robots joined in K-272, both about things nobody here writes.** The first is a
 *pinned compiler*: "stable Rust" means whatever version your machine last downloaded, and
 because Lumit treats every compiler warning as an error, a new Rust released on a Tuesday

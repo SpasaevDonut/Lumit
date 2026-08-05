@@ -5617,3 +5617,32 @@ ignore the job, and an unmaintained crate is a different question from a vulnera
 rsmpeg each bring their own stack). Every workspace crate gains `publish = false`, which is
 both true — they are the application, not libraries — and what lets the wildcard rule see a
 `path` dependency between our own crates as the non-problem it is.
+
+**K-273 · DECIDED · The feature-less build builds, and an observer attaches to a store that
+is already shared.** Two of the bridge's recorded rough edges. **(1)
+`cargo build -p lumit_bridge --no-default-features` builds and tests again.** The rule was
+already written down (docs/17 §Feature gates: the API surface is one shape whatever the
+features, so the generated Dart is one shape everywhere) and the code had drifted from it in
+three places: `api::beats` was gated *away* — so the checked-in generated code called a
+function that did not exist — while `prefetch` and the thumbnail cache leaked
+`lumit_media` types past their gates. Beats is now always compiled and its detection asks
+the audio pipeline, answering `NoAudioPipeline` where a build has none, which is the shape
+every other feature-sensitive call already uses. The decode-ahead thread still exists and
+still drains its queue without the decoder; a build with the feature off is one that does not
+*decode*, not one with a different scheduler. **What it is not**, and what the first version
+of this entry wrongly claimed: a build without FFmpeg. `lumit-render` and `lumit-audio`
+depend on `lumit-media` unconditionally and the bridge depends on both, so FFmpeg is still
+linked — the feature governs the bridge's own decode paths, not the dependency tree. CI
+caught the overstatement immediately, on a runner deliberately given no FFmpeg. Making the
+tree genuinely media-optional is its own piece of work, TODO'd rather than implied. Chosen over the recorded alternative — dropping
+the pretence that the features are independent — because the contract's promise is the
+valuable half and only the code had lapsed. One behaviour change fell out of it: a footage
+item whose file is not on disk now reports **Missing** in a media-less build too. Whether a
+file exists is a question for the filesystem, not the decoder; it used to answer "ready".
+**(2) `DocumentStore::set_callback` takes `&self`.** The observer had to be registered
+before the store went into its `Arc`, which no type enforced and which fights the natural
+shape of the thing: an observer usually wants to refer back to the object that owns the
+store, and that object does not exist yet at that point. The callback lives behind a
+`parking_lot::Mutex`, locked only to clone the `Arc` out or swap it and never across the
+call itself — the existing no-locks-across-FFI and re-entrancy rules (docs/14 §3) are
+unchanged, and their tests still pass.

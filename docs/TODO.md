@@ -178,8 +178,6 @@ The Timeline matters most - it is zoomed constantly while cutting.
 - **`ProjectReference::state()` hands the raw `Arc<RwLock<…>>` out**, so a caller
     can hold a project lock as long as it likes and in any order. The order is
     written down and tested; nothing enforces it at the type level.
-- **`DocumentStore::set_callback` takes `&mut self`**, so the observer can only be
-    attached before the store is shared.
 - **The macOS IOSurface Viewer path is unproven** - CI links the bundle but
     nobody has launched the .app (K-033).
 - **The macOS .app is not relocatable** - the podspec links keg-only FFmpeg by
@@ -204,11 +202,6 @@ The Timeline matters most - it is zoomed constantly while cutting.
 - **The Linux DMA-BUF path has never run on a Linux machine with a GPU** (K-033).
     It fails calmly on the adapter-less CI runner, which proves the failure is
     calm and nothing about the path working.
-- **`cargo build -p lumit_bridge --no-default-features` does not build** - the
-    render worker is part of the API surface, which is deliberately one shape
-    whatever the features ([17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md) §Feature
-    gates). Either make the worker feature-clean or drop the pretence that the
-    features are independent.
 - **frb's SSE codec encodes `Vec<u8>` one byte at a time** - now taxes only
     thumbnails and scope traces, but worth the bulk codec if traces feel late.
 - **Engine subsystems with no frb API** - masks (`add_mask`,
@@ -405,6 +398,12 @@ move** (§9 - the toolchain pin landed in K-272, the edition did not); the
 `ttf-parser` (via fontdue, via `lumit-text`) is the one with a real successor: moving
 the rasteriser to `skrifa` is its own piece of work with its own glyph-metric tests.
 `bincode` 1.x and `paste` leave when the dependencies that pull them update.
+
+**A genuinely FFmpeg-free build is not possible yet (K-273).** `lumit_bridge
+--no-default-features` compiles the bridge's own decode paths out, but `lumit-render` and
+`lumit-audio` depend on `lumit-media` unconditionally, so the library is still linked and
+the build still needs it installed. Making those two deps optional — and the render/audio
+paths that use them — is what "builds without FFmpeg" would actually take.
 
 **The performance harness and its CI gates are not built**
 ([13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md) §7.3): no reference comp in the

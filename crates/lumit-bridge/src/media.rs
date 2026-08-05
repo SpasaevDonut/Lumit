@@ -40,9 +40,11 @@ pub(crate) struct MediaCache {
 
 /// What a cached thumbnail is of: the item, the size asked for, and which
 /// frame of it.
+#[cfg(feature = "media")]
 type ThumbKey = (Uuid, u32, i64);
 
 /// A decoded thumbnail: width, height, and tightly packed RGBA8.
+#[cfg(feature = "media")]
 type Thumb = (u32, u32, Vec<u8>);
 
 impl MediaCache {
@@ -147,6 +149,7 @@ pub(crate) fn thumb_store(
     );
 }
 
+#[cfg(feature = "media")]
 pub(crate) fn thumbnail_from_path(
     cache: &mut MediaCache,
     id: Uuid,
