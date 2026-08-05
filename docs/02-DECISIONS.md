@@ -5667,3 +5667,32 @@ anti-aliases differently from the export would break the K-031 identity. That an
 of the recorded open questions; the work itself (MSAA targets and resolve in the composite
 pass, the setting through the bridge, and an adapter capability check — a sample count is
 asked for, never assumed) stays in [TODO.md](TODO.md).
+
+**K-275 · DECIDED · Selecting a layer means the same thing wherever it happens, and
+layers and effects copy as documents.** Two owner requests (2026-08-05). **(1) The
+selection is the shell's, and the Timeline must follow it.** Picking a layer on the
+picture already replaced the whole selection, but the Timeline kept its *own* per-layer
+state — the property selection, the graph's key selection, the row highlight — and cleared
+it only in its own click path. So a pick in the Viewer left the previous layer's rows lit:
+two layers appearing chosen at once, the exact ambiguity K-203 set out to remove. The panel
+now listens to `selectedLayer` and drops that state wherever the choosing happened, through
+the one helper its own click path uses. The Effect controls panel already followed the
+shell; a test now pins that a Viewer-shaped selection change switches it, so it cannot
+quietly stop. **(2) Copy and paste carry the document, not a summary.** A copied layer is
+the model's own `Layer`, serialised — transform and keyframes, masks, paint, effects,
+switches, markers, retime, and any field a newer Lumit added riding in `extra` — because a
+paste that dropped a property would be found much later, on a shot that looked almost
+right. The paste gives fresh layer and effect ids, and keeps a parent or track matte
+reference **only when it still names a layer in the target comp**: pasting back where it
+came from keeps both, pasting elsewhere keeps neither rather than leaving a dangling
+pointer. Time: `at_frame` lands the in point there and moves in point, out point and
+`start_offset` together (`edit_layer_span`'s `MoveIn`, the `[` key's own rule), so
+keyframes and source frames travel with the layer; `None` keeps the copied time, which is
+the owner's setting for rebuilding a moment in a second composition — **default at the
+playhead**, the other behind a preference. Effects copy as the **same `.lumfx` document a
+preset is**, so a copied effect can be saved as a preset and a preset pasted as an effect,
+and they always paste with their **first keyframe at the playhead** whatever the layer
+setting says: what is being placed is an animation, not a position. An effect with no
+keyframes pastes unmoved — there is no timing to place. The panels' wiring (the clipboard,
+the Edit menu, the copy-effect commands, the settings row) is TODO'd: it needs the bridge
+bindings regenerated, which needs a Flutter toolchain.

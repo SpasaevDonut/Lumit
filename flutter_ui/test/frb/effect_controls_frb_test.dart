@@ -151,6 +151,27 @@ void main() {
           reason: 'the stack draws as it does on any other layer');
     });
 
+    testWidgets('a selection made in the Viewer switches the panel to it',
+        (tester) async {
+      // The Viewer picks a layer by calling `setSelection` on the shell — it
+      // never goes through the Timeline — so this panel must follow the shell,
+      // not the panel that happens to be next to it (K-275).
+      final p = withLayer();
+      p.layer.addEffect(name: 'blur');
+      final other = p.uiState.selectedComp!.addSolidLayer();
+      other.addEffect(name: 'invert');
+      await mount(tester, p);
+      expect(find.text('Gaussian blur'), findsOneWidget);
+
+      p.uiState.setSelection([other]);
+      await tester.pump();
+
+      expect(find.text('Invert'), findsOneWidget,
+          reason: "the panel shows the newly selected layer's stack");
+      expect(find.text('Gaussian blur'), findsNothing,
+          reason: 'and not the one it was showing before');
+    });
+
     testWidgets('a parameter edit commits, and reading it back is exact',
         (tester) async {
       final p = withLayer();

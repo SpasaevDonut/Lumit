@@ -1027,6 +1027,78 @@ impl CompositionReference {
         })
     }
 
+    /// Paste a layer copied by [`crate::api::layer::LayerReference::copy_layer`]
+    /// into this composition, at the top of the stack (K-275).
+    ///
+    /// `at_frame` is where the layer's **in point** lands: the playhead, in the
+    /// ordinary case. `None` keeps the time it was copied at, which is the
+    /// setting for putting the same layer at the same moment in a second comp —
+    /// the two paste behaviours the owner asked for, decided by the caller
+    /// rather than by a mode this end has to remember.
+    ///
+    /// Whichever is chosen, the layer moves as one: in point, out point and
+    /// `start_offset` all shift together (`lumit_core::edit_layer_span`'s
+    /// `MoveIn`, the same rule the `[` key follows), so its keyframes and the
+    /// source frames it shows travel with it rather than sliding against it.
+    ///
+    /// **What is not copied is a reference to something that is not here.** The
+    /// pasted layer gets a fresh id and fresh effect ids — two layers sharing an
+    /// id would make every op that names one ambiguous — and its parent and
+    /// track matte are kept only when they still name a layer in *this* comp.
+    /// A parent that came from another composition is dropped rather than left
+    /// dangling: a layer parented to nothing visible would be a puzzle, and
+    /// re-parenting is one drag.
+    #[frb(sync)]
+    pub fn paste_layer(
+        &self,
+        text: String,
+        at_frame: Option<i64>,
+    ) -> Result<LayerReference, BridgeError> {
+        #[derive(serde::Deserialize)]
+        struct Copied {
+            comp: Uuid,
+            layer: lumit_core::model::Layer,
+        }
+        let copied: Copied = serde_json::from_str(&text).map_err(|_| BridgeError::InvalidItem)?;
+        let mut layer = copied.layer;
+        let comp = self.composition()?;
+
+        layer.id = Uuid::now_v7();
+        for effect in &mut layer.effects {
+            effect.id = Uuid::now_v7();
+        }
+        // A reference only survives if what it names is here. Pasting back into
+        // the comp it was copied from keeps both; pasting elsewhere keeps
+        // neither, because neither id means anything there.
+        let here = |id: Uuid| copied.comp == self.id && comp.layers.iter().any(|l| l.id == id);
+        if layer.parent.is_some_and(|p| !here(p)) {
+            layer.parent = None;
+        }
+        if layer.matte.as_ref().is_some_and(|m| !here(m.layer)) {
+            layer.matte = None;
+        }
+
+        if let Some(frame) = at_frame {
+            let at = comp
+                .frame_rate
+                .time_of_frame(frame.max(0))
+                .map_err(|_| BridgeError::InvalidTime)?;
+            let (in_point, out_point, start_offset) = lumit_core::ops::edit_layer_span(
+                layer.in_point,
+                layer.out_point,
+                layer.start_offset,
+                at,
+                lumit_core::ops::SpanEdit::MoveIn,
+            )
+            .ok_or(BridgeError::InvalidTime)?;
+            layer.in_point = in_point;
+            layer.out_point = out_point;
+            layer.start_offset = start_offset;
+        }
+
+        self.add_at_top(layer)
+    }
+
     /// Insert `layer` at the top of the stack.
     #[frb(ignore)]
     fn add_at_top(&self, layer: lumit_core::model::Layer) -> Result<LayerReference, BridgeError> {
