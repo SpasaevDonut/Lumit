@@ -40,7 +40,7 @@ const { class: klass } = Astro.props;
       <stop offset="1" stop-color="#eaf4ff" stop-opacity="0" />
     </radialGradient>
     <filter id="wm-soft" x="-70%" y="-70%" width="240%" height="240%">
-      <feGaussianBlur stdDeviation="11" />
+      <feGaussianBlur stdDeviation="7" />
     </filter>
     <radialGradient id="wm-rev">
       <stop offset="0" stop-color="#fff" /><stop offset="0.62" stop-color="#fff" />
@@ -57,22 +57,22 @@ const { class: klass } = Astro.props;
     <path class="g" d="M213.9933705329895 0.0V-52.734375H226.09330415725708V0.0Z" />
   </g>
 
+  <path class="key" data-key="a" d="M72.20 -9.20 L119.80 -56.80 L126.63 -49.97 L86.54 -9.89 L110.84 14.41 L103.33 21.92 Z" fill="url(#wm-a)" stroke="url(#wm-a)"
+        stroke-width="3" stroke-linejoin="round" />
+  <path class="key" data-key="b" d="M197.80 -60.80 L150.20 -13.20 L143.37 -20.03 L183.46 -60.11 L159.16 -84.41 L166.67 -91.92 Z" fill="url(#wm-b)" stroke="url(#wm-b)"
+        stroke-width="3" stroke-linejoin="round" />
+
   <g class="swirl" filter="url(#wm-soft)" opacity="0">
     <ellipse data-blob="0" cx="135.0" cy="-35.0" rx="20" ry="18" fill="#5ad7ff" style="mix-blend-mode:screen" />
     <ellipse data-blob="1" cx="135.0" cy="-35.0" rx="20" ry="18" fill="#8a70ff" style="mix-blend-mode:screen" />
     <ellipse data-blob="2" cx="135.0" cy="-35.0" rx="20" ry="18" fill="#ff4f9e" style="mix-blend-mode:screen" />
   </g>
   <ellipse class="core" cx="135.0" cy="-35.0" rx="34" ry="32" fill="url(#wm-core)" opacity="0" />
-
-  <path class="key" data-key="a" d="M72.20 -9.20 L119.80 -56.80 L126.63 -49.97 L86.54 -9.89 L110.84 14.41 L103.33 21.92 Z" fill="url(#wm-a)" stroke="url(#wm-a)"
-        stroke-width="3" stroke-linejoin="round" />
-  <path class="key" data-key="b" d="M197.80 -60.80 L150.20 -13.20 L143.37 -20.03 L183.46 -60.11 L159.16 -84.41 L166.67 -91.92 Z" fill="url(#wm-b)" stroke="url(#wm-b)"
-        stroke-width="3" stroke-linejoin="round" />
 </svg>
 
 <script is:inline>
   (function () {
-    var D = {"a":{"fat":[[98.0,-35.0],[119.8,-56.8],[130.78,-45.82],[119.95,-35.0],[130.78,-24.18],[119.8,-13.2]],"thin":[[98.0,-35.0],[119.8,-56.8],[126.63,-49.97],[111.65,-35.0],[126.63,-20.03],[119.8,-13.2]],"to":[[72.2,-9.2],[119.8,-56.8],[126.63,-49.97],[86.54,-9.89],[110.84,14.41],[103.33,21.92]],"p":[119.8,-56.8],"t":[-110.95,-12.01]},"b":{"fat":[[172.0,-35.0],[150.2,-13.2],[139.22,-24.18],[150.05,-35.0],[139.22,-45.82],[150.2,-56.8]],"thin":[[172.0,-35.0],[150.2,-13.2],[143.37,-20.03],[158.35,-35.0],[143.37,-49.97],[150.2,-56.8]],"to":[[197.8,-60.8],[150.2,-13.2],[143.37,-20.03],[183.46,-60.11],[159.16,-84.41],[166.67,-91.92]],"p":[150.2,-13.2],"t":[107.81,11.7]}};
+    var D = {"a":{"fat":[[98.0,-35.0],[119.8,-56.8],[128.44,-48.16],[115.29,-35.0],[128.44,-21.84],[119.8,-13.2]],"thin":[[98.0,-35.0],[119.8,-56.8],[126.63,-49.97],[111.65,-35.0],[126.63,-20.03],[119.8,-13.2]],"to":[[72.2,-9.2],[119.8,-56.8],[126.63,-49.97],[86.54,-9.89],[110.84,14.41],[103.33,21.92]],"p":[119.8,-56.8],"t":[-110.95,-12.01]},"b":{"fat":[[172.0,-35.0],[150.2,-13.2],[141.56,-21.84],[154.71,-35.0],[141.56,-48.16],[150.2,-56.8]],"thin":[[172.0,-35.0],[150.2,-13.2],[143.37,-20.03],[158.35,-35.0],[143.37,-49.97],[150.2,-56.8]],"to":[[197.8,-60.8],[150.2,-13.2],[143.37,-20.03],[183.46,-60.11],[159.16,-84.41],[166.67,-91.92]],"p":[150.2,-13.2],"t":[107.81,11.7]}};
     var SW = [[0.0, 1.0], [2.1, 0.78], [4.2, 1.22]];
     var svg = document.currentScript.previousElementSibling;
     if (!svg || !svg.classList.contains("wm") || svg.dataset.wmDone) return;
@@ -85,9 +85,9 @@ const { class: klass } = Astro.props;
     var blobs = [].slice.call(svg.querySelectorAll("[data-blob]"));
     if (!keys.a || !keys.b || !core) return;
 
-    var HOLD = 0.06, OUT = 0.44, SNAP = 0.7, OVER = 0.11, DUR = 2200;
-    var BREATHE = 0.36, GONE = 0.6, MORPH_END = 0.518;
-    var REVEAL = [0.18, 0.52];
+    var HOLD = 0.04, OUT = 0.28, SNAP = 0.58, OVER = 0.22, DUR = 2200;
+    var BREATHE = 0.26, GONE = 0.5, MORPH_END = 0.37;
+    var REVEAL = [0.14, 0.46];
     var CX = 135.0, CY = -35.0;
 
     function poly(p) {
@@ -133,11 +133,11 @@ const { class: klass } = Astro.props;
       swirl.setAttribute("opacity", (1.0*inhale*(1-exhale)).toFixed(3));
       blobs.forEach(function (b, i) {
         var ang = SW[i][0] + t*SW[i][1]*6.2831853;
-        var orb = 26*s*0.60;
+        var orb = 30*s*0.26;                      // orbit + blob stays < the core radius
         b.setAttribute("cx", (CX + Math.cos(ang)*orb).toFixed(1));
         b.setAttribute("cy", (CY + Math.sin(ang)*orb*0.66).toFixed(1));
-        b.setAttribute("rx", (30*s*0.72).toFixed(1));
-        b.setAttribute("ry", (27*s*0.72).toFixed(1));
+        b.setAttribute("rx", (30*s*0.38).toFixed(1));
+        b.setAttribute("ry", (28*s*0.38).toFixed(1));
       });
 
       // a radius opening from the centre uncovers the letters, so what lights up
