@@ -5588,3 +5588,26 @@ on screen to say the file and the picture had parted company. A stale entry for 
 replaced rather than kept beside the new one; a path that cannot be stat'd keys as `None`,
 which still matches itself, so it is cached by path exactly as before instead of being
 re-read every frame.
+
+**K-272 · DECIDED · The toolchain is pinned and dependency hygiene is a CI job.** Two of
+[14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md) §9's owed tools, which are the same
+promise from two directions: what this repository is built *with*, and what it is built
+*from*. **(1) `rust-toolchain.toml` pins 1.94.1** (with rustfmt and clippy). Without it,
+"stable" means whatever each machine happens to have, and `-D warnings` turns a compiler
+released mid-week into a red build on a commit that changed nothing. Every CI job installs
+stable and then lets the file decide, so there is one place to raise it — deliberately,
+with the suite run and the changelog written, never incidentally. **(2) `cargo deny check`
+runs on every push** over licences, advisories, wildcards and sources, through the upstream
+action (it ships the binary and caches the advisory database, so the job is seconds rather
+than a three-minute build of a tool that reads a lock file). The allowed-licence list is the
+GPLv3-compatible permissive set plus Lumit's own GPL-3.0-only, so a dependency with any
+other licence stops the build until someone decides deliberately — which is exactly the
+conversation §9 already asks for in the pull request. Three unmaintained-crate advisories
+are ignored **by id, each with what it would take to leave it** (`ttf-parser` via fontdue
+wants the `skrifa` migration; `bincode` 1.x and `paste` leave when their parents update):
+failing every build over a transitive dependency nobody here can update trains people to
+ignore the job, and an unmaintained crate is a different question from a vulnerable one —
+`yanked` and real advisories still deny. Duplicate versions warn rather than fail (wgpu and
+rsmpeg each bring their own stack). Every workspace crate gains `publish = false`, which is
+both true — they are the application, not libraries — and what lets the wildcard rule see a
+`path` dependency between our own crates as the non-problem it is.

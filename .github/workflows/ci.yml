@@ -1,6 +1,11 @@
 # CI: every push re-proves every promise (docs/14-ENGINEERING-RULES.md §tests).
 name: ci
 
+# Every job below installs "stable" and then lets rust-toolchain.toml decide
+# which version that actually is (docs/14 §9): rustup reads the file and fetches
+# exactly the pinned toolchain, so a compiler released mid-week cannot turn a
+# new warning into a red build on a commit that changed nothing.
+
 on:
   push:
     branches: [main]
@@ -534,6 +539,29 @@ jobs:
   # the FFI boundary. This grep covers the blind spot until the lints see
   # through the macro; every call there must return Result<_, BridgeError> or
   # degrade deliberately.
+  # Dependency hygiene (docs/14-ENGINEERING-RULES.md §9). Four questions, all
+  # of them about code nobody here wrote: is a dependency's licence one a GPLv3
+  # program may carry, does any of them have a published advisory, is anything
+  # pinned by a wildcard, and does any of it come from somewhere other than
+  # crates.io. The rules and the reasoning live in deny.toml — including the
+  # three unmaintained-crate advisories that are deliberately ignored, each with
+  # what it would take to leave it.
+  #
+  # No FFmpeg or desktop libraries are installed here on purpose: cargo-deny
+  # reads Cargo.lock and the crate manifests, never the C libraries a build
+  # would link, so this job stays a fast one.
+  cargo-deny:
+    name: dependency hygiene (licences, advisories, sources)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # The upstream action rather than `cargo install cargo-deny`: it ships the
+      # binary and caches the advisory database, so this job is seconds rather
+      # than a three-minute build of a tool that checks a lock file.
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+
   no-panics-in-frb-api:
     name: bridge lint (no panic paths in the frb API surface)
     runs-on: ubuntu-latest

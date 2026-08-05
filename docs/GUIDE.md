@@ -2966,6 +2966,20 @@ it unset and keeps the friendly skip. The macOS and Windows jobs deliberately do
 yet: nobody has confirmed those runners offer an adapter at all, and a gate is only worth
 having where it has been checked.
 
+**Two more robots joined in K-272, both about things nobody here writes.** The first is a
+*pinned compiler*: "stable Rust" means whatever version your machine last downloaded, and
+because Lumit treats every compiler warning as an error, a new Rust released on a Tuesday
+could turn a build red on a commit that changed nothing. A small file at the top of the
+repository (`rust-toolchain.toml`) names the one version everything is built with, and Rust
+fetches exactly that on every machine including CI. Raising it is then a deliberate act
+rather than a surprise. The second is a *dependency check* (`cargo deny`): Lumit is GPLv3,
+which means it may only carry libraries whose licences the GPL can absorb, and it should
+not quietly pick up one with a published security hole or one whose author has stopped
+maintaining it. Four hundred-odd libraries arrive indirectly, so `deny.toml` writes the
+rules down and CI checks them — including three abandoned libraries we knowingly live with
+for now, each recorded with what it would take to leave it, because pretending they are not
+there would be worse than saying so.
+
 **The no-hex rule was being enforced on the wrong language.** Every colour is supposed to
 come from the theme, so the schemes and any custom theme actually reach every pixel — and
 CI was grepping for stray colour values in the *Rust* code, which is where the old frontend
