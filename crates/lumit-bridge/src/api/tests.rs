@@ -1486,6 +1486,63 @@ fn the_pixel_less_kinds_report_no_picture() {
     assert!(adjustment.has_picture().expect("has_picture"));
 }
 
+/// **An effect on a Null keeps its values, animation and all** (K-274).
+///
+/// A Null draws nothing, so an image effect on one changes no picture — which
+/// is why the drop is *labelled inert* rather than refused. The parameters are
+/// the point: a control put on a Null is how a value is meant to be published
+/// for other layers to read (a Slider driving an expression, once expressions
+/// land). So the stack must survive a commit, keep its keyframes, and sample
+/// like any other curve — nothing may quietly strip an effect from a layer that
+/// has no pixels.
+#[test]
+fn an_effect_on_a_null_layer_keeps_its_animated_value() {
+    use crate::api::effect::{sample_scalar, BridgeEffectValue, BridgeRational, BridgeScalar};
+
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let null = comp.add_null_layer().expect("null added");
+
+    null.add_effect("blur".into())
+        .expect("the drop is accepted");
+    assert_eq!(
+        null.get_effects().expect("effects").len(),
+        1,
+        "an effect on a Null is stored like any other"
+    );
+
+    // Animate it, and commit through the ordinary staged-copy path.
+    let mut staged = null.get_effects().expect("effects");
+    let key = |num: i64, value: f64| crate::api::effect::BridgeKeyframe {
+        time: BridgeRational { num, den: 1 },
+        value,
+        interp_in: crate::api::effect::BridgeSideInterp::Linear,
+        interp_out: crate::api::effect::BridgeSideInterp::Linear,
+    };
+    let keys = BridgeScalar::Keyframed(vec![key(0, 0.0), key(1, 10.0)]);
+    staged[0]
+        .set_value("radius".into(), BridgeEffectValue::Float(keys))
+        .expect("a Null's parameter takes a value like any other");
+    null.set_effects(staged).expect("committed");
+
+    // Read it back and sample it: halfway along the ramp is five, on a layer
+    // that will never draw a pixel.
+    let Ok(BridgeEffectValue::Float(scalar)) = null
+        .get_effects()
+        .expect("effects")
+        .first()
+        .expect("the effect survived the commit")
+        .get_value("radius".into())
+    else {
+        panic!("a Null's effect parameter must read back as the Float it is");
+    };
+    let half = sample_scalar(scalar, BridgeRational { num: 1, den: 2 });
+    assert!(
+        (half - 5.0).abs() < 1e-9,
+        "the curve on a Null evaluates like any other: got {half}"
+    );
+}
+
 /// Each switch is its own op, so a click is one undo step and toggling one
 /// switch never disturbs another.
 #[test]

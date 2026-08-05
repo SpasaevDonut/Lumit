@@ -2140,7 +2140,16 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   (it emits no node, so it costs no drawing pass), the renderer returns no pixels for it,
   and it answers "no" when asked whether it has a picture — so it is never offered as a
   matte source or as a layer-valued effect parameter, where picking it would have quietly
-  produced nothing. It is *not* invisible to the frame cache, though, and that distinction
+  produced nothing.
+
+  You *can* still drop an effect on a null, and Lumit deliberately lets you (K-274). Nothing
+  is drawn — there is no picture for an effect to change — so the Effect controls panel says
+  so once, quietly, rather than refusing the drop. The reason is that an effect is not only
+  a picture operation: its parameters are values, animatable like any other, and a null is
+  the natural home for a value that is meant to drive *other* layers. Put a slider on a null,
+  animate it, and point another layer's expression at it, and the fact that the null itself
+  renders nothing is exactly the point. So the stack on a null is stored, keyframed and
+  sampled like any other; only the drawing is absent. It is *not* invisible to the frame cache, though, and that distinction
   matters: the transform still feeds the key that decides which cached frames are still
   good, so nudging a null correctly throws away the cached frames of everything hanging off
   it. A null draws a grabbable 100×100 wireframe box in the Viewer (K-230 — After Effects'

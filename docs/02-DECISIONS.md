@@ -5646,3 +5646,24 @@ store, and that object does not exist yet at that point. The callback lives behi
 `parking_lot::Mutex`, locked only to clone the `Arc` out or swap it and never across the
 call itself — the existing no-locks-across-FFI and re-entrancy rules (docs/14 §3) are
 unchanged, and their tests still pass.
+
+**K-274 · DECIDED · An effect on a Null is labelled inert, never refused — and
+anti-aliasing is a project property, on by default.** Two owner decisions on open
+questions (2026-08-05). **(1) Effects on a Null layer.** The recorded choice was "either
+refuse the drop or say plainly that the stack is inert"; the owner chose *inert*, with the
+reason that decides the shape of it: **a Null is where a control lives when it is meant to
+drive something else.** A Slider (or any parameter) on a Null is how a value gets published
+for another layer's expression to read, so refusing the drop would remove a feature rather
+than prevent a mistake — and this holds for every effect, not just the expression-control
+family. So: the drop is accepted, the stack is stored, keyframed and sampled exactly as on
+any other layer (pinned by `an_effect_on_a_null_layer_keeps_its_animated_value`), nothing
+strips it, and the Effect controls panel says once, calmly, that a Null draws nothing so an
+effect here changes no picture while its parameters stay live. When expressions land
+(Phase 4, [12-PLUGINS.md](12-PLUGINS.md)) they read those parameters like any other; nothing
+about this decision is deferred to them. **(2) Anti-aliasing** is a **project property, on
+by default, with one value shared by preview and export** — it changes what a comp looks
+like, so it must travel with the file and match on another machine, and a preview that
+anti-aliases differently from the export would break the K-031 identity. That answers both
+of the recorded open questions; the work itself (MSAA targets and resolve in the composite
+pass, the setting through the bridge, and an adapter capability check — a sample count is
+asked for, never assumed) stays in [TODO.md](TODO.md).
