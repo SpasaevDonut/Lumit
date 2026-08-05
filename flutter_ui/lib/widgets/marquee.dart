@@ -6,6 +6,7 @@
 // coordinates and the owner decides what fell inside it. A plain click calls
 // [onClear] — a selection box around nothing means "select nothing" everywhere.
 
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/widgets.dart';
 
 import 'controls.dart';
@@ -56,6 +57,21 @@ class _MarqueeSelectState extends State<MarqueeSelect> {
         Positioned.fill(
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
+            // **Everything but the trackpad drags a box.** A two-finger scroll
+            // on a Mac trackpad arrives as a *pan gesture*, not as the wheel's
+            // pointer signal, so a pan recogniser over the whole lane area wins
+            // it in the arena and the panel simply cannot be scrolled — which is
+            // exactly how it was reported ("I can't scroll the timeline with my
+            // trackpad"), and why a mouse wheel worked all along. Leaving
+            // trackpad pans unclaimed hands them to the scrollable underneath,
+            // where they belong; a mouse drag still draws the box.
+            supportedDevices: const {
+              PointerDeviceKind.mouse,
+              PointerDeviceKind.touch,
+              PointerDeviceKind.stylus,
+              PointerDeviceKind.invertedStylus,
+              PointerDeviceKind.unknown,
+            },
             onTap: widget.onTapAt == null ? widget.onClear : null,
             onTapUp: widget.onTapAt == null
                 ? null

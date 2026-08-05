@@ -6,13 +6,15 @@
 // render-time column and the Effect controls panel can show them beside the
 // things they are about.
 //
-// **The measuring is switched on deliberately**, and it is off until it is.
-// Measuring is not free — the engine waits for the graphics card at every node,
-// so a millisecond means the work rather than the paperwork, and that wait is
-// exactly the overlap a brisk preview lives on. A number nobody is reading is
-// therefore not worth its cost: the Timeline's render-time column carries the
-// switch, one switch for the whole session, and every indicator reads the same
-// numbers it turns on.
+// **Measuring is on by default, and the switch is in the bottom strip.** It is
+// not free — the engine waits for the graphics card at every node, so a
+// millisecond means the work rather than the paperwork, and a measured frame is
+// composited rather than served from a cache — but numbers are what the column
+// is *for*, and the first arrangement (off by default, switched on by a glyph in
+// the column header) meant the honest answer to "why is my column empty" was
+// "you have to find the switch". So it starts on, the clock in the bottom strip
+// beside the cache meters turns it off for the session, and everything that
+// shows a number reads the same one set.
 
 import 'package:flutter/foundation.dart';
 
@@ -38,15 +40,20 @@ class RenderTimings extends ChangeNotifier {
   /// hardest kind of fault to report, so this says so out loud instead.
   final void Function(Object error)? _onEngineError;
 
+  /// [measuring] starts **on**, matching the engine's own default, so the
+  /// column fills by itself and no call is needed at startup to put the two
+  /// sides in step. The switch that turns it off lives in the bottom strip.
   RenderTimings({
+    bool measuring = true,
     void Function(bool on)? askEngine,
     void Function()? onMeasuringStarted,
     void Function(Object error)? onEngineError,
-  })  : _askEngine = askEngine ?? ((on) => setRenderProfiling(on_: on)),
+  })  : _measuring = measuring,
+        _askEngine = askEngine ?? ((on) => setRenderProfiling(on_: on)),
         _onMeasuringStarted = onMeasuringStarted,
         _onEngineError = onEngineError;
 
-  bool _measuring = false;
+  bool _measuring;
 
   int? _frame;
   double? _totalMs;

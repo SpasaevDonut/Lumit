@@ -13,6 +13,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
 import 'package:lumit_flutter/panels/timeline_timings.dart';
+import 'package:lumit_flutter/shell/status_line_frb.dart';
 import 'package:lumit_flutter/src/rust/api/state.dart';
 
 import 'frb_test_support.dart';
@@ -33,8 +34,25 @@ void main() {
       );
     }
 
-    Future<void> mount(WidgetTester tester,
-        ({LumitState state, LumitUiState uiState, String layerId}) p) async {
+    /// The same, with one effect on the layer — for the row that carries an
+    /// effect's own cost.
+    ({LumitState state, LumitUiState uiState, String layerId, String effectId})
+        withEffect() {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      comp.addSolidLayer();
+      final layer = comp.getLayers().single;
+      layer.addEffect(name: 'blur');
+      p.uiState.setSelectedComp(comp);
+      return (
+        state: p.state,
+        uiState: p.uiState,
+        layerId: layer.internallayerId.toString(),
+        effectId: layer.getEffects().single.id().toString(),
+      );
+    }
+
+    Future<void> mount(WidgetTester tester, dynamic p) async {
       // A window wide enough to hold the whole outline: the render-time column
       // is its rightmost, and the test is about reaching it rather than about
       // what a narrow window hides.
@@ -51,66 +69,14 @@ void main() {
       await settleFrb(tester, minRounds: 6);
     }
 
-    testWidgets('the stopwatch in the header turns measuring on and off',
+    testWidgets('the column measures by default and shows the frame total',
         (tester) async {
       final p = withLayer();
       await mount(tester, p);
 
-      expect(p.uiState.renderTimings.measuring, isFalse,
-          reason: 'nothing is measured until it is asked for');
+      expect(p.uiState.renderTimings.measuring, isTrue,
+          reason: 'numbers are what the column is for (K-276 revision)');
 
-      // The header cell sits inside the column-group Draggable; a tap must
-      // still reach it.
-      await tester.tap(find.byType(TimingsHeaderCell));
-      await tester.pump();
-      expect(p.uiState.renderTimings.measuring, isTrue);
-      // Measuring: the header stops reading "Time" and starts reporting the
-      // frame — `…` until one has been measured, a number once one has. Which
-      // of the two is a race against the engine, and either is the point: the
-      // header says whether anything is coming.
-      expect(find.text('Time'), findsNothing);
-
-      await tester.tap(find.byType(TimingsHeaderCell));
-      await tester.pump();
-      expect(p.uiState.renderTimings.measuring, isFalse);
-      // Leave the engine as it was found.
-      await settleFrb(tester, minRounds: 4);
-    });
-
-    /// **How the column was reported broken.** Idle, it drew nothing at all, so
-    /// a header called Time over a row per layer and nothing in any of them
-    /// looked exactly like a feature that did not work — and the switch was a
-    /// glyph in the header nobody had reason to press. An idle cell now shows a
-    /// dimmed dash and starts measuring when it is clicked, so the column is
-    /// its own switch wherever the user reaches for it.
-    testWidgets('an idle column shows dashes, and a click on one starts it',
-        (tester) async {
-      final p = withLayer();
-      await mount(tester, p);
-
-      expect(p.uiState.renderTimings.measuring, isFalse);
-      expect(find.descendant(of: find.byType(TimingsCell), matching: find.text('—')),
-          findsWidgets, reason: 'idle reads as "no numbers", not as blank');
-
-      await tester.tap(find.byType(TimingsCell).first);
-      await tester.pump();
-      expect(p.uiState.renderTimings.measuring, isTrue);
-      p.uiState.renderTimings.setMeasuring(false);
-      await settleFrb(tester, minRounds: 4);
-    });
-
-    testWidgets('a measured frame puts its number on the layer row',
-        (tester) async {
-      final p = withLayer();
-      await mount(tester, p);
-
-      await tester.tap(find.byType(TimingsHeaderCell));
-      await tester.pump();
-
-      // The engine's own answer arrives on the worker stream; this test is
-      // about the *row*, so it feeds the read model directly with the shape
-      // the engine sends (render_timings_frb_test.dart pins that the engine
-      // really sends it, and with these ids).
       p.uiState.renderTimings.report(BridgeFrameProfile(
         frame: BigInt.zero,
         totalMs: 12.5,
@@ -125,12 +91,84 @@ void main() {
       expect(find.text('12.5 ms'), findsOneWidget,
           reason: 'and the header shows what the whole frame cost, so a dash '
               'on a row below can be told from an engine saying nothing');
+    });
 
-      p.uiState.renderTimings.setMeasuring(false);
+    /// The switch is in the bottom strip now, not in the column header: a
+    /// header that says Time over a column of dashes gives no hint that it is
+    /// a button, which is exactly how the feature was reported broken.
+    testWidgets('the header is a readout, and the strip carries the switch',
+        (tester) async {
+      final p = withLayer();
+      tester.view.physicalSize = const Size(1600, 700);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(hostPanel(
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(1600, 700),
+        child: const Column(children: [
+          Expanded(child: TimelinePanelFrb()),
+          StatusLineFrb(),
+        ]),
+      ));
       await tester.pump();
-      expect(find.text('8.5 ms'), findsNothing,
-          reason: 'and stops showing a cost nothing is measuring any more');
+      await settleFrb(tester, minRounds: 6);
+
+      // Clicking the header changes nothing — it is a readout now, and there
+      // is not even a gesture detector under it to claim the tap.
+      await tester.tapAt(
+          tester.getTopLeft(find.byType(TimingsHeaderCell)) +
+              const Offset(4, 8));
+      await tester.pump();
+      expect(p.uiState.renderTimings.measuring, isTrue);
+
+      // The strip's clock stops it, and starts it again.
+      await tester.tap(find.byType(RenderTimingsToggle));
+      await tester.pump();
+      expect(p.uiState.renderTimings.measuring, isFalse);
+      expect(find.text('Time'), findsOneWidget,
+          reason: 'the header says what the column is when it is idle');
+
+      await tester.tap(find.byType(RenderTimingsToggle));
+      await tester.pump();
+      expect(p.uiState.renderTimings.measuring, isTrue);
       await settleFrb(tester, minRounds: 4);
+    });
+
+    /// An effect's own cost belongs in the same column as its layer's, or the
+    /// two cannot be read against each other at a glance.
+    testWidgets('an effect heading puts its number in the layer column',
+        (tester) async {
+      final p = withEffect();
+      await mount(tester, p);
+
+      // Twirl the layer open, then its Effects group, so the effect heading is
+      // on screen. Near the left end, not the centre: a fold row spans the
+      // whole outline, which is wider than a click can assume.
+      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-${p.layerId}')));
+      await tester.pump();
+      await tester.tapAt(tester.getTopLeft(find.byKey(
+              ValueKey<String>('tl-group-${p.layerId}/effects'))) +
+          const Offset(5, 8));
+      await tester.pumpAndSettle();
+
+      p.uiState.renderTimings.report(BridgeFrameProfile(
+        frame: BigInt.zero,
+        totalMs: 20,
+        layers: [
+          BridgeLayerTiming(
+            layer: p.layerId,
+            ms: 8.5,
+            effects: [BridgeEffectTiming(effect: p.effectId, ms: 4.5)],
+          ),
+        ],
+      ));
+      await tester.pump();
+
+      final layerNumber = tester.getRect(find.text('8.5 ms'));
+      final effectNumber = tester.getRect(find.text('4.5 ms'));
+      expect(effectNumber.right, closeTo(layerNumber.right, 0.5),
+          reason: 'the two numbers share a column, so they read as one');
     });
   });
 }

@@ -24,21 +24,28 @@ BridgeFrameProfile _profile() => BridgeFrameProfile(
     );
 
 void main() {
-  test('nothing is measured until something asks', () {
+  test('measuring is on to begin with, matching the engine', () {
     final asked = <bool>[];
     final timings = RenderTimings(askEngine: asked.add);
-    expect(timings.measuring, isFalse);
-    expect(asked, isEmpty, reason: 'the engine was never troubled');
+    expect(timings.measuring, isTrue,
+        reason: 'numbers are what the column is for, and a switch nobody finds '
+            'is a feature that does not work (K-276)');
+    expect(asked, isEmpty,
+        reason: 'the engine starts on too, so nothing is said at startup');
 
-    // A profile that arrives anyway (a frame in flight from an earlier ask) is
-    // not a reason to start showing numbers.
+    timings.report(_profile());
+    expect(timings.layerMs('layer-a'), isNotNull);
+  });
+
+  test('switched off, a profile that arrives anyway is ignored', () {
+    final timings = RenderTimings(measuring: false, askEngine: (_) {});
     timings.report(_profile());
     expect(timings.layerMs('layer-a'), isNull);
   });
 
   test('measuring gathers the numbers, and stopping drops them', () {
     final asked = <bool>[];
-    final timings = RenderTimings(askEngine: asked.add);
+    final timings = RenderTimings(measuring: false, askEngine: asked.add);
 
     timings.setMeasuring(true);
     expect(asked, [true]);
@@ -70,6 +77,7 @@ void main() {
     // column that will never fill, because the engine never heard the ask.
     final errors = <Object>[];
     final timings = RenderTimings(
+      measuring: false,
       askEngine: (on) => throw StateError('no such call'),
       onEngineError: errors.add,
     );
@@ -82,7 +90,6 @@ void main() {
 
   test('the frame total is null until a measured frame arrives', () {
     final timings = RenderTimings(askEngine: (_) {});
-    timings.setMeasuring(true);
     expect(timings.totalMs, isNull,
         reason: 'the header shows … rather than a number it does not have');
     timings.report(_profile());

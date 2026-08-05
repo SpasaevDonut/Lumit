@@ -15,10 +15,18 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// The wish, off until something asks. Relaxed ordering throughout: this
-/// decides whether the *next* frame is measured, and a frame either side of the
-/// change is a correct answer to a question about a moving picture.
-static WANTED: AtomicBool = AtomicBool::new(false);
+/// The wish. **On by default (K-276 revision)**: the numbers are what the
+/// column is for, and a diagnostic nobody can find is not shipped — the first
+/// arrangement asked the user to press a glyph in a column header, and the
+/// answer to "why is it empty" was "you have to switch it on", which is no
+/// answer at all. The frontend's switch now lives in the bottom strip beside
+/// the cache meters, where a session-wide toggle belongs, and both sides start
+/// in the same state without a call at startup.
+///
+/// Relaxed ordering throughout: this decides whether the *next* frame is
+/// measured, and a frame either side of the change is a correct answer to a
+/// question about a moving picture.
+static WANTED: AtomicBool = AtomicBool::new(true);
 
 /// Whether the first measured frame since the switch went on has been announced
 /// — see [`announce_first`].

@@ -71,6 +71,17 @@ const double _rowHeight = 22;
 /// The outline's two header rows: the toolbar (timecode, search, the view
 /// buttons) and the column-group header under it.
 const double _toolbarHeight = 26;
+
+/// The lane side's bottom bar (zoom, magnet, the horizontal scrollbar).
+///
+/// **The outline reserves the same height below its rows**, and that is not
+/// decoration: the two halves are one table, and a viewport that is shorter on
+/// one side can be scrolled further than the other. The lanes could run past the
+/// outline's last row by exactly this bar's height, and the halves came apart at
+/// the bottom of a long stack — reported as "the lane area can scroll up more
+/// than the layer area". Reserving it keeps both viewports the same height,
+/// which is what keeps `maxScrollExtent` the same on both.
+const double _laneBottomBarHeight = 20;
 const double _headerHeight = 20;
 
 /// The time ruler's height: the toolbar and column header stay inside the
@@ -1614,19 +1625,41 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                   // playhead is: the line itself, and the razor (which reads it
                   // when clicked). Both listen for themselves now.
                   //
-                  // Dragging never scrolls the timeline — the wheel and the
-                  // scrollbars do (docs/07 §4.6). A drag on empty lane space
-                  // is the keyframe marquee, and a scrollable competing for
-                  // it in the gesture arena would win and eat the box.
+                  // Dragging never scrolls the timeline — the wheel, the
+                  // trackpad and the scrollbars do (docs/07 §4.6). A drag on
+                  // empty lane space is the keyframe marquee, and a scrollable
+                  // competing for it in the gesture arena would win and eat the
+                  // box.
+                  //
+                  // **The trackpad is the exception, and it has to be**: a
+                  // two-finger scroll on a Mac arrives as a pan *gesture*, not
+                  // as the wheel's pointer signal, so an empty `dragDevices`
+                  // set — which is what this was — left the panel unscrollable
+                  // by trackpad while the wheel worked perfectly. Nobody with a
+                  // mouse could see it. Allowing exactly `trackpad` here scrolls
+                  // on two fingers and still leaves a click-drag to the marquee
+                  // (a click-drag is a pointer drag, not a pan-zoom); the
+                  // editing recognisers over these surfaces exclude the
+                  // trackpad in turn, so they cannot take it back
+                  // (`dragDevices` in widgets/controls.dart).
                   return ScrollConfiguration(
-                    behavior: ScrollConfiguration.of(context)
-                        .copyWith(dragDevices: const {}, scrollbars: false),
+                    behavior: ScrollConfiguration.of(context).copyWith(
+                        dragDevices: const {PointerDeviceKind.trackpad},
+                        scrollbars: false),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         SizedBox(
                           width: outlineViewport,
-                          child: Stack(
+                          // A column, to match the lane side's: rows, then a
+                          // block the height of the lane bottom bar, so both
+                          // halves give their rows the same viewport and scroll
+                          // the same distance ([_laneBottomBarHeight]).
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Expanded(
+                                  child: Stack(
                             children: [
                               Row(
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1797,6 +1830,12 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                     ),
                                   ),
                                 ),
+                              ),
+                            ],
+                              )),
+                              Container(
+                                height: _laneBottomBarHeight,
+                                color: t.surface1,
                               ),
                             ],
                           ),
@@ -2320,16 +2359,22 @@ class _FoldRow extends StatelessWidget {
                 color: open ? t.textPrimary : t.textMuted,
               ),
               const SizedBox(width: 4),
-              Flexible(
-                child:
-                    Text(label, style: t.body, overflow: TextOverflow.ellipsis),
-              ),
               // An effect's own heading carries what that effect cost, in the
               // render-time column with the layer totals (docs/13 §7.1). Every
               // other heading — Transform, Effects, Audio — is a grouping
               // rather than a thing that renders, so it carries nothing.
+              //
+              // **Expanded, and no Spacer.** A `Flexible` label beside a
+              // `Spacer` splits the free space between them, which put the
+              // number halfway across the row instead of in the column: two
+              // flex children share, they do not queue. One Expanded label
+              // takes the space, and the cell that follows lands hard right —
+              // where the layer rows' numbers are.
               if (effectIdOfPath(path) case final String effectId) ...[
-                const Spacer(),
+                Expanded(
+                  child: Text(label,
+                      style: t.body, overflow: TextOverflow.ellipsis),
+                ),
                 Padding(
                   padding: EdgeInsets.only(right: timingsColumn.rightInset),
                   child: SizedBox(
@@ -2337,7 +2382,11 @@ class _FoldRow extends StatelessWidget {
                     child: TimingsCell(effectId: effectId),
                   ),
                 ),
-              ],
+              ] else
+                Flexible(
+                  child: Text(label,
+                      style: t.body, overflow: TextOverflow.ellipsis),
+                ),
             ],
           ),
         ),
@@ -4654,6 +4703,7 @@ class _OutlineRowState extends State<_OutlineRow> {
               ? _name(t, id, info)
               : GestureDetector(
                   behavior: HitTestBehavior.opaque,
+                  supportedDevices: dragDevices,
                   onVerticalDragStart: (_) {
                     _dragTravel = 0;
                     widget.layerDrag.value = LayerDrag(index, index);
@@ -5735,6 +5785,7 @@ class _KeyLaneState extends State<_KeyLane> {
                 // marquee could fill the lane catch, so easing one key from
                 // the lanes (F9, the bottom bar's buttons) had nothing to act
                 // on and looked like it did nothing.
+                supportedDevices: dragDevices,
                 onHorizontalDragStart: (_) {
                   final keyboard = HardwareKeyboard.instance;
                   widget.onSelectKey(
@@ -5934,7 +5985,7 @@ class _LaneBottomBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
     return Container(
-      height: 20,
+      height: _laneBottomBarHeight,
       color: t.surface1,
       padding: const EdgeInsets.symmetric(horizontal: 4),
       child: LayoutBuilder(
@@ -6278,6 +6329,7 @@ class _BarState extends State<_Bar> {
                 onHorizontalDragDown: widget.razor || held
                     ? null
                     : (d) => _downDx = d.localPosition.dx,
+                supportedDevices: dragDevices,
                 onHorizontalDragStart: widget.razor || held
                     ? null
                     // No select here: every drag begins with the down, and the

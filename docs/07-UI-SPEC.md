@@ -841,16 +841,23 @@ layer row opens the **layer menu** — duplicate, reorder, delete.
 **The render-time column (K-276, [13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md) §7.1)**
 shows what each layer's own picture cost in the frame at the playhead, and — on a layer
 twirled open — what each effect in its stack cost, on that effect's heading row and in the
-same column. An idle column MUST show a dimmed dash per row rather than nothing, and a
-click on any of them MUST start measuring: a column of blanks reads as a broken feature,
-and a switch only in the header is a switch nobody finds. It MUST carry its own switch (a
-stopwatch in the header, which also switches it back off) and MUST measure nothing until
-that switch is on, because measuring makes the engine wait for the graphics
-card at every node: an honest millisecond, at the price of the overlap a brisk preview lives
-on, and a measured frame MUST be composited rather than served from a cache — a held
-frame cost a copy and has no per-layer cost to report, so the column would otherwise stay
-empty on exactly the compositions worth profiling. Switching the column on MUST ask for
-the frame under the playhead again, so the numbers appear where the user is looking.
+same column — an effect's figure MUST sit in the same column as its layer's, or the two
+cannot be read against each other. Measuring is **on by default**, and its switch is the
+**clock in the bottom strip**, after the cache meters: the column header MUST be a plain
+readout, because a header that says Time over a column of dashes gives no hint that it is a
+button, and a switch nobody can find is a feature that does not work. An idle column MUST
+show a dimmed dash per row rather than nothing. The header MUST report the whole frame's
+cost while measuring — `…` until a measured frame has arrived, the number once one has — so
+the three states (not measuring, measuring with nothing back, measured) read differently
+rather than all showing a dash; and an engine that refuses the switch MUST say so in the
+status line rather than leaving a lit clock over a column that will never fill.
+
+Measuring makes the engine wait for the graphics card at every node: an honest millisecond,
+at the price of the overlap a brisk preview lives on, and a measured frame MUST be
+composited rather than served from a cache — a held frame cost a copy and has no per-layer
+cost to report, so the column would otherwise stay empty on exactly the compositions worth
+profiling. Switching measuring on MUST ask for the frame under the playhead again, so the
+numbers appear where the user is looking.
 Playback MUST never be measured whatever the switch says, and switching off MUST drop
 the numbers rather than leave a stale frame's costs on screen. The same per-effect number
 appears on the effect's title row in the Effect controls panel (§6), from the same
@@ -1000,6 +1007,16 @@ edit point near a beat marker lands exactly on it.
 
 - Plain wheel scrolls vertically. `Shift+wheel` scrolls horizontally. `Ctrl+wheel` zooms
   time about the pointer. The wheel MUST never zoom without a modifier (no scroll hijack).
+- **A trackpad's two-finger scroll MUST scroll the panel** (K-278). It arrives as a pan
+  *gesture* rather than as the wheel's signal, so the panel — which otherwise gives drags to
+  the keyframe marquee — MUST admit exactly the trackpad as a drag-scroll device, and every
+  editing recogniser laid over a scrollable surface MUST exclude it in turn so it cannot be
+  taken back in the gesture arena. A click-drag is a pointer drag, not a pan-zoom, so it
+  still draws the marquee.
+- **The outline and the lanes MUST scroll exactly as far as each other** (K-278): they are
+  one table. The lane side's bottom bar is therefore reserved under the outline as well —
+  without it the lanes have the shorter viewport, scroll further, and the two halves come
+  apart at the bottom of a long stack.
 - `=`/`-` zoom time in/out; `Shift+=` zooms to the work area; `\` toggles between full-comp
   zoom and the previous zoom (AE-compatible).
 - Dragging in the ruler scrubs the playhead. Scrubbing previews video always; holding

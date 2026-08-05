@@ -5768,7 +5768,39 @@ is coming back" from "something came back but not about this row"; a refusal fro
 engine posts a notice instead of leaving a lit switch over an empty column; and the engine
 prints **one line per switching on** and one more on the first frame it measures, so a
 session's console answers "did the engine measure anything at all" without a debugger.
-Diagnosing a report should not need the reporter to be a developer. **(7) The column reports its own state, and so does the engine.** The follow-up
+Diagnosing a report should not need the reporter to be a developer. **(8) The switch moves
+to the bottom strip and starts ON.** The whole thread of reports above has one root: the
+switch was a glyph inside a column header, and the owner — who had read the design and
+asked for the feature — did not know the header was a button. That is the design being
+wrong, not the reporting. So the clock moves to the **bottom strip, after the cache
+meters**, where a session-wide, costs-something switch belongs and where it is seen without
+being looked for; the column header becomes a plain readout; and both sides now *default to
+measuring* (the engine's flag starts true, so no startup call is needed to agree). The cost
+— a fence per node, and a measured frame composited rather than served from a cache — is
+now paid by default, which is the owner's call, made knowing it: the toggle is one obvious
+click away. **(9) An effect's number shares its layer's column.** A `Flexible` label beside
+a `Spacer` splits the free space between them rather than queueing, so the effect heading's
+figure landed halfway across the row instead of in the column. One `Expanded` label and no
+Spacer puts it exactly where the layer rows' numbers are, pinned by a test that compares
+the two rectangles.
+
+**K-278 · DECIDED · A trackpad scrolls the Timeline, and the two halves scroll exactly as
+far as each other.** Two reports from the same Mac session, neither visible to anyone using
+a mouse. **(1) The Timeline could not be scrolled by trackpad at all.** A two-finger scroll
+on a Mac arrives as a pan *gesture* (`PointerPanZoom`), not as the wheel's pointer signal —
+and the panel deliberately sets `dragDevices: const {}` so that a drag draws a keyframe
+marquee instead of scrolling. That setting, correct for a mouse, also switched off the only
+route a trackpad has. It now allows exactly `PointerDeviceKind.trackpad`: two fingers
+scroll, a click-drag still draws the box (a click-drag is a pointer drag, not a pan-zoom).
+The editing recognisers laid over those surfaces — the marquee, the bars, the graph's
+handles — exclude the trackpad in turn (`dragDevices` in `widgets/controls.dart`), so they
+cannot take the gesture back in the arena. **(2) The lane side could scroll further than
+the outline.** The lanes carry a bottom bar (zoom, magnet, the horizontal scrollbar) that
+the outline did not, so the lane rows had a shorter viewport, a larger `maxScrollExtent`,
+and the two halves came apart at the bottom of a long stack — the halves are one table, and
+a table whose rows disagree about where they are is not one. The outline reserves the same
+height below its rows, which makes both viewports equal by construction. Both are pinned by
+tests that drive a real trackpad gesture and compare both halves' scroll extents. **(7) The column reports its own state, and so does the engine.** The follow-up
 report — "I see a dash but no values" — could have meant three different faults, and the
 interface showed the same dash for all of them. So: the header carries the **whole frame's
 cost** while measuring (`…` until one has been measured), which separates "nothing is

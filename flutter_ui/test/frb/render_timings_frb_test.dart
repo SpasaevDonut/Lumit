@@ -6,8 +6,9 @@
 // holds is served without compositing. So a composition warm enough to be worth
 // profiling — which is every composition, a moment after it is opened, because
 // the idle fill makes frames while you think — answered every render from the
-// cache and reported nothing. Switching measuring on now steps over the tiers,
-// which is the cost of asking and the whole point of asking.
+// cache and reported nothing. Measuring now steps over the tiers, which is the
+// cost of asking and the whole point of asking. (Measuring is on by default
+// since K-276's revision; the clock in the bottom strip turns it off.)
 //
 // Two things are pinned here, and each fails without its half of the fix: that
 // a measured render reports at all, and that the ids it reports are the ones
@@ -63,34 +64,30 @@ void main() {
       });
       addTearDown(sub.cancel);
 
-      // Ask for the frame twice with nothing measuring: the second is served
-      // from the cache, which is exactly the state the column used to die in.
+      expect(timings.measuring, isTrue, reason: 'on by default (K-276)');
+
+      // Ask for the frame twice. The second would be a cache hit — the state
+      // the column used to die in — and must be measured all the same.
       for (var i = 0; i < 2; i++) {
         f.comp.renderFrame(
           frame: BigInt.zero,
           scale: 1.0,
           mode: BridgePlaybackMode.everyFrame,
         );
-        await settleFrb(tester, minRounds: 10, maxRounds: 60);
+        await tester.runAsync(() async {
+          for (var i = 0; i < 100; i++) {
+            await Future<void>.delayed(const Duration(milliseconds: 100));
+            if (profiles.isNotEmpty) return;
+          }
+        });
+        await settleFrb(tester, minRounds: 4, maxRounds: 30);
       }
-      expect(profiles, isEmpty,
-          reason: 'nothing is measured until the column asks');
-
-      timings.setMeasuring(true);
-      addTearDown(() => timings.setMeasuring(false));
-      // Switching on asks for the frame again by itself (the engine only has
-      // numbers for a frame it makes), so nothing here re-asks.
-      await tester.runAsync(() async {
-        for (var i = 0; i < 150; i++) {
-          await Future<void>.delayed(const Duration(milliseconds: 100));
-          if (profiles.isNotEmpty) return;
-        }
-      });
-      await settleFrb(tester, minRounds: 4, maxRounds: 20);
 
       expect(profiles, isNotEmpty,
           reason: 'a held frame is re-composited while measuring, or there is '
               'nothing to measure and the column stays empty for ever');
+      expect(profiles.length, greaterThanOrEqualTo(2),
+          reason: 'the second ask was a cache hit and was measured too');
       final profile = profiles.last;
       expect(profile.totalMs, greaterThanOrEqualTo(0));
       expect(profile.layers, isNotEmpty);
@@ -111,7 +108,11 @@ void main() {
       final f = withEffect();
       final timings = f.p.uiState.renderTimings;
 
-      timings.setMeasuring(true);
+      f.comp.renderFrame(
+        frame: BigInt.zero,
+        scale: 1.0,
+        mode: BridgePlaybackMode.everyFrame,
+      );
       await tester.runAsync(() async {
         for (var i = 0; i < 150; i++) {
           await Future<void>.delayed(const Duration(milliseconds: 100));

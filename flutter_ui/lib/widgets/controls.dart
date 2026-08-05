@@ -4,6 +4,7 @@
 
 import 'dart:async';
 
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
@@ -11,6 +12,24 @@ import '../state/workspace.dart';
 import '../theme/theme.dart';
 
 /// The theme + workspace scope: an InheritedNotifier the whole tree reads.
+/// The devices whose drags mean "move this thing" — **the trackpad's
+/// two-finger scroll deliberately excluded**.
+///
+/// A two-finger scroll on a Mac trackpad arrives as a pan *gesture*, not as the
+/// wheel's pointer signal, so any pan recogniser laid over a scrollable area
+/// wins it in the arena and the area cannot be scrolled at all: reported as "I
+/// can't scroll the timeline with my trackpad", and invisible to anyone with a
+/// mouse. Excluding the trackpad here costs nothing that a user wants — a
+/// *click*-drag on a trackpad is an ordinary pointer drag and is unaffected —
+/// and hands two-finger scrolling back to the scrollable underneath.
+const Set<PointerDeviceKind> dragDevices = {
+  PointerDeviceKind.mouse,
+  PointerDeviceKind.touch,
+  PointerDeviceKind.stylus,
+  PointerDeviceKind.invertedStylus,
+  PointerDeviceKind.unknown,
+};
+
 class ThemeScope extends InheritedWidget {
   final LumitTheme theme;
   final AnimationLevel animationLevel;

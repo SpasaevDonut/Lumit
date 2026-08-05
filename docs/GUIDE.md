@@ -3194,8 +3194,9 @@ to where playback began (K-254); a scrub is the exception.
 ### Telling how long a frame is taking, and where the time went (K-276)
 
 Two readouts, one mechanism. Both come from a small recorder the engine builds
-for a frame — `crates/lumit-render/src/profile.rs` — and both are off unless
-something is actually looking.
+for a frame — `crates/lumit-render/src/profile.rs`. The progress bar reports only
+for frames somebody is waiting on; the render times are measured unless the clock
+in the bottom strip is switched off.
 
 **The preview progress bar.** Most frames arrive too quickly to mention. Some do
 not: a heavy composition under a dragged value, or a scrub onto a frame nothing
@@ -3213,15 +3214,16 @@ same kind of number on each effect's heading; the Effect controls panel shows it
 on the effect's title row too. So "why is this comp slow" is answered with names
 and numbers rather than guesses.
 
-**Finding the column, and telling what it is doing.** With nothing being
-measured the column shows a dimmed dash on every row rather than sitting blank —
-a blank column looks broken — and clicking any of those dashes starts the
-measuring. The stopwatch in the column's header does the same, and switches it
-back off. While measuring, the header stops saying "Time" and shows what the
-*whole frame* cost: an ellipsis until a measured frame has come back, then the
-number. So the three things that can be true are three different readings —
-nothing asked for, asked for and waiting, measured — instead of one dash meaning
-all three. If the engine refuses the switch at all, the status line says so, and
+**Where the switch is, and what the column is telling you.** Measuring is on by
+default, and the clock in the **bottom strip** — just after the cache meters —
+turns it off for the session. (It began life as a glyph in the column's own
+header, which is where nobody found it: the column looked broken instead.) While
+measuring, the header stops saying "Time" and shows what the *whole frame* cost:
+an ellipsis until a measured frame has come back, then the number. So the three
+things that can be true read differently — not measuring, measuring and waiting,
+measured — instead of one dash meaning all three; a dimmed dash on a row means
+nothing is being measured, a full-strength one means that row was not in the last
+measured frame. If the engine refuses the switch, the status line says so, and
 the console carries one line per switching on and one more on the first frame
 actually measured.
 
@@ -3260,7 +3262,9 @@ memoises frame↔time conversions the same way, and `timecode.dart` is the singl
   tool overlay. It watches the playhead and re-renders whenever it moves,
   whoever moved it.
 - **Timeline** — two linked columns (outline left, lanes right, shared vertical
-  scroll, independent horizontal), the ruler with markers and the work-area band,
+  scroll, independent horizontal — and the outline reserves the height of the
+  lane side's bottom bar so neither half can scroll further than the other),
+  the ruler with markers and the work-area band,
   layer bars with snapping, and per-layer fold-outs: Contents, Masks, Paint,
   Effects, Transform, Audio. The graph editor lives here as a lens over the
   lanes, with value, speed and Time views.
@@ -3274,6 +3278,14 @@ memoises frame↔time conversions the same way, and `timecode.dart` is the singl
 Panels can be popped out into their own desktop window (`desktop_multi_window`);
 each gets its own Flutter engine but opens a handle to the *same* engine state,
 so edits share one undo history.
+
+**Scrolling it, and why a trackpad needed its own answer (K-278).** Dragging in
+the lanes draws a selection box round keyframes, so the panel switches off
+drag-to-scroll — which on a Mac also switched off the trackpad, because a
+two-finger scroll there is a *drag gesture* and not the wheel's signal. The panel
+now admits exactly the trackpad as a scrolling device and every drag handler over
+those surfaces refuses it, so two fingers scroll and a click-drag still draws the
+box. Clicking and dragging with a mouse is unaffected either way.
 
 ### Tools and the on-picture overlay
 

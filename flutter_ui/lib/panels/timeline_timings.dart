@@ -9,15 +9,13 @@
 // session, and the effect inside it that is doing the costing, are both a
 // glance away.
 //
-// **The switch is the point.** Measuring makes the engine wait for the graphics
-// card at every layer and every effect, which is honest — a millisecond then
-// means the work rather than the paperwork — and not free: that wait is the
-// overlap a brisk preview lives on. So the column's header carries a stopwatch,
-// nothing is measured until it is pressed, and playback is never measured
-// whatever it says. Off, the column shows dimmed dashes — and a click on any of
-// them starts measuring, so the column is its own switch and cannot read as a
-// feature that does not work — and the engine does exactly what it did before
-// this existed.
+// **What it costs, and where the switch is.** Measuring makes the engine wait
+// for the graphics card at every layer and every effect — honest, since a
+// millisecond then means the work rather than the paperwork — and a measured
+// frame is composited rather than served from a cache. It is on by default,
+// because numbers are what the column is for; the clock in the bottom strip,
+// beside the cache meters, turns it off for the session. Playback is never
+// measured whatever the clock says.
 
 import 'package:flutter/widgets.dart';
 import 'package:provider/provider.dart';
@@ -27,16 +25,19 @@ import '../main.dart';
 import '../state/render_timings.dart';
 import '../widgets/controls.dart';
 
-/// The column header: the stopwatch that turns measuring on, and — while it is
-/// on — **what the whole frame cost**, which is the number the rows below add
-/// up to. Pressed, the glyph is lit in the accent; unpressed it is as quiet as
-/// any other header glyph and the header reads "Time".
+/// The column header: what the **whole frame** cost, which is the number the
+/// rows below add up to — or the word "Time" while nothing is being measured.
 ///
-/// The frame total is here because it is worth knowing and because it makes the
-/// column say which of three things is happening, rather than showing the same
-/// dash for all of them: `Time` (idle, nothing measured), `…` (measuring, and
-/// no measured frame has come back yet), or a number (measured — so a dash on a
-/// row below genuinely means "not in that frame").
+/// **A readout, not a control.** It was a control once, and that is precisely
+/// how the feature was reported broken: a header that says Time over a column
+/// of dashes gives no hint that the header is a button, so the column simply
+/// looked like it did not work. The switch now lives in the bottom strip beside
+/// the cache meters ([RenderTimingsToggle]), where something that governs the
+/// whole session belongs and where it can be seen without being looked for.
+///
+/// Three readings, three states: `Time` (not measuring), `…` (measuring, no
+/// measured frame back yet), a number (measured — so a dash on a row below
+/// genuinely means "not in that frame").
 class TimingsHeaderCell extends StatelessWidget {
   const TimingsHeaderCell({super.key});
 
@@ -49,36 +50,69 @@ class TimingsHeaderCell extends StatelessWidget {
       listenable: timings,
       builder: (context, _) {
         final on = timings.measuring;
+        final total = timings.totalMs;
         return LumitTooltip(
           message: on
-              ? 'Render time — the whole frame, with each layer below. Click to '
-                  'stop; measuring slows each frame it measures'
-              : 'Render time — click to measure what each layer and effect '
-                  'costs (it slows the frames it measures)',
+              ? 'Render time — the whole frame, with each layer below. The '
+                  'clock in the bottom strip stops measuring'
+              : 'Render time — the clock in the bottom strip starts measuring',
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: Text(
+                !on
+                    ? 'Time'
+                    : total == null
+                        ? '…'
+                        : formatRenderMs(total),
+                style: t.small,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// The session's measuring switch: a clock in the bottom strip, after the cache
+/// meters (K-276 revision). Lit in the accent while measuring.
+///
+/// **Why here and not on the column.** It governs the whole session and it
+/// costs something to have on, which is the same shape of thing as the cache
+/// meters it sits beside — and unlike a glyph inside a column header, it is
+/// somewhere a person can find it without being told.
+class RenderTimingsToggle extends StatelessWidget {
+  const RenderTimingsToggle({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    final timings =
+        Provider.of<LumitUiState>(context, listen: false).renderTimings;
+    return ListenableBuilder(
+      listenable: timings,
+      builder: (context, _) {
+        final on = timings.measuring;
+        return LumitTooltip(
+          message: on
+              ? 'Measuring render times — each layer and effect in the '
+                  'Timeline. Click to stop; measuring slows the frames it '
+                  'measures'
+              : 'Render times are not being measured. Click to start',
           child: GestureDetector(
+            key: const ValueKey('status-render-timings'),
             behavior: HitTestBehavior.opaque,
             onTap: () => timings.setMeasuring(!on),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                lumitIcon(
-                  LumitIcon.stopwatch,
-                  size: iconSize,
-                  color: on ? t.accent : t.textMuted,
-                ),
-                const SizedBox(width: 4),
-                Flexible(
-                  child: Text(
-                    !on
-                        ? 'Time'
-                        : timings.totalMs == null
-                            ? '…'
-                            : formatRenderMs(timings.totalMs!),
-                    style: t.small,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: lumitIcon(
+                LumitIcon.stopwatch,
+                size: iconSize,
+                color: on ? t.accent : t.textMuted,
+              ),
             ),
           ),
         );
@@ -93,14 +127,10 @@ class TimingsHeaderCell extends StatelessWidget {
 /// effect's heading the second.
 ///
 /// **A dash, never a blank.** The first version drew nothing at all while the
-/// column was idle, and the column was reported as broken within the day: a
-/// header called Time over a row per layer and nothing in any of them looks
-/// exactly like a feature that does not work, and the switch that would fill it
-/// was a glyph in the header nobody had reason to press. So an idle cell shows
-/// a dimmed dash and **a click on it starts measuring** — the column is its own
-/// switch, wherever you reach for it. A dash at full strength means the
-/// opposite: measuring is on and the last measured frame had no such row (it
-/// was hidden, outside its span, or inside a Precomp).
+/// column was idle, and it read as a feature that did not work. A dimmed dash
+/// means nothing is being measured (the clock in the bottom strip is off); a
+/// dash at full strength means measuring is on and the last measured frame had
+/// no such row — it was hidden, outside its span, or inside a Precomp.
 class TimingsCell extends StatelessWidget {
   final String? layerId;
   final String? effectId;
@@ -134,16 +164,7 @@ class TimingsCell extends StatelessWidget {
             ),
           ),
         );
-        if (on) return cell;
-        return LumitTooltip(
-          message: 'Render time — click to measure what this costs '
-              '(it slows the frames it measures)',
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () => timings.setMeasuring(true),
-            child: cell,
-          ),
-        );
+        return cell;
       },
     );
   }

@@ -18,6 +18,8 @@ import 'package:provider/provider.dart';
 
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
+import 'package:lumit_flutter/panels/timeline_timings.dart';
+
 import 'cache_confirm_frb.dart';
 
 class StatusLineFrb extends StatefulWidget {
@@ -84,6 +86,12 @@ class _StatusLineFrbState extends State<StatusLineFrb> {
               child: CacheMeterFrb(),
             ),
           ),
+          _divider(t),
+          // The render-time switch, beside the meters for the same reason they
+          // are here: it governs the whole session and it costs something to
+          // have on (K-276). It began life as a glyph in the Timeline's column
+          // header, which is where nobody found it.
+          const RenderTimingsToggle(),
           _divider(t),
           Expanded(
             child: Row(
