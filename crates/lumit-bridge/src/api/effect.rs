@@ -17,7 +17,7 @@
 //! unchanged. That is what lets the panel treat "read the value, change one
 //! field, write it" as safe — the ordinary way every control in it works.
 
-use std::{println, sync::Arc, todo};
+use std::sync::Arc;
 
 use flutter_rust_bridge::frb;
 pub use lumit_core::model::EffectInstance;
@@ -172,10 +172,7 @@ pub fn sample_scalar(scalar: BridgeScalar, time: BridgeRational) -> f64 {
                 .collect();
             lumit_core::anim::evaluate(&keys, seconds).unwrap_or(0.0)
         }
-        BridgeScalar::Expression(expr) => lumit_core::expression::evaluate(
-            &expr,
-            None,
-        ),
+        BridgeScalar::Expression(expr) => lumit_core::expression::evaluate(&expr, None),
     }
 }
 
@@ -205,14 +202,9 @@ pub fn sample_scalar_with_context(
             lumit_core::anim::evaluate(&keys, seconds).unwrap_or(0.0)
         }
         BridgeScalar::Expression(expr) => {
-            let projects = PROJECTS
-                .read()
-                .map_err(|_| BridgeError::ReadFailed)
-                .unwrap();
-            let project = projects.get(&layer.project_id).unwrap();
-
-            let doc = project.read().unwrap();
-            let doc = doc.store.snapshot();
+            let Some(doc) = document_for(&layer) else {
+                return 0.0;
+            };
 
             lumit_core::expression::evaluate(
                 &expr,
@@ -223,11 +215,26 @@ pub fn sample_scalar_with_context(
                     comp_time: Rational::new(time.num, time.den)
                         .unwrap_or(Rational::ZERO)
                         .to_f64(),
-                        current_depth: 0,
+                    current_depth: 0,
                 })),
             )
         }
     }
+}
+
+/// The project document a layer reference points into.
+///
+/// `None` when the project has gone — closed between the panel asking and this
+/// answering, or a lock poisoned by an unrelated panic. Neither is worth taking
+/// the app down for from inside an FFI call, where a panic unwinds across the
+/// language boundary rather than into a handler, so the samplers below fall
+/// back to the un-driven value instead.
+fn document_for(layer: &LayerReference) -> Option<Arc<lumit_core::Document>> {
+    let projects = PROJECTS.read().ok()?;
+    let project = projects.get(&layer.project_id)?.clone();
+    drop(projects);
+    let state = project.read().ok()?;
+    Some(state.store.snapshot())
 }
 
 #[frb(sync)]
@@ -240,14 +247,9 @@ pub fn sample_scalar_range_with_context(
 ) -> Vec<f64> {
     match scalar {
         BridgeScalar::Expression(expr) => {
-            let projects = PROJECTS
-                .read()
-                .map_err(|_| BridgeError::ReadFailed)
-                .unwrap();
-            let project = projects.get(&layer.project_id).unwrap();
-
-            let doc = project.read().unwrap();
-            let doc = doc.store.snapshot();
+            let Some(doc) = document_for(&layer) else {
+                return Vec::new();
+            };
 
             let start = Rational::new(start.num, start.den)
                 .unwrap_or(Rational::ZERO)
@@ -271,9 +273,10 @@ pub fn sample_scalar_range_with_context(
                 samples,
             )
         }
-        _ => {
-            todo!();
-        }
+        // Only an expression needs sampling by evaluation. A static value is
+        // flat and a keyframed one is drawn from its keys, both of which the
+        // graph editor already has without asking the engine.
+        _ => Vec::new(),
     }
 }
 
