@@ -3,6 +3,9 @@ name = "lumit_bridge"
 version = "0.1.0"
 edition = "2021"
 license = "GPL-3.0-only"
+# Never goes to crates.io: these crates are the application, and they
+# reference each other by path (docs/05-ARCHITECTURE.md).
+publish = false
 
 # A cdylib the Flutter desktop runners load over dart:ffi, plus a staticlib for
 # the platforms cargokit links statically (iOS, and Android's release builds).

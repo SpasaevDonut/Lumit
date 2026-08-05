@@ -396,10 +396,15 @@ template). Each lands wired to the engine through the bridge, not as a Dart-side
 setting nothing reads.
 
 **Engineering-rules tooling still owed** ([14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md)):
-`cargo deny` in CI (§9); fuzz targets for the `.lum` deserialiser and journal replayer (§6);
-a `rust-toolchain.toml` pin and the edition-2024 move (§9); the `indexing_slicing` /
-`arithmetic_side_effects` clippy denies after a hot-path sweep (§4); `clippy::pedantic`
-with curated allows (§7); the golden-frame EXR export corpus (§6).
+fuzz targets for the `.lum` deserialiser and journal replayer (§6); the **edition-2024
+move** (§9 - the toolchain pin landed in K-272, the edition did not); the
+`indexing_slicing` / `arithmetic_side_effects` clippy denies after a hot-path sweep (§4);
+`clippy::pedantic` with curated allows (§7); the golden-frame EXR export corpus (§6).
+
+**Three unmaintained dependencies are deliberately ignored in `deny.toml`** (K-272).
+`ttf-parser` (via fontdue, via `lumit-text`) is the one with a real successor: moving
+the rasteriser to `skrifa` is its own piece of work with its own glyph-metric tests.
+`bincode` 1.x and `paste` leave when the dependencies that pull them update.
 
 **The performance harness and its CI gates are not built**
 ([13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md) §7.3): no reference comp in the
