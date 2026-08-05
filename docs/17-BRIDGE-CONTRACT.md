@@ -218,7 +218,10 @@ path, documented beside the types in
 
 - **`media`** (default on) pulls `lumit-media` (FFmpeg) for probing and decoding.
     Without it, footage does not probe and thumbnails are absent.
-- **Note.** `--no-default-features` builds and tests (K-273). The API surface is
+- **Note.** `--no-default-features` builds and tests (K-273). It is **not** a
+    build without FFmpeg: `lumit-render` and `lumit-audio` depend on
+    `lumit-media` unconditionally and the bridge depends on both, so the library
+    is still linked. The feature governs the bridge's own decode paths. The API surface is
     identical whatever the features are — the generated Dart is one shape
     everywhere — so a function never *disappears* with a feature: it stays
     compiled and its body degrades. Beat detection is the shape to copy: always

@@ -2976,8 +2976,14 @@ feature is off leaves generated code calling something that is not there. What m
 what a function *does*: beat detection is always present and simply answers "this build has
 no audio pipeline". A media-less build loses decoding — no probing, no thumbnails, no
 waveform peaks, and the decode-ahead thread quietly does nothing — never a call that is
-missing. There is now a CI job that builds and tests it **on a runner with no FFmpeg at
-all**, which is the only way to prove the thing actually stands on its own.
+missing. CI now builds and tests it on every push, so it cannot rot again.
+
+One honest correction, because the first version of this said otherwise: turning the
+feature off does **not** give you a build with no FFmpeg in it. Two other parts of the
+engine — the renderer and the audio mixer — depend on the decoder unconditionally, and the
+bridge depends on both, so FFmpeg is still linked either way. What the feature governs is
+the bridge's *own* decode paths. Making the whole dependency tree media-optional is a
+separate job, and it is written down as one rather than implied by a feature flag.
 
 **Two more robots joined in K-272, both about things nobody here writes.** The first is a
 *pinned compiler*: "stable Rust" means whatever version your machine last downloaded, and

@@ -399,6 +399,12 @@ move** (§9 - the toolchain pin landed in K-272, the edition did not); the
 the rasteriser to `skrifa` is its own piece of work with its own glyph-metric tests.
 `bincode` 1.x and `paste` leave when the dependencies that pull them update.
 
+**A genuinely FFmpeg-free build is not possible yet (K-273).** `lumit_bridge
+--no-default-features` compiles the bridge's own decode paths out, but `lumit-render` and
+`lumit-audio` depend on `lumit-media` unconditionally, so the library is still linked and
+the build still needs it installed. Making those two deps optional — and the render/audio
+paths that use them — is what "builds without FFmpeg" would actually take.
+
 **The performance harness and its CI gates are not built**
 ([13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md) §7.3): no reference comp in the
 repository, no headless benchmark scenarios, no budget gates per merge. The per-node
