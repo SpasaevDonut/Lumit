@@ -21,9 +21,12 @@ use crate::api::{
 
 /// One timeline marker (docs/03 §11): a cue on the comp's timebase.
 ///
-/// The engine's marker also carries a duration and a kind; neither has a
-/// control yet, so they are not carried across — a marker written back keeps
-/// what the panel can actually edit and does not pretend to round-trip the rest.
+/// The engine's marker also carries a duration, a kind and any unknown fields
+/// a newer Lumit wrote (docs/10 §1.1); none of the three has a control, so none
+/// of them crosses. They are **not** lost on a write-back: [`core_markers`]
+/// merges each incoming marker onto the one the document already holds under
+/// that id, so the panel edits what it can see and the rest survives untouched
+/// (K-270).
 #[frb(non_opaque)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BridgeMarker {
@@ -48,18 +51,58 @@ pub(crate) fn bridge_marker(m: &lumit_core::markers::Marker) -> BridgeMarker {
     }
 }
 
+/// A whole marker list coming back from the panel, merged onto the list the
+/// document holds (K-270).
+///
+/// **Why a merge and not a conversion.** The bridge marker carries the three
+/// fields a panel can edit — id, time, label — and the engine's marker carries
+/// three more it cannot: the *kind* (a detected beat's provenance, plus its
+/// confidence), a spanning marker's *duration*, and the `extra` map that keeps
+/// fields a newer Lumit wrote (docs/10 §1.1's forward-compatibility promise).
+/// Rebuilding each marker from the bridge's three fields alone flattened all
+/// three to their defaults, so **dragging or renaming a beat marker on the
+/// ruler turned it into an ordinary cue** — and then *Clear beat markers* could
+/// no longer find it, because there was nothing left to say it had ever been
+/// one. K-254's ruler markers made that a click away.
+///
+/// So each incoming marker is matched by id against what the document already
+/// holds: found, and it keeps that marker's kind, duration and extra; new, and
+/// it is a plain user marker, which is exactly what a marker the panel just
+/// created is. Nothing about the frb surface changes — the panel has no use for
+/// a kind it cannot edit, and inventing a control for one to fix a data-loss
+/// bug would be the wrong order.
 #[frb(ignore)]
-pub(crate) fn core_marker(m: BridgeMarker) -> Result<lumit_core::markers::Marker, BridgeError> {
+pub(crate) fn core_markers(
+    incoming: Vec<BridgeMarker>,
+    existing: &[lumit_core::markers::Marker],
+) -> Result<Vec<lumit_core::markers::Marker>, BridgeError> {
+    incoming
+        .into_iter()
+        .map(|m| {
+            let was = existing.iter().find(|e| e.id == m.id);
+            core_marker(m, was)
+        })
+        .collect()
+}
+
+#[frb(ignore)]
+pub(crate) fn core_marker(
+    m: BridgeMarker,
+    existing: Option<&lumit_core::markers::Marker>,
+) -> Result<lumit_core::markers::Marker, BridgeError> {
     use lumit_core::time::{CompTime, Rational};
     Ok(lumit_core::markers::Marker {
         id: m.id,
         time: CompTime(
             Rational::new(m.time.num, m.time.den).map_err(|_| BridgeError::InvalidTime)?,
         ),
-        duration: None,
+        // Everything the panel cannot edit is carried from the marker that was
+        // already there; a marker it has just made has nothing to carry, and
+        // takes the plain-user defaults.
+        duration: existing.and_then(|e| e.duration),
         label: m.label,
-        kind: lumit_core::markers::MarkerKind::default(),
-        extra: serde_json::Map::new(),
+        kind: existing.map(|e| e.kind).unwrap_or_default(),
+        extra: existing.map(|e| e.extra.clone()).unwrap_or_default(),
     })
 }
 
@@ -974,10 +1017,9 @@ impl CompositionReference {
     /// also how beat detection commits a regenerated set.
     #[frb(sync)]
     pub fn set_markers(&self, markers: Vec<BridgeMarker>) -> Result<(), BridgeError> {
-        let markers = markers
-            .into_iter()
-            .map(core_marker)
-            .collect::<Result<Vec<_>, BridgeError>>()?;
+        // Merged onto what the comp already holds, so a dragged or renamed beat
+        // marker stays a beat marker (K-270).
+        let markers = core_markers(markers, &self.composition()?.markers)?;
 
         self.commit(lumit_core::Op::SetCompMarkers {
             comp: self.id,

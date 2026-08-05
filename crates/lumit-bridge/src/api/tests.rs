@@ -3740,6 +3740,114 @@ fn clearing_beats_keeps_the_markers_a_person_made() {
     assert_eq!(comp.get_markers().expect("markers").len(), 1);
 }
 
+/// **Dragging or renaming a beat marker must leave it a beat marker** (K-270).
+///
+/// The regression: the panel writes the whole list back through `set_markers`,
+/// and a bridge marker carries only id, time and label — so every marker was
+/// rebuilt with the *default* kind, no duration, and an empty `extra`. Moving a
+/// detected beat one frame turned it into an ordinary cue, and *Clear beat
+/// markers* then walked straight past it: nothing was left to say it had ever
+/// been detected. K-254's ruler markers made that a drag away.
+///
+/// The same merge protects a spanning marker's duration and the unknown fields
+/// a newer Lumit wrote (docs/10 §1.1), which the panel equally cannot see.
+#[test]
+fn dragging_a_beat_marker_leaves_it_a_beat_marker() {
+    use crate::api::composition::BridgeMarker;
+    use crate::api::effect::BridgeRational;
+
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+
+    // A beat marker with a duration and a field from a newer version, placed
+    // the way detection and a forward-compatible load place them.
+    let beat_id = Uuid::now_v7();
+    {
+        let mut beat = lumit_core::markers::Marker::beat(
+            beat_id,
+            lumit_core::Rational::new(1, 1).expect("1 s"),
+            0.9,
+        );
+        beat.duration = Some(lumit_core::Rational::new(1, 4).expect("a quarter second"));
+        beat.extra
+            .insert("from_a_newer_lumit".into(), serde_json::json!(true));
+        let state = project.state().expect("state");
+        let state = state.write().expect("write");
+        state
+            .store
+            .commit(lumit_core::Op::SetCompMarkers {
+                comp: comp.id,
+                markers: vec![beat],
+            })
+            .expect("seeded");
+    }
+
+    // The panel's write-back: same marker, moved and renamed.
+    comp.set_markers(vec![BridgeMarker {
+        id: beat_id,
+        time: BridgeRational { num: 3, den: 2 },
+        label: "Moved".into(),
+    }])
+    .expect("dragged");
+
+    let stored = comp.composition().expect("comp").markers;
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].label, "Moved", "the edit landed");
+    assert_eq!(
+        stored[0].time.0,
+        lumit_core::Rational::new(3, 2).expect("1.5 s"),
+        "and so did the move"
+    );
+    assert!(
+        matches!(
+            stored[0].kind,
+            lumit_core::markers::MarkerKind::Beat { confidence }
+                if (confidence - 0.9).abs() < 1e-6
+        ),
+        "it is still the beat it was, confidence and all: {:?}",
+        stored[0].kind
+    );
+    assert_eq!(
+        stored[0].duration,
+        Some(lumit_core::Rational::new(1, 4).expect("a quarter second")),
+        "a spanning marker keeps its span"
+    );
+    assert_eq!(
+        stored[0].extra.get("from_a_newer_lumit"),
+        Some(&serde_json::json!(true)),
+        "and the forward-compatibility promise holds across an edit"
+    );
+
+    // Which is the whole point: clearing beats still finds it.
+    comp.clear_beat_markers().expect("cleared");
+    assert!(comp.get_markers().expect("markers").is_empty());
+}
+
+/// A marker the panel has just made is a plain user marker — the merge above
+/// must not invent provenance for one the document has never seen.
+#[test]
+fn a_marker_the_panel_just_made_is_a_user_marker() {
+    use crate::api::composition::BridgeMarker;
+    use crate::api::effect::BridgeRational;
+
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    comp.set_markers(vec![BridgeMarker {
+        id: Uuid::now_v7(),
+        time: BridgeRational { num: 1, den: 2 },
+        label: "Mine".into(),
+    }])
+    .expect("marked");
+
+    let stored = comp.composition().expect("comp").markers;
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].kind, lumit_core::markers::MarkerKind::User);
+    assert_eq!(stored[0].duration, None);
+    assert!(stored[0].extra.is_empty());
+    comp.clear_beat_markers().expect("no beats to clear");
+    assert_eq!(comp.get_markers().expect("markers").len(), 1);
+}
+
 /// A composition dropped into another brings its markers with it as the
 /// layer's own — **copies**, so editing them never reaches back into the
 /// composition they came from, or into anywhere else it is used (K-254).

@@ -7,7 +7,7 @@ use lumit_core::time::{CompTime, Duration, Rational, SourceTime};
 use uuid::Uuid;
 
 use crate::api::{
-    composition::{bridge_marker, core_marker, BridgeMarker},
+    composition::{bridge_marker, core_markers, BridgeMarker},
     effect::{BridgeEffectInstance, BridgeRational, BridgeScalar},
     project_item::ItemReference,
     state::{LumitBridgeState, PROJECTS},
@@ -1991,10 +1991,9 @@ impl LayerReference {
     /// the same shape as the composition's.
     #[frb(sync)]
     pub fn set_markers(&self, markers: Vec<BridgeMarker>) -> Result<(), BridgeError> {
-        let markers = markers
-            .into_iter()
-            .map(core_marker)
-            .collect::<Result<Vec<_>, BridgeError>>()?;
+        // Merged onto the layer's current list, so a marker's kind, duration
+        // and unknown fields survive a drag or a rename (K-270).
+        let markers = core_markers(markers, &self.item()?.markers)?;
         let (comp, layer) = (self.comp_id, self.layer_id);
         self.commit(lumit_core::Op::SetLayerMarkers {
             comp,

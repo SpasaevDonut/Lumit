@@ -5547,3 +5547,22 @@ schemes — translucent black in both families, lighter on a light scheme where 
 opacity reads as a blackout. Two shapes stay legal and are documented in the job: fully
 transparent `0x00000000` (the absence of a colour, not a choice of one) and a colour
 rebuilt from stored numbers (data, not a design decision).
+
+**K-270 · DECIDED · A marker write-back merges onto the marker that is already there.**
+The panel writes its whole marker list back through `set_markers`, and a `BridgeMarker`
+carries the three fields a panel can edit: id, time, label. Each one was then rebuilt from
+those three alone, which silently reset the three the engine owns — the **kind** (a
+detected beat's provenance and its confidence), a spanning marker's **duration**, and the
+**`extra`** map that keeps fields a newer Lumit wrote (docs/10 §1.1). So dragging a beat
+marker one frame turned it into an ordinary cue, and *Clear beat markers* then walked past
+it; K-254's ruler markers put that one drag away. Fixed by merging rather than converting:
+each incoming marker is matched by id against the list the document holds and keeps that
+marker's kind, duration and extra; an id the document has never seen is a plain user
+marker, which is exactly what a marker the panel just made is. **Deliberately not** by
+adding the kind to the frb struct (the TODO's own suggestion): the panel has no control for
+a kind, no use for one it cannot edit, and inventing a UI to fix a data-loss bug is the
+wrong order — while the merge also saves the duration and the forward-compatibility fields,
+which no widening of `BridgeMarker` was going to cover. Both the composition's list and
+every layer's own (K-254) go through the one helper. Also recorded: the TODO entry claiming
+installed RAM is read only on Windows was stale — K-204 answers it on all three desktops;
+only `video_memory_bytes` is still Windows-only, and the entry now says that instead.

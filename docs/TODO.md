@@ -224,9 +224,13 @@ which is what the envelope authors. Slow/Fast/Smooth/Sharp come back with the
 preset-shelf rework above, rebuilt on the property like everything else K-249
 moved.
 
-**System memory is only read on Windows.** `system_memory_bytes` and
-`video_memory_bytes` answer 0 elsewhere and the settings fall back to a 16 GB
-ceiling. macOS/Linux want `sysctl hw.memsize` and `/proc/meminfo` (K-033).
+**Video memory is only read on Windows.** `video_memory_bytes` answers the
+first DXGI adapter's dedicated memory there and 0 everywhere else, so the GPU
+cache ceiling falls back to the frontend's documented figure on macOS and
+Linux. Wants Metal's `recommendedMaxWorkingSetSize` and the Vulkan adapter's
+device-local heap (K-033). *Installed RAM is answered on all three already
+(K-204: `GlobalMemoryStatusEx`, `/proc/meminfo`, `hw.memsize`) — this entry
+used to claim otherwise.*
 
 **Bound keys with nothing behind them.** The **Tools**, **Project**, **Panels**
 and **Effects** keymap contexts have real bindings and no commands. Either build
@@ -284,11 +288,6 @@ colour individually; only the two Timeline tokens default from the mode.
     shared engine (audio device, render worker) across test *files*. Give those
     files a serial marker or make the engine per-file - the serial run is a
     mitigation, not the fix, and it costs wall-clock.
-- **`set_markers` flattens every marker to `MarkerKind::User`** - so dragging or
-    renaming one on the ruler turns detected beats into ordinary cues and *Clear
-    beat markers* stops finding them (`crates/lumit-bridge/src/api/composition.rs`).
-    Carry the kind across the bridge (`BridgeMarker`) and map it back. Pre-dates
-    K-254's ruler markers, which made it far easier to hit.
 - **Beat tap has no key left** - [07-UI-SPEC.md](07-UI-SPEC.md) §10 wants `8`
     during playback to tap a beat, and K-254 gave the bare digits to the numbered
     markers. Needs its own chord or a modal reading.
