@@ -403,9 +403,6 @@ plugins/decoder page; autosave interval/keep; export defaults (preset + filename
 template). Each lands wired to the engine through the bridge, not as a Dart-side
 setting nothing reads.
 
-**The no-hex lint only greps Rust** ([15-DESIGN.md](15-DESIGN.md) §4.1) - a Dart-side gate
-over `flutter_ui/lib` outside `theme/` would catch the literals where widgets actually live.
-
 **Engineering-rules tooling still owed** ([14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md)):
 `cargo deny` in CI (§9); fuzz targets for the `.lum` deserialiser and journal replayer (§6);
 a `rust-toolchain.toml` pin and the edition-2024 move (§9); the `indexing_slicing` /
@@ -419,14 +416,10 @@ profiler (§7.1) is likewise unbuilt - the render-time indicator entry above is 
 visible piece.
 
 **CI coverage the Flutter port left thin:**
-- **The WGSL/CPU-oracle parity tests skip silently without an adapter** - they
-    print "no GPU adapter; skipping" and the run still goes green, so a job
-    without one proves nothing about the kernels. Installing Mesa's software
-    Vulkan driver (`mesa-vulkan-drivers`, the `lvp` ICD) is enough to make them
-    all run: verified 2026-08-03 on a container with no graphics hardware, where
-    the whole `lumit-gpu` suite passed in about five seconds. Worth adding to any
-    Linux job, and worth making the skip loud (an env var that turns "no adapter"
-    into a failure on the machines that should have one).
+- **macOS and Windows CI do not require an adapter.** `LUMIT_REQUIRE_GPU` turns
+    a "no adapter" skip into a failure and the Linux job sets it (K-269); the
+    other two do not, because nobody has confirmed those runners enumerate one.
+    One run with the variable set says whether they can.
 - **Nothing in CI proves a Viewer frame arrives.** The Linux job is the only one
     running the Flutter suite and has no GPU, so the six Viewer tests that wait
     for a frame skip there on `LUMIT_NO_ZERO_COPY_VIEWER=1`. They still fail on a

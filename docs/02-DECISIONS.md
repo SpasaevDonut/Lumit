@@ -5524,3 +5524,26 @@ preview factor — preview only, full resolution always correct. The Nested arm 
 the identical correction the adjustment path has taken since K-266. Both fixes land with
 end-to-end GPU regression tests (a matte that must gate, a shift that must stay a quarter
 of the frame at Full and at Half); both fail on the code as it stood.
+
+**K-269 · DECIDED · A skipped GPU test is a failure where an adapter was installed, and
+the no-hex rule follows the widgets into Dart.** Two CI gates that read as coverage and
+were not. **(1) `LUMIT_REQUIRE_GPU`.** Every kernel test skips itself without a graphics
+adapter — the friendly behaviour on a developer's machine, and the reason a Linux job that
+*installs* Mesa's lavapipe could lose its Vulkan driver, run none of about ninety shader
+oracles, and still report green. `lumit_gpu::no_adapter()` is now the one skip site
+(89 call sites converted from a bare `eprintln!`), and with `LUMIT_REQUIRE_GPU` set to
+anything but `0` it panics instead. The Linux job sets it; macOS and Windows deliberately
+do not, because nobody has confirmed those runners enumerate an adapter and a gate is only
+worth having where it has been verified — flipping them on is a TODO with a one-run test.
+The rule itself (unset/empty/`0` skip, anything else demand) is unit-tested rather than
+living only in a workflow file. **(2) The design-token lint greps Rust, where no widget has
+lived since K-182.** All the colours are in Dart now, so the same rule runs over
+`flutter_ui/lib` outside `theme/`: hex `Color(0x…)` literals, Material's `Colors.*` palette,
+and `Color.fromARGB`/`fromRGBO` calls built entirely from number literals. It found three:
+a modal scrim spelled out as `0x99000000`, and `Colors.red`/`Colors.amber` standing in for
+the theme's error and warning roles. The scrim becomes a **token** (`LumitTheme.scrim`),
+defaulting from the mode in the K-202 manner rather than being restated by all seven
+schemes — translucent black in both families, lighter on a light scheme where the same
+opacity reads as a blackout. Two shapes stay legal and are documented in the job: fully
+transparent `0x00000000` (the absence of a colour, not a choice of one) and a colour
+rebuilt from stored numbers (data, not a design decision).

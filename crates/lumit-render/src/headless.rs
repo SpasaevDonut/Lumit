@@ -1934,7 +1934,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -1962,7 +1962,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -1987,7 +1987,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -2027,7 +2027,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -2090,7 +2090,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -2127,7 +2127,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -2210,7 +2210,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -2234,7 +2234,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -2294,7 +2294,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -2345,7 +2345,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -2395,7 +2395,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -2453,7 +2453,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -2556,7 +2556,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -2637,7 +2637,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -2699,7 +2699,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -2727,7 +2727,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -2816,7 +2816,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -2963,7 +2963,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -3161,7 +3161,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -3188,7 +3188,7 @@ mod tests {
     #[ignore = "timing, not correctness"]
     fn preview_cost() {
         let Ok(mut renderer) = HeadlessRenderer::new() else {
-            eprintln!("skipping: no GPU adapter");
+            lumit_gpu::no_adapter();
             return;
         };
         let (store, comp_id) = doc_with_solid(LinearColour([0.2, 0.4, 0.8, 1.0]), 1920, 1080);
@@ -3232,7 +3232,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };
@@ -3297,7 +3297,7 @@ mod tests {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 return;
             }
         };

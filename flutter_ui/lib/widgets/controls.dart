@@ -669,7 +669,7 @@ Future<T?> showLumitModal<T>({
             behavior: HitTestBehavior.opaque,
             onTap: () => close(null),
             child: ColoredBox(
-              color: const Color(0x99000000),
+              color: ThemeScope.of(context).theme.scrim,
             ),
           ),
         ),

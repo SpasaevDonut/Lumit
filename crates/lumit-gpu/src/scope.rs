@@ -688,7 +688,7 @@ mod tests {
     #[test]
     fn luma_waveform_counts_match_the_cpu_oracle() {
         let Some(ctx) = ctx() else {
-            eprintln!("skipping: no GPU adapter");
+            crate::no_adapter();
             return;
         };
         let engine = ScopeEngine::new(&ctx);
@@ -708,7 +708,7 @@ mod tests {
     #[test]
     fn histogram_counts_match_the_cpu_oracle() {
         let Some(ctx) = ctx() else {
-            eprintln!("skipping: no GPU adapter");
+            crate::no_adapter();
             return;
         };
         let engine = ScopeEngine::new(&ctx);
@@ -729,7 +729,7 @@ mod tests {
     #[test]
     fn vectorscope_centres_a_neutral_grey() {
         let Some(ctx) = ctx() else {
-            eprintln!("skipping: no GPU adapter");
+            crate::no_adapter();
             return;
         };
         let engine = ScopeEngine::new(&ctx);
@@ -749,7 +749,7 @@ mod tests {
     #[test]
     fn luma_trace_pixels_match_within_tolerance() {
         let Some(ctx) = ctx() else {
-            eprintln!("skipping: no GPU adapter");
+            crate::no_adapter();
             return;
         };
         let engine = ScopeEngine::new(&ctx);
@@ -795,7 +795,7 @@ mod tests {
     #[test]
     fn a_short_frame_is_calm() {
         let Some(ctx) = ctx() else {
-            eprintln!("skipping: no GPU adapter");
+            crate::no_adapter();
             return;
         };
         let engine = ScopeEngine::new(&ctx);
