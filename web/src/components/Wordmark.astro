@@ -36,7 +36,7 @@ const { class: klass } = Astro.props;
     <filter id="wm-soft" x="-70%" y="-70%" width="240%" height="240%">
       <feGaussianBlur stdDeviation="7" />
     </filter>
-    <clipPath id="wm-dia"><path class="diaclip" d="M135.0 -50.0 L154.7 -35.0 L135.0 -20.0 L115.3 -35.0 Z" /></clipPath>
+    <clipPath id="wm-dia"><path class="diaclip" d="M135.0 -50.0 L150.0 -35.0 L135.0 -20.0 L120.0 -35.0 Z" /></clipPath>
   </defs>
 
   <g class="letters" opacity="0">
@@ -50,7 +50,7 @@ const { class: klass } = Astro.props;
   <path class="key" data-key="b" d="M197.80 -60.80 L150.20 -13.20 L143.37 -20.03 L183.46 -60.11 L159.16 -84.41 L166.67 -91.92 Z" fill="url(#wm-b)" stroke="url(#wm-b)"
         stroke-width="3" stroke-linejoin="round" />
 
-  <path class="core" d="M135.0 -50.0 L154.7 -35.0 L135.0 -20.0 L115.3 -35.0 Z" fill="#fff" stroke="#fff" stroke-width="6"
+  <path class="core" d="M135.0 -50.0 L150.0 -35.0 L135.0 -20.0 L120.0 -35.0 Z" fill="#fff" stroke="#fff" stroke-width="8"
         stroke-linejoin="round" opacity="0" />
   <g class="swirl" clip-path="url(#wm-dia)" filter="url(#wm-soft)" opacity="0">
     <ellipse data-blob="0" cx="135.0" cy="-35.0" rx="20" ry="18" fill="#5ad7ff" />
@@ -78,9 +78,9 @@ const { class: klass } = Astro.props;
     var HOLD = 0.04, TRAVEL = 0.62, DUR = 2200;
     var T_PEAK = 0.3542, SNAP_END = 0.6, MORPH_END = 0.4402;
     var IN0 = 0.0400, IN1 = 0.2900;
-    var OUT0 = 0.2900, OUT1 = 0.4264;
-    var TX0 = 0.3100, TX1 = 0.4864, DIA_MAX = 3.0;
-    var HW0 = 19.71;
+    var OUT0 = 0.2900, OUT1 = 0.3809;
+    var TX0 = 0.3809, TX1 = 0.4809, DIA_MAX = 3.0;
+    var DIA0 = 15.00;
 
     function pl(p) {
       var d = "M", i;
@@ -99,9 +99,9 @@ const { class: klass } = Astro.props;
     var back = function (u) { var k = u-1; return 1 + C3*k*k*k + C1*k*k; };
     // machine-like: quart in and out, precise rather than springy
     var mech = function (u) { return u < 0.5 ? 8*u*u*u*u : 1-Math.pow(-2*u+2, 4)/2; };
-    function dia(hw, hh) {
-      return "M"+CX+" "+(CY-hh).toFixed(1)+" L"+(CX+hw).toFixed(1)+" "+CY+
-             " L"+CX+" "+(CY+hh).toFixed(1)+" L"+(CX-hw).toFixed(1)+" "+CY+" Z";
+    function dia(h) {                       // a square on its point
+      return "M"+CX+" "+(CY-h).toFixed(1)+" L"+(CX+h).toFixed(1)+" "+CY+
+             " L"+CX+" "+(CY+h).toFixed(1)+" L"+(CX-h).toFixed(1)+" "+CY+" Z";
     }
 
     function apply(t) {
@@ -125,20 +125,20 @@ const { class: klass } = Astro.props;
       // constant rate the whole way down, so nothing catches at the 0.1s mark.
       var open = 1 + (DIA_MAX-1)*sp(t, IN0, IN1);
       var g = open * (1 - sp(t, OUT0, OUT1));
-      var hw = HW0*g, hh = 15*g;
-      core.setAttribute("d", dia(hw, hh));
+      var h = DIA0*g;
+      core.setAttribute("d", dia(h));
       core.setAttribute("opacity", (g > 0.02 ? 1 : 0) + "");
-      diaclip.setAttribute("d", dia(hw, hh));
+      diaclip.setAttribute("d", dia(h));
       letters.setAttribute("opacity", oC(sp(t, TX0, TX1)).toFixed(3));
 
       swirl.setAttribute("opacity", (0.5*Math.min(1, (g-1)/(DIA_MAX-1) + 0.35)).toFixed(3));
       blobs.forEach(function (b, i) {
         var ang = SW[i][0] + t*SW[i][1]*6.2831853;
-        var orb = hw*0.34;
+        var orb = h*0.30;
         b.setAttribute("cx", (CX+Math.cos(ang)*orb).toFixed(1));
-        b.setAttribute("cy", (CY+Math.sin(ang)*orb*0.30).toFixed(1));
-        b.setAttribute("rx", (hw*0.34).toFixed(1));
-        b.setAttribute("ry", (hh*0.62).toFixed(1));
+        b.setAttribute("cy", (CY+Math.sin(ang)*orb).toFixed(1));
+        b.setAttribute("rx", (h*0.40).toFixed(1));
+        b.setAttribute("ry", (h*0.40).toFixed(1));
       });
     }
 
