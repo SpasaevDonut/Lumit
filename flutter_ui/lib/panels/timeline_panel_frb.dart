@@ -2372,6 +2372,40 @@ class _FoldRow extends StatelessWidget {
     );
   }
 
+  /// Copy this one effect (K-275) — the Timeline's half of the pair, the
+  /// Effect controls panel's heading carrying the other.
+  void _effectMenu(BuildContext context, Offset at, String effectId) {
+    showLumitPopup<void>(
+      context: context,
+      position: at,
+      builder: (close) => FloatSurface(
+        width: 190,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            MenuRow(
+              key: ValueKey<String>('tl-fx-menu-copy-$effectId'),
+              onPressed: () {
+                close(null);
+                final ui = Provider.of<LumitUiState>(context, listen: false);
+                try {
+                  ui.copyEffectsToClipboard(
+                    layer.copyEffects(effect: UuidValue.fromString(effectId)),
+                  );
+                } catch (_) {
+                  // The effect went away between the menu opening and this row
+                  // being chosen; the clipboard keeps whatever it had.
+                }
+              },
+              child: const Text('Copy effect'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _control(BuildContext context) {
     final t = ThemeScope.of(context).theme;
     return switch (row) {
@@ -2380,6 +2414,17 @@ class _FoldRow extends StatelessWidget {
           key: ValueKey<String>('tl-group-$path'),
           behavior: HitTestBehavior.opaque,
           onTap: () => onToggle(path),
+          // An *effect's* heading offers to copy that one effect (K-275). The
+          // other headings — Transform, Effects, Masks, Audio — are groupings
+          // rather than things that can be copied, and `effectIdOfPath` is what
+          // tells them apart: only an effect's path carries an id.
+          onSecondaryTapUp: effectIdOfPath(path) == null
+              ? null
+              : (details) => _effectMenu(
+                    context,
+                    details.globalPosition,
+                    effectIdOfPath(path)!,
+                  ),
           child: Row(
             children: [
               lumitIcon(

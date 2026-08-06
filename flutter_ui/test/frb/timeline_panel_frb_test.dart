@@ -13,6 +13,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
+import 'package:lumit_flutter/state/clipboard.dart';
 import 'package:lumit_flutter/theme/theme.dart';
 import 'package:uuid/uuid.dart';
 import 'package:lumit_flutter/panels/project_panel_frb.dart';
@@ -2932,6 +2933,52 @@ void main() {
       await tester.pump();
       expect(find.byKey(ValueKey<String>('tl-rename-$id')), findsNothing,
           reason: 'a locked name does not open the editor');
+    });
+
+    /// **The Timeline's half of Copy effect** (K-275). An effect's heading in
+    /// the fold-out offers it; the groupings around it — Transform, Effects,
+    /// Masks, Audio — are not things that can be copied and offer nothing.
+    testWidgets("an effect's heading in the fold-out copies that effect",
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.addEffect(name: 'blur');
+      await mount(tester, p);
+      final id = layer.internallayerId;
+
+      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
+      await tester.pump();
+      await settleFrb(tester, minRounds: 4);
+      // The effect's own heading sits inside the Effects group, so that has to
+      // be open before there is a row to right-click.
+      final effects = find.byKey(ValueKey<String>('tl-group-$id/effects'));
+      final effectsRect = tester.getRect(effects);
+      await tester.tapAt(
+          Offset(effectsRect.left + 6, effectsRect.center.dy));
+      await tester.pump();
+      await settleFrb(tester, minRounds: 4);
+
+      final effect = layer.getEffects().single;
+      final heading = find.byKey(
+          ValueKey<String>('tl-group-$id/effects/${effect.id()}'));
+      expect(heading, findsOneWidget, reason: 'the effect has a heading row');
+
+      expect(p.uiState.clipboard.kind, isNull);
+      await tester.tapAt(tester.getCenter(heading), buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-fx-menu-copy-${effect.id()}')));
+      await tester.pumpAndSettle();
+      expect(p.uiState.clipboard.kind, ClipboardKind.effects);
+
+      // A grouping offers no menu: right-clicking Transform must not open one.
+      await tester.tapAt(
+        tester.getCenter(find.byKey(ValueKey<String>('tl-group-$id/transform'))),
+        buttons: kSecondaryButton,
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Copy effect'), findsNothing,
+          reason: 'Transform is a grouping, not a thing that can be copied');
     });
 
     /// Enter turns the selected layer's name into an editor (K-243); submitting

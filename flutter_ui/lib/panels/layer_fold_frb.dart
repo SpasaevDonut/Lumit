@@ -289,10 +289,12 @@ String effectsPath(String layerId) => '$layerId/effects';
 String effectPath(String layerId, String effectId) =>
     '$layerId/effects/$effectId';
 
+
 /// The effect instance a fold path names, or null when the path is not one
 /// effect's heading (it is the Effects group itself, one parameter under an
 /// effect, or something else entirely). Used by the render-time indicator to
-/// put an effect's measured cost on its own row (docs/13 §7.1).
+/// put an effect's measured cost on its own row (docs/13 §7.1), and by the
+/// Timeline's heading menu to know which rows can be copied from (K-275).
 String? effectIdOfPath(String path) {
   final parts = path.split('/');
   if (parts.length != 3 || parts[1] != 'effects') return null;

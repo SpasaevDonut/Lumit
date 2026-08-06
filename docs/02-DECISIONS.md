@@ -5854,3 +5854,23 @@ bandwidth cap, and Cloudflare Pages serves the two static sites. There is no ser
 no scaling story to own. Revisit only if the site grows contributors who should not have
 to clone a Rust + Flutter tree — at which point Cloudflare's per-path build filters
 already prevent the two from triggering each other's builds.
+
+**K-287 · DECIDED · An effect is copied from its heading, in both places it has one.**
+K-275 built copy and paste and named what it left: "the two places an effect is *picked*:
+**Copy effect** on an effect's heading in the Effect controls panel and on its row in the
+Timeline, both calling `copy_effects(Some(id))`". Both are wired now.
+
+Nothing new crosses the bridge. `copy_effects(Some(id))` has taken one effect since K-275, and
+the in-app clipboard has held `.lumfx` text since then too — what was missing was any way to
+*name* a single effect from the interface, so the call had no caller and the Edit menu's Copy
+took the whole layer.
+
+**One effect and a whole stack land on the same clipboard**, because both are the same
+`.lumfx` document. Paste therefore needs no idea which it holds, and pasting one effect onto a
+bare layer adds exactly one — which is the test.
+
+**Only an effect's heading offers it.** The Timeline's fold-out draws Transform, Effects,
+Masks, Contents, Paint and Audio as headings too, and none of them is a thing that can be
+copied. `effectIdOfPath` already told the render-time indicator which rows are effects
+(docs/13 §7.1); it now tells the menu the same thing, so a grouping opens no menu at all
+rather than opening one with a dead row in it (docs/15: no punishment UI).

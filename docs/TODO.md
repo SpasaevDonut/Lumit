@@ -209,14 +209,14 @@ The Timeline matters most - it is zoomed constantly while cutting.
 - **The audio mix is rebuilt from scratch** whenever the comp's audio signature
     changes, rather than patched.
 
-**Copy and paste: the effect-header commands are still to wire (K-275).** Layers copy
-and paste from the **Edit** menu (Cut/Copy/Paste, with *Paste layers at their original
-time* in Settings → Interface), and the engine takes one effect or a whole stack
-(`copy_effects`/`paste_effects`). What is owed is the two places an effect is *picked*:
-**Copy effect** on an effect's heading in the Effect controls panel and on its row in the
-Timeline, both calling `copy_effects(Some(id))` and putting it on the same clipboard.
-Copying between two running Lumit windows wants the system clipboard rather than the
-in-app one; decide when it is asked for.
+**Copy and paste (K-275): the effect-header commands are wired (K-287).** Layers copy and
+paste from the **Edit** menu (Cut/Copy/Paste, with *Paste layers at their original time* in
+Settings → Interface); the engine takes one effect or a whole stack
+(`copy_effects`/`paste_effects`); and **Copy effect** now sits on an effect's heading in
+both places an effect is picked — the Effect controls panel's card and the Timeline
+fold-out's row — putting one effect on the same clipboard a stack uses. Still owed: copying
+between two running Lumit windows wants the system clipboard rather than the in-app one;
+decide when it is asked for.
 
 **Retime follow-up after K-249.** **The eased ramp shapes are gone from
 clips** — `Clip::with_ramp` takes two speeds and runs straight between them,

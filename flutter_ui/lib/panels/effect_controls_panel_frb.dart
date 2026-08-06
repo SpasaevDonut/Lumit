@@ -680,6 +680,21 @@ class _EffectSection extends StatelessWidget {
   /// removing it. Reordering is a handful of acts in a session, so it lives
   /// here rather than in two buttons on every heading — and unlike the arrows
   /// it can send an effect to the top or the bottom in one go.
+  /// Put this effect on the clipboard, alone (K-275).
+  ///
+  /// A failure is swallowed the way the neighbouring effect commands' are: the
+  /// effect went away between the menu opening and the row being chosen, and an
+  /// error about a thing that is no longer there helps nobody.
+  void _copyEffect(BuildContext context) {
+    try {
+      final text = layer.copyEffects(effect: info.id);
+      Provider.of<LumitUiState>(context, listen: false)
+          .copyEffectsToClipboard(text);
+    } catch (_) {
+      // The effect is gone; the clipboard keeps whatever it had.
+    }
+  }
+
   void _stackMenu(BuildContext context, Offset at) {
     final id = info.id;
     void move(int to) {
@@ -735,6 +750,20 @@ class _EffectSection extends StatelessWidget {
                 child: const Text('Move to bottom'),
               ),
             ],
+            // **Copy this one effect** (K-275). The engine has taken one or a
+            // whole stack since copy/paste landed — `copy_effects(Some(id))` —
+            // and the Edit menu's Copy takes the *layer*, so until now there
+            // was no way to pick a single effect and no way to reach the call.
+            // It goes on the same clipboard a stack does: both are `.lumfx`, so
+            // both paste the same way, and Paste needs no idea which it holds.
+            MenuRow(
+              key: ValueKey<String>('fx-menu-copy-$id'),
+              onPressed: () {
+                close(null);
+                _copyEffect(context);
+              },
+              child: const Text('Copy effect'),
+            ),
             MenuRow(
               key: ValueKey<String>('fx-menu-remove-$id'),
               onPressed: () {

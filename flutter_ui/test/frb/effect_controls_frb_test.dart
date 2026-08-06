@@ -13,6 +13,7 @@ import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/widgets/controls.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
+import 'package:lumit_flutter/state/clipboard.dart';
 import 'package:lumit_flutter/panels/effect_controls_panel_frb.dart';
 import 'package:lumit_flutter/panels/effect_param_row_frb.dart' show effectLabelOf;
 import 'package:lumit_flutter/src/rust/api/effect.dart';
@@ -151,6 +152,43 @@ void main() {
       expect(nul.getEffects().length, 1);
       expect(find.text('Gaussian blur'), findsOneWidget,
           reason: 'the stack draws as it does on any other layer');
+    });
+
+    /// **Copying one effect** (K-275). The engine has taken one or a whole
+    /// stack since copy/paste landed — `copy_effects(Some(id))` — and the Edit
+    /// menu's Copy takes the *layer*, so until this row existed there was no
+    /// way to pick a single effect and no way to reach the call.
+    testWidgets('an effect heading copies that one effect', (tester) async {
+      final p = withLayer();
+      p.layer.addEffect(name: 'blur');
+      p.layer.addEffect(name: 'invert');
+      await mount(tester, p);
+
+      expect(p.uiState.clipboard.kind, isNull, reason: 'nothing copied yet');
+
+      final second = p.layer.getEffects()[1];
+      await tester.tapAt(
+        tester.getCenter(find.text(effectLabelOf(second.name()))),
+        buttons: kSecondaryButton,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+          find.byKey(ValueKey<String>('fx-menu-copy-${second.id()}')));
+      await tester.pumpAndSettle();
+
+      expect(p.uiState.clipboard.kind, ClipboardKind.effects,
+          reason: 'it goes on the same clipboard a whole stack does — both are '
+              '.lumfx, so Paste needs no idea which it holds');
+      // And it is *one* effect, not the stack: pasting onto a bare layer adds
+      // exactly one.
+      final bare = p.uiState.selectedComp!.addSolidLayer();
+      bare.pasteEffects(
+        text: p.uiState.clipboard.text!,
+        atFrame: 0,
+      );
+      expect(bare.getEffects(), hasLength(1),
+          reason: 'the picked effect alone, not the two on the layer');
+      expect(bare.getEffects().single.name(), second.name());
     });
 
     testWidgets('a selection made in the Viewer switches the panel to it',
