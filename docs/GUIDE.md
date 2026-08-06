@@ -3770,12 +3770,19 @@ wrong:
   much memory an open video decoder holds, so the report says how many are open
   rather than inventing a number.
 
-One more row asks the **graphics driver** what it is holding, and splits it in
-two: how much it has reserved from the system, and how much of that is actually
-in use. Memory that has been given back by Lumit but not by the driver sits in
-the gap between those two numbers, and nothing else in the window can see it.
-On a Mac, where the graphics memory and the system memory are the same memory,
-that gap is part of the total at the top.
+One more row asks the **graphics driver** how many pictures and buffers it is
+still holding for Lumit. A handful is normal: the frames kept on the card, and
+the working pictures of whatever frame is being made right now. Thousands would
+mean pictures Lumit had finished with were never actually destroyed — which is a
+different fault from any cache being too big, and on a Mac that memory is inside
+the total at the top.
+
+Counting them, rather than measuring them, is deliberate. The first version of
+this row asked the driver for bytes, and on a Mac the answer was "not reported
+by this driver" — that particular question only has an answer on Windows and
+Linux. A count is a count on every machine, and it happens to be the sharper
+question anyway: it distinguishes a big cache from a leak, which bytes alone
+cannot.
 
 It does not free a single byte. It is the instrument, not the repair.
 

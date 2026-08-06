@@ -6391,12 +6391,23 @@ worth a syscall.
   one — it leaves out the compressed pages and the IOSurface and Metal allocations a
   graphics application lives on, which is most of what would be hunted. `phys_footprint`
   is what Activity Monitor prints under *Memory*, and so the number a user reads back.
-- **The graphics driver's own accounting rides beside the tiers**, in use and reserved
-  (`Device::generate_allocator_report`). The first reading in anger made the case: 12 GB
-  held, 11 GB of it unaccounted, with ~405 frames decoded — which cleared every
-  byte-budgeted tier at a glance and left the layer underneath, where the tiers' own
-  numbers cannot reach. Reserved-minus-in-use is the shape of "discarded but not deleted",
-  and it is now a number rather than a theory.
+- **The graphics driver's own accounting rides beside the tiers.** The first reading in
+  anger made the case: 12 GB held, 11 GB of it unaccounted, with ~405 frames decoded —
+  which cleared every byte-budgeted tier at a glance and left the layer underneath, where
+  the tiers' own numbers cannot reach.
+  - It was first written as bytes alone (`Device::generate_allocator_report`), and on the
+    Mac it was written for it read **"not reported by this driver"**: that report is
+    Vulkan and D3D12 only, and Metal does its own allocation. An instrument that works
+    only where there is no problem is not an instrument, so the report now leads with
+    **live object counts** — how many textures and buffers the driver is holding — which
+    every backend keeps. A handful at rest against thousands is exactly the difference
+    between a cache doing its job and frames the engine dropped never being destroyed.
+  - The byte figures stay for the platforms that have them, and that row is **not drawn**
+    where they are zero: a zero nobody can distinguish from a real answer is worse than a
+    missing row (docs/15-DESIGN.md — the honest gap).
+  - The counts are pinned by a test that makes a texture, drops it, and checks the tally
+    follows: compiled without wgpu's `counters` feature they would read zero for ever,
+    which is the failure this row could not afford.
 - **VRAM is reported apart, never subtracted**: on unified memory it is inside the process
   and on a discrete card it is not, so folding it in is wrong on half the machines Lumit
   runs on. **Nothing is counted twice** — a frame in the write-behind queue shares its

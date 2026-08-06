@@ -368,12 +368,32 @@ impl GpuContext {
     /// and a large gap between them is memory that is free and still ours —
     /// which is exactly the shape of "discarded but not deleted".
     ///
-    /// `None` where the backend keeps no such accounting.
+    /// `None` where the backend keeps no such accounting — which is **every
+    /// Mac**: the allocator report is Vulkan and D3D12 only, and Metal does its
+    /// own allocation. Read [`Self::live_objects`] and [`Self::device_bytes`]
+    /// there, which is why both exist.
     #[must_use]
     pub fn allocator_bytes(&self) -> Option<(u64, u64)> {
         self.device
             .generate_allocator_report()
             .map(|r| (r.total_allocated_bytes, r.total_reserved_bytes))
+    }
+
+    /// How many textures and buffers the driver is holding for this device
+    /// right now — `(textures, buffers)`.
+    ///
+    /// Every backend keeps these, Metal included, which is what makes them the
+    /// honest question on the platform where the memory was actually lost. A
+    /// cache holding eight frames beside a driver holding four thousand
+    /// textures is not a cache problem and not an allocator subtlety: it is
+    /// objects the engine dropped that were never destroyed.
+    #[must_use]
+    pub fn live_objects(&self) -> (u64, u64) {
+        let counters = self.device.get_internal_counters();
+        (
+            counters.hal.textures.read() as u64,
+            counters.hal.buffers.read() as u64,
+        )
     }
 
     /// Start batching: from here until the matching [`Self::end_frame`], every
@@ -1158,6 +1178,54 @@ impl ColourEngine {
         drop(data);
         buffer.unmap();
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod counter_tests {
+    use super::*;
+
+    /// The live-object count moves with what is actually alive (K-293).
+    ///
+    /// This is the figure the memory report leans on for Metal, where the
+    /// allocator report answers nothing, so a build where the counters were
+    /// compiled out would leave that row reading zero for ever — true-looking
+    /// and useless. Making a texture and dropping it proves the tally is wired.
+    #[test]
+    fn the_live_texture_count_follows_what_is_alive() {
+        let Ok(ctx) = GpuContext::headless() else {
+            no_adapter();
+            return;
+        };
+        let (before, _) = ctx.live_objects();
+        let made = ctx.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("counter-probe"),
+            size: wgpu::Extent3d {
+                width: 64,
+                height: 64,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: WORKING_FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let (during, _) = ctx.live_objects();
+        assert!(
+            during > before,
+            "a new texture is counted: {before} then {during}"
+        );
+        drop(made);
+        // Destruction is deferred until the device is given a turn — which is
+        // the very behaviour this row exists to expose.
+        ctx.device.poll(wgpu::Maintain::Poll);
+        let (after, _) = ctx.live_objects();
+        assert!(
+            after <= during,
+            "and dropping it does not raise the count: {during} then {after}"
+        );
     }
 }
 

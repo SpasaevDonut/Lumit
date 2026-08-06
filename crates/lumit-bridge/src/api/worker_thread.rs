@@ -259,9 +259,13 @@ fn sync_caches(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
     let (decoded_bytes, decoders) = state.renderer.decode_memory();
     crate::framecache::decode::publish(decoded_bytes as u64, decoders as u64);
     crate::framecache::disk::publish_pending_parks(state.disk.pending_parks() as u64);
-    if let Some((allocated, reserved)) = state.renderer.gpu_allocator_bytes() {
-        crate::framecache::gpu::publish(allocated, reserved);
-    }
+    // The driver's own accounting. The byte figures are Vulkan and D3D12 only
+    // — Metal keeps none — so the live-object counts ride with them: those
+    // every backend keeps, and they are what says whether a dropped frame was
+    // actually destroyed (K-293).
+    let (allocated, reserved) = state.renderer.gpu_allocator_bytes().unwrap_or((0, 0));
+    let (textures, buffers) = state.renderer.gpu_live_objects();
+    crate::framecache::gpu::publish(allocated, reserved, textures, buffers);
     let (used, _, entries) = state.renderer.frame_texture_stats();
     if (used as u64, entries as u64) != state.published_vram {
         state.published_vram = (used as u64, entries as u64);

@@ -910,19 +910,33 @@ class _SettingsWindowState extends State<_SettingsWindow> {
         settingsRow(
           t,
           'Held by the graphics driver',
-          'What the driver has reserved for Lumit, and how much of it is '
-              'actually in use. A large gap is memory the engine has released '
-              'and the driver has not handed back — on a Mac that is inside '
-              'the total above.',
+          'Pictures and buffers the driver still has for Lumit. A handful is '
+              'normal — the frames on the card, the ones being made. Thousands '
+              'means pictures the engine finished with were never destroyed, '
+              'and on a Mac that memory is inside the total above.',
           Text(
-            memory.gpuReservedBytes == BigInt.zero
-                ? 'not reported by this driver'
-                : '${_bytes(memory.gpuReservedBytes)} reserved, '
-                    '${_bytes(memory.gpuAllocatedBytes)} in use',
+            '${memory.gpuTextures} pictures, ${memory.gpuBuffers} buffers',
             key: const ValueKey('settings-memory-gpu'),
             style: t.small,
           ),
         ),
+        // The byte figures are Vulkan and D3D12 only, so the row is not drawn
+        // at all on a Mac rather than printing two zeroes and inviting the
+        // reader to draw a conclusion from them.
+        if (memory.gpuReservedBytes != BigInt.zero)
+          settingsRow(
+            t,
+            'Graphics memory reserved',
+            'What the driver has taken from the system for those, and how much '
+                'of it is in use. The gap is memory Lumit has released and the '
+                'driver has not handed back.',
+            Text(
+              '${_bytes(memory.gpuReservedBytes)} reserved, '
+              '${_bytes(memory.gpuAllocatedBytes)} in use',
+              key: const ValueKey('settings-memory-gpu-bytes'),
+              style: t.small,
+            ),
+          ),
         settingsRow(
           t,
           'Open media decoders',

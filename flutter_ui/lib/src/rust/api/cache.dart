@@ -253,9 +253,25 @@ class BridgeMemoryReport {
   ///
   /// The gap between this and `gpu_allocated_bytes` is memory that has been
   /// released by the engine and not handed back by the driver: free, and
-  /// still ours. That is the shape of "discarded but not deleted", and it is
-  /// invisible to every other number in this report.
+  /// still ours.
+  ///
+  /// **Both byte figures are 0 on macOS**, where Metal keeps no such
+  /// accounting and wgpu therefore reports none — which is the platform the
+  /// question was asked on. Read the two counts below there.
   final BigInt gpuReservedBytes;
+
+  /// How many textures the driver is holding for the render device right now.
+  ///
+  /// **This is the figure that works everywhere, Metal included.** The engine
+  /// holds a handful at rest — the frames in the card's cache, the pooled
+  /// upload textures, the shared present targets, and each frame's
+  /// intermediates while it is being made. Thousands of them means frames the
+  /// engine dropped were never destroyed, which is a different fault from any
+  /// cache being too large and is not visible in any other number here.
+  final BigInt gpuTextures;
+
+  /// How many buffers the driver is holding, for the same reason.
+  final BigInt gpuBuffers;
 
   /// `process_bytes` less everything above that lives in ordinary memory.
   /// Saturating at zero, since the platform's number and ours are read a
@@ -271,6 +287,8 @@ class BridgeMemoryReport {
     required this.parkQueueFrames,
     required this.gpuAllocatedBytes,
     required this.gpuReservedBytes,
+    required this.gpuTextures,
+    required this.gpuBuffers,
     required this.unaccountedBytes,
   });
 
@@ -284,6 +302,8 @@ class BridgeMemoryReport {
       parkQueueFrames.hashCode ^
       gpuAllocatedBytes.hashCode ^
       gpuReservedBytes.hashCode ^
+      gpuTextures.hashCode ^
+      gpuBuffers.hashCode ^
       unaccountedBytes.hashCode;
 
   @override
@@ -299,6 +319,8 @@ class BridgeMemoryReport {
           parkQueueFrames == other.parkQueueFrames &&
           gpuAllocatedBytes == other.gpuAllocatedBytes &&
           gpuReservedBytes == other.gpuReservedBytes &&
+          gpuTextures == other.gpuTextures &&
+          gpuBuffers == other.gpuBuffers &&
           unaccountedBytes == other.unaccountedBytes;
 }
 

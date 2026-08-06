@@ -13,7 +13,12 @@ glam = "0.29"
 half = "2"
 pollster = "0.4"
 thiserror = "2"
-wgpu = "24"
+# `counters` turns on wgpu's live-object tallies — how many textures and
+# buffers the driver is holding right now, which is what says whether a frame
+# the engine dropped was actually destroyed (K-293). Every backend keeps them;
+# unlike the allocator report, which is Vulkan and D3D12 only and answers
+# nothing at all on Metal, where the memory question was asked.
+wgpu = { version = "24", features = ["counters"] }
 
 # The Windows-only, zero-copy Viewer path (K-177). Off by default so every
 # existing build is byte-for-byte unchanged; the bridge turns it on to build the

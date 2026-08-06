@@ -943,6 +943,13 @@ impl HeadlessRenderer {
         self.gpu.allocator_bytes()
     }
 
+    /// How many textures and buffers the driver is still holding for this
+    /// renderer — see [`lumit_gpu::GpuContext::live_objects`].
+    #[must_use]
+    pub fn gpu_live_objects(&self) -> (u64, u64) {
+        self.gpu.live_objects()
+    }
+
     /// Resize the decoded-source-frame cache (Settings → Performance).
     pub fn set_decode_budget(&mut self, bytes: usize) {
         self.pool.set_budget(bytes);
