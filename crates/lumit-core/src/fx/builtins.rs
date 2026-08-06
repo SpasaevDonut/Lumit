@@ -2938,11 +2938,53 @@ pub const BUILTINS: &[EffectSchema] = &[
                     dividers_after: &[0],
                 },
             },
+
             MIX_PARAM,
         ],
     },
     EffectSchema {
-        groups: &[],
+        groups: &[
+            ParamGroup {
+                label: "Bokeh particles",
+                params: &[
+                    "bokeh_layers",
+                    "scale",
+                    "scale_var_x",
+                    "scale_var_y",
+                    "rotation_var",
+                    "defocus",
+                    "defocus_var",
+                    "chromatic",
+                ],
+
+                collapsed: false,
+                visible_when: None,
+            },
+            ParamGroup {
+                label: "Scratches & Imperfections",
+                params: &["scratches", "scratch_scale", "vignette", "tint"],
+                collapsed: true,
+                visible_when: None,
+            },
+            ParamGroup {
+                label: "Background",
+                params: &["bg_colour"],
+                collapsed: false,
+                visible_when: Some(("bg_mode", &[1, 2])),
+            },
+            ParamGroup {
+                label: "Sun / Light source",
+                params: &["sun_pos_x", "sun_pos_y", "sun_intensity", "sun_radius"],
+                collapsed: false,
+                visible_when: Some(("bg_mode", &[2])),
+            },
+            ParamGroup {
+                label: "Random seed",
+                params: &["seed"],
+                collapsed: true,
+                visible_when: None,
+            },
+        ],
         match_name: "lens_dirt",
         label: "Lens dirt",
         version: 1,
@@ -2975,8 +3017,17 @@ pub const BUILTINS: &[EffectSchema] = &[
                 },
             },
             ParamSchema {
+                id: "blend_mode",
+                label: "Blend mode",
+                kind: ParamKind::Choice {
+                    options: &["Screen", "Add", "Overlay", "Solo"],
+                    default: 0,
+                    dividers_after: &[],
+                },
+            },
+            ParamSchema {
                 id: "bokeh_layers",
-                label: "Bokeh layers",
+                label: "Layers",
                 kind: ParamKind::Int {
                     default: 3,
                     slider: (1, 8),
@@ -2985,17 +3036,16 @@ pub const BUILTINS: &[EffectSchema] = &[
             },
             ParamSchema {
                 id: "scale",
-                label: "Bokeh scale",
+                label: "Size",
                 kind: ParamKind::Float {
                     default: 1.0,
                     slider: (0.1, 5.0),
                     hard: (Some(0.01), Some(20.0)),
                 },
             },
-
             ParamSchema {
                 id: "scale_var_x",
-                label: "Bokeh scale jitter X",
+                label: "Aspect jitter X",
                 kind: ParamKind::Float {
                     default: 0.0,
                     slider: (0.0, 1.0),
@@ -3004,7 +3054,7 @@ pub const BUILTINS: &[EffectSchema] = &[
             },
             ParamSchema {
                 id: "scale_var_y",
-                label: "Bokeh scale jitter Y",
+                label: "Aspect jitter Y",
                 kind: ParamKind::Float {
                     default: 0.0,
                     slider: (0.0, 1.0),
@@ -3013,20 +3063,11 @@ pub const BUILTINS: &[EffectSchema] = &[
             },
             ParamSchema {
                 id: "rotation_var",
-                label: "Bokeh rotation jitter",
+                label: "Rotation jitter",
                 kind: ParamKind::Float {
                     default: 0.0,
                     slider: (0.0, 1.0),
                     hard: (Some(0.0), Some(1.0)),
-                },
-            },
-            ParamSchema {
-                id: "scratch_scale",
-                label: "Scratch scale",
-                kind: ParamKind::Float {
-                    default: 1.0,
-                    slider: (0.1, 5.0),
-                    hard: (Some(0.01), Some(20.0)),
                 },
             },
             ParamSchema {
@@ -3040,14 +3081,13 @@ pub const BUILTINS: &[EffectSchema] = &[
             },
             ParamSchema {
                 id: "defocus_var",
-                label: "Bokeh defocus jitter",
+                label: "Defocus jitter",
                 kind: ParamKind::Float {
                     default: 0.0,
                     slider: (0.0, 1.0),
                     hard: (Some(0.0), Some(1.0)),
                 },
             },
-
             ParamSchema {
                 id: "chromatic",
                 label: "Chromatic dispersion",
@@ -3067,11 +3107,12 @@ pub const BUILTINS: &[EffectSchema] = &[
                 },
             },
             ParamSchema {
-                id: "tint",
-                label: "Tint",
-                kind: ParamKind::Colour {
-                    default: [1.0, 0.95, 0.85, 1.0],
-                    range: (0.0, 2.0),
+                id: "scratch_scale",
+                label: "Scratch scale",
+                kind: ParamKind::Float {
+                    default: 1.0,
+                    slider: (0.1, 5.0),
+                    hard: (Some(0.01), Some(20.0)),
                 },
             },
             ParamSchema {
@@ -3084,12 +3125,11 @@ pub const BUILTINS: &[EffectSchema] = &[
                 },
             },
             ParamSchema {
-                id: "blend_mode",
-                label: "Blend mode",
-                kind: ParamKind::Choice {
-                    options: &["Screen", "Add", "Overlay", "Solo"],
-                    default: 0,
-                    dividers_after: &[],
+                id: "tint",
+                label: "Tint",
+                kind: ParamKind::Colour {
+                    default: [1.0, 0.95, 0.85, 1.0],
+                    range: (0.0, 2.0),
                 },
             },
             ParamSchema {
@@ -3136,7 +3176,6 @@ pub const BUILTINS: &[EffectSchema] = &[
                     hard: (Some(0.0), None),
                 },
             },
-
             ParamSchema {
                 id: "sun_radius",
                 label: "Sun radius",
@@ -3146,16 +3185,16 @@ pub const BUILTINS: &[EffectSchema] = &[
                     hard: (Some(0.01), Some(5.0)),
                 },
             },
-
             ParamSchema {
                 id: "seed",
-                label: "Seed",
+                label: "Random seed",
                 kind: ParamKind::Seed,
             },
             MIX_PARAM,
         ],
     },
 ];
+
 
 
 /// Look a schema up by its match name.

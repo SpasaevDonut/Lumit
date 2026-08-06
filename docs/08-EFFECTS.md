@@ -1598,28 +1598,35 @@ stable when they land.
 **Parameters:**
 - `intensity` (Float, default `1.0`, slider `0.0`..`4.0`, hard `0.0`..`None`): Master brightness scale. `0.0` is neutral passthrough.
 - `density` (Float, default `100.0`, slider `0.0`..`500.0`, hard `0.0`..`2000.0`): Spatial density of dust specks and out-of-focus bokeh disks.
+- `blend_mode` (Choice `["Screen", "Add", "Overlay", "Solo"]`, default `0` Screen): Compositing mode against source frame.
+
+**Group: Bokeh particles** (Disclosure group)
 - `bokeh_layers` (Int, default `3`, slider `1`..`8`, hard `1`..`10`): Number of independent depth layers of stacked bokeh particles.
 - `scale` (Float, default `1.0`, slider `0.1`..`5.0`, hard `0.01`..`20.0`): Base size multiplier for out-of-focus bokeh disks.
-
 - `scale_var_x` (Float, default `0.0`, slider `0.0`..`1.0`, hard `0.0`..`2.0`): Per-particle horizontal scale randomizer / aspect variance.
 - `scale_var_y` (Float, default `0.0`, slider `0.0`..`1.0`, hard `0.0`..`2.0`): Per-particle vertical scale randomizer / aspect variance.
 - `rotation_var` (Float, default `0.0`, slider `0.0`..`1.0`, hard `0.0`..`1.0`): Per-particle rotation randomizer for oval/anamorphic bokeh disks.
-- `scratch_scale` (Float, default `1.0`, slider `0.1`..`5.0`, hard `0.01`..`20.0`): Size and length multiplier for micro hairline scratches and dust specks.
 - `defocus` (Float, default `0.5`, slider `0.0`..`1.0`, hard `0.0`..`1.0`): Bokeh disc edge softness vs ring iris highlights.
 - `defocus_var` (Float, default `0.0`, slider `0.0`..`1.0`, hard `0.0`..`1.0`): Per-particle defocus randomizer for mixed sharp iris rings and soft halos.
-
 - `chromatic` (Float, default `0.3`, slider `0.0`..`1.0`, hard `0.0`..`2.0`): Spectral color dispersion at bokeh edges and dust spots.
+
+**Group: Scratches & Imperfections** (Disclosure group)
 - `scratches` (Float, default `0.4`, slider `0.0`..`1.0`, hard `0.0`..`1.0`): Micro hairline scratches and glass smudge density.
-- `tint` (Colour, default `[1.0, 0.95, 0.85, 1.0]`, edit range `0.0`..`2.0`): Scene-linear RGBA highlight illumination tint.
+- `scratch_scale` (Float, default `1.0`, slider `0.1`..`5.0`, hard `0.01`..`20.0`): Size and length multiplier for micro hairline scratches and dust specks.
 - `vignette` (Float, default `0.3`, slider `0.0`..`1.0`, hard `0.0`..`1.0`): Optical lens edge darkening / falloff.
-- `blend_mode` (Choice `["Screen", "Add", "Overlay", "Solo"]`, default `0` Screen): Compositing mode against source frame.
+- `tint` (Colour, default `[1.0, 0.95, 0.85, 1.0]`, edit range `0.0`..`2.0`): Scene-linear RGBA highlight illumination tint.
+
+**Group: Background & Sun Light Source** (Disclosure group)
 - `bg_mode` (Choice `["Transparent", "Color", "Sun / Light source"]`, default `0` Transparent): Background rendering mode.
-- `bg_colour` (Colour, default `[0.05, 0.05, 0.08, 1.0]`, edit range `0.0`..`2.0`): Custom background color fill when `bg_mode` > 0.
-- `sun_pos` (Point, default `[0.5, 0.3]`): Screen-normalized coordinates `[x, y]` of procedural sun/light source.
-- `sun_intensity` (Float, default `1.0`, slider `0.0`..`4.0`, hard `0.0`..`None`): Brightness multiplier of background sun light source.
-- `sun_radius` (Float, default `0.4`, slider `0.05`..`1.5`, hard `0.01`..`5.0`): Falloff radius of background sun light source.
+- `bg_colour` (Colour, default `[0.05, 0.05, 0.08, 1.0]`, edit range `0.0`..`2.0`): Custom background color fill (visible when `bg_mode` > 0).
+- `sun_pos` (Point, default `[0.5, 0.3]`): Screen-normalized coordinates `[x, y]` of procedural sun/light source (visible when `bg_mode` = 2).
+- `sun_intensity` (Float, default `1.0`, slider `0.0`..`4.0`, hard `0.0`..`None`): Brightness multiplier of background sun light source (visible when `bg_mode` = 2).
+- `sun_radius` (Float, default `0.4`, slider `0.05`..`1.5`, hard `0.01`..`5.0`): Falloff radius of background sun light source (visible when `bg_mode` = 2).
+
+**Group: Random seed** (Disclosure group)
 - `seed` (Seed): Deterministic pseudo-random seed driving particle distribution.
 - `mix` (Float, default `100.0`, slider `0.0`..`100.0`, hard `0.0`..`100.0`): Host uniform blend.
+
 
 
 **Oracle & WGSL.** A grid-jittered procedural kernel generates bokeh disks, chromatic iris rings, scratch line SDFs, and smudge textures. CPU and WGSL implementations match within 2 fp16 ULPs.
