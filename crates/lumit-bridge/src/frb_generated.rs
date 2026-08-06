@@ -8223,6 +8223,8 @@ impl SseDecode for crate::api::cache::BridgeMemoryReport {
         let mut var_decodeCacheBytes = <u64>::sse_decode(deserializer);
         let mut var_openDecoders = <u64>::sse_decode(deserializer);
         let mut var_parkQueueFrames = <u64>::sse_decode(deserializer);
+        let mut var_gpuAllocatedBytes = <u64>::sse_decode(deserializer);
+        let mut var_gpuReservedBytes = <u64>::sse_decode(deserializer);
         let mut var_unaccountedBytes = <u64>::sse_decode(deserializer);
         return crate::api::cache::BridgeMemoryReport {
             process_bytes: var_processBytes,
@@ -8231,6 +8233,8 @@ impl SseDecode for crate::api::cache::BridgeMemoryReport {
             decode_cache_bytes: var_decodeCacheBytes,
             open_decoders: var_openDecoders,
             park_queue_frames: var_parkQueueFrames,
+            gpu_allocated_bytes: var_gpuAllocatedBytes,
+            gpu_reserved_bytes: var_gpuReservedBytes,
             unaccounted_bytes: var_unaccountedBytes,
         };
     }
@@ -11136,6 +11140,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::cache::BridgeMemoryReport {
             self.decode_cache_bytes.into_into_dart().into_dart(),
             self.open_decoders.into_into_dart().into_dart(),
             self.park_queue_frames.into_into_dart().into_dart(),
+            self.gpu_allocated_bytes.into_into_dart().into_dart(),
+            self.gpu_reserved_bytes.into_into_dart().into_dart(),
             self.unaccounted_bytes.into_into_dart().into_dart(),
         ]
         .into_dart()
@@ -12894,6 +12900,8 @@ impl SseEncode for crate::api::cache::BridgeMemoryReport {
         <u64>::sse_encode(self.decode_cache_bytes, serializer);
         <u64>::sse_encode(self.open_decoders, serializer);
         <u64>::sse_encode(self.park_queue_frames, serializer);
+        <u64>::sse_encode(self.gpu_allocated_bytes, serializer);
+        <u64>::sse_encode(self.gpu_reserved_bytes, serializer);
         <u64>::sse_encode(self.unaccounted_bytes, serializer);
     }
 }

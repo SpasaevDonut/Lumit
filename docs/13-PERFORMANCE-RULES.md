@@ -254,6 +254,12 @@ Rules the report keeps, so its arithmetic can be trusted:
 - **VRAM is reported, never subtracted.** On unified memory (every Apple Silicon Mac) the
   card's frames are part of the process; on a discrete card they are not. Folding them in
   either way would be wrong on half the machines Lumit runs on.
+- **The graphics driver reports what it holds, in use and reserved.** A tier's own bytes
+  say what the engine *asked* for; the driver's reserved figure says what it is still
+  holding on the engine's behalf. The gap between the two is memory the engine has
+  released and the driver has not handed back — free, and still ours — which no other
+  number in the report can see. It is the first thing to read when the unaccounted figure
+  is large.
 - **Nothing is counted twice.** A frame waiting in the write-behind queue shares its
   allocation with the frame cache (one `Arc`, both tiers), so the queue reports a *count*
   of frames rather than bytes.

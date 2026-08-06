@@ -3770,6 +3770,13 @@ wrong:
   much memory an open video decoder holds, so the report says how many are open
   rather than inventing a number.
 
+One more row asks the **graphics driver** what it is holding, and splits it in
+two: how much it has reserved from the system, and how much of that is actually
+in use. Memory that has been given back by Lumit but not by the driver sits in
+the gap between those two numbers, and nothing else in the window can see it.
+On a Mac, where the graphics memory and the system memory are the same memory,
+that gap is part of the total at the top.
+
 It does not free a single byte. It is the instrument, not the repair.
 
 ## 10. The app icon and the brand files

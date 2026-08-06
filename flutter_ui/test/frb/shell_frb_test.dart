@@ -82,25 +82,6 @@ void main() {
       expect(find.byKey(const ValueKey('settings-tier')), findsOneWidget);
       expect(find.byKey(const ValueKey('settings-cache-used')), findsOneWidget);
 
-      // Where the memory has gone (K-295). The report is the first thing on
-      // the page, and the figure it exists for is the unaccounted one: a user
-      // asked "why is Lumit holding 85 GB" reads this row back to us.
-      expect(find.byKey(const ValueKey('settings-memory-process')),
-          findsOneWidget);
-      final unaccounted =
-          find.byKey(const ValueKey('settings-memory-unaccounted'));
-      expect(unaccounted, findsOneWidget);
-      expect(find.byKey(const ValueKey('settings-memory-decoders')),
-          findsOneWidget);
-      expect(find.byKey(const ValueKey('settings-memory-parks')),
-          findsOneWidget);
-      // A real number, not a placeholder: the platform under the test answers
-      // its own size, so the row must show bytes rather than an em dash.
-      expect(
-        (tester.widget<Text>(unaccounted).data ?? ''),
-        anyOf(contains('MB'), contains('GB')),
-        reason: 'the report is wired to the engine, not a stub',
-      );
 
       // The budget is a typed number now (K-194), not a pick from a list:
       // dragging it changes what the engine holds, not just the label.
@@ -118,6 +99,30 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('settings-tier-reset')));
       await tester.pump();
       expect(playbackTier().tier, 1);
+
+      // Where the memory has gone (K-295), at the foot of the page: the rows
+      // above each report one store, and this reports the whole process and
+      // what none of them accounts for. Scrolled to, because the page is
+      // taller than the window — and a memory report is a thing you go and
+      // look for.
+      final unaccounted =
+          find.byKey(const ValueKey('settings-memory-unaccounted'));
+      await tester.scrollUntilVisible(unaccounted, 200,
+          scrollable: find.byType(Scrollable).first);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('settings-memory-process')),
+          findsOneWidget);
+      expect(unaccounted, findsOneWidget);
+      expect(find.byKey(const ValueKey('settings-memory-gpu')), findsOneWidget);
+      expect(find.byKey(const ValueKey('settings-memory-decoders')),
+          findsOneWidget);
+      // A real number, not a placeholder: the platform under the test answers
+      // its own size, so the row shows bytes rather than an em dash.
+      expect(
+        tester.widget<Text>(unaccounted).data ?? '',
+        anyOf(contains('MB'), contains('GB')),
+        reason: 'the report is wired to the engine, not a stub',
+      );
     });
 
     /// The disk tier's controls: its budget reaches the engine, and where the

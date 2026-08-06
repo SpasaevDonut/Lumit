@@ -91,6 +91,18 @@ pub struct BridgeMemoryReport {
     /// `Arc`, both tiers), so charging it twice would make the report lie in
     /// the one direction that matters.
     pub park_queue_frames: u64,
+    /// What the graphics driver holds for the render device, in use. On
+    /// unified memory (every Apple Silicon Mac) this is inside
+    /// `process_bytes`; on a discrete card it is not.
+    pub gpu_allocated_bytes: u64,
+    /// What the graphics driver has **reserved** — the blocks those
+    /// allocations were carved from, including the free room inside them.
+    ///
+    /// The gap between this and `gpu_allocated_bytes` is memory that has been
+    /// released by the engine and not handed back by the driver: free, and
+    /// still ours. That is the shape of "discarded but not deleted", and it is
+    /// invisible to every other number in this report.
+    pub gpu_reserved_bytes: u64,
     /// `process_bytes` less everything above that lives in ordinary memory.
     /// Saturating at zero, since the platform's number and ours are read a
     /// moment apart and a small negative is meaningless.
@@ -105,6 +117,7 @@ pub fn memory_report() -> BridgeMemoryReport {
     let (vram, _) = crate::framecache::vram::stats();
     let (decode, decoders) = crate::framecache::decode::stats();
     let park = crate::framecache::disk::pending_parks();
+    let (gpu_allocated, gpu_reserved) = crate::framecache::gpu::stats();
     let process = crate::api::system::resident_memory_bytes();
     // VRAM is deliberately not subtracted: on a discrete card it is not in the
     // process at all, and on unified memory it is — counting it either way
@@ -117,6 +130,8 @@ pub fn memory_report() -> BridgeMemoryReport {
         decode_cache_bytes: decode,
         open_decoders: decoders,
         park_queue_frames: park,
+        gpu_allocated_bytes: gpu_allocated,
+        gpu_reserved_bytes: gpu_reserved,
         unaccounted_bytes: process.saturating_sub(accounted),
     }
 }

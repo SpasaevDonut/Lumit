@@ -357,6 +357,25 @@ impl GpuContext {
         self.submits.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// What the graphics driver is holding for this device: bytes live in
+    /// allocations, and bytes reserved in the blocks they were carved from
+    /// (K-293's follow-up).
+    ///
+    /// **Why the second number matters more than the first.** An allocator
+    /// hands out blocks and sub-allocates within them; freeing every allocation
+    /// in a block does not necessarily hand the block back. `reserved` is what
+    /// the process is actually holding, `allocated` what it is actually using,
+    /// and a large gap between them is memory that is free and still ours —
+    /// which is exactly the shape of "discarded but not deleted".
+    ///
+    /// `None` where the backend keeps no such accounting.
+    #[must_use]
+    pub fn allocator_bytes(&self) -> Option<(u64, u64)> {
+        self.device
+            .generate_allocator_report()
+            .map(|r| (r.total_allocated_bytes, r.total_reserved_bytes))
+    }
+
     /// Start batching: from here until the matching [`Self::end_frame`], every
     /// [`Self::encoder`] records into one command buffer and nothing is
     /// submitted.

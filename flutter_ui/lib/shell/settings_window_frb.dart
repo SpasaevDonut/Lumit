@@ -755,60 +755,6 @@ class _SettingsWindowState extends State<_SettingsWindow> {
     final memory = memoryReport();
 
     return [
-      // Where the memory has gone (K-295). First on the page, above the tiers
-      // it weighs, because "Lumit is holding 85 GB" is the question this page
-      // is opened to answer and the tiers below are each only a part of it.
-      settingsSection(t, 'Memory', [
-        settingsRow(
-          t,
-          'This process',
-          'What the system says Lumit is holding, all in — the number '
-              'Activity Monitor and Task Manager show.',
-          Text(
-            memory.processBytes == BigInt.zero
-                ? 'not known here'
-                : _bytes(memory.processBytes),
-            key: const ValueKey('settings-memory-process'),
-            style: t.small,
-          ),
-        ),
-        settingsRow(
-          t,
-          'Not held by any cache',
-          'The process, less the finished frames and decoded frames below. '
-              'A large number here is not a cache to shrink: it is memory '
-              'nothing in this window is counting, and it is worth reporting.',
-          Text(
-            memory.processBytes == BigInt.zero
-                ? '—'
-                : _bytes(memory.unaccountedBytes),
-            key: const ValueKey('settings-memory-unaccounted'),
-            style: t.small,
-          ),
-        ),
-        settingsRow(
-          t,
-          'Open media decoders',
-          'One per footage item in play. Each holds buffers of its own that '
-              'no budget here covers.',
-          Text(
-            '${memory.openDecoders}',
-            key: const ValueKey('settings-memory-decoders'),
-            style: t.small,
-          ),
-        ),
-        settingsRow(
-          t,
-          'Frames waiting to be written',
-          'The write-behind queue to the disk cache, which is bounded at '
-              'eight frames.',
-          Text(
-            '${memory.parkQueueFrames}',
-            key: const ValueKey('settings-memory-parks'),
-            style: t.small,
-          ),
-        ),
-      ]),
       settingsSection(t, 'Playback', [
         settingsRow(
           t,
@@ -928,6 +874,78 @@ class _SettingsWindowState extends State<_SettingsWindow> {
         ),
       ]),
       ..._diskCache(t, ui),
+      // Where the memory has gone (K-295). Last on the page, under the tiers
+      // it weighs: each section above reports one store, and this one reports
+      // the whole process and what none of them accounts for. Read downwards it
+      // is the summing-up, and it leaves every control above where the hand
+      // already knows to find it.
+      settingsSection(t, 'Memory', [
+        settingsRow(
+          t,
+          'This process',
+          'What the system says Lumit is holding, all in — the number '
+              'Activity Monitor and Task Manager show.',
+          Text(
+            memory.processBytes == BigInt.zero
+                ? 'not known here'
+                : _bytes(memory.processBytes),
+            key: const ValueKey('settings-memory-process'),
+            style: t.small,
+          ),
+        ),
+        settingsRow(
+          t,
+          'Not held by any cache',
+          'The process, less the finished frames and decoded frames below. '
+              'A large number here is not a cache to shrink: it is memory '
+              'nothing in this window is counting, and it is worth reporting.',
+          Text(
+            memory.processBytes == BigInt.zero
+                ? '—'
+                : _bytes(memory.unaccountedBytes),
+            key: const ValueKey('settings-memory-unaccounted'),
+            style: t.small,
+          ),
+        ),
+        settingsRow(
+          t,
+          'Held by the graphics driver',
+          'What the driver has reserved for Lumit, and how much of it is '
+              'actually in use. A large gap is memory the engine has released '
+              'and the driver has not handed back — on a Mac that is inside '
+              'the total above.',
+          Text(
+            memory.gpuReservedBytes == BigInt.zero
+                ? 'not reported by this driver'
+                : '${_bytes(memory.gpuReservedBytes)} reserved, '
+                    '${_bytes(memory.gpuAllocatedBytes)} in use',
+            key: const ValueKey('settings-memory-gpu'),
+            style: t.small,
+          ),
+        ),
+        settingsRow(
+          t,
+          'Open media decoders',
+          'One per footage item in play. Each holds buffers of its own that '
+              'no budget here covers.',
+          Text(
+            '${memory.openDecoders}',
+            key: const ValueKey('settings-memory-decoders'),
+            style: t.small,
+          ),
+        ),
+        settingsRow(
+          t,
+          'Frames waiting to be written',
+          'The write-behind queue to the disk cache, which is bounded at '
+              'eight frames.',
+          Text(
+            '${memory.parkQueueFrames}',
+            key: const ValueKey('settings-memory-parks'),
+            style: t.small,
+          ),
+        ),
+      ]),
     ];
   }
 

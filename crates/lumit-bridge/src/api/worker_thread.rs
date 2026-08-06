@@ -259,6 +259,9 @@ fn sync_caches(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
     let (decoded_bytes, decoders) = state.renderer.decode_memory();
     crate::framecache::decode::publish(decoded_bytes as u64, decoders as u64);
     crate::framecache::disk::publish_pending_parks(state.disk.pending_parks() as u64);
+    if let Some((allocated, reserved)) = state.renderer.gpu_allocator_bytes() {
+        crate::framecache::gpu::publish(allocated, reserved);
+    }
     let (used, _, entries) = state.renderer.frame_texture_stats();
     if (used as u64, entries as u64) != state.published_vram {
         state.published_vram = (used as u64, entries as u64);

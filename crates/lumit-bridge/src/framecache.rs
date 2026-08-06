@@ -555,6 +555,30 @@ pub(crate) mod decode {
     }
 }
 
+/// What the graphics driver holds for the worker's device, as it last
+/// published — the layer under every tier in this file, and the one nothing
+/// could see until now.
+pub(crate) mod gpu {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static ALLOCATED: AtomicU64 = AtomicU64::new(0);
+    static RESERVED: AtomicU64 = AtomicU64::new(0);
+
+    pub(crate) fn publish(allocated: u64, reserved: u64) {
+        ALLOCATED.store(allocated, Ordering::Relaxed);
+        RESERVED.store(reserved, Ordering::Relaxed);
+    }
+
+    /// `(allocated_bytes, reserved_bytes)`; both 0 on a backend that keeps no
+    /// such accounting.
+    pub(crate) fn stats() -> (u64, u64) {
+        (
+            ALLOCATED.load(Ordering::Relaxed),
+            RESERVED.load(Ordering::Relaxed),
+        )
+    }
+}
+
 pub(crate) mod disk {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};

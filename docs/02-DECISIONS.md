@@ -6391,6 +6391,12 @@ worth a syscall.
   one — it leaves out the compressed pages and the IOSurface and Metal allocations a
   graphics application lives on, which is most of what would be hunted. `phys_footprint`
   is what Activity Monitor prints under *Memory*, and so the number a user reads back.
+- **The graphics driver's own accounting rides beside the tiers**, in use and reserved
+  (`Device::generate_allocator_report`). The first reading in anger made the case: 12 GB
+  held, 11 GB of it unaccounted, with ~405 frames decoded — which cleared every
+  byte-budgeted tier at a glance and left the layer underneath, where the tiers' own
+  numbers cannot reach. Reserved-minus-in-use is the shape of "discarded but not deleted",
+  and it is now a number rather than a theory.
 - **VRAM is reported apart, never subtracted**: on unified memory it is inside the process
   and on a discrete card it is not, so folding it in is wrong on half the machines Lumit
   runs on. **Nothing is counted twice** — a frame in the write-behind queue shares its

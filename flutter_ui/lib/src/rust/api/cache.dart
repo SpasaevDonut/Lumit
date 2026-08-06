@@ -243,6 +243,20 @@ class BridgeMemoryReport {
   /// the one direction that matters.
   final BigInt parkQueueFrames;
 
+  /// What the graphics driver holds for the render device, in use. On
+  /// unified memory (every Apple Silicon Mac) this is inside
+  /// `process_bytes`; on a discrete card it is not.
+  final BigInt gpuAllocatedBytes;
+
+  /// What the graphics driver has **reserved** — the blocks those
+  /// allocations were carved from, including the free room inside them.
+  ///
+  /// The gap between this and `gpu_allocated_bytes` is memory that has been
+  /// released by the engine and not handed back by the driver: free, and
+  /// still ours. That is the shape of "discarded but not deleted", and it is
+  /// invisible to every other number in this report.
+  final BigInt gpuReservedBytes;
+
   /// `process_bytes` less everything above that lives in ordinary memory.
   /// Saturating at zero, since the platform's number and ours are read a
   /// moment apart and a small negative is meaningless.
@@ -255,6 +269,8 @@ class BridgeMemoryReport {
     required this.decodeCacheBytes,
     required this.openDecoders,
     required this.parkQueueFrames,
+    required this.gpuAllocatedBytes,
+    required this.gpuReservedBytes,
     required this.unaccountedBytes,
   });
 
@@ -266,6 +282,8 @@ class BridgeMemoryReport {
       decodeCacheBytes.hashCode ^
       openDecoders.hashCode ^
       parkQueueFrames.hashCode ^
+      gpuAllocatedBytes.hashCode ^
+      gpuReservedBytes.hashCode ^
       unaccountedBytes.hashCode;
 
   @override
@@ -279,6 +297,8 @@ class BridgeMemoryReport {
           decodeCacheBytes == other.decodeCacheBytes &&
           openDecoders == other.openDecoders &&
           parkQueueFrames == other.parkQueueFrames &&
+          gpuAllocatedBytes == other.gpuAllocatedBytes &&
+          gpuReservedBytes == other.gpuReservedBytes &&
           unaccountedBytes == other.unaccountedBytes;
 }
 

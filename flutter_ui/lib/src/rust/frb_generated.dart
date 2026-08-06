@@ -7732,8 +7732,8 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   BridgeMemoryReport dco_decode_bridge_memory_report(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 7)
-      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
+    if (arr.length != 9)
+      throw Exception('unexpected arr length: expect 9 but see ${arr.length}');
     return BridgeMemoryReport(
       processBytes: dco_decode_u_64(arr[0]),
       frameCacheBytes: dco_decode_u_64(arr[1]),
@@ -7741,7 +7741,9 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       decodeCacheBytes: dco_decode_u_64(arr[3]),
       openDecoders: dco_decode_u_64(arr[4]),
       parkQueueFrames: dco_decode_u_64(arr[5]),
-      unaccountedBytes: dco_decode_u_64(arr[6]),
+      gpuAllocatedBytes: dco_decode_u_64(arr[6]),
+      gpuReservedBytes: dco_decode_u_64(arr[7]),
+      unaccountedBytes: dco_decode_u_64(arr[8]),
     );
   }
 
@@ -9737,6 +9739,8 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     var var_decodeCacheBytes = sse_decode_u_64(deserializer);
     var var_openDecoders = sse_decode_u_64(deserializer);
     var var_parkQueueFrames = sse_decode_u_64(deserializer);
+    var var_gpuAllocatedBytes = sse_decode_u_64(deserializer);
+    var var_gpuReservedBytes = sse_decode_u_64(deserializer);
     var var_unaccountedBytes = sse_decode_u_64(deserializer);
     return BridgeMemoryReport(
         processBytes: var_processBytes,
@@ -9745,6 +9749,8 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         decodeCacheBytes: var_decodeCacheBytes,
         openDecoders: var_openDecoders,
         parkQueueFrames: var_parkQueueFrames,
+        gpuAllocatedBytes: var_gpuAllocatedBytes,
+        gpuReservedBytes: var_gpuReservedBytes,
         unaccountedBytes: var_unaccountedBytes);
   }
 
@@ -11911,6 +11917,8 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     sse_encode_u_64(self.decodeCacheBytes, serializer);
     sse_encode_u_64(self.openDecoders, serializer);
     sse_encode_u_64(self.parkQueueFrames, serializer);
+    sse_encode_u_64(self.gpuAllocatedBytes, serializer);
+    sse_encode_u_64(self.gpuReservedBytes, serializer);
     sse_encode_u_64(self.unaccountedBytes, serializer);
   }
 
