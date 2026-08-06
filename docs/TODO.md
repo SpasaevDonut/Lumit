@@ -114,11 +114,12 @@ These are v1-scope surfaces it does not yet match.
 - **The workspace strip shows no preset after a restart** -
     `Workspace.activePreset` is session-only.
 
-**Smooth zooming everywhere else.** The Viewer's magnification flies; the
-Timeline's time zoom (`=`/`-`, `Ctrl+wheel`, `\`), the graph editor's zoom and
-auto-fit, and the Project panel's thumbnail scaling all still cut. Lift the
-Viewer's shape into one shared helper rather than writing it three more times.
-The Timeline matters most - it is zoomed constantly while cutting.
+**Smooth zooming everywhere else.** The shared helper is built
+(`widgets/smooth_zoom.dart`, K-293) and the **Timeline** reads it — the one that
+matters most, since it is zoomed constantly while cutting — along with its zoom
+slider. Still cutting rather than flying: the **graph editor's** zoom and
+auto-fit, and the **Project panel's** thumbnail scaling. Both are now a matter
+of holding a `SmoothZoom` and reading its value, with no design left in them.
 
 **Layer controls in the Viewer ([07-UI-SPEC.md](07-UI-SPEC.md) §2.3):**
 - **Motion paths** (§2.4) - a keyed position draws no path and its keys cannot be

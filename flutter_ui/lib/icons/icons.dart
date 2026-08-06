@@ -139,6 +139,18 @@ enum LumitIcon {
   /// and deliberately unlike [rectangle] and [solid], which are plain squares.
   nullLayer,
 
+  /// A landscape — two hills under a sky — drawn small at one end of the
+  /// Timeline's zoom slider and large at the other, the pair After Effects puts
+  /// on its own zoom slider (owner, 2026-08-06). One shape at two sizes says
+  /// "less of this / more of this" without needing a word.
+  ///
+  /// **Painter-drawn on purpose** (docs/15 §5 allows it, and K-209 requires
+  /// it): the small end wants to be well under 16px, and an Iconoir glyph below
+  /// 16px puts its 1.5-unit stroke on less than a whole pixel — the crunch a
+  /// magnifying glass at 13px showed. A filled shape has no stroke to lose, so
+  /// it stays clean at any size the bar has room for.
+  zoomExtent,
+
   // --- The toolbar's tools (K-216, docs/07 §1.7). ---
   zoomIn,
   rotate,
@@ -213,6 +225,7 @@ Widget lumitIcon(LumitIcon icon, {required double size, required Color color}) {
     LumitIcon.anchorPoint => AnchorPointPainter(color),
     LumitIcon.roundedRectangle => RoundedRectanglePainter(color),
     LumitIcon.wireframe => WireframePainter(color),
+    LumitIcon.zoomExtent => ZoomExtentPainter(color),
     _ => null,
   };
   if (painter != null) {
@@ -338,7 +351,8 @@ Widget _glyph(LumitIcon icon, Color color) => switch (icon) {
       LumitIcon.nullLayer ||
       LumitIcon.anchorPoint ||
       LumitIcon.roundedRectangle ||
-      LumitIcon.wireframe =>
+      LumitIcon.wireframe ||
+      LumitIcon.zoomExtent =>
         const SizedBox.shrink(),
     };
 
@@ -430,6 +444,49 @@ class CircleFillPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(CircleFillPainter old) => old.color != color;
+}
+
+/// The zoom slider's two ends: a landscape — two hills, the taller one behind —
+/// on the same 24×24 grid, drawn small at the left end and large at the right.
+///
+/// **Filled, and drawn rather than looked up.** The pair only says "less / more"
+/// if the two are plainly different sizes, and the small one has to be well
+/// under 16px for that; an Iconoir glyph there would put its 1.5-unit stroke on
+/// a fraction of a pixel and crunch (docs/15 §5, K-209). A filled silhouette has
+/// no stroke to lose, so it reads at 9px as cleanly as at 14.
+class ZoomExtentPainter extends CustomPainter {
+  final Color color;
+  const ZoomExtentPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final s = size.shortestSide / _iconGridUnits;
+    Offset at(double x, double y) => Offset(x * s, y * s);
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+    // The far hill first, so the near one overlaps it and the two read as
+    // depth rather than as one jagged shape.
+    canvas.drawPath(
+      Path()
+        ..moveTo(at(9, 20).dx, at(9, 20).dy)
+        ..lineTo(at(15, 6).dx, at(15, 6).dy)
+        ..lineTo(at(22, 20).dx, at(22, 20).dy)
+        ..close(),
+      paint,
+    );
+    canvas.drawPath(
+      Path()
+        ..moveTo(at(2, 20).dx, at(2, 20).dy)
+        ..lineTo(at(8, 11).dx, at(8, 11).dy)
+        ..lineTo(at(14, 20).dx, at(14, 20).dy)
+        ..close(),
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(ZoomExtentPainter old) => old.color != color;
 }
 
 /// The Null layer's mark, on the same 24×24 grid as the other drawn marks: an

@@ -1046,6 +1046,32 @@ wiring job rather than a design one.
 
 - Plain wheel scrolls vertically. `Shift+wheel` scrolls horizontally. `Ctrl+wheel` zooms
   time about the pointer. The wheel MUST never zoom without a modifier (no scroll hijack).
+- **Zoom flies rather than cutting** (K-293): magnification is a place changing, not a value
+  being nudged, so it animates — geometrically, because zoom is a ratio and equal time should
+  buy equal ratio. Notches arriving quickly are worth more, so a rolled wheel covers ground
+  while a clicked one stays precise; when the hand stops, the flight finishes and settles
+  rather than stopping where the last notch fell. The frame under the pointer is held there
+  for the whole flight, not merely at its ends.
+- **The bottom bar's zoom is a slider** between a small landscape glyph and a large one — the
+  pair After Effects flanks its own zoom slider with, painter-drawn so the small end can sit
+  under K-209's 16px floor without crunching (K-293). Its left end is the whole composition;
+  its right end shows **20 frames** across the lanes, whatever the composition's length — a
+  count of frames rather than a magnification, because that is what the number means to a
+  person. It runs on the logarithm of the zoom, so equal travel buys equal ratio.
+- **A slider zoom holds the playhead still; `Ctrl+wheel` holds the frame under the pointer**
+  (K-293). The slider has no pointer to zoom about, and the playhead is where the work is —
+  the same thing After Effects zooms its timeline about. A playhead in view keeps the screen
+  position it has; a playhead out of view is brought to the middle of the lanes.
+- **The scroll correction that holds the anchor MUST happen inside layout** (K-293): the
+  offset that keeps a frame still is only valid for the width the zoom has just produced, so
+  moving it before that width is laid out leaves the view scrolled past its own end for a
+  frame — which springs back, and draws the scrollbar's thumb from a position and a length
+  that disagree.
+- **A dragged zoom control MUST NOT animate** (K-293). The flight fills the gap between zooms
+  that arrive in steps — a wheel notch, a tap on the track. A drag is already continuous, so
+  it applies at once, and the handle is drawn from the zoom being asked for rather than from
+  the flight's current value; animating a drag makes the lanes trail the finger by a flight's
+  length and restart before arriving.
 - **A trackpad's two-finger scroll MUST scroll the panel** (K-278). It arrives as a pan
   *gesture* rather than as the wheel's signal, so the panel — which otherwise gives drags to
   the keyframe marquee — MUST admit exactly the trackpad as a drag-scroll device, and every
@@ -1073,12 +1099,12 @@ with its own thumb. Each thumb lives in a fixed-width **gutter** down the right 
 half, outside the horizontal scroller so it stays pinned to the viewport edge, and the
 outline reserves the same gutter with an undraggable block level with its toolbar and
 column header — so the columns never shift as the view changes. The lane bottom bar
-carries − / + / Fit time zoom, the magnet, and the horizontal scrollbar. **The wheel
+carries the time-zoom slider, the magnet, and the horizontal scrollbar. **The wheel
 scrolls, dragging never does**: a plain wheel moves the rows, `Shift+wheel` scrolls
 sideways, `Ctrl+wheel` zooms time about the pointer, and a drag on empty lane space is the
-keyframe marquee. A zoom with no pointer to zoom about — the bottom bar's − / + — holds
-the middle of the visible lanes still instead of the left edge, so what is being looked at
-stays on screen. Still to build: `=`/`-`/`\`, and edge-follow during playback.
+keyframe marquee. A zoom with no pointer to zoom about — the slider — holds the playhead
+still instead (§4.6, K-293), so what is being worked on stays on screen. Still to build:
+`=`/`-`/`\`, and edge-follow during playback.
 
 ### 4.7 Editing behaviours
 

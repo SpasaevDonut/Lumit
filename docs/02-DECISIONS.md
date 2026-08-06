@@ -6263,3 +6263,105 @@ them.** That is a deliberate stopping point rather
 than an oversight: the arithmetic is pure and shared (`panels/timeline_snap.dart`, tested on
 its own), so each remaining gesture is a wiring job with no design left in it, and doing them
 one at a time keeps each one's regression test honest. TODO carries the list.
+
+**K-293 · DECIDED · Zoom flies, and the Timeline's zoom is a slider whose ends mean
+something.** From the owner (2026-08-06), in three parts: the zoom should move rather than
+cut, faster input should zoom further and settle when the hand stops, and the bottom bar's
+− / + / Fit buttons should be a slider.
+
+**The wheel still never zooms without a modifier.** This was briefly built the other way, on a
+reading of the owner's first message that they corrected the same day: docs/07 §4.6's "no
+scroll hijack" MUST stands, plain wheel scrolls, `Ctrl+wheel` zooms. Recorded because the
+supersede was written and then withdrawn, and a reader finding half of it in the history should
+know it never applied.
+
+**The motion is the Viewer's, lifted out.** `widgets/smooth_zoom.dart` is K-218's shape shared:
+the Viewer has flown since then while the Timeline, the graph editor and the Project panel all
+cut. It interpolates **geometrically**, because magnification is a *ratio* — lerp 1 → 16
+linearly and half the flight is spent between 8 and 16, which reads as a lurch then a crawl.
+The Timeline reads it now; the graph editor and Project panel are named in TODO and are a
+matter of holding one and reading its value.
+
+**A fast roll goes further, with a ceiling.** A notch is worth more the sooner it follows the
+last — linear in the gap, which is the thing the hand controls directly — up to 4×. The ceiling
+is not a detail: without one a flick crosses the whole zoom range in a single gesture and there
+is no way back to where you were. A notch arriving mid-flight extends the *target* rather than
+restarting from wherever the flight had reached, which is what makes a rolled wheel one
+continuous motion instead of hops that never arrive. When the hand stops, the flight finishes
+and settles.
+
+**The anchor is held for the whole flight, not just its ends.** The frame under the pointer
+stays under it on every tick, because the lanes grow all the way through — hold the scroll
+offset still instead and the anchor slides out from under the cursor, which is the drift the
+Viewer's own note warns about. The correction runs in the same turn as the rebuild: deferring
+it to a post-frame callback paints one whole frame at the new width with the old offset, a
+visible sideways slide.
+
+**The slider's ends are a promise, and one of them is a count of frames.** Left is the whole
+composition. Right is **twenty frames across the lanes** — not a magnification like "6400%",
+because a magnification means nothing without knowing the comp's length, while "twenty frames"
+means the same thing on a five-second comp and a ten-minute one. The visible span is
+`frames / zoom` whatever the panel's width, so the ceiling is simply `frames / 20`, and it
+moves with the composition. The slider runs on the **logarithm** of the zoom for the same
+reason the flight does: linear, nine tenths of its length would sit inside the last handful of
+frames of a long comp and every useful zoom would be crushed into the first centimetre.
+
+**Two zooms, two anchors, and that is deliberate.** `Ctrl+wheel` holds the frame **under the
+pointer**, because there the pointer is the whole gesture. The slider has no pointer, so it
+holds the **playhead** — corrected by the owner the same day from the middle of the visible
+lanes, which was their own first suggestion and which they withdrew: the middle of the
+scrollbar is a place nobody is looking at, while the playhead is where the work is happening,
+and it is what After Effects zooms its own timeline about. In view, the playhead keeps exactly
+the screen position it has, so nothing under the eye moves at all; out of view, it is brought
+to the middle of the lanes, because magnifying about something you cannot see leaves you
+nowhere.
+
+**A dragged slider does not fly.** The flight is for input that arrives in *steps* — a wheel
+notch, a tap on the track — where the gap between two zooms has to be filled. A drag is
+already the motion, and animating towards a target the finger moves every few milliseconds
+meant the lanes trailed the handle by a whole flight, restarting before they ever arrived:
+reported by the owner as the slider being "super super laggy". So a drag sets the zoom at
+once, and the handle is drawn from where the zoom is *going* rather than from where a flight
+has reached, which is what keeps it under the finger. `HouseSlider` gained `onChangeLive` for
+this; a tap on its track still flies.
+
+**Zoom rebuilds the lanes, not the panel.** The other half of that lag: the zoom was a plain
+field and every tick called `setState`, so a flight rebuilt the outline's every row, its
+toolbar and its column header sixty times a second — along with the work-area read, the fold
+tables and the cache-bar read that come with a full rebuild. Nothing left of the seam depends
+on the zoom. The zoom is a `Listenable` and only the lane side listens to it, which is a
+standing shape for this panel rather than a patch: the playhead is already handled this way,
+and for the same reason. docs/13's S1 budgets a Timeline scroll/zoom frame at 8 ms, and the
+bridge-call budget suite is what holds this: a zoom drag now has its own entry there, and
+what it asserts is that the count does not scale with the number of steps dragged. Three things found in the same pass and fixed with it — the cache bar
+was asking the engine for the whole composition's cache map on every rebuild despite its own
+note saying it never polls (it now holds one read until a frame arrives), the merged
+"something changed" listenable was allocated fresh per build so every cache bar
+resubscribed, and the row-divider painter compared its blanks by identity against a list
+rebuilt each time, so it always repainted.
+
+**The scroll correction belongs inside layout.** Holding the anchor meant moving the scroll
+offset the moment the zoom changed — and that offset is only valid for the *new* lane width,
+which has not been laid out yet. For the rest of that frame the position sat past its own end,
+so Flutter began springing it back, and the bottom bar's thumb was drawn from a position and a
+length that disagreed: a thumb that twitched all the way through a drag (owner, 2026-08-06,
+"jumps around a bit"). A scroll position is told its new content size during layout, in
+`applyContentDimensions`, which is the one moment the width and the offset are known together —
+and that method is *documented* to return false when it has moved the offset, so layout runs
+again with the corrected one. `widgets/zoom_anchored_scroll.dart` is a `ScrollController` that
+does exactly that, and the anchor it holds is **one-shot**: an anchor that outlived its zoom
+would be applied by the next unrelated layout — a window resize — and drag the view back to a
+zoom the reader had since scrolled away from. A zoom still in flight simply asks again on its
+next tick, which it does anyway, because every tick is a new width.
+
+**The slider's ends are landscapes, drawn rather than looked up.** A small one and a large one,
+the pair After Effects flanks its own zoom slider with, replacing two sizes of magnifying
+glass. Two reasons, both mattering: at the sizes that make the pair read as "less / more" the
+small end is well under 16px, and K-209's floor exists because an Iconoir glyph's 1.5-unit
+stroke lands on less than a pixel there and crunches — which is exactly what the 13px
+magnifier did. A filled silhouette has no stroke to lose. docs/15 §5 already allows a
+deliberately painter-drawn glyph, and this is one.
+
+The − / + / Fit buttons are gone: the slider's two ends *are* Fit and full zoom, and a slider
+also says where you are between them, which three buttons never did. `HouseSlider` gained a
+width and a value-hiding option rather than a second slider being written for a toolbar.

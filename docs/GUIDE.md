@@ -3562,6 +3562,93 @@ the razor, the work-area handles and markers themselves still land wherever you
 point. The arithmetic is written once and shared, so each of those is wiring
 rather than a fresh design.
 
+### Zooming that flies, and a slider that means something
+
+**The zoom moves rather than jumping.** Magnification is a *place* changing, not
+a number being nudged: jump straight from one zoom to another and you lose where
+you were. The Viewer has moved smoothly for a while; the Timeline used to cut.
+It now uses the same piece of code.
+
+Three details in that motion, each there for a reason:
+
+- It moves **geometrically**. Going from 1× to 16×, halfway through is 4×, not
+  8.5×. Zoom is a ratio, so equal time should buy equal ratio — interpolate it
+  the other way and the start lurches and the end crawls.
+- **Rolling Ctrl+wheel faster zooms further.** A notch counts for more the
+  sooner it follows the last one, up to four times. There is a ceiling on
+  purpose: without one a quick flick crosses the entire zoom range and you
+  cannot find your way back.
+- **The frame under your pointer stays under your pointer** for the whole
+  flight, not just at the ends. The lanes are growing the entire time, so the
+  scroll position has to be corrected on every single frame of the animation —
+  hold it still and whatever you were aiming at slides away from the cursor.
+
+**The bottom bar's zoom is a slider**, between a small landscape and a large
+one — the same pair After Effects puts either side of its own. Those two marks
+are drawn by hand rather than taken from the icon set, for a reason worth
+knowing: the icon set's glyphs are line drawings, and below about 16 pixels the
+line is thinner than a pixel, so it gets smeared across two at half strength.
+That is what "crunchy" small icons are. A filled shape has no line to lose, so
+it stays clean at nine pixels, which is what lets the small end be plainly
+smaller than the large one.
+
+The slider's two ends are promises: all the way left is the whole composition,
+and all the way right is **twenty frames** across the lanes.
+
+Twenty *frames*, not a percentage, and that is the point. "6400%" tells you
+nothing unless you also know how long the comp is; "twenty frames" means the
+same thing on a five-second clip and a ten-minute one. So the right-hand end
+moves with the composition rather than being a fixed number.
+
+The slider also runs on the logarithm of the zoom, for the same reason the
+motion does. A plain linear slider on a ten-minute comp would spend nine tenths
+of its length inside the last handful of frames, and every zoom you actually
+wanted would be crushed into the first centimetre.
+
+The two ways of zooming hold different things still, deliberately. Ctrl and the
+wheel keeps the **frame under the cursor** where it is, because there the cursor
+is the whole gesture. The slider has no cursor to work from, so it keeps the
+**playhead** where it is — that is where the work is happening, and it is what
+After Effects zooms its timeline about. If the playhead has been scrolled out of
+sight, the zoom brings it to the middle instead, because magnifying about
+something you cannot see leaves you nowhere.
+
+**A dragged slider does not animate**, and that is not laziness. The flight
+exists to fill the gap between two zooms that arrive as *steps* — a wheel notch,
+a click on the track. A drag is already a continuous motion, so animating it
+means the lanes are always chasing a target your finger has already moved,
+starting a new 120-millisecond journey before the last one arrived. It feels
+like the panel is stuck to treacle. Dragged, the zoom simply is where the finger
+put it.
+
+**The scrollbar stops twitching, and the reason is where the correction
+happens.** Keeping something still while the lanes grow means moving the scroll
+position to match the new width. Do that the instant the zoom changes and you
+have moved it to a place that only makes sense for a width the panel has not
+laid out yet — so for the rest of that frame the view is scrolled past its own
+end, Flutter starts pulling it back, and the little thumb in the bottom bar is
+drawn from two numbers that do not agree. That is the jitter. Flutter tells a
+scroll how big its content is *during* layout, and offers a way to say "I have
+moved the offset, lay out again" — so the correction now happens there, where
+the width and the offset are known at the same time, and nothing outside that
+moment ever sees a mismatch.
+
+**And a zoom only rebuilds the lanes.** This is the other half of the same
+problem. The Timeline is two halves of one table: the layer names on the left,
+the bars on the right. Nothing on the left depends on the zoom — but the panel
+used to redraw *all* of it every time the zoom moved a fraction, which during an
+animation is sixty times a second, and each of those redraws asked the engine
+again for the work area, the render cache and more. Now the right-hand half
+listens for the zoom by itself and the left-hand half sits still. The Timeline
+already did exactly this for the playhead, for exactly the same reason.
+
+A plain wheel still scrolls, as it always did — it never zooms without a
+modifier, which is a rule the specification is firm about and this did not
+change.
+
+The graph editor and the Project panel's thumbnails still cut rather than fly.
+They are the same job, and the shared piece is written.
+
 ### What is remembered, and where
 
 - **The workspace** — panel arrangement, colour scheme, interface scale, tooltips,
