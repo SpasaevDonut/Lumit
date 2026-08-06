@@ -137,7 +137,7 @@ These are v1-scope surfaces it does not yet match.
     `Workspace.activePreset` is session-only.
 
 **Smooth zooming everywhere else.** The shared helper is built
-(`widgets/smooth_zoom.dart`, K-286) and the **Timeline** reads it — the one that
+(`widgets/smooth_zoom.dart`, K-293) and the **Timeline** reads it — the one that
 matters most, since it is zoomed constantly while cutting — along with its zoom
 slider. Still cutting rather than flying: the **graph editor's** zoom and
 auto-fit, and the **Project panel's** thumbnail scaling. Both are now a matter

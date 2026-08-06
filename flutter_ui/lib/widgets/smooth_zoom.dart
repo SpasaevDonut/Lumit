@@ -90,7 +90,7 @@ class SmoothZoom extends ChangeNotifier {
 
   /// The far end of the range. Settable, because the Timeline's is a property
   /// of the *composition* — full zoom-in is a fixed number of frames across the
-  /// panel, so a longer comp zooms further (K-286).
+  /// panel, so a longer comp zooms further (K-293).
   double max;
   final Duration Function() _clock;
 
@@ -177,7 +177,7 @@ class SmoothZoom extends ChangeNotifier {
 /// Where a zoom sits on a slider whose left end is 1 (the whole composition)
 /// and whose right end is [maxZoom].
 ///
-/// **Logarithmic, for the same reason the flight is** (K-286): the slider
+/// **Logarithmic, for the same reason the flight is** (K-293): the slider
 /// should buy equal *ratio* for equal travel. On a ten-minute comp the linear
 /// mapping spends nine tenths of the slider's length inside the last handful of
 /// frames, so every useful zoom is crushed into the first centimetre.

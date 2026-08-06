@@ -1564,6 +1564,12 @@ class HouseSlider extends StatefulWidget {
   final bool showValue;
   final ValueChanged<double> onChanged;
 
+  /// Called instead of [onChanged] while the handle is being **dragged**, for
+  /// a control whose live value costs something the committed one does not —
+  /// the Timeline's zoom applies a drag at once and only flies for a tap
+  /// (K-293). Unset, a drag reports through [onChanged] as it always did.
+  final ValueChanged<double>? onChangeLive;
+
   const HouseSlider({
     super.key,
     required this.value,
@@ -1576,6 +1582,7 @@ class HouseSlider extends StatefulWidget {
     this.commitOnRelease = false,
     this.width = 140,
     this.showValue = true,
+    this.onChangeLive,
   });
 
   @override
@@ -1612,7 +1619,7 @@ class _HouseSliderState extends State<HouseSlider> {
             if (widget.commitOnRelease) {
               setState(() => _pending = v);
             } else {
-              widget.onChanged(v);
+              (widget.onChangeLive ?? widget.onChanged)(v);
             }
           },
           onHorizontalDragEnd: (_) {

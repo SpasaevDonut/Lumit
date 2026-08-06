@@ -17,6 +17,8 @@ import 'package:lumit_flutter/theme/theme.dart';
 import 'package:uuid/uuid.dart';
 import 'package:lumit_flutter/panels/project_panel_frb.dart';
 import 'package:lumit_flutter/panels/layer_fold_frb.dart';
+import 'package:lumit_flutter/icons/icons.dart';
+import 'package:lumit_flutter/panels/timeline_extras_frb.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
 import 'package:lumit_flutter/state/timeline_columns.dart';
 import 'package:lumit_flutter/state/tools.dart';
@@ -1853,21 +1855,26 @@ void main() {
     });
 
     /// **The bottom bar's zoom is a slider** (owner, 2026-08-06), between a
-    /// small magnifying glass and a large one. Its left end is the whole
+    /// small landscape glyph and a large one. Its left end is the whole
     /// composition; dragging right widens the time axis, and a slider zoom has
-    /// no pointer to zoom about, so it holds the middle of the visible lanes
-    /// still — zooming about the left edge instead pushed whatever was being
-    /// looked at off the right of the panel.
-    testWidgets('the zoom slider widens the lanes about the view\'s middle',
+    /// no pointer to zoom about, so it holds the **playhead** still — the
+    /// middle of the scrollbar, which it held first, is a place nobody is
+    /// looking at (K-293).
+    testWidgets('the zoom slider widens the lanes about the playhead',
         (tester) async {
       final p = withComp();
       final layer = p.comp.addSolidLayer();
       await mount(tester, p);
+      // Off the middle on purpose: holding the *centre* still would pass a
+      // playhead test that only ever looked at the centre.
+      p.uiState.playheadFrame.value = 20;
+      await tester.pump();
 
       Rect barRect() => tester.getRect(
           find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}')));
+      double playheadX() => tester.getRect(find.byType(PlayheadMarker)).left;
       final before = barRect().width;
-      final centreBefore = barRect().center.dx;
+      final playheadBefore = playheadX();
 
       final slider = find.byKey(const ValueKey('tl-zoom-slider'));
       expect(slider, findsOneWidget, reason: 'the buttons became a slider');
@@ -1881,8 +1888,63 @@ void main() {
 
       expect(barRect().width, greaterThan(before),
           reason: 'the comp takes more pixels when zoomed in');
-      expect(barRect().center.dx, moreOrLessEquals(centreBefore, epsilon: 2),
-          reason: 'the middle of the view stayed where it was');
+      expect(playheadX(), moreOrLessEquals(playheadBefore, epsilon: 2),
+          reason: 'the playhead kept the screen position it had');
+    });
+
+    /// **A dragged slider does not fly** (K-293). The flight fills the gap
+    /// between zooms that arrive in steps; a drag is already the motion, and
+    /// animating towards a target the finger keeps moving left the lanes
+    /// trailing the handle by a whole flight — reported as the slider being
+    /// laggy. So the lanes are already at the dragged width *before* anything
+    /// settles.
+    testWidgets('a dragged zoom lands at once, with no flight to wait for',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await mount(tester, p);
+
+      double barWidth() => tester
+          .getRect(find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}')))
+          .width;
+      final before = barWidth();
+
+      final track = tester.getRect(find.byKey(const ValueKey('tl-zoom-slider')));
+      final gesture =
+          await tester.startGesture(Offset(track.left + 2, track.center.dy));
+      await gesture.moveBy(Offset(track.width / 2, 0));
+      // One frame, not `pumpAndSettle`: this is the frame the finger is still
+      // down for.
+      await tester.pump();
+      final duringDrag = barWidth();
+      expect(duringDrag, greaterThan(before),
+          reason: 'the drag was applied in the frame it arrived in');
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(barWidth(), moreOrLessEquals(duringDrag, epsilon: 1),
+          reason: 'and nothing was still flying towards it afterwards');
+    });
+
+    /// The slider's two ends are drawn, not looked up, and plainly different
+    /// sizes — which is the whole of what says "less of this / more of this"
+    /// (K-293, K-209).
+    testWidgets('the slider is flanked by a small landscape and a large one',
+        (tester) async {
+      final p = withComp();
+      await mount(tester, p);
+
+      final glyphs = tester
+          .widgetList<CustomPaint>(find.byType(CustomPaint))
+          .where((w) => w.painter is ZoomExtentPainter)
+          .toList();
+      expect(glyphs.length, 2, reason: 'one at each end of the track');
+      final sizes = glyphs.map((g) => g.size.width).toList()..sort();
+      expect(sizes.first, lessThan(sizes.last),
+          reason: 'the pair reads as small and large');
+      expect(sizes.last, lessThan(16),
+          reason: 'both fit the 20px bar, which is why they are painter-drawn '
+              'rather than icon-set glyphs (K-209)');
     });
 
     /// The bar wears the layer's label colour (K-188), so recolouring the

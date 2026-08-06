@@ -3331,9 +3331,17 @@ Three details in that motion, each there for a reason:
   scroll position has to be corrected on every single frame of the animation —
   hold it still and whatever you were aiming at slides away from the cursor.
 
-**The bottom bar's zoom is a slider**, between a small magnifying glass and a
-large one. Its two ends are promises: all the way left is the whole
-composition, and all the way right is **twenty frames** across the lanes.
+**The bottom bar's zoom is a slider**, between a small landscape and a large
+one — the same pair After Effects puts either side of its own. Those two marks
+are drawn by hand rather than taken from the icon set, for a reason worth
+knowing: the icon set's glyphs are line drawings, and below about 16 pixels the
+line is thinner than a pixel, so it gets smeared across two at half strength.
+That is what "crunchy" small icons are. A filled shape has no line to lose, so
+it stays clean at nine pixels, which is what lets the small end be plainly
+smaller than the large one.
+
+The slider's two ends are promises: all the way left is the whole composition,
+and all the way right is **twenty frames** across the lanes.
 
 Twenty *frames*, not a percentage, and that is the point. "6400%" tells you
 nothing unless you also know how long the comp is; "twenty frames" means the
@@ -3345,10 +3353,30 @@ motion does. A plain linear slider on a ten-minute comp would spend nine tenths
 of its length inside the last handful of frames, and every zoom you actually
 wanted would be crushed into the first centimetre.
 
-The two ways of zooming hold different things still, deliberately. The slider
-has no pointer to work from, so it keeps the **middle of what you can see**
-where it is. Ctrl and the wheel keeps the **frame under the cursor** where it
-is, because there the cursor is the whole gesture.
+The two ways of zooming hold different things still, deliberately. Ctrl and the
+wheel keeps the **frame under the cursor** where it is, because there the cursor
+is the whole gesture. The slider has no cursor to work from, so it keeps the
+**playhead** where it is — that is where the work is happening, and it is what
+After Effects zooms its timeline about. If the playhead has been scrolled out of
+sight, the zoom brings it to the middle instead, because magnifying about
+something you cannot see leaves you nowhere.
+
+**A dragged slider does not animate**, and that is not laziness. The flight
+exists to fill the gap between two zooms that arrive as *steps* — a wheel notch,
+a click on the track. A drag is already a continuous motion, so animating it
+means the lanes are always chasing a target your finger has already moved,
+starting a new 120-millisecond journey before the last one arrived. It feels
+like the panel is stuck to treacle. Dragged, the zoom simply is where the finger
+put it.
+
+**And a zoom only rebuilds the lanes.** This is the other half of the same
+problem. The Timeline is two halves of one table: the layer names on the left,
+the bars on the right. Nothing on the left depends on the zoom — but the panel
+used to redraw *all* of it every time the zoom moved a fraction, which during an
+animation is sixty times a second, and each of those redraws asked the engine
+again for the work area, the render cache and more. Now the right-hand half
+listens for the zoom by itself and the left-hand half sits still. The Timeline
+already did exactly this for the playhead, for exactly the same reason.
 
 A plain wheel still scrolls, as it always did — it never zooms without a
 modifier, which is a rule the specification is firm about and this did not
