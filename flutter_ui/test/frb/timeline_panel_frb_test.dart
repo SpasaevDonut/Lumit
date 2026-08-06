@@ -3280,22 +3280,108 @@ void main() {
               ValueKey<String>('tl-wave-${footageLayer.internallayerId}')),
           findsOneWidget);
 
-      // And the peaks themselves are real: the whole source, bucketed, with
-      // its true length — the data the lane maps through in/out/offset.
-      // `runAsync`, because a real decode completes on real async, which the
-      // test's fake clock would otherwise wait on for ever.
-      final peaks =
-          await tester.runAsync(() => footageLayer.audioPeaks(buckets: 64));
+      // And the peaks themselves are real: the window asked for, bucketed to
+      // the count asked for, with the source's true length beside it — the
+      // data the lane maps through in/out/offset. `runAsync`, because a real
+      // decode completes on real async, which the test's fake clock would
+      // otherwise wait on for ever.
+      final peaks = await tester.runAsync(() => footageLayer.audioPeaks(
+            startSeconds: 0,
+            endSeconds: 0.1,
+            buckets: 64,
+            multiwave: false,
+          ));
       expect(peaks!.durationSeconds, greaterThan(0));
-      expect(peaks.pairs, hasLength(128), reason: 'a (min, max) per bucket');
-      expect(peaks.pairs.any((v) => v.abs() > 0.01), isTrue,
+      expect(peaks.bands, 1, reason: 'one plain wave');
+      expect(peaks.buckets, 64);
+      expect(peaks.values, hasLength(64 * 3),
+          reason: 'a (min, max, rms) per bucket');
+      expect(peaks.values.any((v) => v.abs() > 0.01), isTrue,
           reason: 'a tone is not silence');
+
+      // The multiwave stack: the same buckets three times over, bass, middle
+      // and treble (K-280).
+      final stack = await tester.runAsync(() => footageLayer.audioPeaks(
+            startSeconds: 0,
+            endSeconds: 0.1,
+            buckets: 64,
+            multiwave: true,
+          ));
+      expect(stack!.bands, 3);
+      expect(stack.values, hasLength(3 * 64 * 3));
+      // A 440 Hz square is a middle-band sound: its own band carries far more
+      // than the treble one, which is the whole point of the stack.
+      double loudest(int band) {
+        var most = 0.0;
+        for (var i = 0; i < 64; i++) {
+          final v = stack.values[3 * (band * 64 + i) + 1].abs();
+          if (v > most) most = v;
+        }
+        return most;
+      }
+
+      expect(loudest(1), greaterThan(loudest(2)),
+          reason: 'the middle band hears the tone, the treble barely does');
+
+      // Zooming in asks for a shorter window, and what comes back is a summary
+      // of *that* window — which is what makes the drawn detail follow the
+      // zoom instead of stretching one fixed summary (K-280).
+      final zoomed = await tester.runAsync(() => footageLayer.audioPeaks(
+            startSeconds: 0.02,
+            endSeconds: 0.03,
+            buckets: 64,
+            multiwave: false,
+          ));
+      expect(zoomed!.startSeconds, closeTo(0.02, 1e-9));
+      expect(zoomed.endSeconds, closeTo(0.03, 1e-9));
+      expect(zoomed.buckets, 64,
+          reason: 'a tenth of the audio, in the same number of buckets');
 
       await tester.tap(
           find.byKey(ValueKey<String>('tl-twirl-${silent.internallayerId}')));
       await tester.pump();
       expect(find.text('Audio'), findsOneWidget,
           reason: 'still only the one — a solid has nothing to be heard');
+    });
+
+    /// `L` opens a layer's sound, `LL` its waveform, `LLL` shuts it (K-281) —
+    /// the same three-tap shape `U` has. A layer selected but silent is left
+    /// alone rather than opened onto a group it has not got.
+    testWidgets('L, LL and LLL cycle a layer\'s Audio open and shut',
+        (tester) async {
+      final p = withComp();
+      final audible =
+          p.state.project!.importFootage(path: _wavFile('cycle.wav'));
+      p.comp.addFootageLayer(footage: audible, asSequence: false);
+      await mount(tester, p);
+      final layer = p.comp.getLayers().first;
+      await settleFrb(tester, minRounds: 8);
+
+      // Selected, and shut.
+      p.uiState.setSelection([layer]);
+      await tester.pump();
+      expect(find.text('Audio'), findsNothing);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyL);
+      await tester.pump();
+      expect(find.text('Volume'), findsOneWidget,
+          reason: 'L opens the Audio group');
+      expect(
+          find.byKey(ValueKey<String>('tl-wave-${layer.internallayerId}')),
+          findsNothing,
+          reason: 'the lane waits for the second tap');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyL);
+      await tester.pump();
+      expect(find.byKey(ValueKey<String>('tl-wave-${layer.internallayerId}')),
+          findsOneWidget,
+          reason: 'LL opens the waveform lane');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyL);
+      await tester.pump();
+      expect(find.text('Volume'), findsNothing,
+          reason: 'LLL shuts the audio stuff again');
+      expect(find.text('Audio'), findsNothing);
     });
 
     /// The outline and the lanes are one table. A fold-out that pushed the names

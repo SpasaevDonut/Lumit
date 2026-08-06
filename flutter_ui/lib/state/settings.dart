@@ -160,6 +160,27 @@ class InterfaceSettings {
   /// it either way: a copied animation is placed by its first keyframe.
   bool pasteLayersAtOriginalTime;
 
+  /// Whether a waveform draws as the three-band **multiwave** stack rather
+  /// than one plain wave (K-280).
+  ///
+  /// On by default: a single wave says how loud a moment is and nothing about
+  /// what is in it, and a mastered track is one solid block whichever
+  /// instrument is playing. The stack splits it into bass, middle and treble,
+  /// so a kick and a hi-hat are told apart at a glance — which is what an edit
+  /// is aimed at. Off gives the plain wave back, unchanged.
+  bool multiwaveWaveforms;
+
+  /// Whether a waveform stands on the floor of its row rather than being
+  /// centred about silence (K-285).
+  ///
+  /// Off by default: centred is what the eye expects of a *wave*, and it is
+  /// what Lumit has always drawn. On, each column is folded onto the baseline
+  /// and reaches up by how far the signal swung either way — half of a
+  /// centred wave is a mirror of the other half, so folding it spends the
+  /// whole row's height on the half that carries the information. Applies to
+  /// the single wave and the stack alike.
+  bool waveformsFromBottom;
+
   InterfaceSettings({
     this.uiScale = 1.0,
     this.showTooltips = true,
@@ -168,6 +189,8 @@ class InterfaceSettings {
     this.videoAsSequenceLayer = false,
     this.playheadStaysOnStop = false,
     this.pasteLayersAtOriginalTime = false,
+    this.multiwaveWaveforms = true,
+    this.waveformsFromBottom = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -178,6 +201,8 @@ class InterfaceSettings {
         'video_as_sequence_layer': videoAsSequenceLayer,
         'playhead_stays_on_stop': playheadStaysOnStop,
         'paste_layers_at_original_time': pasteLayersAtOriginalTime,
+        'multiwave_waveforms': multiwaveWaveforms,
+        'waveforms_from_bottom': waveformsFromBottom,
       };
   factory InterfaceSettings.fromJson(Map<String, dynamic> j) =>
       InterfaceSettings(
@@ -199,5 +224,12 @@ class InterfaceSettings {
         // settings file written before this field existed already did.
         pasteLayersAtOriginalTime:
             j['paste_layers_at_original_time'] as bool? ?? false,
+        // Absent means on: the multiwave stack is the new default (K-280),
+        // and a settings file written before this field existed should get
+        // the better picture rather than be pinned to the old one.
+        multiwaveWaveforms: j['multiwave_waveforms'] as bool? ?? true,
+        // Absent means off: centred is what a settings file written before
+        // this field existed was already drawing.
+        waveformsFromBottom: j['waveforms_from_bottom'] as bool? ?? false,
       );
 }

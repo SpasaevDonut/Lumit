@@ -148,7 +148,7 @@ other side of this boundary.
     ask the document; a few ask the *machine*, and the two must not be conflated.
     `ProjectReference::anti_aliasing` returns what the project asks for;
     `anti_aliasing_in_use` returns what this graphics card will actually give
-    (K-274, K-281). Keeping them as two calls is what lets a limited adapter be
+    (K-274, K-286). Keeping them as two calls is what lets a limited adapter be
     reported without rewriting the project — and the capability read takes no
     engine lock, because a panel asking what the card can do must never queue
     behind a frame.
