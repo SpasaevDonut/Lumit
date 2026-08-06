@@ -157,6 +157,72 @@ void main() {
       expect(p.comp.getLayers().length, 1);
     });
 
+    /// The field a readout turns into when it is clicked.
+    Finder fieldIn(String key) => find.descendant(
+          of: find.byKey(ValueKey<String>(key)),
+          matching: find.byType(EditableText),
+        );
+
+    /// The toolbar's two readouts are typed into, not merely read (K-287),
+    /// and neither can send the playhead out of the composition.
+    testWidgets('typing a timecode moves the playhead, clamped to the comp',
+        (tester) async {
+      final p = withComp();
+      p.uiState.playheadFrame.value = 0;
+      p.uiState.model.refresh();
+      await mount(tester, p);
+      final last = p.comp.durationFrames() - 1;
+      final (fpsNum, fpsDen) = p.uiState.model.fpsExact;
+
+      await tester.tap(find.byKey(const ValueKey('tl-timecode')));
+      await tester.pump();
+      await tester.enterText(fieldIn('tl-timecode'), '00:00:01:00');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(p.uiState.playheadFrame.value, (fpsNum / fpsDen).ceil(),
+          reason: 'a second in, counted at this comp\'s rate');
+
+      await tester.tap(find.byKey(const ValueKey('tl-timecode')));
+      await tester.pump();
+      await tester.enterText(fieldIn('tl-timecode'), '99:00:00:00');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(p.uiState.playheadFrame.value, last,
+          reason: 'past the end of the comp is the end of the comp');
+    });
+
+    testWidgets('typing a frame number moves the playhead, clamped',
+        (tester) async {
+      final p = withComp();
+      p.uiState.playheadFrame.value = 0;
+      p.uiState.model.refresh();
+      await mount(tester, p);
+      final last = p.comp.durationFrames() - 1;
+
+      await tester.tap(find.byKey(const ValueKey('tl-frame')));
+      await tester.pump();
+      await tester.enterText(fieldIn('tl-frame'), 'f42');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(p.uiState.playheadFrame.value, 42,
+          reason: 'the f the readout wears is optional on the way back in');
+
+      await tester.tap(find.byKey(const ValueKey('tl-frame')));
+      await tester.pump();
+      await tester.enterText(fieldIn('tl-frame'), '-8');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(p.uiState.playheadFrame.value, 0,
+          reason: 'before the start is the start');
+
+      await tester.tap(find.byKey(const ValueKey('tl-frame')));
+      await tester.pump();
+      await tester.enterText(fieldIn('tl-frame'), '999999');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(p.uiState.playheadFrame.value, last);
+    });
+
     testWidgets('the razor is the toolbar tool, and undoes as one step',
         (tester) async {
       final p = withComp();
@@ -1000,6 +1066,39 @@ void main() {
       expect(keys(), hasLength(2), reason: 'no key was added or lost');
       expect(keys().first.value, greaterThan(0),
           reason: 'the edit landed in the key under the playhead');
+    });
+
+    /// The Retime row reads as a clock, not as a decimal number of seconds
+    /// (K-287, realising K-075) — and the Settings switch puts the seconds
+    /// field back for anyone who wants sub-frame precision.
+    testWidgets('Retime reads as a timecode, or as seconds when asked',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.toggleRetimeProperty();
+      p.uiState.playheadFrame.value = 0;
+      p.uiState.model.refresh();
+      await mount(tester, p);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pump();
+
+      // Frame zero of the source at frame zero of the comp: an identity map
+      // starts where the media does.
+      Finder inRetimeRow(Finder matching) => find.descendant(
+            of: find.byKey(const ValueKey('tl-retime-seconds')),
+            matching: matching,
+          );
+      expect(inRetimeRow(find.text('00:00:00:00')), findsOneWidget,
+          reason: 'the source position is a clock face');
+      expect(inRetimeRow(find.textContaining(' s')), findsNothing,
+          reason: 'and not a number of seconds');
+
+      p.uiState.workspace.interface.retimeInSeconds = true;
+      p.uiState.model.refresh();
+      await tester.pump();
+      expect(inRetimeRow(find.text('0.000 s')), findsOneWidget,
+          reason: 'the setting puts the seconds field back');
     });
 
     /// An animated value stays editable in the outline (docs/07 §4.3): on a

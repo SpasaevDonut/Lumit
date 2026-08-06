@@ -299,9 +299,20 @@ A single compact bar at the bottom of the Viewer holds, left to right:
    steps. Users MUST be able to tell a degraded frame from a final one at a glance.
 10. **Background colour** swatch: per-comp background (project state), plus quick black /
     grey / custom.
-11. **Current time** readout in the comp's timecode; click to type a time.
+11. **Current time** readout in the comp's timecode; click to type a time. A time outside
+    the composition lands on the nearest end rather than being refused (K-287).
 
 The bar MUST remain one row; overflow collapses from the right into a chevron menu.
+
+**Nothing on the bar may move as the picture changes (K-287).** Every part of it whose
+text varies — the clock, the playback-mode button, the degradation badge, the preview
+progress — sits in a slot sized for the longest thing it can ever say, and a part that
+comes and goes keeps its slot while it is away. The bar is read while playback runs, and a
+control that re-letters or resizes itself sixty times a second is movement in the corner
+of the eye that means nothing. For the same reason the **playback-mode button says only
+which mode is in force** ("Adaptive res" or "Every frame") and never the tier it has
+settled on: which tier a frame was made at is item 9's badge, which appears only when
+there is something to say.
 
 ### 2.3 Layer controls: the wireframe and the transform gizmo (K-217)
 
@@ -601,11 +612,16 @@ the transport (§11) and cache system. During scrubs the Viewer shows latest-win
 results (K-017); stale frames MUST never be presented as current without the degradation
 indicator lit.
 
-**Preview progress (K-276).** A frame the user is waiting on — a scrub, a playhead move, a
-dragged value — MUST be able to say how far it has got: a slim bar across the bottom of the
-picture, filling as the engine works through the frame, labelled with the stage it is in
-(preparing, reading media, reading the composition, compositing, showing). Three rules make
-it a help rather than noise:
+**Preview progress (K-276, moved by K-287).** A frame the user is waiting on — a scrub, a
+playhead move, a dragged value — MUST be able to say how far it has got: a slim bar on the
+**right-hand end of the Viewer's transport bar**, filling as the engine works through the
+frame, labelled with the stage it is in (preparing, reading media, reading the
+composition, compositing, showing). It MUST NOT be drawn over the picture: the one thing
+the Viewer exists to show is the picture, and covering its bottom edge exactly while a
+frame is being waited for covers it when it is being looked at hardest. The bar's place on
+the transport is its own — the controls take the space that is left, so the bar arriving
+and leaving MUST NOT move any of them. Three further rules make it a help rather than
+noise:
 
 - It MUST NOT appear during playback. A frame due in sixteen milliseconds has no use for a
   progress bar, and one blinking per frame would be the busiest thing on screen.
@@ -741,7 +757,9 @@ project's: a tab dragged onto another takes its place, and the order rides along
 session. Right-clicking a tab opens **Composition settings…** for that comp, the same
 dialog the Project panel's context menu opens, reached from the comp being worked in. Below them the outline carries two header rows
 of its own: the **toolbar** (the playhead as `HH:MM:SS:FF` timecode plus a zero-based
-frame readout `f72`, the layer search, the master motion-blur button, the shy filter, the
+frame readout `f72` — both in **fixed-width slots** and both **click-to-type**, per K-287:
+a time typed into either moves the playhead, and one outside the composition lands on the
+nearest end — the layer search, the master motion-blur button, the shy filter, the
 Lane and Graph view buttons, and a ⋯ menu with the layer / razor / work-area / marker /
 beat commands) and the **column-group header** (§4.2). The lane side gives those two
 rows' height to a taller, labelled time ruler — a bigger playhead grab — with the cache

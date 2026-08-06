@@ -3459,11 +3459,47 @@ behind it.
 - **The broader scope asks the narrower one first.** Flutter runs every key
   handler in registration order, so the shell's `Delete` asks the Timeline's claim
   before acting (K-234).
+- **A readout that counts must not resize as it counts** (K-287). Numbers get a
+  slot as wide as the longest thing they can ever say, and a badge that comes
+  and goes keeps its slot while it is away. See below.
 - **Tests must let real time pass.** `settleFrb` in
   `flutter_ui/test/frb/frb_test_support.dart` alternates real-time slices with
   fake-clock pumps until the expected state arrives; `await tester.pump()` alone
   advances no clock, and awaiting an engine call inside `runAsync` that was not
   started there deadlocks (K-233).
+
+### The clock readouts (`widgets/time_readout.dart`)
+
+**The problem, in plain terms.** Text is drawn as wide as it needs to be. `f9`
+is narrower than `f10`, and in most typefaces the digit `1` is narrower than the
+digit `8` — so a timecode counting up is a piece of text that changes width
+several times a second. Everything laid out beside it slides to keep up. During
+playback that means the Timeline's search field twitching sixty times a second,
+in the corner of your eye, for no reason anybody can act on.
+
+**The fix.** `TimeReadout` is one small widget every clock on a bar now uses. It
+does three things:
+
+- **It reserves its width.** You tell it how many characters the longest thing it
+  could ever say is — `00:00:00:00` is eleven — and it measures that many
+  characters of its own typeface *once*, caches the answer, and draws the number
+  inside a box of exactly that size. The number changes; the box never does.
+- **It can be typed into.** Clicking it swaps the text for a field already
+  holding what was on screen, selected, so typing replaces it. `Enter` or
+  clicking away takes what you typed; `Escape` throws it away. The widget knows
+  nothing about timecode: whoever uses it hands over a *format* function (a frame
+  number → the text) and a *parse* function (text → a frame number, or nothing if
+  it does not read as a time). That is why the same widget serves the Viewer's
+  clock, the Timeline's clock, the Timeline's `f72` frame count and the Retime
+  row's source position.
+- **It clamps rather than refuses.** A time past either end of the composition
+  lands on that end. Asking for frame 100000 in a 300-frame comp obviously means
+  "the end", and an error message would be a worse answer than the obvious one.
+
+The same "reserve the space" rule applies to things that are not text: the
+Viewer's degradation badge (the "Half" chip that appears when playback has had to
+soften the picture) keeps its empty slot when it is not showing, so it does not
+shove the bar sideways as it comes and goes.
 
 ## 10. The app icon and the brand files
 

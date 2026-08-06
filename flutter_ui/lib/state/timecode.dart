@@ -26,6 +26,38 @@ String timecodeOfRate(int frame, int fpsNum, int fpsDen) {
       '${frames.toString().padLeft(frameDigits, '0')}';
 }
 
+/// How many digits the frames field of a clock face has at this rate — two up
+/// to 99 fps, three to 999, four beyond. The readouts size their slots from
+/// this, so a number never moves what is beside it as it counts.
+int timecodeFrameDigits(int fpsNum, int fpsDen) {
+  final den = fpsDen == 0 ? 1 : fpsDen;
+  final perSecond = (fpsNum / den).ceil().clamp(1, 1000);
+  return (perSecond - 1).toString().length.clamp(2, 4);
+}
+
+/// How many characters a clock face takes at this rate: `HH:MM:SS:` and its
+/// frames field.
+int timecodeChars(int fpsNum, int fpsDen) =>
+    9 + timecodeFrameDigits(fpsNum, fpsDen);
+
+/// `HH:MM:SS:FF` for a frame that may be **before zero**, written with a minus
+/// sign — the clock face a Retime needs, where a source time earlier than the
+/// start of the media is an ordinary thing to ask for (docs/04 §7).
+String timecodeOfRateSigned(int frame, int fpsNum, int fpsDen) =>
+    frame < 0
+        ? '-${timecodeOfRate(-frame, fpsNum, fpsDen)}'
+        : timecodeOfRate(frame, fpsNum, fpsDen);
+
+/// [framesOfTimecode], accepting a leading minus for a time before zero.
+int? framesOfTimecodeSigned(String text, int fpsNum, int fpsDen) {
+  final trimmed = text.trim();
+  final negative = trimmed.startsWith('-');
+  final frames = framesOfTimecode(
+      negative ? trimmed.substring(1) : trimmed, fpsNum, fpsDen);
+  if (frames == null) return null;
+  return negative ? -frames : frames;
+}
+
 /// `HH:MM:SS:mmm` for a length in seconds — the audio-only clock face, where
 /// frames mean nothing: the last field is milliseconds.
 String timecodeOfSecondsMs(double seconds) {

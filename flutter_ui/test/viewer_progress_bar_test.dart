@@ -29,11 +29,12 @@ void main() {
           theme: LumitTheme.dark(),
           animationLevel: animation,
           showTooltips: false,
-          child: Center(
-            child: SizedBox(
-              width: 400,
-              child: ViewerProgressBar(tracker: tracker),
-            ),
+          // Sized by what it draws, not by the box it is in: the bar sits on
+          // the right of the transport now (K-287), taking only the room it
+          // needs, and its width is part of what is being tested.
+          child: Align(
+            alignment: Alignment.topLeft,
+            child: ViewerProgressBar(tracker: tracker),
           ),
         ),
       );
@@ -82,5 +83,25 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.binding.transientCallbackCount, 0,
         reason: 'and nothing is moving once it has arrived');
+  });
+
+  /// The bar rides on the transport now (K-287), where a percentage that
+  /// resized itself as it counted would jog every control beside it.
+  testWidgets('the bar is the same width at 9% as at 100%', (tester) async {
+    final tracker = PreviewProgressTracker();
+    addTearDown(tracker.dispose);
+    await tester.pumpWidget(host(tracker));
+
+    tracker.report(_report(7, fraction: 0.09, stage: 3));
+    await tester.pump(PreviewProgressTracker.appearsAfter);
+    await tester.pump();
+    final narrow = tester.getSize(find.byType(ViewerProgressBar));
+
+    tracker.report(_report(7, fraction: 1.0, stage: 3));
+    await tester.pump();
+    expect(tester.getSize(find.byType(ViewerProgressBar)), narrow);
+
+    tracker.report(_report(7, done: true));
+    await tester.pumpAndSettle();
   });
 }

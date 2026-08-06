@@ -134,6 +134,17 @@ class InterfaceSettings {
   /// unaffected either way; this is a Retime-only preference.
   bool retimeOpensToSpeed;
 
+  /// Whether the Retime row shows its source position in **seconds** rather
+  /// than as a timecode (K-287).
+  ///
+  /// Off by default: a Retime says which moment of the source is showing, and
+  /// every other time in the editor says that as `HH:MM:SS:FF` — a lone
+  /// decimal number of seconds meant doing arithmetic to line a retime up with
+  /// anything else (K-075 asked for the timecode). On is for the people who
+  /// think in seconds, and for the sub-frame precision a whole-frame clock
+  /// face cannot show.
+  bool retimeInSeconds;
+
   /// Whether video footage and image sequences added to a comp arrive as a
   /// one-clip Sequence layer rather than a Footage layer (K-246).
   ///
@@ -186,6 +197,7 @@ class InterfaceSettings {
     this.showTooltips = true,
     this.transformInEffectControls = false,
     this.retimeOpensToSpeed = false,
+    this.retimeInSeconds = false,
     this.videoAsSequenceLayer = false,
     this.playheadStaysOnStop = false,
     this.pasteLayersAtOriginalTime = false,
@@ -198,6 +210,7 @@ class InterfaceSettings {
         'show_tooltips': showTooltips,
         'transform_in_effect_controls': transformInEffectControls,
         'retime_opens_to_speed': retimeOpensToSpeed,
+        'retime_in_seconds': retimeInSeconds,
         'video_as_sequence_layer': videoAsSequenceLayer,
         'playhead_stays_on_stop': playheadStaysOnStop,
         'paste_layers_at_original_time': pasteLayersAtOriginalTime,
@@ -214,6 +227,9 @@ class InterfaceSettings {
         // before these existed — a settings file written by an older build
         // must not silently change how the editor works.
         retimeOpensToSpeed: j['retime_opens_to_speed'] as bool? ?? false,
+        // Absent means off: the timecode readout is the new default, so a
+        // settings file written before this field existed adopts it.
+        retimeInSeconds: j['retime_in_seconds'] as bool? ?? false,
         videoAsSequenceLayer: j['video_as_sequence_layer'] as bool? ?? false,
         // Absent means off here too, but for the opposite reason: the returning
         // playhead is the *new* default (K-254), so a settings file written
