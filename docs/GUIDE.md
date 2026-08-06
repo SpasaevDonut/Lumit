@@ -3487,6 +3487,34 @@ bridge (K-222, K-237), paint strokes stored as the *drag* rather than the pixels
 and re-stamped at render resolution (K-227), the razor (K-221), pan behind
 (K-220), the type tool (K-225) and camera tools (K-229).
 
+### What the lock switch actually does
+
+Locking a layer used to stop you dragging its bar, cutting it, renaming it,
+reordering it or deleting it — but you could still open its twirl-down and
+change its position, its effects or its volume. The switch said "no edits until
+unlocked" and meant something narrower.
+
+Now the refusal lives in the **engine**, in the one place every edit passes
+through on its way into the document. That matters more than it sounds: there
+are twenty-nine different kinds of edit a layer can receive, and guarding them
+one interface control at a time means remembering to do it again every time a
+new control is added — which is exactly how the hole opened, since the three
+kinds of row that leaked are the three newest.
+
+The rows are also shown greyed and untouchable, so you are not offered a gesture
+that would only be refused. Headings still open and close: looking inside a
+locked layer is not editing it.
+
+Three things a locked layer still accepts, because none of them changes the
+composition: **unlocking it** (or you could never get back), the **shy** flag
+(which only hides the row from the Timeline's list) and its **label colour**.
+Everything else waits until you unlock it.
+
+Undo still works across a lock, and the reason is worth knowing because it is
+what makes the whole approach safe: an edit can only have been made while the
+layer was *unlocked*, so walking backwards through your history always reaches
+the unlock before it reaches the edit underneath.
+
 ### What is remembered, and where
 
 - **The workspace** — panel arrangement, colour scheme, interface scale, tooltips,

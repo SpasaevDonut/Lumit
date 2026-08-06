@@ -6181,3 +6181,37 @@ pinned; "adding thirty-one layers adds no submissions" is the property that was 
 the one worth holding. **The wall-clock win is still unmeasured on real hardware**: the number
 that motivated this was a submission count, and what it buys in milliseconds wants a run on a
 real card either side.
+
+**K-291 · DECIDED · The lock is enforced in the engine, and it protects the work rather than
+the housekeeping.** The Timeline guarded the *gestures* a locked layer offers — its bar, the
+razor, rename, reorder, delete — while the fold-out's transform, effect and volume rows went on
+editing it. So the switch did not mean what its own tooltip says ("Locked — no edits until
+unlocked"), and the backlog carried the open question: guard the rows, or enforce in the engine?
+
+**Enforce in the engine.** One guard at the top of `apply` covers every op, every caller, and
+every op yet to be written. A guard per row has to be remembered each time a row is added, and
+forgetting one is precisely how this hole opened — the rows that leaked are the three *newest*
+families of row. The refusal is `OpError::LayerLocked`, which crosses the bridge as an ordinary
+op error.
+
+**And guard the rows anyway, for the interface's sake.** A locked layer's property rows are now
+shown but not touchable: the numbers are still the document's and the curves still draw, but
+nothing on the row takes a pointer. That is not belt-and-braces for its own sake — without it
+the interface would go on offering a gesture the engine would only refuse, which is a worse
+answer than not offering it. *Group* rows stay live: twirling one open is navigation, not
+editing, and a locked layer you could not look inside would be worse than one you can.
+
+**Lock protects the work, not the housekeeping.** A locked layer refuses every edit to what it
+*is* — transform, effects, masks, paint, art, text, clips, markers, blend, matte, parent,
+retime, volume, its switches, its span, its place in the stack, its existence. It still accepts
+three: the **lock itself** (or it could never be undone), **shy** (a filter on the Timeline's
+list, changing no pixel and no timing) and the **label** colour. That line is drawn where it is
+because "locked means the composition does not change" is a sentence a user can hold, and
+neither of the other two changes the composition. If it turns out to be the wrong line, it is
+the reversible half of this decision — the guard's shape does not depend on it.
+
+**Undo still crosses a lock, which is what makes the guard safe to put in the applier.** An
+edit can only have been made while the layer was unlocked, so the journal always holds the
+unlock *after* the edit, and walking backwards meets the unlock first. A `Batch` is guarded by
+its members — each passes through `apply` on its way in, and a refusal rolls the whole batch
+back, so a batch stays all or nothing. Both are pinned by tests.

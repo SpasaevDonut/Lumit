@@ -18,6 +18,7 @@ import 'package:uuid/uuid.dart';
 import 'package:lumit_flutter/panels/project_panel_frb.dart';
 import 'package:lumit_flutter/panels/layer_fold_frb.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
+import 'package:lumit_flutter/panels/transform_rows_frb.dart';
 import 'package:lumit_flutter/state/timeline_columns.dart';
 import 'package:lumit_flutter/state/tools.dart';
 import 'package:lumit_flutter/src/rust/api/assets.dart';
@@ -3031,6 +3032,64 @@ void main() {
       await tester.pump();
       expect(find.byKey(ValueKey<String>('tl-rename-$id')), findsNothing,
           reason: 'a locked name does not open the editor');
+    });
+
+    /// **A locked layer's property rows are read-only too** (K-291). The lock
+    /// used to guard only the *gestures* — the bar, the razor, rename, reorder,
+    /// delete — while the fold-out's transform, effect and volume rows went on
+    /// editing the layer, so the switch did not mean what it says.
+    ///
+    /// Two halves, and this is the interface one: the rows are shown, and their
+    /// numbers are still the document's, but nothing on them can be touched. The
+    /// engine refuses the edit as well (`OpError::LayerLocked`, covered in
+    /// lumit-core), so this is what stops the interface offering a gesture that
+    /// would only be refused.
+    testWidgets("a locked layer's property rows cannot be touched",
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await mount(tester, p);
+      final id = layer.internallayerId;
+
+      // Twirl the layer open so its Transform rows are on screen.
+      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
+      await tester.pump();
+      await settleFrb(tester, minRounds: 4);
+      final transformGroup =
+          find.byKey(ValueKey<String>('tl-group-$id/transform'));
+      final groupRect = tester.getRect(transformGroup);
+      await tester.tapAt(Offset(groupRect.left + 6, groupRect.center.dy));
+      await tester.pump();
+      await settleFrb(tester, minRounds: 4);
+
+      final position = find.byType(TransformRowFrb);
+      expect(position, findsWidgets, reason: 'the transform rows are on screen');
+      expect(
+        find.ancestor(of: position.first, matching: find.byType(AbsorbPointer)),
+        findsNothing,
+        reason: 'an unlocked layer\'s rows are live',
+      );
+
+      await tester.tap(find.byKey(ValueKey<String>('tl-locked-$id')));
+      await tester.pump();
+      await settleFrb(tester, minRounds: 4);
+      expect(layer.getSwitches().locked, isTrue);
+
+      expect(position, findsWidgets,
+          reason: 'a locked row is shown, not hidden — the numbers still read');
+      expect(
+        find.ancestor(of: position.first, matching: find.byType(AbsorbPointer)),
+        findsWidgets,
+        reason: 'but nothing on it can be touched',
+      );
+      // The group heading stays live: twirling one open is navigation, not
+      // editing, and a locked layer you could not look inside would be worse.
+      final group = find.byKey(ValueKey<String>('tl-group-$id/transform'));
+      expect(
+        find.ancestor(of: group, matching: find.byType(AbsorbPointer)),
+        findsNothing,
+        reason: 'a group row is exempt',
+      );
     });
 
     /// Enter turns the selected layer's name into an editor (K-243); submitting
