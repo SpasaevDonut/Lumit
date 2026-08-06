@@ -1542,7 +1542,9 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   of takeover used to be reported as a *clash* the user had to go
   and fix; it is now reported as a *shadow* and left alone, because there was never any
   ambiguity about which one runs — the panel you are in gets first refusal, and the app-wide
-  meaning is the fallback. Two shortcuts fighting inside the *same* panel is still a clash,
+  meaning is the fallback. Settings ▸ Keymap says so in a quiet line above the table
+  ("`L` — Reveal Audio in the Timeline, shuttle forward elsewhere") rather than a warning
+  box, so you can see it without being asked to fix it (K-283). Two shortcuts fighting inside the *same* panel is still a clash,
   since nothing can tell those apart.
 - **Stepping a frame is `Ctrl`+arrow (K-282)** — it used to be the bare left and right arrow
   keys. The trouble with that is that the arrows are *everybody's* keys: a list wants them to

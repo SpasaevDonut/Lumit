@@ -1741,9 +1741,12 @@ transport keeps it in every other context.
 **Shadowing is not a clash (K-281).** A binding scoped to a panel takes a chord over from an
 app-wide one while that panel is focused; which action fires is decided by a stated rule (the
 focused panel gets first refusal, app-wide is the fallback), so Settings → Keymap reports
-those as *shadows* — said out loud beside the row, because the app-wide meaning does stop
-working there — rather than as conflicts to resolve. Two bindings in the *same* context, which
-nothing can tell apart, remain a conflict.
+those as *shadows* — a quiet note above the table reading "`Ctrl+Z` — Zoom time in in the
+Timeline, Undo elsewhere", not a bordered warning — rather than as conflicts to resolve. It is
+said at all because the app-wide meaning does stop working in that one panel. Two bindings in
+the *same* context, which nothing can tell apart, remain a conflict and keep the banner; a
+rebind cannot make one (the previous owner is evicted), so in practice the banner is what an
+imported keymap file trips.
 
 **Shipped (K-199).** Settings → Keymap is a table, grouped by the context a binding is live
 in, with the action's name on the left and its chords on the right — click a chord cell and
@@ -1753,7 +1756,7 @@ the ids underneath, the two presets, and Import / Export for the shareable file.
 another action already holds is taken rather than refused (refusing would make swapping two
 actions' keys impossible) — within one context the previous owner's row simply goes blank,
 and across contexts sharing a chord the panel-scoped one simply wins where it is focused
-(K-281, reported as a shadow). One row, one chord (K-200): no
+(K-281, reported as a shadow note rather than a banner). One row, one chord (K-200): no
 shipped action carries two, and a user who wants a second spelling of a command binds it
 themselves.
 

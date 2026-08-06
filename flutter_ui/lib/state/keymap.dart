@@ -173,6 +173,7 @@ class KeymapState extends ChangeNotifier {
 
   List<BridgeKeymapGroup> _groups = const [];
   List<BridgeKeyConflict> _conflicts = const [];
+  List<BridgeKeyShadow> _shadows = const [];
 
   /// The whole table, grouped by where each binding is live.
   List<BridgeKeymapGroup> get groups => _groups;
@@ -180,6 +181,12 @@ class KeymapState extends ChangeNotifier {
   /// Chords that could fire two actions at once. Empty in the shipped keymap;
   /// the settings page warns when a rebind makes one.
   List<BridgeKeyConflict> get conflicts => _conflicts;
+
+  /// Chords a panel has taken over from an app-wide binding (K-281). Not
+  /// clashes — the focused panel wins by a stated rule — but worth saying,
+  /// because the app-wide meaning stops working in that one panel. The shipped
+  /// keymap carries one on purpose (`L` in the Timeline).
+  List<BridgeKeyShadow> get shadows => _shadows;
 
   /// The search text above the table. Held here rather than in the page so it
   /// survives the page being closed and reopened.
@@ -246,16 +253,18 @@ class KeymapState extends ChangeNotifier {
     return null;
   }
 
-  /// Re-read the table and the conflicts from the engine.
+  /// Re-read the table, the conflicts and the shadows from the engine.
   void refresh() {
     _groups = keymapGroups();
     _conflicts = keymapConflicts();
+    _shadows = keymapShadows();
     notifyListeners();
   }
 
   void _adopt(List<BridgeKeymapGroup> groups) {
     _groups = groups;
     _conflicts = keymapConflicts();
+    _shadows = keymapShadows();
     _store();
     notifyListeners();
   }

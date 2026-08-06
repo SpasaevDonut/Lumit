@@ -5934,3 +5934,17 @@ Nothing is lost: `Page Down` / `Page Up` still step a frame with nothing held, `
 them still steps ten, and `J`/`K`/`L` still shuttle (outside the Timeline, per K-281). This
 also supersedes K-281's aside that "the arrows … still move time" in the Timeline: they no
 longer move time anywhere without `Mod`.
+
+**K-283 · DECIDED · Settings → Keymap says a shadow out loud, quietly.** K-281 stopped
+reporting a panel-scoped binding that takes an app-wide chord as a conflict, which was right
+— nothing is ambiguous — but reporting *nothing* would have been wrong: the app-wide meaning
+really does stop working in that one panel, and finding that out by pressing the key is the
+worst way to learn it. So `Keymap::shadows` is surfaced (`keymap_shadows` on the bridge) as a
+plain muted line above the table — "`L` — Reveal Audio in the Timeline, shuttle forward
+elsewhere" — with no border and no warning colour, because it is a fact about the keymap and
+not something to go and fix. The bordered banner stays for real conflicts.
+
+One consequence worth writing down: a **rebind can no longer make a conflict at all**. Within
+one context the previous owner is evicted (K-200's one row, one chord), and across contexts
+the pair is a shadow — so the banner is now only ever tripped by an imported keymap file
+carrying a duplicate, which is where its regression test now goes.

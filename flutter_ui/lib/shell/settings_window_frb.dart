@@ -583,6 +583,37 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ),
           ),
         ),
+      // Panels that have taken a chord over from an app-wide one (K-281). Not
+      // a warning — nothing is ambiguous, the focused panel simply wins — so
+      // it is a quiet note rather than a bordered banner. It is said at all
+      // because the app-wide meaning does stop working in that one panel, and
+      // finding that out by pressing the key is worse than reading it here.
+      if (km.shadows.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Column(
+            key: const ValueKey('keymap-shadows'),
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                km.shadows.length == 1
+                    ? 'One shortcut means something else in one panel'
+                    : '${km.shadows.length} shortcuts mean something else in '
+                        'one panel',
+                style: t.small.copyWith(color: t.textMuted),
+              ),
+              for (final shadow in km.shadows)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    '${chordLabel(shadow.chord)} — ${shadow.action} in the '
+                    '${shadow.context}, ${shadow.shadowed} elsewhere',
+                    style: t.small.copyWith(color: t.textMuted),
+                  ),
+                ),
+            ],
+          ),
+        ),
       if (groups.isEmpty)
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 12),
