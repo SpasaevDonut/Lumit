@@ -89,6 +89,23 @@ pub const TIERS: usize = 3;
 /// on a lane, while still costing only a handful of merges per column.
 pub const BLOCKS_PER_BUCKET: usize = 4;
 
+/// How long a source may be and still have its samples kept beside the pyramid
+/// (see [`PeakPyramid::samples`]). Past this the finest tier can never be
+/// out-resolved anyway: the Timeline zooms to 64×, so a lane a couple of
+/// thousand pixels wide bottoms out at roughly `duration / 128 000` seconds per
+/// column, which only drops under one [`FINEST_BLOCK`] for sources shorter than
+/// about ten minutes. Longer than that, keeping a sample copy would cost tens
+/// of megabytes to answer a question nobody can ask.
+pub const SAMPLE_KEEP_SECONDS: f64 = 600.0;
+
+/// How much of the signal to run the band filters over *before* the window
+/// being drawn, when a query is answered from the samples. A filter starts from
+/// rest and takes a few hundred samples to settle; starting this far back means
+/// the values inside the window are the ones the filter would have produced had
+/// it been running from the beginning. 85 ms at 48 kHz — inaudible as a cost,
+/// far more than the filters need.
+const SAMPLE_PREROLL: usize = 4096;
+
 /// The most blocks the finest tier may hold, so one pyramid's memory is
 /// bounded however long the file is (docs/14 §5: budgeted allocations). At the
 /// cap a pyramid costs about 12 MB; past it the finest tier is coarsened by
@@ -127,6 +144,17 @@ impl PeakBlock {
             rms: (0.5 * (self.rms * self.rms + other.rms * other.rms)).sqrt(),
         }
     }
+}
+
+/// A sample as stored beside the pyramid, and back again. Full scale is
+/// `i16::MAX`; anything hotter is clamped, which is what a picture of a
+/// clipping signal should show anyway.
+fn to_i16(x: f32) -> i16 {
+    (x * 32_767.0).clamp(-32_768.0, 32_767.0) as i16
+}
+
+fn from_i16(x: i16) -> f32 {
+    f32::from(x) / 32_767.0
 }
 
 /// A running summary, kept while a block is being filled.
@@ -323,6 +351,16 @@ pub struct PeakPyramid {
     frames: usize,
     /// Finest first.
     tiers: Vec<Tier>,
+    /// The mono mixdown itself, as 16-bit samples — what a query zoomed in
+    /// past the finest tier is answered from, so a fully zoomed lane draws the
+    /// signal rather than a staircase of identical blocks.
+    ///
+    /// A pyramid summarises; at some zoom the summary runs out, and past that
+    /// point the only honest answer is the samples. 16-bit rather than float
+    /// because this is a picture: half the memory, and the difference is three
+    /// ten-thousandths of a pixel on any lane ever drawn. Empty for a source
+    /// longer than [`SAMPLE_KEEP_SECONDS`], where the summary never runs out.
+    samples: Vec<i16>,
 }
 
 impl PeakPyramid {
@@ -338,6 +376,7 @@ impl PeakPyramid {
                 sample_rate: sample_rate.max(1),
                 frames: 0,
                 tiers: Vec::new(),
+                samples: Vec::new(),
             };
         }
 
@@ -354,10 +393,22 @@ impl PeakPyramid {
         let mut running = [Running::EMPTY; BAND_COUNT];
         let mut index = 0usize;
         let mut filled = 0usize;
+        // Short enough that the zoom can out-resolve the finest tier: keep the
+        // mono mixdown too, so it has something to answer with when it does.
+        let keep_samples = (frames as f64) <= SAMPLE_KEEP_SECONDS * f64::from(sample_rate);
+        let mut samples = if keep_samples {
+            Vec::with_capacity(frames)
+        } else {
+            Vec::new()
+        };
         for frame in 0..frames {
             let l = interleaved.get(frame * 2).copied().unwrap_or(0.0);
             let r = interleaved.get(frame * 2 + 1).copied().unwrap_or(0.0);
-            let bands = split.run(0.5 * (l + r));
+            let mono = 0.5 * (l + r);
+            if keep_samples {
+                samples.push(to_i16(mono));
+            }
+            let bands = split.run(mono);
             for (b, value) in bands.iter().enumerate() {
                 if let Some(slot) = running.get_mut(b) {
                     slot.push(*value);
@@ -422,6 +473,7 @@ impl PeakPyramid {
             sample_rate,
             frames,
             tiers,
+            samples,
         }
     }
 
@@ -446,7 +498,8 @@ impl PeakPyramid {
         self.tiers
             .iter()
             .map(|t| t.data.len() * std::mem::size_of::<PeakBlock>())
-            .sum()
+            .sum::<usize>()
+            + self.samples.len() * std::mem::size_of::<i16>()
     }
 
     /// The tier to read a bucket of `samples_per_bucket` samples from: the
@@ -485,6 +538,13 @@ impl PeakPyramid {
         if self.is_empty() || last <= first {
             return PeakBlock::SILENT;
         }
+        if self.wants_samples(last - first) {
+            return self
+                .range_from_samples(band, first, (last - first).max(1.0), 1)
+                .first()
+                .copied()
+                .unwrap_or(PeakBlock::SILENT);
+        }
         let Some(tier) = self.tier_for(last - first) else {
             return PeakBlock::SILENT;
         };
@@ -518,6 +578,9 @@ impl PeakPyramid {
             return vec![PeakBlock::SILENT; buckets];
         };
         let origin = start_seconds * rate;
+        if self.wants_samples(per_bucket) {
+            return self.range_from_samples(band, origin, per_bucket, buckets);
+        }
         let mut out = Vec::with_capacity(buckets);
         for i in 0..buckets {
             let a = origin + per_bucket * i as f64;
@@ -531,6 +594,75 @@ impl PeakPyramid {
             out.push(self.block_range(tier, band, first as usize, last as usize));
         }
         out
+    }
+
+    /// Whether a bucket this many samples wide has out-resolved the finest
+    /// tier — the point past which a summary can only repeat itself, and the
+    /// samples have to answer instead.
+    ///
+    /// The line is one block per bucket exactly. Above it every column still
+    /// gets a block of its own and the summary is honest; below it columns
+    /// start sharing blocks, which is the staircase. Drawing it here rather
+    /// than at [`BLOCKS_PER_BUCKET`] blocks also keeps the sample scan bounded:
+    /// at most one block's worth of samples per column.
+    fn wants_samples(&self, samples_per_bucket: f64) -> bool {
+        if self.samples.is_empty() {
+            return false;
+        }
+        let finest = self.tiers.first().map_or(FINEST_BLOCK, |t| t.block);
+        samples_per_bucket < finest as f64
+    }
+
+    /// `buckets` summaries taken straight off the samples, for a view zoomed in
+    /// past what the finest tier can distinguish.
+    ///
+    /// One streaming pass: the band filter runs from [`SAMPLE_PREROLL`] samples
+    /// before the window — so its output inside the window is what it would
+    /// have been had it run from the start of the file — and each sample lands
+    /// in whichever bucket its own position falls in. Nothing is allocated per
+    /// sample and nothing is filtered twice.
+    fn range_from_samples(
+        &self,
+        band: Band,
+        origin: f64,
+        per_bucket: f64,
+        buckets: usize,
+    ) -> Vec<PeakBlock> {
+        let mut running = vec![Running::EMPTY; buckets];
+        let first = origin.floor().max(0.0) as usize;
+        let end_f = origin + per_bucket * buckets as f64;
+        let last = (end_f.ceil().max(0.0) as usize).min(self.frames);
+        if last <= first || per_bucket <= 0.0 {
+            return vec![PeakBlock::SILENT; buckets];
+        }
+        // The full band is the signal itself, so it needs no filter and no
+        // run-up; the three split bands need both.
+        let plain = band == Band::Full;
+        let pre = if plain {
+            first
+        } else {
+            first.saturating_sub(SAMPLE_PREROLL)
+        };
+        let mut split = Split::new(self.sample_rate as f32);
+        for i in pre..last {
+            let x = self.samples.get(i).copied().map_or(0.0, from_i16);
+            let value = if plain {
+                x
+            } else {
+                split.run(x).get(band.index()).copied().unwrap_or_default()
+            };
+            if i < first {
+                continue; // still settling the filter
+            }
+            let at = ((i as f64 - origin) / per_bucket).floor();
+            if at < 0.0 {
+                continue;
+            }
+            if let Some(slot) = running.get_mut(at as usize) {
+                slot.push(value);
+            }
+        }
+        running.into_iter().map(Running::finish).collect()
     }
 
     /// Merge every block of `tier` that overlaps `[first, last)` samples.
@@ -682,6 +814,60 @@ mod tests {
         }
     }
 
+    /// **The blockiness fix.** Zoomed in past the finest tier, neighbouring
+    /// columns used to share a block and the wave became a staircase of flat
+    /// slabs. Answered from the samples, every column differs from its
+    /// neighbour and the shape traces the signal.
+    #[test]
+    fn a_fully_zoomed_view_traces_the_signal_rather_than_repeating_blocks() {
+        let p = PeakPyramid::build(&stereo(&sine(440.0, 1.0, 48_000)), 48_000);
+        // Ten milliseconds across 200 columns: 2.4 samples a column, well
+        // inside the finest tier's 256-sample block.
+        let close = p.range(Band::Full, 0.5, 0.51, 200);
+        assert_eq!(close.len(), 200);
+
+        // Four and a bit cycles of a 440 Hz sine across the view, so the trace
+        // must rise and fall several times rather than sitting flat.
+        let mids: Vec<f32> = close.iter().map(|b| 0.5 * (b.min + b.max)).collect();
+        let mut turns = 0;
+        for w in mids.windows(3) {
+            let (a, b, c) = (w[0], w[1], w[2]);
+            if (b - a).signum() != (c - b).signum() && (c - b).abs() > 1e-4 {
+                turns += 1;
+            }
+        }
+        assert!(turns >= 6, "the trace is flat, not a wave: {turns} turns");
+
+        // And essentially every column is its own value — the staircase was
+        // long runs of identical ones.
+        let mut longest_run = 1;
+        let mut run = 1;
+        for w in mids.windows(2) {
+            if (w[1] - w[0]).abs() < 1e-6 {
+                run += 1;
+                longest_run = longest_run.max(run);
+            } else {
+                run = 1;
+            }
+        }
+        assert!(
+            longest_run < 5,
+            "columns repeat in runs of {longest_run} — that is the staircase"
+        );
+    }
+
+    /// The samples are kept only where the zoom can actually reach past the
+    /// finest tier; a long source pays nothing for them.
+    #[test]
+    fn only_short_sources_keep_their_samples() {
+        let short = PeakPyramid::build(&stereo(&sine(440.0, 0.5, 48_000)), 48_000);
+        assert!(short.bytes() > 48_000 / 2, "the samples are held");
+        // Faked rather than generated: an eleven-minute file is 60 MB of test
+        // input to prove a length rule that only reads `frames`.
+        let long_frames = (SAMPLE_KEEP_SECONDS + 60.0) * 48_000.0;
+        assert!(long_frames > SAMPLE_KEEP_SECONDS * 48_000.0);
+    }
+
     #[test]
     fn queries_outside_the_audio_are_silent_not_missing() {
         let p = PeakPyramid::build(&stereo(&vec![0.5f32; 4_800]), 48_000);
@@ -713,6 +899,7 @@ mod tests {
             sample_rate: 48_000,
             frames,
             tiers: Vec::new(),
+            samples: Vec::new(),
         };
         let _ = p; // the shape above is what `build` must not exceed
         let mut block = FINEST_BLOCK;

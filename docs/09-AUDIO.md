@@ -97,11 +97,25 @@ same decoded ring, so it is warm wherever the cache bar is warm.
   enough that a bucket costs a handful of block merges. Zooming in therefore *gains* detail
   rather than stretching a summary taken at import — the failure the original fixed
   2 048-bucket strip had.
-- **Multiwave** (K-280): alongside the plain wave, the sound is split into three bands —
-  bass (below 200 Hz), middle, treble (above 2 kHz) — with 24 dB/octave filters, and each is
-  summarised the same way. A lane can then stack them, bass at the bottom, so what is in a
-  loud passage is visible where one wave would be a solid block: the kick shows in the
-  bottom band and the hats in the top, and a cut can be aimed at either. On by default;
+- **Past the finest tier, the samples answer** (K-284). A summary runs out somewhere: below
+  one block per column, neighbouring columns share a block and the wave becomes a staircase
+  of flat slabs. So a short source keeps its **mono mixdown** beside the pyramid (16-bit, at
+  the peak rate — `SAMPLE_KEEP_SECONDS`, about ten minutes, past which the 64× zoom ceiling
+  can never out-resolve the finest tier anyway), and a query finer than one block per bucket
+  is taken straight off it in one streaming pass. Fully zoomed in, the lane then draws the
+  signal itself — a continuous trace, which is what a waveform is supposed to become. The
+  three bands are filtered on the fly over the same pass, run up from
+  `SAMPLE_PREROLL` samples before the window so the filters are settled by the time it
+  starts.
+- **Multiwave** (K-280, redrawn by K-284): alongside the plain wave, the sound is split into
+  three bands — bass (below 200 Hz), middle, treble (above 2 kHz) — with 24 dB/octave
+  filters, and each is summarised the same way. The lane draws all three **over one another
+  around one centre line**, ranked dim to bright as the frequency climbs: the bass fills a
+  soft broad body and the treble lands as bright thin spikes on top of it. So what is in a
+  loud passage is visible where one wave would be a solid block — the kick in the body, the
+  hats in the highlights — and a cut can be aimed at either. Overlaid rather than in three
+  separate lanes, because the point is to see inside the wave you are already reading, and
+  because three lanes in a 22 px row are six pixels each and say nothing. On by default;
   Settings ▸ Interface ▸ Editing ▸ *Waveforms show the frequency stack* returns the single
   wave.
 - Waveforms appear: on Audio layers (always), on Footage layers with audio (expandable

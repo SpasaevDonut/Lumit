@@ -1518,18 +1518,27 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   smaller pictures a phone keeps beside a photo so it can show a thumbnail without loading
   the whole thing — and the lane asks for whichever level suits the stretch it is currently
   showing, one bucket per pixel column. Zoom in and it asks again over a shorter stretch, so
-  the wave *gains* detail instead of stretching. The summary is built once per file (a whole
+  the wave *gains* detail instead of stretching. A summary runs out somewhere, though: once a
+  pixel column is narrower than the smallest block, neighbouring columns start sharing one and
+  the wave goes blocky again — so a short file also keeps the *actual samples* beside its
+  summary, and once you are zoomed in that far the lane draws those instead. Fully zoomed, the
+  waveform becomes a single continuous line tracing the sound, which is what it should be. A
+  long file skips the sample copy: at Lumit's zoom ceiling you can never get close enough to
+  an hour-long podcast for the summary to run out, so keeping tens of megabytes to answer a
+  question nobody can ask would be waste. The summary is built once per file (a whole
   track takes a moment to read) and kept for as long as the app is open, shared between every
   layer cut from that file, with a firm ceiling on how much memory the lot may use.
   Two other things came with it. **Clips on a Sequence layer now draw their own waveform**
   inside their box — so a cut, which is a box on a row, finally shows the sound you are
   cutting — and it travels with the clip when you drag it, because it is drawn from the clip's
   own clock rather than pinned to the timeline. And the **multiwave**: instead of one wave, the
-  lane can draw three stacked, splitting the sound into bass, middle and treble. This matters
+  lane can draw three at once, splitting the sound into bass, middle and treble. This matters
   because a modern mastered track is loud all the way through, so a single wave is a solid
-  block whatever is playing — the phrase for it is "a sausage". Split into bands, the kick
-  shows up in the bottom stripe and the hats in the top one, and you can cut to the one you
-  mean. It is on by default; Settings ▸ Interface ▸ Editing has a switch that puts the single
+  block whatever is playing — the phrase for it is "a sausage". The three are drawn *on top of
+  each other* around the same centre line rather than side by side, getting brighter as the
+  pitch goes up: the bass fills a soft wide body, and the hats and other sharp sounds land as
+  bright thin spikes over it. The result is one waveform with its insides showing, so you can
+  cut to the kick or to the hat and see which is which. It is on by default; Settings ▸ Interface ▸ Editing has a switch that puts the single
   plain wave back. (The idea is BLICK's, an editor that does the same thing.)
 - **`L` opens a layer's sound (K-281)** — press `L` with layers selected and their **Audio**
   group opens; press it again and the waveform lane opens under it; a third time shuts the

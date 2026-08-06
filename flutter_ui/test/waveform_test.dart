@@ -139,15 +139,16 @@ void main() {
       }
     });
 
-    test('a multiwave stack draws three lanes, bass at the bottom', () {
-      // Only the bass band carries anything; the other two are silent.
-      final silent = [for (var i = 0; i < 8; i++) ...[0.0, 0.0, 0.0]];
+    /// The stack is drawn *through* the wave, not beside it: every band shares
+    /// one lane and one centre line, so what you read is one silhouette with
+    /// its inside showing rather than three small waveforms.
+    test('a multiwave stack shares one lane and one centre line', () {
       final painter = WaveformPainter(
         peaks: peaks(
           start: 0,
           end: 1,
           bands: 3,
-          values: [...loud(8), ...silent, ...silent],
+          values: [...loud(8), ...loud(8), ...loud(8)],
         ),
         originSeconds: 0,
         secondsPerPixel: 1 / 24,
@@ -157,14 +158,20 @@ void main() {
       );
       final lines = strokes(painter, const Size(24, 30));
       expect(lines, isNotEmpty);
-      // All of it in the bottom third, and all of it in the bass colour.
       for (final line in lines) {
-        expect(line.a.dy, greaterThan(20 - 6));
-        expect(sameHue(line.colour, colours.low), isTrue);
+        // Every stroke straddles the middle of the whole lane.
+        expect(line.a.dy, lessThanOrEqualTo(15));
+        expect(line.b.dy, greaterThanOrEqualTo(15));
+      }
+      // And all three bands are present, none of them boxed into a third.
+      for (final c in [colours.low, colours.mid, colours.high]) {
+        expect(lines.where((l) => sameHue(l.colour, c)), isNotEmpty);
       }
     });
 
-    test('every band of a full stack lands in its own third', () {
+    /// Back to front: bass first, treble last, so the transients land *on top*
+    /// of the body rather than under it.
+    test('the treble is drawn over the bass, not beneath it', () {
       final painter = WaveformPainter(
         peaks: peaks(
           start: 0,
@@ -179,16 +186,38 @@ void main() {
         colours: colours,
       );
       final lines = strokes(painter, const Size(12, 30));
-      double centre(Color c) {
-        final band = lines.where((l) => sameHue(l.colour, c));
-        expect(band, isNotEmpty, reason: 'every band draws');
-        return band.map((l) => (l.a.dy + l.b.dy) / 2).reduce((a, b) => a + b) /
-            band.length;
-      }
+      int firstOf(Color c) => lines.indexWhere((l) => sameHue(l.colour, c));
+      expect(firstOf(colours.low), lessThan(firstOf(colours.mid)));
+      expect(firstOf(colours.mid), lessThan(firstOf(colours.high)));
+    });
 
-      // Treble at the top, bass at the bottom — the order a spectrum reads in.
-      expect(centre(colours.high), lessThan(centre(colours.mid)));
-      expect(centre(colours.mid), lessThan(centre(colours.low)));
+    /// A band in the stack is drawn solid; three softened envelopes over one
+    /// another would blend into a wash and lose the ranking entirely.
+    test('a stacked band is opaque where the single wave is softened', () {
+      List<_Stroke> drawn(int bands) => strokes(
+            WaveformPainter(
+              peaks: peaks(
+                start: 0,
+                end: 1,
+                bands: bands,
+                values: [for (var i = 0; i < bands; i++) ...loud(8)],
+              ),
+              originSeconds: 0,
+              secondsPerPixel: 1 / 24,
+              left: 0,
+              right: 24,
+              colours: colours,
+            ),
+            const Size(24, 30),
+          );
+
+      expect(drawn(3).every((l) => l.colour.a > 0.99), isTrue);
+      // The single wave keeps its softened envelope, drawn under a solid core.
+      final single = drawn(1);
+      expect(single.any((l) => l.colour.a < 0.9), isTrue,
+          reason: 'the envelope is still softened');
+      expect(single.any((l) => l.colour.a > 0.99), isTrue,
+          reason: 'and the rms core is still solid over it');
     });
 
     test('a wave stops where its bar does', () {

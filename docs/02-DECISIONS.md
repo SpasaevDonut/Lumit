@@ -5948,3 +5948,33 @@ One consequence worth writing down: a **rebind can no longer make a conflict at 
 one context the previous owner is evicted (K-200's one row, one chord), and across contexts
 the pair is a shadow — so the banner is now only ever tripped by an imported keymap file
 carrying a duplicate, which is where its regression test now goes.
+
+**K-284 · DECIDED · Past the finest tier the samples answer, and the multiwave is drawn
+through the wave rather than beside it.** Two corrections to K-280 from looking at it.
+
+**(1) Fully zoomed in, a waveform should be a line.** K-280 fixed the stretched-summary
+staircase but left a second one behind it: the finest tier is 256 samples a block, and the
+Timeline zooms to 64×, so on a short comp a pixel column ends up covering about seven
+samples — thirty-odd columns reading the same block, drawn as thirty-odd identical slabs. A
+mip-map cannot fix this, because there is nothing finer in it. So a short source now keeps
+its **mono mixdown** beside the pyramid (16-bit at the peak rate: 96 KB a second, half the
+memory of float and three ten-thousandths of a pixel of difference), and any query finer than
+one block per bucket is taken off it in one streaming pass — full band straight, the three
+split bands filtered on the way with a `SAMPLE_PREROLL` run-up so the filters are settled by
+the time the window starts. Below one sample per column, min and max meet and consecutive
+columns join into a continuous trace, which is the picture every editor shows at full zoom.
+**Short** is `SAMPLE_KEEP_SECONDS` (ten minutes): past that the 64× ceiling can never get a
+column under one block, so a sample copy would be tens of megabytes held to answer a question
+nobody can ask. The peak cache's budget rises to 96 MB to hold the copies, and it is a byte
+budget rather than a count precisely because the count no longer says anything about the cost.
+
+**(2) The stack goes through the wave, not beside it.** K-280 put the three bands in a third
+of the lane each. In a 22 px row that is six pixels a band, which is not a waveform, it is a
+smear — and it asks the reader to add three small pictures up in their head to get back the
+one they were already reading. Drawn instead **over one another around one centre line**, dim
+to bright as the frequency climbs, the bass fills a soft broad body and the treble lands as
+bright thin spikes on it: one silhouette with its inside showing, which is what the reference
+this came from actually looks like. The band colours become a brightness ramp rather than
+three hues for the same reason — hue-coded, they read as three unrelated waveforms — and band
+strokes are opaque, since three softened envelopes over one another blend into a wash and lose
+the ranking. The **single wave is untouched**: same softened envelope, same solid RMS core.

@@ -40,11 +40,18 @@ pub(crate) const PEAK_RATE: u32 = 48_000;
 #[cfg(feature = "media")]
 const MAX_ENTRIES: usize = 4;
 
-/// The cache's memory ceiling. One pyramid costs at most about 12 MB
-/// (`lumit_audio::peaks::MAX_BLOCKS`), so this is the four entries above with
-/// room to spare rather than a number that can be reached by surprise.
+/// The cache's memory ceiling.
+///
+/// A summary is small — about 0.2 bytes per sample, so a five-minute song costs
+/// under 3 MB. What costs is the **mono sample copy** a short source keeps
+/// beside it, which is what a fully zoomed lane draws from
+/// (`lumit_audio::peaks::SAMPLE_KEEP_SECONDS`): 96 KB a second, so a
+/// five-minute song is about 29 MB and the ten-minute ceiling is about 58 MB.
+/// This budget therefore holds two long songs, or four ordinary ones, and
+/// evicts the least recently asked-for past that. It is deliberately a *byte*
+/// budget rather than a count, because the count says nothing about the cost.
 #[cfg(feature = "media")]
-const MAX_BYTES: usize = 64 * 1024 * 1024;
+const MAX_BYTES: usize = 96 * 1024 * 1024;
 
 #[cfg(feature = "media")]
 struct PeakEntry {

@@ -18,10 +18,17 @@
 // **The multiwave.** One wave says how loud a moment is and nothing about what
 // is in it: a mastered track is a solid block whether it is a kick, a snare or
 // a vocal. So the engine can split the sound into three bands and summarise
-// each, and [WaveformPainter] stacks them — bass at the bottom, treble at the
-// top. The kick shows in the bottom band, the hats in the top, and a cut can
-// be aimed at either. The single wave stays available in Settings for anyone
-// who wants the plain picture.
+// each, and [WaveformPainter] draws all three **over one another in the same
+// lane**, around the same centre line, ranked from dim to bright as the
+// frequency climbs. The bass fills the soft broad body, the treble lands as
+// bright thin spikes on top of it — so a kick and a hi-hat are told apart
+// inside one silhouette, at a row height where three separate lanes would each
+// be six pixels tall and say nothing.
+//
+// Overlaid rather than stacked on purpose: the whole point is to see *inside*
+// the wave you are already reading, not to read three small waves and add them
+// up in your head. The single wave stays available in Settings for anyone who
+// wants the plain picture, and is drawn exactly as it always was.
 
 import 'dart:math' as math;
 
@@ -146,10 +153,11 @@ class WaveformPainter extends CustomPainter {
     this.inset = 1,
   });
 
-  /// The bands this painter is drawing, top of the stack first — so a stack
-  /// reads bass at the bottom, treble at the top.
+  /// The colour of each band the answer carries, **in the order the engine
+  /// laid them out** (bass, middle, treble) — which is also back-to-front, so
+  /// the treble's transients land on top of the body the bass fills.
   List<Color> get _bandColours => switch (peaks?.bands ?? 0) {
-        3 => [colours.high, colours.mid, colours.low],
+        3 => [colours.low, colours.mid, colours.high],
         _ => [colours.rest],
       };
 
@@ -163,22 +171,23 @@ class WaveformPainter extends CustomPainter {
     if (!(to > from)) return;
 
     final bands = _bandColours;
-    final lanes = bands.length;
-    final laneHeight = size.height / lanes;
-    final half = math.max(0.5, laneHeight / 2 - inset);
+    // One lane, whichever this is: the stack is drawn *through* the wave, not
+    // beside it.
+    final stacked = bands.length > 1;
+    final mid = size.height / 2;
+    final half = math.max(0.5, mid - inset);
     final buckets = held.buckets;
     final span = held.endSeconds - held.startSeconds;
 
-    for (var lane = 0; lane < lanes; lane++) {
-      final colour = bands[lane];
-      // The bands ride in the answer bottom-first; the stack draws top-first.
-      final band = lanes - 1 - lane;
-      final mid = laneHeight * (lane + 0.5);
+    for (var band = 0; band < bands.length; band++) {
+      final colour = bands[band];
+      // The single wave keeps its softened envelope and its solid energy core
+      // — the shape people already read. A band in the stack is drawn solid
+      // and coreless instead: three softened envelopes over one another blend
+      // into a wash, where three solid ones let the brightest reach through.
       final body = Paint()
-        ..color = colour.withValues(alpha: colour.a * 0.8)
+        ..color = stacked ? colour : colour.withValues(alpha: colour.a * 0.8)
         ..strokeWidth = 1;
-      // The energy inside the envelope, drawn over it: what tells a sustained
-      // note from a spike that happens to reach the same height.
       final core = Paint()
         ..color = colour
         ..strokeWidth = 1;
@@ -199,7 +208,10 @@ class WaveformPainter extends CustomPainter {
           Offset(x + 0.5, mid - lo * half),
           body,
         );
-        if (rms > 0) {
+        // The energy inside the envelope: what tells a sustained note from a
+        // spike that happens to reach the same height. The stack says that
+        // with its own brightness, so only the single wave draws it.
+        if (!stacked && rms > 0) {
           canvas.drawLine(
             Offset(x + 0.5, mid - rms * half),
             Offset(x + 0.5, mid + rms * half),
