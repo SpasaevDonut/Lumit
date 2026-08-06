@@ -4142,6 +4142,7 @@ fn wgsl_lens_dirt_matches_the_cpu_oracle() {
                 intensity: 0.0,
                 density: 50.0,
                 scale: 1.0,
+                scratch_scale: 1.0,
                 defocus: 0.5,
                 chromatic: 0.3,
                 scratches: 0.4,
@@ -4158,6 +4159,7 @@ fn wgsl_lens_dirt_matches_the_cpu_oracle() {
                 intensity: 1.0,
                 density: 50.0,
                 scale: 1.0,
+                scratch_scale: 1.0,
                 defocus: 0.5,
                 chromatic: 0.3,
                 scratches: 0.4,
@@ -4174,6 +4176,7 @@ fn wgsl_lens_dirt_matches_the_cpu_oracle() {
                 intensity: 1.2,
                 density: 60.0,
                 scale: 1.2,
+                scratch_scale: 1.5,
                 defocus: 0.6,
                 chromatic: 0.4,
                 scratches: 0.5,
@@ -4190,6 +4193,7 @@ fn wgsl_lens_dirt_matches_the_cpu_oracle() {
                 intensity: 0.8,
                 density: 40.0,
                 scale: 0.8,
+                scratch_scale: 0.8,
                 defocus: 0.3,
                 chromatic: 0.2,
                 scratches: 0.3,
@@ -4206,6 +4210,7 @@ fn wgsl_lens_dirt_matches_the_cpu_oracle() {
             intensity: op.intensity,
             density: op.density,
             scale: op.scale,
+            scratch_scale: op.scratch_scale,
             defocus: op.defocus,
             chromatic: op.chromatic,
             scratches: op.scratches,
@@ -4215,6 +4220,7 @@ fn wgsl_lens_dirt_matches_the_cpu_oracle() {
             seed: op.seed,
             mix: op.mix,
         };
+
         lumit_core::fx::cpu::lens_dirt(&mut cpu, w, h, &cpu_p);
 
         let tex = upload_linear_f32(&ctx, &img, w, h);

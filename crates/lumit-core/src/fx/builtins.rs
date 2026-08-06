@@ -2976,13 +2976,23 @@ pub const BUILTINS: &[EffectSchema] = &[
             },
             ParamSchema {
                 id: "scale",
-                label: "Scale",
+                label: "Bokeh scale",
                 kind: ParamKind::Float {
                     default: 1.0,
                     slider: (0.1, 5.0),
                     hard: (Some(0.01), Some(20.0)),
                 },
             },
+            ParamSchema {
+                id: "scratch_scale",
+                label: "Scratch scale",
+                kind: ParamKind::Float {
+                    default: 1.0,
+                    slider: (0.1, 5.0),
+                    hard: (Some(0.01), Some(20.0)),
+                },
+            },
+
             ParamSchema {
                 id: "defocus",
                 label: "Defocus",

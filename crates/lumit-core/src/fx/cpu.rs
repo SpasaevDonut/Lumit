@@ -1986,27 +1986,29 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
                     let dist_y = py - center_y;
                     let dist = (dist_x * dist_x + dist_y * dist_y).sqrt();
 
-                    if dist <= radius * 1.2 {
-                        let chrom_shift = 0.12 * chromatic;
-                        let norm_g = dist / radius;
-                        let norm_r = dist / (radius * (1.0 - chrom_shift).max(0.1));
-                        let norm_b = dist / (radius * (1.0 + chrom_shift));
-
-                        let r_fall = cpu_bokeh_profile(norm_r, defocus) * p_intensity;
-                        let g_fall = cpu_bokeh_profile(norm_g, defocus) * p_intensity;
-                        let b_fall = cpu_bokeh_profile(norm_b, defocus) * p_intensity;
-
-                        dirt_r += r_fall;
-                        dirt_g += g_fall;
-                        dirt_b += b_fall;
+                    if dist <= radius * 1.3 {
+                        let norm_d = dist / radius;
+                        let base_val = cpu_bokeh_profile(norm_d, defocus) * p_intensity;
+                        if chromatic > 0.0 {
+                            let fringe = chromatic * 0.15 * norm_d;
+                            let r_val = cpu_bokeh_profile(norm_d + fringe, defocus) * p_intensity;
+                            let b_val = cpu_bokeh_profile(norm_d - fringe, defocus) * p_intensity;
+                            dirt_r += r_val;
+                            dirt_g += base_val;
+                            dirt_b += b_val;
+                        } else {
+                            dirt_r += base_val;
+                            dirt_g += base_val;
+                            dirt_b += base_val;
+                        }
                     }
                 }
             }
 
-
-            // 2. Micro hairline scratches & dust specks
+            // 2. Micro hairline scratches & dust specks (controlled by scratch_scale)
             if scratch_amount > 0.0 {
-                let scratch_cell_size = 48.0;
+                let scratch_scale = p.scratch_scale;
+                let scratch_cell_size = (48.0 * scratch_scale).clamp(12.0, 1024.0);
                 let sgx = (px / scratch_cell_size).floor() as i32;
                 let sgy = (py / scratch_cell_size).floor() as i32;
                 let sprob = h01(10, sgx, sgy);
@@ -2015,8 +2017,10 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
                 if sprob < max_sprob {
                     let p1x = (sgx as f32 + h01(11, sgx, sgy)) * scratch_cell_size;
                     let p1y = (sgy as f32 + h01(12, sgx, sgy)) * scratch_cell_size;
-                    let p2x = p1x + (h01(13, sgx, sgy) - 0.5) * 32.0;
-                    let p2y = p1y + (h01(14, sgx, sgy) - 0.5) * 32.0;
+                    let seg_len = (20.0 + 30.0 * h01(13, sgx, sgy)) * scratch_scale;
+                    let angle = h01(14, sgx, sgy) * std::f32::consts::TAU;
+                    let p2x = p1x + angle.cos() * seg_len;
+                    let p2y = p1y + angle.sin() * seg_len;
 
                     let vx = p2x - p1x;
                     let vy = p2y - p1y;
@@ -2026,7 +2030,7 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
                     let proj_y = p1y + t_seg * vy;
                     let s_dist = (px - proj_x).hypot(py - proj_y);
 
-                    let scratch_width = 0.75 + 0.5 * h01(15, sgx, sgy);
+                    let scratch_width = (0.75 + 0.5 * h01(15, sgx, sgy)) * scratch_scale;
                     if s_dist < scratch_width {
                         let line_val = (1.0 - s_dist / scratch_width) * scratch_amount * 0.7;
                         dirt_r += line_val;
@@ -2035,6 +2039,7 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
                     }
                 }
             }
+
 
             // Apply Master Intensity & Tint
             dirt_r *= intensity * tint[0];

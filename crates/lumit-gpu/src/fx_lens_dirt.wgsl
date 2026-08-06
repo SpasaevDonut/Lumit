@@ -6,6 +6,7 @@ struct Params {
     intensity: f32,
     density: f32,
     scale: f32,
+    scratch_scale: f32,
     defocus: f32,
     chromatic: f32,
     scratches: f32,
@@ -14,8 +15,8 @@ struct Params {
     seed: u32,
     mix_amt: f32,
     _pad0: f32,
-    _pad1: f32,
 };
+
 
 @group(0) @binding(0) var src: texture_2d<f32>;
 @group(0) @binding(1) var orig: texture_2d<f32>;
@@ -125,26 +126,28 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
             let dist_y = py - center_y;
             let dist = sqrt(dist_x * dist_x + dist_y * dist_y);
 
-            if (dist <= radius * 1.2) {
-                let chrom_shift = 0.12 * chromatic;
-                let norm_g = dist / radius;
-                let norm_r = dist / (radius * max(1.0 - chrom_shift, 0.1));
-                let norm_b = dist / (radius * (1.0 + chrom_shift));
-
-                let r_fall = bokeh_profile(norm_r, defocus) * p_intensity;
-                let g_fall = bokeh_profile(norm_g, defocus) * p_intensity;
-                let b_fall = bokeh_profile(norm_b, defocus) * p_intensity;
-
-                dirt_r += r_fall;
-                dirt_g += g_fall;
-                dirt_b += b_fall;
+            if (dist <= radius * 1.3) {
+                let norm_d = dist / radius;
+                let base_val = bokeh_profile(norm_d, defocus) * p_intensity;
+                if (chromatic > 0.0) {
+                    let fringe = chromatic * 0.15 * norm_d;
+                    let r_val = bokeh_profile(norm_d + fringe, defocus) * p_intensity;
+                    let b_val = bokeh_profile(norm_d - fringe, defocus) * p_intensity;
+                    dirt_r += r_val;
+                    dirt_g += base_val;
+                    dirt_b += b_val;
+                } else {
+                    dirt_r += base_val;
+                    dirt_g += base_val;
+                    dirt_b += base_val;
+                }
             }
         }
     }
 
-
     if (scratch_amount > 0.0) {
-        let scratch_cell_size = 48.0;
+        let scratch_scale = p.scratch_scale;
+        let scratch_cell_size = clamp(48.0 * scratch_scale, 12.0, 1024.0);
         let sgx = i32(floor(px / scratch_cell_size));
         let sgy = i32(floor(py / scratch_cell_size));
         let sprob = block_hash01(seed, 10u, sgx, sgy, 0);
@@ -153,8 +156,10 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
         if (sprob < max_sprob) {
             let p1x = (f32(sgx) + block_hash01(seed, 11u, sgx, sgy, 0)) * scratch_cell_size;
             let p1y = (f32(sgy) + block_hash01(seed, 12u, sgx, sgy, 0)) * scratch_cell_size;
-            let p2x = p1x + (block_hash01(seed, 13u, sgx, sgy, 0) - 0.5) * 32.0;
-            let p2y = p1y + (block_hash01(seed, 14u, sgx, sgy, 0) - 0.5) * 32.0;
+            let seg_len = (20.0 + 30.0 * block_hash01(seed, 13u, sgx, sgy, 0)) * scratch_scale;
+            let angle = block_hash01(seed, 14u, sgx, sgy, 0) * 6.28318530718;
+            let p2x = p1x + cos(angle) * seg_len;
+            let p2y = p1y + sin(angle) * seg_len;
 
             let vx = p2x - p1x;
             let vy = p2y - p1y;
@@ -162,9 +167,9 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
             let t_seg = clamp(((px - p1x) * vx + (py - p1y) * vy) / len_sq, 0.0, 1.0);
             let proj_x = p1x + t_seg * vx;
             let proj_y = p1y + t_seg * vy;
-            let s_dist = length(vec2<f32>(px - proj_x, py - proj_y));
+            let s_dist = sqrt((px - proj_x) * (px - proj_x) + (py - proj_y) * (py - proj_y));
 
-            let scratch_width = 0.75 + 0.5 * block_hash01(seed, 15u, sgx, sgy, 0);
+            let scratch_width = (0.75 + 0.5 * block_hash01(seed, 15u, sgx, sgy, 0)) * scratch_scale;
             if (s_dist < scratch_width) {
                 let line_val = (1.0 - s_dist / scratch_width) * scratch_amount * 0.7;
                 dirt_r += line_val;
@@ -175,6 +180,7 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     dirt_r *= intensity * tint.r;
+
     dirt_g *= intensity * tint.g;
     dirt_b *= intensity * tint.b;
 
