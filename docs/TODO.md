@@ -489,6 +489,38 @@ entry above.
 - **Export status still speaks the old idiom** - `export.rs` replies in JSON
     strings (`err_json`) polled on a timer; follow the worker's typed-stream way.
 
+- **Viewer-only exposure and auto tone mapping (asked for by the owner,
+    2026-08-06).** Two controls in the Viewer bar
+    ([07-UI-SPEC.md](07-UI-SPEC.md) §2.2, which gains their entries when they
+    land), both **preview only - neither may change the export**, the same
+    promise preview resolution and the region of interest already make.
+    **(1) Exposure**: a small box that scrubs on drag and takes a typed number,
+    with an aperture icon beside it, reading signed stops to one decimal -
+    `+0.0`, `+1.4`, `-2.3`. The number must mean what the Exposure effect's does
+    (K-106): the same `2^stops` gain in scene-linear, so the two agree.
+    **(2) Auto tone mapping**: an icon that toggles it on and off, nothing more -
+    no curve picker in the bar. It is the "what will this actually look like"
+    switch for a comp whose values run past 1, keeping the low end readable
+    instead of watching the highlights clip flat.
+    Both belong **inside the display transform**, which
+    [06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md) §3.3 already reserves for
+    exactly this ("the exposure control and channel isolation are viewer-only and
+    sit inside this stage") - the display blit in `crates/lumit-gpu/src/lib.rs`
+    (`display`, `display_bgra`, `display_scaled`), not the effect stack. Check
+    before building that the frame cache holds pre-display frames: if it does,
+    changing either control is a re-blit and must not throw a cached frame away.
+    Three things to settle. **The curve is decision-sized** - Reinhard, an
+    ACES fit and AgX all look different, and picking one is a
+    [02-DECISIONS.md](02-DECISIONS.md) entry, not a code comment. **"Auto"
+    needs a definition**: if it adapts to each frame's content the picture
+    breathes as the shot cuts, so say whether it is a fixed curve or a measured
+    one, and if measured, how it is smoothed. **Persistence is an owner call** -
+    per comp in the project like preview resolution, or view state that resets.
+    Whatever they are, the Viewer must say when the picture is not the export:
+    the colour-management badge (§2.2 item 8) is where that lives, in
+    [15-DESIGN.md](15-DESIGN.md)'s calm voice - a statement, never a warning.
+    A tone mapping *effect* is separate work and sits in **Later** below.
+
 - **The menu bar names its own backlog (K-244).** Every row marked
     "(Not implemented)" in File/Edit/Composition/Layer/Animation/View/Help is a
     command with a place waiting for it: Close project, History, Cut/Copy/Paste,
@@ -539,7 +571,12 @@ list, not a re-statement of the roadmap.
     [09-AUDIO.md](09-AUDIO.md)).
 - **Phase 3 - The look.** Per-layer motion blur polish and the scopes GPU pass
     ([08-EFFECTS.md](08-EFFECTS.md)); importing a preset file from outside the
-    presets folder is still a manual copy. This gate is the v1.0 milestone.
+    presets folder is still a manual copy. A **tone mapping effect** belongs here
+    too (owner, 2026-08-06): the grade that actually lands in the export, distinct
+    from the Viewer's preview-only toggle in **Next** above, and it wants
+    [08-EFFECTS.md](08-EFFECTS.md) §3 to gain its entry and a curve chosen in
+    [02-DECISIONS.md](02-DECISIONS.md) - the same choice both then share.
+    This gate is the v1.0 milestone.
 - **Phase 4 - Extensibility** (whole docs, nothing built -
     [11-AE-IMPORT.md](11-AE-IMPORT.md), [12-PLUGINS.md](12-PLUGINS.md)). AE
     import (Bridge panel, `.aep` parser, Lottie, fidelity report); the OFX host;
