@@ -39,7 +39,11 @@ pub mod schedule;
 ///   [`feed_layer`]). Under version 1 a hidden parent could be moved without
 ///   renaming its children's frames, so those frames were served stale; every
 ///   version-1 entry has to stop being addressed for the fix to mean anything.
-pub const ALGO_VERSION: u32 = 2;
+/// * 3 — anti-aliasing (K-274). Two reasons at once, either sufficient: the key
+///   now covers the project's sample count, and turning the setting on by
+///   default changes what every comp renders to. Every version-2 frame was made
+///   without anti-aliasing, so none of them may be served again.
+pub const ALGO_VERSION: u32 = 3;
 
 /// A 128-bit content hash addressing one rendered comp frame (docs/06 §5.2:
 /// collisions are treated as impossible; no structural comparison at lookup).
@@ -103,6 +107,11 @@ fn feed_comp(
     h.update(&comp.width.to_le_bytes());
     h.update(&comp.height.to_le_bytes());
     h.update(&quality.divisor.to_le_bytes());
+    // The project's anti-aliasing count (K-274). It changes the pixels of every
+    // comp, so it belongs in the name of every frame: without it a frame banked
+    // before the setting moved would be handed back after it, and the picture
+    // would silently disagree with the setting.
+    h.update(&doc.anti_aliasing.samples().to_le_bytes());
     for c in comp.background.0 {
         h.update(&c.to_le_bytes());
     }

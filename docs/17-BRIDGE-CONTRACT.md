@@ -144,6 +144,14 @@ other side of this boundary.
     only that subtree rebuilds. This is the whole difference from the previous
     transport, which returned a refreshed snapshot of the entire document after
     every edit.
+- **A capability is not document state, and reads as its own answer.** Most reads
+    ask the document; a few ask the *machine*, and the two must not be conflated.
+    `ProjectReference::anti_aliasing` returns what the project asks for;
+    `anti_aliasing_in_use` returns what this graphics card will actually give
+    (K-274, K-281). Keeping them as two calls is what lets a limited adapter be
+    reported without rewriting the project — and the capability read takes no
+    engine lock, because a panel asking what the card can do must never queue
+    behind a frame.
 - **Rational time crosses as integers.** Frame counts and rates cross as exact
     `{num, den}` pairs or integer frame indices derived from a composition's own
     frame rate, never as floating-point seconds

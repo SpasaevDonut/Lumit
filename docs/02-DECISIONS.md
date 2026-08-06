@@ -5854,3 +5854,35 @@ bandwidth cap, and Cloudflare Pages serves the two static sites. There is no ser
 no scaling story to own. Revisit only if the site grows contributors who should not have
 to clone a Rust + Flutter tree — at which point Cloudflare's per-path build filters
 already prevent the two from triggering each other's builds.
+
+**K-281 · DECIDED · Anti-aliasing defaults to four samples, and what the card can do is
+reported rather than saved.** K-274 settled that anti-aliasing is a project property, on by
+default, with one value shared by preview and export. Building it
+([impl/anti-aliasing.md](impl/anti-aliasing.md)) left three smaller choices, taken here.
+
+**(1) The default is four coverage samples.** K-274 said "on" without saying how much. Four is
+the standard trade: it removes the staircase on everything but the shallowest diagonal, every
+adapter Lumit targets offers it, and it costs one multisample attachment beside the comp frame
+rather than four times the shading. Off / 2 / 4 / 8 are the choices, because those are the
+counts hardware actually implements — a free number would offer precision that does not exist.
+
+**(2) What the machine can draw is reported, never written back.** The count is asked of the
+adapter and never assumed; a card that will not multisample the working format at the count
+asked for gets the highest it will, down to off. The project keeps the value its author chose
+and the Settings row states what is being used instead, beside it, in the calm voice
+([15-DESIGN.md](15-DESIGN.md)) — a statement, never a warning. The alternative, quietly
+lowering the stored setting, would mean opening a file on a weaker machine silently changed
+the project for everyone who opened it afterwards. A machine's limit is not a project's error.
+
+**(3) The count is part of a frame's name, and `ALGO_VERSION` goes to 3.** The setting changes
+every pixel, so it joins the content hash a cached frame is filed under (docs/06 §5.2) — a
+frame banked at one count must never be served at another. And because the default is *on*,
+every frame banked before this was made without anti-aliasing, so the version bump retires all
+of them by construction. Both reasons stand alone; either would have been enough.
+
+The Settings window gains a **Rendering** page for it — the one page there whose value lives in
+the project rather than in this machine's settings file, which its section heading says
+outright. That is a narrowing of [07-UI-SPEC.md](07-UI-SPEC.md) §15's "every value here is
+machine-local", in the same way K-215 narrowed it for the per-project cache location: a setting
+that changes what a composition looks like cannot be machine-local without breaking the promise
+that a `.lum` opens the same way everywhere.

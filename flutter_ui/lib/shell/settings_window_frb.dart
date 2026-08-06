@@ -61,6 +61,7 @@ enum SettingsPage {
   appearance('Appearance'),
   interface('Interface'),
   keymap('Keymap'),
+  rendering('Rendering'),
   performance('Performance');
 
   const SettingsPage(this.label);
@@ -187,6 +188,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             SettingsPage.appearance => _appearance(t, ui),
             SettingsPage.interface => _interface(t, ui),
             SettingsPage.keymap => _keymap(t, ui),
+            SettingsPage.rendering => _rendering(t),
             SettingsPage.performance => _performance(t, ui),
           },
         ],
@@ -650,6 +652,61 @@ class _SettingsWindowState extends State<_SettingsWindow> {
     _search = created;
     return created;
   }
+
+  /// Rendering: settings that change what a composition looks like.
+  ///
+  /// The one page here whose values live in the **project**, not in this
+  /// machine's settings file (K-274) — which is why the section says so. A
+  /// setting that changes the picture has to travel with the file and match
+  /// when somebody else opens it, and it is undoable like any other edit.
+  List<Widget> _rendering(LumitTheme t) {
+    final project = _project(context);
+    final set = project?.antiAliasing() ?? 4;
+    final inUse = project?.antiAliasingInUse() ?? set;
+    return [
+      _section(t, 'This project', [
+        _row(
+          t,
+          'Anti-aliasing',
+          'Smooths the edges of rotated and scaled layers. Saved in the '
+              'project, and the same for the preview and the export.',
+          SizedBox(
+            width: 130,
+            child: BareDropdown<int>(
+              key: const ValueKey('settings-anti-aliasing'),
+              value: set,
+              options: _aaCounts,
+              label: _aaLabel,
+              onChanged: (n) =>
+                  setState(() => project?.setAntiAliasing(samples: n)),
+            ),
+          ),
+        ),
+        // Only when the card cannot manage what was asked for. A statement,
+        // never a warning (docs/15-DESIGN.md): the project keeps the value its
+        // author chose, and this says what is actually being drawn.
+        if (inUse != set)
+          _row(
+            t,
+            'In use on this machine',
+            'This graphics card does not offer the setting above, so Lumit '
+                'is using the highest it does. The project is unchanged.',
+            Text(
+              _aaLabel(inUse),
+              key: const ValueKey('settings-anti-aliasing-in-use'),
+              style: t.small,
+            ),
+          ),
+      ]),
+    ];
+  }
+
+  /// The coverage-sample counts on offer — the ones graphics hardware actually
+  /// implements, which is why this is a pick rather than a free number.
+  static const List<int> _aaCounts = [1, 2, 4, 8];
+
+  static String _aaLabel(int samples) =>
+      samples <= 1 ? 'Off' : '$samples samples';
 
   List<Widget> _performance(LumitTheme t, LumitUiState ui) {
     final stats = cacheStats();

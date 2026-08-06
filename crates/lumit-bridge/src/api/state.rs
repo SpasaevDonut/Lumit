@@ -346,6 +346,11 @@ pub(crate) fn op_scope(op: &lumit_core::Op) -> (Option<Uuid>, Option<Uuid>, bool
         // reads it directly — but it is a document change like any other, so it
         // belongs in the item scope rather than in a silent default.
         | Op::SetCacheLocation { .. }
+        // How hard the renderer works at the edges (K-274). No panel draws it
+        // either — Settings reads it directly — but it is a document change,
+        // and one that renames every frame of every comp, so it must be
+        // reported rather than fall through silently.
+        | Op::SetAntiAliasing { .. }
         // A solid def is a project item, and its name shows in the panel.
         | Op::SetSolidDef { .. } => (None, None, true),
 

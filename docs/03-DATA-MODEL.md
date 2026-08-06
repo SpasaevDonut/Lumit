@@ -50,10 +50,27 @@ struct Document {
     id: Uuid,
     items: Vec<ProjectItem>,   // flat storage; Project-panel order = Vec order; folders hold children by id
     auto_folders: AutoFolders, // where new solids / comps are auto-filed (K-068)
+    anti_aliasing: AntiAliasing,           // coverage samples per pixel: Off/X2/X4/X8, default X4 (K-274)
     cache_location: Option<CacheLocation>, // this project's own frame-cache folder (K-215)
     ui_state: Option<serde_json::Value>,   // how the interface was arranged, opaque (K-245)
 }
 ```
+
+`anti_aliasing` is how hard the renderer works at the edges of transformed layers (K-274,
+[impl/anti-aliasing.md](impl/anti-aliasing.md)). It is a **project** property rather than a
+preference, and that is the decision, not an implementation detail: it changes what a comp
+looks like, so it must travel in the `.lum` and match when the file is opened on another
+machine. **One value serves preview and export** — a preview that anti-aliased differently
+from the file would break the K-031 preview-equals-export identity that the whole render path
+is built around. Default `X4`: on, four coverage samples per pixel. Set through an ordinary
+op, so it is undoable and journalled like any other change to the picture, and — unlike
+`cache_location` — it *does* change pixels, so the sample count is part of a frame's content
+hash (docs/06 §5.2) and a frame banked at one setting is never served at another.
+
+What a given graphics card will actually do is a separate question from what the project asks
+for. The count is asked of the adapter and never assumed; one that cannot manage the count
+falls back to the highest it will, down to off, and the interface says which is in use. That is
+a fact about the machine, never an error and never a rewrite of the project.
 
 `cache_location` is the one piece of *machine* preference the document carries, and it is here on
 purpose (K-215, docs/06 §5.4): where a project's rendered frames are parked belongs to the

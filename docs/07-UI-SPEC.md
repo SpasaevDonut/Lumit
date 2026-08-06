@@ -1670,8 +1670,10 @@ Binding, from the household mandate; these override convenience everywhere.
 
 ### Settings inventory (K-031/K-032 anchors)
 
-The Settings window groups, minimum set — every value here is machine-local (never in the
-project file, [10-FILE-FORMAT.md](10-FILE-FORMAT.md) §2):
+The Settings window groups, minimum set. Almost every value here is machine-local (never in
+the project file, [10-FILE-FORMAT.md](10-FILE-FORMAT.md) §2); the exceptions are the few that
+change what a composition *looks like* or where its own frames are parked, which have to
+travel in the `.lum` and are marked below:
 
 - **Performance**: RAM budget for Lumit (default 60% of system, slider + absolute),
   VRAM budget (default 70%), CUDA acceleration on/off (per K-014 it is only ever an
@@ -1686,6 +1688,12 @@ project file, [10-FILE-FORMAT.md](10-FILE-FORMAT.md) §2):
   header text so users understand what the app guarantees.
 - **Export**: default preset, export priority default (background/balanced/fast), encoder
   preference order, filename template.
+- **Rendering** — *in the project, not machine-local* (K-274): **anti-aliasing**, the number
+  of coverage samples per pixel the composite is drawn with (Off / 2 / 4 / 8, default 4). It
+  changes what a comp looks like, so it is saved in the `.lum`, matches on another machine,
+  and is undoable like any other edit — and **one value serves the preview and the export**,
+  which is the K-031 identity. Where the graphics card cannot manage the count asked for, a
+  second row states what is being used instead; the project keeps the value its author chose.
 - **Keymap**, **Interface** (UI scale, tooltips, reduced motion follows OS or override),
   **Autosave** (interval, copies kept), **Plugins** (search paths, disabled list,
   per-plugin overrides).
@@ -1696,7 +1704,9 @@ the setting is, a line saying what it does, and its control on the right. Its pa
 **General** (reset workspace, version and build), **Appearance** (colour scheme, corners,
 interface motion), **Interface** (UI scale, tooltips, and whether the Effect controls panel
 repeats the layer's Source, Transform and Retime rows — off by default, since the Timeline's
-fold-out already shows them), and **Performance** (playback mode, quality tier and reset,
+fold-out already shows them), **Rendering** (anti-aliasing — the one page whose value lives in
+the project rather than in this machine's settings file, which its section heading says), and
+**Performance** (playback mode, quality tier and reset,
 and the RAM and VRAM frame-cache budgets with their readouts and Clear buttons). The two
 budgets are **typed and draggable numbers capped at what the machine has** — installed RAM
 and the adapter's dedicated video memory, asked of the engine — rather than a pick from a

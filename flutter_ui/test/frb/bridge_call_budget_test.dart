@@ -481,6 +481,15 @@ void main() {
         lessThanOrEqualTo(20),
         reason: 'a frame arriving re-read the engine:\n${counter.ranking()}',
       );
+      // Ten renders were asked for; let the last of them come back before the
+      // test ends, or the progress tracker's timer is still pending. Waiting on
+      // the condition rather than a round count keeps this independent of how
+      // long a frame happens to take on the machine running it.
+      await settleFrb(
+        tester,
+        until: () => p.uiState.previewProgress.idle,
+        maxRounds: 100,
+      );
     });
     /// **Panning the picture must ask the engine nothing (K-230).**
     ///

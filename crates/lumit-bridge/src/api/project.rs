@@ -394,6 +394,59 @@ impl ProjectReference {
         Ok(())
     }
 
+    /// How hard the renderer works at the edges of transformed layers, as the
+    /// number of coverage samples per pixel: 1, 2, 4 or 8, where 1 is off
+    /// (K-274, docs/impl/anti-aliasing.md).
+    ///
+    /// The project's own setting, exactly as stored — **what the current
+    /// machine can actually draw is a separate question**, answered by
+    /// [`Self::anti_aliasing_in_use`]. Keeping the two apart is what stops a
+    /// card that cannot manage the asked-for count from quietly rewriting the
+    /// project when it is opened.
+    #[frb(sync)]
+    pub fn anti_aliasing(&self) -> Result<u32, BridgeError> {
+        let state = self.state()?;
+        let state = state.read().map_err(|_| BridgeError::ReadFailed)?;
+        Ok(state.store.snapshot().anti_aliasing.samples())
+    }
+
+    /// The count this machine is actually drawing with — the project's setting
+    /// resolved against what the graphics card offers.
+    ///
+    /// Equal to [`Self::anti_aliasing`] on any adapter that can manage what was
+    /// asked for, which is the ordinary case. Where it differs, the difference
+    /// is a fact about the machine and never an error: the Settings row shows
+    /// what is being used beside what is set, in the calm voice
+    /// (docs/15-DESIGN.md), and the project keeps the value its author chose.
+    #[frb(sync)]
+    pub fn anti_aliasing_in_use(&self) -> Result<u32, BridgeError> {
+        let asked = self.anti_aliasing()?;
+        // The adapter's own answer where one has been opened, and the
+        // project's setting until then — never a lock on the renderer behind a
+        // panel's read.
+        Ok(lumit_render::adapter_sample_count(asked).unwrap_or(asked))
+    }
+
+    /// Set how hard the renderer works at the edges of transformed layers.
+    ///
+    /// Takes a sample count — 1, 2, 4 or 8. Anything else reads as 1 (off)
+    /// rather than failing: an unknown count is not a reason to refuse an edit.
+    /// An ordinary op, so it is undoable, journalled and saved in the `.lum`,
+    /// which is the point of it living in the document — it changes what the
+    /// comp looks like, so it must travel with the file and match on another
+    /// machine (K-274).
+    #[frb(sync)]
+    pub fn set_anti_aliasing(&self, samples: u32) -> Result<(), BridgeError> {
+        let anti_aliasing = lumit_core::model::AntiAliasing::from_samples(samples);
+        let state = self.state()?;
+        let state = state.write().map_err(|_| BridgeError::WriteFailed)?;
+        state
+            .store
+            .commit(Op::SetAntiAliasing { anti_aliasing })
+            .map_err(BridgeError::OpError)?;
+        Ok(())
+    }
+
     /// How the interface was arranged when this project was last saved, as the
     /// JSON the frontend itself wrote (K-245), or `None` for a project that has
     /// never carried one.

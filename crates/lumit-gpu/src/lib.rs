@@ -35,6 +35,78 @@ pub struct GpuContext {
     /// checked — within one 8-bit step instead of exactly (see
     /// `accumulation_still_scene_is_identity_and_moving_scene_smears`).
     pub software: bool,
+    /// Exactly which multisample counts this adapter will give the working
+    /// format, asked at device creation and never assumed
+    /// (docs/impl/anti-aliasing.md §2). Read it through
+    /// [`Self::sample_count`] rather than directly.
+    ///
+    /// The whole set rides here rather than just a maximum because the counts
+    /// are reported per count, and a card that offers 4 is not thereby promised
+    /// to offer 2. Keeping the set is what lets the check stay a check.
+    ///
+    /// It rides on the context at all because the probe needs the *adapter*,
+    /// which only [`Self::headless`] holds — every other handle in the engine
+    /// is a cheap clone of a device and a queue.
+    pub sample_flags: wgpu::TextureFormatFeatureFlags,
+}
+
+/// The multisample counts the composite is willing to use, highest first.
+/// Nothing outside this list is ever asked for.
+pub const SAMPLE_COUNTS: [u32; 3] = [8, 4, 2];
+
+/// The highest count at or below `requested` that `adapter` will give
+/// [`WORKING_FORMAT`], or 1 if it will give none.
+///
+/// This is the whole of the capability check the anti-aliasing note demands: a
+/// count is asked for, never assumed. Asking for 8 on a card that does 4 gets
+/// 4 — the render succeeds, softer than it might have been on better hardware
+/// and never an error (docs/impl/anti-aliasing.md §2, docs/15-DESIGN.md: no
+/// red-alert states).
+#[must_use]
+pub fn supported_sample_count(adapter: &wgpu::Adapter, requested: u32) -> u32 {
+    sample_count_from(
+        adapter.get_texture_format_features(WORKING_FORMAT).flags,
+        requested,
+    )
+}
+
+/// What the adapter said about multisampling, published the first time any
+/// context opens one.
+///
+/// A process-wide fact, and legitimately so: the backend is pinned on all three
+/// platforms and the adapter is chosen deterministically (see
+/// [`GpuContext::headless`]), so every context in a process opens the same card
+/// and gets the same answer. It exists for callers that want to *report* the
+/// capability — the Settings row saying what is actually being drawn — without
+/// taking the renderer's lock behind a user interface query. Rendering itself
+/// never reads it: a render has a context in hand and asks that.
+static ADAPTER_SAMPLE_FLAGS: std::sync::OnceLock<wgpu::TextureFormatFeatureFlags> =
+    std::sync::OnceLock::new();
+
+/// The count this machine will give for `requested`, without needing a context.
+///
+/// `None` before any adapter has been opened — which is the honest answer, not
+/// a default: nothing has asked the card yet. Callers show the project's own
+/// setting until there is something truer to show.
+#[must_use]
+pub fn adapter_sample_count(requested: u32) -> Option<u32> {
+    ADAPTER_SAMPLE_FLAGS
+        .get()
+        .map(|&flags| sample_count_from(flags, requested))
+}
+
+/// [`supported_sample_count`] against an already-fetched flag set — the shared
+/// rule, so the adapter-side check and [`GpuContext::sample_count`] cannot
+/// drift apart.
+#[must_use]
+fn sample_count_from(flags: wgpu::TextureFormatFeatureFlags, requested: u32) -> u32 {
+    if requested <= 1 {
+        return 1;
+    }
+    SAMPLE_COUNTS
+        .into_iter()
+        .find(|&n| n <= requested && flags.sample_count_supported(n))
+        .unwrap_or(1)
 }
 
 /// The environment variable that turns "no GPU adapter" from a skip into a
@@ -87,11 +159,41 @@ impl GpuContext {
     /// Wrap an existing device/queue (eframe's render state — wgpu handles
     /// are internally reference-counted, so cloning shares the one device).
     /// This is the running application's real display adapter.
+    ///
+    /// The adapter is not in hand here, so [`Self::sample_count`] answers 1:
+    /// a context built this way composites without anti-aliasing. Callers that
+    /// already hold a context want [`Self::clone_handle`] instead, which keeps
+    /// what the adapter said.
     pub fn from_parts(device: wgpu::Device, queue: wgpu::Queue) -> Self {
         Self {
             device,
             queue,
             software: false,
+            sample_flags: wgpu::TextureFormatFeatureFlags::empty(),
+        }
+    }
+
+    /// The count this context will actually give for `requested` — the project
+    /// setting resolved against what the adapter said (see
+    /// [`Self::sample_flags`]). Never fails and never exceeds what the card
+    /// offers: a machine that will not multisample simply gets 1.
+    #[must_use]
+    pub fn sample_count(&self, requested: u32) -> u32 {
+        sample_count_from(self.sample_flags, requested)
+    }
+
+    /// A second handle on the same device and queue, keeping what the adapter
+    /// reported. wgpu handles are internally reference-counted, so this shares
+    /// the one device; unlike [`Self::from_parts`] it does not throw away
+    /// [`Self::sample_flags`] or [`Self::software`], which is why every in-engine
+    /// re-borrow (the realiser's owned handle, the flow crate's) uses it.
+    #[must_use]
+    pub fn clone_handle(&self) -> Self {
+        Self {
+            device: self.device.clone(),
+            queue: self.queue.clone(),
+            software: self.software,
+            sample_flags: self.sample_flags,
         }
     }
 
@@ -184,10 +286,18 @@ impl GpuContext {
             eprintln!("lumit-gpu: device lost ({reason:?}): {msg}");
         });
 
+        // Ask the adapter once, here, while it is still in hand: nothing
+        // downstream holds one, and the answer never changes for a given device.
+        let sample_flags = adapter.get_texture_format_features(WORKING_FORMAT).flags;
+        // Publish it for the reporting path (see `ADAPTER_SAMPLE_FLAGS`); the
+        // first context to open wins and every later one agrees with it.
+        let _ = ADAPTER_SAMPLE_FLAGS.set(sample_flags);
+
         Ok(Self {
             device,
             queue,
             software,
+            sample_flags,
         })
     }
 }
