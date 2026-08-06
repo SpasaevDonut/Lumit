@@ -1852,42 +1852,37 @@ void main() {
           reason: 'every other group kept its width');
     });
 
-    /// The bottom bar's zoom: + widens the time axis (the bar stretches) and
-    /// the readout says so; Fit brings it back.
-    testWidgets('the zoom buttons widen the lanes and read out the factor',
+    /// **The bottom bar's zoom is a slider** (owner, 2026-08-06), between a
+    /// small magnifying glass and a large one. Its left end is the whole
+    /// composition; dragging right widens the time axis, and a slider zoom has
+    /// no pointer to zoom about, so it holds the middle of the visible lanes
+    /// still — zooming about the left edge instead pushed whatever was being
+    /// looked at off the right of the panel.
+    testWidgets('the zoom slider widens the lanes about the view\'s middle',
         (tester) async {
       final p = withComp();
       final layer = p.comp.addSolidLayer();
       await mount(tester, p);
 
-      expect(find.text('100%'), findsOneWidget);
-      final before = tester
-          .getRect(
-              find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}')))
-          .width;
-
-      final centreBefore = tester
-          .getRect(
-              find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}')))
-          .center
-          .dx;
-
-      await tester.tap(find.byKey(const ValueKey('tl-zoom-in')));
-      await tester.pumpAndSettle();
-      expect(find.text('150%'), findsOneWidget);
-      final bar = tester.getRect(
+      Rect barRect() => tester.getRect(
           find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}')));
-      expect(bar.width, greaterThan(before),
-          reason: 'the comp takes more pixels when zoomed in');
-      // A button zoom has no pointer to zoom about, so it holds the middle of
-      // the visible lanes still — zooming about the left edge instead pushed
-      // whatever was being looked at off the right of the panel.
-      expect(bar.center.dx, moreOrLessEquals(centreBefore, epsilon: 1),
-          reason: 'the middle of the view stayed where it was');
+      final before = barRect().width;
+      final centreBefore = barRect().center.dx;
 
-      await tester.tap(find.byKey(const ValueKey('tl-zoom-fit')));
+      final slider = find.byKey(const ValueKey('tl-zoom-slider'));
+      expect(slider, findsOneWidget, reason: 'the buttons became a slider');
+      // Drag the handle a third of the way along its track.
+      final track = tester.getRect(slider);
+      await tester.dragFrom(
+        Offset(track.left + 2, track.center.dy),
+        Offset(track.width / 3, 0),
+      );
       await tester.pumpAndSettle();
-      expect(find.text('100%'), findsOneWidget);
+
+      expect(barRect().width, greaterThan(before),
+          reason: 'the comp takes more pixels when zoomed in');
+      expect(barRect().center.dx, moreOrLessEquals(centreBefore, epsilon: 2),
+          reason: 'the middle of the view stayed where it was');
     });
 
     /// The bar wears the layer's label colour (K-188), so recolouring the

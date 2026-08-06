@@ -1551,6 +1551,17 @@ class HouseSlider extends StatefulWidget {
   final int decimals;
   final String? suffix;
   final bool commitOnRelease;
+
+  /// How wide the track is drawn. The default suits a settings row; a control
+  /// in a toolbar wants less.
+  final double width;
+
+  /// Whether the number is drawn beside the track.
+  ///
+  /// Off for a slider whose value is already said elsewhere — the Timeline's
+  /// zoom says it in a tooltip, and a readout repeating it would cost the
+  /// bottom bar room it does not have.
+  final bool showValue;
   final ValueChanged<double> onChanged;
 
   const HouseSlider({
@@ -1563,6 +1574,8 @@ class HouseSlider extends StatefulWidget {
     this.decimals = 2,
     this.suffix,
     this.commitOnRelease = false,
+    this.width = 140,
+    this.showValue = true,
   });
 
   @override
@@ -1585,7 +1598,7 @@ class _HouseSliderState extends State<HouseSlider> {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    const width = 140.0;
+    final width = widget.width;
     final frac =
         ((_shown - widget.min) / (widget.max - widget.min)).clamp(0.0, 1.0);
     return Row(
@@ -1621,11 +1634,13 @@ class _HouseSliderState extends State<HouseSlider> {
             ),
           ),
         ),
-        const SizedBox(width: 8),
-        Text(
-          '${_shown.toStringAsFixed(widget.decimals)}${widget.suffix ?? ''}',
-          style: t.bodyPrimary,
-        ),
+        if (widget.showValue) ...[
+          const SizedBox(width: 8),
+          Text(
+            '${_shown.toStringAsFixed(widget.decimals)}${widget.suffix ?? ''}',
+            style: t.bodyPrimary,
+          ),
+        ],
       ],
     );
   }

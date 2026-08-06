@@ -5854,3 +5854,53 @@ bandwidth cap, and Cloudflare Pages serves the two static sites. There is no ser
 no scaling story to own. Revisit only if the site grows contributors who should not have
 to clone a Rust + Flutter tree — at which point Cloudflare's per-path build filters
 already prevent the two from triggering each other's builds.
+**K-286 · DECIDED · Zoom flies, and the Timeline's zoom is a slider whose ends mean
+something.** From the owner (2026-08-06), in three parts: the zoom should move rather than
+cut, faster input should zoom further and settle when the hand stops, and the bottom bar's
+− / + / Fit buttons should be a slider.
+
+**The wheel still never zooms without a modifier.** This was briefly built the other way, on a
+reading of the owner's first message that they corrected the same day: docs/07 §4.6's "no
+scroll hijack" MUST stands, plain wheel scrolls, `Ctrl+wheel` zooms. Recorded because the
+supersede was written and then withdrawn, and a reader finding half of it in the history should
+know it never applied.
+
+**The motion is the Viewer's, lifted out.** `widgets/smooth_zoom.dart` is K-218's shape shared:
+the Viewer has flown since then while the Timeline, the graph editor and the Project panel all
+cut. It interpolates **geometrically**, because magnification is a *ratio* — lerp 1 → 16
+linearly and half the flight is spent between 8 and 16, which reads as a lurch then a crawl.
+The Timeline reads it now; the graph editor and Project panel are named in TODO and are a
+matter of holding one and reading its value.
+
+**A fast roll goes further, with a ceiling.** A notch is worth more the sooner it follows the
+last — linear in the gap, which is the thing the hand controls directly — up to 4×. The ceiling
+is not a detail: without one a flick crosses the whole zoom range in a single gesture and there
+is no way back to where you were. A notch arriving mid-flight extends the *target* rather than
+restarting from wherever the flight had reached, which is what makes a rolled wheel one
+continuous motion instead of hops that never arrive. When the hand stops, the flight finishes
+and settles.
+
+**The anchor is held for the whole flight, not just its ends.** The frame under the pointer
+stays under it on every tick, because the lanes grow all the way through — hold the scroll
+offset still instead and the anchor slides out from under the cursor, which is the drift the
+Viewer's own note warns about. The correction runs in the same turn as the rebuild: deferring
+it to a post-frame callback paints one whole frame at the new width with the old offset, a
+visible sideways slide.
+
+**The slider's ends are a promise, and one of them is a count of frames.** Left is the whole
+composition. Right is **twenty frames across the lanes** — not a magnification like "6400%",
+because a magnification means nothing without knowing the comp's length, while "twenty frames"
+means the same thing on a five-second comp and a ten-minute one. The visible span is
+`frames / zoom` whatever the panel's width, so the ceiling is simply `frames / 20`, and it
+moves with the composition. The slider runs on the **logarithm** of the zoom for the same
+reason the flight does: linear, nine tenths of its length would sit inside the last handful of
+frames of a long comp and every useful zoom would be crushed into the first centimetre.
+
+**Two zooms, two anchors, and that is deliberate.** The slider has no pointer to zoom about, so
+it holds the **middle of the visible lanes** still — zooming about the left edge pushed
+whatever was being looked at off the right of the panel. `Ctrl+wheel` holds the frame **under
+the pointer**, because there the pointer is the whole gesture.
+
+The − / + / Fit buttons are gone: the slider's two ends *are* Fit and full zoom, and a slider
+also says where you are between them, which three buttons never did. `HouseSlider` gained a
+width and a value-hiding option rather than a second slider being written for a toolbar.

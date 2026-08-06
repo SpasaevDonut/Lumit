@@ -58,6 +58,7 @@ import 'timeline_razor.dart';
 import 'effect_param_row_frb.dart';
 import 'keyframe_controls_frb.dart';
 import 'layer_fold_frb.dart';
+import '../widgets/smooth_zoom.dart';
 import 'timeline_timings.dart';
 import 'transform_rows_frb.dart';
 
@@ -301,7 +302,8 @@ class TimelinePanelFrb extends StatefulWidget {
   State<TimelinePanelFrb> createState() => _TimelinePanelFrbState();
 }
 
-class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
+class _TimelinePanelFrbState extends State<TimelinePanelFrb>
+    with SingleTickerProviderStateMixin {
   /// What is twirled open: layer ids, and the paths of the groups under them
   /// (`<layer>/transform`, `<layer>/effects/<effect>`, `<layer>/audio`). Held by
   /// the panel rather than by each row so the lane side can leave room for
@@ -960,7 +962,48 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
 
   /// Time zoom: 1 is fit-to-panel; the bottom bar's − / + / Fit set it, and
   /// Ctrl+wheel zooms about the pointer.
-  double _zoom = 1;
+  /// Time zoom: 1 is fit-to-panel, and it **flies** rather than cutting
+  /// (docs/07 §4.6). The Viewer's magnification has flown since K-218; this is
+  /// the same helper, so the two read as one application rather than two.
+  late final SmoothZoom _zoomMotion;
+
+  /// What the flight is holding still: the frame that was under the pointer (or
+  /// under the middle of the lanes, for the bottom bar's buttons) and where on
+  /// screen it was. Re-applied on **every tick**, because the content grows all
+  /// through the flight — hold the offset still instead and the anchor slides
+  /// out from under the cursor, which is the drift the Viewer's own note warns
+  /// about.
+  double _zoomAnchorFrame = 0;
+  double _zoomAnchorViewportX = 0;
+
+  double get _zoom => _zoomMotion.value;
+
+  /// The lanes' width at zoom 1, and how many frames span it — recorded in
+  /// build so the flight can work out the *new* pixels-per-frame itself. It
+  /// cannot read the axis: the axis is rebuilt from this tick's zoom, and the
+  /// scroll has to be corrected in the same turn or the panel paints one frame
+  /// at the new width with the old offset.
+  double _laneViewport = 0;
+  int _laneFrames = 1;
+
+  /// How much motion the shell is set to show, read in build where the theme
+  /// scope is in reach — the same arrangement the Viewer's zoom uses.
+  AnimationLevel _animationLevel = AnimationLevel.all;
+
+  double get _perFrameNow =>
+      _laneFrames <= 0 ? 0 : _laneViewport * _zoomMotion.value / _laneFrames;
+
+  /// How many frames full zoom-in shows across the lanes (owner, 2026-08-06).
+  ///
+  /// A *count of frames*, not a magnification, because that is the thing the
+  /// number means to a person: at the right-hand end of the slider you are
+  /// looking at twenty frames, whether the composition is five seconds or ten
+  /// minutes. The visible span is `frames / zoom` whatever the panel's width,
+  /// so the ceiling that gives it is simply `frames / 20`.
+  static const int _framesAtFullZoom = 20;
+
+  double get _maxZoom =>
+      max(1.0, _laneFrames / _framesAtFullZoom.toDouble());
 
   /// The body the Project panel drops onto, so a drop can be measured against
   /// it: where in the stack the pointer let go is where the footage lands.
@@ -975,6 +1018,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   @override
   void initState() {
     super.initState();
+    _zoomMotion = SmoothZoom(vsync: this, initial: 1, min: 1, max: 64)
+      ..addListener(_onZoomTick);
     _vOutline.addListener(() => _followScroll(_vOutline, _vLane));
     _vLane.addListener(() => _followScroll(_vLane, _vOutline));
     HardwareKeyboard.instance.addHandler(_onKey);
@@ -1360,6 +1405,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     _ui?.renderTimings.removeListener(_onTimingsChanged);
     if (_ui?.deleteClaim == _deleteSelectedMasks) _ui!.deleteClaim = null;
     _boundTools?.removeListener(_onToolChanged);
+    _zoomMotion.dispose();
     _barDrag.dispose();
     _layerDrag.dispose();
     _renameRequest.dispose();
@@ -1376,23 +1422,16 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   void _wheel(PointerScrollEvent event, double contentX, double perFrame) {
     final keys = HardwareKeyboard.instance;
     if (keys.isControlPressed) {
-      final next = (event.scrollDelta.dy < 0 ? _zoom * 1.2 : _zoom / 1.2)
-          .clamp(1.0, 64.0);
-      if (next == _zoom) return;
-      // Where the pointer sits in the viewport, and which frame is under it.
-      final viewportX = contentX - (_hLane.hasClients ? _hLane.offset : 0);
-      final frame = perFrame <= 0 ? 0.0 : contentX / perFrame;
-      final grew = next / _zoom;
-      setState(() => _zoom = next);
-      // Jumped in the SAME turn as the zoom, not from a post-frame callback:
-      // deferring it painted one whole frame at the new width with the old
-      // offset, which is the sideways slide a zoom visibly made before it
-      // settled. `jumpTo` does not clamp — the viewport clamps at layout, and
-      // layout this frame already has the wider content — so the only bound
-      // needed here is the lower one.
-      if (_hLane.hasClients) {
-        _hLane.jumpTo(max(0.0, frame * perFrame * grew - viewportX));
-      }
+      // What to hold still, in the numbers that are true *now*: which frame is
+      // under the pointer, and where on screen the pointer is. The flight
+      // re-applies these every tick, so the frame under the cursor stays under
+      // it for the whole zoom rather than only at its ends.
+      _zoomAnchorViewportX = contentX - (_hLane.hasClients ? _hLane.offset : 0);
+      _zoomAnchorFrame = perFrame <= 0 ? 0.0 : contentX / perFrame;
+      _zoomMotion.nudge(
+        event.scrollDelta.dy < 0 ? 1.2 : 1 / 1.2,
+        duration: animationDuration(_animationLevel),
+      );
       return;
     }
     if (keys.isShiftPressed && _hLane.hasClients) {
@@ -1406,14 +1445,30 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   /// edge instead threw whatever was being looked at off the right of the
   /// panel with every press. Same-turn jump, for the reason [_wheel] gives.
   void _setZoom(double z) {
-    final next = z.clamp(1.0, 64.0);
-    if (next == _zoom) return;
     final half =
         _hLane.hasClients ? _hLane.position.viewportDimension / 2 : 0.0;
     final centre = (_hLane.hasClients ? _hLane.offset : 0.0) + half;
-    final grew = next / _zoom;
-    setState(() => _zoom = next);
-    if (_hLane.hasClients) _hLane.jumpTo(max(0.0, centre * grew - half));
+    final perFrame = _perFrameNow;
+    _zoomAnchorViewportX = half;
+    _zoomAnchorFrame = perFrame <= 0 ? 0.0 : centre / perFrame;
+    _zoomMotion.goTo(z, duration: animationDuration(_animationLevel));
+  }
+
+  /// Hold the anchor still as the flight widens the lanes.
+  ///
+  /// Jumped in the same turn as the rebuild, not from a post-frame callback:
+  /// deferring it painted one whole frame at the new width with the old offset,
+  /// which is the sideways slide a zoom visibly made before it settled.
+  /// `jumpTo` does not clamp — the viewport clamps at layout — so the only
+  /// bound needed here is the lower one.
+  void _onZoomTick() {
+    setState(() {});
+    if (!_hLane.hasClients) return;
+    final perFrame = _perFrameNow;
+    if (perFrame <= 0) return;
+    _hLane.jumpTo(
+      max(0.0, _zoomAnchorFrame * perFrame - _zoomAnchorViewportX),
+    );
   }
 
   /// Which layer index a Project-panel drop landed on. The stack starts below
@@ -1483,7 +1538,10 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
 
   Widget _body(
       BuildContext context, LumitUiState ui, CompositionReference comp) {
-    final t = ThemeScope.of(context).theme;
+    final scope = ThemeScope.of(context);
+    final t = scope.theme;
+    // How much motion the shell shows, for the zoom's flight.
+    _animationLevel = scope.animationLevel;
     // The columns actually drawn. The render-time column is only there while
     // something is being measured (K-276): switched off it takes no width, no
     // header and no cells — a column of blanks is not a column, and the outline
@@ -1637,6 +1695,13 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                       .clamp(1.0, 1e6);
                   final axis =
                       TimelineAxis(frames: frames, width: laneViewport * _zoom);
+                  _laneViewport = laneViewport;
+                  _laneFrames = frames;
+                  // A different comp is a different ceiling; a zoom already
+                  // past the new one is pulled back to it rather than left
+                  // showing fewer frames than the slider's end promises.
+                  _zoomMotion.max = _maxZoom;
+                  if (_zoomMotion.target > _maxZoom) _setZoom(_maxZoom);
 
                   // Where the work area falls, read once and handed to the
                   // ruler, the lanes and the curves alike (K-203) — and null
@@ -2052,6 +2117,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                       onToggleMagnet: () =>
                                           setState(() => _magnet = !_magnet),
                                       onZoom: _setZoom,
+                                      maxZoom: _maxZoom,
                                       lens: _graphLens,
                                       onLens: (lens) =>
                                           setState(() => _graphLens = lens),
@@ -2217,6 +2283,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                       onToggleMagnet: () =>
                                           setState(() => _magnet = !_magnet),
                                       onZoom: _setZoom,
+                                      maxZoom: _maxZoom,
                                     ),
                                   ],
                                 ),
@@ -5963,6 +6030,10 @@ class _LaneKeysPainter extends CustomPainter {
 /// switch, and the auto-fit toggle.
 class _LaneBottomBar extends StatelessWidget {
   final double zoom;
+
+  /// The far end of the slider: the zoom at which the lanes show
+  /// [_TimelinePanelFrbState._framesAtFullZoom] frames.
+  final double maxZoom;
   final ScrollController hScroll;
   final ValueChanged<double> onZoom;
   final bool magnet;
@@ -5977,6 +6048,7 @@ class _LaneBottomBar extends StatelessWidget {
 
   const _LaneBottomBar({
     required this.zoom,
+    required this.maxZoom,
     required this.hScroll,
     required this.onZoom,
     required this.magnet,
@@ -6086,34 +6158,37 @@ class _LaneBottomBar extends StatelessWidget {
                         const SizedBox(width: 6),
                       ],
                       ...[
-                        HouseButton(
-                          key: const ValueKey('tl-zoom-out'),
-                          small: true,
-                          frameless: true,
-                          onPressed: () => onZoom(zoom / 1.5),
-                          child: Text('−', style: t.small),
+                        // The zoom, as a slider between a small magnifying
+                        // glass and a large one (owner, 2026-08-06). The far
+                        // left is the whole composition; the far right is
+                        // twenty frames across the lanes, whatever the comp's
+                        // length. It replaced − / + / Fit: the two ends *are*
+                        // Fit and full zoom, and a slider says where you are
+                        // between them, which three buttons never did.
+                        lumitIcon(LumitIcon.magnifier,
+                            size: iconSize - 3, color: t.textMuted),
+                        const SizedBox(width: 4),
+                        LumitTooltip(
+                          message: 'Zoom — ${(zoom * 100).round()}%',
+                          child: HouseSlider(
+                            key: const ValueKey('tl-zoom-slider'),
+                            // The slider runs on the *logarithm* of the zoom,
+                            // so equal travel buys equal ratio — the same
+                            // reason the flight interpolates that way. A linear
+                            // one would spend nine tenths of its length in the
+                            // last few frames of a long comp.
+                            value: zoomSliderPosition(zoom, maxZoom),
+                            min: 0,
+                            max: 1,
+                            width: 96,
+                            showValue: false,
+                            onChanged: (t) =>
+                                onZoom(zoomForSliderPosition(t, maxZoom)),
+                          ),
                         ),
-                        SizedBox(
-                          width: 44,
-                          child: Text('${(zoom * 100).round()}%',
-                              key: const ValueKey('tl-zoom-label'),
-                              style: t.small.copyWith(color: t.textMuted),
-                              textAlign: TextAlign.center),
-                        ),
-                        HouseButton(
-                          key: const ValueKey('tl-zoom-in'),
-                          small: true,
-                          frameless: true,
-                          onPressed: () => onZoom(zoom * 1.5),
-                          child: Text('+', style: t.small),
-                        ),
-                        HouseButton(
-                          key: const ValueKey('tl-zoom-fit'),
-                          small: true,
-                          frameless: true,
-                          onPressed: () => onZoom(1),
-                          child: Text('Fit', style: t.small),
-                        ),
+                        const SizedBox(width: 4),
+                        lumitIcon(LumitIcon.magnifier,
+                            size: iconSize + 3, color: t.textMuted),
                         const SizedBox(width: 6),
                         LumitTooltip(
                           message: magnet

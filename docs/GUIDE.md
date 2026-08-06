@@ -3310,6 +3310,53 @@ bridge (K-222, K-237), paint strokes stored as the *drag* rather than the pixels
 and re-stamped at render resolution (K-227), the razor (K-221), pan behind
 (K-220), the type tool (K-225) and camera tools (K-229).
 
+### Zooming that flies, and a slider that means something
+
+**The zoom moves rather than jumping.** Magnification is a *place* changing, not
+a number being nudged: jump straight from one zoom to another and you lose where
+you were. The Viewer has moved smoothly for a while; the Timeline used to cut.
+It now uses the same piece of code.
+
+Three details in that motion, each there for a reason:
+
+- It moves **geometrically**. Going from 1× to 16×, halfway through is 4×, not
+  8.5×. Zoom is a ratio, so equal time should buy equal ratio — interpolate it
+  the other way and the start lurches and the end crawls.
+- **Rolling Ctrl+wheel faster zooms further.** A notch counts for more the
+  sooner it follows the last one, up to four times. There is a ceiling on
+  purpose: without one a quick flick crosses the entire zoom range and you
+  cannot find your way back.
+- **The frame under your pointer stays under your pointer** for the whole
+  flight, not just at the ends. The lanes are growing the entire time, so the
+  scroll position has to be corrected on every single frame of the animation —
+  hold it still and whatever you were aiming at slides away from the cursor.
+
+**The bottom bar's zoom is a slider**, between a small magnifying glass and a
+large one. Its two ends are promises: all the way left is the whole
+composition, and all the way right is **twenty frames** across the lanes.
+
+Twenty *frames*, not a percentage, and that is the point. "6400%" tells you
+nothing unless you also know how long the comp is; "twenty frames" means the
+same thing on a five-second clip and a ten-minute one. So the right-hand end
+moves with the composition rather than being a fixed number.
+
+The slider also runs on the logarithm of the zoom, for the same reason the
+motion does. A plain linear slider on a ten-minute comp would spend nine tenths
+of its length inside the last handful of frames, and every zoom you actually
+wanted would be crushed into the first centimetre.
+
+The two ways of zooming hold different things still, deliberately. The slider
+has no pointer to work from, so it keeps the **middle of what you can see**
+where it is. Ctrl and the wheel keeps the **frame under the cursor** where it
+is, because there the cursor is the whole gesture.
+
+A plain wheel still scrolls, as it always did — it never zooms without a
+modifier, which is a rule the specification is firm about and this did not
+change.
+
+The graph editor and the Project panel's thumbnails still cut rather than fly.
+They are the same job, and the shared piece is written.
+
 ### What is remembered, and where
 
 - **The workspace** — panel arrangement, colour scheme, interface scale, tooltips,

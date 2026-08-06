@@ -1009,6 +1009,18 @@ edit point near a beat marker lands exactly on it.
 
 - Plain wheel scrolls vertically. `Shift+wheel` scrolls horizontally. `Ctrl+wheel` zooms
   time about the pointer. The wheel MUST never zoom without a modifier (no scroll hijack).
+- **Zoom flies rather than cutting** (K-286): magnification is a place changing, not a value
+  being nudged, so it animates — geometrically, because zoom is a ratio and equal time should
+  buy equal ratio. Notches arriving quickly are worth more, so a rolled wheel covers ground
+  while a clicked one stays precise; when the hand stops, the flight finishes and settles
+  rather than stopping where the last notch fell. The frame under the pointer is held there
+  for the whole flight, not merely at its ends.
+- **The bottom bar's zoom is a slider** between a small magnifying glass and a large one
+  (K-286). Its left end is the whole composition; its right end shows **20 frames** across the
+  lanes, whatever the composition's length — a count of frames rather than a magnification,
+  because that is what the number means to a person. It runs on the logarithm of the zoom, so
+  equal travel buys equal ratio. A slider zoom has no pointer to zoom about, so it holds the
+  **middle of the visible lanes** still; `Ctrl+wheel` holds the frame under the pointer.
 - **A trackpad's two-finger scroll MUST scroll the panel** (K-278). It arrives as a pan
   *gesture* rather than as the wheel's signal, so the panel — which otherwise gives drags to
   the keyframe marquee — MUST admit exactly the trackpad as a drag-scroll device, and every

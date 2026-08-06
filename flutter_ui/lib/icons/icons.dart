@@ -66,6 +66,7 @@ import 'package:iconoir_flutter/regular/type.dart' as ic;
 import 'package:iconoir_flutter/regular/video_camera.dart' as ic;
 import 'package:iconoir_flutter/regular/view_columns_3.dart' as ic;
 import 'package:iconoir_flutter/regular/wind.dart' as ic;
+import 'package:iconoir_flutter/regular/search.dart' as ic;
 import 'package:iconoir_flutter/regular/zoom_in.dart' as ic;
 import 'package:iconoir_flutter/solid/keyframe.dart' as ics;
 
@@ -138,6 +139,11 @@ enum LumitIcon {
   /// Effects puts on a null. Drawn, not looked up (Iconoir has no crosshair),
   /// and deliberately unlike [rectangle] and [solid], which are plain squares.
   nullLayer,
+
+  /// A plain magnifying glass, drawn small at one end of the Timeline's zoom
+  /// slider and large at the other — the same glyph at two sizes, which is what
+  /// says "less of this / more of this" without needing a word.
+  magnifier,
 
   // --- The toolbar's tools (K-216, docs/07 §1.7). ---
   zoomIn,
@@ -310,6 +316,7 @@ Widget _glyph(LumitIcon icon, Color color) => switch (icon) {
       // editor would name — a razor, a puppet pin — the nearest honest glyph
       // from the same family is used rather than a second family being brought
       // in for one icon (15-DESIGN §5: one set, no exceptions).
+      LumitIcon.magnifier => ic.Search(color: color),
       LumitIcon.zoomIn => ic.ZoomIn(color: color),
       LumitIcon.rotate => ic.RotateCameraRight(color: color),
       LumitIcon.razor => ic.Scissor(color: color),
