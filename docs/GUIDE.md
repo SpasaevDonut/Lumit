@@ -3369,6 +3369,18 @@ starting a new 120-millisecond journey before the last one arrived. It feels
 like the panel is stuck to treacle. Dragged, the zoom simply is where the finger
 put it.
 
+**The scrollbar stops twitching, and the reason is where the correction
+happens.** Keeping something still while the lanes grow means moving the scroll
+position to match the new width. Do that the instant the zoom changes and you
+have moved it to a place that only makes sense for a width the panel has not
+laid out yet — so for the rest of that frame the view is scrolled past its own
+end, Flutter starts pulling it back, and the little thumb in the bottom bar is
+drawn from two numbers that do not agree. That is the jitter. Flutter tells a
+scroll how big its content is *during* layout, and offers a way to say "I have
+moved the offset, lay out again" — so the correction now happens there, where
+the width and the offset are known at the same time, and nothing outside that
+moment ever sees a mismatch.
+
 **And a zoom only rebuilds the lanes.** This is the other half of the same
 problem. The Timeline is two halves of one table: the layer names on the left,
 the bars on the right. Nothing on the left depends on the zoom — but the panel

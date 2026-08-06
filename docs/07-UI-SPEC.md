@@ -1025,6 +1025,11 @@ edit point near a beat marker lands exactly on it.
   (K-293). The slider has no pointer to zoom about, and the playhead is where the work is —
   the same thing After Effects zooms its timeline about. A playhead in view keeps the screen
   position it has; a playhead out of view is brought to the middle of the lanes.
+- **The scroll correction that holds the anchor MUST happen inside layout** (K-293): the
+  offset that keeps a frame still is only valid for the width the zoom has just produced, so
+  moving it before that width is laid out leaves the view scrolled past its own end for a
+  frame — which springs back, and draws the scrollbar's thumb from a position and a length
+  that disagree.
 - **A dragged zoom control MUST NOT animate** (K-293). The flight fills the gap between zooms
   that arrive in steps — a wheel notch, a tap on the track. A drag is already continuous, so
   it applies at once, and the handle is drawn from the zoom being asked for rather than from

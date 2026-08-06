@@ -59,6 +59,7 @@ import 'effect_param_row_frb.dart';
 import 'keyframe_controls_frb.dart';
 import 'layer_fold_frb.dart';
 import '../widgets/smooth_zoom.dart';
+import '../widgets/zoom_anchored_scroll.dart';
 import 'timeline_timings.dart';
 import 'transform_rows_frb.dart';
 
@@ -966,7 +967,14 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
   final ScrollController _vLane = ScrollController();
 
   /// The lanes' horizontal scroll, once zoomed past fit.
-  final ScrollController _hLane = ScrollController();
+  ///
+  /// Anchored (K-293): a zoom hands it the frame to hold and where to hold it,
+  /// and it makes the offset agree with the new width **during layout**, which
+  /// is the only moment the two are known together. Jumping it from outside
+  /// layout put the offset past the end of content that had not been laid out
+  /// yet, and the spring back — with the scrollbar drawn from a position and a
+  /// length that disagreed — is the twitching thumb a zoom drag showed.
+  final ZoomAnchoredScrollController _hLane = ZoomAnchoredScrollController();
 
   /// Time zoom: 1 is fit-to-panel, and it **flies** rather than cutting
   /// (docs/07 §4.6). The Viewer's magnification has flown since K-218; this is
@@ -1511,25 +1519,26 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     });
   }
 
-  /// Hold the anchor still as the flight widens the lanes.
+  /// Hand the anchor to the scroll, for the layout that follows this tick.
   ///
-  /// Jumped in the same turn as the rebuild, not from a post-frame callback:
-  /// deferring it painted one whole frame at the new width with the old offset,
-  /// which is the sideways slide a zoom visibly made before it settled.
-  /// `jumpTo` does not clamp — the viewport clamps at layout — so the only
-  /// bound needed here is the lower one.
+  /// Every tick, because the lanes are growing the whole way through the flight
+  /// — hold the offset still instead and the anchor slides out from under the
+  /// cursor. The scroll applies it while it is being laid out, so the offset and
+  /// the width it belongs to are never out of step (see
+  /// `widgets/zoom_anchored_scroll.dart`); this used to jump the controller from
+  /// here, which is what made the scrollbar's thumb twitch through a zoom.
   ///
   /// **No `setState`.** The lane side listens to [_zoomMotion] itself, so a
   /// tick rebuilds the lanes and nothing else; calling `setState` here rebuilt
   /// the outline's every row, and the bridge reads that come with it, once per
   /// animation frame (K-293).
   void _onZoomTick() {
-    if (!_hLane.hasClients) return;
-    final perFrame = _perFrameNow;
-    if (perFrame <= 0) return;
-    _hLane.jumpTo(
-      max(0.0, _zoomAnchorFrame * perFrame - _zoomAnchorViewportX),
-    );
+    if (_laneFrames <= 0) return;
+    _hLane.hold(ZoomAnchor(
+      frame: _zoomAnchorFrame,
+      viewportX: _zoomAnchorViewportX,
+      frames: _laneFrames,
+    ));
   }
 
   /// Which layer index a Project-panel drop landed on. The stack starts below

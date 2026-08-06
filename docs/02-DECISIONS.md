@@ -5931,6 +5931,20 @@ note saying it never polls (it now holds one read until a frame arrives), the me
 resubscribed, and the row-divider painter compared its blanks by identity against a list
 rebuilt each time, so it always repainted.
 
+**The scroll correction belongs inside layout.** Holding the anchor meant moving the scroll
+offset the moment the zoom changed — and that offset is only valid for the *new* lane width,
+which has not been laid out yet. For the rest of that frame the position sat past its own end,
+so Flutter began springing it back, and the bottom bar's thumb was drawn from a position and a
+length that disagreed: a thumb that twitched all the way through a drag (owner, 2026-08-06,
+"jumps around a bit"). A scroll position is told its new content size during layout, in
+`applyContentDimensions`, which is the one moment the width and the offset are known together —
+and that method is *documented* to return false when it has moved the offset, so layout runs
+again with the corrected one. `widgets/zoom_anchored_scroll.dart` is a `ScrollController` that
+does exactly that, and the anchor it holds is **one-shot**: an anchor that outlived its zoom
+would be applied by the next unrelated layout — a window resize — and drag the view back to a
+zoom the reader had since scrolled away from. A zoom still in flight simply asks again on its
+next tick, which it does anyway, because every tick is a new width.
+
 **The slider's ends are landscapes, drawn rather than looked up.** A small one and a large one,
 the pair After Effects flanks its own zoom slider with, replacing two sizes of magnifying
 glass. Two reasons, both mattering: at the sizes that make the pair read as "less / more" the
