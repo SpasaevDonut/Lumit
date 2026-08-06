@@ -271,9 +271,9 @@ colour individually; only the two Timeline tokens default from the mode.
 - **Snapping covers the lane key drag only** (K-292). A key now lands on edit
     points, in/out points, other keyframes, markers (beat markers among them),
     the playhead and the work-area edges, with `Ctrl`-hold to suspend and the
-    caught target drawn. The other gestures still land where the pointer puts
-    them: the layer **bar** drag, the razor, the work-area handles and marker
-    drags. The arithmetic is shared and pure (`panels/timeline_snap.dart`), so
+    caught target drawn; the **razor** snaps the same way and its line now
+    stands where the cut lands. The other gestures still land where the pointer
+    puts them: the layer **bar** drag, the work-area handles and marker drags. The arithmetic is shared and pure (`panels/timeline_snap.dart`), so
     each is wiring rather than design.
 - **Volume keyframes draw no lane diamonds and no graph curve** - volume is not
     in the comp read model; fold it into `BridgeLayerInfo` if either matters.

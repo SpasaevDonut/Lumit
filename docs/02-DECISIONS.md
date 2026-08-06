@@ -6251,8 +6251,15 @@ gesture, not for a session; the magnet in the bottom bar remains the session-len
 beat-sync covenant's daily face — arrives by being marker snapping rather than by being a
 separate kind with a separate list.
 
-**Only the lane key drag is wired.** The layer bar drag, the razor, the work-area handles and
-marker drags still land where the pointer puts them. That is a deliberate stopping point rather
+**The razor reads the same function, and that fixed a disagreement nobody had written down**
+(owner, 2026-08-06). A cut was always quantised — `TimelineAxis.frameAt` rounds — but the line
+drawn under the blade followed the pointer continuously, so the mark stood up to half a frame
+from where the edge actually bit. One function now answers for both, so they cannot part. A cut
+is a clip boundary and therefore a whole frame, so the razor rounds *after* snapping: a target
+that sits between frames still takes the cut, and the cut still lands on a frame.
+
+**The layer bar drag, the work-area handles and marker drags still land where the pointer puts
+them.** That is a deliberate stopping point rather
 than an oversight: the arithmetic is pure and shared (`panels/timeline_snap.dart`, tested on
 its own), so each remaining gesture is a wiring job with no design left in it, and doing them
 one at a time keeps each one's regression test honest. TODO carries the list.

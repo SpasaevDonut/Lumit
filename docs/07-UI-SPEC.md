@@ -1030,9 +1030,16 @@ The snapped-to target is indicated at the moment of capture — a line at what c
 **`Ctrl` held suspends snapping** for as long as it is held, which is the way out when the
 wanted place is exactly where a snap will not allow.
 
-Still to build: snapping for the gestures other than a lane key drag — the layer **bar**
-drag, the razor, the work-area handles and marker drags all still land where the pointer
-puts them. The arithmetic is shared and pure (`panels/timeline_snap.dart`), so each is a
+**The razor snaps too, and its line says where the edge bites** (owner, 2026-08-06). A cut
+was always quantised — it lands on a whole frame — while the blade's line followed the pointer
+continuously, so the two disagreed by up to half a frame. Both now read one function: the line
+stands exactly where the cut will land, and with the magnet on the cut takes the nearest target
+in reach before falling back to the nearest frame. A cut is a clip boundary, so it lands on a
+whole frame even when what caught it sits between two.
+
+Still to build: snapping for the gestures other than a lane key drag and the razor — the layer
+**bar** drag, the work-area handles and marker drags all still land where the pointer puts
+them. The arithmetic is shared and pure (`panels/timeline_snap.dart`), so each is a
 wiring job rather than a design one.
 
 ### 4.6 Navigation, zoom, and scroll

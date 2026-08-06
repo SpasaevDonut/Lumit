@@ -5505,12 +5505,31 @@ class _LayerArea extends StatelessWidget {
         work.whole ? null : (axis.xOf(work.start), axis.xOf(work.end));
     // Gathered once for the whole area, not once per lane (docs/07 §4.5).
     final snap = _snapTargets();
+    // Where a razor cut lands, as a frame — the *one* answer the blade's line
+    // and the cut itself both read, so the mark cannot stand anywhere but
+    // where the edge bites. The cut was always quantised (`frameAt` rounds);
+    // it is the line that used to follow the pointer between frames.
+    double razorFrameAt(double x) => snapFrame(
+          frame: axis.perFrame <= 0 ? 0 : x / axis.perFrame,
+          targets: snap,
+          perFrame: axis.perFrame,
+          magnet: magnet &&
+              !snapSuspended(
+                  controlPressed: HardwareKeyboard.instance.isControlPressed),
+        )
+            // A cut is a clip boundary, and a clip boundary is a whole frame —
+            // so even a snap onto a target that sits between frames (a keyframe
+            // may) lands on one. Rounding here rather than at the cut is what
+            // keeps the drawn line and the edge exactly the same place.
+            .frame
+            .roundToDouble();
     // The blade pointer and the line that says where the cut lands (K-220).
     // Round the whole area rather than inside a bar: the line spans every row,
     // and a pointer clipped to one bar would vanish at its edges. Inert — and
     // free — while the razor is not armed.
     return RazorOverlay(
       active: razor,
+      snapX: (x) => axis.xOf(razorFrameAt(x)),
       mark: t.textPrimary,
       outline: t.surface0,
       child: Stack(
@@ -5680,6 +5699,7 @@ class _LayerArea extends StatelessWidget {
                                                   playhead.value,
                                               onRazor: (frame) =>
                                                   onRazor(layers[i], frame),
+                                              razorFrameAt: razorFrameAt,
                                               onSelect: () =>
                                                   onSelect(layers[i].layer),
                                               onOpenSequence: layers[i]
@@ -5718,6 +5738,7 @@ class _LayerArea extends StatelessWidget {
                                                 razor: razor,
                                                 onRazor: (frame) =>
                                                     onRazor(layers[i], frame),
+                                                razorFrameAt: razorFrameAt,
                                                 onSelect: () =>
                                                     onSelect(layers[i].layer),
                                                 onClose: () => onOpenSequence
@@ -6436,6 +6457,10 @@ class _Bar extends StatefulWidget {
   /// nothing about.
   final void Function(int frame) onRazor;
 
+  /// Where a cut at screen x lands, in comp frames — the same function the
+  /// blade's line is drawn with, so the two cannot disagree (docs/07 §4.5).
+  final double Function(double x) razorFrameAt;
+
   /// Clicking (or grabbing) the bar selects its layer.
   final VoidCallback onSelect;
 
@@ -6466,6 +6491,7 @@ class _Bar extends StatefulWidget {
     required this.selected,
     required this.playheadFrame,
     required this.onRazor,
+    required this.razorFrameAt,
     required this.onSelect,
     this.onOpenSequence,
     required this.onChanged,
@@ -6619,7 +6645,9 @@ class _BarState extends State<_Bar> {
                 // nothing on screen — the cut simply does not happen.
                 onTapUp: widget.razor && !held
                     ? (details) => widget.onRazor(
-                          widget.axis.frameAt(left + details.localPosition.dx),
+                          widget
+                              .razorFrameAt(left + details.localPosition.dx)
+                              .round(),
                         )
                     : null,
                 // Selection already happened on the down; the tap has nothing

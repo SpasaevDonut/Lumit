@@ -155,4 +155,50 @@ void main() {
       expect(snapSuspended(controlPressed: false), isFalse);
     });
   });
+
+  /// **A cut lands on a frame, and the line says where** (owner, 2026-08-06).
+  ///
+  /// The cut was always quantised — `TimelineAxis.frameAt` rounds — while the
+  /// blade's line followed the pointer continuously, so the two disagreed by up
+  /// to half a frame and the mark stood where the edge did not bite. Both now
+  /// read one function; these are the cases that function has to get right.
+  group('Where a razor cut lands', () {
+    const perFrame = 10.0;
+
+    /// The razor's rule, as the panel applies it: snap, then round, because a
+    /// clip boundary is a whole frame whatever caught it.
+    double razorFrame(double x, List<SnapTarget> targets, {bool magnet = true}) =>
+        snapFrame(
+          frame: x / perFrame,
+          targets: targets,
+          perFrame: perFrame,
+          magnet: magnet,
+        ).frame.roundToDouble();
+
+    test('with nothing near, a cut lands on the nearest frame', () {
+      expect(razorFrame(124, const []), 12);
+      expect(razorFrame(126, const []), 13);
+    });
+
+    test('the magnet off still lands on a frame, because a clip boundary is '
+        'one', () {
+      expect(razorFrame(126, const [], magnet: false), 13);
+    });
+
+    test('a marker in reach takes the cut, and it is still a whole frame', () {
+      // The marker sits between frames; the cut may not.
+      expect(
+        razorFrame(124, const [SnapTarget(12.4, SnapKind.marker)]),
+        12,
+      );
+      expect(
+        razorFrame(126, const [SnapTarget(12.6, SnapKind.marker)]),
+        13,
+      );
+    });
+
+    test('an edit point in reach takes it exactly', () {
+      expect(razorFrame(124, const [SnapTarget(13, SnapKind.editPoint)]), 13);
+    });
+  });
 }
