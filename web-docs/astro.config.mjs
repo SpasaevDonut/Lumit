@@ -2,7 +2,7 @@
 import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
 
-// docs.lumitlab.com — its own Cloudflare Pages project so the subdomain is a real
+// docs.lumitlab.com - its own Cloudflare Pages project so the subdomain is a real
 // deployment target rather than a redirect. Shares the marketing site's palette.
 export default defineConfig({
   site: "https://docs.lumitlab.com",
@@ -27,7 +27,7 @@ export default defineConfig({
         baseUrl: "https://github.com/luminalmvm/Lumit/edit/main/web-docs/",
       },
       // Using the application comes first and stays first. The engine section is
-      // background reading — nobody needs it to edit, so it sits below.
+      // background reading - nobody needs it to edit, so it sits below.
       sidebar: [
         { label: "Start here", autogenerate: { directory: "start" } },
         { label: "Using Lumit", autogenerate: { directory: "use" } },

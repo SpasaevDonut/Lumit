@@ -8,14 +8,14 @@ sidebar:
 ## The problem with decimals
 
 At 29.97 frames per second, one frame is 1001/30000 of a second. As a decimal that is
-0.033366666… — it does not terminate.
+0.033366666… - it does not terminate.
 
 Store times as decimals and small errors accumulate. After an hour a frame lands a
 frame early or late. Editors know this as drift.
 
 ## What Lumit does
 
-Lumit stores time as an **exact fraction** — a whole-number numerator over a
+Lumit stores time as an **exact fraction** - a whole-number numerator over a
 whole-number denominator. 1001/30000 is stored as exactly that, not as an
 approximation.
 

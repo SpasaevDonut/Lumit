@@ -32,7 +32,7 @@ documentation. A change that breaks a budget fails the build.
 ## Determinism
 
 The same project renders the same pixels. This is a hard requirement, not an
-aspiration — it is what makes the cache safe to trust and bugs possible to reproduce.
+aspiration - it is what makes the cache safe to trust and bugs possible to reproduce.
 
 ## Related
 

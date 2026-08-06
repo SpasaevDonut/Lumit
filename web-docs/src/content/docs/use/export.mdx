@@ -24,7 +24,7 @@ comp or set a custom in and out.
 
 ## The export queue
 
-Exports run through a queue. Queue several items and let them run — each item keeps
+Exports run through a queue. Queue several items and let them run - each item keeps
 its own range, preset, output folder, and filename. An item snapshots the composition
 when it is queued, so edits you make afterwards do not change what it writes.
 
@@ -43,8 +43,8 @@ Export runs away from the interface. You can keep editing while the queue writes
 
 ## Codecs and encoders
 
-Video exports as **H.264** or **HEVC**. Lumit probes for a hardware encoder — NVENC,
-AMF, or QSV — and picks one automatically, with a software fallback that is always
+Video exports as **H.264** or **HEVC**. Lumit probes for a hardware encoder - NVENC,
+AMF, or QSV - and picks one automatically, with a software fallback that is always
 available. Audio is AAC. A PNG sequence carries no audio and no bitrate; it is
 lossless.
 
@@ -53,7 +53,7 @@ lossless.
 [Adaptive degradation](/use/preview/) and preview resolution affect preview only. An
 export always renders at full quality.
 
-Export may **bake** internally — flattening retimes, rasterising, pre-compositing — to
+Export may **bake** internally - flattening retimes, rasterising, pre-compositing - to
 go faster. Baking happens inside the export pipeline and never alters your project.
 
 :::note[Not built yet]

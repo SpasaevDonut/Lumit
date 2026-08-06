@@ -1,5 +1,5 @@
 {
-  // docs.lumitlab.com — the Starlight build, served the same way.
+  // docs.lumitlab.com - the Starlight build, served the same way.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "lumit-docs",
   "compatibility_date": "2026-08-04",

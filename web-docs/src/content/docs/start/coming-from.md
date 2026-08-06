@@ -19,8 +19,8 @@ brings Vegas-style cutting. Most of what you know carries over; only some names 
 | Time stretch | **Stretch** |
 | Null object | **Null layer** |
 
-Keyframes use the same maths as After Effects — hold, linear, and bezier with speed and
-influence — so your easing habits transfer directly. An After Effects keymap preset
+Keyframes use the same maths as After Effects - hold, linear, and bezier with speed and
+influence - so your easing habits transfer directly. An After Effects keymap preset
 ships in Settings for muscle-memory cases where the defaults deviate.
 
 Importing an After Effects project is on the roadmap; it is not built yet.

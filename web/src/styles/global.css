@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 /* Tokens mirror the app's dark ramp (docs/15-DESIGN.md). The mark's own gradient
-   is the only saturated colour on the site — everything else is the neutral ramp. */
+   is the only saturated colour on the site - everything else is the neutral ramp. */
 @theme {
   --color-ink:      #0a0b0d;
   --color-ink-2:    #0e1013;

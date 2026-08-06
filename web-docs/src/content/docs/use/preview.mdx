@@ -34,14 +34,14 @@ This is real downsampling, and it applies per composition. It never affects expo
 
 ## The progress bar
 
-When a frame you are waiting on — a scrub, a playhead move, a value drag — takes
+When a frame you are waiting on - a scrub, a playhead move, a value drag - takes
 longer than a moment, a thin bar appears and fills as the frame passes through
 decoding, building, and compositing. Ordinary frames stay silent, and playback never
 shows it: the bar exists to separate a slow frame from a stuck one.
 
 ## Adaptive degradation
 
-Under load, Lumit reduces quality on its own to keep responding — it may drop
+Under load, Lumit reduces quality on its own to keep responding - it may drop
 resolution or skip effects while you interact.
 
 This only happens during interaction. It can never affect an export.

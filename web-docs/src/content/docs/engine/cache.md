@@ -12,7 +12,7 @@ Rendering a frame is expensive. Lumit stores what it computes and reuses it.
 A cache entry is named by a hash of everything that produced it, never by its position
 on the timeline.
 
-Move a layer in time and its frames stay valid — the content did not change, only where
+Move a layer in time and its frames stay valid - the content did not change, only where
 it sits. A cache keyed by timeline position would throw all that away.
 
 ## Three tiers

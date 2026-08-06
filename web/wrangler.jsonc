@@ -1,5 +1,5 @@
 {
-  // lumitlab.com — a static Worker: no server code, just the built site served
+  // lumitlab.com - a static Worker: no server code, just the built site served
   // from Cloudflare's edge. `npm run build` writes ./dist, this uploads it.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "lumit",

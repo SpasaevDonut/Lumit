@@ -7,17 +7,17 @@ import Wordmark from "../components/Wordmark.astro";
 const features = [
   {
     h: "Playback is the product",
-    p: "A GPU-first pipeline with content-hash caching and adaptive degradation. The interface never renders a frame itself, so the app stays responsive whatever the project is doing — including mid-export.",
+    p: "Rendering runs on the GPU. Lumit reuses cached work and lowers preview quality when it needs to, so the interface stays responsive - even during export.",
     clip: "/clips/playback.webm",
   },
   {
     h: "One retime, two choices",
-    p: "Retime is a single system with two views: a value graph for those who think in After Effects' time remapping, and a speed graph and sequence layers for those who prefer the feeling of velocity. Same data, edit in whichever feels like home, and convert at any time.",
+    p: "Retime has two views of the same data. Use the value graph if you work like After Effects, or the speed graph and Sequence layers if you cut like Vegas. Switch whenever you need.",
     clip: "/clips/retime.webm",
   },
   {
     h: "Cut like an NLE, inside a comp",
-    p: "Sequence layers hold a run of clips cut back-to-back on one row — cutting and per-clip retiming, living inside the compositions layer stack. Editing ramps never move a cut.",
+    p: "Sequence layers hold a run of clips cut back-to-back on one row - cutting and per-clip retiming, living inside the composition's layer stack.",
     clip: "/clips/sequence.webm",
   },
   {
@@ -27,7 +27,7 @@ const features = [
   },
   {
     h: "The effects you actually use",
-    p: "Glow, flow motion blur, camera shake, RGB split, smooth zoom, grades with a LUT loader — the stacked-look staples, built in and GPU-rendered. OFX hosting and After Effects import are on the roadmap.",
+    p: "Glow, flow motion blur, camera shake, RGB split, smooth zoom, grades with a LUT loader - built in and GPU-rendered. OFX hosting and After Effects import are on the roadmap.",
     clip: "/clips/effects.webm",
   },
   {
@@ -36,12 +36,11 @@ const features = [
   },
 ];
 
-// Three numbered stages, each with its own note. The stage after 1.0 gets a
-// dashed rail: past the release, the order is a guess and the site should say so.
+// Three numbered stages. The stage after 1.0 gets a dashed rail: past the
+// release, the order is a guess and the site should say so.
 const roadmap = [
   {
-    label: "In the workshop",
-    note: "Being built now, in roughly this order.",
+    label: "Currently in-progress",
     items: [
       "Optical-flow retiming",
       "Beat detection and snapping",
@@ -56,7 +55,6 @@ const roadmap = [
   },
   {
     label: "Before 1.0",
-    note: "The last of what a first stable release owes you.",
     items: [
       "Preset save and sharing",
       "Per-layer motion blur",
@@ -68,7 +66,6 @@ const roadmap = [
   },
   {
     label: "After 1.0",
-    note: "Wanted, specified, unscheduled. Order decided by what you ask for.",
     dashed: true,
     items: [
       "Expressions",
@@ -108,16 +105,16 @@ const roadmap = [
         <Wordmark class="mb-9 w-[min(340px,68vw)]" />
         <a class="pill" href="/download">
           <span class="h-1.5 w-1.5 rounded-full bg-key-cy"></span>
-          <b class="font-medium text-fg">v0.1.0</b> — public beta
+          <b class="font-medium text-fg">v0.1.0</b> - public beta
         </a>
       </div>
       <h1
         class="mt-6 max-w-[15ch] text-[clamp(38px,6.4vw,72px)] leading-[1.02] tracking-[-0.042em]"
       >
-        Compositing at the speed of playback.
+        Composite at the speed you set.
       </h1>
       <p class="mt-6 max-w-[56ch] text-[clamp(16px,2vw,18.5px)] leading-relaxed">
-        A native compositing and motion-graphics editor, built for editors first.
+        A native compositing and motion-graphics editor, built for editors.
         GPU-first, open source, and responsive in projects with thousands of layers.
       </p>
       <div class="mt-9 flex flex-wrap gap-3">
@@ -142,13 +139,12 @@ const roadmap = [
     <div class="wrap">
       <p class="kicker">Why Lumit exists</p>
       <h2 class="mt-4 text-[clamp(26px,3.6vw,40px)] leading-[1.1]">
-        The editing stack should not fight back.
+        Editing should not be a chore.
       </h2>
       <p class="mt-4 max-w-[620px]">
-        Preview lag, RAM exhaustion, interfaces that stop answering, and a chain of
-        external tools taped on to compensate. Lumit is one application in their place:
-        After Effects-style compositing, Vegas-style cutting and retiming, GPU-first
-        throughout.
+        Preview lag, interfaces that stop responding, and large external plugin suites
+        that slow down your device. Lumit replaces all of this in a single application,
+        with support for OFX plugins should you still require them.
       </p>
 
       <div
@@ -190,8 +186,8 @@ const roadmap = [
       <p class="kicker">Roadmap</p>
       <h2 class="mt-4 text-[clamp(26px,3.6vw,40px)] leading-[1.1]">What we are building.</h2>
       <p class="mt-4 max-w-[620px]">
-        Lumit is in public beta. The three stages below get less certain as they go —
-        the first is work in progress, the last is a list of intentions.
+        Lumit is in public beta. Here are the current in-progress features, and a
+        preview of what's to come.
       </p>
 
       <div class="roadmap mt-14">
@@ -203,7 +199,6 @@ const roadmap = [
               </span>
               <div class="head">
                 <h3 class="kicker">{stage.label}</h3>
-                <p class="mt-2 text-[13.5px] leading-snug text-fg-3">{stage.note}</p>
               </div>
               <ul class="items">
                 {stage.items.map((item) => (
@@ -220,7 +215,9 @@ const roadmap = [
   {/* ---------- close ---------- */}
   <section class="border-t border-line py-16 text-center sm:py-24">
     <div class="wrap">
-      <h2 class="text-[clamp(26px,3.6vw,40px)] leading-[1.1]">Built for flow.</h2>
+      <h2 class="text-[clamp(26px,3.6vw,40px)] leading-[1.1]">
+        Keep editing while Lumit exports.
+      </h2>
       <p class="mx-auto mt-4 max-w-[620px]">
         Free, open source, and yours to keep. Windows and Linux builds are ready now;
         macOS is close behind.
@@ -266,9 +263,6 @@ const roadmap = [
     font-family: var(--font-mono);
     font-size: 11px;
     line-height: 1;
-  }
-  .head p {
-    max-width: 42ch;
   }
   .items {
     display: grid;
@@ -319,7 +313,7 @@ const roadmap = [
     if (os === "macOS") {
       const note = document.querySelector("[data-platnote]");
       if (note)
-        note.textContent = "macOS build is unsigned — see the download page. GPLv3 · free forever";
+        note.textContent = "macOS build is unsigned - see the download page. GPLv3 · free forever";
     }
   }
 

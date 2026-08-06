@@ -5,15 +5,15 @@ sidebar:
   order: 1
 ---
 
-Lumit is free and open source under GPLv3. There is no account and no licence key —
-download the build for your platform from [lumitlab.com/download](https://lumitlab.com/download)
-and run it.
+Free and open source under GPLv3. You do not need an account or licence key. Download the
+build for your platform from [lumitlab.com/download](https://lumitlab.com/download) and run
+it.
 
 ## What you need
 
 Lumit is GPU-first: the whole render pipeline lives on the graphics card and there is no
 software-rendering fallback. You need a GPU that supports **Vulkan**, **Direct3D 12** or
-**Metal** — which in practice means any discrete card or integrated graphics from roughly
+**Metal** - which in practice means any discrete card or integrated graphics from roughly
 2016 onwards.
 
 ## Windows
@@ -42,7 +42,7 @@ until the macOS pass lands.
 :::
 
 Gatekeeper will refuse to open an unnotarised app on a double-click. Right-click the app in
-Finder and choose **Open**, then confirm at the prompt — this only has to be done once.
+Finder and choose **Open**, then confirm at the prompt - this only has to be done once.
 
 ## Building from source
 
@@ -57,5 +57,5 @@ git clone https://github.com/luminalmvm/Lumit.git
 ## Updating
 
 Lumit does not update itself yet. New releases are announced on the
-[GitHub releases page](https://github.com/luminalmvm/Lumit/releases) — install over the top
+[GitHub releases page](https://github.com/luminalmvm/Lumit/releases) - install over the top
 of an existing copy to upgrade.

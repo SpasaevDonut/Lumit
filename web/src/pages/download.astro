@@ -16,7 +16,7 @@ const notes = [
   },
   {
     th: "Windows",
-    td: "Run the installer. It registers .lum and .lumfx so projects open on double-click. SmartScreen will warn on first run — the build is not code-signed yet.",
+    td: "Run the installer. It registers .lum and .lumfx so projects open on double-click. SmartScreen will warn on first run - the build is not code-signed yet.",
   },
   {
     th: "Linux",
@@ -24,7 +24,7 @@ const notes = [
   },
   {
     th: "macOS",
-    td: "Apple silicon only, and not notarised — Gatekeeper will refuse it on first open. Right-click the app and choose Open to get the override prompt. The macOS pass is still in progress, so treat this build as experimental.",
+    td: "macOS is experimental and supports Apple silicon only. The build is not notarised yet, so Gatekeeper blocks the first launch. Right-click the app, choose Open, then approve the prompt.",
   },
   {
     th: "Building it yourself",
@@ -43,8 +43,8 @@ const notes = [
       <h2 class="mt-4 text-[clamp(26px,3.6vw,40px)] leading-[1.1]">Get Lumit.</h2>
       <p class="mt-4 max-w-[620px]">
         Free and open source under GPLv3. No account, no licence key. Latest release
-        <span class="font-mono tabular-nums text-fg" data-tag>—</span>, published
-        <span data-date>—</span>.
+        <span class="font-mono tabular-nums text-fg" data-tag>-</span>, published
+        <span data-date>-</span>.
       </p>
 
       <div class="mt-11 grid gap-4.5 lg:grid-cols-3">
@@ -53,7 +53,7 @@ const notes = [
             <div class="card flex flex-col gap-1.5" data-plat={p.key}>
               <h3 class="text-[18px] tracking-[-0.02em]">{p.name}</h3>
               <p class="mb-4 text-[13px] text-fg-3">
-                {p.meta} · <span class="font-mono tabular-nums" data-size={p.key}>—</span>
+                {p.meta} · <span class="font-mono tabular-nums" data-size={p.key}>-</span>
               </p>
               <a
                 class:list={["btn mt-auto", p.soft && "btn-ghost"]}

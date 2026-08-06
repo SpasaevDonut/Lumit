@@ -1,7 +1,7 @@
 # lumitlab.com
 
 Two Astro sites, both static, both deployed from this repository to Cloudflare
-Workers (static assets — the successor to Pages).
+Workers (static assets - the successor to Pages).
 
 | Directory   | Domain                | What it is                          |
 | ----------- | --------------------- | ----------------------------------- |
@@ -21,7 +21,7 @@ The domain is already on Cloudflare, so Pages is the path of least resistance: i
 free, has no bandwidth cap, and serves from Cloudflare's CDN.
 
 Each directory is its own Worker, with a `wrangler.jsonc` declaring `dist` as its
-static asset directory. There is no server code — Cloudflare serves the built files
+static asset directory. There is no server code - Cloudflare serves the built files
 from the edge.
 
 | Setting            | `lumitlab.com`      | `docs.lumitlab.com` |
@@ -32,7 +32,7 @@ from the edge.
 | Deploy command     | `npx wrangler deploy` | `npx wrangler deploy` |
 | Build watch path   | `web/*`             | `web-docs/*`        |
 
-The watch paths are **case-sensitive** — `Web/*` will silently never match and the
+The watch paths are **case-sensitive** - `Web/*` will silently never match and the
 Worker will simply stop building on push. Node is pinned by `.node-version` (22) in
 each directory, because the platform default is older than Astro 5 will build on.
 
@@ -53,7 +53,7 @@ for the newest release and points the three buttons at its assets:
 - `lumit-<version>-linux-x64.tar.gz`
 - `lumit-<version>-macos-arm64.dmg`
 
-So **tagging a release updates the site with no deploy** — `.github/workflows/release.yml`
+So **tagging a release updates the site with no deploy** - `.github/workflows/release.yml`
 builds and publishes on any `v*` tag, and the download page picks it up on next load.
 GitHub serves release assets from its own CDN with no bandwidth limit, which is what
 every comparable project does; there is nothing to scale here.
@@ -62,7 +62,7 @@ If the API call fails or is rate-limited (60 requests/hour per IP, unauthenticat
 every button falls back to the releases page, which is a hard-coded `href` in the
 markup. The page is still fully usable with JavaScript disabled.
 
-> **Note.** The macOS `.dmg` in v0.1.0 was not produced by CI — `release.yml` has no
+> **Note.** The macOS `.dmg` in v0.1.0 was not produced by CI - `release.yml` has no
 > macOS job (deliberately, see the comment at the top of that file). Future tags will
 > not produce one until that job exists or someone runs `packaging/macos/make-dmg.sh`
 > by hand and attaches the result.
