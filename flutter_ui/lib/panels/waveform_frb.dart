@@ -29,6 +29,14 @@
 // the wave you are already reading, not to read three small waves and add them
 // up in your head. The single wave stays available in Settings for anyone who
 // wants the plain picture, and is drawn exactly as it always was.
+//
+// **Where the wave sits** is a second, independent choice ([WaveformStyle]). A
+// waveform is symmetrical about silence, so half of a centred one is a mirror
+// of the other half and says nothing twice. Folding it onto the floor spends
+// the whole row's height on the half that carries the information, which reads
+// far better in a short row and is the shape most NLEs draw. Centred is the
+// default because it is what the eye expects of a *wave*; from the bottom is
+// there for anyone who would rather have the height.
 
 import 'dart:math' as math;
 
@@ -119,6 +127,36 @@ int _roundUpToPowerOfTwo(int n) {
   return p;
 }
 
+/// How a waveform is drawn — the two choices Settings offers, together,
+/// because a painter wants them together and neither means much alone.
+@immutable
+class WaveformStyle {
+  /// Draw the three-band stack rather than one full-range wave.
+  final bool multiwave;
+
+  /// Stand the wave on the floor of its row, rectified, instead of centring it
+  /// about silence. Each column then reaches up by how far the signal swung
+  /// *either* way, so the whole row's height carries signal rather than half
+  /// of it mirroring the other half.
+  final bool fromBottom;
+
+  const WaveformStyle({this.multiwave = true, this.fromBottom = false});
+
+  /// What the peaks are fetched for. Only [multiwave] reaches the engine —
+  /// where the wave sits is a drawing decision, so switching it repaints
+  /// without asking for anything.
+  bool get needsBands => multiwave;
+
+  @override
+  bool operator ==(Object other) =>
+      other is WaveformStyle &&
+      other.multiwave == multiwave &&
+      other.fromBottom == fromBottom;
+
+  @override
+  int get hashCode => Object.hash(multiwave, fromBottom);
+}
+
 /// The waveform of one span of audio, drawn a pixel column at a time.
 ///
 /// The peaks carry their own clock — source seconds for a layer, clip-local
@@ -139,6 +177,9 @@ class WaveformPainter extends CustomPainter {
 
   final WaveformColours colours;
 
+  /// Where the wave sits and whether the bands are stacked.
+  final WaveformStyle style;
+
   /// Vertical breathing room top and bottom, so a full-scale wave does not
   /// touch the row's edges.
   final double inset;
@@ -150,6 +191,7 @@ class WaveformPainter extends CustomPainter {
     required this.left,
     required this.right,
     required this.colours,
+    this.style = const WaveformStyle(),
     this.inset = 1,
   });
 
@@ -174,8 +216,15 @@ class WaveformPainter extends CustomPainter {
     // One lane, whichever this is: the stack is drawn *through* the wave, not
     // beside it.
     final stacked = bands.length > 1;
-    final mid = size.height / 2;
-    final half = math.max(0.5, mid - inset);
+    // Centred about silence, or stood on the floor of the row. Standing on the
+    // floor spends the whole height on one rectified half, so `reach` is twice
+    // what a centred wave's is.
+    final baseline =
+        style.fromBottom ? size.height - inset : size.height / 2;
+    final reach = math.max(
+      0.5,
+      style.fromBottom ? size.height - inset * 2 : size.height / 2 - inset,
+    );
     final buckets = held.buckets;
     final span = held.endSeconds - held.startSeconds;
 
@@ -203,18 +252,29 @@ class WaveformPainter extends CustomPainter {
         final hi = held.values[base + 1].clamp(-1.0, 1.0);
         final rms = held.values[base + 2].clamp(0.0, 1.0);
         if (lo == 0 && hi == 0 && rms == 0) continue;
-        canvas.drawLine(
-          Offset(x + 0.5, mid - hi * half),
-          Offset(x + 0.5, mid - lo * half),
-          body,
-        );
+        if (style.fromBottom) {
+          // Rectified: the column reaches up by how far the signal swung
+          // either way, whichever was further.
+          final amp = math.max(hi.abs(), lo.abs());
+          canvas.drawLine(
+            Offset(x + 0.5, baseline),
+            Offset(x + 0.5, baseline - amp * reach),
+            body,
+          );
+        } else {
+          canvas.drawLine(
+            Offset(x + 0.5, baseline - hi * reach),
+            Offset(x + 0.5, baseline - lo * reach),
+            body,
+          );
+        }
         // The energy inside the envelope: what tells a sustained note from a
         // spike that happens to reach the same height. The stack says that
         // with its own brightness, so only the single wave draws it.
         if (!stacked && rms > 0) {
           canvas.drawLine(
-            Offset(x + 0.5, mid - rms * half),
-            Offset(x + 0.5, mid + rms * half),
+            Offset(x + 0.5, baseline - rms * reach),
+            Offset(x + 0.5, style.fromBottom ? baseline : baseline + rms * reach),
             core,
           );
         }
@@ -230,6 +290,7 @@ class WaveformPainter extends CustomPainter {
       old.left != left ||
       old.right != right ||
       old.colours != colours ||
+      old.style != style ||
       old.inset != inset;
 
   /// A background painter's default is to absorb hits across its whole rect,

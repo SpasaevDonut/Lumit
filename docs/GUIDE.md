@@ -1538,7 +1538,14 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   each other* around the same centre line rather than side by side, getting brighter as the
   pitch goes up: the bass fills a soft wide body, and the hats and other sharp sounds land as
   bright thin spikes over it. The result is one waveform with its insides showing, so you can
-  cut to the kick or to the hat and see which is which. It is on by default; Settings ▸ Interface ▸ Editing has a switch that puts the single
+  cut to the kick or to the hat and see which is which.
+  There is a second switch beside it for **where the wave sits**. Normally it is centred, with
+  the sound drawn going up and down from a middle line — but the two halves are mirror images,
+  so half the row is saying the same thing twice. Turn *Waveforms rise from the bottom* on and
+  the wave is folded onto the floor of its row: every column starts at the bottom and reaches
+  up by however far the sound swung, which uses the whole row's height and is what a lot of
+  editors draw. It applies to the plain wave and the frequency stack alike, and it is only a
+  matter of drawing — nothing is re-read from the file when you flip it. It is on by default; Settings ▸ Interface ▸ Editing has a switch that puts the single
   plain wave back. (The idea is BLICK's, an editor that does the same thing.)
 - **`L` opens a layer's sound (K-281)** — press `L` with layers selected and their **Audio**
   group opens; press it again and the waveform lane opens under it; a third time shuts the

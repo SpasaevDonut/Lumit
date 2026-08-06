@@ -5978,3 +5978,19 @@ this came from actually looks like. The band colours become a brightness ramp ra
 three hues for the same reason — hue-coded, they read as three unrelated waveforms — and band
 strokes are opaque, since three softened envelopes over one another blend into a wash and lose
 the ranking. The **single wave is untouched**: same softened envelope, same solid RMS core.
+
+**K-285 · DECIDED · Where a waveform sits is its own setting: centred, or standing on the
+floor.** A waveform is symmetrical about silence, so a centred one spends half its row
+drawing a mirror of the other half. In the Timeline's 22 px lane that is eleven pixels of
+information and eleven pixels of restating it. Settings ▸ Interface ▸ Editing ▸ *Waveforms
+rise from the bottom* folds it onto the baseline instead: each column reaches up by how far
+the signal swung either way, whichever was further, over the whole row's height.
+
+Kept as a **second, independent** switch rather than folded into the multiwave one, because
+the two answer different questions — *what is in the sound* and *how the row is spent* — and
+all four combinations are sensible. It is also purely a drawing decision: the peaks fetched
+are identical either way, so `WaveformStyle.needsBands` is what reaches the engine and
+flipping the baseline repaints without asking for anything.
+
+Centred stays the default. It is what Lumit has always drawn, it is what the eye expects of a
+*wave*, and defaults do not change under people for a preference.

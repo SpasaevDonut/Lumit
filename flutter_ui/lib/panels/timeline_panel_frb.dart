@@ -355,13 +355,15 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   /// is what keeps a rebuild free of bridge calls (K-184).
   BigInt? _boundsRevision;
 
-  /// Whether waveforms draw as the three-band stack — Settings ▸ Interface ▸
-  /// Editing ▸ *Waveforms show the frequency stack* (K-280).
-  bool get _multiwave =>
-      Provider.of<LumitUiState>(context, listen: false)
-          .workspace
-          .interface
-          .multiwaveWaveforms;
+  /// How waveforms draw — Settings ▸ Interface ▸ Editing (K-280, K-285).
+  WaveformStyle get _waveformStyle {
+    final interface =
+        Provider.of<LumitUiState>(context, listen: false).workspace.interface;
+    return WaveformStyle(
+      multiwave: interface.multiwaveWaveforms,
+      fromBottom: interface.waveformsFromBottom,
+    );
+  }
 
   /// Fetch peaks for every layer whose Waveform twirl is open, over the stretch
   /// of audio the lanes are showing right now.
@@ -384,7 +386,9 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     final fps = ui.model.fps;
     final width = _laneViewport * _zoom;
     if (frames <= 0 || fps <= 0 || width <= 0 || _laneViewport <= 0) return;
-    final multiwave = _multiwave;
+    // Only the band split reaches the engine: where the wave sits is a
+    // drawing decision, so toggling it repaints and fetches nothing.
+    final multiwave = _waveformStyle.needsBands;
     // The comp seconds under the lanes' window, from the same mapping the axis
     // draws with.
     final maxOffset = max(0.0, width - _laneViewport);
@@ -2270,7 +2274,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                   ),
                                                   hasAudio: _hasAudio,
                                                   peaks: _peaks,
-                                                  multiwave: _multiwave,
+                                                  waveformStyle:
+                                                      _waveformStyle,
                                                   fps: ui.model.fps,
                                                   fpsNum: fpsNum,
                                                   fpsDen: fpsDen,
@@ -5251,9 +5256,9 @@ class _LayerArea extends StatelessWidget {
   /// Each layer's source peaks, for the waveform lanes.
   final Map<String, BridgeAudioPeaks> peaks;
 
-  /// Whether waveforms draw as the three-band stack (K-280) — the lanes' own
-  /// answer, handed down so an open Sequence view's clips agree with it.
-  final bool multiwave;
+  /// How waveforms draw (K-280, K-285) — the lanes' own answer, handed down so
+  /// an open Sequence view's clips agree with it.
+  final WaveformStyle waveformStyle;
 
   /// The comp's rate, mapping the lane's pixels onto source seconds.
   final double fps;
@@ -5332,7 +5337,7 @@ class _LayerArea extends StatelessWidget {
     this.onClipPreview,
     required this.hasAudio,
     required this.peaks,
-    required this.multiwave,
+    required this.waveformStyle,
     required this.fps,
     required this.axis,
     required this.playhead,
@@ -5607,7 +5612,7 @@ class _LayerArea extends StatelessWidget {
                                                 fpsNum: fpsNum,
                                                 fpsDen: fpsDen,
                                                 hScroll: hScroll,
-                                                multiwave: multiwave,
+                                                style: waveformStyle,
                                                 razor: razor,
                                                 onRazor: (frame) =>
                                                     onRazor(layers[i], frame),
@@ -5749,6 +5754,7 @@ class _LayerArea extends StatelessWidget {
               left: axis.xOf(inFrame),
               right: axis.xOf(outFrame),
               colours: t.waveform,
+              style: waveformStyle,
             ),
           );
         },

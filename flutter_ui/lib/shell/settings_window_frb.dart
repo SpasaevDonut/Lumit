@@ -474,6 +474,24 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             }),
           ),
         ),
+        _row(
+          t,
+          'Waveforms rise from the bottom',
+          'A waveform stands on the floor of its row instead of being centred '
+              'about silence, each column reaching up by how far the sound '
+              'swung either way. Half of a centred wave is a mirror of the '
+              'other half, so this spends the whole row on the half that says '
+              'something — useful in a short row. Applies to the single wave '
+              'and the frequency stack alike.',
+          HouseCheckbox(
+            key: const ValueKey('settings-waveform-from-bottom'),
+            value: settings.waveformsFromBottom,
+            onChanged: (on) => setState(() {
+              settings.waveformsFromBottom = on;
+              ui.workspace.settingsChanged();
+            }),
+          ),
+        ),
       ]),
     ];
   }

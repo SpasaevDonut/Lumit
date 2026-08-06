@@ -1446,8 +1446,11 @@ The v1 sync toolkit (K-050); the Composer workspace is future work specified in
   stretching one fixed summary. Sequence-layer **clips** draw their own waveform inside
   their box, bucketed through the clip's own map so a ramp's transients land where they are
   heard, and carried along when the clip is slid. Waveforms draw as a three-band
-  **multiwave** stack (bass / middle / treble) by default; Settings ▸ Interface ▸ Editing ▸
-  *Waveforms show the frequency stack* turns it off for one plain wave.
+  **multiwave** stack (bass / middle / treble) by default, drawn over one another around one
+  centre line rather than in separate lanes (K-284); Settings ▸ Interface ▸ Editing ▸
+  *Waveforms show the frequency stack* turns it off for one plain wave, and *Waveforms rise
+  from the bottom* stands either of them on the floor of the row rather than centring it
+  (K-285).
   The earlier comp-wide strip under the ruler is gone — it was one mixed-down waveform for
   the whole comp, went stale during a drag, and stopped earning its row once every layer
   could carry its own.

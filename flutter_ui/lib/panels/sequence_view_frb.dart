@@ -88,11 +88,10 @@ class SequenceViewFrb extends StatefulWidget {
   /// with nothing naming them. The graph editor solved this the same way.
   final ScrollController? hScroll;
 
-  /// Whether waveforms draw as the three-band stack (K-280). Passed in rather
-  /// than read here: the Timeline already reads the setting for its own lanes,
-  /// and a clip and a layer disagreeing about it would be two answers to one
-  /// question.
-  final bool multiwave;
+  /// How waveforms draw (K-280, K-285). Passed in rather than read here: the
+  /// Timeline already reads the setting for its own lanes, and a clip and a
+  /// layer disagreeing about it would be two answers to one question.
+  final WaveformStyle style;
 
   /// Whether the razor is armed, and how to cut this layer at a frame — the
   /// open view stands in for the layer's bar, so it carries the bar's razor.
@@ -125,7 +124,7 @@ class SequenceViewFrb extends StatefulWidget {
     required this.fpsNum,
     required this.fpsDen,
     this.hScroll,
-    this.multiwave = true,
+    this.style = const WaveformStyle(),
     this.razor = false,
     this.onRazor,
     this.onSelect,
@@ -231,7 +230,7 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
     // The trim and the map are part of the key: both change which source
     // moments the buckets stand for, and neither moves the clip's box.
     final key = '${request.key}|${clip.startFrame}|${clip.endFrame}'
-        '|${clip.retimed}|${widget.multiwave}';
+        '|${clip.retimed}|${widget.style.needsBands}';
     if (_peakKeys[id] == key) return;
     _peakKeys[id] = key;
     widget.entry.layer
@@ -240,7 +239,7 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
       startSeconds: request.startSeconds,
       endSeconds: request.endSeconds,
       buckets: request.buckets,
-      multiwave: widget.multiwave,
+      multiwave: widget.style.needsBands,
     )
         .then((peaks) {
       if (!mounted || _peakKeys[id] != key) return;
@@ -453,6 +452,7 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
                         left: 0,
                         right: width,
                         colours: t.waveform,
+                        style: widget.style,
                       ),
                     ),
                   ),

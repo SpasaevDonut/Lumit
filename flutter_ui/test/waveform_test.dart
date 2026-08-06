@@ -4,6 +4,7 @@
 // over data the bridge hands over, and both are the parts that decide whether
 // a zoomed-in wave gains detail or turns into a staircase.
 
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
@@ -249,6 +250,99 @@ void main() {
       );
       for (final line in strokes(painter, const Size(32, 16))) {
         expect(line.a.dx, lessThan(16));
+      }
+    });
+
+    /// Standing on the floor (K-285): every column starts at the baseline and
+    /// reaches up, so the whole row's height carries signal instead of half of
+    /// it mirroring the other half.
+    test('from the bottom, every column stands on the baseline', () {
+      final painter = WaveformPainter(
+        peaks: peaks(start: 0, end: 1, bands: 1, values: loud(32)),
+        originSeconds: 0,
+        secondsPerPixel: 1 / 32,
+        left: 0,
+        right: 32,
+        colours: colours,
+        style: const WaveformStyle(multiwave: false, fromBottom: true),
+      );
+      final lines = strokes(painter, const Size(32, 32));
+      expect(lines, isNotEmpty);
+      for (final line in lines) {
+        // The lower end sits on the floor, the upper end reaches up from it.
+        expect(math.max(line.a.dy, line.b.dy), closeTo(31, 0.01));
+        expect(math.min(line.a.dy, line.b.dy), lessThan(31));
+      }
+      // A full-scale wave uses the whole row, not half of it — the point of
+      // folding it onto the floor.
+      final tallest =
+          lines.map((l) => math.min(l.a.dy, l.b.dy)).reduce(math.min);
+      expect(tallest, lessThan(4), reason: 'the whole height is spent');
+    });
+
+    test('from the bottom, a rectified column takes the bigger swing', () {
+      // Quiet upward, loud downward: standing up, the column shows the loud
+      // one, because how far it swung is what a rectified wave says.
+      final painter = WaveformPainter(
+        peaks: peaks(
+          start: 0,
+          end: 1,
+          bands: 1,
+          values: [for (var i = 0; i < 8; i++) ...[-1.0, 0.1, 0.2]],
+        ),
+        originSeconds: 0,
+        secondsPerPixel: 1 / 8,
+        left: 0,
+        right: 8,
+        colours: colours,
+        style: const WaveformStyle(multiwave: false, fromBottom: true),
+      );
+      final body = strokes(painter, const Size(8, 32))
+          .where((l) => l.colour.a < 0.9);
+      expect(body, isNotEmpty);
+      for (final line in body) {
+        expect(math.min(line.a.dy, line.b.dy), lessThan(4),
+            reason: 'the downward swing is what sets the height');
+      }
+    });
+
+    test('the stack stands on the floor too, still ranked by brightness', () {
+      final painter = WaveformPainter(
+        peaks: peaks(
+          start: 0,
+          end: 1,
+          bands: 3,
+          values: [...loud(8), ...loud(8), ...loud(8)],
+        ),
+        originSeconds: 0,
+        secondsPerPixel: 1 / 24,
+        left: 0,
+        right: 24,
+        colours: colours,
+        style: const WaveformStyle(multiwave: true, fromBottom: true),
+      );
+      final lines = strokes(painter, const Size(24, 30));
+      expect(lines, isNotEmpty);
+      for (final line in lines) {
+        expect(math.max(line.a.dy, line.b.dy), closeTo(29, 0.01));
+      }
+      int firstOf(Color c) => lines.indexWhere((l) => sameHue(l.colour, c));
+      expect(firstOf(colours.low), lessThan(firstOf(colours.high)));
+    });
+
+    /// Centred is the default, and unchanged — the wave people already read.
+    test('centred is the default and straddles the middle', () {
+      final painter = WaveformPainter(
+        peaks: peaks(start: 0, end: 1, bands: 1, values: loud(32)),
+        originSeconds: 0,
+        secondsPerPixel: 1 / 32,
+        left: 0,
+        right: 32,
+        colours: colours,
+      );
+      for (final line in strokes(painter, const Size(32, 32))) {
+        expect(line.a.dy, lessThanOrEqualTo(16));
+        expect(line.b.dy, greaterThanOrEqualTo(16));
       }
     });
 

@@ -118,6 +118,14 @@ same decoded ring, so it is warm wherever the cache bar is warm.
   because three lanes in a 22 px row are six pixels each and say nothing. On by default;
   Settings ▸ Interface ▸ Editing ▸ *Waveforms show the frequency stack* returns the single
   wave.
+- **Where the wave sits** is a second, independent choice (K-285). Centred about silence by
+  default; Settings ▸ Interface ▸ Editing ▸ *Waveforms rise from the bottom* stands it on the
+  floor of its row instead, rectified — each column reaching up by how far the signal swung
+  either way, whichever was further. Half of a centred wave is a mirror of the other half, so
+  folding it spends the whole row's height on the half that carries information, which reads
+  better in a short row. It applies to the single wave and the stack alike, and it changes
+  nothing about what is fetched: the peaks are the same either way, so switching it repaints
+  and asks the engine for nothing.
 - Waveforms appear: on Audio layers (always), on Footage layers with audio (expandable
   lane), and **inside Sequence layer clips** — each clip draws the waveform of its own
   source range, so a cut's audio content is visible exactly where the clip sits. Clip
