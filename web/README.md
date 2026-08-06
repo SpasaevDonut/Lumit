@@ -67,6 +67,25 @@ markup. The page is still fully usable with JavaScript disabled.
 > not produce one until that job exists or someone runs `packaging/macos/make-dmg.sh`
 > by hand and attaches the result.
 
+## Release notes
+
+`/releases` is the changelog, in the shape of Astro's Starlog example: a sticky
+version pill on the left, that release's notes beside it, newest first. One
+Markdown file per release under `web/src/content/releases`, named for its version -
+`0.1.0.md` is served at `/releases/0.1.0`, and each release also gets that page of
+its own. The frontmatter is `title`, `description`, `versionNumber` and `date`;
+`_template.md` in that directory is the file to copy, and the leading underscore
+keeps it out of the collection.
+
+The notes are written by hand and there are none yet, so the page shows a short
+line pointing at GitHub releases instead. That empty state is a supported build,
+not a broken one - the only sign of it is Astro warning during `npm run build` that the
+glob matched nothing and that the collection is empty.
+
+This is separate from the download page, which reads the GitHub releases API: the
+API gives the assets, these files give the prose. Nothing here needs a tag to exist,
+so notes can be written before or after the release goes out.
+
 ## Brand
 
 `web/src/components/Wordmark.astro` builds the wordmark out of the app icon on load.
