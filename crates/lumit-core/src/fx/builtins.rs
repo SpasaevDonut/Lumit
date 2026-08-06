@@ -3039,6 +3039,16 @@ pub const BUILTINS: &[EffectSchema] = &[
                 },
             },
             ParamSchema {
+                id: "defocus_var",
+                label: "Bokeh defocus jitter",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(1.0)),
+                },
+            },
+
+            ParamSchema {
                 id: "chromatic",
                 label: "Chromatic dispersion",
                 kind: ParamKind::Float {

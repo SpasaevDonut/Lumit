@@ -6002,6 +6002,7 @@ fn lens_dirt_neutral_points_and_default_resolve() {
         assert_eq!(p.rotation_var, 0.0);
         assert_eq!(p.scratch_scale, 1.0);
         assert_eq!(p.defocus, 0.5);
+        assert_eq!(p.defocus_var, 0.0);
         assert_eq!(p.chromatic, 0.3);
         assert_eq!(p.scratches, 0.4);
         assert_eq!(p.tint, [1.0, 0.95, 0.85, 1.0]);
@@ -6029,6 +6030,7 @@ fn lens_dirt_neutral_points_and_default_resolve() {
         rotation_var: 0.0,
         scratch_scale: 1.0,
         defocus: 0.5,
+        defocus_var: 0.0,
         chromatic: 0.3,
         scratches: 0.4,
         tint: [1.0, 0.95, 0.85, 1.0],
@@ -6061,6 +6063,7 @@ fn lens_dirt_seed_determinism() {
         rotation_var: 0.0,
         scratch_scale: 1.0,
         defocus: 0.5,
+        defocus_var: 0.0,
         chromatic: 0.3,
         scratches: 0.4,
         tint: [1.0, 0.95, 0.85, 1.0],
@@ -6074,6 +6077,7 @@ fn lens_dirt_seed_determinism() {
         seed: 12345,
         mix: 1.0,
     };
+
 
 
 

@@ -2009,12 +2009,18 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
                         let dist_y = dy_raw / rad_y;
                         let norm_d = (dist_x * dist_x + dist_y * dist_y).sqrt();
 
+                        let p_defocus = if p.defocus_var > 0.0 {
+                            (defocus + (super::block_hash01(layer_seed, 8, cx, cy, 0) - 0.5) * p.defocus_var).clamp(0.0, 1.0)
+                        } else {
+                            defocus
+                        };
+
                         if norm_d <= 1.3 {
-                            let base_val = cpu_bokeh_profile(norm_d, defocus) * p_intensity;
+                            let base_val = cpu_bokeh_profile(norm_d, p_defocus) * p_intensity;
                             if chromatic > 0.0 {
                                 let fringe = chromatic * 0.15 * norm_d;
-                                let r_val = cpu_bokeh_profile(norm_d + fringe, defocus) * p_intensity;
-                                let b_val = cpu_bokeh_profile(norm_d - fringe, defocus) * p_intensity;
+                                let r_val = cpu_bokeh_profile(norm_d + fringe, p_defocus) * p_intensity;
+                                let b_val = cpu_bokeh_profile(norm_d - fringe, p_defocus) * p_intensity;
                                 dirt_r += r_val;
                                 dirt_g += base_val;
                                 dirt_b += b_val;
@@ -2024,6 +2030,7 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
                                 dirt_b += base_val;
                             }
                         }
+
                     }
                 }
             }

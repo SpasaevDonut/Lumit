@@ -672,7 +672,9 @@ pub struct LensDirtParams {
     pub rotation_var: f32,
     pub scratch_scale: f32,
     pub defocus: f32,
+    pub defocus_var: f32,
     pub chromatic: f32,
+
     pub scratches: f32,
     pub tint: [f32; 4],
     pub vignette: f32,
@@ -2066,6 +2068,7 @@ fn resolve_one(
             let rotation_var = (e.float_at("rotation_var", lt).unwrap_or(0.0) as f32).clamp(0.0, 1.0);
             let scratch_scale = (e.float_at("scratch_scale", lt).unwrap_or(1.0) as f32).clamp(0.01, 20.0);
             let defocus = (e.float_at("defocus", lt).unwrap_or(0.5) as f32).clamp(0.0, 1.0);
+            let defocus_var = (e.float_at("defocus_var", lt).unwrap_or(0.0) as f32).clamp(0.0, 1.0);
             let chromatic = (e.float_at("chromatic", lt).unwrap_or(0.3) as f32).clamp(0.0, 2.0);
             let scratches = (e.float_at("scratches", lt).unwrap_or(0.4) as f32).clamp(0.0, 1.0);
             let tint = match e.colour_at("tint", lt) {
@@ -2109,6 +2112,7 @@ fn resolve_one(
                 rotation_var,
                 scratch_scale,
                 defocus,
+                defocus_var,
                 chromatic,
                 scratches,
                 tint,
@@ -2123,6 +2127,7 @@ fn resolve_one(
                 mix,
             }))
         }
+
 
 
 

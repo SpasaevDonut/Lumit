@@ -14,6 +14,7 @@ struct Params {
     rotation_var: f32,
     scratch_scale: f32,
     defocus: f32,
+    defocus_var: f32,
     chromatic: f32,
     scratches: f32,
     vignette: f32,
@@ -27,8 +28,8 @@ struct Params {
     _pad0: f32,
     _pad1: f32,
     _pad2: f32,
-    _pad3: f32,
 };
+
 
 
 @group(0) @binding(0) var src: texture_2d<f32>;
@@ -164,12 +165,17 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
                 let dist_y = dy_raw / rad_y;
                 let norm_d = sqrt(dist_x * dist_x + dist_y * dist_y);
 
+                var p_defocus = defocus;
+                if (p.defocus_var > 0.0) {
+                    p_defocus = clamp(defocus + (block_hash01(layer_seed, 8u, cx, cy, 0) - 0.5) * p.defocus_var, 0.0, 1.0);
+                }
+
                 if (norm_d <= 1.3) {
-                    let base_val = bokeh_profile(norm_d, defocus) * p_intensity;
+                    let base_val = bokeh_profile(norm_d, p_defocus) * p_intensity;
                     if (chromatic > 0.0) {
                         let fringe = chromatic * 0.15 * norm_d;
-                        let r_val = bokeh_profile(norm_d + fringe, defocus) * p_intensity;
-                        let b_val = bokeh_profile(norm_d - fringe, defocus) * p_intensity;
+                        let r_val = bokeh_profile(norm_d + fringe, p_defocus) * p_intensity;
+                        let b_val = bokeh_profile(norm_d - fringe, p_defocus) * p_intensity;
                         dirt_r += r_val;
                         dirt_g += base_val;
                         dirt_b += b_val;
@@ -179,6 +185,7 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
                         dirt_b += base_val;
                     }
                 }
+
             }
         }
     }

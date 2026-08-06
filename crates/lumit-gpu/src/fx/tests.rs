@@ -4148,6 +4148,7 @@ fn wgsl_lens_dirt_matches_the_cpu_oracle() {
                 rotation_var: 0.0,
                 scratch_scale: 1.0,
                 defocus: 0.5,
+                defocus_var: 0.0,
                 chromatic: 0.3,
                 scratches: 0.4,
                 tint: [1.0, 0.95, 0.85, 1.0],
@@ -4174,6 +4175,7 @@ fn wgsl_lens_dirt_matches_the_cpu_oracle() {
                 rotation_var: 0.0,
                 scratch_scale: 1.0,
                 defocus: 0.5,
+                defocus_var: 0.0,
                 chromatic: 0.3,
                 scratches: 0.4,
                 tint: [1.0, 0.95, 0.85, 1.0],
@@ -4200,6 +4202,7 @@ fn wgsl_lens_dirt_matches_the_cpu_oracle() {
                 rotation_var: 0.5,
                 scratch_scale: 1.5,
                 defocus: 0.6,
+                defocus_var: 0.3,
                 chromatic: 0.4,
                 scratches: 0.5,
                 tint: [1.0, 0.9, 0.8, 1.0],
@@ -4226,6 +4229,7 @@ fn wgsl_lens_dirt_matches_the_cpu_oracle() {
                 rotation_var: 0.2,
                 scratch_scale: 0.8,
                 defocus: 0.3,
+                defocus_var: 0.1,
                 chromatic: 0.2,
                 scratches: 0.3,
                 tint: [0.9, 0.95, 1.0, 1.0],
@@ -4252,6 +4256,7 @@ fn wgsl_lens_dirt_matches_the_cpu_oracle() {
             rotation_var: op.rotation_var,
             scratch_scale: op.scratch_scale,
             defocus: op.defocus,
+            defocus_var: op.defocus_var,
             chromatic: op.chromatic,
             scratches: op.scratches,
             tint: op.tint,
@@ -4265,6 +4270,7 @@ fn wgsl_lens_dirt_matches_the_cpu_oracle() {
             seed: op.seed,
             mix: op.mix,
         };
+
 
 
 

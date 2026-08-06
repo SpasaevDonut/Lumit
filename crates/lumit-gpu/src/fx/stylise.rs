@@ -512,6 +512,7 @@ impl FxEngine {
                 rotation_var: op.rotation_var,
                 scratch_scale: op.scratch_scale,
                 defocus: op.defocus,
+                defocus_var: op.defocus_var,
                 chromatic: op.chromatic,
                 scratches: op.scratches,
                 vignette: op.vignette,
@@ -525,7 +526,6 @@ impl FxEngine {
                 _pad0: 0.0,
                 _pad1: 0.0,
                 _pad2: 0.0,
-                _pad3: 0.0,
             }),
         );
         out
@@ -544,6 +544,7 @@ pub struct LensDirtOp {
     pub rotation_var: f32,
     pub scratch_scale: f32,
     pub defocus: f32,
+    pub defocus_var: f32,
     pub chromatic: f32,
     pub scratches: f32,
     pub tint: [f32; 4],
@@ -572,6 +573,7 @@ struct LensDirtParams {
     rotation_var: f32,
     scratch_scale: f32,
     defocus: f32,
+    defocus_var: f32,
     chromatic: f32,
     scratches: f32,
     vignette: f32,
@@ -585,8 +587,8 @@ struct LensDirtParams {
     _pad0: f32,
     _pad1: f32,
     _pad2: f32,
-    _pad3: f32,
 }
+
 
 
 
