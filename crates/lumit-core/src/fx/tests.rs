@@ -6044,16 +6044,17 @@ fn lens_dirt_seed_determinism() {
         seed: 12345,
         mix: 1.0,
     };
-    let mut img1 = vec![0.2f32; 32 * 32 * 4];
-    let mut img2 = vec![0.2f32; 32 * 32 * 4];
-    lens_dirt(&mut img1, 32, 32, &p);
-    lens_dirt(&mut img2, 32, 32, &p);
+    let mut img1 = vec![0.2f32; 128 * 128 * 4];
+    let mut img2 = vec![0.2f32; 128 * 128 * 4];
+    lens_dirt(&mut img1, 128, 128, &p);
+    lens_dirt(&mut img2, 128, 128, &p);
     assert_eq!(img1, img2, "two runs with same seed must be bit-identical");
 
     let p_diff = LensDirtParams { seed: 9999, ..p };
-    let mut img3 = vec![0.2f32; 32 * 32 * 4];
-    lens_dirt(&mut img3, 32, 32, &p_diff);
+    let mut img3 = vec![0.2f32; 128 * 128 * 4];
+    lens_dirt(&mut img3, 128, 128, &p_diff);
     assert_ne!(img1, img3, "different seed must yield different pattern");
 }
+
 
 

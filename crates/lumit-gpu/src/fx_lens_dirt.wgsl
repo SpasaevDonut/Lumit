@@ -43,6 +43,24 @@ fn block_hash01(seed: u32, channel: u32, bx: i32, by: i32, tick: i32) -> f32 {
     return f32(h >> 8u) / 16777216.0;
 }
 
+fn bokeh_profile(norm_d: f32, defocus: f32) -> f32 {
+    if (norm_d > 1.0) {
+        return 0.0;
+    }
+    var ring: f32 = 1.0 - norm_d * norm_d;
+    if (defocus > 0.05) {
+        let ring_pos = clamp(1.0 - defocus * 0.45, 0.1, 0.95);
+        if (norm_d >= ring_pos) {
+            let t = (norm_d - ring_pos) / (1.0 - ring_pos);
+            ring = 0.5 + 1.0 * t * t;
+        } else {
+            let t_in = norm_d / ring_pos;
+            ring = 0.5 + 0.5 * t_in * t_in;
+        }
+    }
+    return (1.0 - norm_d * norm_d) * ring;
+}
+
 @compute @workgroup_size(8, 8)
 fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
     let size = vec2<i32>(textureDimensions(src));
@@ -63,7 +81,7 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let seed = p.seed;
     let density_scale = clamp(p.density / 50.0, 0.0, 4.0);
-    let particle_size_base = p.scale * (diag * 0.04);
+    let particle_size_base = p.scale * (diag * 0.035);
     let scratch_amount = p.scratches;
     let defocus = p.defocus;
     let chromatic = p.chromatic;
@@ -78,7 +96,7 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
     let nx = (px / wf - 0.5) * 2.0;
     let ny = (py / hf - 0.5) * 2.0;
 
-    let cell_size = clamp(diag * 0.08 / max(sqrt(p.scale), 0.1), 16.0, 256.0);
+    let cell_size = clamp(particle_size_base * 3.0, 32.0, 1024.0);
 
     var dirt_r: f32 = 0.0;
     var dirt_g: f32 = 0.0;
@@ -107,25 +125,15 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
             let dist_y = py - center_y;
             let dist = sqrt(dist_x * dist_x + dist_y * dist_y);
 
-            if (dist <= radius) {
-                let norm_d = dist / radius;
+            if (dist <= radius * 1.2) {
+                let chrom_shift = 0.12 * chromatic;
+                let norm_g = dist / radius;
+                let norm_r = dist / (radius * max(1.0 - chrom_shift, 0.1));
+                let norm_b = dist / (radius * (1.0 + chrom_shift));
 
-                var ring: f32 = 1.0 - norm_d * norm_d;
-                if (defocus > 0.1) {
-                    let ring_pos = 1.0 - defocus * 0.35;
-                    let edge_t = clamp((norm_d - ring_pos) / (1.0 - ring_pos), 0.0, 1.0);
-                    ring = 0.6 + 0.8 * edge_t * edge_t;
-                }
-
-                let falloff = max(1.0 - norm_d * norm_d, 0.0) * ring * p_intensity;
-
-                let fringe = 0.05 * chromatic * norm_d;
-                let r_norm = clamp(norm_d * (1.0 - fringe), 0.0, 1.0);
-                let b_norm = clamp(norm_d * (1.0 + fringe), 0.0, 1.0);
-
-                let r_fall = clamp(1.0 - r_norm * r_norm, 0.0, 1.0) * falloff;
-                let g_fall = falloff;
-                let b_fall = clamp(1.0 - b_norm * b_norm, 0.0, 1.0) * falloff;
+                let r_fall = bokeh_profile(norm_r, defocus) * p_intensity;
+                let g_fall = bokeh_profile(norm_g, defocus) * p_intensity;
+                let b_fall = bokeh_profile(norm_b, defocus) * p_intensity;
 
                 dirt_r += r_fall;
                 dirt_g += g_fall;
@@ -133,6 +141,7 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
         }
     }
+
 
     if (scratch_amount > 0.0) {
         let scratch_cell_size = 48.0;

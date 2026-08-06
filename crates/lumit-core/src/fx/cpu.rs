@@ -1898,10 +1898,30 @@ pub fn scanlines(
     }
 }
 
+fn cpu_bokeh_profile(norm_d: f32, defocus: f32) -> f32 {
+    if norm_d > 1.0 {
+        return 0.0;
+    }
+    let ring = if defocus > 0.05 {
+        let ring_pos = (1.0 - defocus * 0.45).clamp(0.1, 0.95);
+        if norm_d >= ring_pos {
+            let t = (norm_d - ring_pos) / (1.0 - ring_pos);
+            0.5 + 1.0 * t * t
+        } else {
+            let t_in = norm_d / ring_pos;
+            0.5 + 0.5 * t_in * t_in
+        }
+    } else {
+        1.0 - norm_d * norm_d
+    };
+    (1.0 - norm_d * norm_d) * ring
+}
+
 /// Lens Dirt Overlay Generator (docs/08 §3.28).
 /// Procedurally generates out-of-focus aperture bokeh disks, micro dust specks,
 /// hairline scratches, smudges, and optical vignetting overlay.
 pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
+
     if p.intensity == 0.0 || p.mix == 0.0 {
         return; // Neutral passthrough
     }
@@ -1912,8 +1932,8 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
 
     let seed = p.seed;
     let density_scale = (p.density / 50.0).clamp(0.0, 4.0);
-    let particle_size_base = p.scale * (diag * 0.04);
     let scratch_amount = p.scratches;
+
     let defocus = p.defocus;
     let chromatic = p.chromatic;
     let vignette_strength = p.vignette;
@@ -1926,7 +1946,8 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
         super::block_hash01(seed, ch, bx, by, 0)
     };
 
-    let cell_size = (diag * 0.08 / p.scale.sqrt().max(0.1)).clamp(16.0, 256.0);
+    let particle_size_base = p.scale * (diag * 0.035);
+    let cell_size = (particle_size_base * 3.0).clamp(32.0, 1024.0);
 
     for y in 0..h {
         let py = y as f32 + 0.5;
@@ -1963,26 +1984,17 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
 
                     let dist_x = px - center_x;
                     let dist_y = py - center_y;
-                    let dist_sq = dist_x * dist_x + dist_y * dist_y;
-                    let dist = dist_sq.sqrt();
+                    let dist = (dist_x * dist_x + dist_y * dist_y).sqrt();
 
-                    if dist <= radius {
-                        let norm_d = dist / radius;
+                    if dist <= radius * 1.2 {
+                        let chrom_shift = 0.12 * chromatic;
+                        let norm_g = dist / radius;
+                        let norm_r = dist / (radius * (1.0 - chrom_shift).max(0.1));
+                        let norm_b = dist / (radius * (1.0 + chrom_shift));
 
-                        let ring = if defocus > 0.1 {
-                            let ring_pos = 1.0 - defocus * 0.35;
-                            let edge_t = ((norm_d - ring_pos) / (1.0 - ring_pos)).clamp(0.0, 1.0);
-                            0.6 + 0.8 * edge_t * edge_t
-                        } else {
-                            1.0 - norm_d * norm_d
-                        };
-
-                        let falloff = (1.0 - norm_d * norm_d).max(0.0) * ring * p_intensity;
-
-                        let fringe = 0.05 * chromatic * norm_d;
-                        let r_fall = (1.0 - (norm_d * (1.0 - fringe)).clamp(0.0, 1.0).powi(2)).clamp(0.0, 1.0) * falloff;
-                        let g_fall = falloff;
-                        let b_fall = (1.0 - (norm_d * (1.0 + fringe)).clamp(0.0, 1.0).powi(2)).clamp(0.0, 1.0) * falloff;
+                        let r_fall = cpu_bokeh_profile(norm_r, defocus) * p_intensity;
+                        let g_fall = cpu_bokeh_profile(norm_g, defocus) * p_intensity;
+                        let b_fall = cpu_bokeh_profile(norm_b, defocus) * p_intensity;
 
                         dirt_r += r_fall;
                         dirt_g += g_fall;
@@ -1990,6 +2002,7 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
                     }
                 }
             }
+
 
             // 2. Micro hairline scratches & dust specks
             if scratch_amount > 0.0 {
