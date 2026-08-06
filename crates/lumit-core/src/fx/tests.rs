@@ -5994,7 +5994,8 @@ fn lens_dirt_neutral_points_and_default_resolve() {
     let resolved = resolve_stack(&[plain], 0.0, 1000.0, 1.0, &markers).pop().unwrap();
     if let Resolved::LensDirt(p) = resolved {
         assert_eq!(p.intensity, 1.0);
-        assert_eq!(p.density, 50.0);
+        assert_eq!(p.density, 100.0);
+        assert_eq!(p.bokeh_layers, 3);
         assert_eq!(p.scale, 1.0);
         assert_eq!(p.scale_var_x, 0.0);
         assert_eq!(p.scale_var_y, 0.0);
@@ -6020,7 +6021,8 @@ fn lens_dirt_neutral_points_and_default_resolve() {
     let copy = image.clone();
     let p_zero = LensDirtParams {
         intensity: 0.0,
-        density: 50.0,
+        density: 100.0,
+        bokeh_layers: 3,
         scale: 1.0,
         scale_var_x: 0.0,
         scale_var_y: 0.0,
@@ -6051,7 +6053,8 @@ fn lens_dirt_seed_determinism() {
 
     let p = LensDirtParams {
         intensity: 1.0,
-        density: 50.0,
+        density: 100.0,
+        bokeh_layers: 3,
         scale: 1.0,
         scale_var_x: 0.0,
         scale_var_y: 0.0,
@@ -6071,6 +6074,7 @@ fn lens_dirt_seed_determinism() {
         seed: 12345,
         mix: 1.0,
     };
+
 
 
 

@@ -21,10 +21,15 @@ struct Params {
     sun_radius: f32,
     blend_mode: u32,
     bg_mode: u32,
+    bokeh_layers: u32,
     seed: u32,
     mix_amt: f32,
     _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
+    _pad3: f32,
 };
+
 
 @group(0) @binding(0) var src: texture_2d<f32>;
 @group(0) @binding(1) var orig: texture_2d<f32>;
@@ -89,7 +94,8 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
     let diag = max(sqrt(wf * wf + hf * hf), 1.0);
 
     let seed = p.seed;
-    let density_scale = clamp(p.density / 50.0, 0.0, 4.0);
+    let density_scale = clamp(p.density / 50.0, 0.0, 40.0);
+    let num_layers = clamp(p.bokeh_layers, 1u, 10u);
     let particle_size_base = p.scale * (diag * 0.035);
     let scratch_amount = p.scratches;
     let defocus = p.defocus;
@@ -106,65 +112,72 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
     let ny = (py / hf - 0.5) * 2.0;
 
     let scale_jitter_max = max(p.scale_var_x, p.scale_var_y);
-    let cell_size = clamp(particle_size_base * 3.5 * (1.0 + scale_jitter_max), 32.0, 2048.0);
 
     var dirt_r: f32 = 0.0;
     var dirt_g: f32 = 0.0;
     var dirt_b: f32 = 0.0;
 
-    let gx = i32(floor(px / cell_size));
-    let gy = i32(floor(py / cell_size));
+    for (var layer_idx = 0u; layer_idx < num_layers; layer_idx++) {
+        let layer_seed = seed + layer_idx * 0x9e3779b9u;
+        let layer_scale_factor = 0.7 + 0.4 * f32(layer_idx);
+        let particle_size_layer = particle_size_base * layer_scale_factor;
+        let cell_size = clamp(particle_size_layer * 3.5 * (1.0 + scale_jitter_max), 24.0, 2048.0);
 
-    for (var dy = -1; dy <= 1; dy++) {
-        for (var dx = -1; dx <= 1; dx++) {
-            let cx = gx + dx;
-            let cy = gy + dy;
+        let max_p = clamp(0.20 * density_scale / sqrt(f32(num_layers)), 0.05, 0.95);
 
-            let prob = block_hash01(seed, 0u, cx, cy, 0);
-            let max_p = min(0.15 * density_scale, 0.95);
-            if (prob > max_p) {
-                continue;
-            }
+        let gx = i32(floor(px / cell_size));
+        let gy = i32(floor(py / cell_size));
 
-            let center_x = (f32(cx) + block_hash01(seed, 1u, cx, cy, 0)) * cell_size;
-            let center_y = (f32(cy) + block_hash01(seed, 2u, cx, cy, 0)) * cell_size;
-            let radius_base = particle_size_base * (0.3 + 1.2 * block_hash01(seed, 3u, cx, cy, 0));
-            let p_intensity = 0.2 + 0.8 * block_hash01(seed, 4u, cx, cy, 0);
+        for (var dy = -1; dy <= 1; dy++) {
+            for (var dx = -1; dx <= 1; dx++) {
+                let cx = gx + dx;
+                let cy = gy + dy;
 
-            let rx_mult = 1.0 + (block_hash01(seed, 5u, cx, cy, 0) - 0.5) * 2.0 * p.scale_var_x;
-            let ry_mult = 1.0 + (block_hash01(seed, 6u, cx, cy, 0) - 0.5) * 2.0 * p.scale_var_y;
-            let rad_x = max(radius_base * rx_mult, 0.1);
-            let rad_y = max(radius_base * ry_mult, 0.1);
+                let prob = block_hash01(layer_seed, 0u, cx, cy, 0);
+                if (prob > max_p) {
+                    continue;
+                }
 
-            var dx_raw = px - center_x;
-            var dy_raw = py - center_y;
-            if (p.rotation_var > 0.0) {
-                let angle = (block_hash01(seed, 7u, cx, cy, 0) - 0.5) * 3.14159265359 * p.rotation_var;
-                let cos_a = cos(angle);
-                let sin_a = sin(angle);
-                let rx = dx_raw * cos_a + dy_raw * sin_a;
-                let ry = -dx_raw * sin_a + dy_raw * cos_a;
-                dx_raw = rx;
-                dy_raw = ry;
-            }
+                let center_x = (f32(cx) + block_hash01(layer_seed, 1u, cx, cy, 0)) * cell_size;
+                let center_y = (f32(cy) + block_hash01(layer_seed, 2u, cx, cy, 0)) * cell_size;
+                let radius_base = particle_size_layer * (0.3 + 1.2 * block_hash01(layer_seed, 3u, cx, cy, 0));
+                let p_intensity = 0.2 + 0.8 * block_hash01(layer_seed, 4u, cx, cy, 0);
 
-            let dist_x = dx_raw / rad_x;
-            let dist_y = dy_raw / rad_y;
-            let norm_d = sqrt(dist_x * dist_x + dist_y * dist_y);
+                let rx_mult = 1.0 + (block_hash01(layer_seed, 5u, cx, cy, 0) - 0.5) * 2.0 * p.scale_var_x;
+                let ry_mult = 1.0 + (block_hash01(layer_seed, 6u, cx, cy, 0) - 0.5) * 2.0 * p.scale_var_y;
+                let rad_x = max(radius_base * rx_mult, 0.1);
+                let rad_y = max(radius_base * ry_mult, 0.1);
 
-            if (norm_d <= 1.3) {
-                let base_val = bokeh_profile(norm_d, defocus) * p_intensity;
-                if (chromatic > 0.0) {
-                    let fringe = chromatic * 0.15 * norm_d;
-                    let r_val = bokeh_profile(norm_d + fringe, defocus) * p_intensity;
-                    let b_val = bokeh_profile(norm_d - fringe, defocus) * p_intensity;
-                    dirt_r += r_val;
-                    dirt_g += base_val;
-                    dirt_b += b_val;
-                } else {
-                    dirt_r += base_val;
-                    dirt_g += base_val;
-                    dirt_b += base_val;
+                var dx_raw = px - center_x;
+                var dy_raw = py - center_y;
+                if (p.rotation_var > 0.0) {
+                    let angle = (block_hash01(layer_seed, 7u, cx, cy, 0) - 0.5) * 3.14159265359 * p.rotation_var;
+                    let cos_a = cos(angle);
+                    let sin_a = sin(angle);
+                    let rx = dx_raw * cos_a + dy_raw * sin_a;
+                    let ry = -dx_raw * sin_a + dy_raw * cos_a;
+                    dx_raw = rx;
+                    dy_raw = ry;
+                }
+
+                let dist_x = dx_raw / rad_x;
+                let dist_y = dy_raw / rad_y;
+                let norm_d = sqrt(dist_x * dist_x + dist_y * dist_y);
+
+                if (norm_d <= 1.3) {
+                    let base_val = bokeh_profile(norm_d, defocus) * p_intensity;
+                    if (chromatic > 0.0) {
+                        let fringe = chromatic * 0.15 * norm_d;
+                        let r_val = bokeh_profile(norm_d + fringe, defocus) * p_intensity;
+                        let b_val = bokeh_profile(norm_d - fringe, defocus) * p_intensity;
+                        dirt_r += r_val;
+                        dirt_g += base_val;
+                        dirt_b += b_val;
+                    } else {
+                        dirt_r += base_val;
+                        dirt_g += base_val;
+                        dirt_b += base_val;
+                    }
                 }
             }
         }

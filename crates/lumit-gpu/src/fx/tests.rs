@@ -4141,6 +4141,7 @@ fn wgsl_lens_dirt_matches_the_cpu_oracle() {
             LensDirtOp {
                 intensity: 0.0,
                 density: 50.0,
+                bokeh_layers: 2,
                 scale: 1.0,
                 scale_var_x: 0.0,
                 scale_var_y: 0.0,
@@ -4166,6 +4167,7 @@ fn wgsl_lens_dirt_matches_the_cpu_oracle() {
             LensDirtOp {
                 intensity: 1.0,
                 density: 50.0,
+                bokeh_layers: 2,
                 scale: 1.0,
                 scale_var_x: 0.0,
                 scale_var_y: 0.0,
@@ -4191,6 +4193,7 @@ fn wgsl_lens_dirt_matches_the_cpu_oracle() {
             LensDirtOp {
                 intensity: 1.2,
                 density: 60.0,
+                bokeh_layers: 2,
                 scale: 1.2,
                 scale_var_x: 0.3,
                 scale_var_y: 0.2,
@@ -4216,6 +4219,7 @@ fn wgsl_lens_dirt_matches_the_cpu_oracle() {
             LensDirtOp {
                 intensity: 0.8,
                 density: 40.0,
+                bokeh_layers: 2,
                 scale: 0.8,
                 scale_var_x: 0.1,
                 scale_var_y: 0.4,
@@ -4241,6 +4245,7 @@ fn wgsl_lens_dirt_matches_the_cpu_oracle() {
         let cpu_p = lumit_core::fx::LensDirtParams {
             intensity: op.intensity,
             density: op.density,
+            bokeh_layers: op.bokeh_layers,
             scale: op.scale,
             scale_var_x: op.scale_var_x,
             scale_var_y: op.scale_var_y,
@@ -4260,6 +4265,7 @@ fn wgsl_lens_dirt_matches_the_cpu_oracle() {
             seed: op.seed,
             mix: op.mix,
         };
+
 
 
 

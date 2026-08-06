@@ -1019,6 +1019,7 @@ pub fn run_ops(
                     &lumit_gpu::fx::LensDirtOp {
                         intensity: p.intensity,
                         density: p.density,
+                        bokeh_layers: p.bokeh_layers,
                         scale: p.scale,
                         scale_var_x: p.scale_var_x,
                         scale_var_y: p.scale_var_y,
@@ -1037,6 +1038,7 @@ pub fn run_ops(
                         sun_radius: p.sun_radius,
                         seed: p.seed,
                         mix: p.mix,
+
                     },
                 );
             }

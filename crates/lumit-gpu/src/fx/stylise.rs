@@ -519,9 +519,13 @@ impl FxEngine {
                 sun_radius: op.sun_radius,
                 blend_mode: op.blend_mode,
                 bg_mode: op.bg_mode,
+                bokeh_layers: op.bokeh_layers,
                 seed: op.seed,
                 mix_amt: op.mix,
                 _pad0: 0.0,
+                _pad1: 0.0,
+                _pad2: 0.0,
+                _pad3: 0.0,
             }),
         );
         out
@@ -533,6 +537,7 @@ impl FxEngine {
 pub struct LensDirtOp {
     pub intensity: f32,
     pub density: f32,
+    pub bokeh_layers: u32,
     pub scale: f32,
     pub scale_var_x: f32,
     pub scale_var_y: f32,
@@ -574,10 +579,16 @@ struct LensDirtParams {
     sun_radius: f32,
     blend_mode: u32,
     bg_mode: u32,
+    bokeh_layers: u32,
     seed: u32,
     mix_amt: f32,
     _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
+    _pad3: f32,
 }
+
+
 
 
 

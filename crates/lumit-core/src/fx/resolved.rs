@@ -665,6 +665,7 @@ pub enum Resolved {
 pub struct LensDirtParams {
     pub intensity: f32,
     pub density: f32,
+    pub bokeh_layers: u32,
     pub scale: f32,
     pub scale_var_x: f32,
     pub scale_var_y: f32,
@@ -686,6 +687,7 @@ pub struct LensDirtParams {
     pub seed: u32,
     pub mix: f32,
 }
+
 
 
 
@@ -2055,7 +2057,9 @@ fn resolve_one(
         }
         "lens_dirt" => {
             let intensity = (e.float_at("intensity", lt).unwrap_or(1.0) as f32).max(0.0);
-            let density = (e.float_at("density", lt).unwrap_or(50.0) as f32).clamp(0.0, 100.0);
+            let density = (e.float_at("density", lt).unwrap_or(100.0) as f32).clamp(0.0, 2000.0);
+            let bokeh_layers = (e.float_at("bokeh_layers", lt).unwrap_or(3.0) as u32).clamp(1, 10);
+
             let scale = (e.float_at("scale", lt).unwrap_or(1.0) as f32).clamp(0.01, 20.0);
             let scale_var_x = (e.float_at("scale_var_x", lt).unwrap_or(0.0) as f32).clamp(0.0, 2.0);
             let scale_var_y = (e.float_at("scale_var_y", lt).unwrap_or(0.0) as f32).clamp(0.0, 2.0);
@@ -2098,6 +2102,7 @@ fn resolve_one(
             Some(Resolved::LensDirt(LensDirtParams {
                 intensity,
                 density,
+                bokeh_layers,
                 scale,
                 scale_var_x,
                 scale_var_y,
@@ -2118,6 +2123,7 @@ fn resolve_one(
                 mix,
             }))
         }
+
 
 
 

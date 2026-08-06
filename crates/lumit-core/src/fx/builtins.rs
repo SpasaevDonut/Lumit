@@ -2969,9 +2969,18 @@ pub const BUILTINS: &[EffectSchema] = &[
                 id: "density",
                 label: "Density",
                 kind: ParamKind::Float {
-                    default: 50.0,
-                    slider: (0.0, 100.0),
-                    hard: (Some(0.0), Some(100.0)),
+                    default: 100.0,
+                    slider: (0.0, 500.0),
+                    hard: (Some(0.0), Some(2000.0)),
+                },
+            },
+            ParamSchema {
+                id: "bokeh_layers",
+                label: "Bokeh layers",
+                kind: ParamKind::Int {
+                    default: 3,
+                    slider: (1, 8),
+                    hard: (Some(1), Some(10)),
                 },
             },
             ParamSchema {
@@ -2983,6 +2992,7 @@ pub const BUILTINS: &[EffectSchema] = &[
                     hard: (Some(0.01), Some(20.0)),
                 },
             },
+
             ParamSchema {
                 id: "scale_var_x",
                 label: "Bokeh scale jitter X",

@@ -1597,8 +1597,10 @@ stable when they land.
 
 **Parameters:**
 - `intensity` (Float, default `1.0`, slider `0.0`..`4.0`, hard `0.0`..`None`): Master brightness scale. `0.0` is neutral passthrough.
-- `density` (Float, default `50.0`, slider `0.0`..`100.0`, hard `0.0`..`100.0`): Spatial density of dust specks and out-of-focus bokeh disks.
+- `density` (Float, default `100.0`, slider `0.0`..`500.0`, hard `0.0`..`2000.0`): Spatial density of dust specks and out-of-focus bokeh disks.
+- `bokeh_layers` (Int, default `3`, slider `1`..`8`, hard `1`..`10`): Number of independent depth layers of stacked bokeh particles.
 - `scale` (Float, default `1.0`, slider `0.1`..`5.0`, hard `0.01`..`20.0`): Base size multiplier for out-of-focus bokeh disks.
+
 - `scale_var_x` (Float, default `0.0`, slider `0.0`..`1.0`, hard `0.0`..`2.0`): Per-particle horizontal scale randomizer / aspect variance.
 - `scale_var_y` (Float, default `0.0`, slider `0.0`..`1.0`, hard `0.0`..`2.0`): Per-particle vertical scale randomizer / aspect variance.
 - `rotation_var` (Float, default `0.0`, slider `0.0`..`1.0`, hard `0.0`..`1.0`): Per-particle rotation randomizer for oval/anamorphic bokeh disks.

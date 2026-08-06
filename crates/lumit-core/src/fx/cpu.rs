@@ -1931,7 +1931,8 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
     let diag = (wf * wf + hf * hf).sqrt().max(1.0);
 
     let seed = p.seed;
-    let density_scale = (p.density / 50.0).clamp(0.0, 4.0);
+    let density_scale = (p.density / 50.0).clamp(0.0, 40.0);
+    let num_layers = p.bokeh_layers.clamp(1, 10);
     let scratch_amount = p.scratches;
 
     let defocus = p.defocus;
@@ -1942,13 +1943,8 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
     let intensity = p.intensity;
     let tint = p.tint;
 
-    let h01 = |ch: u32, bx: i32, by: i32| {
-        super::block_hash01(seed, ch, bx, by, 0)
-    };
-
     let particle_size_base = p.scale * (diag * 0.035);
     let scale_jitter_max = p.scale_var_x.max(p.scale_var_y);
-    let cell_size = (particle_size_base * 3.5 * (1.0 + scale_jitter_max)).clamp(32.0, 2048.0);
 
     for y in 0..h {
         let py = y as f32 + 0.5;
@@ -1963,73 +1959,86 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
             let mut dirt_g = 0.0f32;
             let mut dirt_b = 0.0f32;
 
-            // 1. Grid-jittered out-of-focus Bokeh disks & Dust specks
-            let gx = (px / cell_size).floor() as i32;
-            let gy = (py / cell_size).floor() as i32;
+            // 1. Multi-layered out-of-focus Bokeh disks & Dust specks
+            for layer_idx in 0..num_layers {
+                let layer_seed = seed.wrapping_add(layer_idx.wrapping_mul(0x9e3779b9));
 
-            for dy in -1..=1 {
-                for dx in -1..=1 {
-                    let cx = gx + dx;
-                    let cy = gy + dy;
+                let layer_scale_factor = 0.7 + 0.4 * (layer_idx as f32);
+                let particle_size_layer = particle_size_base * layer_scale_factor;
+                let cell_size = (particle_size_layer * 3.5 * (1.0 + scale_jitter_max))
+                    .clamp(24.0, 2048.0);
 
-                    let prob = h01(0, cx, cy);
-                    let max_p: f32 = (0.15 * density_scale).min(0.95);
-                    if prob > max_p {
-                        continue;
-                    }
+                let max_p: f32 = (0.20 * density_scale / (num_layers as f32).sqrt()).clamp(0.05, 0.95);
 
-                    let center_x = (cx as f32 + h01(1, cx, cy)) * cell_size;
-                    let center_y = (cy as f32 + h01(2, cx, cy)) * cell_size;
-                    let radius_base = particle_size_base * (0.3 + 1.2 * h01(3, cx, cy));
-                    let p_intensity = 0.2 + 0.8 * h01(4, cx, cy);
+                let gx = (px / cell_size).floor() as i32;
+                let gy = (py / cell_size).floor() as i32;
 
-                    let rx_mult = 1.0 + (h01(5, cx, cy) - 0.5) * 2.0 * p.scale_var_x;
-                    let ry_mult = 1.0 + (h01(6, cx, cy) - 0.5) * 2.0 * p.scale_var_y;
-                    let rad_x = (radius_base * rx_mult).max(0.1);
-                    let rad_y = (radius_base * ry_mult).max(0.1);
+                for dy in -1..=1 {
+                    for dx in -1..=1 {
+                        let cx = gx + dx;
+                        let cy = gy + dy;
 
-                    let mut dx_raw = px - center_x;
-                    let mut dy_raw = py - center_y;
-                    if p.rotation_var > 0.0 {
-                        let angle = (h01(7, cx, cy) - 0.5) * std::f32::consts::PI * p.rotation_var;
-                        let cos_a = angle.cos();
-                        let sin_a = angle.sin();
-                        let rx = dx_raw * cos_a + dy_raw * sin_a;
-                        let ry = -dx_raw * sin_a + dy_raw * cos_a;
-                        dx_raw = rx;
-                        dy_raw = ry;
-                    }
+                        let prob = super::block_hash01(layer_seed, 0, cx, cy, 0);
+                        if prob > max_p {
+                            continue;
+                        }
 
-                    let dist_x = dx_raw / rad_x;
-                    let dist_y = dy_raw / rad_y;
-                    let norm_d = (dist_x * dist_x + dist_y * dist_y).sqrt();
+                        let center_x = (cx as f32 + super::block_hash01(layer_seed, 1, cx, cy, 0)) * cell_size;
+                        let center_y = (cy as f32 + super::block_hash01(layer_seed, 2, cx, cy, 0)) * cell_size;
+                        let radius_base = particle_size_layer * (0.3 + 1.2 * super::block_hash01(layer_seed, 3, cx, cy, 0));
+                        let p_intensity = 0.2 + 0.8 * super::block_hash01(layer_seed, 4, cx, cy, 0);
 
-                    if norm_d <= 1.3 {
-                        let base_val = cpu_bokeh_profile(norm_d, defocus) * p_intensity;
-                        if chromatic > 0.0 {
-                            let fringe = chromatic * 0.15 * norm_d;
-                            let r_val = cpu_bokeh_profile(norm_d + fringe, defocus) * p_intensity;
-                            let b_val = cpu_bokeh_profile(norm_d - fringe, defocus) * p_intensity;
-                            dirt_r += r_val;
-                            dirt_g += base_val;
-                            dirt_b += b_val;
-                        } else {
-                            dirt_r += base_val;
-                            dirt_g += base_val;
-                            dirt_b += base_val;
+                        let rx_mult = 1.0 + (super::block_hash01(layer_seed, 5, cx, cy, 0) - 0.5) * 2.0 * p.scale_var_x;
+                        let ry_mult = 1.0 + (super::block_hash01(layer_seed, 6, cx, cy, 0) - 0.5) * 2.0 * p.scale_var_y;
+                        let rad_x = (radius_base * rx_mult).max(0.1);
+                        let rad_y = (radius_base * ry_mult).max(0.1);
+
+                        let mut dx_raw = px - center_x;
+                        let mut dy_raw = py - center_y;
+                        if p.rotation_var > 0.0 {
+                            let angle = (super::block_hash01(layer_seed, 7, cx, cy, 0) - 0.5) * std::f32::consts::PI * p.rotation_var;
+                            let cos_a = angle.cos();
+                            let sin_a = angle.sin();
+                            let rx = dx_raw * cos_a + dy_raw * sin_a;
+                            let ry = -dx_raw * sin_a + dy_raw * cos_a;
+                            dx_raw = rx;
+                            dy_raw = ry;
+                        }
+
+                        let dist_x = dx_raw / rad_x;
+                        let dist_y = dy_raw / rad_y;
+                        let norm_d = (dist_x * dist_x + dist_y * dist_y).sqrt();
+
+                        if norm_d <= 1.3 {
+                            let base_val = cpu_bokeh_profile(norm_d, defocus) * p_intensity;
+                            if chromatic > 0.0 {
+                                let fringe = chromatic * 0.15 * norm_d;
+                                let r_val = cpu_bokeh_profile(norm_d + fringe, defocus) * p_intensity;
+                                let b_val = cpu_bokeh_profile(norm_d - fringe, defocus) * p_intensity;
+                                dirt_r += r_val;
+                                dirt_g += base_val;
+                                dirt_b += b_val;
+                            } else {
+                                dirt_r += base_val;
+                                dirt_g += base_val;
+                                dirt_b += base_val;
+                            }
                         }
                     }
                 }
             }
 
 
+
             // 2. Micro hairline scratches & dust specks (controlled by scratch_scale)
             if scratch_amount > 0.0 {
+                let h01 = |ch: u32, bx: i32, by: i32| super::block_hash01(seed, ch, bx, by, 0);
                 let scratch_scale = p.scratch_scale;
                 let scratch_cell_size = (48.0 * scratch_scale).clamp(12.0, 1024.0);
                 let sgx = (px / scratch_cell_size).floor() as i32;
                 let sgy = (py / scratch_cell_size).floor() as i32;
                 let sprob = h01(10, sgx, sgy);
+
 
                 let max_sprob: f32 = (0.25 * scratch_amount).min(0.8);
                 if sprob < max_sprob {
