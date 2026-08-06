@@ -74,11 +74,17 @@ pub struct BridgeMemoryReport {
     pub process_bytes: u64,
     /// Finished frames held in ordinary memory.
     pub frame_cache_bytes: u64,
-    /// Frames held on the graphics card. On a machine with unified memory (every
-    /// Apple Silicon Mac) these are part of `process_bytes` too; on a discrete
-    /// card they are not, which is why they are reported apart rather than
-    /// summed for you.
+    /// Frames held on the graphics card.
     pub vram_cache_bytes: u64,
+    /// Whether the card's memory *is* this process's memory — true on every
+    /// Apple Silicon Mac and on any integrated adapter.
+    ///
+    /// When it is, `vram_cache_bytes` is counted against `process_bytes` like
+    /// any other tier; when it is not, the card's frames are somewhere else
+    /// entirely and counting them would understate what is unaccounted for.
+    /// Getting this backwards is how a cache doing exactly its job read as
+    /// gigabytes nobody could explain.
+    pub unified_memory: bool,
     /// Decoded source frames held for the compositor.
     pub decode_cache_bytes: u64,
     /// How many media decoders are open. Counted, not weighed: what a decoder
@@ -133,14 +139,20 @@ pub fn memory_report() -> BridgeMemoryReport {
     let park = crate::framecache::disk::pending_parks();
     let (gpu_allocated, gpu_reserved, gpu_textures, gpu_buffers) = crate::framecache::gpu::stats();
     let process = crate::api::system::resident_memory_bytes();
-    // VRAM is deliberately not subtracted: on a discrete card it is not in the
-    // process at all, and on unified memory it is — counting it either way
-    // would be wrong on half the machines Lumit runs on.
-    let accounted = (frame_cache as u64).saturating_add(decode);
+    // On unified memory the card's frames are inside this process, so they are
+    // accounted like any other tier; on a discrete card they are not in it at
+    // all and must not be. The adapter says which, rather than the platform:
+    // a Mac with an external card would answer differently, and so should the
+    // report.
+    let unified = crate::framecache::gpu::unified();
+    let accounted = (frame_cache as u64)
+        .saturating_add(decode)
+        .saturating_add(if unified { vram } else { 0 });
     BridgeMemoryReport {
         process_bytes: process,
         frame_cache_bytes: frame_cache as u64,
         vram_cache_bytes: vram,
+        unified_memory: unified,
         decode_cache_bytes: decode,
         open_decoders: decoders,
         park_queue_frames: park,

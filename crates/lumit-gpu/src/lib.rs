@@ -91,6 +91,14 @@ pub struct GpuContext {
     /// unshared and the honest scope for the question: what did *this* render
     /// hand over.
     ///
+    /// Whether the graphics memory and the system memory are the same memory —
+    /// an integrated or software adapter, which is every Apple Silicon Mac.
+    ///
+    /// It decides one thing, and that one thing matters: whether the frames
+    /// held on the card are *inside* this process's total or beside it. Report
+    /// them the wrong way round and a cache doing exactly its job reads as
+    /// gigabytes nobody can account for (K-293).
+    pub unified_memory: bool,
     /// Shared with every [`Self::clone_handle`] of this context, because they
     /// are handles on the *same* device and queue: the realiser keeps one of
     /// its own, and a count that missed what went through it would be counting
@@ -305,6 +313,10 @@ impl GpuContext {
             device,
             queue,
             software: false,
+            // Not knowable from a device alone, and the safe answer for a
+            // memory report is the one that does not claim the card's frames
+            // are inside this process when they may not be.
+            unified_memory: false,
             sample_flags: wgpu::TextureFormatFeatureFlags::empty(),
             frame: std::cell::RefCell::new(None),
             frame_depth: std::cell::Cell::new(0),
@@ -332,6 +344,7 @@ impl GpuContext {
             device: self.device.clone(),
             queue: self.queue.clone(),
             software: self.software,
+            unified_memory: self.unified_memory,
             sample_flags: self.sample_flags,
             frame: std::cell::RefCell::new(None),
             frame_depth: std::cell::Cell::new(0),
@@ -394,6 +407,29 @@ impl GpuContext {
             counters.hal.textures.read() as u64,
             counters.hal.buffers.read() as u64,
         )
+    }
+
+    /// Give the driver a turn to hand back what the engine has dropped.
+    ///
+    /// **Why this has to be called, and called regularly.** Dropping a texture
+    /// or a buffer does not free it: wgpu marks it destroyed and reclaims it on
+    /// the device's next *maintain*. A renderer that draws to a window gets
+    /// maintains for free from presenting; this engine renders into caches, on
+    /// a worker thread, and idles — so nothing was making that turn happen, and
+    /// dropped frames sat un-freed until something asked the device a question
+    /// for its own reasons.
+    ///
+    /// Reported twice from a Mac at tens of gigabytes (K-277, K-293): the
+    /// second reading caught it in the act — 5 000-odd live buffers and 6 GB
+    /// held, then 8 buffers and 2.9 GB moments later, because opening a panel
+    /// happened to poll. Memory that comes back only when the user does
+    /// something unrelated is a leak in every sense that matters.
+    ///
+    /// Non-blocking: this drains what has already finished and returns. It is
+    /// cheap enough to call on every turn of the worker's loop, which is
+    /// exactly what it is for.
+    pub fn reclaim(&self) {
+        self.device.poll(wgpu::Maintain::Poll);
     }
 
     /// Start batching: from here until the matching [`Self::end_frame`], every
@@ -509,6 +545,13 @@ impl GpuContext {
             adapter.get_info().device_type,
             wgpu::DeviceType::Cpu | wgpu::DeviceType::Other
         );
+        // Integrated and software adapters draw from system memory; a discrete
+        // card has its own. Metal reports Apple Silicon as integrated, which is
+        // the case this exists for.
+        let unified_memory = !matches!(
+            adapter.get_info().device_type,
+            wgpu::DeviceType::DiscreteGpu
+        );
         // The Linux DMA-BUF path needs the external-memory device extensions
         // enabled at device-creation time, which wgpu's default Vulkan device does
         // not do (K-177). Open the device ourselves with them appended; if the
@@ -577,6 +620,7 @@ impl GpuContext {
             device,
             queue,
             software,
+            unified_memory,
             sample_flags,
             frame: std::cell::RefCell::new(None),
             frame_depth: std::cell::Cell::new(0),

@@ -7732,20 +7732,21 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   BridgeMemoryReport dco_decode_bridge_memory_report(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 11)
-      throw Exception('unexpected arr length: expect 11 but see ${arr.length}');
+    if (arr.length != 12)
+      throw Exception('unexpected arr length: expect 12 but see ${arr.length}');
     return BridgeMemoryReport(
       processBytes: dco_decode_u_64(arr[0]),
       frameCacheBytes: dco_decode_u_64(arr[1]),
       vramCacheBytes: dco_decode_u_64(arr[2]),
-      decodeCacheBytes: dco_decode_u_64(arr[3]),
-      openDecoders: dco_decode_u_64(arr[4]),
-      parkQueueFrames: dco_decode_u_64(arr[5]),
-      gpuAllocatedBytes: dco_decode_u_64(arr[6]),
-      gpuReservedBytes: dco_decode_u_64(arr[7]),
-      gpuTextures: dco_decode_u_64(arr[8]),
-      gpuBuffers: dco_decode_u_64(arr[9]),
-      unaccountedBytes: dco_decode_u_64(arr[10]),
+      unifiedMemory: dco_decode_bool(arr[3]),
+      decodeCacheBytes: dco_decode_u_64(arr[4]),
+      openDecoders: dco_decode_u_64(arr[5]),
+      parkQueueFrames: dco_decode_u_64(arr[6]),
+      gpuAllocatedBytes: dco_decode_u_64(arr[7]),
+      gpuReservedBytes: dco_decode_u_64(arr[8]),
+      gpuTextures: dco_decode_u_64(arr[9]),
+      gpuBuffers: dco_decode_u_64(arr[10]),
+      unaccountedBytes: dco_decode_u_64(arr[11]),
     );
   }
 
@@ -9738,6 +9739,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     var var_processBytes = sse_decode_u_64(deserializer);
     var var_frameCacheBytes = sse_decode_u_64(deserializer);
     var var_vramCacheBytes = sse_decode_u_64(deserializer);
+    var var_unifiedMemory = sse_decode_bool(deserializer);
     var var_decodeCacheBytes = sse_decode_u_64(deserializer);
     var var_openDecoders = sse_decode_u_64(deserializer);
     var var_parkQueueFrames = sse_decode_u_64(deserializer);
@@ -9750,6 +9752,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         processBytes: var_processBytes,
         frameCacheBytes: var_frameCacheBytes,
         vramCacheBytes: var_vramCacheBytes,
+        unifiedMemory: var_unifiedMemory,
         decodeCacheBytes: var_decodeCacheBytes,
         openDecoders: var_openDecoders,
         parkQueueFrames: var_parkQueueFrames,
@@ -11920,6 +11923,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     sse_encode_u_64(self.processBytes, serializer);
     sse_encode_u_64(self.frameCacheBytes, serializer);
     sse_encode_u_64(self.vramCacheBytes, serializer);
+    sse_encode_bool(self.unifiedMemory, serializer);
     sse_encode_u_64(self.decodeCacheBytes, serializer);
     sse_encode_u_64(self.openDecoders, serializer);
     sse_encode_u_64(self.parkQueueFrames, serializer);

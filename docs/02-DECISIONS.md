@@ -6420,3 +6420,48 @@ worth a syscall.
 This is a diagnostic, and it is deliberately not a fix: it does not reclaim a byte. It is
 the instrument the next report is read with, written down in docs/13 §7.0.1 as a standing
 rule — a tier that holds memory and does not report it is not finished.
+
+**K-294 · DECIDED · What the engine drops, the driver hands back on the next turn: the
+worker reclaims once a loop.** From the owner's readings on 2026-08-06, which caught the
+fault in the act: 6 GB held with **around 5 500 live graphics buffers**, then 2.9 GB and
+**8 buffers** moments later — because switching back to a settings page happened to make
+the device do a maintain. Memory that comes back only when the user does something
+unrelated is a leak in every sense that matters to the person whose machine it is.
+
+**The mechanism.** Dropping a texture or a buffer does not free it. wgpu marks it
+destroyed and hands the memory back on the device's next *maintain*, which a renderer
+drawing into a window gets for free from presenting. This engine renders into caches, on a
+worker thread, and spends most of its time idle: the frame cache evicts, read-backs
+finish, a composite's intermediates go out of scope — and none of that asked the device
+for anything, so the memory sat marked-and-not-returned until something else polled for
+its own reasons. The idle fill and the idle backup make that worse rather than better,
+because they are what produces the dropped objects while nothing presents.
+
+**The fix is one line and a rule.** `GpuContext::reclaim` — a non-blocking
+`Maintain::Poll` — on every turn of the worker's loop. It drains what has already
+finished, costs nothing when there is nothing to drain, and makes reclamation a property
+of time passing rather than of the user opening a panel.
+
+**The rule this writes down** (docs/13 §7.0.2): an engine that renders without presenting
+MUST maintain its device on a schedule of its own. Anything that only frees memory as a
+side effect of an unrelated call is not freeing memory.
+
+Two things fell out of the same readings and are fixed with it:
+
+- **Frames on the card are counted against the process where the card's memory *is* the
+  process's memory.** K-293 reported VRAM apart from every tier on the grounds that a
+  discrete card's frames are not in the process — true, but on the Apple Silicon Mac doing
+  the reporting they are, so a cache doing exactly its job showed up inside the
+  unaccounted figure and looked like the fault. The adapter now says which kind of memory
+  it has (`unified_memory`, integrated or software), and the report counts accordingly.
+  The rule generalises: a report that can mislead in the direction of "this is the bug" is
+  worse than one that says less.
+- **The memory section is a debug-build instrument** (owner, 2026-08-06). It is for
+  hunting a fault, not a setting anybody should be asked to interpret; `kDebugMode` gates
+  both the section and the call behind it, so a release build neither draws it nor asks.
+
+**Verified** by `what_the_engine_drops_the_driver_gets_back`, which renders far more
+frames than the cache can hold and then asks the driver what it still has: tens, not one
+per frame. It runs on every platform the suite runs on, and the one that matters is
+**macOS** — where the reclamation went wrong, and where no allocator report exists to see
+it, which is why the gate is a count of live objects rather than a number of bytes.

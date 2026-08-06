@@ -222,11 +222,18 @@ class BridgeMemoryReport {
   /// Finished frames held in ordinary memory.
   final BigInt frameCacheBytes;
 
-  /// Frames held on the graphics card. On a machine with unified memory (every
-  /// Apple Silicon Mac) these are part of `process_bytes` too; on a discrete
-  /// card they are not, which is why they are reported apart rather than
-  /// summed for you.
+  /// Frames held on the graphics card.
   final BigInt vramCacheBytes;
+
+  /// Whether the card's memory *is* this process's memory — true on every
+  /// Apple Silicon Mac and on any integrated adapter.
+  ///
+  /// When it is, `vram_cache_bytes` is counted against `process_bytes` like
+  /// any other tier; when it is not, the card's frames are somewhere else
+  /// entirely and counting them would understate what is unaccounted for.
+  /// Getting this backwards is how a cache doing exactly its job read as
+  /// gigabytes nobody could explain.
+  final bool unifiedMemory;
 
   /// Decoded source frames held for the compositor.
   final BigInt decodeCacheBytes;
@@ -282,6 +289,7 @@ class BridgeMemoryReport {
     required this.processBytes,
     required this.frameCacheBytes,
     required this.vramCacheBytes,
+    required this.unifiedMemory,
     required this.decodeCacheBytes,
     required this.openDecoders,
     required this.parkQueueFrames,
@@ -297,6 +305,7 @@ class BridgeMemoryReport {
       processBytes.hashCode ^
       frameCacheBytes.hashCode ^
       vramCacheBytes.hashCode ^
+      unifiedMemory.hashCode ^
       decodeCacheBytes.hashCode ^
       openDecoders.hashCode ^
       parkQueueFrames.hashCode ^
@@ -314,6 +323,7 @@ class BridgeMemoryReport {
           processBytes == other.processBytes &&
           frameCacheBytes == other.frameCacheBytes &&
           vramCacheBytes == other.vramCacheBytes &&
+          unifiedMemory == other.unifiedMemory &&
           decodeCacheBytes == other.decodeCacheBytes &&
           openDecoders == other.openDecoders &&
           parkQueueFrames == other.parkQueueFrames &&

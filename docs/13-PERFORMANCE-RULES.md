@@ -272,6 +272,24 @@ Rules the report keeps, so its arithmetic can be trusted:
 - **A platform that cannot answer says zero**, and the interface says "not known here"
   rather than printing a guess.
 
+### 7.0.2 Reclaiming what has been dropped (K-294)
+
+**An engine that renders without presenting MUST maintain its graphics device on a
+schedule of its own.** Dropping a texture or a buffer only *marks* it destroyed; the
+driver hands the memory back on the device's next maintain. A renderer that draws to a
+window gets those for free from presenting — Lumit renders into caches, on a worker
+thread, and idles, so it gets none.
+
+The worker calls `GpuContext::reclaim` (a non-blocking `Maintain::Poll`) once per turn.
+It is cheap when there is nothing to drain, and it makes reclamation a property of time
+passing rather than of the user happening to open a panel — which is exactly what was
+observed before it: 5 500 live buffers and 6 GB held, then 8 buffers and 2.9 GB the moment
+something else polled.
+
+Anything that frees memory only as a side effect of an unrelated call is not freeing
+memory. The regression gate is `what_the_engine_drops_the_driver_gets_back`, which renders
+many times the cache's capacity and then asks the driver how many objects it still holds.
+
 ### 7.1 Per-node profiler
 
 A built-in profiler, surfaced in the UI — After Effects' composition profiler done properly:

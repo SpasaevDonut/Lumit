@@ -27,6 +27,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
@@ -752,7 +753,9 @@ class _SettingsWindowState extends State<_SettingsWindow> {
     final stats = cacheStats();
     final vram = vramCacheStats();
     final tier = playbackTier();
-    final memory = memoryReport();
+    // Only read when it is going to be drawn: the report is a debug-build
+    // instrument, and a release build should not be making the call at all.
+    final memory = kDebugMode ? memoryReport() : null;
 
     return [
       settingsSection(t, 'Playback', [
@@ -879,7 +882,13 @@ class _SettingsWindowState extends State<_SettingsWindow> {
       // the whole process and what none of them accounts for. Read downwards it
       // is the summing-up, and it leaves every control above where the hand
       // already knows to find it.
-      settingsSection(t, 'Memory', [
+      //
+      // **Debug builds only** (owner, 2026-08-06). It is an instrument for
+      // hunting a fault, not a setting: a shipped editor asking its user to
+      // interpret live texture counts has handed them the engineering rather
+      // than the tool. `kDebugMode` is false in both profile and release
+      // builds, so what ships is the page without it.
+      if (memory != null) settingsSection(t, 'Memory', [
         settingsRow(
           t,
           'This process',
@@ -896,9 +905,10 @@ class _SettingsWindowState extends State<_SettingsWindow> {
         settingsRow(
           t,
           'Not held by any cache',
-          'The process, less the finished frames and decoded frames below. '
-              'A large number here is not a cache to shrink: it is memory '
-              'nothing in this window is counting, and it is worth reporting.',
+          'The process, less every store above that is inside it — which on '
+              'this machine includes the frames on the card. A large number '
+              'here is not a cache to shrink: it is memory nothing in this '
+              'window is counting, and it is worth reporting.',
           Text(
             memory.processBytes == BigInt.zero
                 ? '—'

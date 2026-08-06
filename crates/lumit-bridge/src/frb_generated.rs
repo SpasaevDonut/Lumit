@@ -8220,6 +8220,7 @@ impl SseDecode for crate::api::cache::BridgeMemoryReport {
         let mut var_processBytes = <u64>::sse_decode(deserializer);
         let mut var_frameCacheBytes = <u64>::sse_decode(deserializer);
         let mut var_vramCacheBytes = <u64>::sse_decode(deserializer);
+        let mut var_unifiedMemory = <bool>::sse_decode(deserializer);
         let mut var_decodeCacheBytes = <u64>::sse_decode(deserializer);
         let mut var_openDecoders = <u64>::sse_decode(deserializer);
         let mut var_parkQueueFrames = <u64>::sse_decode(deserializer);
@@ -8232,6 +8233,7 @@ impl SseDecode for crate::api::cache::BridgeMemoryReport {
             process_bytes: var_processBytes,
             frame_cache_bytes: var_frameCacheBytes,
             vram_cache_bytes: var_vramCacheBytes,
+            unified_memory: var_unifiedMemory,
             decode_cache_bytes: var_decodeCacheBytes,
             open_decoders: var_openDecoders,
             park_queue_frames: var_parkQueueFrames,
@@ -11141,6 +11143,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::cache::BridgeMemoryReport {
             self.process_bytes.into_into_dart().into_dart(),
             self.frame_cache_bytes.into_into_dart().into_dart(),
             self.vram_cache_bytes.into_into_dart().into_dart(),
+            self.unified_memory.into_into_dart().into_dart(),
             self.decode_cache_bytes.into_into_dart().into_dart(),
             self.open_decoders.into_into_dart().into_dart(),
             self.park_queue_frames.into_into_dart().into_dart(),
@@ -12903,6 +12906,7 @@ impl SseEncode for crate::api::cache::BridgeMemoryReport {
         <u64>::sse_encode(self.process_bytes, serializer);
         <u64>::sse_encode(self.frame_cache_bytes, serializer);
         <u64>::sse_encode(self.vram_cache_bytes, serializer);
+        <bool>::sse_encode(self.unified_memory, serializer);
         <u64>::sse_encode(self.decode_cache_bytes, serializer);
         <u64>::sse_encode(self.open_decoders, serializer);
         <u64>::sse_encode(self.park_queue_frames, serializer);

@@ -2109,7 +2109,13 @@ fn the_memory_report_answers_and_its_arithmetic_holds() {
         return;
     }
 
-    let accounted = report.frame_cache_bytes + report.decode_cache_bytes;
+    let accounted = report.frame_cache_bytes
+        + report.decode_cache_bytes
+        + if report.unified_memory {
+            report.vram_cache_bytes
+        } else {
+            0
+        };
     assert_eq!(
         report.unaccounted_bytes,
         report.process_bytes.saturating_sub(accounted),
@@ -2119,12 +2125,19 @@ fn the_memory_report_answers_and_its_arithmetic_holds() {
         report.unaccounted_bytes <= report.process_bytes,
         "a part cannot exceed the whole"
     );
-    // The graphics card's frames are reported apart rather than folded in:
-    // on a discrete card they are not in the process at all.
-    assert!(
-        report.vram_cache_bytes == 0 || report.unaccounted_bytes < report.process_bytes + 1,
-        "VRAM is reported, not subtracted"
-    );
+    // The card's frames count against the process only where they are in it.
+    // Getting this backwards makes a cache doing its job read as a leak, which
+    // is the one way this report can actively mislead.
+    if !report.unified_memory {
+        assert_eq!(
+            report.unaccounted_bytes,
+            report
+                .process_bytes
+                .saturating_sub(report.frame_cache_bytes + report.decode_cache_bytes),
+            "a discrete card's frames are not in this process, so they are not \
+             subtracted from it"
+        );
+    }
     assert!(
         report.park_queue_frames <= lumit_render::diskio::MAX_PENDING_PARKS as u64,
         "the write-behind queue is bounded (K-277), and the report shows it"

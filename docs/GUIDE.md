@@ -3784,7 +3784,25 @@ Linux. A count is a count on every machine, and it happens to be the sharper
 question anyway: it distinguishes a big cache from a leak, which bytes alone
 cannot.
 
-It does not free a single byte. It is the instrument, not the repair.
+The report is a **debug-build tool**: it is there while a fault is being hunted,
+and a shipped Lumit does not show it. Asking somebody editing a video to
+interpret a live texture count is handing them the engineering instead of the
+tool.
+
+### And the repair it found (K-294)
+
+Here is what the instrument caught. Telling the graphics card "I have finished
+with this picture" does not give the memory back. It marks it finished, and the
+memory returns the next time the program asks the card to tidy up. A program
+that is drawing to a window asks constantly, without meaning to, because showing
+a frame *is* asking. Lumit spends much of its time drawing into its caches
+instead — no window, no asking, and so a pile of finished pictures nobody had
+collected.
+
+That is why the memory came back when the owner switched panels: the switch
+happened to ask. Now the engine asks once per turn of its own loop, whether
+anything is on screen or not, which costs nothing when there is nothing to
+collect and means the pile is never more than a moment old.
 
 ## 10. The app icon and the brand files
 
