@@ -3544,6 +3544,19 @@ Beat markers need no special mention in any of this, and that is by design: beat
 detection writes ordinary markers, so dragging near a beat lands on it because
 it lands on markers.
 
+One thing the indicator broke on its way in, now fixed. The line is a piece of
+the lane that only exists while a snap is holding the drag, and it was drawn
+*before* the diamonds rather than after them. Flutter keeps a widget's identity
+by its position in a list unless you name it, so a line appearing at the front
+of that list shunted every diamond one place along, and each of them was rebuilt
+as though it were a different diamond — including the one your pointer was
+holding. A control rebuilt mid-drag loses the pointer, and losing the pointer
+ends the drag: the key committed the two or three pixels it had travelled by
+then and ignored the rest of the gesture. That is what "a keyframe will only
+move one frame, and dragging it again puts it back" was — the second drag being
+caught by the same target and landing back on it. The diamonds and the line are
+named now, so each is rebuilt as itself and a drag lasts until you let go.
+
 Right now this covers dragging a keyframe on its lane. Dragging a layer's bar,
 the razor, the work-area handles and markers themselves still land wherever you
 point. The arithmetic is written once and shared, so each of those is wiring

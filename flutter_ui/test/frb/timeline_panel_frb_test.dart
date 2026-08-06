@@ -1442,6 +1442,104 @@ void main() {
       await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
     });
 
+    /// **The one-frame regression.** A real drag is many pointer moves with a
+    /// rebuild between each; the tests above are one move, which is the only
+    /// reason they passed. Part-way through a real drag the snap indicator
+    /// appears, and it used to be an unkeyed child inserted ahead of the
+    /// diamonds — so Flutter paired it with the first diamond, the first
+    /// diamond with the second, and rebuilt every gesture detector in the lane.
+    /// The detector holding the pointer went with them, which ended the drag
+    /// where it stood: the key committed the two or three pixels travelled so
+    /// far and sat there however much further it was dragged, and a second drag
+    /// died on the same target and put it back. Reported as "a keyframe can
+    /// only be dragged one frame, and dragging again moves it back".
+    testWidgets('a lane keyframe drags past a snap, over many pointer moves',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.setTransform(
+        prop: BridgeTransformProp.opacity,
+        value: BridgeScalar.keyframed([
+          for (final f in [600, 2400])
+            BridgeKeyframe(
+              time: p.comp.timeOfFrame(frame: f),
+              value: f.toDouble(),
+              interpIn: const BridgeSideInterp.linear(),
+              interpOut: const BridgeSideInterp.linear(),
+            ),
+        ]),
+      );
+      // A marker in the middle of the journey, so the drag is certain to be
+      // caught by a snap on its way past — the moment the indicator appears.
+      const markerFrame = 800;
+      writeMarkers(p.comp, [
+        BridgeMarker(
+          id: UuidValue.fromString(const Uuid().v4()),
+          time: p.comp.timeOfFrame(frame: markerFrame),
+          label: 'Beat',
+        ),
+      ]);
+      await mount(tester, p);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pump();
+      await tester.tap(find.text('Transform'));
+      await tester.pump();
+
+      List<BridgeKeyframe> keys() =>
+          (layer.getTransform().opacity as BridgeScalar_Keyframed).field0;
+      final laneKey = ValueKey<String>(
+          'tl-keys-${layer.internallayerId}/transform/opacity');
+      final handle = find.byKey(ValueKey<String>(
+          'tl-key-${layer.internallayerId}/transform/opacity#0'));
+      final perFrame =
+          tester.getRect(find.byKey(laneKey)).width / p.comp.durationFrames();
+
+      // The little push that gets the gesture past the pointer slop.
+      const nudge = 3.0;
+
+      // A drag as one really arrives: a nudge to start it, then a run of small
+      // moves with a frame rendered between each. Returns the frame the key
+      // ended on. A mouse, so the slop is a single pixel rather than a
+      // finger's worth.
+      Future<int> dragOn(double frames, {int steps = 18}) async {
+        final gesture = await tester.startGesture(tester.getCenter(handle),
+            kind: PointerDeviceKind.mouse);
+        await gesture.moveBy(const Offset(nudge, 0));
+        await tester.pump();
+        for (var i = 0; i < steps; i++) {
+          await gesture.moveBy(Offset(frames * perFrame / steps, 0));
+          await tester.pump();
+        }
+        await gesture.up();
+        await tester.pumpAndSettle();
+        return p.comp.frameAtTime(time: keys().first.time);
+      }
+
+      // Four hundred frames of travel, measured in pixels from the axis so the
+      // drag stays inside the comp whatever width the panel gives the lanes.
+      const travel = 400.0;
+      // The nudge that starts the drag is spent on the slop when something else
+      // is in the gesture arena and counted when the diamond is alone in it, so
+      // the landing is allowed its worth of frames either way. Either is a
+      // world away from the fault, which left the key on the marker 200 frames
+      // back.
+      final slack = nudge / perFrame + 2;
+
+      final landed = await dragOn(travel);
+      expect(landed, isNot(markerFrame),
+          reason: 'the drag went past the marker rather than dying on it');
+      expect(landed.toDouble(), closeTo(600 + travel, slack),
+          reason: 'the key travelled the whole drag, not its first moments');
+      expect(keys(), hasLength(2), reason: 'no key added or lost');
+
+      // And again from where it now is: the second drag carries on rather than
+      // being pulled back to what caught the first.
+      final again = await dragOn(travel);
+      expect(again.toDouble(), closeTo(landed + travel, slack),
+          reason: 'a second drag moves it on again, not back');
+    });
+
     /// **The undo regression.** A drag on a *keyframed* value used to commit
     /// on every tick — [DragValueField] falls back to `onChanged` per tick
     /// when no `onChangeLive` is given — so the undo stack filled with a step

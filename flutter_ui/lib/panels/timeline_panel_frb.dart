@@ -6055,14 +6055,32 @@ class _KeyLaneState extends State<_KeyLane> {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
+    // Worked out once for the build: [_frameOf] is where the snap is decided
+    // and where [_caught] is set, so asking it twice per key would answer the
+    // same question twice and leave the indicator depending on which of the
+    // two calls ran last.
+    final frames = [for (var i = 0; i < widget.keys.length; i++) _frameOf(i)];
+    final caught = _caught;
+    // **Every child of this Stack carries a key**, and the keys stay the same
+    // whether or not a snap has been caught.
+    //
+    // Without them the drag died the moment a snap first took it, which read as
+    // "a lane key can only be dragged one frame, and dragging again puts it
+    // back". A child appearing part-way down an unkeyed list makes Flutter pair
+    // each new child with the *old* child in that slot — the indicator was
+    // matched to the first diamond, the first diamond to the second, and so on —
+    // so the diamonds' gesture detectors were torn down and rebuilt mid-gesture.
+    // A recogniser destroyed while it holds a pointer ends its drag, which
+    // committed the two or three pixels travelled so far and left the rest of
+    // the gesture doing nothing. Keyed, each child is matched to itself, the
+    // detector holding the pointer lives, and the drag runs to the release.
     return Stack(
       children: [
         Positioned.fill(
+          key: const ValueKey<String>('tl-lane-diamonds'),
           child: CustomPaint(
             painter: _LaneKeysPainter(
-              frames: [
-                for (var i = 0; i < widget.keys.length; i++) _frameOf(i)
-              ],
+              frames: frames,
               selected: {
                 for (var i = 0; i < widget.keys.length; i++)
                   if (widget.selectedKeys.contains('${widget.rowId}#$i')) i,
@@ -6075,9 +6093,10 @@ class _KeyLaneState extends State<_KeyLane> {
         ),
         // What the drag landed on, marked while it holds it (docs/07 §4.5:
         // the snapped-to target MUST be indicated at the moment of capture).
-        if (_caught != null)
+        if (caught != null)
           Positioned(
-            left: widget.axis.xOf(_caught!.frame) - 0.5,
+            key: const ValueKey<String>('tl-lane-snap-caught'),
+            left: widget.axis.xOf(caught.frame) - 0.5,
             top: 0,
             bottom: 0,
             width: 1,
@@ -6087,7 +6106,8 @@ class _KeyLaneState extends State<_KeyLane> {
           ),
         for (var i = 0; i < widget.keys.length; i++)
           Positioned(
-            left: widget.axis.xOf(_frameOf(i)) - 6,
+            key: ValueKey<String>('tl-key-slot-${widget.rowId}#$i'),
+            left: widget.axis.xOf(frames[i]) - 6,
             top: 0,
             width: 12,
             height: _rowHeight,
