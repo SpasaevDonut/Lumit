@@ -1713,7 +1713,10 @@ travel in the `.lum` and are marked below:
 sidebar of pages, each a stack of named sections, each section a card of rows carrying what
 the setting is, a line saying what it does, and its control on the right. Its pages are
 **General** (reset workspace, version and build), **Appearance** (colour scheme, corners,
-interface motion), **Interface** (UI scale, tooltips, and whether the Effect controls panel
+interface motion, and the Scopes and Viewer toggles — themed scope colours, themed surround,
+and whether the Viewer smooths the picture when it is zoomed past 1:1, all three off by
+default: a magnified pixel is a square, because looking at the pixels is what zooming in is
+for), **Interface** (UI scale, tooltips, and whether the Effect controls panel
 repeats the layer's Source, Transform and Retime rows — off by default, since the Timeline's
 fold-out already shows them), **Rendering** (anti-aliasing — the one page whose value lives in
 the project rather than in this machine's settings file, which its section heading says), and

@@ -331,6 +331,20 @@ class _SettingsWindowState extends State<_SettingsWindow> {
                   setState(() => ui.workspace.setThemedViewerSurround(v)),
             ),
           ),
+          _row(
+            t,
+            'Smooth the picture when zoomed in',
+            'Off, a pixel magnified past 1:1 stays a square, which is what '
+                'you zoom in to see. On, the picture is blended between '
+                'pixels — softer, and easier on the eye when the zoom is for '
+                'framing rather than for inspecting.',
+            HouseCheckbox(
+              key: const ValueKey('settings-smooth-zoomed-viewer'),
+              value: ui.workspace.smoothZoomedViewer,
+              onChanged: (v) =>
+                  setState(() => ui.workspace.setSmoothZoomedViewer(v)),
+            ),
+          ),
         ]),
       ];
 

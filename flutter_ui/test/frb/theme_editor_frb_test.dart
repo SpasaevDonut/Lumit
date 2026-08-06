@@ -184,17 +184,34 @@ void main() {
           reason: 'on, it takes the panel surface like everything else');
     });
 
-    /// The toggle is machine-local settings, so it has to survive a restart.
-    testWidgets('both surround and scope choices survive the workspace file',
+    /// A magnified pixel is a square unless asked otherwise: Flutter's
+    /// `Texture` filters bilinearly by default, which blurred the picture at
+    /// every zoom past 1:1.
+    testWidgets('the zoomed picture is unsmoothed until switched on',
+        (tester) async {
+      final p = await openAppearance(tester);
+      expect(p.uiState.workspace.smoothZoomedViewer, isFalse);
+
+      await tester
+          .tap(find.byKey(const ValueKey('settings-smooth-zoomed-viewer')));
+      await tester.pumpAndSettle();
+      expect(p.uiState.workspace.smoothZoomedViewer, isTrue);
+    });
+
+    /// The toggles are machine-local settings, so they have to survive a
+    /// restart.
+    testWidgets('the viewer and scope choices survive the workspace file',
         (tester) async {
       final p = await openAppearance(tester);
       p.uiState.workspace.setThemedViewerSurround(true);
       p.uiState.workspace.setThemedScopes(true);
+      p.uiState.workspace.setSmoothZoomedViewer(true);
       await tester.pumpAndSettle();
 
       final restored = Workspace()..applyJson(p.uiState.workspace.toJson());
       expect(restored.themedViewerSurround, isTrue);
       expect(restored.themedScopes, isTrue);
+      expect(restored.smoothZoomedViewer, isTrue);
     });
   }, skip: !engineAvailable);
 }

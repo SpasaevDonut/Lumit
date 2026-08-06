@@ -1284,8 +1284,17 @@ class _Picture extends StatelessWidget {
     return ValueListenableBuilder<int?>(
       valueListenable: uiState.viewerFrameid,
       builder: (context, textureId, _) {
+        // Nearest by default: Flutter's `Texture` filters bilinearly unless
+        // told otherwise, which softens every pixel once the zoom is past
+        // 1:1 — the opposite of what zooming in is usually for. The setting
+        // hands the smoothing back to anyone who wants it.
         final picture = textureId != null
-            ? Texture(textureId: textureId)
+            ? Texture(
+                textureId: textureId,
+                filterQuality: uiState.workspace.smoothZoomedViewer
+                    ? FilterQuality.low
+                    : FilterQuality.none,
+              )
             : const SizedBox.expand();
         return pictureChannelFilter(channel, picture);
       },
