@@ -1766,15 +1766,16 @@ Two honest gaps. The **Project**, **Panels** and **Effects** contexts have rows
 in the table and nothing behind them — those commands are not built on this frontend, so the
 bindings are real and pressing them does nothing. The **Tools** context arms the toolbar's
 tools (§1.7) and cycles a group on a repeat press, but what most tools then *do* is not built
-either, so the chord lands and the picture stays as it was. And the arrows step a frame alongside
-`Page Down`/`Page Up`; the table below did not name them, which would have quietly taken
-them away the day dispatch started going through the keymap.
+either, so the chord lands and the picture stays as it was. Stepping a frame has a second
+chord alongside `Page Down`/`Page Up` — `Ctrl`+arrow (K-282); the **bare** arrows do nothing
+app-wide, so a list, a field or a canvas is free to use them for moving within itself.
 
 | Context | Key | Action |
 |---|---|---|
 | Global | `Space` | Play / pause |
 | Global | `J` / `K` / `L` | Shuttle reverse / pause / forward (repeat `J`/`L` steps ×2, ×4, ×8) |
 | Global | `Page Down` / `Page Up` | Next / previous frame |
+| Global | `Ctrl+→` / `Ctrl+←` | Next / previous frame (K-282; `Cmd` on macOS) |
 | Global | `Shift+Page Down` / `Shift+Page Up` | ±10 frames |
 | Global | `Home` / `End` | Comp start / end |
 | Global | `Shift+Home` / `Shift+End` | Work area start / end |

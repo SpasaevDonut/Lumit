@@ -5919,3 +5919,18 @@ The cost is real and accepted: inside the Timeline, `L` no longer steps the play
 The Timeline is the panel where you reach for a layer's sound and the least likely place to be
 shuttling; the arrows, `PageUp`/`PageDown` and `J`/`K` all still move time there, and `L`
 keeps its transport meaning in every other panel.
+
+**K-282 · DECIDED · Stepping a frame is `Mod`+arrow; the bare arrows belong to whatever has
+focus.** `ArrowRight`/`ArrowLeft` were bound app-wide to next/previous frame. That is one key
+each for the commonest transport move, which is why it was done — but the arrows are the two
+keys *every* focused thing wants for moving within itself: a list moving its highlight, a
+field moving its cursor, a canvas nudging a selection. An app-wide binding on them means none
+of those can ever be given the key without taking the transport away, and a panel-scoped
+binding that shadows it (K-281) would have to be added one panel at a time for ever. So the
+step moves to `Mod+ArrowRight` / `Mod+ArrowLeft` — Ctrl on Windows and Linux, Cmd on macOS,
+like every other `Mod` chord — and the bare arrows are unbound.
+
+Nothing is lost: `Page Down` / `Page Up` still step a frame with nothing held, `Shift` with
+them still steps ten, and `J`/`K`/`L` still shuttle (outside the Timeline, per K-281). This
+also supersedes K-281's aside that "the arrows … still move time" in the Timeline: they no
+longer move time anywhere without `Mod`.

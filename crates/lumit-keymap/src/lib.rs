@@ -569,12 +569,14 @@ pub fn default_keymap() -> Keymap {
         row(Global, "J", "playback.shuttle.reverse"),
         row(Global, "K", "playback.shuttle.pause"),
         row(Global, "L", "playback.shuttle.forward"),
-        // The arrows step a frame as well as PageUp/PageDown. They are what
-        // the shell has always answered to and what every editor does; §15's
-        // table named only the page keys, which would have quietly taken the
-        // arrows away the day dispatch started going through the keymap.
-        row(Global, "ArrowRight", "playback.frame.next"),
-        row(Global, "ArrowLeft", "playback.frame.prev"),
+        // Stepping a frame is `Mod`+arrow, not the bare arrow (K-282). The
+        // bare arrows used to do it, which meant the app-wide transport owned
+        // the two keys every list, field and canvas wants for moving *within*
+        // itself — so nothing else could ever be given them. `Mod` is the
+        // platform's primary modifier, so this is Ctrl+arrow on Windows and
+        // Linux and Cmd+arrow on macOS, like every other `Mod` chord here.
+        row(Global, "Mod+ArrowRight", "playback.frame.next"),
+        row(Global, "Mod+ArrowLeft", "playback.frame.prev"),
         row(Global, "PageDown", "playback.frame.next"),
         row(Global, "PageUp", "playback.frame.prev"),
         row(Global, "Shift+PageDown", "playback.frame.next10"),
@@ -847,6 +849,28 @@ mod tests {
         km.bind(KeyContext::Timeline, chord("Mod+S"), "file.save".into());
         assert!(km.conflicts().is_empty());
         assert!(km.shadows().is_empty());
+    }
+
+    /// Stepping a frame is `Mod`+arrow (K-282), and the bare arrows are free.
+    #[test]
+    fn a_frame_step_takes_the_primary_modifier() {
+        let km = default_keymap();
+        assert_eq!(
+            km.lookup(KeyContext::Global, &chord("Mod+ArrowRight")),
+            Some(&ActionId::from("playback.frame.next"))
+        );
+        assert_eq!(
+            km.lookup(KeyContext::Global, &chord("Mod+ArrowLeft")),
+            Some(&ActionId::from("playback.frame.prev"))
+        );
+        assert_eq!(km.lookup(KeyContext::Global, &chord("ArrowRight")), None);
+        assert_eq!(km.lookup(KeyContext::Timeline, &chord("ArrowLeft")), None);
+        // The page keys still step a frame unmodified — the chord moved, the
+        // other way of doing it did not.
+        assert_eq!(
+            km.lookup(KeyContext::Global, &chord("PageDown")),
+            Some(&ActionId::from("playback.frame.next"))
+        );
     }
 
     /// `L` reveals a layer's Audio in the Timeline and shuttles forward

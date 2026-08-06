@@ -1538,11 +1538,19 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   three shortcuts to remember instead of one key pressed once, twice or three times.
   `L` is also "play forward" in the NLE keyboard Lumit borrows (`J` back, `K` stop, `L`
   forward) — so inside the Timeline it now means the audio reveal, and everywhere else it
-  still moves time. That kind of takeover used to be reported as a *clash* the user had to go
+  still moves time. (Stepping a single frame is `Ctrl`+arrow — see the note below.) That kind
+  of takeover used to be reported as a *clash* the user had to go
   and fix; it is now reported as a *shadow* and left alone, because there was never any
   ambiguity about which one runs — the panel you are in gets first refusal, and the app-wide
   meaning is the fallback. Two shortcuts fighting inside the *same* panel is still a clash,
   since nothing can tell those apart.
+- **Stepping a frame is `Ctrl`+arrow (K-282)** — it used to be the bare left and right arrow
+  keys. The trouble with that is that the arrows are *everybody's* keys: a list wants them to
+  move the highlight, a text field to move the cursor, a canvas to nudge what is selected. As
+  long as the app-wide transport owned them, nothing else could ever be given them without a
+  fight. So the frame step took a modifier and the bare arrows went back to being available.
+  `Page Down`/`Page Up` still step a frame with nothing held, so there is still a
+  one-key way to do it.
 - **Your project remembers where you were** — reopening a saved project no longer lands on a
   blank Viewer waiting for a playhead nudge. Which comp tabs were open, which one was in
   front, where the playhead sat, which layer was selected, and which twirls were unfurled all
