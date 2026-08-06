@@ -171,20 +171,24 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
                 }
 
                 if (norm_d <= 1.3) {
-                    let base_val = bokeh_profile(norm_d, p_defocus) * p_intensity;
                     if (chromatic > 0.0) {
-                        let fringe = chromatic * 0.15 * norm_d;
-                        let r_val = bokeh_profile(norm_d + fringe, p_defocus) * p_intensity;
-                        let b_val = bokeh_profile(norm_d - fringe, p_defocus) * p_intensity;
+                        let c_scale = chromatic * 0.15;
+                        let d_red = norm_d / (1.0 + c_scale);
+                        let d_blue = norm_d / max(1.0 - c_scale, 0.01);
+                        let r_val = bokeh_profile(d_red, p_defocus) * p_intensity;
+                        let g_val = bokeh_profile(norm_d, p_defocus) * p_intensity;
+                        let b_val = bokeh_profile(d_blue, p_defocus) * p_intensity;
                         dirt_r += r_val;
-                        dirt_g += base_val;
+                        dirt_g += g_val;
                         dirt_b += b_val;
                     } else {
+                        let base_val = bokeh_profile(norm_d, p_defocus) * p_intensity;
                         dirt_r += base_val;
                         dirt_g += base_val;
                         dirt_b += base_val;
                     }
                 }
+
 
             }
         }
