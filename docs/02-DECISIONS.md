@@ -5995,16 +5995,20 @@ flipping the baseline repaints without asking for anything.
 Centred stays the default. It is what Lumit has always drawn, it is what the eye expects of a
 *wave*, and defaults do not change under people for a preference.
 
-**K-286 · DECIDED · Anti-aliasing defaults to four samples, and what the card can do is
-reported rather than saved.** K-274 settled that anti-aliasing is a project property, on by
-default, with one value shared by preview and export. Building it
-([impl/anti-aliasing.md](impl/anti-aliasing.md)) left three smaller choices, taken here.
+**K-286 · DECIDED · Anti-aliasing defaults to eight samples, what the card can do is reported
+rather than saved, and the project's own settings leave the Settings window.** K-274 settled
+that anti-aliasing is a project property, on by default, with one value shared by preview and
+export. Building it ([impl/anti-aliasing.md](impl/anti-aliasing.md)) left four smaller choices,
+taken here.
 
-**(1) The default is four coverage samples.** K-274 said "on" without saying how much. Four is
-the standard trade: it removes the staircase on everything but the shallowest diagonal, every
-adapter Lumit targets offers it, and it costs one multisample attachment beside the comp frame
-rather than four times the shading. Off / 2 / 4 / 8 are the choices, because those are the
-counts hardware actually implements — a free number would offer precision that does not exist.
+**(1) The default is eight coverage samples.** K-274 said "on" without saying how much. Eight
+smooths the shallow diagonals four still steps on, which is where a slow rotation's crawl is
+most visible, and the cost is one multisample attachment beside the comp frame rather than more
+shading — a memory cost, paid once per comp frame, not a per-pixel one. A card that will not
+give eight falls back to four by the rule in (2), so the weaker machine lands on what would
+have been the conservative default anyway. Off / 2 / 4 / 8 are the choices, because those are
+the counts hardware actually implements — a free number would offer precision that does not
+exist.
 
 **(2) What the machine can draw is reported, never written back.** The count is asked of the
 adapter and never assumed; a card that will not multisample the working format at the count
@@ -6020,9 +6024,13 @@ frame banked at one count must never be served at another. And because the defau
 every frame banked before this was made without anti-aliasing, so the version bump retires all
 of them by construction. Both reasons stand alone; either would have been enough.
 
-The Settings window gains a **Rendering** page for it — the one page there whose value lives in
-the project rather than in this machine's settings file, which its section heading says
-outright. That is a narrowing of [07-UI-SPEC.md](07-UI-SPEC.md) §15's "every value here is
-machine-local", in the same way K-215 narrowed it for the per-project cache location: a setting
-that changes what a composition looks like cannot be machine-local without breaking the promise
-that a `.lum` opens the same way everywhere.
+**(4) A project's settings get their own window, and Settings stays machine-local.** The count
+first landed as a **Rendering** page inside Settings, marked as the project's with a section
+heading — which put a value that travels in the `.lum`, and undoes like an edit, in the window
+whose every other value belongs to this machine and to no document. A caption was doing a
+window's job. So **File ▸ Project settings…** (`Mod+Alt+Shift+K`, After Effects' own chord)
+holds the project's answers, and [07-UI-SPEC.md](07-UI-SPEC.md) §15's "every value here is
+machine-local" needs no narrowing for it after all. The disk cache's *Applies to* row (K-215)
+stays in Settings → Performance: its whole purpose is choosing between the two scopes, so it is
+the one control that has to stand with a foot in each. Colour management and export defaults
+land in the new window when they are built, rather than back in Settings.

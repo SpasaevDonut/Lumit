@@ -3325,12 +3325,15 @@ of guessing. It costs some memory on the graphics card and one extra step per
 frame; it does not cost four times the work, which is why it is the standard
 answer for edges rather than a luxury.
 
-**It is a setting on the project, not on your copy of Lumit** (Settings →
-Rendering). That is deliberate. It changes what a composition looks like, so it
+**It is a setting on the project, not on your copy of Lumit** (File ▸ Project
+settings…). That is deliberate, and it is why that window exists at all:
+everything in **Settings** belongs to this machine — your theme, your cache
+sizes, your shortcuts — and nothing there travels or undoes. A project setting
+is the opposite on both counts, so it has a window of its own. It changes what a composition looks like, so it
 has to be saved inside the `.lum` and be the same when somebody else opens the
 file — and the *same* value is used for the preview and for the export, because
 the whole render path is built on the promise that what you are watching is what
-you will get. Four samples is the default: on.
+you will get. Eight samples is the default: on.
 
 Two things it deliberately does not do. It does not soften the *inside* of a
 layer's picture — that is the scaling filter's job, and a shape's own curves, a
@@ -3339,7 +3342,7 @@ And it does not change with the preview resolution: a half-size preview is a
 smaller picture with the same treatment of its edges.
 
 **If your graphics card cannot manage the number asked for**, Lumit uses the
-highest it will and says which — in the Settings row, plainly, beside the one you
+highest it will and says which — in that window, plainly, beside the one you
 chose. Your project keeps the value you picked; nothing is rewritten behind your
 back, and nothing fails.
 

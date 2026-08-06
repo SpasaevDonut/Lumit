@@ -157,14 +157,18 @@ always meant.
 
 ## 6. What landed, and where
 
-- **The setting.** `Document::anti_aliasing` (`AntiAliasing::{Off,X2,X4,X8}`, default `X4`)
+- **The setting.** `Document::anti_aliasing` (`AntiAliasing::{Off,X2,X4,X8}`, default `X8` — K-286)
   in `lumit-core/src/model.rs`, written through `Op::SetAntiAliasing` so it is undoable and
   journalled. Across the bridge as `ProjectReference::{anti_aliasing, set_anti_aliasing}`,
   with `anti_aliasing_in_use` reporting what the adapter will actually give — the two are
   kept apart so a limited card never rewrites the project.
 - **The capability check.** `lumit_gpu::supported_sample_count` (adapter in hand) and
   `GpuContext::sample_count` (from the flags the context carries), sharing one rule.
-  `lumit_gpu::adapter_sample_count` is the lock-free reporting path the Settings row reads.
+  `lumit_gpu::adapter_sample_count` is the lock-free reporting path the Project settings row
+  reads. Both are held to what the *device* will accept, not to what the adapter advertises:
+  counts beyond 1 and 4 need `TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES` enabled at device
+  creation, and reading the adapter's answer without it is what let an 8× setting reach
+  `create_texture` and fail there.
 - **The composite.** `Compositor` now keeps a `PipelineSet` per sample count, built on
   demand and cached (trap 2); count 1 is built up front so an un-anti-aliased frame costs
   exactly what it did. `composite_seeded` takes `samples`, allocates the multisample
@@ -174,8 +178,9 @@ always meant.
   both the preview and the export path, which is what makes §4 hold.
 - **The cache.** The count is fed into `comp_frame_key`, and `ALGO_VERSION` went to 3: every
   frame banked before this was made without anti-aliasing and may not be served again.
-- **The interface.** A **Rendering** page in the Settings window, whose section heading says
-  "This project" — the one page there that is not a machine preference.
+- **The interface.** The **Project settings** window (`File ▸ Project settings…`,
+  `Mod+Alt+Shift+K`), which exists to keep the project's own values out of Settings — where
+  everything else belongs to this machine and neither travels nor undoes (K-286).
 
 Not built, and deliberately: nothing anti-aliases the *interior* of a layer's picture (that
 is the sampler's business, §In plain terms), and there is no per-comp override — the count is

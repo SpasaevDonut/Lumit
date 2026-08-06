@@ -1319,11 +1319,15 @@ pub enum AntiAliasing {
     /// One sample per pixel: no anti-aliasing.
     Off,
     X2,
-    /// The default (K-274: on by default). Four samples is the standard
-    /// trade — it removes the staircase on everything but the shallowest
-    /// diagonal, and every adapter Lumit targets offers it.
-    #[default]
+    /// Four samples: the standard trade, and what a card that will not give
+    /// eight falls back to.
     X4,
+    /// The default (K-274: on by default; K-286). Eight samples smooths the
+    /// shallow diagonals four still steps on, which is where the crawl is
+    /// most visible, and it costs one more multisample attachment beside the
+    /// comp frame rather than more shading. A card that will not give eight
+    /// falls back to [`Self::X4`] and says so.
+    #[default]
     X8,
 }
 

@@ -135,6 +135,7 @@ void main() {
         'Save as…',
         'Import…',
         'Export…',
+        'Project settings…',
         'Close project (Not implemented)',
       ]) {
         expect(find.text(item), findsOneWidget, reason: 'File ▸ $item');
@@ -142,6 +143,21 @@ void main() {
       await dismiss(tester);
       expect(find.text('New'), findsNothing,
           reason: 'the barrier closes the menu without choosing anything');
+    });
+
+    /// The project's own settings are not in Settings (K-286): Settings is
+    /// this machine's, and a value saved in the `.lum` is not.
+    testWidgets('File ▸ Project settings… opens a window of its own',
+        (tester) async {
+      await mount(tester);
+      await choose(tester, 'File', 'Project settings…');
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('project-anti-aliasing')),
+          findsOneWidget);
+      expect(find.byKey(const ValueKey('settings-page-appearance')),
+          findsNothing,
+          reason: 'it is its own window, not a page of Settings');
     });
 
     testWidgets('Edit and Composition show their items', (tester) async {

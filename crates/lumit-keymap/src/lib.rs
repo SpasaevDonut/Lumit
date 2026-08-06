@@ -99,6 +99,7 @@ impl ActionId {
             "file.export" => "Export the composition",
             "comp.new" => "New composition",
             "app.settings" => "Open Settings",
+            "project.settings" => "Open Project settings",
             "panel.maximise" => "Maximise the panel under the pointer",
             "graph.toggle" => "Show or hide the graph editor",
             // Tools.
@@ -625,6 +626,9 @@ pub fn default_keymap() -> Keymap {
         row(Global, "Mod+A", "edit.select.all"),
         row(Global, "Mod+Shift+A", "edit.deselect.all"),
         row(Global, "Mod+Alt+;", "app.settings"),
+        // After Effects' own chord for the same window, and one nothing else
+        // wants: Mod+K alone is Composition settings, a comp away from this.
+        row(Global, "Mod+Alt+Shift+K", "project.settings"),
         row(Global, "`", "panel.maximise"),
         row(Global, "Shift+F3", "graph.toggle"),
         // Retime is app-wide, not Timeline-scoped: the shell runs it whatever

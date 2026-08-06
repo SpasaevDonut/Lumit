@@ -62,7 +62,8 @@ preference, and that is the decision, not an implementation detail: it changes w
 looks like, so it must travel in the `.lum` and match when the file is opened on another
 machine. **One value serves preview and export** — a preview that anti-aliased differently
 from the file would break the K-031 preview-equals-export identity that the whole render path
-is built around. Default `X4`: on, four coverage samples per pixel. Set through an ordinary
+is built around. Default `X8`: on, eight coverage samples per pixel (K-286), falling back to four on a card
+that will not give eight. Set through an ordinary
 op, so it is undoable and journalled like any other change to the picture, and — unlike
 `cache_location` — it *does* change pixels, so the sample count is part of a frame's content
 hash (docs/06 §5.2) and a frame banked at one setting is never served at another.
