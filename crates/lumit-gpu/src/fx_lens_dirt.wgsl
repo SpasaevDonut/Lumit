@@ -22,12 +22,17 @@ struct Params {
 @group(0) @binding(2) var dst: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(3) var<uniform> p: Params;
 
-fn splitmix32(state: u32) -> u32 {
-    var z = state + 0x9e3779b9u;
-    z = (z ^ (z >> 16u)) * 0x85ebca6bu;
-    z = (z ^ (z >> 13u)) * 0xc2b2ae35u;
-    return z ^ (z >> 16u);
+fn splitmix32(xin: u32) -> u32 {
+    var x = xin;
+    x = x + 0x9e3779b9u;
+    x = x ^ (x >> 16u);
+    x = x * 0x21f0aaadu;
+    x = x ^ (x >> 15u);
+    x = x * 0x735a2d97u;
+    x = x ^ (x >> 15u);
+    return x;
 }
+
 
 fn block_hash01(seed: u32, channel: u32, bx: i32, by: i32, tick: i32) -> f32 {
     var h = seed;
