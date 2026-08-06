@@ -3,26 +3,28 @@
 
 struct Params {
     tint: vec4<f32>,
+
+    bg_colour: vec4<f32>,
+    sun_pos: vec2<f32>,
     intensity: f32,
     density: f32,
     scale: f32,
     scale_var_x: f32,
     scale_var_y: f32,
+    rotation_var: f32,
     scratch_scale: f32,
     defocus: f32,
     chromatic: f32,
     scratches: f32,
     vignette: f32,
+    sun_intensity: f32,
+    sun_radius: f32,
     blend_mode: u32,
+    bg_mode: u32,
     seed: u32,
     mix_amt: f32,
     _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
 };
-
-
-
 
 @group(0) @binding(0) var src: texture_2d<f32>;
 @group(0) @binding(1) var orig: texture_2d<f32>;
@@ -134,8 +136,20 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
             let rad_x = max(radius_base * rx_mult, 0.1);
             let rad_y = max(radius_base * ry_mult, 0.1);
 
-            let dist_x = (px - center_x) / rad_x;
-            let dist_y = (py - center_y) / rad_y;
+            var dx_raw = px - center_x;
+            var dy_raw = py - center_y;
+            if (p.rotation_var > 0.0) {
+                let angle = (block_hash01(seed, 7u, cx, cy, 0) - 0.5) * 3.14159265359 * p.rotation_var;
+                let cos_a = cos(angle);
+                let sin_a = sin(angle);
+                let rx = dx_raw * cos_a + dy_raw * sin_a;
+                let ry = -dx_raw * sin_a + dy_raw * cos_a;
+                dx_raw = rx;
+                dy_raw = ry;
+            }
+
+            let dist_x = dx_raw / rad_x;
+            let dist_y = dy_raw / rad_y;
             let norm_d = sqrt(dist_x * dist_x + dist_y * dist_y);
 
             if (norm_d <= 1.3) {
@@ -155,7 +169,6 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
         }
     }
-
 
     if (scratch_amount > 0.0) {
         let scratch_scale = p.scratch_scale;
@@ -192,7 +205,6 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     dirt_r *= intensity * tint.r;
-
     dirt_g *= intensity * tint.g;
     dirt_b *= intensity * tint.b;
 
@@ -204,12 +216,36 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
         dirt_b *= v_factor;
     }
 
-    let src_r = original.r;
-    let src_g = original.g;
-    let src_b = original.b;
-    let src_a = original.a;
+    var src_r = original.r;
+    var src_g = original.g;
+    var src_b = original.b;
+    var src_a = original.a;
+
+    if (p.bg_mode > 0u) {
+        src_r = p.bg_colour.r;
+        src_g = p.bg_colour.g;
+        src_b = p.bg_colour.b;
+        src_a = p.bg_colour.a;
+        if (p.bg_mode == 2u) {
+            let min_dim = max(min(wf, hf), 1.0);
+            let u = px / wf;
+            let v = py / hf;
+            let sun_dx = (u - p.sun_pos.x) * (wf / min_dim);
+            let sun_dy = (v - p.sun_pos.y) * (hf / min_dim);
+            let sun_dist = sqrt(sun_dx * sun_dx + sun_dy * sun_dy);
+
+            let core = pow(1.0 - clamp(sun_dist / max(p.sun_radius * 0.2, 0.001), 0.0, 1.0), 2.0) * 2.0;
+            let halo = 1.0 / (1.0 + pow(sun_dist / max(p.sun_radius * 0.8, 0.001), 2.0));
+            let sun_light = (core + halo) * p.sun_intensity;
+
+            src_r += tint.r * sun_light;
+            src_g += tint.g * sun_light;
+            src_b += tint.b * sun_light;
+        }
+    }
 
     var out_r: f32 = 0.0;
+
     var out_g: f32 = 0.0;
     var out_b: f32 = 0.0;
 

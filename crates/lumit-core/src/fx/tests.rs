@@ -5998,6 +5998,7 @@ fn lens_dirt_neutral_points_and_default_resolve() {
         assert_eq!(p.scale, 1.0);
         assert_eq!(p.scale_var_x, 0.0);
         assert_eq!(p.scale_var_y, 0.0);
+        assert_eq!(p.rotation_var, 0.0);
         assert_eq!(p.scratch_scale, 1.0);
         assert_eq!(p.defocus, 0.5);
         assert_eq!(p.chromatic, 0.3);
@@ -6005,6 +6006,11 @@ fn lens_dirt_neutral_points_and_default_resolve() {
         assert_eq!(p.tint, [1.0, 0.95, 0.85, 1.0]);
         assert_eq!(p.vignette, 0.3);
         assert_eq!(p.blend_mode, 0);
+        assert_eq!(p.bg_mode, 0);
+        assert_eq!(p.bg_colour, [0.05, 0.05, 0.08, 1.0]);
+        assert_eq!(p.sun_pos, [0.5, 0.3]);
+        assert_eq!(p.sun_intensity, 1.0);
+        assert_eq!(p.sun_radius, 0.4);
         assert_eq!(p.mix, 1.0);
     } else {
         panic!("expected Resolved::LensDirt");
@@ -6018,6 +6024,7 @@ fn lens_dirt_neutral_points_and_default_resolve() {
         scale: 1.0,
         scale_var_x: 0.0,
         scale_var_y: 0.0,
+        rotation_var: 0.0,
         scratch_scale: 1.0,
         defocus: 0.5,
         chromatic: 0.3,
@@ -6025,6 +6032,11 @@ fn lens_dirt_neutral_points_and_default_resolve() {
         tint: [1.0, 0.95, 0.85, 1.0],
         vignette: 0.3,
         blend_mode: 0,
+        bg_mode: 0,
+        bg_colour: [0.05, 0.05, 0.08, 1.0],
+        sun_pos: [0.5, 0.3],
+        sun_intensity: 1.0,
+        sun_radius: 0.4,
         seed: 42,
         mix: 1.0,
     };
@@ -6043,6 +6055,7 @@ fn lens_dirt_seed_determinism() {
         scale: 1.0,
         scale_var_x: 0.0,
         scale_var_y: 0.0,
+        rotation_var: 0.0,
         scratch_scale: 1.0,
         defocus: 0.5,
         chromatic: 0.3,
@@ -6050,9 +6063,15 @@ fn lens_dirt_seed_determinism() {
         tint: [1.0, 0.95, 0.85, 1.0],
         vignette: 0.3,
         blend_mode: 0,
+        bg_mode: 0,
+        bg_colour: [0.05, 0.05, 0.08, 1.0],
+        sun_pos: [0.5, 0.3],
+        sun_intensity: 1.0,
+        sun_radius: 0.4,
         seed: 12345,
         mix: 1.0,
     };
+
 
 
     let mut img1 = vec![0.2f32; 128 * 128 * 4];

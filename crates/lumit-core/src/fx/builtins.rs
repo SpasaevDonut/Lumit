@@ -3001,7 +3001,15 @@ pub const BUILTINS: &[EffectSchema] = &[
                     hard: (Some(0.0), Some(2.0)),
                 },
             },
-
+            ParamSchema {
+                id: "rotation_var",
+                label: "Bokeh rotation jitter",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(1.0)),
+                },
+            },
             ParamSchema {
                 id: "scratch_scale",
                 label: "Scratch scale",
@@ -3011,7 +3019,6 @@ pub const BUILTINS: &[EffectSchema] = &[
                     hard: (Some(0.01), Some(20.0)),
                 },
             },
-
             ParamSchema {
                 id: "defocus",
                 label: "Defocus",
@@ -3065,6 +3072,61 @@ pub const BUILTINS: &[EffectSchema] = &[
                     dividers_after: &[],
                 },
             },
+            ParamSchema {
+                id: "bg_mode",
+                label: "Background mode",
+                kind: ParamKind::Choice {
+                    options: &["Transparent", "Color", "Sun / Light source"],
+                    default: 0,
+                    dividers_after: &[],
+                },
+            },
+            ParamSchema {
+                id: "bg_colour",
+                label: "Background color",
+                kind: ParamKind::Colour {
+                    default: [0.05, 0.05, 0.08, 1.0],
+                    range: (0.0, 2.0),
+                },
+            },
+            ParamSchema {
+                id: "sun_pos_x",
+                label: "Sun position X",
+                kind: ParamKind::Float {
+                    default: 50.0,
+                    slider: (0.0, 100.0),
+                    hard: (None, None),
+                },
+            },
+            ParamSchema {
+                id: "sun_pos_y",
+                label: "Sun position Y",
+                kind: ParamKind::Float {
+                    default: 30.0,
+                    slider: (0.0, 100.0),
+                    hard: (None, None),
+                },
+            },
+            ParamSchema {
+                id: "sun_intensity",
+                label: "Sun intensity",
+                kind: ParamKind::Float {
+                    default: 1.0,
+                    slider: (0.0, 4.0),
+                    hard: (Some(0.0), None),
+                },
+            },
+
+            ParamSchema {
+                id: "sun_radius",
+                label: "Sun radius",
+                kind: ParamKind::Float {
+                    default: 0.4,
+                    slider: (0.05, 1.5),
+                    hard: (Some(0.01), Some(5.0)),
+                },
+            },
+
             ParamSchema {
                 id: "seed",
                 label: "Seed",

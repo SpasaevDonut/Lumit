@@ -1988,8 +1988,20 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
                     let rad_x = (radius_base * rx_mult).max(0.1);
                     let rad_y = (radius_base * ry_mult).max(0.1);
 
-                    let dist_x = (px - center_x) / rad_x;
-                    let dist_y = (py - center_y) / rad_y;
+                    let mut dx_raw = px - center_x;
+                    let mut dy_raw = py - center_y;
+                    if p.rotation_var > 0.0 {
+                        let angle = (h01(7, cx, cy) - 0.5) * std::f32::consts::PI * p.rotation_var;
+                        let cos_a = angle.cos();
+                        let sin_a = angle.sin();
+                        let rx = dx_raw * cos_a + dy_raw * sin_a;
+                        let ry = -dx_raw * sin_a + dy_raw * cos_a;
+                        dx_raw = rx;
+                        dy_raw = ry;
+                    }
+
+                    let dist_x = dx_raw / rad_x;
+                    let dist_y = dy_raw / rad_y;
                     let norm_d = (dist_x * dist_x + dist_y * dist_y).sqrt();
 
                     if norm_d <= 1.3 {
@@ -2061,11 +2073,31 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
                 dirt_b *= v_factor;
             }
 
+            let (src_r, src_g, src_b, src_a) = if p.bg_mode == 0 {
+                (original[idx], original[idx + 1], original[idx + 2], original[idx + 3])
+            } else {
+                let mut bg_r = p.bg_colour[0];
+                let mut bg_g = p.bg_colour[1];
+                let mut bg_b = p.bg_colour[2];
+                if p.bg_mode == 2 {
+                    let min_dim = wf.min(hf).max(1.0);
+                    let u = px / wf;
+                    let v = py / hf;
+                    let sun_dx = (u - p.sun_pos[0]) * (wf / min_dim);
+                    let sun_dy = (v - p.sun_pos[1]) * (hf / min_dim);
+                    let sun_dist = (sun_dx * sun_dx + sun_dy * sun_dy).sqrt();
 
-            let src_r = original[idx];
-            let src_g = original[idx + 1];
-            let src_b = original[idx + 2];
-            let src_a = original[idx + 3];
+                    let core = (1.0 - (sun_dist / (p.sun_radius * 0.2).max(0.001)).clamp(0.0, 1.0)).powi(2) * 2.0;
+                    let halo = 1.0 / (1.0 + (sun_dist / (p.sun_radius * 0.8).max(0.001)).powi(2));
+                    let sun_light = (core + halo) * p.sun_intensity;
+
+                    bg_r += tint[0] * sun_light;
+                    bg_g += tint[1] * sun_light;
+                    bg_b += tint[2] * sun_light;
+                }
+                (bg_r, bg_g, bg_b, p.bg_colour[3])
+            };
+
 
             let (out_r, out_g, out_b) = match blend_mode {
                 0 => (

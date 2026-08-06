@@ -668,6 +668,7 @@ pub struct LensDirtParams {
     pub scale: f32,
     pub scale_var_x: f32,
     pub scale_var_y: f32,
+    pub rotation_var: f32,
     pub scratch_scale: f32,
     pub defocus: f32,
     pub chromatic: f32,
@@ -676,9 +677,16 @@ pub struct LensDirtParams {
     pub vignette: f32,
     /// Blend mode wire code: 0 = Screen, 1 = Add, 2 = Overlay, 3 = Solo (dirt map only).
     pub blend_mode: u32,
+    /// Background mode wire code: 0 = Transparent, 1 = Color fill, 2 = Sun / Light source.
+    pub bg_mode: u32,
+    pub bg_colour: [f32; 4],
+    pub sun_pos: [f32; 2],
+    pub sun_intensity: f32,
+    pub sun_radius: f32,
     pub seed: u32,
     pub mix: f32,
 }
+
 
 
 
@@ -2051,6 +2059,7 @@ fn resolve_one(
             let scale = (e.float_at("scale", lt).unwrap_or(1.0) as f32).clamp(0.01, 20.0);
             let scale_var_x = (e.float_at("scale_var_x", lt).unwrap_or(0.0) as f32).clamp(0.0, 2.0);
             let scale_var_y = (e.float_at("scale_var_y", lt).unwrap_or(0.0) as f32).clamp(0.0, 2.0);
+            let rotation_var = (e.float_at("rotation_var", lt).unwrap_or(0.0) as f32).clamp(0.0, 1.0);
             let scratch_scale = (e.float_at("scratch_scale", lt).unwrap_or(1.0) as f32).clamp(0.01, 20.0);
             let defocus = (e.float_at("defocus", lt).unwrap_or(0.5) as f32).clamp(0.0, 1.0);
             let chromatic = (e.float_at("chromatic", lt).unwrap_or(0.3) as f32).clamp(0.0, 2.0);
@@ -2065,6 +2074,22 @@ fn resolve_one(
                 Some(EffectValue::Choice(c)) => (*c).min(3),
                 _ => 0,
             };
+            let bg_mode = match e.param("bg_mode") {
+                Some(EffectValue::Choice(c)) => (*c).min(2),
+                _ => 0,
+            };
+            let bg_colour = match e.colour_at("bg_colour", lt) {
+                Some(c) => [c[0] as f32, c[1] as f32, c[2] as f32, c[3] as f32],
+                None => [0.05, 0.05, 0.08, 1.0],
+            };
+            let sun_pos_x = e.float_at("sun_pos_x", lt).unwrap_or(50.0) as f32 / 100.0;
+            let sun_pos_y = e.float_at("sun_pos_y", lt).unwrap_or(30.0) as f32 / 100.0;
+
+            let sun_pos = [sun_pos_x, sun_pos_y];
+            let sun_intensity = (e.float_at("sun_intensity", lt).unwrap_or(1.0) as f32).max(0.0);
+
+            let sun_radius = (e.float_at("sun_radius", lt).unwrap_or(0.4) as f32).clamp(0.01, 5.0);
+
             let seed = match e.param("seed") {
                 Some(EffectValue::Seed(s)) => *s,
                 _ => 0,
@@ -2076,6 +2101,7 @@ fn resolve_one(
                 scale,
                 scale_var_x,
                 scale_var_y,
+                rotation_var,
                 scratch_scale,
                 defocus,
                 chromatic,
@@ -2083,10 +2109,16 @@ fn resolve_one(
                 tint,
                 vignette,
                 blend_mode,
+                bg_mode,
+                bg_colour,
+                sun_pos,
+                sun_intensity,
+                sun_radius,
                 seed,
                 mix,
             }))
         }
+
 
 
         _ => None,
