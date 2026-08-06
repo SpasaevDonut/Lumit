@@ -22,6 +22,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
+import 'package:lumit_flutter/src/rust/api/assets.dart';
 import 'package:lumit_flutter/panels/viewer_gizmo.dart';
 import 'package:lumit_flutter/panels/viewer_panel_frb.dart';
 import 'package:lumit_flutter/panels/viewer_paint.dart';
@@ -1454,6 +1455,165 @@ void main() {
           reason: 'and so did the other one the sweep caught');
       expect(after[3].x, closeTo(before[3].x, 0.001),
           reason: 'the points the sweep missed stayed put');
+    });
+
+    /// **A shape layer's own art is correctable on the picture**, by the same
+    /// gesture a mask's points take (K-224, and K-237's "the same gesture over
+    /// shape contents is the next piece"). Before this, art could be drawn and
+    /// then only redrawn.
+    testWidgets("a shape layer's points can be swept up and dragged",
+        (tester) async {
+      final p = withLayer();
+      // A shape layer with a square of its own, in comp coordinates — the
+      // layer maps 1:1 to the comp, so its points sit where the maths below
+      // says they do.
+      final shape = p.comp.addShapeLayer(
+        name: 'Square',
+        contents: [
+          BridgeShapeItem(
+            id: UuidValue.fromString(const Uuid().v4()),
+            name: 'Rectangle',
+            vertices: const [
+              BridgeVertex(
+                  x: 400, y: 200, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+              BridgeVertex(
+                  x: 600, y: 200, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+              BridgeVertex(
+                  x: 600, y: 400, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+              BridgeVertex(
+                  x: 400, y: 400, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+            ],
+            closed: true,
+            fill: const BridgeColourRgba(r: 1, g: 1, b: 1, a: 1),
+            stroke: null,
+            strokeWidth: 0,
+            opacity: 100,
+          ),
+        ],
+      );
+      p.uiState.setSelection([shape]);
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      final before = shape.getShapeContents().single.vertices;
+      final fitted = fittedRect(tester, p.comp);
+      Offset onScreen(double x, double y) => Offset(
+            fitted.left + x / 1920 * fitted.width,
+            fitted.top + y / 1080 * fitted.height,
+          );
+
+      // Sweep the top two points, starting from empty space outside the
+      // picture — exactly as the mask case does.
+      final panel = tester.getRect(find.byType(ViewerPanelFrb));
+      final gesture =
+          await tester.startGesture(panel.topLeft + const Offset(2, 2));
+      await tester.pump();
+      await gesture.moveTo(onScreen(940, 440));
+      await tester.pump();
+      await gesture.moveTo(onScreen(1040, 470));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(shape.getShapeContents().single.vertices.first.x, before.first.x,
+          reason: 'a sweep only chooses; nothing has moved yet');
+
+      final drag = await tester.startGesture(onScreen(800, 400));
+      await tester.pump();
+      // Past the framework's pan slop, which is larger than the touch slop.
+      for (var i = 0; i < 10; i++) {
+        await drag.moveBy(const Offset(6, 0));
+        await tester.pump();
+      }
+      await drag.up();
+      await tester.pumpAndSettle();
+
+      final after = shape.getShapeContents().single.vertices;
+      expect(after[0].x, greaterThan(before[0].x),
+          reason: 'the swept top-left point moved');
+      expect(after[1].x, greaterThan(before[1].x),
+          reason: 'and so did the other one the sweep caught');
+      expect(after[3].x, closeTo(before[3].x, 0.001),
+          reason: 'the points the sweep missed stayed put');
+      expect(after[0].y, closeTo(before[0].y, 0.001),
+          reason: 'a horizontal drag moves nothing vertically');
+    });
+
+    /// A layer can carry a mask *and* be a shape layer, and the two sets of
+    /// points are written back by different calls. This is the case that would
+    /// break if the keys naming them ever collided.
+    testWidgets('a mask on a shape layer edits apart from the art',
+        (tester) async {
+      final p = withLayer();
+      final shape = p.comp.addShapeLayer(
+        name: 'Square',
+        contents: [
+          BridgeShapeItem(
+            id: UuidValue.fromString(const Uuid().v4()),
+            name: 'Rectangle',
+            vertices: const [
+              BridgeVertex(
+                  x: 400, y: 200, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+              BridgeVertex(
+                  x: 600, y: 200, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+              BridgeVertex(
+                  x: 600, y: 400, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+            ],
+            closed: true,
+            fill: const BridgeColourRgba(r: 1, g: 1, b: 1, a: 1),
+            stroke: null,
+            strokeWidth: 0,
+            opacity: 100,
+          ),
+        ],
+      );
+      shape.addMask(
+        mask: BridgeMask(
+          id: UuidValue.fromString(const Uuid().v4()),
+          name: 'Mask',
+          vertices: const [
+            BridgeVertex(
+                x: 300, y: 300, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+            BridgeVertex(
+                x: 500, y: 300, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+            BridgeVertex(
+                x: 500, y: 500, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+          ],
+          closed: true,
+          inverted: false,
+          opacity: 100,
+        ),
+      );
+      p.uiState.setSelection([shape]);
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      final artBefore = shape.getShapeContents().single.vertices;
+      final maskBefore = shape.getMasks().single.vertices;
+      final fitted = fittedRect(tester, p.comp);
+      Offset onScreen(double x, double y) => Offset(
+            fitted.left + x / 1920 * fitted.width,
+            fitted.top + y / 1080 * fitted.height,
+          );
+
+      // Drag one of the ART's points. The mask must not follow.
+      final drag = await tester.startGesture(onScreen(800, 400));
+      await tester.pump();
+      for (var i = 0; i < 10; i++) {
+        await drag.moveBy(const Offset(6, 0));
+        await tester.pump();
+      }
+      await drag.up();
+      await tester.pumpAndSettle();
+
+      expect(shape.getShapeContents().single.vertices[0].x,
+          greaterThan(artBefore[0].x),
+          reason: 'the art point moved');
+      final maskAfter = shape.getMasks().single.vertices;
+      for (var i = 0; i < maskAfter.length; i++) {
+        expect(maskAfter[i].x, closeTo(maskBefore[i].x, 0.001),
+            reason: 'the mask on the same layer is a different path');
+        expect(maskAfter[i].y, closeTo(maskBefore[i].y, 0.001));
+      }
     });
 
     /// The Type tool (K-225): a click on empty picture makes a text layer where

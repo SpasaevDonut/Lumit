@@ -453,8 +453,12 @@ and 3D gizmos, scale and rotation of a *multiple* selection about a shared box (
 selection moves, and shows a box per layer), and motion paths (§2.4). A layer whose position
 is keyframed draws no box: there is no single value for a drag to add to. **Masks can be
 drawn, listed, selected, inverted, faded, deleted (by menu or `Delete`), and their points
-selected and moved** (K-224, K-234); their bezier **handles** cannot be dragged, and mask
-paths cannot be keyframed.
+selected and moved** (K-224, K-234), and **a shape layer's own art is drawn and edited by the
+same gesture** (K-283) — the two hold the same path type, so a point of either is aimed at,
+swept up and dragged alike. Not built: bezier **handles** on any path, mask or shape (the
+model carries no linked/broken tangent flag, so it is a data-model change as well as a
+gesture); a **paint stroke's** points, a stroke being a stored gesture rather than a path; and
+mask paths cannot be keyframed.
 
 ### 2.3.2 The Type tool (K-225)
 

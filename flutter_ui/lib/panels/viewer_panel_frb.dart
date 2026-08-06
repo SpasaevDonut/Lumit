@@ -681,6 +681,7 @@ class _Stage extends StatelessWidget {
         scalable: sx != null && sy != null && rotation != null,
         rotationDegrees: rotation ?? 0,
         masks: entry.info.masks,
+        shapeContents: entry.info.shapeContents,
       ));
     }
     return out;

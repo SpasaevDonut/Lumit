@@ -5854,3 +5854,34 @@ bandwidth cap, and Cloudflare Pages serves the two static sites. There is no ser
 no scaling story to own. Revisit only if the site grows contributors who should not have
 to clone a Rust + Flutter tree — at which point Cloudflare's per-path build filters
 already prevent the two from triggering each other's builds.
+
+**K-283 · DECIDED · A shape layer's own art is correctable on the picture, by the gesture that
+already corrects a mask.** K-237 shipped shape layers and named the gap outright — "editing a
+shape layer's points on the picture (K-224 edits *mask* points; the same gesture over shape
+contents is the next piece)". Until now art could be drawn and then only *re*drawn.
+
+**One piece of code, because it is one kind of thing.** A mask and a shape item hold the same
+path type (`BezierPath`, in `lumit_core::mask`), so the points of both are found, drawn, swept
+up and dragged by the same walk. What differs is only where the edit is written back: a mask
+one at a time by id (`set_mask`), a shape layer's items as a whole list
+(`set_shape_contents` / `SetShapeContents`). That is still **one op per layer**, which is the
+rule K-224 set for a multi-layer point drag and the razor set for a multi-layer cut.
+
+**A shape point and a mask point are told apart by their key, and by nothing else.** A layer
+can carry both; their ids are both UUIDs; the selection is a set of strings. So a shape item's
+key carries a `shape#` prefix. Without it a selection could not tell the two apart and a shape
+point would be committed as a mask — which is why there is a test for exactly that case.
+
+**Everything else K-224 decided carries over unchanged**, deliberately: the press order (handle,
+then point of a *selected* layer, then layer, then empty space), the marquee that gathers points
+when there are points to gather and settles on release, and the screen delta mapped through each
+layer's own inverse so a selection spanning two layers still moves together. None of that needed
+restating for shapes; it needed only to stop being mask-shaped.
+
+**Still not built, and each for its own reason.** A **paint stroke's** points: a stroke is a
+stored *gesture*, not a path, so it is a different piece of work rather than the same one
+extended. **Bezier handles**, on any path, mask included — K-224 deferred them and the reason
+has grown teeth since: `Vertex` has no linked/broken flag, corners being merely both tangents at
+zero, so an `Alt`-drag that re-links a pair needs a [03-DATA-MODEL.md](03-DATA-MODEL.md) change
+and a decision about what a file written before that flag means. It is not a gesture waiting to
+be wired.

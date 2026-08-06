@@ -141,6 +141,15 @@ class LayerBox {
   /// model with everything else, so drawing them costs no bridge calls.
   final List<BridgeMask> masks;
 
+  /// A shape layer's own art (K-237), for the same reason and from the same
+  /// read. Empty for every other kind of layer.
+  ///
+  /// A mask and a shape item hold the *same* path type — `BezierPath`, in
+  /// `lumit_core::mask` — which is why the points of both can be aimed at,
+  /// swept up and dragged by one piece of code. What differs is only where the
+  /// edit is written back to (K-224 for masks; `setShapeContents` here).
+  final List<BridgeShapeItem> shapeContents;
+
   /// The layer's rotation in degrees, as the document holds it.
   ///
   /// Carried rather than recovered from [map]'s sine and cosine, which only
@@ -157,6 +166,7 @@ class LayerBox {
     required this.scalable,
     required this.rotationDegrees,
     this.masks = const [],
+    this.shapeContents = const [],
   });
 
   /// The same box with the layer scaled to [sxPercent] / [syPercent] — the
@@ -289,51 +299,92 @@ class LayerBox {
 String maskPointKey(UuidValue layerId, UuidValue maskId, int index) =>
     '$layerId#$maskId#$index';
 
-/// Every mask vertex of [box], with where it sits on screen and the key that
-/// names it.
-List<({String key, Offset at, UuidValue maskId, int index})> maskPointsOf(
-    LayerBox box) {
-  final out = <({String key, Offset at, UuidValue maskId, int index})>[];
+/// The same for a shape item's vertex (K-237).
+///
+/// Prefixed, because a mask and a shape item are told apart by nothing else: a
+/// layer could hold both, their ids are both UUIDs, and the two are written
+/// back to the document by different calls. The prefix is what carries that
+/// difference through a `Set<String>` of selected points.
+String shapePointKey(UuidValue layerId, UuidValue itemId, int index) =>
+    'shape#$layerId#$itemId#$index';
+
+/// One editable vertex on the picture: where it is, what names it, and which of
+/// the layer's paths it belongs to.
+typedef PathPoint = ({
+  String key,
+  Offset at,
+  UuidValue pathId,
+  int index,
+  bool shape,
+});
+
+/// Every vertex of [box] that can be aimed at — its masks' and, for a shape
+/// layer, its own art's.
+///
+/// Masks and shape items hold the same path type, so this is one walk over two
+/// lists rather than two kinds of point.
+List<PathPoint> pathPointsOf(LayerBox box) {
+  final out = <PathPoint>[];
   for (final mask in box.masks) {
     for (var i = 0; i < mask.vertices.length; i++) {
       final v = mask.vertices[i];
       out.add((
         key: maskPointKey(box.id, mask.id, i),
         at: box.map.toScreen(v.x, v.y),
-        maskId: mask.id,
+        pathId: mask.id,
         index: i,
+        shape: false,
+      ));
+    }
+  }
+  for (final item in box.shapeContents) {
+    for (var i = 0; i < item.vertices.length; i++) {
+      final v = item.vertices[i];
+      out.add((
+        key: shapePointKey(box.id, item.id, i),
+        at: box.map.toScreen(v.x, v.y),
+        pathId: item.id,
+        index: i,
+        shape: true,
       ));
     }
   }
   return out;
 }
 
-/// The mask point under [point] across [boxes], or null when none is near
+/// The editable point under [point] across [boxes], or null when none is near
 /// enough. Nearest wins, so two points close together do not fight.
-({LayerBox box, String key, UuidValue maskId, int index})? maskPointAt(
+({LayerBox box, String key, UuidValue pathId, int index, bool shape})?
+    pathPointAt(
   List<LayerBox> boxes,
   Offset point, {
   double slop = gizmoAnchorSlop / 2,
 }) {
-  ({LayerBox box, String key, UuidValue maskId, int index})? best;
+  ({LayerBox box, String key, UuidValue pathId, int index, bool shape})? best;
   var bestDistance = slop;
   for (final box in boxes) {
-    for (final p in maskPointsOf(box)) {
+    for (final p in pathPointsOf(box)) {
       final d = (p.at - point).distance;
       if (d <= bestDistance) {
         bestDistance = d;
-        best = (box: box, key: p.key, maskId: p.maskId, index: p.index);
+        best = (
+          box: box,
+          key: p.key,
+          pathId: p.pathId,
+          index: p.index,
+          shape: p.shape,
+        );
       }
     }
   }
   return best;
 }
 
-/// Every mask point of [boxes] inside [rect] — what a marquee catches when it
-/// is sweeping points rather than layers.
-Set<String> maskPointsInRect(List<LayerBox> boxes, Rect rect) => {
+/// Every editable point of [boxes] inside [rect] — what a marquee catches when
+/// it is sweeping points rather than layers.
+Set<String> pathPointsInRect(List<LayerBox> boxes, Rect rect) => {
       for (final box in boxes)
-        for (final p in maskPointsOf(box))
+        for (final p in pathPointsOf(box))
           if (rect.contains(p.at)) p.key,
     };
 
@@ -654,7 +705,7 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
     // A mask point first: it sits on top of the layer it belongs to, and a
     // click on it means the point rather than the layer.
     final point = widget.showControls
-        ? maskPointAt(_selected, details.localPosition)
+        ? pathPointAt(_selected, details.localPosition)
         : null;
     if (point != null) {
       setState(() {
@@ -719,7 +770,7 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
     // Only on selected layers, because a stray point of some layer underneath
     // must not steal a press meant for the picture.
     final point = widget.showControls
-        ? maskPointAt(_selected, at)
+        ? pathPointAt(_selected, at)
         : null;
     if (point != null) {
       setState(() {
@@ -1093,6 +1144,61 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
           // The mask went away mid-drag; the rest still move.
         }
       }
+      // A shape layer's own art moves the same way, and by the same maths — the
+      // one difference is where it is written back. Masks are set one at a time
+      // by id; shape contents are a whole list (`SetShapeContents`, K-237), so
+      // a layer's items are rebuilt together and committed once. That is still
+      // one undo step per layer, which is the rule K-224 set.
+      if (box.shapeContents.isNotEmpty) {
+        final origin = box.map.layerOf(Offset.zero);
+        final shifted = box.map.layerOf(_delta);
+        final dx = shifted.dx - origin.dx;
+        final dy = shifted.dy - origin.dy;
+        var touched = false;
+        final contents = <BridgeShapeItem>[];
+        for (final item in box.shapeContents) {
+          final moved = <int>[
+            for (var i = 0; i < item.vertices.length; i++)
+              if (_points.contains(shapePointKey(box.id, item.id, i))) i,
+          ];
+          if (moved.isEmpty) {
+            contents.add(item);
+            continue;
+          }
+          touched = true;
+          contents.add(BridgeShapeItem(
+            id: item.id,
+            name: item.name,
+            vertices: [
+              for (var i = 0; i < item.vertices.length; i++)
+                if (moved.contains(i))
+                  BridgeVertex(
+                    x: item.vertices[i].x + dx,
+                    y: item.vertices[i].y + dy,
+                    tanInX: item.vertices[i].tanInX,
+                    tanInY: item.vertices[i].tanInY,
+                    tanOutX: item.vertices[i].tanOutX,
+                    tanOutY: item.vertices[i].tanOutY,
+                  )
+                else
+                  item.vertices[i],
+            ],
+            closed: item.closed,
+            fill: item.fill,
+            stroke: item.stroke,
+            strokeWidth: item.strokeWidth,
+            opacity: item.opacity,
+          ));
+        }
+        if (touched) {
+          try {
+            box.layer.setShapeContents(contents: contents);
+            landed = true;
+          } catch (_) {
+            // The layer or its art went away mid-drag; the rest still move.
+          }
+        }
+      }
     }
     if (landed) widget.onChanged();
   }
@@ -1110,7 +1216,7 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
     // are already selected anyway. With none caught it is the layer sweep it
     // has always been.
     if (widget.showControls) {
-      final caughtPoints = maskPointsInRect(_selected, rect);
+      final caughtPoints = pathPointsInRect(_selected, rect);
       if (caughtPoints.isNotEmpty) {
         setState(() {
           if (!HardwareKeyboard.instance.isShiftPressed) _points.clear();
@@ -1259,7 +1365,25 @@ class _GizmoPainter extends CustomPainter {
 
     for (final box in maskedBoxes) {
       for (final mask in box.masks) {
-        _maskOutline(canvas, box, mask);
+        _pathOutline(
+          canvas,
+          box,
+          mask.vertices,
+          mask.closed,
+          (i) => maskPointKey(box.id, mask.id, i),
+        );
+      }
+      // A shape layer's own art gets the same outline and the same vertices, so
+      // drawn art can be seen point by point and corrected rather than redrawn
+      // (K-237's "editing a shape layer's points on the picture").
+      for (final item in box.shapeContents) {
+        _pathOutline(
+          canvas,
+          box,
+          item.vertices,
+          item.closed,
+          (i) => shapePointKey(box.id, item.id, i),
+        );
       }
     }
 
@@ -1308,43 +1432,51 @@ class _GizmoPainter extends CustomPainter {
     );
   }
 
-  /// One mask's path over the picture, in the layer's own space put through its
-  /// transform — so the outline sits on the pixels it gates however the layer
-  /// is moved or turned.
-  void _maskOutline(Canvas canvas, LayerBox box, BridgeMask mask) {
-    if (mask.vertices.length < 2) return;
+  /// One path over the picture, in the layer's own space put through its
+  /// transform — so the outline sits on the pixels it belongs to however the
+  /// layer is moved or turned.
+  ///
+  /// Serves a mask (K-224) and a shape layer's own art (K-237) alike: the two
+  /// hold the same path type, and only the key that names a vertex — and so
+  /// where an edit is written back — differs.
+  void _pathOutline(
+    Canvas canvas,
+    LayerBox box,
+    List<BridgeVertex> vertices,
+    bool closed,
+    String Function(int index) keyOf,
+  ) {
+    if (vertices.length < 2) return;
     // A selected point follows the pointer while it is being dragged, so the
     // path bends live rather than jumping on release.
     Offset nudgeFor(int i) =>
-        selectedPoints.contains(maskPointKey(box.id, mask.id, i))
-            ? pointNudge
-            : Offset.zero;
+        selectedPoints.contains(keyOf(i)) ? pointNudge : Offset.zero;
     Offset at(int i) {
-      final v = mask.vertices[i];
+      final v = vertices[i];
       return box.map.toScreen(v.x, v.y) + moved + nudgeFor(i);
     }
 
     Offset out(int i) {
-      final v = mask.vertices[i];
+      final v = vertices[i];
       return box.map.toScreen(v.x + v.tanOutX, v.y + v.tanOutY) +
           moved +
           nudgeFor(i);
     }
 
     Offset into(int i) {
-      final v = mask.vertices[i];
+      final v = vertices[i];
       return box.map.toScreen(v.x + v.tanInX, v.y + v.tanInY) +
           moved +
           nudgeFor(i);
     }
 
     final path = Path()..moveTo(at(0).dx, at(0).dy);
-    for (var i = 1; i < mask.vertices.length; i++) {
+    for (var i = 1; i < vertices.length; i++) {
       path.cubicTo(
           out(i - 1).dx, out(i - 1).dy, into(i).dx, into(i).dy, at(i).dx, at(i).dy);
     }
-    if (mask.closed && mask.vertices.length > 2) {
-      final last = mask.vertices.length - 1;
+    if (closed && vertices.length > 2) {
+      final last = vertices.length - 1;
       path.cubicTo(
           out(last).dx, out(last).dy, into(0).dx, into(0).dy, at(0).dx, at(0).dy);
       path.close();
@@ -1360,9 +1492,8 @@ class _GizmoPainter extends CustomPainter {
     // Every vertex, so a path can be seen point by point (K-224): hollow when
     // it is merely there, filled when it is selected — the same "outline means
     // available, fill means chosen" the keyframe diamonds use.
-    for (var i = 0; i < mask.vertices.length; i++) {
-      final selected =
-          selectedPoints.contains(maskPointKey(box.id, mask.id, i));
+    for (var i = 0; i < vertices.length; i++) {
+      final selected = selectedPoints.contains(keyOf(i));
       final rect = Rect.fromCenter(center: at(i), width: 6, height: 6);
       canvas.drawRect(rect, Paint()..color = selected ? accent : surface);
       if (!selected) {
