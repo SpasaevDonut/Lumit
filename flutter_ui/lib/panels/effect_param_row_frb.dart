@@ -81,7 +81,8 @@ class EffectParamRowFrb extends StatelessWidget {
   final bool twoColumn;
 
   /// The layer this effect sits on, and every layer in the comp — what a
-  /// layer-valued parameter picks from, minus the owner itself (K-194). Both
+  /// layer-valued parameter picks from (K-194). The owner is offered too
+  /// (K-288): picking it means "this layer", the effect's own input. Both
   /// ride in from the read model, so the closed picker costs nothing.
   final UuidValue ownerLayerId;
   final List<BridgeLayerEntry> ownerLayers;
@@ -635,6 +636,10 @@ class EffectParamRowFrb extends StatelessWidget {
   /// container with FFmpeg while drawing a row.
   Widget _layerPicker(BuildContext context, UuidValue id, UuidValue? current) {
     final chosen = current?.toString();
+    // The layer the effect is on says so, so "everything below" is readable
+    // on an adjustment layer rather than an unexplained self-reference.
+    String named(String name, UuidValue layerId) =>
+        layerId == ownerLayerId ? '$name (this layer)' : name;
     return SizedBox(
       width: effectCellWidth + 40,
       child: BareLazyDropdown<UuidValue?>(
@@ -645,19 +650,27 @@ class EffectParamRowFrb extends StatelessWidget {
             ? 'None'
             : (ownerLayers
                     .where((l) => l.layer.internallayerId == current)
-                    .map((l) => l.info.name)
+                    .map((l) => named(l.info.name, l.layer.internallayerId))
                     .firstOrNull ??
                 'Missing layer'),
         options: () => [
           (null, 'None'),
           for (final entry in ownerLayers)
-            // A layer-valued parameter samples another layer's *picture* — a
-            // depth map, a displacement source — so a layer with none (a
-            // camera, an audio-only clip) is not offered, and neither is the
-            // layer the effect is on: sampling itself is not defined.
-            if (entry.layer.internallayerId != ownerLayerId &&
+            // A layer-valued parameter samples a *picture*, so a layer with
+            // none (a camera, an audio-only clip) is not offered.
+            //
+            // The layer the effect is ON is always offered, picture or not
+            // (K-288): picking it does not re-render that layer, it reads
+            // the effect's own input at its point in the stack. That is the
+            // whole point on an **adjustment layer** — which has no picture
+            // of its own, and whose input is the composite of everything
+            // below it. A Lens flare added to one starts here.
+            if (entry.layer.internallayerId == ownerLayerId ||
                 entry.layer.hasPicture())
-              (entry.layer.internallayerId, entry.info.name),
+              (
+                entry.layer.internallayerId,
+                named(entry.info.name, entry.layer.internallayerId)
+              ),
         ],
         onChanged: (picked) => _set(BridgeEffectValue.layer(picked)),
       ),

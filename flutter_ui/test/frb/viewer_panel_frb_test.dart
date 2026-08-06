@@ -2127,9 +2127,13 @@ void main() {
 
       final button = find.byKey(const ValueKey('viewer-playback-mode'));
       expect(button, findsOneWidget, reason: 'the mode is visible, not buried');
-      expect(find.textContaining('Adaptive'), findsOneWidget,
+      expect(find.text('Adaptive res'), findsOneWidget,
           reason:
               'adaptive is the mode that always plays, so it is the default');
+      // The mode, and only the mode (K-287): the tier it settled on used to
+      // ride in the label, which re-lettered the button through playback.
+      expect(find.textContaining('·'), findsNothing,
+          reason: 'no tier beside the mode name');
 
       await tester.tap(button);
       await tester.pump();

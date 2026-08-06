@@ -106,6 +106,33 @@ impl LutCache {
     }
 }
 
+/// One layer-input slot as [`run_ops`] receives it — the realised twin of
+/// [`crate::draw::LayerInputDraw`] (docs/impl/layer-input.md, K-288).
+pub enum LayerInput {
+    /// Nothing to read: the effect degrades to its labelled no-op.
+    Absent,
+    /// The effect's **own input** at its point in the stack. There is no
+    /// texture to carry here because only `run_ops` knows it — it is the
+    /// picture the chain is holding when the op comes round, which on an
+    /// adjustment layer is the composite of everything below.
+    ThisLayer,
+    /// Another layer, already rendered alone at this raster.
+    Texture(Tex),
+}
+
+impl LayerInput {
+    /// The texture this slot names, given the texture the chain currently
+    /// holds. `None` for [`LayerInput::Absent`] — the passthrough.
+    #[must_use]
+    pub fn texture<'a>(&'a self, current: &'a Tex) -> Option<&'a Tex> {
+        match self {
+            LayerInput::Absent => None,
+            LayerInput::ThisLayer => Some(current),
+            LayerInput::Texture(t) => Some(t),
+        }
+    }
+}
+
 /// Render one referenced layer alone into the depth input a depth-of-field
 /// effect samples (docs/impl/layer-input.md §2). The **one** helper the preview
 /// (`GpuViewer`) and export (`Renderer`) paths both call, so the depth pass is
@@ -178,15 +205,16 @@ pub fn render_layer_input(
 /// or unreadable file) is a passthrough, exactly like a missing flow field.
 /// `layer_inputs` is the parallel depth-input list (docs/08 §3.22, docs/impl/
 /// layer-input.md): the k-th `Resolved::Dof` op binds `layer_inputs[k]` — the
-/// referenced layer rendered alone at comp size, or `None` (unset, missing or
-/// cyclic) for a passthrough, exactly like a missing LUT.
+/// referenced layer rendered alone at comp size, [`LayerInput::ThisLayer`]
+/// for the effect's own input (K-288), or [`LayerInput::Absent`] (unset,
+/// missing or cyclic) for a passthrough, exactly like a missing LUT.
 /// `flare_mattes` is the parallel Lens flare Matte-source list (docs/08
 /// §3.27, K-257), and `flare_lens` the parallel custom-prescription list
 /// (K-264, `lens_file` as content hash + text; None = use the picked
 /// library lens): the k-th `Resolved::LensFlare` op binds `flare_mattes[k]`
-/// — the referenced matte layer rendered alone at this raster, or `None`
-/// (unset, dangling, or not in Matte mode) which detects no sources, the
-/// LUT/DoF passthrough convention.
+/// — the referenced matte layer rendered alone at this raster, this effect's
+/// own input, or absent (unset, dangling, or not in Matte mode) which
+/// detects no sources, the LUT/DoF passthrough convention.
 #[allow(clippy::too_many_arguments)]
 pub fn run_ops(
     fx: &FxEngine,
@@ -198,8 +226,8 @@ pub fn run_ops(
     neighbours: &[(i32, Tex)],
     flow_field: Option<&Tex>,
     luts: &[Option<LoadedLut>],
-    layer_inputs: &[Option<Tex>],
-    flare_mattes: &[Option<Tex>],
+    layer_inputs: &[LayerInput],
+    flare_mattes: &[LayerInput],
     flare_lens: &[Option<(u64, String)>],
     mut timings: Option<&mut Vec<f32>>,
 ) -> Tex {
@@ -845,7 +873,7 @@ pub fn run_ops(
                 // (the labelled no-op rule; never a fault). The depth is a
                 // whole texture, so it travels beside the op, exactly as the
                 // LUT cube does, since it is not Copy in `Resolved`.
-                let depth = layer_inputs.get(dof_i).and_then(|o| o.as_ref());
+                let depth = layer_inputs.get(dof_i).and_then(|o| o.texture(&tex));
                 dof_i += 1;
                 if let Some(depth) = depth {
                     tex = fx.dof(
@@ -873,7 +901,7 @@ pub fn run_ops(
                 // parameter-hash cache misses. The k-th LensFlare op binds
                 // the k-th `flare_mattes` slot (its Matte source).
                 use lumit_core::fx::lens_flare as lf;
-                let matte = flare_mattes.get(flare_i).and_then(|o| o.as_ref());
+                let matte = flare_mattes.get(flare_i).and_then(|o| o.texture(&tex));
                 let custom = flare_lens.get(flare_i).and_then(|o| o.as_ref());
                 flare_i += 1;
                 let (tier_base, tier_lambda, flare_div) = lf::quality_ladder(p.quality);
@@ -913,7 +941,7 @@ pub fn run_ops(
                     threshold_softness: p.threshold_softness,
                     light_tint: p.light_tint,
                     use_source_colour: p.use_source_colour,
-                    background: p.background,
+                    blend: p.blend,
                     mix: p.mix,
                     bake_key: lf::bake_key_with(p, custom.map(|(h, _)| *h)),
                 };
@@ -984,6 +1012,11 @@ pub fn run_ops(
             }
         }
         if let (Some(started), Some(into)) = (started, timings.as_mut()) {
+            // Same reason as the per-layer fence in `realise`: a frame's
+            // commands are batched, and timing a queue that has not been
+            // handed over would measure nothing. A measured frame gives the
+            // batching up, effect by effect.
+            ctx.flush();
             ctx.device.poll(wgpu::Maintain::Wait);
             into.push(started.elapsed().as_secs_f32() * 1000.0);
         }

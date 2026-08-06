@@ -27,9 +27,14 @@ struct CombineParams {
     fscale: f32,
     mix_amt: f32,
     light_count: u32,
-    // 1 = Black background: the output is made opaque (K-258). Only reached
-    // while live -- the neutral early-out above the flare maths returns first.
-    background: u32,
+    // How the flare element combines with the layer under it: an index into
+    // lumit_core::fx::lens_flare::BLEND_OPTIONS (K-289) -- 0 Normal,
+    // 1 Add, 2 Screen, 3 Multiply, 4 Overlay, 5 Soft light, 6 Hard light,
+    // 7 Lighten, 8 Darken, 9 Difference, 10 Exclusion, 11 Subtract,
+    // 12 Divide. Only reached while live -- the neutral early-out above the
+    // flare maths returns first, so every mode keeps the Intensity-0 /
+    // Mix-0 passthroughs bit-exact.
+    blend: u32,
 };
 
 @group(0) @binding(0) var src_tex: texture_2d<f32>;
@@ -60,6 +65,56 @@ fn tap_rgb(tex: texture_2d<f32>, fx_in: f32, fy_in: f32, dims: vec2<i32>) -> vec
     let b = textureLoad(tex, vec2<i32>(x0, y1), 0).rgb * (1.0 - tx)
         + textureLoad(tex, vec2<i32>(x1, y1), 0).rgb * tx;
     return a * (1.0 - ty) + b * ty;
+}
+
+// W3C soft-light D(d) helper (== the compositor's and Echo's).
+fn flare_soft_light_d(d: vec4<f32>) -> vec4<f32> {
+    let poly = ((16.0 * d - 12.0) * d + 4.0) * d;
+    return select(sqrt(d), poly, d <= vec4<f32>(0.25));
+}
+
+// Combine the flare element `e` with the layer under it `d`, both
+// premultiplied linear RGBA, per channel on all four -- the exact
+// arithmetic order lumit_core::fx::lens_flare::flare_blend uses, so the two
+// agree bit-for-bit (docs/08 1.6). Normal ignores `d` and returns the
+// element on its opaque black background.
+fn flare_blend(mode: u32, d: vec4<f32>, e: vec4<f32>) -> vec4<f32> {
+    let one = vec4<f32>(1.0);
+    if (mode == 0u) {
+        return vec4<f32>(e.rgb, 1.0); // Normal: the element replaces the layer
+    } else if (mode == 1u) {
+        return d + e; // Add
+    } else if (mode == 2u) {
+        return d + e - d * e; // Screen
+    } else if (mode == 3u) {
+        return d * e; // Multiply
+    } else if (mode == 4u) {
+        // Overlay = hard light with the LAYER as the switch.
+        let lo = 2.0 * d * e;
+        let hi = one - 2.0 * (one - d) * (one - e);
+        return select(hi, lo, d <= vec4<f32>(0.5));
+    } else if (mode == 5u) {
+        // Soft light (W3C), source = the element, backdrop = the layer.
+        let darkened = d - (one - 2.0 * e) * d * (one - d);
+        let lightened = d + (2.0 * e - one) * (flare_soft_light_d(d) - d);
+        return select(lightened, darkened, e <= vec4<f32>(0.5));
+    } else if (mode == 6u) {
+        // Hard light: the element is the switch.
+        let lo = 2.0 * d * e;
+        let hi = one - 2.0 * (one - d) * (one - e);
+        return select(hi, lo, e <= vec4<f32>(0.5));
+    } else if (mode == 7u) {
+        return max(d, e); // Lighten
+    } else if (mode == 8u) {
+        return min(d, e); // Darken
+    } else if (mode == 9u) {
+        return abs(d - e); // Difference
+    } else if (mode == 10u) {
+        return d + e - 2.0 * d * e; // Exclusion
+    } else if (mode == 11u) {
+        return max(d - e, vec4<f32>(0.0)); // Subtract
+    }
+    return max(d / max(e, vec4<f32>(1e-6)), vec4<f32>(0.0)); // Divide
 }
 
 @compute @workgroup_size(8, 8)
@@ -116,10 +171,12 @@ fn combine(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     let add = (f + sb) * cp.intensity;
     let luma = 0.2126 * add.r + 0.7152 * add.g + 0.0722 * add.b;
-    let flared = vec4<f32>(o.rgb + add, min(o.a + luma, 1.0));
-    var outv = o * (1.0 - cp.mix_amt) + flared * cp.mix_amt;
-    if (cp.background == 1u) {
-        outv.a = 1.0;
-    }
+    // The flare element (K-289): the light this frame drew, with the
+    // coverage that light implies as its alpha. Blend it with the layer,
+    // then saturate alpha at 1 -- Add reduces to o + add with alpha
+    // min(o.a + luma, 1), the pre-menu behaviour exactly.
+    var flared = flare_blend(cp.blend, o, vec4<f32>(add, luma));
+    flared.a = min(flared.a, 1.0);
+    let outv = o * (1.0 - cp.mix_amt) + flared * cp.mix_amt;
     textureStore(dst_tex, xy, outv);
 }

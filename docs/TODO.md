@@ -49,21 +49,6 @@ These sit above everything else: they are what the editor feels like in the hand
     `sample_scalar` per animated row plus one `time_of_frame`. Batch per frame if
     it ever bites, the way `time_of_frame` already was.
     (`bridge_call_budget_test.dart` is the gate.)
-- **A frame gives the card one command buffer per layer, where one would do.**
-    Measured 2026-07-31: submits per frame = layers + 2 (3 at one layer, 10 at
-    eight, 34 at thirty-two). Every pass in `lumit-gpu` makes and submits its own
-    encoder (`composite.rs`, `fx/*`, the display pass), yet all of a frame's
-    passes are in order on one queue, so they can be encoded once and handed over
-    once. Each submit is a round trip to the driver, a cost that does not depend
-    on the card - which is why this is worth doing even though it cannot be
-    *timed* on a software rasteriser. It takes
-    [impl/playback-scheduler.md](impl/playback-scheduler.md) §2's one-submit-thread
-    rule further rather than conflicting with it. The shape: pass a
-    `&mut wgpu::CommandEncoder` down the realise walk and submit once at the top,
-    leaving the read-backs (`start_readback8`) and shared-texture copies alone -
-    both need their own submission to be waited on. **Re-measure on real hardware
-    either side**: the stopwatch that found it was on the dropped worker-pool
-    branch, and a change made for a number needs the number.
 
 ---
 
@@ -73,17 +58,10 @@ Flutter is the only frontend (K-174, K-182); git history is the parity reference
 These are v1-scope surfaces it does not yet match.
 
 **Audio ([07-UI-SPEC.md](07-UI-SPEC.md) §10, [09-AUDIO.md](09-AUDIO.md)):**
-- Sequence-clip waveforms - a Sequence layer's clips draw none, so a clip in
-    the sequence view is a coloured box with its opening frame and its speed
-    on it. `audio_peaks` answers for a Footage layer only; a clip wants peaks
-    over its own trim of its own source, which is a new engine path beside the
-    decode-at-a-moment one the clip thumbnails already use (K-248).
 
 **Viewer bar ([07-UI-SPEC.md](07-UI-SPEC.md) §2.2):**
 - The wireframe/overlay *menu*; guides menu; region-of-interest;
     colour-management indicator; background-colour swatch.
-- Click-to-edit timecode (read-only today) - decide whether it moves to the
-    Timeline's clock rather than being built twice.
 
 **Toolbar tools ([07-UI-SPEC.md](07-UI-SPEC.md) §1.7):** what is armed is a
 *tool*; what each tool then does is the backlog.
@@ -268,9 +246,6 @@ colour individually; only the two Timeline tokens default from the mode.
     in [04-RETIMING.md](04-RETIMING.md).
 - **The Flow column is reserved, not wired** - per-layer optical flow has no
     engine backing. Build the engine model first, then the fold-out's Flow group.
-- **Lock guards the gestures, not the property rows** - a locked layer's bar,
-    razor, rename, reorder and delete refuse; its transform/effect/volume rows are
-    still editable. Guard the rows or enforce in the engine ops; decide which.
 - **The Timeline's two halves are built twice and kept in step by hand.**
     `_Outline` and `_LayerArea` are separate widget trees walking the same layer
     list, aligned only because both read the same numbers, with vertical scroll
@@ -294,10 +269,13 @@ colour individually; only the two Timeline tokens default from the mode.
 - **Beat tap has no key left** - [07-UI-SPEC.md](07-UI-SPEC.md) §10 wants `8`
     during playback to tap a beat, and K-254 gave the bare digits to the numbered
     markers. Needs its own chord or a modal reading.
-- **The magnet snaps keyframes to frames and nothing else**
-    ([07-UI-SPEC.md](07-UI-SPEC.md) §4.5 wants edit points, in/out points,
-    markers, beat markers, the playhead and work-area edges, plus `Ctrl`-hold to
-    suspend mid-drag).
+- **Snapping covers the lane key drag only** (K-292). A key now lands on edit
+    points, in/out points, other keyframes, markers (beat markers among them),
+    the playhead and the work-area edges, with `Ctrl`-hold to suspend and the
+    caught target drawn; the **razor** snaps the same way and its line now
+    stands where the cut lands. The other gestures still land where the pointer
+    puts them: the layer **bar** drag, the work-area handles and marker drags. The arithmetic is shared and pure (`panels/timeline_snap.dart`), so
+    each is wiring rather than design.
 - **Volume keyframes draw no lane diamonds and no graph curve** - volume is not
     in the comp read model; fold it into `BridgeLayerInfo` if either matters.
 
@@ -351,19 +329,6 @@ folds is the real cure for both. The panel side owes the pair row's dropper to
 Light uses it; Transform's rows just aren't wired to it), **Radial blur's centre
 migration** from the grandfathered % of frame to px@comp (K-260 convention), and one-op
 writes for a paired keyframe toggle (two ops today).
-
-**Anti-aliasing in the renderer.** Edges of transformed layers, shape strokes and
-text stair-step, worst on a slow rotation. **Decided (owner, 2026-08-05, K-274): a
-project property, on by default, one value shared by preview and export** — it
-changes what a comp looks like, so it must travel with the file and match on
-another machine. **How** is pinned in
-[impl/anti-aliasing.md](impl/anti-aliasing.md) (written before the code, per the
-impl-note rule): MSAA on the composite target rather than supersampling, one
-persistent multisample texture resolving per pass, the four traps in the composite
-loop (the seed copy cannot cross sample counts; pipelines carry their count; every
-reader wants the resolved texture; motion blur and coverage draw geometry too), the
-adapter capability check, and the test plan. Still to build: all of it, plus the
-project field through the bridge and its Settings row.
 
 **The stale-fd race on a Linux Viewer resize** (`lumit-render/src/headless.rs`'s
 `shared_dmabuf` re-create, with `lumit-gpu/src/shared_linux.rs`'s `Drop`). The
@@ -546,8 +511,9 @@ list, not a re-statement of the roadmap.
 - **Audio - the largest gap** ([07-UI-SPEC.md](07-UI-SPEC.md) §10,
     [09-AUDIO.md](09-AUDIO.md)): the whole **Audio panel** and level meters; the
     beat-marker tuning controls (sensitivity, BPM-grid, range); **Beat tap**
-    (`8` during playback); persistent waveform peak files (peaks are computed on
-    demand today).
+    (`8` during playback); persistent waveform peak files (the multi-zoom summary is
+    built on demand and cached for the session, K-280 — it is not yet written to
+    the project sidecar, so it is rebuilt next time the project opens).
 - **File format ([10-FILE-FORMAT.md](10-FILE-FORMAT.md)).** Embedded `thumbs/`
     previews in the `.lum`; the per-project sidecar `proxies/`, `peaks/` and
     `flow/` directories (only `frames/` and the global media index exist).

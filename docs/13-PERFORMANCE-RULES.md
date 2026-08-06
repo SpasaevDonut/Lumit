@@ -212,6 +212,29 @@ per-layer and per-effect indicators, K-276) and the rest of it — continuous co
 recording mode, the profiler panel — and the headless benchmark harness with budget gates
 (§7.3) are not — [TODO.md](TODO.md) tracks them.
 
+### 7.0 Submissions per frame (K-290)
+
+**A frame hands the graphics driver one command buffer, and the number does not grow with the
+layer count.** A submit is a round trip through the driver whose cost does not depend on the
+card, so this is a budget that means the same on every machine — and one that can be *gated*
+rather than benchmarked: `GpuContext::submits_so_far` counts every submission, and the
+regression test asserts the shape rather than a magic number ("adding thirty-one layers adds
+no submissions"). It is checkable on the software rasteriser CI runs, where a timing would
+prove nothing.
+
+The exceptions are deliberate and each is followed by a fence, which is the one thing batching
+cannot defer: the read-backs, the scope trace, and the shared-texture present paths. A
+**measured** frame is the other exception and gives the batching up on purpose — see §7.1.
+
+**The count belongs to the context, not to the process.** It began as one global atomic, and
+that made the gate report a *shared* number: the suite runs its cases in parallel, each with a
+renderer of its own, so any other test rendering between the two reads was counted as this
+render's work. The gate went red on CI — where there are cores enough for the overlap — while
+passing on a quieter machine, which is the worst way for a test to be wrong. The counter now
+lives on `GpuContext` and is shared only with the handles of that same device, so what a
+measurement sees is one renderer's own submissions. Any future budget counted this way MUST be
+scoped the same: a number two tests can both write is not a measurement.
+
 ### 7.1 Per-node profiler
 
 A built-in profiler, surfaced in the UI — After Effects' composition profiler done properly:
@@ -222,7 +245,10 @@ A built-in profiler, surfaced in the UI — After Effects' composition profiler 
   *submitted* rather than performed and an unfenced span would time the paperwork. That is a
   true per-node number at the cost of the processor/card overlap for the frame measured, so
   it is opt-in (the Timeline column's stopwatch), never on during playback, and off by
-  default. A measured frame is also a **composited** frame: while the switch is on the
+  default. Measuring also gives up the one-command-buffer-per-frame batching (§7.0, K-290) and
+  hands work over layer by layer, because a fence over a queue that has not been submitted
+  waits for nothing — the same processor/card overlap, paid in a second place. A measured frame
+  is also a **composited** frame: while the switch is on the
   cache ladder is stepped over, because a frame served from a tier costs a copy and so
   has nothing to say about what its layers cost. Timestamp queries are what would make it continuous and free; TODO tracks the
   upgrade, and until then the honest description of this rung is "measured when asked".

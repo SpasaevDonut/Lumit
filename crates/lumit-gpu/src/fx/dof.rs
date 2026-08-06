@@ -149,11 +149,7 @@ impl FxEngine {
                 },
             ],
         });
-        let mut enc = ctx
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("fx-dof-enc"),
-            });
+        let mut enc = ctx.encoder("fx-dof-enc");
         {
             let mut cpass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("fx-dof-pass"),
@@ -163,7 +159,7 @@ impl FxEngine {
             cpass.set_bind_group(0, &bind, &[]);
             cpass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
         }
-        ctx.queue.submit([enc.finish()]);
+        drop(enc);
         out
     }
 
@@ -243,11 +239,7 @@ impl FxEngine {
                 },
             ],
         });
-        let mut enc = ctx
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("fx-lut-enc"),
-            });
+        let mut enc = ctx.encoder("fx-lut-enc");
         {
             let mut cpass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("fx-lut-pass"),
@@ -257,7 +249,7 @@ impl FxEngine {
             cpass.set_bind_group(0, &bind, &[]);
             cpass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
         }
-        ctx.queue.submit([enc.finish()]);
+        drop(enc);
         out
     }
 
@@ -323,11 +315,7 @@ impl FxEngine {
                 },
             ],
         });
-        let mut enc = ctx
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("fx-adjust-enc"),
-            });
+        let mut enc = ctx.encoder("fx-adjust-enc");
         {
             let mut cpass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("fx-adjust-pass"),
@@ -337,7 +325,7 @@ impl FxEngine {
             cpass.set_bind_group(0, &bind, &[]);
             cpass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
         }
-        ctx.queue.submit([enc.finish()]);
+        drop(enc);
         out
     }
 }

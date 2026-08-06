@@ -56,6 +56,11 @@ Rules:
   contain is anything machine-specific — no pixel window placements, no paths, no usernames
   (§2's rule, which K-245 narrowed rather than lifted: panel names, tab indices and fractional
   shares mean the same thing on any machine, and that is all this field is for).
+- **Rendering settings that change the picture travel with the file.** `anti_aliasing`
+  (K-274) is the first of them: the project's coverage-sample count, written as its variant
+  name (`"anti_aliasing": "x4"`). Absent — as it is in any `.lum` written before the field
+  existed — it reads as the default rather than failing, which is the serde-default rule
+  every additive field here follows.
 - **Unknown-field preservation is mandatory**: a reader keeps any keys it does not
   understand and writes them back out. This is what lets shared projects and newer/older
   Lumit versions coexist (K-065) and lets Placeholder effects round-trip

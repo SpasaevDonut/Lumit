@@ -35,6 +35,214 @@ pub struct GpuContext {
     /// checked — within one 8-bit step instead of exactly (see
     /// `accumulation_still_scene_is_identity_and_moving_scene_smears`).
     pub software: bool,
+    /// Exactly which multisample counts this adapter will give the working
+    /// format, asked at device creation and never assumed
+    /// (docs/impl/anti-aliasing.md §2). Read it through
+    /// [`Self::sample_count`] rather than directly.
+    ///
+    /// The whole set rides here rather than just a maximum because the counts
+    /// are reported per count, and a card that offers 4 is not thereby promised
+    /// to offer 2. Keeping the set is what lets the check stay a check.
+    ///
+    /// It rides on the context at all because the probe needs the *adapter*,
+    /// which only [`Self::headless`] holds — every other handle in the engine
+    /// is a cheap clone of a device and a queue.
+    pub sample_flags: wgpu::TextureFormatFeatureFlags,
+    /// The frame's open command buffer, while one is being batched.
+    ///
+    /// A submit is a round trip to the driver. Every pass in this crate used to
+    /// make its own encoder and submit it, so a frame cost one round trip per
+    /// layer and per effect; all of a frame's passes are in order on one queue,
+    /// so they can be encoded once and handed over once instead. Between
+    /// [`Self::begin_frame`] and the matching [`Self::end_frame`], every
+    /// [`Self::encoder`] hands back *this* encoder rather than a fresh one, and
+    /// nothing is submitted until the batch closes.
+    ///
+    /// A `RefCell` rather than a lock because a context is used by one thread at
+    /// a time — the same reason the realiser's LUT cache is one — and because a
+    /// lock here would be held across GPU work, which
+    /// docs/14-ENGINEERING-RULES.md forbids. It keeps `GpuContext: Send`, which
+    /// is what the renderer living on a worker thread actually needs; it was
+    /// never `Sync`.
+    frame: std::cell::RefCell<Option<wgpu::CommandEncoder>>,
+    /// How many [`Self::begin_frame`] calls are open. The realise walk recurses
+    /// — nested comps, adjustment layers, one whole render per motion-blur
+    /// sample — so the batch is closed by the *outermost* caller, not the first
+    /// one to finish.
+    frame_depth: std::cell::Cell<u32>,
+    /// How many command buffers **this context** has handed to the driver
+    /// ([`Self::submits_so_far`]).
+    ///
+    /// Every submission in the engine goes through [`Self::submit`], which
+    /// counts here. It exists because "a frame submits once, not once per
+    /// layer" is a claim about behaviour that would otherwise only be checkable
+    /// with a stopwatch on real hardware — and a submit is a round trip to the
+    /// driver whose cost does not depend on the card, so the *count* is the
+    /// honest gate and it runs anywhere, including on a software rasteriser
+    /// (docs/16-ROADMAP.md standing rules: verification beats assertion).
+    ///
+    /// **Per context, not per process.** It began as one global atomic, which
+    /// made the count a shared number: the test suite runs its cases in
+    /// parallel threads, each with a renderer of its own, so any *other* test
+    /// rendering between the two reads was counted as this render's work. The
+    /// gate failed on CI — where there are cores enough for that overlap —
+    /// while passing on a quieter machine, which is the worst way for a test to
+    /// be wrong. A renderer owns its context, so counting here is both
+    /// unshared and the honest scope for the question: what did *this* render
+    /// hand over.
+    ///
+    /// Shared with every [`Self::clone_handle`] of this context, because they
+    /// are handles on the *same* device and queue: the realiser keeps one of
+    /// its own, and a count that missed what went through it would be counting
+    /// part of a frame. A context opened fresh (a new device) starts a new
+    /// count, which is what keeps one renderer's number its own.
+    ///
+    /// An atomic rather than a `Cell` because a submission may be made from
+    /// whichever thread the render is running on; relaxed throughout, since it
+    /// is a counter read between frames and never a happens-before edge.
+    submits: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+/// The multisample counts the composite is willing to use, highest first.
+/// Nothing outside this list is ever asked for.
+pub const SAMPLE_COUNTS: [u32; 3] = [8, 4, 2];
+
+/// The highest count at or below `requested` that `adapter` will give
+/// [`WORKING_FORMAT`], or 1 if it will give none.
+///
+/// This is the whole of the capability check the anti-aliasing note demands: a
+/// count is asked for, never assumed. Asking for 8 on a card that does 4 gets
+/// 4 — the render succeeds, softer than it might have been on better hardware
+/// and never an error (docs/impl/anti-aliasing.md §2, docs/15-DESIGN.md: no
+/// red-alert states).
+#[must_use]
+pub fn supported_sample_count(adapter: &wgpu::Adapter, requested: u32) -> u32 {
+    // No device in hand, so only the counts every device must accept count.
+    sample_count_from(
+        usable_sample_flags(
+            adapter.get_texture_format_features(WORKING_FORMAT).flags,
+            wgpu::Features::empty(),
+        ),
+        requested,
+    )
+}
+
+/// The counts an adapter reports that a device with `enabled` features will
+/// actually accept.
+///
+/// An adapter answers for the *hardware*: `get_texture_format_features` lists
+/// every count the card can do, including 2×, 8× and 16×. A device only accepts
+/// those if it was opened with `TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES`;
+/// without it, WebGPU guarantees 1 and 4 and nothing else, and asking for more
+/// is a validation error at `create_texture` — which is how an 8× project
+/// setting turned into a black frame on a card that advertises 8×.
+#[must_use]
+fn usable_sample_flags(
+    adapter_flags: wgpu::TextureFormatFeatureFlags,
+    enabled: wgpu::Features,
+) -> wgpu::TextureFormatFeatureFlags {
+    if enabled.contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES) {
+        return adapter_flags;
+    }
+    let mut flags = adapter_flags;
+    flags.remove(
+        wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X2
+            | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X8
+            | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X16,
+    );
+    flags
+}
+
+/// What the adapter said about multisampling, published the first time any
+/// context opens one.
+///
+/// A process-wide fact, and legitimately so: the backend is pinned on all three
+/// platforms and the adapter is chosen deterministically (see
+/// [`GpuContext::headless`]), so every context in a process opens the same card
+/// and gets the same answer. It exists for callers that want to *report* the
+/// capability — the Settings row saying what is actually being drawn — without
+/// taking the renderer's lock behind a user interface query. Rendering itself
+/// never reads it: a render has a context in hand and asks that.
+static ADAPTER_SAMPLE_FLAGS: std::sync::OnceLock<wgpu::TextureFormatFeatureFlags> =
+    std::sync::OnceLock::new();
+
+/// The count this machine will give for `requested`, without needing a context.
+///
+/// `None` before any adapter has been opened — which is the honest answer, not
+/// a default: nothing has asked the card yet. Callers show the project's own
+/// setting until there is something truer to show.
+#[must_use]
+pub fn adapter_sample_count(requested: u32) -> Option<u32> {
+    ADAPTER_SAMPLE_FLAGS
+        .get()
+        .map(|&flags| sample_count_from(flags, requested))
+}
+
+/// [`supported_sample_count`] against an already-fetched flag set — the shared
+/// rule, so the adapter-side check and [`GpuContext::sample_count`] cannot
+/// drift apart.
+#[must_use]
+fn sample_count_from(flags: wgpu::TextureFormatFeatureFlags, requested: u32) -> u32 {
+    if requested <= 1 {
+        return 1;
+    }
+    SAMPLE_COUNTS
+        .into_iter()
+        .find(|&n| n <= requested && flags.sample_count_supported(n))
+        .unwrap_or(1)
+}
+
+/// A borrowed command encoder from [`GpuContext::encoder`].
+///
+/// Derefs to the encoder, so a pass records into it exactly as it recorded into
+/// its own. What differs is what happens when it drops: inside a frame batch,
+/// nothing — the commands stay in the frame's buffer for one submission at the
+/// end. Outside one, the encoder is finished and submitted, which is the
+/// standalone behaviour every pass had before batching.
+pub struct EncoderGuard<'a> {
+    ctx: &'a GpuContext,
+    /// Set when this guard owns its encoder (no batch open).
+    owned: Option<wgpu::CommandEncoder>,
+    /// Set when it borrows the frame's. Always `Some(..)` inside, because
+    /// [`GpuContext::encoder`] fills the slot before handing the borrow over.
+    batched: Option<std::cell::RefMut<'a, Option<wgpu::CommandEncoder>>>,
+}
+
+impl std::ops::Deref for EncoderGuard<'_> {
+    type Target = wgpu::CommandEncoder;
+    fn deref(&self) -> &Self::Target {
+        // One of the two is always set, and the batched slot is always filled.
+        // `expect` is unreachable rather than a judgement call, and an engine
+        // crate may not panic (docs/14-ENGINEERING-RULES.md §4) — but there is
+        // no `&CommandEncoder` to return instead, and returning a wrong one
+        // would corrupt a frame silently. The invariant is upheld two functions
+        // away, in `encoder`, and nothing else can construct this type.
+        match (&self.owned, &self.batched) {
+            (Some(enc), _) => enc,
+            (None, Some(slot)) => slot.as_ref().unwrap_or_else(|| unreachable!()),
+            (None, None) => unreachable!(),
+        }
+    }
+}
+
+impl std::ops::DerefMut for EncoderGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match (&mut self.owned, &mut self.batched) {
+            (Some(enc), _) => enc,
+            (None, Some(slot)) => slot.as_mut().unwrap_or_else(|| unreachable!()),
+            (None, None) => unreachable!(),
+        }
+    }
+}
+
+impl Drop for EncoderGuard<'_> {
+    fn drop(&mut self) {
+        // Only an owned encoder is submitted here. A batched one belongs to the
+        // frame and is submitted once, by `end_frame`.
+        if let Some(enc) = self.owned.take() {
+            self.ctx.submit([enc.finish()]);
+        }
+    }
 }
 
 /// The environment variable that turns "no GPU adapter" from a skip into a
@@ -87,12 +295,135 @@ impl GpuContext {
     /// Wrap an existing device/queue (eframe's render state — wgpu handles
     /// are internally reference-counted, so cloning shares the one device).
     /// This is the running application's real display adapter.
+    ///
+    /// The adapter is not in hand here, so [`Self::sample_count`] answers 1:
+    /// a context built this way composites without anti-aliasing. Callers that
+    /// already hold a context want [`Self::clone_handle`] instead, which keeps
+    /// what the adapter said.
     pub fn from_parts(device: wgpu::Device, queue: wgpu::Queue) -> Self {
         Self {
             device,
             queue,
             software: false,
+            sample_flags: wgpu::TextureFormatFeatureFlags::empty(),
+            frame: std::cell::RefCell::new(None),
+            frame_depth: std::cell::Cell::new(0),
+            submits: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
+    }
+
+    /// The count this context will actually give for `requested` — the project
+    /// setting resolved against what the adapter said (see
+    /// [`Self::sample_flags`]). Never fails and never exceeds what the card
+    /// offers: a machine that will not multisample simply gets 1.
+    #[must_use]
+    pub fn sample_count(&self, requested: u32) -> u32 {
+        sample_count_from(self.sample_flags, requested)
+    }
+
+    /// A second handle on the same device and queue, keeping what the adapter
+    /// reported. wgpu handles are internally reference-counted, so this shares
+    /// the one device; unlike [`Self::from_parts`] it does not throw away
+    /// [`Self::sample_flags`] or [`Self::software`], which is why every in-engine
+    /// re-borrow (the realiser's owned handle, the flow crate's) uses it.
+    #[must_use]
+    pub fn clone_handle(&self) -> Self {
+        Self {
+            device: self.device.clone(),
+            queue: self.queue.clone(),
+            software: self.software,
+            sample_flags: self.sample_flags,
+            frame: std::cell::RefCell::new(None),
+            frame_depth: std::cell::Cell::new(0),
+            submits: std::sync::Arc::clone(&self.submits),
+        }
+    }
+
+    /// Hand one command buffer to the driver, counting it (see
+    /// [`Self::submits_so_far`]). Every submission in the engine comes through
+    /// here.
+    pub fn submit(&self, buffers: impl IntoIterator<Item = wgpu::CommandBuffer>) {
+        let mut n = 0u64;
+        self.queue.submit(buffers.into_iter().inspect(|_| n += 1));
+        self.submits
+            .fetch_add(n, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// How many command buffers this context has submitted so far. Take it
+    /// either side of a render and the difference is that render's submissions
+    /// — nobody else's (see [`Self::submits`]).
+    #[must_use]
+    pub fn submits_so_far(&self) -> u64 {
+        self.submits.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Start batching: from here until the matching [`Self::end_frame`], every
+    /// [`Self::encoder`] records into one command buffer and nothing is
+    /// submitted.
+    ///
+    /// Nests. Only the outermost pair actually opens and closes the batch, so a
+    /// recursive walk can call this at the top of each level without thinking
+    /// about which level it is on.
+    pub fn begin_frame(&self) {
+        self.frame_depth.set(self.frame_depth.get() + 1);
+    }
+
+    /// Close one [`Self::begin_frame`]. On the outermost one, submit whatever
+    /// the batch holds.
+    pub fn end_frame(&self) {
+        let depth = self.frame_depth.get().saturating_sub(1);
+        self.frame_depth.set(depth);
+        if depth == 0 {
+            self.flush();
+        }
+    }
+
+    /// Submit whatever the batch holds right now and leave it open.
+    ///
+    /// Two callers need this and both have the same reason: something is about
+    /// to *observe* the GPU, and a command that has not been submitted has not
+    /// run. The profiler fences on the device to time a layer, and the lens
+    /// flare recycles its scratch buffers between batches. Outside a batch this
+    /// does nothing, because there is nothing being held back.
+    pub fn flush(&self) {
+        let held = self.frame.borrow_mut().take();
+        if let Some(enc) = held {
+            self.submit([enc.finish()]);
+        }
+    }
+
+    /// An encoder to record into.
+    ///
+    /// Inside a batch this is the frame's shared encoder and the returned guard
+    /// submits nothing when it drops. Outside one it is a fresh encoder that is
+    /// submitted on drop — which is exactly what every pass in this crate did
+    /// before batching existed, so a standalone call still works unchanged.
+    ///
+    /// The guard borrows the batch, so only one may be alive at a time. That is
+    /// the intended shape: a pass records and lets go, and no caller holds an
+    /// encoder across a nested pass.
+    pub fn encoder(&self, label: &str) -> EncoderGuard<'_> {
+        if self.frame_depth.get() == 0 {
+            return EncoderGuard {
+                ctx: self,
+                owned: Some(self.new_encoder(label)),
+                batched: None,
+            };
+        }
+        let mut slot = self.frame.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(self.new_encoder("frame"));
+        }
+        EncoderGuard {
+            ctx: self,
+            owned: None,
+            batched: Some(slot),
+        }
+    }
+
+    fn new_encoder(&self, label: &str) -> wgpu::CommandEncoder {
+        self.device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) })
     }
 
     /// Headless context (tests, future CLI export).
@@ -144,18 +475,25 @@ impl GpuContext {
         // not do (K-177). Open the device ourselves with them appended; if the
         // adapter cannot enable them, fall back to a plain device so the read-back
         // path still works (the DMA-BUF path then reports unavailable).
+        //
+        // The device also asks for the adapter's own format features where the
+        // card has them, which is what makes 8× anti-aliasing legal rather than
+        // merely advertised (see [`usable_sample_flags`]). A card without them
+        // opens as before and is held to 4×.
+        let descriptor = wgpu::DeviceDescriptor {
+            required_features: adapter.features()
+                & wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
+            ..Default::default()
+        };
         #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
         let (device, queue) = match shared_linux::open_device(&adapter) {
             Ok(dq) => dq,
-            Err(_) => {
-                pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
-                    .map_err(|e| GpuError::Device(e.to_string()))?
-            }
+            Err(_) => pollster::block_on(adapter.request_device(&descriptor, None))
+                .map_err(|e| GpuError::Device(e.to_string()))?,
         };
         #[cfg(not(all(target_os = "linux", feature = "shared-texture-linux")))]
-        let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
-                .map_err(|e| GpuError::Device(e.to_string()))?;
+        let (device, queue) = pollster::block_on(adapter.request_device(&descriptor, None))
+            .map_err(|e| GpuError::Device(e.to_string()))?;
 
         // Which adapter was picked is the first thing anyone asks when the
         // Viewer is black or a hybrid-GPU machine chose the wrong card — but it
@@ -184,10 +522,26 @@ impl GpuContext {
             eprintln!("lumit-gpu: device lost ({reason:?}): {msg}");
         });
 
+        // Ask the adapter once, here, while it is still in hand: nothing
+        // downstream holds one, and the answer never changes for a given device.
+        // Held to what *this device* will accept, not to what the card can do:
+        // the two differ whenever the adapter-specific feature is unavailable.
+        let sample_flags = usable_sample_flags(
+            adapter.get_texture_format_features(WORKING_FORMAT).flags,
+            device.features(),
+        );
+        // Publish it for the reporting path (see `ADAPTER_SAMPLE_FLAGS`); the
+        // first context to open wins and every later one agrees with it.
+        let _ = ADAPTER_SAMPLE_FLAGS.set(sample_flags);
+
         Ok(Self {
             device,
             queue,
             software,
+            sample_flags,
+            frame: std::cell::RefCell::new(None),
+            frame_depth: std::cell::Cell::new(0),
+            submits: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })
     }
 }
@@ -472,9 +826,7 @@ impl ColourEngine {
                 },
             ],
         });
-        let mut encoder = ctx
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
+        let mut encoder = ctx.encoder(label);
         {
             let view = dst.create_view(&Default::default());
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -493,7 +845,7 @@ impl ColourEngine {
             rpass.set_bind_group(0, &bind, &[]);
             rpass.draw(0..3, 0..1);
         }
-        ctx.queue.submit([encoder.finish()]);
+        drop(encoder);
         dst
     }
 
@@ -705,6 +1057,10 @@ impl ColourEngine {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
+        // Hand over anything the frame batch is still holding: what is
+        // read below may have been recorded into it, and a command that has
+        // not been submitted has not run. A no-op outside a batch.
+        ctx.flush();
         let mut encoder = ctx.device.create_command_encoder(&Default::default());
         encoder.copy_texture_to_buffer(
             tex.as_image_copy(),
@@ -718,7 +1074,7 @@ impl ColourEngine {
             },
             size,
         );
-        ctx.queue.submit([encoder.finish()]);
+        ctx.submit([encoder.finish()]);
         let (tx, rx) = std::sync::mpsc::channel();
         buffer
             .slice(..)
@@ -745,6 +1101,10 @@ impl ColourEngine {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
+        // Hand over anything the frame batch is still holding: what is
+        // read below may have been recorded into it, and a command that has
+        // not been submitted has not run. A no-op outside a batch.
+        ctx.flush();
         let mut encoder = ctx.device.create_command_encoder(&Default::default());
         encoder.copy_texture_to_buffer(
             tex.as_image_copy(),
@@ -758,7 +1118,7 @@ impl ColourEngine {
             },
             size,
         );
-        ctx.queue.submit([encoder.finish()]);
+        ctx.submit([encoder.finish()]);
 
         let slice = buffer.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
@@ -801,6 +1161,36 @@ mod tests {
         assert!(!adapter_is_required(Some("0")), "0 turns it off explicitly");
         assert!(adapter_is_required(Some("1")), "CI sets 1");
         assert!(adapter_is_required(Some("yes")));
+    }
+
+    /// **What the card can do is not what the device will take.** A DX12
+    /// adapter reporting 8× while the device was opened without the
+    /// adapter-specific format features made an 8× project setting a
+    /// validation error at `create_texture`, and the frame came back empty.
+    #[test]
+    fn adapter_only_sample_counts_are_dropped_unless_the_device_enabled_them() {
+        let card = wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X2
+            | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4
+            | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X8
+            | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE;
+
+        let plain = usable_sample_flags(card, wgpu::Features::empty());
+        assert_eq!(sample_count_from(plain, 8), 4, "8× is not guaranteed");
+        assert_eq!(sample_count_from(plain, 2), 1, "nor is 2×");
+        assert!(
+            plain.contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE),
+            "unrelated flags survive the mask"
+        );
+
+        let asked = usable_sample_flags(
+            card,
+            wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
+        );
+        assert_eq!(
+            sample_count_from(asked, 8),
+            8,
+            "a device that asked gets 8×"
+        );
     }
 
     /// The gpu-foundation §7 golden: every 8-bit value survives

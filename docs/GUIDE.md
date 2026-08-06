@@ -723,6 +723,41 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   the owner's white-circle precomp flares with the strength of the whole
   circle where it used to count as a single pixel — while a true pinpoint
   light reads exactly as before.
+  A sixth pass fixed two things that had been quietly making the effect
+  harder to use than it needed to be.
+  **The matte now starts on the layer you put the effect on** (K-288).
+  Switching Source to Matte used to leave the Matte layer empty, so the
+  effect did nothing until you went and found a layer to point it at — and
+  the layer you nearly always wanted was the one you were already standing
+  on. Worse: on an **adjustment layer** there was no right answer at all.
+  An adjustment layer has no picture of its own; its job is to act on
+  everything below it. But the picker refused to offer the layer itself
+  ("you can't sample yourself"), so you had to point at some other layer and
+  detect lights in the wrong image. Now the picker does offer it, labelled
+  *(this layer)*, and it means something precise: **read whatever picture is
+  arriving at this effect**. On an ordinary layer that is the layer's own
+  image; on an adjustment layer it is the composite of everything beneath
+  it — which is exactly the picture you wanted flared. Nothing is rendered
+  twice to do it (the effect already has that picture in hand), so it is
+  cheaper as well as more useful, and it lines up pixel-for-pixel with what
+  the flare draws instead of being stretched to fit. The rule applies to any
+  effect that reads another layer, not just this one — the depth-of-field
+  depth pass can be pointed at its own layer too, though it doesn't start
+  there, because a depth map is never the picture itself.
+  **And the Background choice became a Blend menu** (K-289). The flare used
+  to offer Transparent or Black, which was really a blend-mode question in
+  disguise: everything the effect renders is a picture of light on a black
+  background, and those two options were two ways of combining that picture
+  with your layer. So it is now the same menu a layer's own Mode dropdown
+  offers — Normal, then Add, Screen, Multiply, Overlay, Soft light, Hard
+  light, Lighten, Darken, Difference, Exclusion, Subtract, Divide (the same
+  list Echo offers, and short of the layer list for the same reason: hue and
+  colour-burn style modes don't mean anything applied to a glow). **Add** is
+  the default and is exactly what the flare always did, pixel for pixel, so
+  nothing you have already built moves. **Normal** shows the flare on its
+  own black background and hides the layer, which is what "Black" was for —
+  the flare as a separate element you Screen back on in another comp — so a
+  project saved with Black opens on Normal.
 - **RGB split gains a Wavelength mode** (K-090's quality-tier pattern: where the smooth
   look is optional, it hides behind a Bool next to the fast one). Off — the default —
   the split is three tinted samples: the first colour pulled one way, the third the
@@ -1507,6 +1542,68 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   and a precomp layer's own Volume scales everything inside it — the gains multiply down the
   chain, so it has the Volume row too. And a purely-audio layer (a music file) shows no eye
   in the outline at all: there is no picture to hide.
+- **Waveforms that sharpen as you zoom, and show what the sound *is* (K-280)** — a waveform
+  is not the sound itself, it is a summary of it: for each column of pixels, how far the
+  speaker cone swung up and down while that sliver of time went by. That means a summary is
+  only ever as detailed as the stretch it was taken over. The first version took one summary
+  of the whole file when you opened the lane and kept it, so zooming in stretched the same
+  coarse picture until the wave was a staircase of blocks — you could see roughly where the
+  loud bits were and never where the *hit* was, which is the one thing you zoom in for.
+  Now the sound is summarised once at three levels of detail at the same time — think of the
+  smaller pictures a phone keeps beside a photo so it can show a thumbnail without loading
+  the whole thing — and the lane asks for whichever level suits the stretch it is currently
+  showing, one bucket per pixel column. Zoom in and it asks again over a shorter stretch, so
+  the wave *gains* detail instead of stretching. A summary runs out somewhere, though: once a
+  pixel column is narrower than the smallest block, neighbouring columns start sharing one and
+  the wave goes blocky again — so a short file also keeps the *actual samples* beside its
+  summary, and once you are zoomed in that far the lane draws those instead. Fully zoomed, the
+  waveform becomes a single continuous line tracing the sound, which is what it should be. A
+  long file skips the sample copy: at Lumit's zoom ceiling you can never get close enough to
+  an hour-long podcast for the summary to run out, so keeping tens of megabytes to answer a
+  question nobody can ask would be waste. The summary is built once per file (a whole
+  track takes a moment to read) and kept for as long as the app is open, shared between every
+  layer cut from that file, with a firm ceiling on how much memory the lot may use.
+  Two other things came with it. **Clips on a Sequence layer now draw their own waveform**
+  inside their box — so a cut, which is a box on a row, finally shows the sound you are
+  cutting — and it travels with the clip when you drag it, because it is drawn from the clip's
+  own clock rather than pinned to the timeline. And the **multiwave**: instead of one wave, the
+  lane can draw three at once, splitting the sound into bass, middle and treble. This matters
+  because a modern mastered track is loud all the way through, so a single wave is a solid
+  block whatever is playing — the phrase for it is "a sausage". The three are drawn *on top of
+  each other* around the same centre line rather than side by side, getting brighter as the
+  pitch goes up: the bass fills a soft wide body, and the hats and other sharp sounds land as
+  bright thin spikes over it. The result is one waveform with its insides showing, so you can
+  cut to the kick or to the hat and see which is which.
+  There is a second switch beside it for **where the wave sits**. Normally it is centred, with
+  the sound drawn going up and down from a middle line — but the two halves are mirror images,
+  so half the row is saying the same thing twice. Turn *Waveforms rise from the bottom* on and
+  the wave is folded onto the floor of its row: every column starts at the bottom and reaches
+  up by however far the sound swung, which uses the whole row's height and is what a lot of
+  editors draw. It applies to the plain wave and the frequency stack alike, and it is only a
+  matter of drawing — nothing is re-read from the file when you flip it. It is on by default; Settings ▸ Interface ▸ Editing has a switch that puts the single
+  plain wave back. (The idea is BLICK's, an editor that does the same thing.)
+- **`L` opens a layer's sound (K-281)** — press `L` with layers selected and their **Audio**
+  group opens; press it again and the waveform lane opens under it; a third time shuts the
+  layer. The same three-tap shape `U` has for animated properties, and for the same reason:
+  what you want is usually one of three depths, and inventing a modifier for each would be
+  three shortcuts to remember instead of one key pressed once, twice or three times.
+  `L` is also "play forward" in the NLE keyboard Lumit borrows (`J` back, `K` stop, `L`
+  forward) — so inside the Timeline it now means the audio reveal, and everywhere else it
+  still moves time. (Stepping a single frame is `Ctrl`+arrow — see the note below.) That kind
+  of takeover used to be reported as a *clash* the user had to go
+  and fix; it is now reported as a *shadow* and left alone, because there was never any
+  ambiguity about which one runs — the panel you are in gets first refusal, and the app-wide
+  meaning is the fallback. Settings ▸ Keymap says so in a quiet line above the table
+  ("`L` — Reveal Audio in the Timeline, shuttle forward elsewhere") rather than a warning
+  box, so you can see it without being asked to fix it (K-283). Two shortcuts fighting inside the *same* panel is still a clash,
+  since nothing can tell those apart.
+- **Stepping a frame is `Ctrl`+arrow (K-282)** — it used to be the bare left and right arrow
+  keys. The trouble with that is that the arrows are *everybody's* keys: a list wants them to
+  move the highlight, a text field to move the cursor, a canvas to nudge what is selected. As
+  long as the app-wide transport owned them, nothing else could ever be given them without a
+  fight. So the frame step took a modifier and the bare arrows went back to being available.
+  `Page Down`/`Page Up` still step a frame with nothing held, so there is still a
+  one-key way to do it.
 - **Your project remembers where you were** — reopening a saved project no longer lands on a
   blank Viewer waiting for a playhead nudge. Which comp tabs were open, which one was in
   front, where the playhead sat, which layer was selected, and which twirls were unfurled all
@@ -3248,6 +3345,86 @@ numbers dropped when it goes off so nothing stale is left on screen. Doing this
 continuously and for free needs *GPU timestamp queries*, which is written down as
 the follow-up in TODO.
 
+### Smoothing the edges of a rotated layer (K-274)
+
+Rotate a layer a few degrees and its edge crosses each pixel diagonally. A pixel
+is a small square that is either painted or not, so the edge comes out as a
+staircase — and on a slow rotation the steps crawl along it, which is the thing
+the eye actually catches.
+
+The cure is to stop asking one question per pixel. **Multisampling** keeps four
+(or two, or eight) coverage points inside each pixel, works the colour out
+*once*, and mixes it into that pixel in proportion to how many of those points
+the layer covered. A pixel the edge cuts in half comes back half-covered instead
+of guessing. It costs some memory on the graphics card and one extra step per
+frame; it does not cost four times the work, which is why it is the standard
+answer for edges rather than a luxury.
+
+**It is a setting on the project, not on your copy of Lumit** (File ▸ Project
+settings…). That is deliberate, and it is why that window exists at all:
+everything in **Settings** belongs to this machine — your theme, your cache
+sizes, your shortcuts — and nothing there travels or undoes. A project setting
+is the opposite on both counts, so it has a window of its own. It changes what a composition looks like, so it
+has to be saved inside the `.lum` and be the same when somebody else opens the
+file — and the *same* value is used for the preview and for the export, because
+the whole render path is built on the promise that what you are watching is what
+you will get. Eight samples is the default: on.
+
+Two things it deliberately does not do. It does not soften the *inside* of a
+layer's picture — that is the scaling filter's job, and a shape's own curves, a
+mask's edge and the outline of a letter are already smooth where they are drawn.
+And it does not change with the preview resolution: a half-size preview is a
+smaller picture with the same treatment of its edges.
+
+**If your graphics card cannot manage the number asked for**, Lumit uses the
+highest it will and says which — in that window, plainly, beside the one you
+chose. Your project keeps the value you picked; nothing is rewritten behind your
+back, and nothing fails.
+
+One consequence worth knowing about: because the setting changes every pixel, it
+is part of how a finished frame is *named* in the cache (see "the three-tier
+cache" above). Changing it means the frames already made no longer answer, and
+the ones you look at next are made afresh. That is the same rule every other
+picture-changing edit follows; it is not the setting misbehaving.
+
+### Asking the graphics card once instead of thirty-two times
+
+Work does not go to the graphics card one instruction at a time. It is written
+into a **command buffer** — a list of things to do — and the whole list is then
+*submitted*. Handing a list over is a round trip through the graphics driver,
+and that round trip costs roughly the same whether the list has one item on it
+or a thousand.
+
+Lumit used to build a separate list for every step of a frame: one for each
+layer, one for each effect on it, one for the final combine. A composition with
+thirty-two layers handed over thirty-four lists to draw a single frame. All of
+that work was going to the same card in the same order anyway, so there was
+never a reason for it to travel separately.
+
+Now a frame writes one list and hands it over once. Measured on the same
+composition: thirty-four submissions became three, and — the part that matters —
+the number no longer grows when you add layers. Adding thirty-one more layers to
+a comp now adds *no* extra round trips.
+
+**Two places still have to hand work over early**, and both for the same reason:
+they need to *look* at what the card produced. You cannot read a picture the
+card has not drawn yet, and a list that has not been submitted has not been
+drawn. So reading a finished frame back, measuring a scope, and handing the
+picture to the Viewer each push the list through first.
+
+**The render-time column is the interesting exception.** It measures a layer by
+waiting for the card to finish that layer before reading the clock — but under
+one-list-per-frame there is nothing to wait for yet, so the wait would return
+instantly and every number would be wrong. So a *measured* frame deliberately
+goes back to handing work over layer by layer. That is not a bug: it is the same
+trade the stopwatch already makes, which is why measuring is a switch you turn
+on rather than something running all the time.
+
+The thing that keeps this honest is a **count**, not a stopwatch. Lumit counts
+every submission, and a test asserts that adding layers adds none. A timing test
+would prove nothing on the machines that check the code (they have no real
+graphics card), but a count is a count anywhere.
+
 ### The panels
 
 `state/comp_model.dart` is the read model: **one** bridge call returns the whole
@@ -3309,6 +3486,81 @@ Built on top of that: masks and shape layers sharing one path type across the
 bridge (K-222, K-237), paint strokes stored as the *drag* rather than the pixels
 and re-stamped at render resolution (K-227), the razor (K-221), pan behind
 (K-220), the type tool (K-225) and camera tools (K-229).
+
+### What the lock switch actually does
+
+Locking a layer used to stop you dragging its bar, cutting it, renaming it,
+reordering it or deleting it — but you could still open its twirl-down and
+change its position, its effects or its volume. The switch said "no edits until
+unlocked" and meant something narrower.
+
+Now the refusal lives in the **engine**, in the one place every edit passes
+through on its way into the document. That matters more than it sounds: there
+are twenty-nine different kinds of edit a layer can receive, and guarding them
+one interface control at a time means remembering to do it again every time a
+new control is added — which is exactly how the hole opened, since the three
+kinds of row that leaked are the three newest.
+
+The rows are also shown greyed and untouchable, so you are not offered a gesture
+that would only be refused. Headings still open and close: looking inside a
+locked layer is not editing it.
+
+Three things a locked layer still accepts, because none of them changes the
+composition: **unlocking it** (or you could never get back), the **shy** flag
+(which only hides the row from the Timeline's list) and its **label colour**.
+Everything else waits until you unlock it.
+
+Undo still works across a lock, and the reason is worth knowing because it is
+what makes the whole approach safe: an edit can only have been made while the
+layer was *unlocked*, so walking backwards through your history always reaches
+the unlock before it reaches the edit underneath.
+
+### Why a keyframe jumps onto things
+
+Drag a keyframe along its lane with the magnet on — the horseshoe in the bar
+under the Timeline — and it now wants to land on the things already there: the
+start or end of a layer, a cut inside a sequence, another keyframe, a marker,
+the playhead, the edges of the work area. Before, the only thing it wanted was
+a whole frame.
+
+**The reach is measured in screen pixels, not in time**, and that is the part
+worth understanding. Zoomed right out, a hundred frames might be ten pixels
+apart, and a snap that reached "two frames" would be useless. Zoomed right in,
+one frame might be fifty pixels, and a snap that reached two frames would drag
+your key somewhere you never pointed. Measuring the reach on the screen instead
+means how far you are zoomed *is* how precise you are being — which is the thing
+your hand already understands, so there is no second setting to learn.
+
+When something catches the drag, a line is drawn at it. Without that, a key
+that leaps to a spot the pointer wasn't looks like a bug rather than a service.
+
+Two escapes. The magnet switch turns the whole thing off for as long as you like
+— and with it off a key may sit *between* frames, which is occasionally exactly
+what you want. Hold **Ctrl** during a drag and snapping stops just for that
+moment, for the one time in ten when the place you want is precisely where a
+snap will not let you put it.
+
+Beat markers need no special mention in any of this, and that is by design: beat
+detection writes ordinary markers, so dragging near a beat lands on it because
+it lands on markers.
+
+One thing the indicator broke on its way in, now fixed. The line is a piece of
+the lane that only exists while a snap is holding the drag, and it was drawn
+*before* the diamonds rather than after them. Flutter keeps a widget's identity
+by its position in a list unless you name it, so a line appearing at the front
+of that list shunted every diamond one place along, and each of them was rebuilt
+as though it were a different diamond — including the one your pointer was
+holding. A control rebuilt mid-drag loses the pointer, and losing the pointer
+ends the drag: the key committed the two or three pixels it had travelled by
+then and ignored the rest of the gesture. That is what "a keyframe will only
+move one frame, and dragging it again puts it back" was — the second drag being
+caught by the same target and landing back on it. The diamonds and the line are
+named now, so each is rebuilt as itself and a drag lasts until you let go.
+
+Right now this covers dragging a keyframe on its lane. Dragging a layer's bar,
+the razor, the work-area handles and markers themselves still land wherever you
+point. The arithmetic is written once and shared, so each of those is wiring
+rather than a fresh design.
 
 ### Zooming that flies, and a slider that means something
 
@@ -3442,11 +3694,47 @@ behind it.
 - **The broader scope asks the narrower one first.** Flutter runs every key
   handler in registration order, so the shell's `Delete` asks the Timeline's claim
   before acting (K-234).
+- **A readout that counts must not resize as it counts** (K-287). Numbers get a
+  slot as wide as the longest thing they can ever say, and a badge that comes
+  and goes keeps its slot while it is away. See below.
 - **Tests must let real time pass.** `settleFrb` in
   `flutter_ui/test/frb/frb_test_support.dart` alternates real-time slices with
   fake-clock pumps until the expected state arrives; `await tester.pump()` alone
   advances no clock, and awaiting an engine call inside `runAsync` that was not
   started there deadlocks (K-233).
+
+### The clock readouts (`widgets/time_readout.dart`)
+
+**The problem, in plain terms.** Text is drawn as wide as it needs to be. `f9`
+is narrower than `f10`, and in most typefaces the digit `1` is narrower than the
+digit `8` — so a timecode counting up is a piece of text that changes width
+several times a second. Everything laid out beside it slides to keep up. During
+playback that means the Timeline's search field twitching sixty times a second,
+in the corner of your eye, for no reason anybody can act on.
+
+**The fix.** `TimeReadout` is one small widget every clock on a bar now uses. It
+does three things:
+
+- **It reserves its width.** You tell it how many characters the longest thing it
+  could ever say is — `00:00:00:00` is eleven — and it measures that many
+  characters of its own typeface *once*, caches the answer, and draws the number
+  inside a box of exactly that size. The number changes; the box never does.
+- **It can be typed into.** Clicking it swaps the text for a field already
+  holding what was on screen, selected, so typing replaces it. `Enter` or
+  clicking away takes what you typed; `Escape` throws it away. The widget knows
+  nothing about timecode: whoever uses it hands over a *format* function (a frame
+  number → the text) and a *parse* function (text → a frame number, or nothing if
+  it does not read as a time). That is why the same widget serves the Viewer's
+  clock, the Timeline's clock, the Timeline's `f72` frame count and the Retime
+  row's source position.
+- **It clamps rather than refuses.** A time past either end of the composition
+  lands on that end. Asking for frame 100000 in a 300-frame comp obviously means
+  "the end", and an error message would be a worse answer than the obvious one.
+
+The same "reserve the space" rule applies to things that are not text: the
+Viewer's degradation badge (the "Half" chip that appears when playback has had to
+soften the picture) keeps its empty slot when it is not showing, so it does not
+shove the bar sideways as it comes and goes.
 
 ## 10. The app icon and the brand files
 

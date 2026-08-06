@@ -44,6 +44,7 @@ import '../state/tools.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 import '../widgets/marquee.dart';
+import '../widgets/time_readout.dart';
 // The ruler helpers moved with the ruler (shared with the graph editor); the
 // re-export keeps their long-standing import path alive for their tests.
 export 'timeline_extras_frb.dart' show rulerLabelStepSeconds, rulerLabelOf;
@@ -60,6 +61,8 @@ import 'keyframe_controls_frb.dart';
 import 'layer_fold_frb.dart';
 import '../widgets/smooth_zoom.dart';
 import '../widgets/zoom_anchored_scroll.dart';
+import 'timeline_snap.dart';
+import 'waveform_frb.dart';
 import 'timeline_timings.dart';
 import 'transform_rows_frb.dart';
 
@@ -327,14 +330,31 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
   /// answer arrives.
   final Map<String, bool> _hasAudio = {};
 
-  /// Each layer's source waveform peaks, by id — fetched once when its
-  /// Waveform twirl first opens (decoding a whole track is not work for a
-  /// build), then good for the session: peaks belong to the file, so trims
-  /// and drags never invalidate them (K-172).
+  /// Each layer's waveform peaks, by id — the stretch of its source the lanes
+  /// are currently showing, summarised to one bucket per pixel column (K-280).
+  ///
+  /// Refetched when the zoom or the scroll moves the window far enough to
+  /// matter, which is what keeps the drawn detail level with the zoom instead
+  /// of blocky. Peaks belong to the file, so the painter maps them through the
+  /// live in/out/offset and a drag or a trim carries the transients with it
+  /// without asking again (K-172).
   final Map<String, BridgeAudioPeaks> _peaks = {};
 
-  /// One lane's worth of buckets: plenty for any panel width.
-  static const int _peakBuckets = 2048;
+  /// What each layer's peaks were fetched for: the window, the bucket count
+  /// and the wave style. Equal keys mean the answer in hand is still the right
+  /// one, so nothing is asked again — a scroll of a few pixels rounds to the
+  /// same key by design ([WaveformRequest]).
+  final Map<String, String> _peakKeys = {};
+
+  /// The lanes' viewport width as the last layout measured it. Written during
+  /// build and never read to decide layout.
+  ///
+  /// Two things read it: how much audio a waveform lane is showing, which is
+  /// what the peak window is worked out from (K-280); and the zoom, which
+  /// needs the width at magnification 1 to know what a frame is worth in
+  /// pixels *now* — it cannot ask the axis, because the axis is rebuilt from
+  /// the zoom itself ([_laneFrames] is its other half, K-293).
+  double _laneViewport = 0;
 
   /// Each Footage layer's source length in comp frames, by layer id. Cached
   /// for the same reason [_hasAudio] is: the answer comes from probing the
@@ -353,21 +373,101 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
   /// is what keeps a rebuild free of bridge calls (K-184).
   BigInt? _boundsRevision;
 
-  /// Fetch peaks for any layer whose Waveform twirl is open and unanswered.
+  /// How waveforms draw — Settings ▸ Interface ▸ Editing (K-280, K-285).
+  WaveformStyle get _waveformStyle {
+    final interface =
+        Provider.of<LumitUiState>(context, listen: false).workspace.interface;
+    return WaveformStyle(
+      multiwave: interface.multiwaveWaveforms,
+      fromBottom: interface.waveformsFromBottom,
+    );
+  }
+
+  /// Fetch peaks for every layer whose Waveform twirl is open, over the stretch
+  /// of audio the lanes are showing right now.
+  ///
+  /// **This is what makes the resolution follow the zoom.** The old lane asked
+  /// once for 2 048 buckets across the whole source and kept them for the
+  /// session, so zooming in stretched the same coarse summary until it was a
+  /// staircase (K-172, superseded here). Now the window is the visible one and
+  /// the buckets are the visible pixel columns, so a wave has as much detail as
+  /// there is room to show, at any zoom.
+  ///
+  /// Called from the build *and* from the lanes' scroll, because scrolling
+  /// moves the window without changing anything the panel rebuilds for. The
+  /// request rounds itself off, so an ordinary scroll asks nothing new and only
+  /// a real move sends a fetch.
   void _refreshPeaks(List<BridgeLayerEntry> layers) {
+    final ui = _ui;
+    if (ui == null) return;
+    final frames = ui.model.durationFrames;
+    final fps = ui.model.fps;
+    final width = _laneViewport * _zoom;
+    if (frames <= 0 || fps <= 0 || width <= 0 || _laneViewport <= 0) return;
+    // Only the band split reaches the engine: where the wave sits is a
+    // drawing decision, so toggling it repaints and fetches nothing.
+    final multiwave = _waveformStyle.needsBands;
+    // The comp seconds under the lanes' window, from the same mapping the axis
+    // draws with.
+    final maxOffset = max(0.0, width - _laneViewport);
+    final offset =
+        _hLane.hasClients ? _hLane.offset.clamp(0.0, maxOffset) : 0.0;
+    final secondsPerPixel = frames / fps / width;
+    final viewStart = offset * secondsPerPixel;
+    final viewEnd = (offset + _laneViewport) * secondsPerPixel;
+
     for (final entry in layers) {
       final id = entry.layer.internallayerId.toString();
-      if (!_open.contains(waveformPath(id)) || _peaks.containsKey(id)) {
+      if (!_open.contains(waveformPath(id))) {
+        // A shut lane keeps nothing: the window it was fetched for is stale by
+        // the time it opens again, and the memory is a whole track's summary.
+        _peaks.remove(id);
+        _peakKeys.remove(id);
         continue;
       }
-      // Claim the slot first, so a rebuild mid-decode does not decode twice.
-      _peaks[id] = BridgeAudioPeaks(durationSeconds: 0, pairs: Float32List(0));
-      entry.layer.audioPeaks(buckets: _peakBuckets).then((peaks) {
-        if (!mounted) return;
+      final span = entry.info.span;
+      final startOffset =
+          span.startOffset.num / span.startOffset.den.toDouble();
+      // The layer's own source clock: comp time less where its source starts.
+      final request = WaveformRequest.forView(
+        startSeconds: viewStart - startOffset,
+        endSeconds: viewEnd - startOffset,
+        pixels: _laneViewport,
+      );
+      if (request == null) continue;
+      final key = '${request.key}|$multiwave';
+      // Claimed before the fetch starts, so a rebuild mid-decode does not ask
+      // twice for the same window.
+      if (_peakKeys[id] == key) continue;
+      _peakKeys[id] = key;
+      entry.layer
+          .audioPeaks(
+        startSeconds: request.startSeconds,
+        endSeconds: request.endSeconds,
+        buckets: request.buckets,
+        multiwave: multiwave,
+      )
+          .then((peaks) {
+        // A later window may already have been asked for while this one was
+        // decoding; the newest ask wins, so an old answer is dropped rather
+        // than drawn over a lane that has moved on.
+        if (!mounted || _peakKeys[id] != key) return;
         setState(() => _peaks[id] = peaks);
       });
     }
   }
+
+  /// The lanes scrolled: the visible window moved, so the waveforms may want a
+  /// finer summary of somewhere else. Nothing is rebuilt here — the fetch calls
+  /// `setState` only when an answer actually arrives.
+  void _onLaneScroll() {
+    if (_peakKeys.isEmpty && _peaks.isEmpty) return;
+    _refreshPeaks(_lastLayers);
+  }
+
+  /// The layers the last build drew, so a scroll can refresh their peaks
+  /// without a rebuild to hand them over.
+  List<BridgeLayerEntry> _lastLayers = const [];
 
   /// Work out how far every layer's ends may be dragged (K-211).
   ///
@@ -996,12 +1096,9 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
 
   double get _zoom => _zoomMotion.value;
 
-  /// The lanes' width at zoom 1, and how many frames span it — recorded in
-  /// build so the flight can work out the *new* pixels-per-frame itself. It
-  /// cannot read the axis: the axis is rebuilt from this tick's zoom, and the
-  /// scroll has to be corrected in the same turn or the panel paints one frame
-  /// at the new width with the old offset.
-  double _laneViewport = 0;
+  /// How many frames the lanes span — [_laneViewport]'s other half, recorded in
+  /// build so the zoom can work out the pixels a frame is worth at any
+  /// magnification without reading the axis it is itself rebuilding.
   int _laneFrames = 1;
 
   /// How much motion the shell is set to show, read in build where the theme
@@ -1040,6 +1137,11 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
       ..addListener(_onZoomTick);
     _vOutline.addListener(() => _followScroll(_vOutline, _vLane));
     _vLane.addListener(() => _followScroll(_vLane, _vOutline));
+    // Scrolling sideways moves which stretch of audio the waveform lanes show,
+    // and a summary is only as detailed as the window it was taken over
+    // (K-280). Nothing else about the panel changes, so this listens rather
+    // than the panel rebuilding on every scrolled pixel.
+    _hLane.addListener(_onLaneScroll);
     HardwareKeyboard.instance.addHandler(_onKey);
     // Claim Delete for the finer selection this panel holds (K-234). The state
     // is kept, not looked up again: `dispose` runs after the element is
@@ -1199,6 +1301,9 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     }
     if (action == 'reveal.animated') {
       return _revealTap();
+    }
+    if (action == 'reveal.audio') {
+      return _revealAudioTap(ui);
     }
     // Enter renames the selected layer in place (docs/07 §15, K-243): the row
     // it names opens its own editor, which is why this sets a value rather
@@ -1411,6 +1516,55 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
         // Retime needs no path of its own: the row sits above Transform on
         // any open layer that has one, and `groups.any` already counts it, so
         // a layer whose only animation is its Retime opens for `U` here.
+      }
+    });
+    return true;
+  }
+
+  /// When the last `L` was pressed, and how many times in a row (K-281) — the
+  /// same shape as the `U` cycle, and for the same reason: three taps inside
+  /// the window are three different commands.
+  DateTime? _lastAudioReveal;
+  int _audioRevealTaps = 0;
+
+  /// One press of `L` on the selected layers: **L** opens their Audio group,
+  /// **LL** opens the waveform lane inside it, **LLL** shuts them again
+  /// (docs/07 §4.3).
+  ///
+  /// A layer with no sound is left alone rather than opened onto an Audio
+  /// group it does not have — the same answer `M` gives a layer with no masks.
+  /// Whether a layer carries sound is the cached probe the outline already
+  /// uses, so this costs no bridge call.
+  bool _revealAudioTap(LumitUiState ui) {
+    final selected = ui.selectedLayerIds;
+    if (selected.isEmpty) return false;
+    final now = DateTime.now();
+    final last = _lastAudioReveal;
+    _audioRevealTaps =
+        (last != null && now.difference(last) <= _revealWindow)
+            ? _audioRevealTaps + 1
+            : 1;
+    _lastAudioReveal = now;
+
+    setState(() {
+      for (final entry in ui.model.layers) {
+        if (!selected.contains(entry.layer.internallayerId)) continue;
+        final id = entry.layer.internallayerId.toString();
+        // Every tap starts from the layer closed, so the cycle shows exactly
+        // what it says rather than adding to whatever was already open.
+        _open.removeWhere((p) => p == id || isUnderPath(id, p));
+        _dropSelectionUnder(id);
+        if (_audioRevealTaps >= 3) continue;
+        if (!(_hasAudio[id] ?? false)) continue;
+        _open
+          ..add(id)
+          ..add(audioPath(id));
+        if (_audioRevealTaps >= 2) _open.add(waveformPath(id));
+      }
+      if (_audioRevealTaps >= 3) {
+        // LLL: shut, and the next L starts the cycle over.
+        _audioRevealTaps = 0;
+        _lastAudioReveal = null;
       }
     });
     return true;
@@ -1642,6 +1796,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
           e,
     ];
     _refreshAudio(layers);
+    _lastLayers = layers;
     _refreshPeaks(layers);
     // Every layer, not the filtered list: a bar hidden by the search box still
     // has ends, and they must be known the moment it comes back.
@@ -1763,7 +1918,6 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
                           outlineViewport -
                           scrollGutterWidth)
                       .clamp(1.0, 1e6);
-                  _laneViewport = laneViewport;
                   _laneFrames = frames;
                   // A different comp is a different ceiling; a zoom already
                   // past the new one is pulled back to it rather than left
@@ -1776,6 +1930,20 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
                   // `setState` during build and an outright crash.
                   _zoomMotion.max = _maxZoom;
                   _pullZoomBackToCeiling();
+                  // How wide the lanes are is how many buckets a waveform wants
+                  // (K-280). Measured here because this is where it is known;
+                  // acted on after the frame, since a build must not start one.
+                  //
+                  // The axis and the work area's pixels are *not* worked out
+                  // here any more: they belong to the zoom, and the zoom only
+                  // rebuilds the lane side (K-293), so they are worked out
+                  // inside that half's builder below.
+                  if (_laneViewport != laneViewport) {
+                    _laneViewport = laneViewport;
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) _refreshPeaks(_lastLayers);
+                    });
+                  }
 
                   // **Not** wrapped in a playhead listener. Every layer row and
                   // every bar used to rebuild each time the playhead moved —
@@ -1841,6 +2009,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
                                               comp: comp,
                                               model: ui.model,
                                               playhead: ui.playheadFrame,
+                                              onSeek: ui.scrubTo,
                                               graph: _graph,
                                               onToggleGraph: () => setState(
                                                   () => _graph = !_graph),
@@ -2271,6 +2440,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
                                                   ),
                                                   hasAudio: _hasAudio,
                                                   peaks: _peaks,
+                                                  waveformStyle:
+                                                      _waveformStyle,
                                                   fps: ui.model.fps,
                                                   fpsNum: fpsNum,
                                                   fpsDen: fpsDen,
@@ -2480,6 +2651,11 @@ class _FoldRow extends StatelessWidget {
   final ValueChanged<String> onToggle;
   final VoidCallback onChanged;
 
+  /// Whether the layer this row belongs to is locked (K-291). A locked layer's
+  /// rows are still *read* — the numbers are what the document holds and the
+  /// curves still draw — but nothing on them can be touched.
+  final bool locked;
+
   const _FoldRow({
     required this.comp,
     required this.layer,
@@ -2496,6 +2672,7 @@ class _FoldRow extends StatelessWidget {
     required this.onSeek,
     required this.onToggle,
     required this.onChanged,
+    required this.locked,
   });
 
   @override
@@ -2526,7 +2703,19 @@ class _FoldRow extends StatelessWidget {
                 : null,
       ),
       padding: EdgeInsets.only(left: indent, right: 4),
-      child: _control(context),
+      // A locked layer's rows are read-only, not hidden (K-291): the numbers
+      // are still the document's and the curves still draw, but nothing on the
+      // row can be touched. The engine refuses the edit anyway — this is what
+      // stops the interface offering a gesture that would only be refused.
+      //
+      // A *group* row is exempt: twirling one open is navigation, not editing,
+      // and a locked layer that could not be looked inside would be worse than
+      // one that can.
+      child: locked && row is! FoldGroupRow && row is! FoldWaveformRow
+          ? AbsorbPointer(
+              child: Opacity(opacity: 0.5, child: _control(context)),
+            )
+          : _control(context),
     );
   }
 
@@ -3471,8 +3660,12 @@ class _RetimeRowState extends State<_RetimeRow> {
     final t = ThemeScope.of(context).theme;
     final scalar = widget.scalar;
     final animated = scalar is BridgeScalar_Keyframed;
-    final playhead =
-        Provider.of<LumitUiState>(context, listen: false).playheadFrame;
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    final playhead = ui.playheadFrame;
+    // Which face the row wears (K-287): the clock by default, seconds for
+    // anyone who asked for them in Settings ▸ Interface ▸ Editing.
+    final seconds = ui.workspace.interface.retimeInSeconds;
+    final (fpsNum, fpsDen) = ui.model.fpsExact;
 
     return ValueListenableBuilder<int>(
       valueListenable: playhead,
@@ -3506,33 +3699,56 @@ class _RetimeRowState extends State<_RetimeRow> {
             ),
             SizedBox(
               width: widget.valueColumn.width,
-              child: animated
-                  ? KeyedValueField(
-                      fieldKey: const ValueKey('tl-retime-seconds'),
-                      value: value,
-                      // The same open range a transform axis gets: a source
-                      // time before zero or past the end simply holds the end
-                      // frame (docs/04 §7), so clamping the field would only
-                      // fight the drag.
-                      min: -100000,
-                      max: 100000,
-                      decimals: 3,
-                      suffix: ' s',
-                      speed: 0.02,
-                      onCommit: (v) => _commitAt(scalar, v, frame),
-                    )
-                  : DragValueField(
+              child: seconds
+                  ? (animated
+                      ? KeyedValueField(
+                          fieldKey: const ValueKey('tl-retime-seconds'),
+                          value: value,
+                          // The same open range a transform axis gets: a
+                          // source time before zero or past the end simply
+                          // holds the end frame (docs/04 §7), so clamping the
+                          // field would only fight the drag.
+                          min: -100000,
+                          max: 100000,
+                          decimals: 3,
+                          suffix: ' s',
+                          speed: 0.02,
+                          onCommit: (v) => _commitAt(scalar, v, frame),
+                        )
+                      : DragValueField(
+                          key: const ValueKey('tl-retime-seconds'),
+                          value: value,
+                          min: -100000,
+                          max: 100000,
+                          decimals: 3,
+                          suffix: ' s',
+                          speed: 0.02,
+                          onChanged: (v) => _commitAt(scalar, v, frame),
+                          onChangeLive: (v) =>
+                              setState(() => _staged = v.toDouble()),
+                          onChangeEnd: (v) => _commitAt(scalar, v, frame),
+                          onDragCancel: () => setState(() => _staged = null),
+                        ))
+                  // The clock face (K-287, realising K-075): which moment of
+                  // the source is showing, written the way every other time in
+                  // the editor is written. Dragged and typed in whole source
+                  // frames — a timecode cannot say "between two frames", which
+                  // is what the seconds setting is for.
+                  : TimeReadout(
                       key: const ValueKey('tl-retime-seconds'),
-                      value: value,
-                      min: -100000,
-                      max: 100000,
-                      decimals: 3,
-                      suffix: ' s',
-                      speed: 0.02,
-                      onChanged: (v) => _commitAt(scalar, v, frame),
-                      onChangeLive: (v) =>
-                          setState(() => _staged = v.toDouble()),
-                      onChangeEnd: (v) => _commitAt(scalar, v, frame),
+                      frame: _frameOfSeconds(value, fpsNum, fpsDen),
+                      format: (f) => timecodeOfRateSigned(f, fpsNum, fpsDen),
+                      parse: (text) =>
+                          framesOfTimecodeSigned(text, fpsNum, fpsDen),
+                      widthChars: timecodeChars(fpsNum, fpsDen) + 1,
+                      style: t.mono,
+                      minFrame: -100000,
+                      maxFrame: 100000,
+                      draggable: true,
+                      onDragLive: (f) => setState(
+                          () => _staged = _secondsOfFrame(f, fpsNum, fpsDen)),
+                      onCommit: (f) => _commitAt(
+                          scalar, _secondsOfFrame(f, fpsNum, fpsDen), frame),
                       onDragCancel: () => setState(() => _staged = null),
                     ),
             ),
@@ -3542,6 +3758,18 @@ class _RetimeRowState extends State<_RetimeRow> {
       },
     );
   }
+
+  /// A source time in seconds as a whole source frame, and back.
+  ///
+  /// At the composition's rate: the read model does not carry the footage's own
+  /// rate yet, and every other time in the panel is counted in comp frames.
+  static int _frameOfSeconds(double seconds, int fpsNum, int fpsDen) {
+    if (fpsDen <= 0 || fpsNum <= 0) return 0;
+    return (seconds * fpsNum / fpsDen).round();
+  }
+
+  static double _secondsOfFrame(int frame, int fpsNum, int fpsDen) =>
+      fpsNum <= 0 ? 0 : frame * (fpsDen <= 0 ? 1 : fpsDen) / fpsNum;
 
   void _commitAt(BridgeScalar scalar, num value, int frame) {
     widget.layer.setRetimeProperty(
@@ -3730,83 +3958,6 @@ class BarEndMarksPainter extends CustomPainter {
       old.atIn != atIn || old.atOut != atOut || old.colour != colour;
 }
 
-/// The waveform lane's painter: the layer's source peaks, mapped through its
-/// live in/out/offset so dragging or trimming the bar carries the transients
-/// with it in realtime (K-172). One vertical min-max line per pixel column.
-class _WaveformPainter extends CustomPainter {
-  final BridgeAudioPeaks? peaks;
-
-  /// The span as drawn — the document's frames plus any drag in flight.
-  final int inFrame;
-  final int outFrame;
-  final double startOffsetSeconds;
-  final TimelineAxis axis;
-  final double fps;
-  final Color colour;
-
-  const _WaveformPainter({
-    required this.peaks,
-    required this.inFrame,
-    required this.outFrame,
-    required this.startOffsetSeconds,
-    required this.axis,
-    required this.fps,
-    required this.colour,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final held = peaks;
-    if (held == null || held.pairs.isEmpty || held.durationSeconds <= 0) {
-      return;
-    }
-    final buckets = held.pairs.length ~/ 2;
-    final startOffset = startOffsetSeconds;
-    final left = axis.xOf(inFrame).clamp(0.0, size.width);
-    final right = axis.xOf(outFrame).clamp(0.0, size.width);
-    final mid = size.height / 2;
-    // Half a pixel of breathing room top and bottom.
-    final half = mid - 1;
-    final paintLine = Paint()
-      ..color = colour
-      ..strokeWidth = 1;
-
-    for (var x = left; x < right; x += 1) {
-      // Fractional, straight off the axis mapping: frameAt rounds to whole
-      // frames, which would staircase the waveform.
-      final compSec = x / axis.width * axis.frames / fps;
-      final srcSec = compSec - startOffset;
-      if (srcSec < 0 || srcSec >= held.durationSeconds) continue;
-      final bucket = (srcSec / held.durationSeconds * buckets)
-          .floor()
-          .clamp(0, buckets - 1);
-      final lo = held.pairs[bucket * 2].clamp(-1.0, 1.0);
-      final hi = held.pairs[bucket * 2 + 1].clamp(-1.0, 1.0);
-      canvas.drawLine(
-        Offset(x, mid - hi * half),
-        Offset(x, mid - lo * half),
-        paintLine,
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(_WaveformPainter old) =>
-      old.peaks != peaks ||
-      old.inFrame != inFrame ||
-      old.outFrame != outFrame ||
-      old.startOffsetSeconds != startOffsetSeconds ||
-      old.fps != fps ||
-      old.axis.frames != axis.frames ||
-      old.axis.width != axis.width;
-
-  /// A background painter's default is to absorb hits across its whole rect,
-  /// which would eat the keyframe marquee underneath. The lane is a picture,
-  /// not a control.
-  @override
-  bool? hitTest(Offset position) => false;
-}
-
 /// The outline's toolbar (docs/07 §4.1): the timecode and frame readouts, the
 /// layer search, the master motion-blur and shy-filter buttons, the Lane and
 /// Graph view buttons, and the ⋯ menu holding the layer/work-area/marker
@@ -3820,6 +3971,11 @@ class _Toolbar extends StatelessWidget {
 
   /// Listened to, not read: only the two readouts redraw as it moves.
   final ValueListenable<int> playhead;
+
+  /// Where a typed time goes — the same take-hold-of-the-playhead move a drag
+  /// on the ruler makes, so typing a time also stops the transport.
+  final ValueChanged<int> onSeek;
+
   final bool graph;
   final VoidCallback onToggleGraph;
   final bool razor;
@@ -3833,6 +3989,7 @@ class _Toolbar extends StatelessWidget {
     required this.comp,
     required this.model,
     required this.playhead,
+    required this.onSeek,
     required this.graph,
     required this.onToggleGraph,
     required this.razor,
@@ -3848,6 +4005,7 @@ class _Toolbar extends StatelessWidget {
     final t = ThemeScope.of(context).theme;
     final (fpsNum, fpsDen) = model.fpsExact;
     final mbOn = model.motionBlurEnabled;
+    final lastFrame = model.durationFrames - 1;
     return Container(
       height: _toolbarHeight,
       color: t.surface1,
@@ -3856,20 +4014,44 @@ class _Toolbar extends StatelessWidget {
         children: [
           // The clock face and the frame count, both zero-based: frame 0 is
           // 00:00:00:00, so three seconds into a 24 fps comp reads f72.
+          //
+          // Both sit in slots wide enough for the longest thing they can say
+          // and both can be typed into (K-287): a readout that resized itself
+          // as it counted shoved the search field sideways through every
+          // second of playback, and a time you can read is a time you should
+          // be able to state. Anything outside the composition lands on its
+          // nearest end.
           ValueListenableBuilder<int>(
             valueListenable: playhead,
             builder: (context, frame, _) => Row(
               children: [
-                Text(
-                  timecodeOfRate(frame, fpsNum, fpsDen),
+                TimeReadout(
                   key: const ValueKey('tl-timecode'),
+                  frame: frame,
+                  format: (f) => timecodeOfRate(f, fpsNum, fpsDen),
+                  widthChars: timecodeChars(fpsNum, fpsDen),
                   style: t.mono,
+                  parse: (text) => framesOfTimecode(text, fpsNum, fpsDen),
+                  onCommit: onSeek,
+                  minFrame: 0,
+                  maxFrame: lastFrame,
+                  tooltip: 'The frame the playhead is on. '
+                      'Click to type a time.',
                 ),
-                const SizedBox(width: 6),
-                Text(
-                  'f$frame',
+                TimeReadout(
                   key: const ValueKey('tl-frame'),
+                  frame: frame,
+                  format: (f) => 'f$f',
+                  // The `f`, the digits of the last frame, and one spare so a
+                  // comp that grows past a power of ten does not start to
+                  // twitch before the next rebuild.
+                  widthChars: 2 + '${lastFrame < 0 ? 0 : lastFrame}'.length,
                   style: t.mono.copyWith(color: t.textMuted),
+                  parse: _frameOfTyped,
+                  onCommit: onSeek,
+                  minFrame: 0,
+                  maxFrame: lastFrame,
+                  tooltip: 'The frame number. Click to type one.',
                 ),
               ],
             ),
@@ -3930,6 +4112,14 @@ class _Toolbar extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  /// A typed frame number, with or without the `f` the readout wears. Null for
+  /// anything that is not a number at all, which leaves the readout alone.
+  static int? _frameOfTyped(String text) {
+    var trimmed = text.trim().toLowerCase();
+    if (trimmed.startsWith('f')) trimmed = trimmed.substring(1);
+    return int.tryParse(trimmed.trim());
   }
 
   Widget _iconButton(
@@ -4534,6 +4724,7 @@ class _Outline extends StatelessWidget {
                   onSeek: onSeek,
                   onToggle: onToggle,
                   onChanged: onChanged,
+                  locked: layers[i].info.switches.locked,
                 ),
               ),
               ],
@@ -5329,6 +5520,10 @@ class _LayerArea extends StatelessWidget {
   /// Each layer's source peaks, for the waveform lanes.
   final Map<String, BridgeAudioPeaks> peaks;
 
+  /// How waveforms draw (K-280, K-285) — the lanes' own answer, handed down so
+  /// an open Sequence view's clips agree with it.
+  final WaveformStyle waveformStyle;
+
   /// The comp's rate, mapping the lane's pixels onto source seconds.
   final double fps;
   final TimelineAxis axis;
@@ -5406,6 +5601,7 @@ class _LayerArea extends StatelessWidget {
     this.onClipPreview,
     required this.hasAudio,
     required this.peaks,
+    required this.waveformStyle,
     required this.fps,
     required this.axis,
     required this.playhead,
@@ -5471,12 +5667,33 @@ class _LayerArea extends StatelessWidget {
     // wash and the strip stays one colour.
     final workAreaPixels =
         work.whole ? null : (axis.xOf(work.start), axis.xOf(work.end));
+    // Gathered once for the whole area, not once per lane (docs/07 §4.5).
+    final snap = _snapTargets();
+    // Where a razor cut lands, as a frame — the *one* answer the blade's line
+    // and the cut itself both read, so the mark cannot stand anywhere but
+    // where the edge bites. The cut was always quantised (`frameAt` rounds);
+    // it is the line that used to follow the pointer between frames.
+    double razorFrameAt(double x) => snapFrame(
+          frame: axis.perFrame <= 0 ? 0 : x / axis.perFrame,
+          targets: snap,
+          perFrame: axis.perFrame,
+          magnet: magnet &&
+              !snapSuspended(
+                  controlPressed: HardwareKeyboard.instance.isControlPressed),
+        )
+            // A cut is a clip boundary, and a clip boundary is a whole frame —
+            // so even a snap onto a target that sits between frames (a keyframe
+            // may) lands on one. Rounding here rather than at the cut is what
+            // keeps the drawn line and the edge exactly the same place.
+            .frame
+            .roundToDouble();
     // The blade pointer and the line that says where the cut lands (K-220).
     // Round the whole area rather than inside a bar: the line spans every row,
     // and a pointer clipped to one bar would vanish at its edges. Inert — and
     // free — while the razor is not armed.
     return RazorOverlay(
       active: razor,
+      snapX: (x) => axis.xOf(razorFrameAt(x)),
       mark: t.textPrimary,
       outline: t.surface0,
       child: Stack(
@@ -5646,6 +5863,7 @@ class _LayerArea extends StatelessWidget {
                                                   playhead.value,
                                               onRazor: (frame) =>
                                                   onRazor(layers[i], frame),
+                                              razorFrameAt: razorFrameAt,
                                               onSelect: () =>
                                                   onSelect(layers[i].layer),
                                               onOpenSequence: layers[i]
@@ -5680,9 +5898,11 @@ class _LayerArea extends StatelessWidget {
                                                 fpsNum: fpsNum,
                                                 fpsDen: fpsDen,
                                                 hScroll: hScroll,
+                                                style: waveformStyle,
                                                 razor: razor,
                                                 onRazor: (frame) =>
                                                     onRazor(layers[i], frame),
+                                                razorFrameAt: razorFrameAt,
                                                 onSelect: () =>
                                                     onSelect(layers[i].layer),
                                                 onClose: () => onOpenSequence
@@ -5718,8 +5938,8 @@ class _LayerArea extends StatelessWidget {
                                                       in _rowsOf(layers[i]))
                                                     SizedBox(
                                                       height: _rowHeight,
-                                                      child: _lane(
-                                                          t, layers[i], row),
+                                                      child: _lane(t,
+                                                          layers[i], row, snap),
                                                     ),
                                                 ],
                                               ),
@@ -5791,7 +6011,30 @@ class _LayerArea extends StatelessWidget {
 
   /// One fold row's lane: diamonds for a keyed property, the waveform for
   /// the waveform row, empty room otherwise.
-  Widget? _lane(LumitTheme t, BridgeLayerEntry entry, LayerFoldRow row) {
+  /// Everything a lane key can land on (docs/07 §4.5), built once for the
+  /// panel from the read model and the memoised marker list — so it costs no
+  /// bridge calls, and no lane pays for another lane's targets.
+  List<SnapTarget> _snapTargets() => snapTargetsOf(
+        layers: layers,
+        compMarkers: markersOf(comp),
+        keyRows: [
+          for (final entry in layers)
+            for (final row in _rowsOf(entry))
+              (
+                rowId: foldRowPath(
+                    entry.layer.internallayerId.toString(), row),
+                frames: [
+                  for (final k in laneKeysOf(row)) laneKeyFrame(k, fps),
+                ],
+              ),
+        ],
+        playheadFrame: playhead.value,
+        work: work,
+        fps: fps,
+      );
+
+  Widget? _lane(LumitTheme t, BridgeLayerEntry entry, LayerFoldRow row,
+      List<SnapTarget> snapTargets) {
     final id = entry.layer.internallayerId.toString();
     if (row is FoldWaveformRow) {
       return ValueListenableBuilder<BarDragPreview?>(
@@ -5799,19 +6042,29 @@ class _LayerArea extends StatelessWidget {
         builder: (context, preview, _) {
           final p = preview?.layerId == id ? preview : null;
           final span = entry.info.span;
+          // The span as drawn — the document's frames plus any drag in flight —
+          // and where its source starts, so a bar being dragged or trimmed
+          // carries its transients with it in realtime (K-172).
+          final inFrame = entry.info.inFrame.toInt() + (p?.deltaIn ?? 0);
+          final outFrame = entry.info.outFrame.toInt() + (p?.deltaOut ?? 0);
+          final startOffset =
+              span.startOffset.num / span.startOffset.den.toDouble() +
+                  (p?.offsetShift ?? 0) / fps;
+          final secondsPerPixel =
+              axis.width <= 0 ? 0.0 : axis.frames / fps / axis.width;
           return CustomPaint(
             key: ValueKey<String>('tl-wave-$id'),
             size: Size(axis.width, _rowHeight),
-            painter: _WaveformPainter(
+            painter: WaveformPainter(
               peaks: peaks[id],
-              inFrame: entry.info.inFrame.toInt() + (p?.deltaIn ?? 0),
-              outFrame: entry.info.outFrame.toInt() + (p?.deltaOut ?? 0),
-              startOffsetSeconds:
-                  span.startOffset.num / span.startOffset.den.toDouble() +
-                      (p?.offsetShift ?? 0) / fps,
-              axis: axis,
-              fps: fps,
-              colour: t.accent,
+              // Canvas x 0 is comp time 0, and the source's own clock runs
+              // from there less wherever the layer starts it.
+              originSeconds: -startOffset,
+              secondsPerPixel: secondsPerPixel,
+              left: axis.xOf(inFrame),
+              right: axis.xOf(outFrame),
+              colours: t.waveform,
+              style: waveformStyle,
             ),
           );
         },
@@ -5831,6 +6084,7 @@ class _LayerArea extends StatelessWidget {
       fpsNum: fpsNum,
       fpsDen: fpsDen,
       magnet: magnet,
+      snapTargets: snapTargets,
       selectedKeys: selectedKeys,
       onSelectKey: (index, additive) {
         final id = '$rowId#$index';
@@ -5869,6 +6123,12 @@ class _KeyLane extends StatefulWidget {
   final int fpsNum;
   final int fpsDen;
   final bool magnet;
+
+  /// Everything on the Timeline this lane's keys may land on (docs/07 §4.5),
+  /// gathered once for the panel and handed down — the list is the same for
+  /// every lane, so building it per lane would be the same work many times.
+  /// This lane's own keys are already left out of it.
+  final List<SnapTarget> snapTargets;
   final Set<String> selectedKeys;
 
   /// Click a diamond to select it — the second way into the key selection the
@@ -5888,6 +6148,7 @@ class _KeyLane extends StatefulWidget {
     required this.fpsNum,
     required this.fpsDen,
     required this.magnet,
+    required this.snapTargets,
     required this.selectedKeys,
     required this.onSelectKey,
     required this.onChanged,
@@ -5905,14 +6166,37 @@ class _KeyLaneState extends State<_KeyLane> {
   /// bar drag does it: per-event rounding reads as mouse acceleration.
   double _deltaPx = 0;
 
-  /// Where key [i] draws — its own time, plus the drag in flight.
+  /// What the drag in flight last landed on, so the capture can be drawn. The
+  /// spec requires the target to be indicated at the moment it takes the drag —
+  /// without it a key that jumps reads as a fault rather than a service.
+  SnapTarget? _caught;
+
+  /// Where key [i] draws — its own time, plus the drag in flight, snapped.
   double _frameOf(int i) {
     final base = laneKeyFrame(widget.keys[i], widget.fps);
     if (_dragging != i) return base;
     final perFrame = widget.axis.perFrame;
     final moved = perFrame <= 0 ? base : base + _deltaPx / perFrame;
     final clamped = moved.clamp(0.0, widget.axis.frames.toDouble());
-    return widget.magnet ? clamped.roundToDouble() : clamped;
+    final own = {
+      for (final k in widget.keys) laneKeyFrame(k, widget.fps),
+    };
+    final snapped = snapFrame(
+      frame: clamped,
+      // This lane's own keys are dropped: a key snapping to itself would be
+      // pinned where it started, and a neighbour already on the same frame is
+      // not a place worth being taken to either.
+      targets: widget.snapTargets
+          .where((t) => t.kind != SnapKind.keyframe || !own.contains(t.frame)),
+      perFrame: perFrame,
+      // `Ctrl` held suspends snapping for as long as it is held, which is the
+      // way out when the wanted place is exactly where a snap will not allow.
+      magnet: widget.magnet &&
+          !snapSuspended(
+              controlPressed: HardwareKeyboard.instance.isControlPressed),
+    );
+    _caught = snapped.caught;
+    return snapped.frame;
   }
 
   void _commit(int index) {
@@ -5920,6 +6204,7 @@ class _KeyLaneState extends State<_KeyLane> {
     setState(() {
       _dragging = null;
       _deltaPx = 0;
+      _caught = null;
     });
     if (frame == laneKeyFrame(widget.keys[index], widget.fps)) return;
     final moved = moveLaneKey(
@@ -5934,14 +6219,32 @@ class _KeyLaneState extends State<_KeyLane> {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
+    // Worked out once for the build: [_frameOf] is where the snap is decided
+    // and where [_caught] is set, so asking it twice per key would answer the
+    // same question twice and leave the indicator depending on which of the
+    // two calls ran last.
+    final frames = [for (var i = 0; i < widget.keys.length; i++) _frameOf(i)];
+    final caught = _caught;
+    // **Every child of this Stack carries a key**, and the keys stay the same
+    // whether or not a snap has been caught.
+    //
+    // Without them the drag died the moment a snap first took it, which read as
+    // "a lane key can only be dragged one frame, and dragging again puts it
+    // back". A child appearing part-way down an unkeyed list makes Flutter pair
+    // each new child with the *old* child in that slot — the indicator was
+    // matched to the first diamond, the first diamond to the second, and so on —
+    // so the diamonds' gesture detectors were torn down and rebuilt mid-gesture.
+    // A recogniser destroyed while it holds a pointer ends its drag, which
+    // committed the two or three pixels travelled so far and left the rest of
+    // the gesture doing nothing. Keyed, each child is matched to itself, the
+    // detector holding the pointer lives, and the drag runs to the release.
     return Stack(
       children: [
         Positioned.fill(
+          key: const ValueKey<String>('tl-lane-diamonds'),
           child: CustomPaint(
             painter: _LaneKeysPainter(
-              frames: [
-                for (var i = 0; i < widget.keys.length; i++) _frameOf(i)
-              ],
+              frames: frames,
               selected: {
                 for (var i = 0; i < widget.keys.length; i++)
                   if (widget.selectedKeys.contains('${widget.rowId}#$i')) i,
@@ -5952,9 +6255,23 @@ class _KeyLaneState extends State<_KeyLane> {
             ),
           ),
         ),
+        // What the drag landed on, marked while it holds it (docs/07 §4.5:
+        // the snapped-to target MUST be indicated at the moment of capture).
+        if (caught != null)
+          Positioned(
+            key: const ValueKey<String>('tl-lane-snap-caught'),
+            left: widget.axis.xOf(caught.frame) - 0.5,
+            top: 0,
+            bottom: 0,
+            width: 1,
+            child: IgnorePointer(
+              child: ColoredBox(color: t.accent),
+            ),
+          ),
         for (var i = 0; i < widget.keys.length; i++)
           Positioned(
-            left: widget.axis.xOf(_frameOf(i)) - 6,
+            key: ValueKey<String>('tl-key-slot-${widget.rowId}#$i'),
+            left: widget.axis.xOf(frames[i]) - 6,
             top: 0,
             width: 12,
             height: _rowHeight,
@@ -6357,6 +6674,10 @@ class _Bar extends StatefulWidget {
   /// nothing about.
   final void Function(int frame) onRazor;
 
+  /// Where a cut at screen x lands, in comp frames — the same function the
+  /// blade's line is drawn with, so the two cannot disagree (docs/07 §4.5).
+  final double Function(double x) razorFrameAt;
+
   /// Clicking (or grabbing) the bar selects its layer.
   final VoidCallback onSelect;
 
@@ -6387,6 +6708,7 @@ class _Bar extends StatefulWidget {
     required this.selected,
     required this.playheadFrame,
     required this.onRazor,
+    required this.razorFrameAt,
     required this.onSelect,
     this.onOpenSequence,
     required this.onChanged,
@@ -6540,7 +6862,9 @@ class _BarState extends State<_Bar> {
                 // nothing on screen — the cut simply does not happen.
                 onTapUp: widget.razor && !held
                     ? (details) => widget.onRazor(
-                          widget.axis.frameAt(left + details.localPosition.dx),
+                          widget
+                              .razorFrameAt(left + details.localPosition.dx)
+                              .round(),
                         )
                     : null,
                 // Selection already happened on the down; the tap has nothing

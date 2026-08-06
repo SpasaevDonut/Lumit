@@ -15,11 +15,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/theme/theme.dart';
 import 'package:uuid/uuid.dart';
+import 'package:lumit_flutter/state/comp_time.dart';
 import 'package:lumit_flutter/panels/project_panel_frb.dart';
 import 'package:lumit_flutter/panels/layer_fold_frb.dart';
 import 'package:lumit_flutter/icons/icons.dart';
 import 'package:lumit_flutter/panels/timeline_extras_frb.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
+import 'package:lumit_flutter/panels/transform_rows_frb.dart';
 import 'package:lumit_flutter/state/timeline_columns.dart';
 import 'package:lumit_flutter/state/tools.dart';
 import 'package:lumit_flutter/src/rust/api/assets.dart';
@@ -157,6 +159,72 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(p.comp.getLayers().length, 1);
+    });
+
+    /// The field a readout turns into when it is clicked.
+    Finder fieldIn(String key) => find.descendant(
+          of: find.byKey(ValueKey<String>(key)),
+          matching: find.byType(EditableText),
+        );
+
+    /// The toolbar's two readouts are typed into, not merely read (K-287),
+    /// and neither can send the playhead out of the composition.
+    testWidgets('typing a timecode moves the playhead, clamped to the comp',
+        (tester) async {
+      final p = withComp();
+      p.uiState.playheadFrame.value = 0;
+      p.uiState.model.refresh();
+      await mount(tester, p);
+      final last = p.comp.durationFrames() - 1;
+      final (fpsNum, fpsDen) = p.uiState.model.fpsExact;
+
+      await tester.tap(find.byKey(const ValueKey('tl-timecode')));
+      await tester.pump();
+      await tester.enterText(fieldIn('tl-timecode'), '00:00:01:00');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(p.uiState.playheadFrame.value, (fpsNum / fpsDen).ceil(),
+          reason: 'a second in, counted at this comp\'s rate');
+
+      await tester.tap(find.byKey(const ValueKey('tl-timecode')));
+      await tester.pump();
+      await tester.enterText(fieldIn('tl-timecode'), '99:00:00:00');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(p.uiState.playheadFrame.value, last,
+          reason: 'past the end of the comp is the end of the comp');
+    });
+
+    testWidgets('typing a frame number moves the playhead, clamped',
+        (tester) async {
+      final p = withComp();
+      p.uiState.playheadFrame.value = 0;
+      p.uiState.model.refresh();
+      await mount(tester, p);
+      final last = p.comp.durationFrames() - 1;
+
+      await tester.tap(find.byKey(const ValueKey('tl-frame')));
+      await tester.pump();
+      await tester.enterText(fieldIn('tl-frame'), 'f42');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(p.uiState.playheadFrame.value, 42,
+          reason: 'the f the readout wears is optional on the way back in');
+
+      await tester.tap(find.byKey(const ValueKey('tl-frame')));
+      await tester.pump();
+      await tester.enterText(fieldIn('tl-frame'), '-8');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(p.uiState.playheadFrame.value, 0,
+          reason: 'before the start is the start');
+
+      await tester.tap(find.byKey(const ValueKey('tl-frame')));
+      await tester.pump();
+      await tester.enterText(fieldIn('tl-frame'), '999999');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(p.uiState.playheadFrame.value, last);
     });
 
     testWidgets('the razor is the toolbar tool, and undoes as one step',
@@ -1004,6 +1072,39 @@ void main() {
           reason: 'the edit landed in the key under the playhead');
     });
 
+    /// The Retime row reads as a clock, not as a decimal number of seconds
+    /// (K-287, realising K-075) — and the Settings switch puts the seconds
+    /// field back for anyone who wants sub-frame precision.
+    testWidgets('Retime reads as a timecode, or as seconds when asked',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.toggleRetimeProperty();
+      p.uiState.playheadFrame.value = 0;
+      p.uiState.model.refresh();
+      await mount(tester, p);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pump();
+
+      // Frame zero of the source at frame zero of the comp: an identity map
+      // starts where the media does.
+      Finder inRetimeRow(Finder matching) => find.descendant(
+            of: find.byKey(const ValueKey('tl-retime-seconds')),
+            matching: matching,
+          );
+      expect(inRetimeRow(find.text('00:00:00:00')), findsOneWidget,
+          reason: 'the source position is a clock face');
+      expect(inRetimeRow(find.textContaining(' s')), findsNothing,
+          reason: 'and not a number of seconds');
+
+      p.uiState.workspace.interface.retimeInSeconds = true;
+      p.uiState.model.refresh();
+      await tester.pump();
+      expect(inRetimeRow(find.text('0.000 s')), findsOneWidget,
+          reason: 'the setting puts the seconds field back');
+    });
+
     /// An animated value stays editable in the outline (docs/07 §4.3): on a
     /// keyframe the edit lands in that key; between keyframes it plants one.
     /// Fails if the cell falls back to a read-only "animated" label, or if it
@@ -1267,6 +1368,178 @@ void main() {
       final free = keys().first.time;
       expect(free.num * 60 % free.den, isNot(0),
           reason: 'with the magnet off it may land between frames');
+    });
+
+    /// **A key lands on the marker it is dragged near** (docs/07 §4.5). The
+    /// magnet used to cover exactly one snap — a whole frame — and the spec's
+    /// other sources and targets were still to build. This is the one that
+    /// matters most in use: beat-marker snapping is the beat-sync covenant's
+    /// daily face, and a beat marker is an ordinary marker.
+    testWidgets('a lane keyframe snaps onto a marker, and Ctrl lets it past',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.setTransform(
+        prop: BridgeTransformProp.opacity,
+        value: BridgeScalar.keyframed([
+          for (final f in [600, 2400])
+            BridgeKeyframe(
+              time: p.comp.timeOfFrame(frame: f),
+              value: f.toDouble(),
+              interpIn: const BridgeSideInterp.linear(),
+              interpOut: const BridgeSideInterp.linear(),
+            ),
+        ]),
+      );
+      // A marker a little past where a ten-frame drag would land, so the snap
+      // has to reach *forwards* for it rather than the drag happening to hit.
+      const markerFrame = 611;
+      writeMarkers(p.comp, [
+        BridgeMarker(
+          id: UuidValue.fromString(const Uuid().v4()),
+          time: p.comp.timeOfFrame(frame: markerFrame),
+          label: 'Beat',
+        ),
+      ]);
+      await mount(tester, p);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pump();
+      await tester.tap(find.text('Transform'));
+      await tester.pump();
+
+      List<BridgeKeyframe> keys() =>
+          (layer.getTransform().opacity as BridgeScalar_Keyframed).field0;
+      final laneKey = ValueKey<String>(
+          'tl-keys-${layer.internallayerId}/transform/opacity');
+      final handle = find.byKey(ValueKey<String>(
+          'tl-key-${layer.internallayerId}/transform/opacity#0'));
+      final perFrame =
+          tester.getRect(find.byKey(laneKey)).width / p.comp.durationFrames();
+
+      // Ten frames lands at 610 — one frame short of the marker, which at this
+      // zoom is well inside the eight-pixel reach.
+      await tester.drag(handle, Offset(perFrame * 10, 0));
+      await tester.pumpAndSettle();
+      expect(p.comp.frameAtTime(time: keys().first.time), markerFrame,
+          reason: 'the key landed ON the marker, not one frame short of it');
+
+      p.state.project!.undo();
+      expect(p.comp.frameAtTime(time: keys().first.time), 600);
+      // The lane draws from the read model, so it has to be told the undo
+      // happened before the next drag starts from where the key really is.
+      p.uiState.model.refresh();
+      await tester.pumpAndSettle();
+
+      // Ctrl held suspends the snap, so the same drag lands where it was aimed
+      // (docs/07 §4.5) — the way out when the wanted place is exactly where a
+      // snap will not allow.
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      addTearDown(() async =>
+          tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft));
+      await tester.drag(handle, Offset(perFrame * 10, 0));
+      await tester.pumpAndSettle();
+      expect(p.comp.frameAtTime(time: keys().first.time), 610,
+          reason: 'Ctrl held let the key past the marker');
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    });
+
+    /// **The one-frame regression.** A real drag is many pointer moves with a
+    /// rebuild between each; the tests above are one move, which is the only
+    /// reason they passed. Part-way through a real drag the snap indicator
+    /// appears, and it used to be an unkeyed child inserted ahead of the
+    /// diamonds — so Flutter paired it with the first diamond, the first
+    /// diamond with the second, and rebuilt every gesture detector in the lane.
+    /// The detector holding the pointer went with them, which ended the drag
+    /// where it stood: the key committed the two or three pixels travelled so
+    /// far and sat there however much further it was dragged, and a second drag
+    /// died on the same target and put it back. Reported as "a keyframe can
+    /// only be dragged one frame, and dragging again moves it back".
+    testWidgets('a lane keyframe drags past a snap, over many pointer moves',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.setTransform(
+        prop: BridgeTransformProp.opacity,
+        value: BridgeScalar.keyframed([
+          for (final f in [600, 2400])
+            BridgeKeyframe(
+              time: p.comp.timeOfFrame(frame: f),
+              value: f.toDouble(),
+              interpIn: const BridgeSideInterp.linear(),
+              interpOut: const BridgeSideInterp.linear(),
+            ),
+        ]),
+      );
+      // A marker in the middle of the journey, so the drag is certain to be
+      // caught by a snap on its way past — the moment the indicator appears.
+      const markerFrame = 800;
+      writeMarkers(p.comp, [
+        BridgeMarker(
+          id: UuidValue.fromString(const Uuid().v4()),
+          time: p.comp.timeOfFrame(frame: markerFrame),
+          label: 'Beat',
+        ),
+      ]);
+      await mount(tester, p);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pump();
+      await tester.tap(find.text('Transform'));
+      await tester.pump();
+
+      List<BridgeKeyframe> keys() =>
+          (layer.getTransform().opacity as BridgeScalar_Keyframed).field0;
+      final laneKey = ValueKey<String>(
+          'tl-keys-${layer.internallayerId}/transform/opacity');
+      final handle = find.byKey(ValueKey<String>(
+          'tl-key-${layer.internallayerId}/transform/opacity#0'));
+      final perFrame =
+          tester.getRect(find.byKey(laneKey)).width / p.comp.durationFrames();
+
+      // The little push that gets the gesture past the pointer slop.
+      const nudge = 3.0;
+
+      // A drag as one really arrives: a nudge to start it, then a run of small
+      // moves with a frame rendered between each. Returns the frame the key
+      // ended on. A mouse, so the slop is a single pixel rather than a
+      // finger's worth.
+      Future<int> dragOn(double frames, {int steps = 18}) async {
+        final gesture = await tester.startGesture(tester.getCenter(handle),
+            kind: PointerDeviceKind.mouse);
+        await gesture.moveBy(const Offset(nudge, 0));
+        await tester.pump();
+        for (var i = 0; i < steps; i++) {
+          await gesture.moveBy(Offset(frames * perFrame / steps, 0));
+          await tester.pump();
+        }
+        await gesture.up();
+        await tester.pumpAndSettle();
+        return p.comp.frameAtTime(time: keys().first.time);
+      }
+
+      // Four hundred frames of travel, measured in pixels from the axis so the
+      // drag stays inside the comp whatever width the panel gives the lanes.
+      const travel = 400.0;
+      // The nudge that starts the drag is spent on the slop when something else
+      // is in the gesture arena and counted when the diamond is alone in it, so
+      // the landing is allowed its worth of frames either way. Either is a
+      // world away from the fault, which left the key on the marker 200 frames
+      // back.
+      final slack = nudge / perFrame + 2;
+
+      final landed = await dragOn(travel);
+      expect(landed, isNot(markerFrame),
+          reason: 'the drag went past the marker rather than dying on it');
+      expect(landed.toDouble(), closeTo(600 + travel, slack),
+          reason: 'the key travelled the whole drag, not its first moments');
+      expect(keys(), hasLength(2), reason: 'no key added or lost');
+
+      // And again from where it now is: the second drag carries on rather than
+      // being pulled back to what caught the first.
+      final again = await dragOn(travel);
+      expect(again.toDouble(), closeTo(landed + travel, slack),
+          reason: 'a second drag moves it on again, not back');
     });
 
     /// **The undo regression.** A drag on a *keyframed* value used to commit
@@ -2996,6 +3269,64 @@ void main() {
           reason: 'a locked name does not open the editor');
     });
 
+    /// **A locked layer's property rows are read-only too** (K-291). The lock
+    /// used to guard only the *gestures* — the bar, the razor, rename, reorder,
+    /// delete — while the fold-out's transform, effect and volume rows went on
+    /// editing the layer, so the switch did not mean what it says.
+    ///
+    /// Two halves, and this is the interface one: the rows are shown, and their
+    /// numbers are still the document's, but nothing on them can be touched. The
+    /// engine refuses the edit as well (`OpError::LayerLocked`, covered in
+    /// lumit-core), so this is what stops the interface offering a gesture that
+    /// would only be refused.
+    testWidgets("a locked layer's property rows cannot be touched",
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await mount(tester, p);
+      final id = layer.internallayerId;
+
+      // Twirl the layer open so its Transform rows are on screen.
+      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
+      await tester.pump();
+      await settleFrb(tester, minRounds: 4);
+      final transformGroup =
+          find.byKey(ValueKey<String>('tl-group-$id/transform'));
+      final groupRect = tester.getRect(transformGroup);
+      await tester.tapAt(Offset(groupRect.left + 6, groupRect.center.dy));
+      await tester.pump();
+      await settleFrb(tester, minRounds: 4);
+
+      final position = find.byType(TransformRowFrb);
+      expect(position, findsWidgets, reason: 'the transform rows are on screen');
+      expect(
+        find.ancestor(of: position.first, matching: find.byType(AbsorbPointer)),
+        findsNothing,
+        reason: 'an unlocked layer\'s rows are live',
+      );
+
+      await tester.tap(find.byKey(ValueKey<String>('tl-locked-$id')));
+      await tester.pump();
+      await settleFrb(tester, minRounds: 4);
+      expect(layer.getSwitches().locked, isTrue);
+
+      expect(position, findsWidgets,
+          reason: 'a locked row is shown, not hidden — the numbers still read');
+      expect(
+        find.ancestor(of: position.first, matching: find.byType(AbsorbPointer)),
+        findsWidgets,
+        reason: 'but nothing on it can be touched',
+      );
+      // The group heading stays live: twirling one open is navigation, not
+      // editing, and a locked layer you could not look inside would be worse.
+      final group = find.byKey(ValueKey<String>('tl-group-$id/transform'));
+      expect(
+        find.ancestor(of: group, matching: find.byType(AbsorbPointer)),
+        findsNothing,
+        reason: 'a group row is exempt',
+      );
+    });
+
     /// Enter turns the selected layer's name into an editor (K-243); submitting
     /// renames the layer through the document (one op, undoable like any
     /// other). It used to be a double-click, which now opens the layer.
@@ -3342,22 +3673,108 @@ void main() {
               ValueKey<String>('tl-wave-${footageLayer.internallayerId}')),
           findsOneWidget);
 
-      // And the peaks themselves are real: the whole source, bucketed, with
-      // its true length — the data the lane maps through in/out/offset.
-      // `runAsync`, because a real decode completes on real async, which the
-      // test's fake clock would otherwise wait on for ever.
-      final peaks =
-          await tester.runAsync(() => footageLayer.audioPeaks(buckets: 64));
+      // And the peaks themselves are real: the window asked for, bucketed to
+      // the count asked for, with the source's true length beside it — the
+      // data the lane maps through in/out/offset. `runAsync`, because a real
+      // decode completes on real async, which the test's fake clock would
+      // otherwise wait on for ever.
+      final peaks = await tester.runAsync(() => footageLayer.audioPeaks(
+            startSeconds: 0,
+            endSeconds: 0.1,
+            buckets: 64,
+            multiwave: false,
+          ));
       expect(peaks!.durationSeconds, greaterThan(0));
-      expect(peaks.pairs, hasLength(128), reason: 'a (min, max) per bucket');
-      expect(peaks.pairs.any((v) => v.abs() > 0.01), isTrue,
+      expect(peaks.bands, 1, reason: 'one plain wave');
+      expect(peaks.buckets, 64);
+      expect(peaks.values, hasLength(64 * 3),
+          reason: 'a (min, max, rms) per bucket');
+      expect(peaks.values.any((v) => v.abs() > 0.01), isTrue,
           reason: 'a tone is not silence');
+
+      // The multiwave stack: the same buckets three times over, bass, middle
+      // and treble (K-280).
+      final stack = await tester.runAsync(() => footageLayer.audioPeaks(
+            startSeconds: 0,
+            endSeconds: 0.1,
+            buckets: 64,
+            multiwave: true,
+          ));
+      expect(stack!.bands, 3);
+      expect(stack.values, hasLength(3 * 64 * 3));
+      // A 440 Hz square is a middle-band sound: its own band carries far more
+      // than the treble one, which is the whole point of the stack.
+      double loudest(int band) {
+        var most = 0.0;
+        for (var i = 0; i < 64; i++) {
+          final v = stack.values[3 * (band * 64 + i) + 1].abs();
+          if (v > most) most = v;
+        }
+        return most;
+      }
+
+      expect(loudest(1), greaterThan(loudest(2)),
+          reason: 'the middle band hears the tone, the treble barely does');
+
+      // Zooming in asks for a shorter window, and what comes back is a summary
+      // of *that* window — which is what makes the drawn detail follow the
+      // zoom instead of stretching one fixed summary (K-280).
+      final zoomed = await tester.runAsync(() => footageLayer.audioPeaks(
+            startSeconds: 0.02,
+            endSeconds: 0.03,
+            buckets: 64,
+            multiwave: false,
+          ));
+      expect(zoomed!.startSeconds, closeTo(0.02, 1e-9));
+      expect(zoomed.endSeconds, closeTo(0.03, 1e-9));
+      expect(zoomed.buckets, 64,
+          reason: 'a tenth of the audio, in the same number of buckets');
 
       await tester.tap(
           find.byKey(ValueKey<String>('tl-twirl-${silent.internallayerId}')));
       await tester.pump();
       expect(find.text('Audio'), findsOneWidget,
           reason: 'still only the one — a solid has nothing to be heard');
+    });
+
+    /// `L` opens a layer's sound, `LL` its waveform, `LLL` shuts it (K-281) —
+    /// the same three-tap shape `U` has. A layer selected but silent is left
+    /// alone rather than opened onto a group it has not got.
+    testWidgets('L, LL and LLL cycle a layer\'s Audio open and shut',
+        (tester) async {
+      final p = withComp();
+      final audible =
+          p.state.project!.importFootage(path: _wavFile('cycle.wav'));
+      p.comp.addFootageLayer(footage: audible, asSequence: false);
+      await mount(tester, p);
+      final layer = p.comp.getLayers().first;
+      await settleFrb(tester, minRounds: 8);
+
+      // Selected, and shut.
+      p.uiState.setSelection([layer]);
+      await tester.pump();
+      expect(find.text('Audio'), findsNothing);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyL);
+      await tester.pump();
+      expect(find.text('Volume'), findsOneWidget,
+          reason: 'L opens the Audio group');
+      expect(
+          find.byKey(ValueKey<String>('tl-wave-${layer.internallayerId}')),
+          findsNothing,
+          reason: 'the lane waits for the second tap');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyL);
+      await tester.pump();
+      expect(find.byKey(ValueKey<String>('tl-wave-${layer.internallayerId}')),
+          findsOneWidget,
+          reason: 'LL opens the waveform lane');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyL);
+      await tester.pump();
+      expect(find.text('Volume'), findsNothing,
+          reason: 'LLL shuts the audio stuff again');
+      expect(find.text('Audio'), findsNothing);
     });
 
     /// The outline and the lanes are one table. A fold-out that pushed the names

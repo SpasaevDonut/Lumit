@@ -8,7 +8,7 @@ import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `preset_map`, `row`, `with_keymap`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`
 
 /// Every binding, grouped by context in the order the page lists them — the
 /// whole table in one call.
@@ -29,6 +29,12 @@ List<BridgeKeyBinding> keymapSearch({required String query}) =>
 List<BridgeKeyConflict> keymapConflicts() =>
     BridgeLib.instance.api.crateApiKeymapKeymapConflicts();
 
+/// Every chord a panel takes over from an app-wide binding, described for
+/// display (K-281). Said out loud beside the table rather than flagged as
+/// something to fix — the shipped default carries one on purpose (`L`).
+List<BridgeKeyShadow> keymapShadows() =>
+    BridgeLib.instance.api.crateApiKeymapKeymapShadows();
+
 /// What `chord` does while `context` is focused, or `None` for nothing bound.
 ///
 /// This is the dispatch path: every keypress the frontend sees becomes chord
@@ -45,8 +51,9 @@ String? keymapLookup(
 /// Rejects only chord text that is not a chord; a chord another action already
 /// holds is accepted deliberately, because refusing it would make swapping two
 /// actions' keys impossible. Within one context the previous owner is left
-/// unbound and its row goes blank; across overlapping contexts both survive and
-/// [`keymap_conflicts`] reports the clash.
+/// unbound and its row goes blank; a panel-scoped binding taking an app-wide
+/// chord leaves both alive, the panel's winning where it is focused, and
+/// [`keymap_shadows`] says so (K-281).
 Future<List<BridgeKeymapGroup>> keymapRebind(
         {required BridgeKeyContext context,
         required String action,
@@ -167,6 +174,47 @@ enum BridgeKeyContext {
   panels,
   effects,
   ;
+}
+
+/// One chord a panel takes over from an app-wide binding (K-281).
+///
+/// **Not a clash.** The focused panel gets first refusal and the app-wide
+/// binding is the fallback, so the chord runs exactly one action and which one
+/// is never in doubt. It is reported because the app-wide meaning does stop
+/// working in that one panel, and somebody reading their keymap should be able
+/// to see that rather than discover it by pressing the key.
+class BridgeKeyShadow {
+  final String chord;
+
+  /// Where the takeover applies, e.g. "Timeline".
+  final String context;
+
+  /// What the chord does there, described for display.
+  final String action;
+
+  /// What it does everywhere else.
+  final String shadowed;
+
+  const BridgeKeyShadow({
+    required this.chord,
+    required this.context,
+    required this.action,
+    required this.shadowed,
+  });
+
+  @override
+  int get hashCode =>
+      chord.hashCode ^ context.hashCode ^ action.hashCode ^ shadowed.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeKeyShadow &&
+          runtimeType == other.runtimeType &&
+          chord == other.chord &&
+          context == other.context &&
+          action == other.action &&
+          shadowed == other.shadowed;
 }
 
 /// One context's worth of rows, with the heading to put above them — the shape

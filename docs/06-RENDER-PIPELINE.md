@@ -155,6 +155,43 @@ the AE 2023 model). Four combinations: alpha or luma, normal or inverted.
   effects. Footage inside such a comp decodes with the rest of the frame: the decode plan
   follows matte and layer-input references whether or not the referenced layer is visible.
 
+### 1.7 Anti-aliasing the composite (K-274)
+
+A layer is drawn as a rectangle placed by its transform. Where the transform turns that
+rectangle off-axis its edge crosses pixels diagonally, and a pixel is either drawn or not —
+so the edge is a staircase, and on a slow rotation the steps crawl. **Multisampling** fixes
+it: the card keeps N coverage samples per pixel, shades once, and averages by how many samples
+the shape actually covered.
+
+- **The count is a project property** (`Document::anti_aliasing`,
+  [03-DATA-MODEL.md](03-DATA-MODEL.md) §2), default 4, and **one value serves preview and
+  export**. Both drive the same realise walk with the same count, which is what keeps the
+  K-031 identity true with anti-aliasing on.
+- **It is orthogonal to preview resolution.** A reduced-resolution preview is a smaller
+  picture with the same edge treatment; the count does not change with the scale.
+- **The composite target is multisampled, the working texture is not.** One multisample
+  colour texture lives beside the single-sample comp frame for the whole composite; every
+  pass attaches the former and resolves into the latter. Every reader downstream — the
+  snapshot copy for shader-computed blends, read-backs, the Scopes trace, the shared-texture
+  hand-off and the display blit — takes the resolved texture, because a multisample texture
+  cannot be sampled or copied to a buffer.
+- **Per-layer motion blur takes the same count**, because its sub-frame placements are the
+  same geometry the composite draws; an aliased smear under an anti-aliased composite would
+  show the seam on every blurring layer.
+- **The count is asked of the adapter, never assumed.** A card that will not multisample the
+  working format at the count asked for falls back to the highest it will, down to 1, and the
+  interface reports which is in use. That is a machine's limit, never a render error.
+- **It is part of a frame's content hash** (§5.2), so a frame banked at one count is never
+  served at another.
+
+What multisampling does *not* fix is worth stating: the inside of a layer's picture is a
+texture lookup and its quality is the sampler's business. A shape's own curves, a mask's edge
+and a glyph's outline are already anti-aliased where they are rasterised. What stair-steps is
+the layer's quad edge, and that is what this addresses.
+
+The *how* — the traps in the composite loop as it stands, and the test plan — is
+[impl/anti-aliasing.md](impl/anti-aliasing.md).
+
 ## 2. ROI and DoD
 
 ### 2.1 Request propagation

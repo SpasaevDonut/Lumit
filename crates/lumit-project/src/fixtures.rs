@@ -198,6 +198,8 @@ pub fn stress_document(p: &StressParams) -> Document {
         id: uid(0, 0),
         items,
         auto_folders: AutoFolders::default(),
+        // The default, on, like any new project (K-274).
+        anti_aliasing: Default::default(),
         // The fixture caches wherever the application is set to, like any
         // ordinary project.
         cache_location: None,

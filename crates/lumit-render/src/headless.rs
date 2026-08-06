@@ -733,15 +733,17 @@ impl HeadlessRenderer {
         };
         let out = {
             let realiser = crate::realise::Realiser {
-                ctx: lumit_gpu::GpuContext::from_parts(
-                    self.gpu.device.clone(),
-                    self.gpu.queue.clone(),
-                ),
+                ctx: self.gpu.clone_handle(),
                 engine: &parts.colour,
                 compositor: &parts.compositor,
                 fx: &parts.fx,
                 lut_cache: &parts.lut_cache,
                 render_scale: composite_scale(quality),
+                // The project's setting, resolved against what this adapter
+                // will actually give (K-274). Preview and export both read the
+                // same document field — unlike `render_scale`, which is a
+                // preview-only reduction — so the two stay the same picture.
+                samples: self.gpu.sample_count(doc.anti_aliasing.samples()),
                 profiler: watcher.as_ref(),
             };
             let pixels_by_layer: HashMap<Uuid, &crate::decode::CompLayerPixels> = retained
@@ -3025,6 +3027,20 @@ mod tests {
                 comp.layers.insert(0, adj);
                 (doc, comp_id, 15)
             }),
+            // The anti-aliasing row (K-274, docs/impl/anti-aliasing.md §5,
+            // test 3): the count is a PROJECT property, so both walks read the
+            // same one — an export that anti-aliased differently from the
+            // preview is exactly what this matrix exists to catch. A rotated
+            // layer, because a rotated edge is what the setting changes.
+            ("anti-aliasing on a rotated layer", |w, h, red, blue| {
+                let (mut doc, comp_id, _) = matrix_base(w, h, red);
+                doc.anti_aliasing = lumit_core::model::AntiAliasing::X4;
+                let (_, top) = matrix_top(&mut doc, comp_id, blue);
+                let comp = doc.comp_mut(comp_id).unwrap();
+                let l = comp.layers.iter_mut().find(|l| l.id == top).unwrap();
+                l.transform.rotation = Property::fixed(17.0);
+                (doc, comp_id, 0)
+            }),
             ("camera over a 3d layer", |w, h, red, blue| {
                 let (mut doc, comp_id, _) = matrix_base(w, h, red);
                 let (_, top) = matrix_top(&mut doc, comp_id, blue);
@@ -3208,6 +3224,70 @@ mod tests {
             comp.layers.insert(0, layer);
         }
         (solid, layer_id)
+    }
+
+    /// **A frame is one command buffer, however many layers it has.**
+    ///
+    /// Every pass in `lumit-gpu` used to make its own encoder and submit it, so
+    /// a frame cost the driver one round trip per layer and per effect —
+    /// measured 2026-07-31 at `layers + 2`. All of a frame's passes are in
+    /// order on one queue, so they are encoded once and handed over once.
+    ///
+    /// The gate is the *count*, not a stopwatch. A submit is a round trip whose
+    /// cost does not depend on the card, so the number is the honest measure and
+    /// it runs anywhere — including on the software rasteriser CI uses, where a
+    /// timing would prove nothing (docs/16-ROADMAP.md standing rules).
+    ///
+    /// What is asserted is the **shape**: the count does not grow with the layer
+    /// count. A fixed budget would be a fragile thing to pin, but "adding thirty
+    /// layers adds no submissions" is exactly the property that was lost.
+    ///
+    /// The count is read off **this renderer's own context**. It used to be a
+    /// process-wide counter, which quietly made this test a measurement of
+    /// whatever else the suite happened to be rendering at the same moment:
+    /// green here, red on CI, where there are cores enough for two GPU tests to
+    /// overlap (docs/13 §7.0).
+    #[test]
+    fn a_frame_submits_once_however_many_layers_it_has() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                lumit_gpu::no_adapter();
+                return;
+            }
+        };
+        let (cw, ch) = (32u32, 16u32);
+
+        // One render's submissions, for a comp with `extra` layers over the base.
+        let mut submits_for = |extra: usize| -> u64 {
+            let (mut doc, comp_id, _) = matrix_base(cw, ch, LinearColour([0.8, 0.1, 0.1, 1.0]));
+            for _ in 0..extra {
+                matrix_top(&mut doc, comp_id, LinearColour([0.1, 0.2, 0.9, 1.0]));
+            }
+            let store = DocumentStore::new(doc);
+            let doc = store.snapshot();
+            // A first render warms every lazily-built pipeline and cache, so
+            // what the second one submits is the steady state.
+            let _ = r.render_rgba(&doc, comp_id, 0, 1.0).unwrap();
+            let before = r.gpu.submits_so_far();
+            let _ = r.render_rgba(&doc, comp_id, 0, 1.0).unwrap();
+            r.gpu.submits_so_far() - before
+        };
+
+        let one = submits_for(0);
+        let many = submits_for(31);
+        assert_eq!(
+            one, many,
+            "a frame's submissions must not grow with its layers: \
+             1 layer submitted {one}, 32 layers submitted {many}"
+        );
+        // And the constant is small — the walk's one buffer plus the read-back
+        // the export path ends with, not a per-pass tail hiding under the
+        // equality above.
+        assert!(
+            one <= 4,
+            "a frame should cost a handful of submissions, not {one}"
+        );
     }
 
     /// A consumer layer matted by a hidden source carrying a mask and an
@@ -3449,6 +3529,77 @@ mod tests {
         assert!(
             layer.ms >= 0.0 && layer.effects[0].ms >= 0.0,
             "measured times are real durations"
+        );
+    }
+
+    /// **Measuring gives the batching up, deliberately.**
+    ///
+    /// A frame's passes are recorded into one command buffer and submitted at
+    /// the end, so a fence taken mid-walk would wait on a queue that has not
+    /// been handed over and time nothing real. A *measured* frame therefore
+    /// flushes at each layer and each effect before it fences — which is the
+    /// cost the stopwatch already declares (K-276: measuring waits for the card
+    /// at each layer, which is why it is opt-in and never runs during playback).
+    ///
+    /// So the property is the opposite of the unmeasured one: an unmeasured
+    /// frame's submissions do not grow with its layers, and a measured frame's
+    /// do. Asserting both together is what stops a future change from
+    /// "optimising" the flush away and silently turning the render-time column
+    /// into a measure of how long Lumit takes to *describe* a layer.
+    #[test]
+    fn a_measured_frame_hands_its_work_over_layer_by_layer() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                lumit_gpu::no_adapter();
+                return;
+            }
+        };
+        let (cw, ch) = (32u32, 16u32);
+        let (mut doc, comp_id, _) = matrix_base(cw, ch, LinearColour([0.8, 0.1, 0.1, 1.0]));
+        for _ in 0..15 {
+            matrix_top(&mut doc, comp_id, LinearColour([0.1, 0.2, 0.9, 1.0]));
+        }
+        let store = DocumentStore::new(doc);
+        let doc = store.snapshot();
+        // A frame is only measured when the switch is on *and* the numbers have
+        // somewhere to go, so the sink is part of turning measuring on.
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<crate::profile::FrameProfile>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let into = std::sync::Arc::clone(&seen);
+        r.set_profile_sink(Some(std::sync::Arc::new(move |p| {
+            if let Ok(mut got) = into.lock() {
+                got.push(p);
+            }
+        })));
+        // Warm the lazily-built pipelines first, so neither count below
+        // includes one-off setup.
+        let _ = r.render_rgba(&doc, comp_id, 0, 1.0).expect("render");
+
+        let before = r.gpu.submits_so_far();
+        let _ = r.render_rgba(&doc, comp_id, 0, 1.0).expect("render");
+        let unmeasured = r.gpu.submits_so_far() - before;
+
+        r.measure_frames(true);
+        let before = r.gpu.submits_so_far();
+        let _ = r.render_rgba(&doc, comp_id, 1, 1.0).expect("render");
+        let measured = r.gpu.submits_so_far() - before;
+        r.measure_frames(false);
+
+        assert!(
+            !seen.lock().expect("profiles").is_empty(),
+            "the frame was supposed to be measured; without that this proves nothing"
+        );
+        assert!(
+            measured > unmeasured,
+            "a measured frame must hand its work over as it goes, or its \
+             numbers are encoding time rather than GPU time \
+             (measured {measured}, unmeasured {unmeasured})"
+        );
+        assert!(
+            unmeasured <= 4,
+            "an ordinary frame is one command buffer plus its read-back, \
+             not {unmeasured}"
         );
     }
 

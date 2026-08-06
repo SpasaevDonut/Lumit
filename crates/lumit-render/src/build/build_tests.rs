@@ -374,6 +374,138 @@ fn a_live_adjustment_layer_emits_a_staging_draw() {
     }
 }
 
+/// **A Lens flare on an adjustment layer flares the picture below it**
+/// (K-288). The regression: the flare's Matte source could only name
+/// *another* layer, and an adjustment layer has no picture of its own, so
+/// putting the effect on one meant hunting for some other layer to point at
+/// — and whichever you picked was the wrong picture, since an adjustment
+/// layer is supposed to act on everything beneath it.
+///
+/// The fix is a reference to the layer the effect is ON, which resolves to
+/// that effect's own input rather than a second render. This test checks the
+/// draw builder's half: the matte slot comes back as
+/// [`LayerInputDraw::ThisLayer`] (nothing to render — `run_ops` binds the
+/// texture it is already carrying), on an adjustment layer and on an
+/// ordinary one alike, and stays `Absent` while the Source type is not
+/// Matte or the reference is unset.
+#[test]
+fn a_flare_matte_pointed_at_its_own_layer_reads_this_layers_input() {
+    use crate::draw::LayerInputDraw;
+    use lumit_core::model::{EffectValue, LayerKind};
+
+    let solid_def = Uuid::now_v7();
+    let base = Layer {
+        markers: Vec::new(),
+        id: Uuid::now_v7(),
+        name: "under".into(),
+        kind: LayerKind::Solid { def: solid_def },
+        in_point: CompTime(Rational::ZERO),
+        out_point: CompTime(Rational::new(10, 1).unwrap()),
+        start_offset: CompTime(Rational::ZERO),
+        transform: TransformGroup::default(),
+        matte: None,
+        parent: None,
+        label: 0,
+        volume_db: lumit_core::anim::Property::zero(),
+        retime: None,
+        interpolation: Default::default(),
+        blend: Default::default(),
+        masks: Vec::new(),
+        paint: Vec::new(),
+        effects: Vec::new(),
+        switches: Switches::default(),
+        extra: serde_json::Map::new(),
+    };
+    let mut doc = Document::new();
+    doc.items.push(lumit_core::model::ProjectItem::Solid(
+        lumit_core::model::SolidDef {
+            id: solid_def,
+            name: "red".into(),
+            colour: LinearColour([1.0, 0.0, 0.0, 1.0]),
+            width: 64,
+            height: 64,
+            extra: serde_json::Map::new(),
+        },
+    ));
+
+    // A flare in Matte mode whose Matte layer is `owner` — exactly what
+    // `add_effect` now writes for a fresh instance.
+    let flare_on = |owner: Uuid, source_type: u32, matte: Option<Uuid>| {
+        let mut fx = lumit_core::fx::instantiate("lens_flare").unwrap();
+        let _ = owner;
+        for p in &mut fx.params {
+            match p.id.as_str() {
+                "source_type" => p.value = EffectValue::Choice(source_type),
+                "matte" => p.value = EffectValue::Layer(matte),
+                _ => {}
+            }
+        }
+        fx
+    };
+
+    let comp_of = |layers: Vec<Layer>| Composition {
+        id: Uuid::now_v7(),
+        name: "Comp".into(),
+        width: 64,
+        height: 64,
+        frame_rate: FrameRate::new(60, 1).unwrap(),
+        duration: Duration(Rational::new(10, 1).unwrap()),
+        background: LinearColour::BLACK,
+        work_area: None,
+        layers,
+        markers: Vec::new(),
+        motion_blur: Default::default(),
+        extra: serde_json::Map::new(),
+    };
+    let map: HashMap<Uuid, &CompLayerPixels> = HashMap::new();
+    let slots = |comp: &Composition| -> Vec<Vec<LayerInputDraw>> {
+        let mut visited = vec![comp.id];
+        build_comp_draws(&doc, comp, 0.0, &map, &mut visited)
+            .into_iter()
+            .map(|d| d.flare_mattes)
+            .collect()
+    };
+
+    // 1. An adjustment layer, the case that did not work at all before.
+    let mut adj = base.clone();
+    adj.id = Uuid::now_v7();
+    adj.name = "adjust".into();
+    adj.kind = LayerKind::Adjustment;
+    adj.effects.push(flare_on(adj.id, 1, Some(adj.id)));
+    let comp = comp_of(vec![adj.clone(), base.clone()]);
+    let drawn = slots(&comp);
+    // Bottom-up: the solid, then the adjustment's staging draw.
+    assert_eq!(drawn.len(), 2);
+    assert!(
+        matches!(drawn[1].as_slice(), [LayerInputDraw::ThisLayer]),
+        "an adjustment layer's flare must read the composite below it"
+    );
+
+    // 2. An ordinary layer pointed at itself reads its own input too — no
+    //    second render of the same picture.
+    let mut own = base.clone();
+    own.id = Uuid::now_v7();
+    own.effects.push(flare_on(own.id, 1, Some(own.id)));
+    let comp = comp_of(vec![own.clone()]);
+    assert!(
+        matches!(slots(&comp)[0].as_slice(), [LayerInputDraw::ThisLayer]),
+        "a layer's own flare must read its own input"
+    );
+
+    // 3. Absent while the Source type is Manual, and while the reference is
+    //    unset — both still the labelled no-flare they always were.
+    for (source_type, matte) in [(0u32, Some(own.id)), (1, None)] {
+        let mut quiet = base.clone();
+        quiet.id = Uuid::now_v7();
+        quiet.effects.push(flare_on(quiet.id, source_type, matte));
+        let comp = comp_of(vec![quiet]);
+        assert!(
+            matches!(slots(&comp)[0].as_slice(), [LayerInputDraw::Absent]),
+            "source {source_type} / matte {matte:?} must stay absent"
+        );
+    }
+}
+
 // --- K-119: Settings → Export filename template ------------------------
 
 /// A paint stroke is stamped into the layer's own pixels before its masks gate

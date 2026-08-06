@@ -1255,9 +1255,15 @@ fn resolve_one(
                 _ => 1,
             };
             let detail = (e.float_at("detail", lt).unwrap_or(1.0) as f32).clamp(0.25, 4.0);
-            let background = match e.param("background") {
-                Some(EffectValue::Choice(c)) => (*c).min(1),
-                _ => 0,
+            // Blend menu (K-289). An index past the menu clamps to the last
+            // option rather than faulting; a project saved before the menu
+            // existed is migrated by `backfill_builtin_params`, so the
+            // fallback here is simply the default.
+            let blend = match e.param("blend") {
+                Some(EffectValue::Choice(c)) => {
+                    (*c).min(crate::fx::lens_flare::BLEND_OPTIONS.len() as u32 - 1)
+                }
+                _ => crate::fx::lens_flare::BLEND_ADD,
             };
             // Source mode (K-257): Lights resolves as Manual until light
             // layers land (the option is prepared, not wired).
@@ -1322,7 +1328,7 @@ fn resolve_one(
                     anamorphic,
                     quality,
                     detail,
-                    background,
+                    blend,
                     mix,
                 },
             ))

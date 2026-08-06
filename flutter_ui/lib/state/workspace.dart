@@ -173,6 +173,13 @@ class Workspace extends ChangeNotifier {
   /// the middle of a themed shell is a thing people want to turn off.
   bool themedViewerSurround = false;
 
+  /// Whether the Viewer smooths the picture when it is zoomed past 1:1. Off,
+  /// so a magnified pixel is a square and what is on screen is what is in the
+  /// frame — the reason to zoom in is usually to look at the pixels. On,
+  /// Flutter's bilinear filtering blends them, which is gentler on the eye
+  /// when the zoom is being used to frame rather than to inspect.
+  bool smoothZoomedViewer = false;
+
   /// Working preferences for the Pre-compose dialogue (Ctrl+Shift+C).
   /// Default: Move attributes = true, Adjust duration = true, Open new comp = false.
   /// If changed by the user, saved straight to the workspace store.
@@ -388,6 +395,12 @@ class Workspace extends ChangeNotifier {
     save();
   }
 
+  void setSmoothZoomedViewer(bool on) {
+    smoothZoomedViewer = on;
+    notifyListeners();
+    save();
+  }
+
   void setPrecomposeSettings({
     required bool moveAttributes,
     required bool adjustDuration,
@@ -560,6 +573,7 @@ class Workspace extends ChangeNotifier {
         'custom_theme': customThemeName,
         'themed_scopes': themedScopes,
         'themed_viewer_surround': themedViewerSurround,
+        'smooth_zoomed_viewer': smoothZoomedViewer,
         'precompose_move_attributes': precomposeMoveAttributes,
         'precompose_adjust_duration': precomposeAdjustDuration,
         'precompose_open_new_comp': precomposeOpenNewComp,
@@ -612,6 +626,7 @@ class Workspace extends ChangeNotifier {
         j['custom_theme'] is String ? j['custom_theme'] as String : null;
     themedScopes = j['themed_scopes'] == true;
     themedViewerSurround = j['themed_viewer_surround'] == true;
+    smoothZoomedViewer = j['smooth_zoomed_viewer'] == true;
     precomposeMoveAttributes = j['precompose_move_attributes'] as bool? ?? true;
     precomposeAdjustDuration = j['precompose_adjust_duration'] as bool? ?? true;
     precomposeOpenNewComp = j['precompose_open_new_comp'] as bool? ?? false;
