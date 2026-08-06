@@ -17,20 +17,15 @@ this file is the concrete backlog underneath it.
 
 These sit above everything else: they are what the editor feels like in the hand.
 
-- **Show how far through a preview frame the engine is.** Asked for by the owner
-    while testing the Lens flare: a heavy effect makes a change land seconds
-    later, and with nothing on screen saying so, a slow frame and a hung one look
-    identical - which is exactly the confusion the K-263 device-loss bug caused.
-    A thin bar (Viewer or status line, per [15-DESIGN.md](15-DESIGN.md)'s calm
-    voice - progress, never a punishment) fed by the worker as it walks the
-    layer/effect stack. The obvious feed is the realise walk in
-    `lumit-render/src/realise.rs` reporting "n of m stack steps" on the existing
-    worker response stream ([17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md)); it
-    must cost nothing when nothing is watching. **Pairs with taking the flare's
-    bake off the render thread**: choosing a lens blocks the picture for about
-    half a second of pure CPU optics (measured, K-263) and that is the single
-    longest stall the effect has - a bake that runs beside the render, with the
-    bar showing it, turns a freeze into a wait you can see.
+- **Take the lens flare's bake off the render thread.** Choosing a lens blocks
+    the picture for about half a second of pure CPU optics (measured, K-263) -
+    the single longest stall the effect has - and the bake is still a closure the
+    render thread runs inside the frame (`lumit-render/src/fxops.rs`, the
+    `Resolved::LensFlare` arm). Run it beside the render and a freeze becomes a
+    wait you can see. *The progress bar this used to be paired with is built and
+    mounted (K-276/K-278: `flutter_ui/lib/panels/viewer_progress_bar.dart`, fed by
+    the realise walk in `lumit-render/src/realise.rs`); what its fractions still
+    get wrong has its own entry below.*
 - **The flare's raster still draws the cells it culled.** After K-263 a batch
     draws exactly its own cells, but a cell the guards kill is still stored and
     still submitted as a degenerate off-screen triangle. Compacting to just the
@@ -204,10 +199,13 @@ The Timeline matters most - it is zoomed constantly while cutting.
     calm and nothing about the path working.
 - **frb's SSE codec encodes `Vec<u8>` one byte at a time** - now taxes only
     thumbnails and scope traces, but worth the bulk codec if traces feel late.
-- **Engine subsystems with no frb API** - masks (`add_mask`,
-    `add_mask_geometry`); the Retime **graph** (`segment_to_rate`,
-    `set_segment_preset`, `drag_boundary`) and the curve view that makes ramps
-    editable; `trim_to_source_end`.
+- **Engine subsystems with no frb API** - the Retime **graph**
+    (`with_segment_ease`, `with_segment_speeds`, `with_segment_as_rate` in
+    `lumit-core/src/retime.rs`) and the curve view that makes ramps editable;
+    `trim_to_source_end`. *Masks left this list: `add_mask` is on
+    `LayerReference` and the shape tools call it. The three segment calls above
+    are also the current names - the ones this entry used to give
+    (`segment_to_rate`, `set_segment_preset`, `drag_boundary`) went with K-249.*
 - **The audio mix is rebuilt from scratch** whenever the comp's audio signature
     changes, rather than patched.
 
@@ -253,10 +251,12 @@ colour individually; only the two Timeline tokens default from the mode.
 - **Workspace machinery beyond the presets** ([07-UI-SPEC.md](07-UI-SPEC.md)
     §1.6) - user workspaces (save-as/rename/export), the chrome switcher strip,
     and Alt+Shift+1-9.
-- **First-run setup screen** (K-006, K-251) - v1 ships minimal in the Vegas PR:
-    one AE-style / Vegas-style choice writing the two K-251 settings. Still owed
-    after that lands: the four-card version with a small image over each choice
-    ([07-UI-SPEC.md](07-UI-SPEC.md) §13.1).
+- **First-run setup screen: the four-card version** (K-006, K-246,
+    [07-UI-SPEC.md](07-UI-SPEC.md) §13.1) - §13.1's four cards, a small image over
+    each choice. *The plain screen landed: `shell/first_run_frb.dart` asks the one
+    AE-style / Vegas-style question and writes K-246's pair, with
+    `test/first_run_test.dart` as its cover. This entry also used to cite K-251,
+    which is the mark decision, not this one.*
 - **Command palette** - recents are session-lived, and only genuinely bound
     shortcuts are taught (today just undo/redo).
 
@@ -386,8 +386,10 @@ are the reference for behaviour, not wiring targets):
     interpolation toggle; Flow-params UI and the source-rate advisory badge.
 - Precomp retiming - Precomp layers carry no Retime today; decide the intended
     scope before building.
-- The Time-lens **vertical (source-position) boundary drag** has no bridge op
-    (`SetLayerRetime`/`from_source_keyframes` unexposed).
+- The Time-lens **vertical (source-position) boundary drag** has no bridge op -
+    `Retime::from_source_keyframes` (`lumit-core/src/retime.rs`) is unexposed, and
+    the `SetLayerRetime` op this entry used to name alongside it no longer exists
+    at all, K-249 having moved Retime onto the property path.
 
 **Bridge reads left outside the read model** - the Source card's text/camera
 fields for the selected layer, the Viewer's missing-file probe, and the
