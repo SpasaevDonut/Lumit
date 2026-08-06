@@ -24,6 +24,8 @@ pub enum OpError {
     InvalidSpan,
     #[error("invalid parent: would form a cycle, self-parent, or unknown layer")]
     InvalidParent,
+    #[error("the layer is locked")]
+    LayerLocked,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -346,7 +348,86 @@ pub enum AutoFolderKind {
 }
 
 /// Apply `op` to `doc`, returning the exact inverse operation.
+/// The `(comp, layer)` a lock would protect this op from, or `None` when the
+/// lock has nothing to say about it.
+///
+/// **Lock protects the work, not the housekeeping.** A locked layer refuses
+/// every edit to what it *is* — its transform, effects, masks, paint, art,
+/// text, clips, markers, blend, matte, parent, retime, volume, switches, its
+/// span, its place in the stack and its existence. It still accepts the three
+/// that are about the Timeline's own bookkeeping rather than the composition:
+/// the lock itself (or it could never be undone), **shy** (a filter on the
+/// list, which changes no pixel and no timing) and the **label** colour.
+///
+/// Ops that name no layer — a comp setting, a project item, a folder — are not
+/// the lock's business and answer `None`.
+#[must_use]
+fn lock_guards(op: &Op) -> Option<(Uuid, Uuid)> {
+    match op {
+        // The three a locked layer still accepts.
+        Op::SetLayerLocked { .. } | Op::SetLayerShy { .. } | Op::SetLayerLabel { .. } => None,
+
+        Op::RemoveLayer { comp, layer }
+        | Op::ReorderLayer { comp, layer, .. }
+        | Op::SetLayerSpan { comp, layer, .. }
+        | Op::RenameLayer { comp, layer, .. }
+        | Op::SetLayerMasks { comp, layer, .. }
+        | Op::SetLayerPaint { comp, layer, .. }
+        | Op::SetShapeContents { comp, layer, .. }
+        | Op::SetLayerEffects { comp, layer, .. }
+        | Op::SetLayerFx { comp, layer, .. }
+        | Op::SetLayerThreeD { comp, layer, .. }
+        | Op::SetSequenceClips { comp, layer, .. }
+        | Op::SetLayerAudible { comp, layer, .. }
+        | Op::SetLayerVisible { comp, layer, .. }
+        | Op::SetLayerSolo { comp, layer, .. }
+        | Op::SetLayerMotionBlur { comp, layer, .. }
+        | Op::SetLayerCollapse { comp, layer, .. }
+        | Op::SetTextDocument { comp, layer, .. }
+        | Op::SetLayerMarkers { comp, layer, .. }
+        | Op::SetLayerBlend { comp, layer, .. }
+        | Op::SetLayerMatte { comp, layer, .. }
+        | Op::SetLayerParent { comp, layer, .. }
+        | Op::SetTransformProperty { comp, layer, .. }
+        | Op::SetCameraZoom { comp, layer, .. }
+        | Op::SetLayerVolume { comp, layer, .. }
+        | Op::SetRetimeProperty { comp, layer, .. }
+        | Op::SetLayerInterpolation { comp, layer, .. } => Some((*comp, *layer)),
+
+        // Everything else names no layer to lock: comp settings, project items,
+        // folders, and `Batch`, whose members are each guarded on their own way
+        // through `apply`.
+        _ => None,
+    }
+}
+
+/// Whether `layer` in `comp` is locked. An unknown comp or layer is not locked:
+/// the op's own arm reports what is actually missing, which is a better error
+/// than "locked".
+#[must_use]
+fn is_locked(doc: &Document, comp: Uuid, layer: Uuid) -> bool {
+    doc.comp(comp)
+        .and_then(|c| c.layers.iter().find(|l| l.id == layer))
+        .is_some_and(|l| l.switches.locked)
+}
+
 pub fn apply(doc: &mut Document, op: &Op) -> Result<Op, OpError> {
+    // **The lock is enforced here, not in the interface** (K-291). The Timeline
+    // already refused the *gestures* — the bar, the razor, rename, reorder,
+    // delete — but a locked layer's transform, effect and volume rows went on
+    // editing it, so the switch did not mean what it says. One guard covers
+    // every op, every caller and every op yet to be written; a guard per row
+    // would have to be remembered each time a row is added, and forgetting one
+    // is exactly how this hole opened.
+    //
+    // A `Batch` is guarded by its members: each goes through here on its way
+    // in, and a refusal rolls the whole batch back, so a batch is still all or
+    // nothing.
+    if let Some((comp, layer)) = lock_guards(op) {
+        if is_locked(doc, comp, layer) {
+            return Err(OpError::LayerLocked);
+        }
+    }
     match op {
         Op::AddItem { index, item } => {
             if *index > doc.items.len() {

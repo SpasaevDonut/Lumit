@@ -245,9 +245,6 @@ colour individually; only the two Timeline tokens default from the mode.
     in [04-RETIMING.md](04-RETIMING.md).
 - **The Flow column is reserved, not wired** - per-layer optical flow has no
     engine backing. Build the engine model first, then the fold-out's Flow group.
-- **Lock guards the gestures, not the property rows** - a locked layer's bar,
-    razor, rename, reorder and delete refuse; its transform/effect/volume rows are
-    still editable. Guard the rows or enforce in the engine ops; decide which.
 - **The Timeline's two halves are built twice and kept in step by hand.**
     `_Outline` and `_LayerArea` are separate widget trees walking the same layer
     list, aligned only because both read the same numbers, with vertical scroll

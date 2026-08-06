@@ -2486,6 +2486,11 @@ class _FoldRow extends StatelessWidget {
   final ValueChanged<String> onToggle;
   final VoidCallback onChanged;
 
+  /// Whether the layer this row belongs to is locked (K-291). A locked layer's
+  /// rows are still *read* — the numbers are what the document holds and the
+  /// curves still draw — but nothing on them can be touched.
+  final bool locked;
+
   const _FoldRow({
     required this.comp,
     required this.layer,
@@ -2502,6 +2507,7 @@ class _FoldRow extends StatelessWidget {
     required this.onSeek,
     required this.onToggle,
     required this.onChanged,
+    required this.locked,
   });
 
   @override
@@ -2532,7 +2538,19 @@ class _FoldRow extends StatelessWidget {
                 : null,
       ),
       padding: EdgeInsets.only(left: indent, right: 4),
-      child: _control(context),
+      // A locked layer's rows are read-only, not hidden (K-291): the numbers
+      // are still the document's and the curves still draw, but nothing on the
+      // row can be touched. The engine refuses the edit anyway — this is what
+      // stops the interface offering a gesture that would only be refused.
+      //
+      // A *group* row is exempt: twirling one open is navigation, not editing,
+      // and a locked layer that could not be looked inside would be worse than
+      // one that can.
+      child: locked && row is! FoldGroupRow && row is! FoldWaveformRow
+          ? AbsorbPointer(
+              child: Opacity(opacity: 0.5, child: _control(context)),
+            )
+          : _control(context),
     );
   }
 
@@ -4541,6 +4559,7 @@ class _Outline extends StatelessWidget {
                   onSeek: onSeek,
                   onToggle: onToggle,
                   onChanged: onChanged,
+                  locked: layers[i].info.switches.locked,
                 ),
               ),
               ],

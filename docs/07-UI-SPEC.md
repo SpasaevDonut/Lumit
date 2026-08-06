@@ -1069,6 +1069,16 @@ stays on screen. Still to build: `=`/`-`/`\`, and edge-follow during playback.
   **Shipped (K-193):** dragging a layer's **bar** moves it in time, and dragging a layer's
   **name** in the outline moves it up or down the stack — drop it on a row and it takes
   that row's place, as one undo step. A locked layer neither drags nor accepts a drop.
+
+  **What the lock means (K-291).** A locked layer refuses every edit to what it *is* — its
+  transform, effects, masks, paint, art, text, clips, markers, blend, matte, parent, retime,
+  volume, its switches, its span, its place in the stack and its existence. The refusal is in
+  the **engine**, so it holds for every caller, not only the gestures the Timeline happens to
+  guard; the property rows are also shown read-only, so the interface never offers a gesture
+  that would only be refused. A *group* heading in the fold-out stays live: twirling one open
+  is navigation, not editing. Three things a locked layer still accepts, because they are the
+  Timeline's own bookkeeping rather than the composition: the **lock** itself (or it could
+  never be undone), **shy**, and the **label** colour.
   Footage or a comp dragged in from the Project panel lands **where it was dropped** —
   the slot the pointer let go over, by the same midpoint rule — rather than always at the
   top of the stack; a drop past the last layer lands at the bottom.
