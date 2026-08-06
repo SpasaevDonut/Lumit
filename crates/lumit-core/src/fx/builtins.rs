@@ -1194,8 +1194,13 @@ pub const BUILTINS: &[EffectSchema] = &[
                 label: "Depth layer",
                 // The layer whose red channel is the depth pass (0 = near,
                 // 1 = far by convention; the effect is symmetric about Focus).
-                // Unset until the owner picks one (a labelled no-op).
-                kind: ParamKind::Layer {},
+                // Unset until the owner picks one (a labelled no-op): a
+                // depth pass is never the picture itself, so no
+                // `self_default` here (K-288) — though pointing it at this
+                // layer is still allowed, and reads the effect's own input.
+                kind: ParamKind::Layer {
+                    self_default: false,
+                },
             },
             // The depth Layer input's sampling mode (K-142) is not a schema
             // parameter: the inspector renders a source combobox beside the
@@ -2596,7 +2601,7 @@ pub const BUILTINS: &[EffectSchema] = &[
         ],
         match_name: "lens_flare",
         label: "Lens flare",
-        version: 4,
+        version: 5,
         category: FxCategory::Stylise,
         traits: EffectTraits {
             cost: CostClass::Heavy,
@@ -2871,10 +2876,16 @@ pub const BUILTINS: &[EffectSchema] = &[
             ParamSchema {
                 id: "matte",
                 label: "Matte layer",
-                // The layer whose brightest sources spawn the flares
-                // (impl note §6); unset is a labelled no-flare, never a
-                // fault — the File/Layer no-op convention (§1.2).
-                kind: ParamKind::Layer {},
+                // The layer whose brightest sources spawn the flares (impl
+                // note §6); unset is a labelled no-flare, never a fault —
+                // the File/Layer no-op convention (§1.2). `self_default`
+                // (K-288): a fresh flare points at its OWN layer, because
+                // "flare the lights in this picture" is what asking for a
+                // matte source nearly always means — and on an adjustment
+                // layer that reads the composite of everything below, so
+                // the effect works there without hunting for another layer
+                // to point at.
+                kind: ParamKind::Layer { self_default: true },
             },
             ParamSchema {
                 id: "threshold",
@@ -2909,15 +2920,22 @@ pub const BUILTINS: &[EffectSchema] = &[
                 },
             },
             ParamSchema {
-                id: "background",
-                label: "Background",
-                // Transparent keeps the layer's own alpha; Black makes the
-                // output opaque — the flare-element-over-black export for
-                // Screen/Add workflows (K-258).
+                id: "blend",
+                label: "Blend",
+                // How the flare element combines with the layer under it
+                // (K-289, replacing K-258's Transparent/Black Background
+                // pair). The curated light-combine set Echo offers, for the
+                // same reason (T21): the HSL / burn / dodge modes are
+                // ill-defined on a premultiplied light overlay. Normal heads
+                // the list, then a divider, because it is the one mode that
+                // REPLACES the layer — the flare on its own opaque black,
+                // which is what Background = Black existed to export.
+                // Default Add: the behaviour every flare had before this
+                // menu, so nothing anyone had built moves.
                 kind: ParamKind::Choice {
-                    options: &["Transparent", "Black"],
-                    default: 0,
-                    dividers_after: &[],
+                    options: crate::fx::lens_flare::BLEND_OPTIONS,
+                    default: crate::fx::lens_flare::BLEND_ADD,
+                    dividers_after: &[0],
                 },
             },
             MIX_PARAM,
@@ -2992,7 +3010,7 @@ pub fn default_param_value(kind: &ParamKind) -> EffectValue {
         // effect is a labelled no-op until the owner picks a layer, the same
         // sanctioned exception the File parameter takes to the "no no-op
         // default" rule.
-        ParamKind::Layer {} => EffectValue::Layer(None),
+        ParamKind::Layer { .. } => EffectValue::Layer(None),
     }
 }
 
@@ -3010,6 +3028,7 @@ pub fn backfill_builtin_params(effects: &mut [EffectInstance]) {
         let Some(s) = schema(&e.effect.match_name) else {
             continue;
         };
+        migrate_lens_flare_background(e);
         for p in s.params {
             if !e.params.iter().any(|have| have.id == p.id) {
                 e.params.push(EffectParam {
@@ -3018,6 +3037,66 @@ pub fn backfill_builtin_params(effects: &mut [EffectInstance]) {
                     extra: serde_json::Map::new(),
                 });
             }
+        }
+    }
+}
+
+/// Carry a saved Lens flare's Background choice over to the Blend menu that
+/// replaced it (K-289, superseding K-258). The old parameter had two values:
+/// Transparent (the flare added to the layer's own alpha) and Black (the
+/// output forced opaque — the flare-element-over-black export). Transparent
+/// *is* the new Add, bit for bit, and it was the default, so almost every
+/// saved flare needs nothing beyond the ordinary backfill. Black becomes
+/// Normal: on the empty layer that option was for, "the flare on opaque
+/// black" is what both produce.
+///
+/// The legacy parameter is dropped once read — the schema no longer declares
+/// it, so leaving it would be a row `set_value` refuses and the panel cannot
+/// draw. Runs before the backfill appends `blend`, so a project saved with
+/// Black never briefly reads as Add.
+fn migrate_lens_flare_background(e: &mut EffectInstance) {
+    if e.effect.match_name != "lens_flare" {
+        return;
+    }
+    let Some(old) = e.params.iter().position(|p| p.id == "background") else {
+        return;
+    };
+    let was_black = matches!(e.params[old].value, EffectValue::Choice(1));
+    e.params.remove(old);
+    if e.params.iter().any(|p| p.id == "blend") {
+        return;
+    }
+    e.params.push(EffectParam {
+        id: "blend".to_owned(),
+        value: EffectValue::Choice(if was_black {
+            crate::fx::lens_flare::BLEND_NORMAL
+        } else {
+            crate::fx::lens_flare::BLEND_ADD
+        }),
+        extra: serde_json::Map::new(),
+    });
+}
+
+/// Point every `self_default` Layer parameter in `inst` at `layer` — the
+/// layer the effect is being added to (K-288, docs/impl/layer-input.md).
+///
+/// A schema constant cannot know which layer it will land on, so the apply
+/// site passes it, exactly as [`instantiate_for_raster`] passes the raster.
+/// Today that is the Lens flare's Matte layer: adding the effect and
+/// switching Source to Matte should flare the lights in the picture the
+/// effect is already looking at, not sit there doing nothing until a layer
+/// is picked. Presets and plain [`instantiate`] leave the reference unset,
+/// which stays the labelled no-op it always was.
+pub fn point_self_layer_params_at(inst: &mut EffectInstance, layer: uuid::Uuid) {
+    let Some(s) = schema(&inst.effect.match_name) else {
+        return;
+    };
+    for p in s.params {
+        if !matches!(p.kind, ParamKind::Layer { self_default: true }) {
+            continue;
+        }
+        if let Some(slot) = inst.params.iter_mut().find(|have| have.id == p.id) {
+            slot.value = EffectValue::Layer(Some(layer));
         }
     }
 }

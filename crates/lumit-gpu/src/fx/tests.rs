@@ -3004,7 +3004,7 @@ fn flare_params() -> lumit_core::fx::lens_flare::LensFlareParams {
         anamorphic: 1.0,
         quality: 0,
         detail: 1.0,
-        background: 0,
+        blend: lumit_core::fx::lens_flare::BLEND_ADD,
         mix: 1.0,
     }
 }
@@ -3046,7 +3046,7 @@ fn flare_op(p: &lumit_core::fx::lens_flare::LensFlareParams, w: u32, h: u32) -> 
         threshold_softness: p.threshold_softness,
         light_tint: p.light_tint,
         use_source_colour: p.use_source_colour,
-        background: p.background,
+        blend: p.blend,
         mix: p.mix,
         bake_key: lf::bake_key(p),
     }
@@ -3905,6 +3905,13 @@ fn wgsl_lens_flare_padded_anamorphic_matches_and_fills_the_edge() {
 #[test]
 fn wgsl_lens_flare_matte_mode_matches_the_cpu_reference() {
     assert_eq!(MAX_LIGHTS as usize, lumit_core::fx::lens_flare::MAX_LIGHTS);
+    // The combine kernel's `flare_blend` implements exactly the menu
+    // lumit-core declares (K-289) — a mode added to one and not the other
+    // would silently clamp to Divide.
+    assert_eq!(
+        crate::fx::lens_flare::BLEND_COUNT as usize,
+        lumit_core::fx::lens_flare::BLEND_OPTIONS.len()
+    );
 
     let Ok(ctx) = GpuContext::headless() else {
         crate::no_adapter();

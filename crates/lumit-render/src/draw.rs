@@ -91,6 +91,26 @@ pub struct DofInputDraw {
     pub nested: Option<Box<NestedInputDraw>>,
 }
 
+/// What a layer-input parameter resolves to for one effect op (docs/impl/
+/// layer-input.md, K-288): nothing, this effect's own input, or another
+/// layer's picture. One of these per op that declares a Layer parameter,
+/// 1:1 and in order with those ops.
+pub enum LayerInputDraw {
+    /// Unset, dangling, out of its time span, or not in a mode that reads
+    /// one — the effect degrades to its labelled no-op, never a fault.
+    Absent,
+    /// The reference points at the layer the effect is **on** (K-288), so
+    /// the input is that effect's own input at its point in the stack. No
+    /// second render happens: `run_ops` binds the texture it is already
+    /// carrying. On an adjustment layer that texture is the composite of
+    /// everything below, which is the only picture an adjustment layer has —
+    /// so a Lens flare added to one finds the lights in the footage beneath
+    /// it without being pointed anywhere.
+    ThisLayer,
+    /// Another layer, rendered alone at this raster.
+    Layer(DofInputDraw),
+}
+
 /// A layer-input's nested comp render (K-266) — the [`DrawSource::Nested`]
 /// shape, boxed onto [`DofInputDraw`].
 pub struct NestedInputDraw {
@@ -211,19 +231,20 @@ pub struct CompLayerDraw {
     /// `run_ops`. No GPU work happens here; these are just the strings.
     pub lut_files: Vec<Option<String>>,
     /// The depth inputs of the layer's enabled built-in `dof` effects (docs/08
-    /// §3.22, docs/impl/layer-input.md; None = unset/dangling). Because
-    /// `resolve_stack` keeps the same filter and order and a `dof` effect
-    /// always resolves to exactly one `Resolved::Dof`, this list is 1:1 and in
-    /// order with the stack's `Dof` ops — the caller renders each one alone at
-    /// comp size and passes the parallel `layer_inputs` to `run_ops`. Each
+    /// §3.22, docs/impl/layer-input.md). Because `resolve_stack` keeps the
+    /// same filter and order and a `dof` effect always resolves to exactly one
+    /// `Resolved::Dof`, this list is 1:1 and in order with the stack's `Dof`
+    /// ops — the caller renders each one alone at comp size and passes the
+    /// parallel `layer_inputs` to `run_ops`. A [`LayerInputDraw::Layer`]
     /// carries the referenced layer's source pixels; the GPU render happens in
     /// `realise_segment`.
-    pub dof_inputs: Vec<Option<DofInputDraw>>,
+    pub dof_inputs: Vec<LayerInputDraw>,
     /// The Lens flare Matte sources (docs/08 §3.27, K-257), 1:1 with the
-    /// stack's `Resolved::LensFlare` ops: the referenced layer's pixels in
-    /// the same shape the DoF depth inputs take (None = unset/dangling/not
-    /// in Matte mode — the effect then detects nothing, never faults).
-    pub flare_mattes: Vec<Option<DofInputDraw>>,
+    /// stack's `Resolved::LensFlare` ops, in the same shape the DoF depth
+    /// inputs take. [`LayerInputDraw::Absent`] when the reference is unset,
+    /// dangling or the Source type is not Matte — the effect then detects
+    /// nothing, never faults.
+    pub flare_mattes: Vec<LayerInputDraw>,
     /// The `lens_file` paths of the layer's enabled built-in `lens_flare`
     /// effects (K-264), 1:1 with the stack's `Resolved::LensFlare` ops —
     /// None = unset. The caller reads and hashes each file and passes the

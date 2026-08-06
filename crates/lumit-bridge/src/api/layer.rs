@@ -2938,12 +2938,17 @@ impl LayerReference {
     #[frb(sync)]
     pub fn add_effect(&self, name: String) -> Result<(), BridgeError> {
         let comp = self.composition()?;
-        let instance = lumit_core::fx::instantiate_for_raster(
+        let mut instance = lumit_core::fx::instantiate_for_raster(
             &name,
             f64::from(comp.width),
             f64::from(comp.height),
         )
         .ok_or(BridgeError::UnknownEffectName)?;
+        // A `self_default` layer reference starts pointed at the layer the
+        // effect is landing on (K-288, docs/impl/layer-input.md): the Lens
+        // flare's Matte source, whose natural reading is "the lights in this
+        // picture" — and on an adjustment layer, the composite below.
+        lumit_core::fx::point_self_layer_params_at(&mut instance, self.layer_id);
 
         self.with_effects(move |effects| {
             effects.push(instance);

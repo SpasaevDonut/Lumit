@@ -276,6 +276,20 @@ fn feed_effect_stack(
                     // recurse; `visited` still guards any precomp cycle
                     // inside that source. An unset or dangling reference
                     // feeds a distinct 0 marker (the effect is a no-op).
+                    //
+                    // **This layer** (K-288) feeds its own marker and stops.
+                    // The reference names the effect's own input, not a
+                    // second render, and that input is already in the key:
+                    // this layer's source and the stack above this effect
+                    // are hashed by the walk we are inside, and on an
+                    // adjustment layer the composite below is hashed by the
+                    // other layers' own `feed_layer` calls (draw order is
+                    // content). Recursing here would re-hash the same
+                    // source for no gain.
+                    if *lref == Some(marker_layer.id) {
+                        h.update(&[2]);
+                        continue;
+                    }
                     match lref
                         .as_ref()
                         .and_then(|id| comp.layers.iter().find(|l| l.id == *id))

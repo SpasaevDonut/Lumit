@@ -723,6 +723,41 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   the owner's white-circle precomp flares with the strength of the whole
   circle where it used to count as a single pixel — while a true pinpoint
   light reads exactly as before.
+  A sixth pass fixed two things that had been quietly making the effect
+  harder to use than it needed to be.
+  **The matte now starts on the layer you put the effect on** (K-288).
+  Switching Source to Matte used to leave the Matte layer empty, so the
+  effect did nothing until you went and found a layer to point it at — and
+  the layer you nearly always wanted was the one you were already standing
+  on. Worse: on an **adjustment layer** there was no right answer at all.
+  An adjustment layer has no picture of its own; its job is to act on
+  everything below it. But the picker refused to offer the layer itself
+  ("you can't sample yourself"), so you had to point at some other layer and
+  detect lights in the wrong image. Now the picker does offer it, labelled
+  *(this layer)*, and it means something precise: **read whatever picture is
+  arriving at this effect**. On an ordinary layer that is the layer's own
+  image; on an adjustment layer it is the composite of everything beneath
+  it — which is exactly the picture you wanted flared. Nothing is rendered
+  twice to do it (the effect already has that picture in hand), so it is
+  cheaper as well as more useful, and it lines up pixel-for-pixel with what
+  the flare draws instead of being stretched to fit. The rule applies to any
+  effect that reads another layer, not just this one — the depth-of-field
+  depth pass can be pointed at its own layer too, though it doesn't start
+  there, because a depth map is never the picture itself.
+  **And the Background choice became a Blend menu** (K-289). The flare used
+  to offer Transparent or Black, which was really a blend-mode question in
+  disguise: everything the effect renders is a picture of light on a black
+  background, and those two options were two ways of combining that picture
+  with your layer. So it is now the same menu a layer's own Mode dropdown
+  offers — Normal, then Add, Screen, Multiply, Overlay, Soft light, Hard
+  light, Lighten, Darken, Difference, Exclusion, Subtract, Divide (the same
+  list Echo offers, and short of the layer list for the same reason: hue and
+  colour-burn style modes don't mean anything applied to a glow). **Add** is
+  the default and is exactly what the flare always did, pixel for pixel, so
+  nothing you have already built moves. **Normal** shows the flare on its
+  own black background and hides the layer, which is what "Black" was for —
+  the flare as a separate element you Screen back on in another comp — so a
+  project saved with Black opens on Normal.
 - **RGB split gains a Wavelength mode** (K-090's quality-tier pattern: where the smooth
   look is optional, it hides behind a Bool next to the fast one). Off — the default —
   the split is three tinted samples: the first colour pulled one way, the third the
