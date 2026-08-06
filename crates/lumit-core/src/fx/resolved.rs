@@ -666,6 +666,8 @@ pub struct LensDirtParams {
     pub intensity: f32,
     pub density: f32,
     pub scale: f32,
+    pub scale_var_x: f32,
+    pub scale_var_y: f32,
     pub scratch_scale: f32,
     pub defocus: f32,
     pub chromatic: f32,
@@ -677,6 +679,7 @@ pub struct LensDirtParams {
     pub seed: u32,
     pub mix: f32,
 }
+
 
 
 
@@ -2046,6 +2049,8 @@ fn resolve_one(
             let intensity = (e.float_at("intensity", lt).unwrap_or(1.0) as f32).max(0.0);
             let density = (e.float_at("density", lt).unwrap_or(50.0) as f32).clamp(0.0, 100.0);
             let scale = (e.float_at("scale", lt).unwrap_or(1.0) as f32).clamp(0.01, 20.0);
+            let scale_var_x = (e.float_at("scale_var_x", lt).unwrap_or(0.0) as f32).clamp(0.0, 2.0);
+            let scale_var_y = (e.float_at("scale_var_y", lt).unwrap_or(0.0) as f32).clamp(0.0, 2.0);
             let scratch_scale = (e.float_at("scratch_scale", lt).unwrap_or(1.0) as f32).clamp(0.01, 20.0);
             let defocus = (e.float_at("defocus", lt).unwrap_or(0.5) as f32).clamp(0.0, 1.0);
             let chromatic = (e.float_at("chromatic", lt).unwrap_or(0.3) as f32).clamp(0.0, 2.0);
@@ -2069,6 +2074,8 @@ fn resolve_one(
                 intensity,
                 density,
                 scale,
+                scale_var_x,
+                scale_var_y,
                 scratch_scale,
                 defocus,
                 chromatic,
@@ -2080,6 +2087,7 @@ fn resolve_one(
                 mix,
             }))
         }
+
 
         _ => None,
     }

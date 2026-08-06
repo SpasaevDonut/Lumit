@@ -1947,7 +1947,8 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
     };
 
     let particle_size_base = p.scale * (diag * 0.035);
-    let cell_size = (particle_size_base * 3.0).clamp(32.0, 1024.0);
+    let scale_jitter_max = p.scale_var_x.max(p.scale_var_y);
+    let cell_size = (particle_size_base * 3.5 * (1.0 + scale_jitter_max)).clamp(32.0, 2048.0);
 
     for y in 0..h {
         let py = y as f32 + 0.5;
@@ -1979,15 +1980,19 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
 
                     let center_x = (cx as f32 + h01(1, cx, cy)) * cell_size;
                     let center_y = (cy as f32 + h01(2, cx, cy)) * cell_size;
-                    let radius = particle_size_base * (0.3 + 1.2 * h01(3, cx, cy));
+                    let radius_base = particle_size_base * (0.3 + 1.2 * h01(3, cx, cy));
                     let p_intensity = 0.2 + 0.8 * h01(4, cx, cy);
 
-                    let dist_x = px - center_x;
-                    let dist_y = py - center_y;
-                    let dist = (dist_x * dist_x + dist_y * dist_y).sqrt();
+                    let rx_mult = 1.0 + (h01(5, cx, cy) - 0.5) * 2.0 * p.scale_var_x;
+                    let ry_mult = 1.0 + (h01(6, cx, cy) - 0.5) * 2.0 * p.scale_var_y;
+                    let rad_x = (radius_base * rx_mult).max(0.1);
+                    let rad_y = (radius_base * ry_mult).max(0.1);
 
-                    if dist <= radius * 1.3 {
-                        let norm_d = dist / radius;
+                    let dist_x = (px - center_x) / rad_x;
+                    let dist_y = (py - center_y) / rad_y;
+                    let norm_d = (dist_x * dist_x + dist_y * dist_y).sqrt();
+
+                    if norm_d <= 1.3 {
                         let base_val = cpu_bokeh_profile(norm_d, defocus) * p_intensity;
                         if chromatic > 0.0 {
                             let fringe = chromatic * 0.15 * norm_d;
@@ -2004,6 +2009,7 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
                     }
                 }
             }
+
 
             // 2. Micro hairline scratches & dust specks (controlled by scratch_scale)
             if scratch_amount > 0.0 {

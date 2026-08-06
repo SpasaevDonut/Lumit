@@ -1598,8 +1598,11 @@ stable when they land.
 **Parameters:**
 - `intensity` (Float, default `1.0`, slider `0.0`..`4.0`, hard `0.0`..`None`): Master brightness scale. `0.0` is neutral passthrough.
 - `density` (Float, default `50.0`, slider `0.0`..`100.0`, hard `0.0`..`100.0`): Spatial density of dust specks and out-of-focus bokeh disks.
-- `scale` (Float, default `1.0`, slider `0.1`..`5.0`, hard `0.01`..`20.0`): Size multiplier for out-of-focus bokeh disks.
+- `scale` (Float, default `1.0`, slider `0.1`..`5.0`, hard `0.01`..`20.0`): Base size multiplier for out-of-focus bokeh disks.
+- `scale_var_x` (Float, default `0.0`, slider `0.0`..`1.0`, hard `0.0`..`2.0`): Per-particle horizontal scale randomizer / aspect variance.
+- `scale_var_y` (Float, default `0.0`, slider `0.0`..`1.0`, hard `0.0`..`2.0`): Per-particle vertical scale randomizer / aspect variance.
 - `scratch_scale` (Float, default `1.0`, slider `0.1`..`5.0`, hard `0.01`..`20.0`): Size and length multiplier for micro hairline scratches and dust specks.
+
 - `defocus` (Float, default `0.5`, slider `0.0`..`1.0`, hard `0.0`..`1.0`): Bokeh disc edge softness vs ring iris highlights.
 
 - `chromatic` (Float, default `0.3`, slider `0.0`..`1.0`, hard `0.0`..`2.0`): Spectral color dispersion at bokeh edges and dust spots.

@@ -5996,6 +5996,8 @@ fn lens_dirt_neutral_points_and_default_resolve() {
         assert_eq!(p.intensity, 1.0);
         assert_eq!(p.density, 50.0);
         assert_eq!(p.scale, 1.0);
+        assert_eq!(p.scale_var_x, 0.0);
+        assert_eq!(p.scale_var_y, 0.0);
         assert_eq!(p.scratch_scale, 1.0);
         assert_eq!(p.defocus, 0.5);
         assert_eq!(p.chromatic, 0.3);
@@ -6014,6 +6016,8 @@ fn lens_dirt_neutral_points_and_default_resolve() {
         intensity: 0.0,
         density: 50.0,
         scale: 1.0,
+        scale_var_x: 0.0,
+        scale_var_y: 0.0,
         scratch_scale: 1.0,
         defocus: 0.5,
         chromatic: 0.3,
@@ -6037,6 +6041,8 @@ fn lens_dirt_seed_determinism() {
         intensity: 1.0,
         density: 50.0,
         scale: 1.0,
+        scale_var_x: 0.0,
+        scale_var_y: 0.0,
         scratch_scale: 1.0,
         defocus: 0.5,
         chromatic: 0.3,
@@ -6047,6 +6053,7 @@ fn lens_dirt_seed_determinism() {
         seed: 12345,
         mix: 1.0,
     };
+
 
     let mut img1 = vec![0.2f32; 128 * 128 * 4];
     let mut img2 = vec![0.2f32; 128 * 128 * 4];

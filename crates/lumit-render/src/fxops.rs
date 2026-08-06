@@ -1020,8 +1020,11 @@ pub fn run_ops(
                         intensity: p.intensity,
                         density: p.density,
                         scale: p.scale,
+                        scale_var_x: p.scale_var_x,
+                        scale_var_y: p.scale_var_y,
                         scratch_scale: p.scratch_scale,
                         defocus: p.defocus,
+
 
                         chromatic: p.chromatic,
                         scratches: p.scratches,

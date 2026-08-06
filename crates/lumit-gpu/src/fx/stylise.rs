@@ -505,6 +505,8 @@ impl FxEngine {
                 intensity: op.intensity,
                 density: op.density,
                 scale: op.scale,
+                scale_var_x: op.scale_var_x,
+                scale_var_y: op.scale_var_y,
                 scratch_scale: op.scratch_scale,
                 defocus: op.defocus,
                 chromatic: op.chromatic,
@@ -514,6 +516,8 @@ impl FxEngine {
                 seed: op.seed,
                 mix_amt: op.mix,
                 _pad0: 0.0,
+                _pad1: 0.0,
+                _pad2: 0.0,
             }),
         );
         out
@@ -526,6 +530,8 @@ pub struct LensDirtOp {
     pub intensity: f32,
     pub density: f32,
     pub scale: f32,
+    pub scale_var_x: f32,
+    pub scale_var_y: f32,
     pub scratch_scale: f32,
     pub defocus: f32,
     pub chromatic: f32,
@@ -544,6 +550,8 @@ struct LensDirtParams {
     intensity: f32,
     density: f32,
     scale: f32,
+    scale_var_x: f32,
+    scale_var_y: f32,
     scratch_scale: f32,
     defocus: f32,
     chromatic: f32,
@@ -553,4 +561,8 @@ struct LensDirtParams {
     seed: u32,
     mix_amt: f32,
     _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 }
+
+

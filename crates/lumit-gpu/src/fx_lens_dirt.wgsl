@@ -6,6 +6,8 @@ struct Params {
     intensity: f32,
     density: f32,
     scale: f32,
+    scale_var_x: f32,
+    scale_var_y: f32,
     scratch_scale: f32,
     defocus: f32,
     chromatic: f32,
@@ -15,7 +17,11 @@ struct Params {
     seed: u32,
     mix_amt: f32,
     _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 };
+
+
 
 
 @group(0) @binding(0) var src: texture_2d<f32>;
@@ -97,7 +103,8 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
     let nx = (px / wf - 0.5) * 2.0;
     let ny = (py / hf - 0.5) * 2.0;
 
-    let cell_size = clamp(particle_size_base * 3.0, 32.0, 1024.0);
+    let scale_jitter_max = max(p.scale_var_x, p.scale_var_y);
+    let cell_size = clamp(particle_size_base * 3.5 * (1.0 + scale_jitter_max), 32.0, 2048.0);
 
     var dirt_r: f32 = 0.0;
     var dirt_g: f32 = 0.0;
@@ -119,15 +126,19 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
 
             let center_x = (f32(cx) + block_hash01(seed, 1u, cx, cy, 0)) * cell_size;
             let center_y = (f32(cy) + block_hash01(seed, 2u, cx, cy, 0)) * cell_size;
-            let radius = particle_size_base * (0.3 + 1.2 * block_hash01(seed, 3u, cx, cy, 0));
+            let radius_base = particle_size_base * (0.3 + 1.2 * block_hash01(seed, 3u, cx, cy, 0));
             let p_intensity = 0.2 + 0.8 * block_hash01(seed, 4u, cx, cy, 0);
 
-            let dist_x = px - center_x;
-            let dist_y = py - center_y;
-            let dist = sqrt(dist_x * dist_x + dist_y * dist_y);
+            let rx_mult = 1.0 + (block_hash01(seed, 5u, cx, cy, 0) - 0.5) * 2.0 * p.scale_var_x;
+            let ry_mult = 1.0 + (block_hash01(seed, 6u, cx, cy, 0) - 0.5) * 2.0 * p.scale_var_y;
+            let rad_x = max(radius_base * rx_mult, 0.1);
+            let rad_y = max(radius_base * ry_mult, 0.1);
 
-            if (dist <= radius * 1.3) {
-                let norm_d = dist / radius;
+            let dist_x = (px - center_x) / rad_x;
+            let dist_y = (py - center_y) / rad_y;
+            let norm_d = sqrt(dist_x * dist_x + dist_y * dist_y);
+
+            if (norm_d <= 1.3) {
                 let base_val = bokeh_profile(norm_d, defocus) * p_intensity;
                 if (chromatic > 0.0) {
                     let fringe = chromatic * 0.15 * norm_d;
@@ -144,6 +155,7 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
         }
     }
+
 
     if (scratch_amount > 0.0) {
         let scratch_scale = p.scratch_scale;

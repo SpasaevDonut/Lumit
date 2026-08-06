@@ -2984,6 +2984,25 @@ pub const BUILTINS: &[EffectSchema] = &[
                 },
             },
             ParamSchema {
+                id: "scale_var_x",
+                label: "Bokeh scale jitter X",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(2.0)),
+                },
+            },
+            ParamSchema {
+                id: "scale_var_y",
+                label: "Bokeh scale jitter Y",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(2.0)),
+                },
+            },
+
+            ParamSchema {
                 id: "scratch_scale",
                 label: "Scratch scale",
                 kind: ParamKind::Float {
