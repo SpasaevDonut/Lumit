@@ -267,7 +267,7 @@ void main() {
         (tester) async {
       final p = freshProject();
       final comp = p.state.project!.newComposition(name: 'Scene');
-      comp.addSolidLayer();
+      final layer = comp.addSolidLayer();
       comp.addTextLayer();
       p.uiState.setSelectedComp(comp);
 
@@ -282,14 +282,21 @@ void main() {
       ));
       await settleFrb(tester, minRounds: 8);
 
+      double barWidth() => tester
+          .getRect(
+              find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}')))
+          .width;
+      final before = barWidth();
       final track = tester.getRect(find.byKey(const ValueKey('tl-zoom-slider')));
       counter
         ..reset()
         ..counting = true;
       // Eight steps along the track, the way a hand moves it — not one jump,
-      // because the cost being guarded is *per step*.
+      // because the cost being guarded is *per step*. The first is spent
+      // crossing the drag slop, which is what starts the drag.
       final gesture =
           await tester.startGesture(Offset(track.left + 2, track.center.dy));
+      await tester.pump();
       for (var i = 0; i < 8; i++) {
         await gesture.moveBy(Offset(track.width / 10, 0));
         await tester.pump();
@@ -297,6 +304,10 @@ void main() {
       await gesture.up();
       await tester.pumpAndSettle();
       counter.counting = false;
+
+      // A drag that did nothing would cost nothing too, so say that it moved.
+      expect(barWidth(), greaterThan(before),
+          reason: 'the drag actually zoomed');
       // ignore: avoid_print
       print('ZOOM DRAG COST ${counter.total} calls\n${counter.ranking()}');
 

@@ -1912,7 +1912,12 @@ void main() {
       final track = tester.getRect(find.byKey(const ValueKey('tl-zoom-slider')));
       final gesture =
           await tester.startGesture(Offset(track.left + 2, track.center.dy));
-      await gesture.moveBy(Offset(track.width / 2, 0));
+      await tester.pump();
+      // Two moves: the first is spent crossing the drag slop, which is what
+      // *starts* the drag; the second is the one the slider reads.
+      await gesture.moveBy(const Offset(20, 0));
+      await tester.pump();
+      await gesture.moveBy(Offset(track.width / 3, 0));
       // One frame, not `pumpAndSettle`: this is the frame the finger is still
       // down for.
       await tester.pump();
