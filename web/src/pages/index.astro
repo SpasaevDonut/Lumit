@@ -11,18 +11,18 @@ const features = [
     clip: "/clips/playback.webm",
   },
   {
-    h: "One retime, both instincts",
-    p: "Retime is a single system with two views: a value graph for those who think in After Effects' time remapping, and a speed graph for those raised on Vegas-style velocity. Same data, edit in whichever feels like home.",
+    h: "One retime, two choices",
+    p: "Retime is a single system with two views: a value graph for those who think in After Effects' time remapping, and a speed graph and sequence layers for those who prefer the feeling of velocity. Same data, edit in whichever feels like home, and convert at any time.",
     clip: "/clips/retime.webm",
   },
   {
     h: "Cut like an NLE, inside a comp",
-    p: "Sequence layers hold a run of clips cut back-to-back on one row — Vegas-style cutting and per-clip retiming, living inside an After Effects-style layer stack. Editing a ramp never moves a cut.",
+    p: "Sequence layers hold a run of clips cut back-to-back on one row — cutting and per-clip retiming, living inside the compositions layer stack. Editing ramps never move a cut.",
     clip: "/clips/sequence.webm",
   },
   {
     h: "A graph editor worth living in",
-    p: "Value and speed views of the same curves, AE-compatible bezier maths, and easing built to be judged by feel. This style of editing is named after interpolation quality; the graph editor is where Lumit earns it.",
+    p: "Value and speed views of the same curves, AE-compatible bezier maths, and easing built to be judged by feel.",
     clip: "/clips/graph.webm",
   },
   {
@@ -46,7 +46,6 @@ const roadmap = [
       "Optical-flow retiming",
       "Beat detection and snapping",
       "Mask modes and feather",
-      "Audio panel and level meters",
       "Anti-aliasing",
       "Motion paths in the Viewer",
       "Proxy generation",
@@ -81,6 +80,7 @@ const roadmap = [
       "Keying",
       "Particles",
       "Text animators",
+      "Audio panel and level meters",
       "Composer audio workspace",
       "Node view",
       "Scripting",
@@ -102,11 +102,15 @@ const roadmap = [
     >
     </div>
     <div class="wrap relative">
-      <Wordmark class="mb-9 w-[min(340px,68vw)]" />
-      <a class="pill" href="/download">
-        <span class="h-1.5 w-1.5 rounded-full bg-key-cy"></span>
-        <b class="font-medium text-fg">v0.1.0</b> — public beta
-      </a>
+      {/* Centred on mobile: the wordmark's launch swings well left of its own
+          box, and only symmetric margin keeps that excursion on screen. */}
+      <div class="flex flex-col items-center sm:items-start">
+        <Wordmark class="mb-9 w-[min(340px,68vw)]" />
+        <a class="pill" href="/download">
+          <span class="h-1.5 w-1.5 rounded-full bg-key-cy"></span>
+          <b class="font-medium text-fg">v0.1.0</b> — public beta
+        </a>
+      </div>
       <h1
         class="mt-6 max-w-[15ch] text-[clamp(38px,6.4vw,72px)] leading-[1.02] tracking-[-0.042em]"
       >
