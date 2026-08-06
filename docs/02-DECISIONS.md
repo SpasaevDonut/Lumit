@@ -6215,3 +6215,51 @@ edit can only have been made while the layer was unlocked, so the journal always
 unlock *after* the edit, and walking backwards meets the unlock first. A `Batch` is guarded by
 its members — each passes through `apply` on its way in, and a refusal rolls the whole batch
 back, so a batch stays all or nothing. Both are pinned by tests.
+
+**K-292 · DECIDED · Snapping reaches in pixels, reports what caught it, and lets `Ctrl`
+past.** [07-UI-SPEC.md](07-UI-SPEC.md) §4.5 has always asked for snapping across edit points,
+layer in/out points, keyframes, markers, beat markers, the playhead and the work area edges.
+K-190 shipped the magnet covering exactly one of them — a whole frame — and the rest waited.
+They are built now, for the lane key drag.
+
+**The reach is measured in screen pixels, not in time**, which is the spec's rule and the one
+that makes a single slop feel right everywhere. Zoomed out, a hundred frames may be ten pixels
+apart and snapping should be eager; zoomed in, one frame may be fifty pixels and it must not
+reach across three of them. Eight pixels is the distance: a little under half a row, close
+enough that landing on a marker takes no aim and far enough that the frame either side stays
+reachable at any useful zoom. Magnification is therefore the precision control, and there is no
+second setting for it.
+
+**What caught the drag is part of the answer, not a side effect.** `snapFrame` returns the
+target as well as the frame, because the spec requires the capture to be *indicated* — a key
+that jumps to a place the pointer was not reads as a fault unless something says why. The lane
+draws a line at what took it, for as long as it holds it.
+
+**A whole frame is the fallback, not a target.** With nothing in reach the drag rounds, exactly
+as K-190 made it. That keeps the magnet's original meaning intact for the common case — an
+empty comp has nothing to snap to and behaves precisely as before — and it is why the
+whole-frame landing reports *no* caught target and so draws no indicator: it is not news.
+
+**A lane's own keys are excluded.** A key that could snap to itself would be pinned where it
+started, which reads as a broken drag rather than as a snap. A neighbour already on the same
+frame goes with it, since being taken to where you already are is not a service either.
+
+**`Ctrl` held suspends it, rather than a second toggle.** It is wanted for a moment inside a
+gesture, not for a session; the magnet in the bottom bar remains the session-length switch.
+
+**Beat markers are markers.** Beat detection writes ordinary markers, so beat snapping — the
+beat-sync covenant's daily face — arrives by being marker snapping rather than by being a
+separate kind with a separate list.
+
+**The razor reads the same function, and that fixed a disagreement nobody had written down**
+(owner, 2026-08-06). A cut was always quantised — `TimelineAxis.frameAt` rounds — but the line
+drawn under the blade followed the pointer continuously, so the mark stood up to half a frame
+from where the edge actually bit. One function now answers for both, so they cannot part. A cut
+is a clip boundary and therefore a whole frame, so the razor rounds *after* snapping: a target
+that sits between frames still takes the cut, and the cut still lands on a frame.
+
+**The layer bar drag, the work-area handles and marker drags still land where the pointer puts
+them.** That is a deliberate stopping point rather
+than an oversight: the arithmetic is pure and shared (`panels/timeline_snap.dart`, tested on
+its own), so each remaining gesture is a wiring job with no design left in it, and doing them
+one at a time keeps each one's regression test honest. TODO carries the list.

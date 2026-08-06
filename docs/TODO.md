@@ -268,10 +268,13 @@ colour individually; only the two Timeline tokens default from the mode.
 - **Beat tap has no key left** - [07-UI-SPEC.md](07-UI-SPEC.md) §10 wants `8`
     during playback to tap a beat, and K-254 gave the bare digits to the numbered
     markers. Needs its own chord or a modal reading.
-- **The magnet snaps keyframes to frames and nothing else**
-    ([07-UI-SPEC.md](07-UI-SPEC.md) §4.5 wants edit points, in/out points,
-    markers, beat markers, the playhead and work-area edges, plus `Ctrl`-hold to
-    suspend mid-drag).
+- **Snapping covers the lane key drag only** (K-292). A key now lands on edit
+    points, in/out points, other keyframes, markers (beat markers among them),
+    the playhead and the work-area edges, with `Ctrl`-hold to suspend and the
+    caught target drawn; the **razor** snaps the same way and its line now
+    stands where the cut lands. The other gestures still land where the pointer
+    puts them: the layer **bar** drag, the work-area handles and marker drags. The arithmetic is shared and pure (`panels/timeline_snap.dart`), so
+    each is wiring rather than design.
 - **Volume keyframes draw no lane diamonds and no graph curve** - volume is not
     in the comp read model; fold it into `BridgeLayerInfo` if either matters.
 

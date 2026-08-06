@@ -3515,6 +3515,40 @@ what makes the whole approach safe: an edit can only have been made while the
 layer was *unlocked*, so walking backwards through your history always reaches
 the unlock before it reaches the edit underneath.
 
+### Why a keyframe jumps onto things
+
+Drag a keyframe along its lane with the magnet on — the horseshoe in the bar
+under the Timeline — and it now wants to land on the things already there: the
+start or end of a layer, a cut inside a sequence, another keyframe, a marker,
+the playhead, the edges of the work area. Before, the only thing it wanted was
+a whole frame.
+
+**The reach is measured in screen pixels, not in time**, and that is the part
+worth understanding. Zoomed right out, a hundred frames might be ten pixels
+apart, and a snap that reached "two frames" would be useless. Zoomed right in,
+one frame might be fifty pixels, and a snap that reached two frames would drag
+your key somewhere you never pointed. Measuring the reach on the screen instead
+means how far you are zoomed *is* how precise you are being — which is the thing
+your hand already understands, so there is no second setting to learn.
+
+When something catches the drag, a line is drawn at it. Without that, a key
+that leaps to a spot the pointer wasn't looks like a bug rather than a service.
+
+Two escapes. The magnet switch turns the whole thing off for as long as you like
+— and with it off a key may sit *between* frames, which is occasionally exactly
+what you want. Hold **Ctrl** during a drag and snapping stops just for that
+moment, for the one time in ten when the place you want is precisely where a
+snap will not let you put it.
+
+Beat markers need no special mention in any of this, and that is by design: beat
+detection writes ordinary markers, so dragging near a beat lands on it because
+it lands on markers.
+
+Right now this covers dragging a keyframe on its lane. Dragging a layer's bar,
+the razor, the work-area handles and markers themselves still land wherever you
+point. The arithmetic is written once and shared, so each of those is wiring
+rather than a fresh design.
+
 ### What is remembered, and where
 
 - **The workspace** — panel arrangement, colour scheme, interface scale, tooltips,

@@ -59,6 +59,7 @@ import 'timeline_razor.dart';
 import 'effect_param_row_frb.dart';
 import 'keyframe_controls_frb.dart';
 import 'layer_fold_frb.dart';
+import 'timeline_snap.dart';
 import 'waveform_frb.dart';
 import 'timeline_timings.dart';
 import 'transform_rows_frb.dart';
@@ -5502,12 +5503,33 @@ class _LayerArea extends StatelessWidget {
     // wash and the strip stays one colour.
     final workAreaPixels =
         work.whole ? null : (axis.xOf(work.start), axis.xOf(work.end));
+    // Gathered once for the whole area, not once per lane (docs/07 §4.5).
+    final snap = _snapTargets();
+    // Where a razor cut lands, as a frame — the *one* answer the blade's line
+    // and the cut itself both read, so the mark cannot stand anywhere but
+    // where the edge bites. The cut was always quantised (`frameAt` rounds);
+    // it is the line that used to follow the pointer between frames.
+    double razorFrameAt(double x) => snapFrame(
+          frame: axis.perFrame <= 0 ? 0 : x / axis.perFrame,
+          targets: snap,
+          perFrame: axis.perFrame,
+          magnet: magnet &&
+              !snapSuspended(
+                  controlPressed: HardwareKeyboard.instance.isControlPressed),
+        )
+            // A cut is a clip boundary, and a clip boundary is a whole frame —
+            // so even a snap onto a target that sits between frames (a keyframe
+            // may) lands on one. Rounding here rather than at the cut is what
+            // keeps the drawn line and the edge exactly the same place.
+            .frame
+            .roundToDouble();
     // The blade pointer and the line that says where the cut lands (K-220).
     // Round the whole area rather than inside a bar: the line spans every row,
     // and a pointer clipped to one bar would vanish at its edges. Inert — and
     // free — while the razor is not armed.
     return RazorOverlay(
       active: razor,
+      snapX: (x) => axis.xOf(razorFrameAt(x)),
       mark: t.textPrimary,
       outline: t.surface0,
       child: Stack(
@@ -5677,6 +5699,7 @@ class _LayerArea extends StatelessWidget {
                                                   playhead.value,
                                               onRazor: (frame) =>
                                                   onRazor(layers[i], frame),
+                                              razorFrameAt: razorFrameAt,
                                               onSelect: () =>
                                                   onSelect(layers[i].layer),
                                               onOpenSequence: layers[i]
@@ -5715,6 +5738,7 @@ class _LayerArea extends StatelessWidget {
                                                 razor: razor,
                                                 onRazor: (frame) =>
                                                     onRazor(layers[i], frame),
+                                                razorFrameAt: razorFrameAt,
                                                 onSelect: () =>
                                                     onSelect(layers[i].layer),
                                                 onClose: () => onOpenSequence
@@ -5750,8 +5774,8 @@ class _LayerArea extends StatelessWidget {
                                                       in _rowsOf(layers[i]))
                                                     SizedBox(
                                                       height: _rowHeight,
-                                                      child: _lane(
-                                                          t, layers[i], row),
+                                                      child: _lane(t,
+                                                          layers[i], row, snap),
                                                     ),
                                                 ],
                                               ),
@@ -5823,7 +5847,30 @@ class _LayerArea extends StatelessWidget {
 
   /// One fold row's lane: diamonds for a keyed property, the waveform for
   /// the waveform row, empty room otherwise.
-  Widget? _lane(LumitTheme t, BridgeLayerEntry entry, LayerFoldRow row) {
+  /// Everything a lane key can land on (docs/07 §4.5), built once for the
+  /// panel from the read model and the memoised marker list — so it costs no
+  /// bridge calls, and no lane pays for another lane's targets.
+  List<SnapTarget> _snapTargets() => snapTargetsOf(
+        layers: layers,
+        compMarkers: markersOf(comp),
+        keyRows: [
+          for (final entry in layers)
+            for (final row in _rowsOf(entry))
+              (
+                rowId: foldRowPath(
+                    entry.layer.internallayerId.toString(), row),
+                frames: [
+                  for (final k in laneKeysOf(row)) laneKeyFrame(k, fps),
+                ],
+              ),
+        ],
+        playheadFrame: playhead.value,
+        work: work,
+        fps: fps,
+      );
+
+  Widget? _lane(LumitTheme t, BridgeLayerEntry entry, LayerFoldRow row,
+      List<SnapTarget> snapTargets) {
     final id = entry.layer.internallayerId.toString();
     if (row is FoldWaveformRow) {
       return ValueListenableBuilder<BarDragPreview?>(
@@ -5873,6 +5920,7 @@ class _LayerArea extends StatelessWidget {
       fpsNum: fpsNum,
       fpsDen: fpsDen,
       magnet: magnet,
+      snapTargets: snapTargets,
       selectedKeys: selectedKeys,
       onSelectKey: (index, additive) {
         final id = '$rowId#$index';
@@ -5911,6 +5959,12 @@ class _KeyLane extends StatefulWidget {
   final int fpsNum;
   final int fpsDen;
   final bool magnet;
+
+  /// Everything on the Timeline this lane's keys may land on (docs/07 §4.5),
+  /// gathered once for the panel and handed down — the list is the same for
+  /// every lane, so building it per lane would be the same work many times.
+  /// This lane's own keys are already left out of it.
+  final List<SnapTarget> snapTargets;
   final Set<String> selectedKeys;
 
   /// Click a diamond to select it — the second way into the key selection the
@@ -5930,6 +5984,7 @@ class _KeyLane extends StatefulWidget {
     required this.fpsNum,
     required this.fpsDen,
     required this.magnet,
+    required this.snapTargets,
     required this.selectedKeys,
     required this.onSelectKey,
     required this.onChanged,
@@ -5947,14 +6002,37 @@ class _KeyLaneState extends State<_KeyLane> {
   /// bar drag does it: per-event rounding reads as mouse acceleration.
   double _deltaPx = 0;
 
-  /// Where key [i] draws — its own time, plus the drag in flight.
+  /// What the drag in flight last landed on, so the capture can be drawn. The
+  /// spec requires the target to be indicated at the moment it takes the drag —
+  /// without it a key that jumps reads as a fault rather than a service.
+  SnapTarget? _caught;
+
+  /// Where key [i] draws — its own time, plus the drag in flight, snapped.
   double _frameOf(int i) {
     final base = laneKeyFrame(widget.keys[i], widget.fps);
     if (_dragging != i) return base;
     final perFrame = widget.axis.perFrame;
     final moved = perFrame <= 0 ? base : base + _deltaPx / perFrame;
     final clamped = moved.clamp(0.0, widget.axis.frames.toDouble());
-    return widget.magnet ? clamped.roundToDouble() : clamped;
+    final own = {
+      for (final k in widget.keys) laneKeyFrame(k, widget.fps),
+    };
+    final snapped = snapFrame(
+      frame: clamped,
+      // This lane's own keys are dropped: a key snapping to itself would be
+      // pinned where it started, and a neighbour already on the same frame is
+      // not a place worth being taken to either.
+      targets: widget.snapTargets
+          .where((t) => t.kind != SnapKind.keyframe || !own.contains(t.frame)),
+      perFrame: perFrame,
+      // `Ctrl` held suspends snapping for as long as it is held, which is the
+      // way out when the wanted place is exactly where a snap will not allow.
+      magnet: widget.magnet &&
+          !snapSuspended(
+              controlPressed: HardwareKeyboard.instance.isControlPressed),
+    );
+    _caught = snapped.caught;
+    return snapped.frame;
   }
 
   void _commit(int index) {
@@ -5962,6 +6040,7 @@ class _KeyLaneState extends State<_KeyLane> {
     setState(() {
       _dragging = null;
       _deltaPx = 0;
+      _caught = null;
     });
     if (frame == laneKeyFrame(widget.keys[index], widget.fps)) return;
     final moved = moveLaneKey(
@@ -5994,6 +6073,18 @@ class _KeyLaneState extends State<_KeyLane> {
             ),
           ),
         ),
+        // What the drag landed on, marked while it holds it (docs/07 §4.5:
+        // the snapped-to target MUST be indicated at the moment of capture).
+        if (_caught != null)
+          Positioned(
+            left: widget.axis.xOf(_caught!.frame) - 0.5,
+            top: 0,
+            bottom: 0,
+            width: 1,
+            child: IgnorePointer(
+              child: ColoredBox(color: t.accent),
+            ),
+          ),
         for (var i = 0; i < widget.keys.length; i++)
           Positioned(
             left: widget.axis.xOf(_frameOf(i)) - 6,
@@ -6366,6 +6457,10 @@ class _Bar extends StatefulWidget {
   /// nothing about.
   final void Function(int frame) onRazor;
 
+  /// Where a cut at screen x lands, in comp frames — the same function the
+  /// blade's line is drawn with, so the two cannot disagree (docs/07 §4.5).
+  final double Function(double x) razorFrameAt;
+
   /// Clicking (or grabbing) the bar selects its layer.
   final VoidCallback onSelect;
 
@@ -6396,6 +6491,7 @@ class _Bar extends StatefulWidget {
     required this.selected,
     required this.playheadFrame,
     required this.onRazor,
+    required this.razorFrameAt,
     required this.onSelect,
     this.onOpenSequence,
     required this.onChanged,
@@ -6549,7 +6645,9 @@ class _BarState extends State<_Bar> {
                 // nothing on screen — the cut simply does not happen.
                 onTapUp: widget.razor && !held
                     ? (details) => widget.onRazor(
-                          widget.axis.frameAt(left + details.localPosition.dx),
+                          widget
+                              .razorFrameAt(left + details.localPosition.dx)
+                              .round(),
                         )
                     : null,
                 // Selection already happened on the down; the tap has nothing
