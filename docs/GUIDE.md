@@ -3310,6 +3310,48 @@ numbers dropped when it goes off so nothing stale is left on screen. Doing this
 continuously and for free needs *GPU timestamp queries*, which is written down as
 the follow-up in TODO.
 
+### Smoothing the edges of a rotated layer (K-274)
+
+Rotate a layer a few degrees and its edge crosses each pixel diagonally. A pixel
+is a small square that is either painted or not, so the edge comes out as a
+staircase — and on a slow rotation the steps crawl along it, which is the thing
+the eye actually catches.
+
+The cure is to stop asking one question per pixel. **Multisampling** keeps four
+(or two, or eight) coverage points inside each pixel, works the colour out
+*once*, and mixes it into that pixel in proportion to how many of those points
+the layer covered. A pixel the edge cuts in half comes back half-covered instead
+of guessing. It costs some memory on the graphics card and one extra step per
+frame; it does not cost four times the work, which is why it is the standard
+answer for edges rather than a luxury.
+
+**It is a setting on the project, not on your copy of Lumit** (File ▸ Project
+settings…). That is deliberate, and it is why that window exists at all:
+everything in **Settings** belongs to this machine — your theme, your cache
+sizes, your shortcuts — and nothing there travels or undoes. A project setting
+is the opposite on both counts, so it has a window of its own. It changes what a composition looks like, so it
+has to be saved inside the `.lum` and be the same when somebody else opens the
+file — and the *same* value is used for the preview and for the export, because
+the whole render path is built on the promise that what you are watching is what
+you will get. Eight samples is the default: on.
+
+Two things it deliberately does not do. It does not soften the *inside* of a
+layer's picture — that is the scaling filter's job, and a shape's own curves, a
+mask's edge and the outline of a letter are already smooth where they are drawn.
+And it does not change with the preview resolution: a half-size preview is a
+smaller picture with the same treatment of its edges.
+
+**If your graphics card cannot manage the number asked for**, Lumit uses the
+highest it will and says which — in that window, plainly, beside the one you
+chose. Your project keeps the value you picked; nothing is rewritten behind your
+back, and nothing fails.
+
+One consequence worth knowing about: because the setting changes every pixel, it
+is part of how a finished frame is *named* in the cache (see "the three-tier
+cache" above). Changing it means the frames already made no longer answer, and
+the ones you look at next are made afresh. That is the same rule every other
+picture-changing edit follows; it is not the setting misbehaving.
+
 ### The panels
 
 `state/comp_model.dart` is the read model: **one** bridge call returns the whole

@@ -5994,3 +5994,43 @@ flipping the baseline repaints without asking for anything.
 
 Centred stays the default. It is what Lumit has always drawn, it is what the eye expects of a
 *wave*, and defaults do not change under people for a preference.
+
+**K-286 · DECIDED · Anti-aliasing defaults to eight samples, what the card can do is reported
+rather than saved, and the project's own settings leave the Settings window.** K-274 settled
+that anti-aliasing is a project property, on by default, with one value shared by preview and
+export. Building it ([impl/anti-aliasing.md](impl/anti-aliasing.md)) left four smaller choices,
+taken here.
+
+**(1) The default is eight coverage samples.** K-274 said "on" without saying how much. Eight
+smooths the shallow diagonals four still steps on, which is where a slow rotation's crawl is
+most visible, and the cost is one multisample attachment beside the comp frame rather than more
+shading — a memory cost, paid once per comp frame, not a per-pixel one. A card that will not
+give eight falls back to four by the rule in (2), so the weaker machine lands on what would
+have been the conservative default anyway. Off / 2 / 4 / 8 are the choices, because those are
+the counts hardware actually implements — a free number would offer precision that does not
+exist.
+
+**(2) What the machine can draw is reported, never written back.** The count is asked of the
+adapter and never assumed; a card that will not multisample the working format at the count
+asked for gets the highest it will, down to off. The project keeps the value its author chose
+and the Settings row states what is being used instead, beside it, in the calm voice
+([15-DESIGN.md](15-DESIGN.md)) — a statement, never a warning. The alternative, quietly
+lowering the stored setting, would mean opening a file on a weaker machine silently changed
+the project for everyone who opened it afterwards. A machine's limit is not a project's error.
+
+**(3) The count is part of a frame's name, and `ALGO_VERSION` goes to 3.** The setting changes
+every pixel, so it joins the content hash a cached frame is filed under (docs/06 §5.2) — a
+frame banked at one count must never be served at another. And because the default is *on*,
+every frame banked before this was made without anti-aliasing, so the version bump retires all
+of them by construction. Both reasons stand alone; either would have been enough.
+
+**(4) A project's settings get their own window, and Settings stays machine-local.** The count
+first landed as a **Rendering** page inside Settings, marked as the project's with a section
+heading — which put a value that travels in the `.lum`, and undoes like an edit, in the window
+whose every other value belongs to this machine and to no document. A caption was doing a
+window's job. So **File ▸ Project settings…** (`Mod+Alt+Shift+K`, After Effects' own chord)
+holds the project's answers, and [07-UI-SPEC.md](07-UI-SPEC.md) §15's "every value here is
+machine-local" needs no narrowing for it after all. The disk cache's *Applies to* row (K-215)
+stays in Settings → Performance: its whole purpose is choosing between the two scopes, so it is
+the one control that has to stand with a foot in each. Colour management and export defaults
+land in the new window when they are built, rather than back in Settings.

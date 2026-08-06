@@ -44,6 +44,7 @@ import '../state/workspace.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 import 'cache_confirm_frb.dart';
+import 'settings_rows.dart';
 import 'theme_editor_frb.dart';
 
 /// The smallest budget worth setting, in MiB. Below this the cache holds a
@@ -195,8 +196,8 @@ class _SettingsWindowState extends State<_SettingsWindow> {
   // ---- the pages -----------------------------------------------------------
 
   List<Widget> _general(LumitTheme t, LumitUiState ui) => [
-        _section(t, 'Workspace', [
-          _row(
+        settingsSection(t, 'Workspace', [
+          settingsRow(
             t,
             'Panel layout',
             'Return every panel to its default place and size.',
@@ -213,8 +214,8 @@ class _SettingsWindowState extends State<_SettingsWindow> {
       ];
 
   List<Widget> _appearance(LumitTheme t, LumitUiState ui) => [
-        _section(t, 'Theme', [
-          _row(
+        settingsSection(t, 'Theme', [
+          settingsRow(
             t,
             'Colour scheme',
             'The palette every panel draws from.',
@@ -233,7 +234,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
               ),
             ),
           ),
-          _row(
+          settingsRow(
             t,
             'Custom colours',
             ui.workspace.customThemeName == null
@@ -265,7 +266,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
               ],
             ),
           ),
-          _row(
+          settingsRow(
             t,
             'Corners',
             'How rounded controls and panels are.',
@@ -280,7 +281,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
               ),
             ),
           ),
-          _row(
+          settingsRow(
             t,
             'Motion',
             'How much controls animate as they change.',
@@ -301,8 +302,8 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ),
           ),
         ]),
-        _section(t, 'Scopes', [
-          _row(
+        settingsSection(t, 'Scopes', [
+          settingsRow(
             t,
             'Use theme colours',
             'Off, a scope reads on the standard near-black graticule '
@@ -315,8 +316,8 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ),
           ),
         ]),
-        _section(t, 'Viewer', [
-          _row(
+        settingsSection(t, 'Viewer', [
+          settingsRow(
             t,
             'Surround takes theme colours',
             'Off, the area around the picture is a neutral grey — a grade '
@@ -329,14 +330,28 @@ class _SettingsWindowState extends State<_SettingsWindow> {
                   setState(() => ui.workspace.setThemedViewerSurround(v)),
             ),
           ),
+          settingsRow(
+            t,
+            'Smooth the picture when zoomed in',
+            'Off, a pixel magnified past 1:1 stays a square, which is what '
+                'you zoom in to see. On, the picture is blended between '
+                'pixels — softer, and easier on the eye when the zoom is for '
+                'framing rather than for inspecting.',
+            HouseCheckbox(
+              key: const ValueKey('settings-smooth-zoomed-viewer'),
+              value: ui.workspace.smoothZoomedViewer,
+              onChanged: (v) =>
+                  setState(() => ui.workspace.setSmoothZoomedViewer(v)),
+            ),
+          ),
         ]),
       ];
 
   List<Widget> _interface(LumitTheme t, LumitUiState ui) {
     final settings = ui.workspace.interface;
     return [
-      _section(t, 'Display', [
-        _row(
+      settingsSection(t, 'Display', [
+        settingsRow(
           t,
           'Interface scale',
           'How large every panel draws, for a dense or a distant screen.',
@@ -356,7 +371,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             }),
           ),
         ),
-        _row(
+        settingsRow(
           t,
           'Tooltips',
           'Show the hint that explains a control when you rest on it.',
@@ -370,8 +385,8 @@ class _SettingsWindowState extends State<_SettingsWindow> {
           ),
         ),
       ]),
-      _section(t, 'Panels', [
-        _row(
+      settingsSection(t, 'Panels', [
+        settingsRow(
           t,
           'Transform in Effect controls',
           'Repeat the layer\'s Transform rows above its effects. The '
@@ -393,8 +408,8 @@ class _SettingsWindowState extends State<_SettingsWindow> {
       // §13.1 expects to be common. The playhead row is not one the screen
       // touches — both answers want the returning playhead, so there is
       // nothing for the question to decide.
-      _section(t, 'Editing', [
-        _row(
+      settingsSection(t, 'Editing', [
+        settingsRow(
           t,
           'Retime opens to Velocity',
           'The Retime graph opens showing playback speed per cent — one point '
@@ -409,7 +424,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             }),
           ),
         ),
-        _row(
+        settingsRow(
           t,
           'Video arrives as a Sequence layer',
           'Video and image sequences added to a composition become a Sequence '
@@ -424,7 +439,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             }),
           ),
         ),
-        _row(
+        settingsRow(
           t,
           'Paste layers at their original time',
           'A pasted layer keeps the timecode it was copied at, instead of '
@@ -441,7 +456,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             }),
           ),
         ),
-        _row(
+        settingsRow(
           t,
           'Playhead stays where playback stopped',
           'Leave the playhead on the frame that was on screen when playback '
@@ -457,7 +472,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             }),
           ),
         ),
-        _row(
+        settingsRow(
           t,
           'Waveforms show the frequency stack',
           'A layer\'s waveform draws as three stacked waves — bass, middle '
@@ -474,7 +489,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             }),
           ),
         ),
-        _row(
+        settingsRow(
           t,
           'Waveforms rise from the bottom',
           'A waveform stands on the floor of its row instead of being centred '
@@ -639,9 +654,9 @@ class _SettingsWindowState extends State<_SettingsWindow> {
               style: t.small.copyWith(color: t.textMuted)),
         ),
       for (final group in groups)
-        _section(t, group.label, [
+        settingsSection(t, group.label, [
           for (final binding in group.bindings)
-            _row(
+            settingsRow(
               t,
               binding.description,
               '',
@@ -723,8 +738,8 @@ class _SettingsWindowState extends State<_SettingsWindow> {
     final tier = playbackTier();
 
     return [
-      _section(t, 'Playback', [
-        _row(
+      settingsSection(t, 'Playback', [
+        settingsRow(
           t,
           'When the machine cannot keep up',
           'Adaptive keeps time and softens the picture; every frame keeps '
@@ -744,7 +759,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ),
           ),
         ),
-        _row(
+        settingsRow(
           t,
           'Quality tier',
           'What the realtime controller has settled on.',
@@ -768,7 +783,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
           ),
         ),
       ]),
-      _section(t, 'Rendered-frame cache', [
+      settingsSection(t, 'Rendered-frame cache', [
         _budgetRow(
           t,
           key: 'settings-cache-budget',
@@ -781,7 +796,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ui.workspace.setCacheBudgetBytes(bytes.toInt());
           }),
         ),
-        _row(
+        settingsRow(
           t,
           'In use',
           '${stats.hits} of ${stats.hits + stats.misses} frames were served '
@@ -805,7 +820,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
           ),
         ),
       ]),
-      _section(t, 'Preview cache on the graphics card', [
+      settingsSection(t, 'Preview cache on the graphics card', [
         _budgetRow(
           t,
           key: 'settings-vram-budget',
@@ -818,7 +833,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ui.workspace.setVramBudgetBytes(bytes.toInt());
           }),
         ),
-        _row(
+        settingsRow(
           t,
           'In use',
           'Frames held on the card, ready to show without compositing.',
@@ -858,7 +873,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
         cacheLocationFromName(ui.workspace.performance.diskCacheLocation ??
             BridgeCacheLocation.appData.name);
     return [
-      _section(t, 'Frames parked on disk', [
+      settingsSection(t, 'Frames parked on disk', [
         _budgetRow(
           t,
           key: 'settings-disk-budget',
@@ -871,7 +886,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ui.workspace.setDiskBudgetBytes(bytes.toInt());
           }),
         ),
-        _row(
+        settingsRow(
           t,
           'Where',
           disk.root.isEmpty
@@ -905,7 +920,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ],
           ),
         ),
-        _row(
+        settingsRow(
           t,
           'Applies to',
           scope == CacheScope.thisProject
@@ -925,7 +940,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ),
           ),
         ),
-        _row(
+        settingsRow(
           t,
           'In use',
           'Frames on disk, one promotion away from playing.',
@@ -1038,71 +1053,6 @@ class _SettingsWindowState extends State<_SettingsWindow> {
 
   // ---- the shapes every page is built from ---------------------------------
 
-  /// A named group of rows: a quiet label, then one card holding them.
-  Widget _section(LumitTheme t, String title, List<Widget> rows) => Padding(
-        padding: const EdgeInsets.only(bottom: 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(2, 0, 0, 4),
-              child: Text(title, style: t.small.copyWith(color: t.textMuted)),
-            ),
-            Container(
-              decoration: BoxDecoration(
-                color: t.surface1,
-                borderRadius: BorderRadius.circular(t.tokens.floatRadius),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  for (var i = 0; i < rows.length; i++) ...[
-                    // A hairline between rows, never above the first or below
-                    // the last: the card's own edge is the boundary there.
-                    if (i > 0) Container(height: 1, color: t.hairline),
-                    rows[i],
-                  ],
-                ],
-              ),
-            ),
-          ],
-        ),
-      );
-
-  /// One row: what it is, a line saying what it does, and its control on the
-  /// right. An empty [description] leaves the second line out entirely rather
-  /// than reserving blank space for it.
-  Widget _row(
-    LumitTheme t,
-    String title,
-    String description,
-    Widget control,
-  ) =>
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(title, style: t.body),
-                  if (description.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 2),
-                      child: Text(description,
-                          style: t.small.copyWith(color: t.textMuted)),
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 12),
-            control,
-          ],
-        ),
-      );
 
   /// A cache budget: type a number of megabytes, or drag it, up to what the
   /// machine actually has (K-194).
@@ -1118,7 +1068,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
     required double ceilingMib,
     required ValueChanged<BigInt> onSet,
   }) =>
-      _row(
+      settingsRow(
         t,
         'Budget',
         description,

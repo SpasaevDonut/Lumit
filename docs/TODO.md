@@ -346,19 +346,6 @@ Light uses it; Transform's rows just aren't wired to it), **Radial blur's centre
 migration** from the grandfathered % of frame to px@comp (K-260 convention), and one-op
 writes for a paired keyframe toggle (two ops today).
 
-**Anti-aliasing in the renderer.** Edges of transformed layers, shape strokes and
-text stair-step, worst on a slow rotation. **Decided (owner, 2026-08-05, K-274): a
-project property, on by default, one value shared by preview and export** — it
-changes what a comp looks like, so it must travel with the file and match on
-another machine. **How** is pinned in
-[impl/anti-aliasing.md](impl/anti-aliasing.md) (written before the code, per the
-impl-note rule): MSAA on the composite target rather than supersampling, one
-persistent multisample texture resolving per pass, the four traps in the composite
-loop (the seed copy cannot cross sample counts; pipelines carry their count; every
-reader wants the resolved texture; motion blur and coverage draw geometry too), the
-adapter capability check, and the test plan. Still to build: all of it, plus the
-project field through the bridge and its Settings row.
-
 **The stale-fd race on a Linux Viewer resize** (`lumit-render/src/headless.rs`'s
 `shared_dmabuf` re-create, with `lumit-gpu/src/shared_linux.rs`'s `Drop`). The
 exported descriptor is closed when `SharedDmabuf` drops, but the descriptor

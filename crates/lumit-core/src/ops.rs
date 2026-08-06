@@ -306,6 +306,17 @@ pub enum Op {
     SetCacheLocation {
         location: Option<crate::model::CacheLocation>,
     },
+    /// Set how hard the renderer works at the edges of transformed layers
+    /// (K-274, docs/impl/anti-aliasing.md).
+    ///
+    /// An op like any other — undoable, journalled and saved with the project —
+    /// because it is a property of the project rather than a preference: it
+    /// changes what the comp looks like, in the preview and in the export
+    /// alike, so it has to travel in the file and be undoable like any other
+    /// change to the picture.
+    SetAntiAliasing {
+        anti_aliasing: crate::model::AntiAliasing,
+    },
     /// Edit a composition's settings after creation (AE: Composition
     /// Settings). Layers keep their spans; a shorter duration simply clips
     /// what plays.
@@ -985,6 +996,12 @@ pub fn apply(doc: &mut Document, op: &Op) -> Result<Op, OpError> {
         Op::SetCacheLocation { location } => {
             let previous = std::mem::replace(&mut doc.cache_location, location.clone());
             Ok(Op::SetCacheLocation { location: previous })
+        }
+        Op::SetAntiAliasing { anti_aliasing } => {
+            let previous = std::mem::replace(&mut doc.anti_aliasing, *anti_aliasing);
+            Ok(Op::SetAntiAliasing {
+                anti_aliasing: previous,
+            })
         }
         Op::SetAutoFolder { kind, folder } => {
             let slot = match kind {

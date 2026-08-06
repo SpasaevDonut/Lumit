@@ -1708,6 +1708,55 @@ mod tests {
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 
+    /// The anti-aliasing setting is a project property (K-274,
+    /// docs/impl/anti-aliasing.md §5, test 7): a non-default value must survive
+    /// a save and reload, and a `.lum` written before the field existed must
+    /// load at the default rather than failing.
+    #[test]
+    fn the_anti_aliasing_setting_round_trips_and_defaults_when_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("edit.lum");
+        let mut doc = doc_with_item();
+        doc.anti_aliasing = lumit_core::model::AntiAliasing::X8;
+        save(&doc, &path).unwrap();
+        let (loaded, _) = open(&path).unwrap();
+        assert_eq!(loaded.anti_aliasing, lumit_core::model::AntiAliasing::X8);
+
+        // An older file: the same project with the key removed entirely, which
+        // is exactly what a `.lum` written before this field looks like.
+        let older = dir.path().join("older.lum");
+        strip_document_key(&path, &older, "anti_aliasing");
+        let (old, _) = open(&older).unwrap();
+        assert_eq!(
+            old.anti_aliasing,
+            lumit_core::model::AntiAliasing::default(),
+            "a file with no setting must load at the default, not fail"
+        );
+    }
+
+    /// Rewrite a `.lum` with one key deleted from its document JSON — how a
+    /// test stands in for a file written by a build that predates a field.
+    fn strip_document_key(from: &Path, to: &Path, key: &str) {
+        let (_, manifest) = open(from).unwrap();
+        let mut zip = ZipArchive::new(File::open(from).unwrap()).unwrap();
+        let mut raw = String::new();
+        {
+            use std::io::Read;
+            zip.by_name("project.json")
+                .unwrap()
+                .read_to_string(&mut raw)
+                .unwrap();
+        }
+        let mut value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert!(
+            value.as_object_mut().unwrap().remove(key).is_some(),
+            "{key} was not in the saved document, so removing it proves nothing"
+        );
+        let doc: Document = serde_json::from_value(value).unwrap();
+        let _ = manifest;
+        save(&doc, to).unwrap();
+    }
+
     #[test]
     fn manifest_is_first_entry() {
         let dir = tempfile::tempdir().unwrap();

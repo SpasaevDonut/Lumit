@@ -40,6 +40,20 @@ pub struct Realiser<'a> {
     /// inherit it with no signature ripple. Export always builds with 1.0, so
     /// the K-031 preview == export identity is untouched at full scale.
     pub render_scale: f32,
+    /// The project's anti-aliasing sample count (K-274,
+    /// docs/impl/anti-aliasing.md): how many coverage samples per pixel the
+    /// composite is drawn with. 1 is the picture Lumit made before the setting
+    /// existed. A field beside [`Self::render_scale`], for the same reason —
+    /// the nested, below and adjustment recursions inherit it with no signature
+    /// ripple — but **not** like it in one way that matters: `render_scale`
+    /// differs between preview and export by design, and this must not. Both
+    /// paths read the same project field, which is what keeps the K-031
+    /// preview-equals-export identity true with anti-aliasing on.
+    ///
+    /// Already run through [`lumit_gpu::supported_sample_count`] by whoever
+    /// built the realiser: by the time it is here it is a count this adapter
+    /// really offers.
+    pub samples: u32,
     /// The frame's recorder, when this render is being watched (docs/13 §7.1):
     /// it counts finished layers for the Viewer's progress bar and measures
     /// each layer and effect for the render-time indicators. `None` — every
@@ -419,6 +433,7 @@ impl Realiser<'_> {
             cam_mat,
             None,
             self.render_scale,
+            self.samples,
         )
     }
 
@@ -548,6 +563,7 @@ impl Realiser<'_> {
                         l.pre,
                         cam_mat,
                         self.render_scale,
+                        self.samples,
                     )
                 })
             })
@@ -697,6 +713,7 @@ impl Realiser<'_> {
             cam_mat,
             seed.as_ref(),
             self.render_scale,
+            self.samples,
         )
     }
 }

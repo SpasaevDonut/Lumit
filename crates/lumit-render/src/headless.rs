@@ -733,15 +733,17 @@ impl HeadlessRenderer {
         };
         let out = {
             let realiser = crate::realise::Realiser {
-                ctx: lumit_gpu::GpuContext::from_parts(
-                    self.gpu.device.clone(),
-                    self.gpu.queue.clone(),
-                ),
+                ctx: self.gpu.clone_handle(),
                 engine: &parts.colour,
                 compositor: &parts.compositor,
                 fx: &parts.fx,
                 lut_cache: &parts.lut_cache,
                 render_scale: composite_scale(quality),
+                // The project's setting, resolved against what this adapter
+                // will actually give (K-274). Preview and export both read the
+                // same document field — unlike `render_scale`, which is a
+                // preview-only reduction — so the two stay the same picture.
+                samples: self.gpu.sample_count(doc.anti_aliasing.samples()),
                 profiler: watcher.as_ref(),
             };
             let pixels_by_layer: HashMap<Uuid, &crate::decode::CompLayerPixels> = retained
@@ -3024,6 +3026,20 @@ mod tests {
                     .push(lumit_core::fx::instantiate("posterize_time").unwrap());
                 comp.layers.insert(0, adj);
                 (doc, comp_id, 15)
+            }),
+            // The anti-aliasing row (K-274, docs/impl/anti-aliasing.md §5,
+            // test 3): the count is a PROJECT property, so both walks read the
+            // same one — an export that anti-aliased differently from the
+            // preview is exactly what this matrix exists to catch. A rotated
+            // layer, because a rotated edge is what the setting changes.
+            ("anti-aliasing on a rotated layer", |w, h, red, blue| {
+                let (mut doc, comp_id, _) = matrix_base(w, h, red);
+                doc.anti_aliasing = lumit_core::model::AntiAliasing::X4;
+                let (_, top) = matrix_top(&mut doc, comp_id, blue);
+                let comp = doc.comp_mut(comp_id).unwrap();
+                let l = comp.layers.iter_mut().find(|l| l.id == top).unwrap();
+                l.transform.rotation = Property::fixed(17.0);
+                (doc, comp_id, 0)
             }),
             ("camera over a 3d layer", |w, h, red, blue| {
                 let (mut doc, comp_id, _) = matrix_base(w, h, red);

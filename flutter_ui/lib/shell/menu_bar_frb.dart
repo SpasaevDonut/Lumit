@@ -44,6 +44,7 @@ import 'comp_settings_frb.dart';
 import 'precompose_dialog_frb.dart';
 import 'export_dialog_frb.dart';
 import 'recovery_dialog_frb.dart';
+import 'project_settings_frb.dart';
 import 'settings_window_frb.dart';
 
 /// One row of a menu: a label with an action, a submenu, or a divider.
@@ -269,6 +270,12 @@ class LumitMenuBarFrb extends StatelessWidget {
           category: 'Edit',
           run: () => showSettingsWindowFrb(context),
         ),
+        if (app.project case final project?)
+          PaletteCommand(
+            label: 'Project settings…',
+            category: 'File',
+            run: () => showProjectSettingsFrb(context, project),
+          ),
       ],
     );
   }
@@ -352,6 +359,15 @@ List<MenuSection> lumitMenus(
           action: 'file.import'),
       MenuEntry('Export…', comp == null ? null : () => exportFrb(context),
           action: 'file.export'),
+      const MenuEntry.divider(),
+      // The project's own settings, kept apart from Settings because Settings
+      // is this machine's and these travel in the `.lum` (K-286).
+      MenuEntry(
+          'Project settings…',
+          project == null
+              ? null
+              : () => showProjectSettingsFrb(context, project),
+          action: 'project.settings'),
       const MenuEntry.divider(),
       // Not in the specified list, and kept: recovering work beside a project
       // is the one command whose absence costs a day's work.

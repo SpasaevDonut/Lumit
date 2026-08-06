@@ -1623,7 +1623,26 @@ attribute choice is remembered but overridden by a multiple selection, which can
 refusal from the engine leaves the dialogue open saying so, rather than closing on a move that
 did not happen.
 
-### 13.5 Floating windows (K-242)
+### 13.5 The Project settings window (K-286)
+
+**File ▸ Project settings…** (`Mod+Alt+Shift+K`), disabled with no project open, holds the
+values that belong to the *project* rather than to this machine — saved inside the `.lum`,
+undoable like any other edit, and the same when the file is opened somewhere else. It is a
+plain form in the same shape as a Settings page (a named section, rows of what-it-is,
+what-it-does, control-on-the-right) in a window of its own, and it exists so that §15's
+"almost every value there is machine-local" can go back to being simply true.
+
+- **Anti-aliasing** — the number of coverage samples per pixel the composite is drawn with
+  (Off / 2 / 4 / 8, default 8). **One value serves the preview and the export**, which is the
+  K-031 identity. Where the graphics card cannot manage the count asked for, a second row
+  states what is being used instead, in the calm voice; the project keeps the value its author
+  chose and nothing is rewritten behind the user's back.
+
+Colour management and export defaults land here when they are built, not in Settings. The disk
+cache's *Applies to* row stays in Settings ▸ Performance (K-215): choosing between the two
+scopes is that control's whole job, so it is the one that stands in both.
+
+### 13.6 Floating windows (K-242)
 
 Every window that floats over the shell — Settings, the theme editor, Export, Composition
 settings, New composition, Pre-compose — opens centred and **can be dragged anywhere in the
@@ -1681,8 +1700,10 @@ Binding, from the household mandate; these override convenience everywhere.
 
 ### Settings inventory (K-031/K-032 anchors)
 
-The Settings window groups, minimum set — every value here is machine-local (never in the
-project file, [10-FILE-FORMAT.md](10-FILE-FORMAT.md) §2):
+The Settings window groups, minimum set. Almost every value here is machine-local (never in
+the project file, [10-FILE-FORMAT.md](10-FILE-FORMAT.md) §2); the exceptions are the few that
+change what a composition *looks like* or where its own frames are parked, which have to
+travel in the `.lum` and are marked below:
 
 - **Performance**: RAM budget for Lumit (default 60% of system, slider + absolute),
   VRAM budget (default 70%), CUDA acceleration on/off (per K-014 it is only ever an
@@ -1697,6 +1718,8 @@ project file, [10-FILE-FORMAT.md](10-FILE-FORMAT.md) §2):
   header text so users understand what the app guarantees.
 - **Export**: default preset, export priority default (background/balanced/fast), encoder
   preference order, filename template.
+- **Rendering** — *not here at all*: it is the project's, not this machine's, so it lives in
+  the **Project settings** window instead (§13.5, K-286).
 - **Keymap**, **Interface** (UI scale, tooltips, reduced motion follows OS or override),
   **Autosave** (interval, copies kept), **Plugins** (search paths, disabled list,
   per-plugin overrides).
@@ -1705,7 +1728,10 @@ project file, [10-FILE-FORMAT.md](10-FILE-FORMAT.md) §2):
 sidebar of pages, each a stack of named sections, each section a card of rows carrying what
 the setting is, a line saying what it does, and its control on the right. Its pages are
 **General** (reset workspace, version and build), **Appearance** (colour scheme, corners,
-interface motion), **Interface** (UI scale, tooltips, and whether the Effect controls panel
+interface motion, and the Scopes and Viewer toggles — themed scope colours, themed surround,
+and whether the Viewer smooths the picture when it is zoomed past 1:1, all three off by
+default: a magnified pixel is a square, because looking at the pixels is what zooming in is
+for), **Interface** (UI scale, tooltips, and whether the Effect controls panel
 repeats the layer's Source, Transform and Retime rows — off by default, since the Timeline's
 fold-out already shows them), and **Performance** (playback mode, quality tier and reset,
 and the RAM and VRAM frame-cache budgets with their readouts and Clear buttons). The two
@@ -1796,6 +1822,7 @@ app-wide, so a list, a field or a canvas is free to use them for moving within i
 | Global | `Ctrl+Shift+P` | Command palette |
 | Global | `Ctrl+M` | Add active comp to export queue |
 | Global | `Ctrl+K` | Composition settings |
+| Global | `Ctrl+Alt+Shift+K` | Project settings (K-286) |
 | Global | `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / redo |
 | Global | `Ctrl+Alt+N` / `Ctrl+N` | New project / new composition (After Effects' pairing) |
 | Global | `Ctrl+O` | Open a project |

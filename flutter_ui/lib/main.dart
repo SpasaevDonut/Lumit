@@ -18,6 +18,7 @@ import 'package:lumit_flutter/shell/precompose_dialog_frb.dart';
 import 'package:lumit_flutter/shell/dock_widget.dart';
 import 'package:lumit_flutter/shell/first_run_frb.dart';
 import 'package:lumit_flutter/shell/menu_bar_frb.dart';
+import 'package:lumit_flutter/shell/project_settings_frb.dart';
 import 'package:lumit_flutter/shell/settings_window_frb.dart';
 import 'package:lumit_flutter/shell/status_line_frb.dart';
 import 'package:lumit_flutter/shell/tool_bar_frb.dart';
@@ -1612,6 +1613,12 @@ class _LumitAppViewState extends State<LumitAppView> {
         ui.clearSelection();
       case 'app.settings':
         showSettingsWindowFrb(context);
+      case 'project.settings':
+        if (project == null) {
+          handled = false;
+        } else {
+          showProjectSettingsFrb(context, project);
+        }
       case 'file.save':
         // Ctrl+S goes through exactly the same call the File menu's Save does
         // (K-203) — a shortcut with its own path to disk is a second save to

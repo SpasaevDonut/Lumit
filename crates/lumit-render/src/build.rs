@@ -1449,12 +1449,13 @@ mod render_below_at_tests {
         let fx = lumit_gpu::fx::FxEngine::new(&ctx);
         let lut_cache = std::cell::RefCell::new(crate::fxops::LutCache::default());
         let realiser = Realiser {
-            ctx: lumit_gpu::GpuContext::from_parts(ctx.device.clone(), ctx.queue.clone()),
+            ctx: ctx.clone_handle(),
             engine: &engine,
             compositor: &compositor,
             fx: &fx,
             lut_cache: &lut_cache,
             render_scale: 1.0,
+            samples: 1,
             profiler: None,
         };
         let comp = Composition {
@@ -1774,12 +1775,13 @@ mod render_below_at_tests {
         let fx = lumit_gpu::fx::FxEngine::new(&ctx);
         let lut_cache = std::cell::RefCell::new(crate::fxops::LutCache::default());
         let realiser = Realiser {
-            ctx: lumit_gpu::GpuContext::from_parts(ctx.device.clone(), ctx.queue.clone()),
+            ctx: ctx.clone_handle(),
             engine: &engine,
             compositor: &compositor,
             fx: &fx,
             lut_cache: &lut_cache,
             render_scale: 1.0,
+            samples: 1,
             profiler: None,
         };
         let comp = posterize_comp();
@@ -1920,12 +1922,13 @@ mod render_below_at_tests {
         let fx = lumit_gpu::fx::FxEngine::new(&ctx);
         let lut_cache = std::cell::RefCell::new(crate::fxops::LutCache::default());
         let realiser = Realiser {
-            ctx: lumit_gpu::GpuContext::from_parts(ctx.device.clone(), ctx.queue.clone()),
+            ctx: ctx.clone_handle(),
             engine: &engine,
             compositor: &compositor,
             fx: &fx,
             lut_cache: &lut_cache,
             render_scale: 1.0,
+            samples: 1,
             profiler: None,
         };
         let doc = Document::new();
