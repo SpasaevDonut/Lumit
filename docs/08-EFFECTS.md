@@ -52,13 +52,23 @@ effect's maths in a release invalidates stale cached frames rather than mixing g
   until a file is chosen, the one sanctioned exception to the "no no-op default" rule above,
   since a file the user must supply cannot have a tasteful default.
 - **Layer-reference** parameters (K-123, [impl/layer-input.md](impl/layer-input.md)) name
-  **another layer** in the same composition as an auxiliary picture an effect samples — a
-  depth pass for Depth of field (§3.22). The stored value is an optional layer id (the shape
+  a layer in the same composition as an auxiliary picture an effect samples — a
+  depth pass for Depth of field (§3.22), a bright-source matte for the Lens flare (§3.27).
+  The stored value is an optional layer id (the shape
   a matte reference uses, §5.1 of [03-DATA-MODEL.md](03-DATA-MODEL.md)), static in v1. The
   host renders that layer alone and threads its texture to the effect, exactly as a matte
   layer is rendered alone. An **unset** or **dangling** reference resolves to identity — the
   same sanctioned exception to the "no no-op default" rule, since a layer the user must
-  supply cannot have a tasteful default. Beside the picker sits a **source** combobox
+  supply cannot have a tasteful default.
+  **This layer** (K-288): a reference may name the layer the effect is *on*, and then it is
+  not a second render at all — it is the effect's own input at its point in the stack. On an
+  ordinary layer that is the picture the effect is about to process; on an **adjustment
+  layer** it is the composite of everything below, which is the only picture an adjustment
+  layer has, and which is what makes a matte-sourced effect usable there. A schema may
+  declare this the *default* for one of its layer references (the Lens flare's Matte layer
+  does), in which case a fresh instance added to a layer starts pointed at that layer; the
+  source combobox below does not apply to a this-layer reference, since nothing is
+  re-rendered. Beside the picker sits a **source** combobox
   (K-142, revising K-125's before/after bool) choosing *what of* the referenced layer is
   read: **None** (its raw footage/solid — no masks, no effects), **Masks** (its source plus
   its masks) or **Effects and masks** (its finished picture — a graded or blurred input).
@@ -1216,8 +1226,9 @@ The depth layer only needs to be **in-span**
 preview decode planner and export decode a hidden layer-input reference exactly as they do a
 matte source. The bokeh is a plain flat disc; shaped, bright-rimmed highlights are the
 planned "DOF PRO" second effect. The depth layer is chosen with the inspector's Layer picker
-(a dropdown of the comp's other layers), with the Depth source combobox beside it; an unset
-or dangling reference is a no-op.
+(a dropdown of the comp's layers, its own included — K-288, where it reads the effect's
+own input), with the Depth source combobox beside it; an unset or dangling reference is a
+no-op.
 
 ### 3.23 Invert
 
@@ -1463,15 +1474,35 @@ the tail:
 |---|---|
 | *Lens options* (twirl) | Focus (m) (0.5–100 slider, hard min 0.2 — the focus distance; K-260, refocusing shifts the sensor plane and visibly rearranges the whole ghost train, the "same lens, different focus" look), Anamorphic squeeze (0.5–3), Blades (int 3–16), Rotation, Coating (0 uncoated → 1 fully coated), Roundness, Softness |
 | *Flare options* (twirl) | Ghost intensity (0–4), Ghost softness (0–1 slider, % of the frame diagonal — FlareSim's Ghost Blur, K-261: a touch of out-of-focus softness on the ghost train; default 0.02 since K-264 — taste, not cover: the vertex-smoothed density and the multisampled raster leave nothing for it to hide, and **0 is a clean setting**), Max ghosts (int 0–200 — the brightest survive), **Detail** (0.25–4 slider, default 1; K-265 — multiplies the Quality tier's ray grid AND its traced wavelength count through one shared pair of helpers, so the budget is the user's dial: a lens whose rims still show structure buys more without jumping a tier, a preview buys less), Dispersion (0–2), Starburst intensity (0–4), Scale (0.05–20 — the WHOLE flare about the optical centre, ghosts and starbursts together) |
-| *Source* | Source type (Manual light / Matte / Lights); **Light tint** (a colour, with picker and eyedropper — multiplies every light in every mode); then, shown conditionally: **Use source colour** (Matte *and* Lights) and — Matte only — Matte layer (a layer reference), Threshold (linear luma, slider 0–1, open above), Threshold softness |
+| *Source* | Source type (Manual light / Matte / Lights); **Light tint** (a colour, with picker and eyedropper — multiplies every light in every mode); then, shown conditionally: **Use source colour** (Matte *and* Lights) and — Matte only — Matte layer (a layer reference, defaulting to **this layer**, K-288), Threshold (linear luma, slider 0–1, open above), Threshold softness |
 
-and **Quality** (Draft / Normal / High / Ultra), **Background** (Transparent /
-Black, K-258 — Black makes the output opaque, the flare-element-over-black
-export for Screen/Add workflows; the neutral passthroughs stay bit-exact
-regardless), **Mix**. Blades and Max
-ghosts are the first **Int-kind** parameters (§1.2): stored and animated as
-Float scalars, but declared whole-number so the row steps, displays and
-commits integers.
+and **Quality** (Draft / Normal / High / Ultra), **Blend** (K-289 — how the
+flare element combines with the layer under it; see below), **Mix**. Blades
+and Max ghosts are the first **Int-kind** parameters (§1.2): stored and
+animated as Float scalars, but declared whole-number so the row steps,
+displays and commits integers.
+
+**Blend (K-289, superseding K-258's Background pair).** Everything the effect
+renders is a black-backed light **element**: a frame that is pure black where
+there is no flare. Blend says how that element combines with the layer
+beneath it — the same question a layer's Mode dropdown asks — and offers the
+curated light-combine set Echo does (§3.13, T21), for the same reason: the
+HSL / burn / dodge modes are ill-defined on a premultiplied light overlay, so
+they are not listed. In code order: **Normal**, a divider, then **Add**
+(default), Screen, Multiply, Overlay, Soft light, Hard light, Lighten,
+Darken, Difference, Exclusion, Subtract, Divide. Every mode runs per channel
+on all four channels in premultiplied linear light, and the result's alpha
+saturates at 1.
+
+**Normal** heads the list because it is the odd one out: the element
+*replaces* the layer, black background and all, so you see the flare on
+opaque black. That is exactly what Background = Black existed to produce —
+the flare-element-over-black export for a Screen/Add workflow — and it is
+what a project saved with that option migrates to. **Add** is light
+addition, bit-identical to what the effect did before this menu existed
+(`out = in + flare`, alpha saturating), so a project saved with the old
+default renders the same pixels. The neutral passthroughs (Intensity 0, Mix
+0) stay bit-exact whatever the menu holds.
 
 **Source modes (K-257).** **Manual light** is the tracked-point workflow: one
 white source at the Light point. **Matte** detects the flare's sources in a
@@ -1481,9 +1512,14 @@ the source, gated by the soft Threshold; each anchor's brightness is the
 **summed flux of every gated detection tile nearest it** (K-267), so a
 practical spanning half the frame finally weighs as its whole lit area
 where it used to count as one pixel, while a true point source reads
-exactly as before; the matte layer renders alone
-exactly as a DoF depth pass does (its own masks and effects apply, K-142
-default) and is expected to be hidden. **Lights** is prepared for light
+exactly as before. The matte layer defaults to **this layer** — the layer
+the effect is on (K-288) — because "flare the lights in this picture" is
+what asking for a matte source nearly always means; that reads the effect's
+own input at its point in the stack rather than re-rendering anything, and
+on an **adjustment layer** it is the composite of everything below, which is
+the only picture an adjustment layer has. Point it at any *other* layer and
+that layer renders alone exactly as a DoF depth pass does (its own masks and
+effects apply, K-142 default) and is expected to be hidden. **Lights** is prepared for light
 layers: the option exists and resolves as Manual until they land, so projects
 built against it survive the wiring.
 

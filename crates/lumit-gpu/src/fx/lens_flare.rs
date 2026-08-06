@@ -82,8 +82,9 @@ pub struct LensFlareOp {
     pub light_tint: [f32; 3],
     /// Matte/Lights: whether a detected source's own colour tints its flare.
     pub use_source_colour: bool,
-    /// 1 = Black background: the output is made opaque (K-258).
-    pub background: u32,
+    /// How the flare element combines with the layer under it — an index
+    /// into `lumit_core::fx::lens_flare::BLEND_OPTIONS` (K-289).
+    pub blend: u32,
     /// 0..1.
     pub mix: f32,
     /// `lumit_core::fx::lens_flare::bake_key` of the op — the bake cache key.
@@ -273,6 +274,11 @@ impl<T: Clone> BakeCache<T> {
     }
 }
 
+/// How many blend modes the combine kernel's `flare_blend` implements — the
+/// length of `lumit_core::fx::lens_flare::BLEND_OPTIONS` (K-289), pinned by
+/// test. An index past the last option clamps rather than faulting.
+pub const BLEND_COUNT: u32 = 13;
+
 /// Most flare sources a frame renders — must equal
 /// `lumit_core::fx::lens_flare::MAX_LIGHTS` (pinned by test).
 pub const MAX_LIGHTS: u32 = 16;
@@ -382,7 +388,7 @@ struct CombineParams {
     fscale: f32,
     mix_amt: f32,
     light_count: u32,
-    background: u32,
+    blend: u32,
 }
 
 #[repr(C)]
@@ -1544,7 +1550,7 @@ impl FxEngine {
             fscale,
             mix_amt: op.mix,
             light_count,
-            background: op.background.min(1),
+            blend: op.blend.min(BLEND_COUNT - 1),
         };
         let cp_buf = ctx
             .device

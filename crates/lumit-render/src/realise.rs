@@ -14,7 +14,7 @@
 //! Because every caller drives this one walk, a comp looks the same in the
 //! viewport, in Flutter, and in the exported file (K-031).
 
-use crate::draw::{AccumulationBelow, CompLayerDraw, DofInputDraw, DrawSource};
+use crate::draw::{AccumulationBelow, CompLayerDraw, DrawSource, LayerInputDraw};
 use crate::fxops::LoadedLut;
 
 /// The GPU primitives that turn a comp draw list into a linear texture,
@@ -145,23 +145,33 @@ impl Realiser<'_> {
             .collect()
     }
 
-    /// Render a layer's depth-of-field depth inputs (docs/impl/layer-input.md
-    /// §2): each `DofInputDraw` (the referenced layer's source pixels) is
-    /// uploaded, linearised and resampled into the effect's working raster
-    /// `(w, h)` through the shared [`crate::fxops::render_layer_input`], so the
-    /// parallel `layer_inputs` handed to `run_ops` is 1:1 with the stack's
-    /// `Dof` ops and aligned with the layer texture the kernel blurs. Export
-    /// renders these identically (K-031).
-    fn render_dof_inputs(
+    /// Render a layer's layer-input slots (docs/impl/layer-input.md §2) — the
+    /// depth passes of its `dof` effects, the matte sources of its Lens
+    /// flares. Each [`LayerInputDraw::Layer`] (the referenced layer's source
+    /// pixels) is uploaded, linearised and resampled into the effect's
+    /// working raster `(w, h)` through the shared
+    /// [`crate::fxops::render_layer_input`], so the parallel list handed to
+    /// `run_ops` is 1:1 with the stack's ops and aligned with the layer
+    /// texture the kernel reads. Export renders these identically (K-031).
+    ///
+    /// [`LayerInputDraw::ThisLayer`] (K-288) renders nothing here: it names
+    /// the texture `run_ops` is already carrying, which only `run_ops` can
+    /// hand over, so it passes through as [`LayerInput::ThisLayer`].
+    fn render_layer_inputs(
         &self,
-        inputs: &[Option<DofInputDraw>],
+        inputs: &[LayerInputDraw],
         w: u32,
         h: u32,
-    ) -> Vec<Option<wgpu::Texture>> {
+    ) -> Vec<crate::fxops::LayerInput> {
+        use crate::fxops::LayerInput;
         inputs
             .iter()
             .map(|slot| {
-                let d = slot.as_ref()?;
+                let d = match slot {
+                    LayerInputDraw::Absent => return LayerInput::Absent,
+                    LayerInputDraw::ThisLayer => return LayerInput::ThisLayer,
+                    LayerInputDraw::Layer(d) => d,
+                };
                 // A Precomp input realises its nested comp exactly as a
                 // Precomp layer's picture does (K-266); anything else is
                 // the uploaded source pixels.
@@ -201,7 +211,7 @@ impl Realiser<'_> {
                         None,
                     )
                 };
-                Some(crate::fxops::render_layer_input(
+                LayerInput::Texture(crate::fxops::render_layer_input(
                     self.compositor,
                     &self.ctx,
                     w,
@@ -268,8 +278,8 @@ impl Realiser<'_> {
             // identical to export (K-031). The adjustment stack runs on the
             // comp-sized composite, so its depth inputs resample to comp size.
             let luts = self.load_luts(&l.lut_files);
-            let layer_inputs = self.render_dof_inputs(&l.dof_inputs, tw, th);
-            let flare_mattes = self.render_dof_inputs(&l.flare_mattes, tw, th);
+            let layer_inputs = self.render_layer_inputs(&l.dof_inputs, tw, th);
+            let flare_mattes = self.render_layer_inputs(&l.flare_mattes, tw, th);
             let flare_lens = self.load_flare_lens(&l.flare_lens_files);
             // The stack was resolved against the comp raster; this render
             // target may be smaller (reduced-resolution preview), and every
@@ -505,8 +515,8 @@ impl Realiser<'_> {
                 // The depth-of-field depth inputs, resampled to this layer's
                 // working raster (w, h), 1:1 with the stack's Resolved::Dof ops
                 // (§3.22); the same render export runs (K-031).
-                let layer_inputs = self.render_dof_inputs(&l.dof_inputs, w, h);
-                let flare_mattes = self.render_dof_inputs(&l.flare_mattes, w, h);
+                let layer_inputs = self.render_layer_inputs(&l.dof_inputs, w, h);
+                let flare_mattes = self.render_layer_inputs(&l.flare_mattes, w, h);
                 let flare_lens = self.load_flare_lens(&l.flare_lens_files);
                 // A stack resolved against a raster wider than the one it is
                 // about to run on (a Precomp layer's, under reduced-resolution

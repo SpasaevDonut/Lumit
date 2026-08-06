@@ -100,12 +100,27 @@ pub enum ParamKind {
     },
     /// A reference to another layer in the composition (docs/impl/
     /// layer-input.md), sampled as an auxiliary picture — the depth pass a
-    /// depth-of-field effect reads. The value carries an
-    /// [`EffectValue::Layer`] (an optional layer id); the caller renders that
-    /// layer alone at comp size and threads its texture beside the resolved
-    /// op, exactly as a matte layer is rendered alone. Unset (or a dangling
-    /// reference) is a labelled no-op, never a fault.
-    Layer {},
+    /// depth-of-field effect reads, the bright-source matte a Lens flare
+    /// detects lights in. The value carries an [`EffectValue::Layer`] (an
+    /// optional layer id); the caller renders that layer alone at comp size
+    /// and threads its texture beside the resolved op, exactly as a matte
+    /// layer is rendered alone. Unset (or a dangling reference) is a
+    /// labelled no-op, never a fault.
+    ///
+    /// **This layer** (K-288): a reference to the layer the effect is *on*
+    /// is not a re-render of that layer — it is the effect's own input at
+    /// its point in the stack. On an ordinary layer that is the picture the
+    /// effect is about to process; on an **adjustment layer** it is the
+    /// composite of everything below, which is the only thing an adjustment
+    /// layer has to look at. `self_default` declares that a fresh instance
+    /// should start pointed at its own layer (the Lens flare's matte, whose
+    /// natural reading is "the lights in this picture"), rather than unset.
+    Layer {
+        /// A fresh instance added to a layer starts referencing that layer
+        /// (see the type docs). `false` leaves it unset, the historical
+        /// no-op default — a depth pass is never the picture itself.
+        self_default: bool,
+    },
 }
 
 /// How a transform- or displacement-domain effect treats the border pixels

@@ -317,7 +317,10 @@ pub fn list_parameters(effect: String) -> Vec<BridgeParamInfo> {
                     filter: filter.iter().map(|f| (*f).to_owned()).collect(),
                     filter_name: filter_name.to_owned(),
                 },
-                ParamKind::Layer {} => BridgeParamKind::Layer,
+                // `self_default` is an engine-side instantiation detail
+                // (K-288) — the panel draws the same picker either way, and
+                // the value it edits already carries the layer id.
+                ParamKind::Layer { .. } => BridgeParamKind::Layer,
             },
         })
         .collect()

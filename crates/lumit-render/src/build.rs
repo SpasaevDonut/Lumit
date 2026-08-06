@@ -20,7 +20,8 @@
 
 use crate::decode::CompLayerPixels;
 use crate::draw::{
-    AccumulationBelow, CompLayerDraw, DofInputDraw, DrawSource, MatteDraw, TemporalBelow,
+    AccumulationBelow, CompLayerDraw, DofInputDraw, DrawSource, LayerInputDraw, MatteDraw,
+    TemporalBelow,
 };
 use crate::export::mask_rgba;
 use crate::realise::Realiser;
@@ -421,7 +422,7 @@ pub fn build_comp_draws_at(
     };
 
     let dof_inputs_for =
-        |effects: &[lumit_core::model::EffectInstance]| -> Vec<Option<DofInputDraw>> {
+        |owner: uuid::Uuid, effects: &[lumit_core::model::EffectInstance]| -> Vec<LayerInputDraw> {
             use lumit_core::model::EffectNamespace;
             effects
                 .iter()
@@ -431,58 +432,67 @@ pub fn build_comp_draws_at(
                         && e.effect.match_name == "dof"
                 })
                 .map(|e| {
-                    let id = e.layer_ref("depth")?;
-                    let src = comp.layers.iter().find(|l| l.id == id)?;
-                    if !in_span(src) {
-                        return None;
+                    // "This layer" (K-288): a reference to the layer the effect
+                    // is ON is not a second render — it is the effect's own
+                    // input, which `run_ops` already holds.
+                    if e.layer_ref("depth") == Some(owner) {
+                        return LayerInputDraw::ThisLayer;
                     }
-                    // A Precomp depth renders its comp (K-266).
-                    if let Some(nested) = nested_input_for(src) {
-                        return Some(nested);
-                    }
-                    let mode = e.layer_source("depth");
-                    // Depth source (K-142). None samples the depth layer's raw
-                    // pixels — clear its masks so `pixels_for` skips them; Masks
-                    // and Effects and masks keep them.
-                    let (rgba, tex_w, tex_h, natural) = if mode.applies_masks() {
-                        pixels_for(src)?
-                    } else {
-                        let mut bare = src.clone();
-                        bare.masks.clear();
-                        pixels_for(&bare)?
+                    let slot = || -> Option<DofInputDraw> {
+                        let id = e.layer_ref("depth")?;
+                        let src = comp.layers.iter().find(|l| l.id == id)?;
+                        if !in_span(src) {
+                            return None;
+                        }
+                        // A Precomp depth renders its comp (K-266).
+                        if let Some(nested) = nested_input_for(src) {
+                            return Some(nested);
+                        }
+                        let mode = e.layer_source("depth");
+                        // Depth source (K-142). None samples the depth layer's raw
+                        // pixels — clear its masks so `pixels_for` skips them; Masks
+                        // and Effects and masks keep them.
+                        let (rgba, tex_w, tex_h, natural) = if mode.applies_masks() {
+                            pixels_for(src)?
+                        } else {
+                            let mut bare = src.clone();
+                            bare.masks.clear();
+                            pixels_for(&bare)?
+                        };
+                        // Effects and masks (K-142): resolve the depth layer's own
+                        // stack at its layer time so render_dof_inputs runs it on the
+                        // depth texture before resampling. Uses the depth layer's
+                        // decode scale (its px@comp radii stay honest), the same
+                        // resolve export uses (K-031). Empty otherwise.
+                        let (fx, lut_files) = if mode.folds_effects() && src.switches.fx {
+                            let slt = t_comp - src.start_offset.0.to_f64();
+                            let comp_diag =
+                                ((comp.width as f32).powi(2) + (comp.height as f32).powi(2)).sqrt();
+                            let scale = tex_w as f32 / natural.0.max(1.0);
+                            let markers = lumit_core::fx::MarkerContext::for_layer(comp, src);
+                            (
+                                lumit_core::fx::resolve_stack(
+                                    &src.effects,
+                                    slt,
+                                    comp_diag * scale,
+                                    scale,
+                                    &markers,
+                                ),
+                                lut_files(&src.effects, slt),
+                            )
+                        } else {
+                            (Vec::new(), Vec::new())
+                        };
+                        Some(DofInputDraw {
+                            rgba,
+                            tex_w,
+                            tex_h,
+                            fx,
+                            lut_files,
+                            nested: None,
+                        })
                     };
-                    // Effects and masks (K-142): resolve the depth layer's own
-                    // stack at its layer time so render_dof_inputs runs it on the
-                    // depth texture before resampling. Uses the depth layer's
-                    // decode scale (its px@comp radii stay honest), the same
-                    // resolve export uses (K-031). Empty otherwise.
-                    let (fx, lut_files) = if mode.folds_effects() && src.switches.fx {
-                        let slt = t_comp - src.start_offset.0.to_f64();
-                        let comp_diag =
-                            ((comp.width as f32).powi(2) + (comp.height as f32).powi(2)).sqrt();
-                        let scale = tex_w as f32 / natural.0.max(1.0);
-                        let markers = lumit_core::fx::MarkerContext::for_layer(comp, src);
-                        (
-                            lumit_core::fx::resolve_stack(
-                                &src.effects,
-                                slt,
-                                comp_diag * scale,
-                                scale,
-                                &markers,
-                            ),
-                            lut_files(&src.effects, slt),
-                        )
-                    } else {
-                        (Vec::new(), Vec::new())
-                    };
-                    Some(DofInputDraw {
-                        rgba,
-                        tex_w,
-                        tex_h,
-                        fx,
-                        lut_files,
-                        nested: None,
-                    })
+                    slot().map_or(LayerInputDraw::Absent, LayerInputDraw::Layer)
                 })
                 .collect()
         };
@@ -494,7 +504,7 @@ pub fn build_comp_draws_at(
     // own masks and effects apply per its layer_source mode (default:
     // effects and masks — a user grading their matte expects the grade).
     let flare_mattes_for =
-        |effects: &[lumit_core::model::EffectInstance]| -> Vec<Option<DofInputDraw>> {
+        |owner: uuid::Uuid, effects: &[lumit_core::model::EffectInstance]| -> Vec<LayerInputDraw> {
             use lumit_core::model::{EffectNamespace, EffectValue};
             effects
                 .iter()
@@ -505,54 +515,65 @@ pub fn build_comp_draws_at(
                 })
                 .map(|e| {
                     if !matches!(e.param("source_type"), Some(EffectValue::Choice(1))) {
-                        return None;
+                        return LayerInputDraw::Absent;
                     }
-                    let id = e.layer_ref("matte")?;
-                    let src = comp.layers.iter().find(|l| l.id == id)?;
-                    if !in_span(src) {
-                        return None;
+                    // "This layer" (K-288), the default a fresh flare carries:
+                    // detect the lights in the effect's OWN input rather than
+                    // rendering a second layer. On an adjustment layer that
+                    // input is the composite of everything below — which is
+                    // why a flare works on an adjustment layer at all now.
+                    if e.layer_ref("matte") == Some(owner) {
+                        return LayerInputDraw::ThisLayer;
                     }
-                    // A Precomp matte renders its comp (K-266) — "a white
-                    // circle in a precomp" is the natural way to author a
-                    // flare source, and it detected nothing before this.
-                    if let Some(nested) = nested_input_for(src) {
-                        return Some(nested);
-                    }
-                    let mode = e.layer_source("matte");
-                    let (rgba, tex_w, tex_h, natural) = if mode.applies_masks() {
-                        pixels_for(src)?
-                    } else {
-                        let mut bare = src.clone();
-                        bare.masks.clear();
-                        pixels_for(&bare)?
+                    let slot = || -> Option<DofInputDraw> {
+                        let id = e.layer_ref("matte")?;
+                        let src = comp.layers.iter().find(|l| l.id == id)?;
+                        if !in_span(src) {
+                            return None;
+                        }
+                        // A Precomp matte renders its comp (K-266) — "a white
+                        // circle in a precomp" is the natural way to author a
+                        // flare source, and it detected nothing before this.
+                        if let Some(nested) = nested_input_for(src) {
+                            return Some(nested);
+                        }
+                        let mode = e.layer_source("matte");
+                        let (rgba, tex_w, tex_h, natural) = if mode.applies_masks() {
+                            pixels_for(src)?
+                        } else {
+                            let mut bare = src.clone();
+                            bare.masks.clear();
+                            pixels_for(&bare)?
+                        };
+                        let (fx, lut_files) = if mode.folds_effects() && src.switches.fx {
+                            let slt = t_comp - src.start_offset.0.to_f64();
+                            let comp_diag =
+                                ((comp.width as f32).powi(2) + (comp.height as f32).powi(2)).sqrt();
+                            let scale = tex_w as f32 / natural.0.max(1.0);
+                            let markers = lumit_core::fx::MarkerContext::for_layer(comp, src);
+                            (
+                                lumit_core::fx::resolve_stack(
+                                    &src.effects,
+                                    slt,
+                                    comp_diag * scale,
+                                    scale,
+                                    &markers,
+                                ),
+                                lut_files(&src.effects, slt),
+                            )
+                        } else {
+                            (Vec::new(), Vec::new())
+                        };
+                        Some(DofInputDraw {
+                            rgba,
+                            tex_w,
+                            tex_h,
+                            fx,
+                            lut_files,
+                            nested: None,
+                        })
                     };
-                    let (fx, lut_files) = if mode.folds_effects() && src.switches.fx {
-                        let slt = t_comp - src.start_offset.0.to_f64();
-                        let comp_diag =
-                            ((comp.width as f32).powi(2) + (comp.height as f32).powi(2)).sqrt();
-                        let scale = tex_w as f32 / natural.0.max(1.0);
-                        let markers = lumit_core::fx::MarkerContext::for_layer(comp, src);
-                        (
-                            lumit_core::fx::resolve_stack(
-                                &src.effects,
-                                slt,
-                                comp_diag * scale,
-                                scale,
-                                &markers,
-                            ),
-                            lut_files(&src.effects, slt),
-                        )
-                    } else {
-                        (Vec::new(), Vec::new())
-                    };
-                    Some(DofInputDraw {
-                        rgba,
-                        tex_w,
-                        tex_h,
-                        fx,
-                        lut_files,
-                        nested: None,
-                    })
+                    slot().map_or(LayerInputDraw::Absent, LayerInputDraw::Layer)
                 })
                 .collect()
         };
@@ -789,8 +810,8 @@ pub fn build_comp_draws_at(
                     lut_files: lut_files(&layer.effects, lt),
                     // Depth inputs of the enabled built-in `dof` effects, 1:1
                     // with the stack's Resolved::Dof ops (docs/08 §3.22).
-                    dof_inputs: dof_inputs_for(&layer.effects),
-                    flare_mattes: flare_mattes_for(&layer.effects),
+                    dof_inputs: dof_inputs_for(layer.id, &layer.effects),
+                    flare_mattes: flare_mattes_for(layer.id, &layer.effects),
                     flare_lens_files: flare_lens_files(&layer.effects, lt),
                     // The adjust stack resolves at comp scale but runs on
                     // the render target (K-266) — realise rescales.
@@ -1020,8 +1041,8 @@ pub fn build_comp_draws_at(
             // Depth inputs of the enabled built-in `dof` effects, 1:1 with the
             // stack's Resolved::Dof ops (docs/08 §3.22); built the same way
             // export does, so the two blur identically (K-031).
-            dof_inputs: dof_inputs_for(&layer.effects),
-            flare_mattes: flare_mattes_for(&layer.effects),
+            dof_inputs: dof_inputs_for(layer.id, &layer.effects),
+            flare_mattes: flare_mattes_for(layer.id, &layer.effects),
             flare_lens_files: flare_lens_files(&layer.effects, lt),
             fx_ref_width,
             // Per-layer motion blur (docs/06 §4, K-120): the layer's own

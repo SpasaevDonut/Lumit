@@ -6076,3 +6076,67 @@ The shared widget is `TimeReadout` (`flutter_ui/lib/widgets/time_readout.dart`):
 measured in characters of the face it draws in, a click that turns it into a field holding
 exactly what was shown, and an optional drag for the places that were a drag field before
 they were a clock.
+
+**K-288 · DECIDED · A layer-input parameter may name the layer the effect is on, and
+that means "this effect's own input" — which on an adjustment layer is everything
+below.** A layer reference (K-123, K-142) used to name only *another* layer: the picker
+excluded the owner outright, on the reasonable-sounding ground that sampling yourself is
+not defined. For a depth pass that is true enough. For the Lens flare's Matte source it
+was simply wrong, in two ways at once. On an ordinary layer, "flare the lights in this
+picture" is what asking for a matte source nearly always means, and the effect made you
+go and find the layer you were already standing on. On an **adjustment layer** — which
+has no picture of its own, and whose whole job is to act on the composite beneath it —
+there was nothing correct to point at at all: whichever layer you picked, you were
+detecting lights in the wrong image, and the effect that most wants to sit on an
+adjustment layer was the one that could not.
+
+So a reference to the owning layer resolves, everywhere, to **the effect's own input at
+its point in the stack**. No second render happens — `run_ops` binds the texture it is
+already carrying — which makes it cheaper than any other answer as well as the right
+one, and makes it exactly aligned with the raster the effect writes (a separately
+rendered layer is resampled to get there). On an adjustment layer that texture is the
+composite of everything below, so the flare finds the lights in the footage beneath it
+with no setup. The K-142 source combobox (None / Masks / Effects and masks) does not
+apply to a this-layer reference: nothing is re-rendered, so there is nothing for it to
+choose between.
+
+A schema declares `ParamKind::Layer { self_default }`, and a `true` there means a fresh
+instance **added to a layer** starts pointed at that layer. The Lens flare's Matte layer
+takes it; DoF's Depth layer does not, because a depth pass is never the picture itself —
+though it may still be pointed at this layer by hand, and reads the same input if it is.
+Plain `instantiate` (presets, tests) leaves every reference unset, so the labelled no-op
+stays the value a preset carries. The frame key feeds a distinct marker and stops
+recursing: this layer's own content is already hashed by the walk the parameter is
+inside, and an adjustment layer's below-composite by the other layers' entries, since
+draw order is content.
+
+**K-289 · DECIDED · The Lens flare's Background pair becomes a Blend menu, defaulting
+to Add; Normal is the flare on black.** K-258 gave the flare a two-option Background
+choice — Transparent (the layer's own alpha carries the flare) or Black (the output
+forced opaque, so the flare could be exported as an element over black and Screened or
+Added back in a compositor). That is a blend mode question wearing a disguise: both
+options are answers to "how does this light combine with the picture", and only two of
+the answers were available.
+
+Everything the effect renders is a black-backed light **element** — a frame that is pure
+black where there is no flare — so the honest control is the same menu a layer's Mode
+dropdown offers, applied to that element over the layer beneath. It offers the curated
+light-combine set **Echo** offers (K-149, T21) and omits the same modes for the same
+reason: the HSL, burn and dodge modes are ill-defined on a premultiplied light overlay.
+In code order: Normal, a divider, then Add (the default), Screen, Multiply, Overlay,
+Soft light, Hard light, Lighten, Darken, Difference, Exclusion, Subtract, Divide. Every
+mode runs per channel on all four channels in premultiplied linear light — this is light
+being added to light, not a perceptual re-encode of a finished picture, which is also
+what keeps the CPU reference and the WGSL kernel bit-exact (§1.6) without an sRGB round
+trip.
+
+Two modes carry the old behaviour. **Add** is `out = in + flare` with alpha saturating at
+1 — bit-identical to every flare rendered before this menu existed, which is why it is
+the default and why a project that never touched Background renders the same pixels.
+**Normal** ignores the layer and returns the element on its opaque black background:
+that is precisely the flare-over-black that Background = Black existed to export, so a
+project saved with Black migrates to Normal. The migration runs in
+`backfill_builtin_params` and drops the dead `background` parameter, because the schema
+no longer declares it and the panel cannot draw a row `set_value` refuses. The neutral
+passthroughs (Intensity 0, Mix 0) return before any of this, so they stay bit-exact
+whatever the menu holds.

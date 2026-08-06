@@ -5240,12 +5240,12 @@ fn lens_flare_backfill_restores_missing_params() {
     let mut inst = instantiate("lens_flare").unwrap();
     // Simulate a pre-K-257 save: strip the params that pass added.
     inst.params
-        .retain(|p| !matches!(p.id.as_str(), "source_type" | "background"));
+        .retain(|p| !matches!(p.id.as_str(), "source_type" | "blend"));
     assert!(inst.params.iter().all(|p| p.id != "source_type"));
     let mut effects = vec![inst];
     backfill_builtin_params(&mut effects);
     let inst = &effects[0];
-    for id in ["source_type", "background"] {
+    for id in ["source_type", "blend"] {
         assert!(
             inst.params.iter().any(|p| p.id == id),
             "{id} must be backfilled"
@@ -5257,13 +5257,70 @@ fn lens_flare_backfill_restores_missing_params() {
     assert_eq!(effects[0].params.len(), count);
 }
 
-// Background (K-258): Black makes the live output opaque and changes nothing
-// else; the Intensity-0 passthrough stays bit-exact whatever it holds.
+// The Background → Blend migration (K-289, superseding K-258). A project
+// saved with Transparent lands on Add — the same pixels it always rendered —
+// and one saved with Black lands on Normal, the flare on opaque black that
+// option existed to produce. The dead parameter goes, because the schema no
+// longer declares it and the panel cannot draw a row `set_value` refuses.
 #[test]
-fn lens_flare_black_background_sets_alpha_only_while_live() {
+fn lens_flare_background_migrates_to_the_blend_menu() {
+    use crate::fx::lens_flare::{BLEND_ADD, BLEND_NORMAL};
+    for (saved, want) in [(0u32, BLEND_ADD), (1, BLEND_NORMAL)] {
+        let mut inst = instantiate("lens_flare").unwrap();
+        inst.params.retain(|p| p.id != "blend");
+        inst.params.push(crate::model::EffectParam {
+            id: "background".to_owned(),
+            value: EffectValue::Choice(saved),
+            extra: serde_json::Map::new(),
+        });
+        let mut effects = vec![inst];
+        backfill_builtin_params(&mut effects);
+        assert!(
+            effects[0].params.iter().all(|p| p.id != "background"),
+            "the legacy parameter must be dropped"
+        );
+        assert!(
+            matches!(effects[0].param("blend"), Some(EffectValue::Choice(c)) if *c == want),
+            "background {saved} must migrate to blend {want}"
+        );
+        // Idempotent: loading twice cannot re-migrate or duplicate.
+        let count = effects[0].params.len();
+        backfill_builtin_params(&mut effects);
+        assert_eq!(effects[0].params.len(), count);
+        assert!(matches!(effects[0].param("blend"), Some(EffectValue::Choice(c)) if *c == want));
+    }
+}
+
+// "This layer" (K-288): a fresh Lens flare added to a layer points its Matte
+// source at that layer, so switching Source to Matte flares the lights in
+// the picture the effect is already on — and on an adjustment layer, the
+// composite below. Plain `instantiate` (presets, tests) leaves it unset, the
+// labelled no-op it always was, and no other effect's Layer parameter moves.
+#[test]
+fn lens_flare_matte_defaults_to_the_layer_it_is_added_to() {
+    let owner = uuid::Uuid::now_v7();
+
+    let bare = instantiate("lens_flare").unwrap();
+    assert_eq!(bare.layer_ref("matte"), None, "a preset stays unset");
+
+    let mut inst = instantiate("lens_flare").unwrap();
+    point_self_layer_params_at(&mut inst, owner);
+    assert_eq!(inst.layer_ref("matte"), Some(owner));
+
+    // DoF's depth pass is never the picture itself, so it is untouched.
+    let mut dof = instantiate("dof").unwrap();
+    point_self_layer_params_at(&mut dof, owner);
+    assert_eq!(dof.layer_ref("depth"), None);
+}
+
+// Blend (K-289, replacing K-258's Background pair): Normal shows the flare
+// element alone on opaque black, Add is the historical behaviour bit for
+// bit, and every mode keeps the Intensity-0 passthrough exact.
+#[test]
+fn lens_flare_blend_normal_is_the_element_on_opaque_black() {
     use crate::fx::lens_flare::*;
     let p = LensFlareParams {
-        background: 1,
+        blend: BLEND_NORMAL,
         ..default_flare_params()
     };
     let baked = bake(&p);
@@ -5274,19 +5331,28 @@ fn lens_flare_black_background_sets_alpha_only_while_live() {
     let flare = vec![0.25f32; (w * h * 3) as usize];
     let lights = manual_light(&p, w, h);
 
-    let mut black = src.clone();
-    cpu_combine(&mut black, w, h, &p, &baked, &flare, w, h, &lights);
-    let mut transparent = src.clone();
-    let pt = LensFlareParams { background: 0, ..p };
-    cpu_combine(&mut transparent, w, h, &pt, &baked, &flare, w, h, &lights);
+    let mut normal = src.clone();
+    cpu_combine(&mut normal, w, h, &p, &baked, &flare, w, h, &lights);
+    let mut add = src.clone();
+    let pa = LensFlareParams {
+        blend: BLEND_ADD,
+        ..p
+    };
+    cpu_combine(&mut add, w, h, &pa, &baked, &flare, w, h, &lights);
     for i in 0..(w * h) as usize {
-        assert_eq!(black[i * 4 + 3], 1.0, "alpha must be opaque");
+        assert_eq!(normal[i * 4 + 3], 1.0, "alpha must be opaque");
         for c in 0..3 {
-            assert_eq!(black[i * 4 + c], transparent[i * 4 + c], "rgb untouched");
+            // Add lays the same element over the layer, so Normal is Add
+            // minus the layer: the element by itself.
+            let element = add[i * 4 + c] - src[i * 4 + c];
+            assert!(
+                (normal[i * 4 + c] - element).abs() < 1e-6,
+                "Normal must show the element alone"
+            );
         }
     }
 
-    // Neutral points ignore the background: bit-exact passthrough.
+    // Neutral points ignore the blend: bit-exact passthrough.
     let mut neutral = src.clone();
     let p0 = LensFlareParams {
         intensity: 0.0,
@@ -5294,6 +5360,120 @@ fn lens_flare_black_background_sets_alpha_only_while_live() {
     };
     cpu_combine(&mut neutral, w, h, &p0, &baked, &flare, w, h, &lights);
     assert_eq!(neutral, src);
+}
+
+// The default Blend is Add, and Add is exactly what the effect did before
+// the menu existed (K-289): `out = in + flare`, alpha saturating at 1. A
+// regression here would silently move every flare anyone has already built.
+#[test]
+fn lens_flare_add_blend_is_the_historical_combine() {
+    use crate::fx::lens_flare::*;
+    let p = LensFlareParams {
+        blend: BLEND_ADD,
+        ..default_flare_params()
+    };
+    let baked = bake(&p);
+    let (w, h) = (8u32, 6u32);
+    let src: Vec<f32> = (0..(w * h * 4) as usize)
+        .map(|i| (i % 13) as f32 / 24.0)
+        .collect();
+    let flare = vec![0.25f32; (w * h * 3) as usize];
+    let lights = manual_light(&p, w, h);
+
+    let mut out = src.clone();
+    cpu_combine(&mut out, w, h, &p, &baked, &flare, w, h, &lights);
+    for i in 0..(w * h) as usize {
+        let add: Vec<f32> = (0..3).map(|c| out[i * 4 + c] - src[i * 4 + c]).collect();
+        let luma = 0.2126 * add[0] + 0.7152 * add[1] + 0.0722 * add[2];
+        assert!(
+            (out[i * 4 + 3] - (src[i * 4 + 3] + luma).min(1.0)).abs() < 1e-6,
+            "alpha must be the historical saturating sum"
+        );
+    }
+
+    // And the schema default really is Add.
+    let inst = instantiate("lens_flare").unwrap();
+    assert!(matches!(
+        inst.param("blend"),
+        Some(EffectValue::Choice(c)) if *c == BLEND_ADD
+    ));
+}
+
+// Every Blend option is reachable, and the resolve clamps an index past the
+// menu rather than faulting (K-289).
+#[test]
+fn lens_flare_blend_options_all_resolve() {
+    use crate::fx::lens_flare::*;
+    let last = BLEND_OPTIONS.len() as u32 - 1;
+    for mode in 0..=last + 3 {
+        let mut inst = instantiate("lens_flare").unwrap();
+        for p in &mut inst.params {
+            if p.id == "blend" {
+                p.value = EffectValue::Choice(mode);
+            }
+        }
+        let ops = resolve_stack(&[inst], 0.0, 2202.9, 1.0, &MarkerContext::NONE);
+        let [Resolved::LensFlare(p)] = ops.as_slice() else {
+            panic!("lens_flare must resolve to exactly one op");
+        };
+        assert_eq!(p.blend, mode.min(last));
+    }
+}
+
+// The blend table itself (K-289), against the formulas written out by hand.
+// The CPU twin is the oracle the WGSL `flare_blend` is pinned to, so it has
+// to be right on its own terms first.
+#[test]
+fn flare_blend_matches_its_formulas() {
+    use crate::fx::lens_flare::*;
+    let d = [0.30_f32, 0.60, 0.10, 0.80];
+    let e = [0.40_f32, 0.20, 0.70, 0.25];
+    let close = |got: [f32; 4], want: [f32; 4], what: &str| {
+        for c in 0..4 {
+            assert!(
+                (got[c] - want[c]).abs() < 1e-6,
+                "{what} channel {c}: {} vs {}",
+                got[c],
+                want[c]
+            );
+        }
+    };
+    close(
+        flare_blend(BLEND_NORMAL, d, e),
+        [e[0], e[1], e[2], 1.0],
+        "Normal",
+    );
+    close(
+        flare_blend(BLEND_ADD, d, e),
+        [0.70, 0.80, 0.80, 1.05],
+        "Add",
+    );
+    close(
+        flare_blend(2, d, e),
+        [
+            d[0] + e[0] - d[0] * e[0],
+            d[1] + e[1] - d[1] * e[1],
+            d[2] + e[2] - d[2] * e[2],
+            d[3] + e[3] - d[3] * e[3],
+        ],
+        "Screen",
+    );
+    close(
+        flare_blend(3, d, e),
+        [d[0] * e[0], d[1] * e[1], d[2] * e[2], d[3] * e[3]],
+        "Multiply",
+    );
+    close(flare_blend(7, d, e), [0.40, 0.60, 0.70, 0.80], "Lighten");
+    close(flare_blend(8, d, e), [0.30, 0.20, 0.10, 0.25], "Darken");
+    close(flare_blend(9, d, e), [0.10, 0.40, 0.60, 0.55], "Difference");
+    close(
+        flare_blend(11, d, e),
+        [0.0, 0.40, 0.0, 0.55],
+        "Subtract clamps at black",
+    );
+    // Divide by a zero element cannot produce a NaN or an infinity.
+    let z = flare_blend(12, d, [0.0; 4]);
+    assert!(z.iter().all(|v| v.is_finite()), "Divide must stay finite");
 }
 
 // Light tint and Use source colour (K-259): the tint multiplies every mode's
@@ -5608,7 +5788,7 @@ fn default_flare_params() -> crate::fx::lens_flare::LensFlareParams {
         anamorphic: 1.0,
         quality: 1,
         detail: 1.0,
-        background: 0,
+        blend: crate::fx::lens_flare::BLEND_ADD,
         mix: 1.0,
     }
 }

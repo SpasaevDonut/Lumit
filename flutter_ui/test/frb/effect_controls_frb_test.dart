@@ -550,6 +550,13 @@ void main() {
       expect(find.text('Threshold'), findsOneWidget);
       expect(find.text('Threshold softness'), findsOneWidget);
 
+      // The Matte layer starts pointed at the layer the effect is ON
+      // (K-288), and the picker says so. Before this it defaulted to None
+      // and the effect sat there detecting nothing until you went hunting
+      // for another layer — which on an adjustment layer, whose only
+      // picture is the composite below, was always the wrong one.
+      expect(find.textContaining('(this layer)'), findsOneWidget);
+
       // Light tint is a source-mode-independent row (K-259); Use source
       // colour appears with Matte and would with Lights.
       expect(find.text('Light tint'), findsOneWidget);
@@ -566,6 +573,22 @@ void main() {
       expect(find.text('Light tint'), findsOneWidget);
       expect(find.text('Use source colour'), findsNothing);
       expect(find.text('Matte layer'), findsNothing);
+    });
+
+    // Blend (K-289): the Transparent/Black Background pair became a blend
+    // menu, defaulting to Add — the behaviour every flare already had.
+    testWidgets('the lens flare offers a blend menu, defaulting to Add',
+        (tester) async {
+      final p = withLayer();
+      p.layer.addEffect(name: 'lens_flare');
+      p.uiState.model.refresh();
+      await mount(tester, p, transform: false);
+
+      expect(find.text('Background'), findsNothing,
+          reason: 'the two-option Background choice is gone');
+      expect(find.text('Blend'), findsOneWidget);
+      expect(find.text('Add'), findsWidgets,
+          reason: 'a fresh flare adds its light, as it always did');
     });
 
     // The Lens picker (K-262, curated K-264). Twenty entries sit well
