@@ -1438,8 +1438,19 @@ The v1 sync toolkit (K-050); the Composer workspace is future work specified in
 - **Waveforms in the Timeline**: every audible layer MAY show its waveform inside its row
   (twirl the Audio group, or a per-layer waveform toggle); the Audio workspace defaults
   them on. Waveform rendering MUST stay responsive at any zoom (mip-mapped peaks).
-  **Shipped (K-172):** the Audio group (Volume + Waveform twirl) in the layer outline; the
-  lane draws the item's 2048-bucket peak strip through the layer's live offset each paint.
+  **Shipped (K-172, K-280):** the Audio group (Volume + Waveform twirl) in the layer
+  outline; the lane draws the layer's own peaks through its live offset each paint. The
+  peaks are **mip-mapped and window-fetched** (K-280): the lane asks the engine for the
+  stretch of source it is showing at one bucket per pixel column, and asks again when the
+  zoom or the scroll moves that window, so the drawn detail follows the zoom instead of
+  stretching one fixed summary. Sequence-layer **clips** draw their own waveform inside
+  their box, bucketed through the clip's own map so a ramp's transients land where they are
+  heard, and carried along when the clip is slid. Waveforms draw as a three-band
+  **multiwave** stack (bass / middle / treble) by default, drawn over one another around one
+  centre line rather than in separate lanes (K-284); Settings ▸ Interface ▸ Editing ▸
+  *Waveforms show the frequency stack* turns it off for one plain wave, and *Waveforms rise
+  from the bottom* stands either of them on the floor of the row rather than centring it
+  (K-285).
   The earlier comp-wide strip under the ruler is gone — it was one mixed-down waveform for
   the whole comp, went stale during a drag, and stopped earning its row once every layer
   could carry its own.
@@ -1726,6 +1737,19 @@ display); the keymap serialises to a shareable file. An "After Effects" alternat
 ships for muscle-memory cases where Lumit's default deviates. Notable deviations from AE:
 `J/K/L` are shuttle transport (the audience's NLE habit, per the layout brief), so keyframe
 navigation moves to `,`/`.`; Viewer zoom therefore lives on `Ctrl+=`/`Ctrl+-` and the wheel.
+Inside the **Timeline** `L` reveals a layer's Audio instead (K-281) — the panel where you
+reach for a layer's sound is the panel where you are least often shuttling — and the
+transport keeps it in every other context.
+
+**Shadowing is not a clash (K-281).** A binding scoped to a panel takes a chord over from an
+app-wide one while that panel is focused; which action fires is decided by a stated rule (the
+focused panel gets first refusal, app-wide is the fallback), so Settings → Keymap reports
+those as *shadows* — a quiet note above the table reading "`Ctrl+Z` — Zoom time in in the
+Timeline, Undo elsewhere", not a bordered warning — rather than as conflicts to resolve. It is
+said at all because the app-wide meaning does stop working in that one panel. Two bindings in
+the *same* context, which nothing can tell apart, remain a conflict and keep the banner; a
+rebind cannot make one (the previous owner is evicted), so in practice the banner is what an
+imported keymap file trips.
 
 **Shipped (K-199).** Settings → Keymap is a table, grouped by the context a binding is live
 in, with the action's name on the left and its chords on the right — click a chord cell and
@@ -1734,7 +1758,8 @@ shipped chord back. Above it: a search box that matches what the table *shows* a
 the ids underneath, the two presets, and Import / Export for the shareable file. A chord
 another action already holds is taken rather than refused (refusing would make swapping two
 actions' keys impossible) — within one context the previous owner's row simply goes blank,
-and across overlapping contexts a banner names the clash. One row, one chord (K-200): no
+and across contexts sharing a chord the panel-scoped one simply wins where it is focused
+(K-281, reported as a shadow note rather than a banner). One row, one chord (K-200): no
 shipped action carries two, and a user who wants a second spelling of a command binds it
 themselves.
 
@@ -1747,15 +1772,16 @@ Two honest gaps. The **Project**, **Panels** and **Effects** contexts have rows
 in the table and nothing behind them — those commands are not built on this frontend, so the
 bindings are real and pressing them does nothing. The **Tools** context arms the toolbar's
 tools (§1.7) and cycles a group on a repeat press, but what most tools then *do* is not built
-either, so the chord lands and the picture stays as it was. And the arrows step a frame alongside
-`Page Down`/`Page Up`; the table below did not name them, which would have quietly taken
-them away the day dispatch started going through the keymap.
+either, so the chord lands and the picture stays as it was. Stepping a frame has a second
+chord alongside `Page Down`/`Page Up` — `Ctrl`+arrow (K-282); the **bare** arrows do nothing
+app-wide, so a list, a field or a canvas is free to use them for moving within itself.
 
 | Context | Key | Action |
 |---|---|---|
 | Global | `Space` | Play / pause |
 | Global | `J` / `K` / `L` | Shuttle reverse / pause / forward (repeat `J`/`L` steps ×2, ×4, ×8) |
 | Global | `Page Down` / `Page Up` | Next / previous frame |
+| Global | `Ctrl+→` / `Ctrl+←` | Next / previous frame (K-282; `Cmd` on macOS) |
 | Global | `Shift+Page Down` / `Shift+Page Up` | ±10 frames |
 | Global | `Home` / `End` | Comp start / end |
 | Global | `Shift+Home` / `Shift+End` | Work area start / end |
@@ -1796,7 +1822,7 @@ them away the day dispatch started going through the keymap.
 | Timeline | `P` `S` `R` `T` `A` | Reveal position / scale / rotation / opacity / anchor |
 | Timeline | `E` / `M` | Reveal effects / masks |
 | Timeline | `U` / `UU` | Reveal animated / modified properties |
-| Timeline | `Shift+L` | Reveal volume (audio) |
+| Timeline | `L` / `LL` / `LLL` | Reveal Audio / and its waveform / shut again (K-281; `Shift+L` does the same). Inside the Timeline this takes `L` from the shuttle transport, which keeps it everywhere else |
 | Timeline | `[` / `]` | Move layer in / out to playhead |
 | Timeline | `Alt+[` / `Alt+]` | Trim layer in / out at playhead |
 | Timeline | `Ctrl+Shift+D` | Split layer / cut clip at playhead |

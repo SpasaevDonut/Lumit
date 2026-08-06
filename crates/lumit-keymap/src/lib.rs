@@ -125,6 +125,7 @@ impl ActionId {
             "reveal.masks" => "Reveal Masks",
             "reveal.animated" => "Reveal animated properties",
             "reveal.volume" => "Reveal Volume",
+            "reveal.audio" => "Reveal Audio, again for the waveform",
             "layer.move.in" => "Move the layer's in point to the playhead",
             "layer.move.out" => "Move the layer's out point to the playhead",
             "layer.trim.in" => "Trim the layer's in point to the playhead",
@@ -331,10 +332,23 @@ pub struct Binding {
     pub action: ActionId,
 }
 
-/// Two contexts overlap when a binding in one can fire while the other is
-/// active — i.e. they are equal, or either is `Global` (live everywhere).
-fn contexts_overlap(a: KeyContext, b: KeyContext) -> bool {
-    a == b || a == KeyContext::Global || b == KeyContext::Global
+/// One chord a panel takes over from an app-wide binding (K-281).
+///
+/// Not a conflict: [`Keymap::lookup`] resolves it by a stated rule — the
+/// focused panel gets first refusal, and `Global` is the fallback — so the
+/// chord always runs exactly one action and which one is never in doubt.
+/// Worth *saying*, though, because the app-wide meaning silently stops working
+/// in that one panel, which is a thing somebody reading their keymap should be
+/// able to see.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Shadow {
+    pub chord: Chord,
+    /// The panel whose binding wins while it is focused.
+    pub context: KeyContext,
+    /// What the chord does there.
+    pub action: ActionId,
+    /// What it does everywhere else.
+    pub shadowed: ActionId,
 }
 
 /// A set of chords sharing one chord that resolves to more than one action —
@@ -389,16 +403,23 @@ impl Keymap {
                 .iter()
                 .filter(|o| o.chord == b.chord)
                 .collect();
-            let has_global = same.iter().any(|o| o.context == KeyContext::Global);
-            // Collect the distinct actions that can collide. With a Global
-            // binding present, all of them overlap; otherwise only bindings
-            // sharing a context do.
+            // Collect the distinct actions that can genuinely collide: two
+            // bindings in the *same* context, which nothing can tell apart.
+            //
+            // A `Global` binding under a scoped one is **not** one of those
+            // (K-281, superseding the original rule): `lookup` resolves it by a
+            // stated precedence — the focused panel first, `Global` as the
+            // fallback — so the chord runs one action and which one is never
+            // ambiguous. Flagging it as a clash made the shipped default
+            // unable to give a panel a plain letter that transport already
+            // used, which is how `L` could not mean "reveal Audio" in the
+            // Timeline while J/K/L still shuttled everywhere else.
+            // [`Keymap::shadows`] reports those pairs instead.
             let mut actions: Vec<ActionId> = Vec::new();
             for x in &same {
-                let clashes = has_global
-                    || same
-                        .iter()
-                        .any(|y| !std::ptr::eq(*x, *y) && contexts_overlap(x.context, y.context));
+                let clashes = same
+                    .iter()
+                    .any(|y| !std::ptr::eq(*x, *y) && x.context == y.context);
                 if clashes && !actions.contains(&x.action) {
                     actions.push(x.action.clone());
                 }
@@ -409,6 +430,37 @@ impl Keymap {
                     actions,
                 });
             }
+        }
+        out
+    }
+
+    /// Every chord a panel takes over from an app-wide binding (K-281) — what
+    /// Settings → Keymap says beside the row rather than flagging as a clash.
+    #[must_use]
+    pub fn shadows(&self) -> Vec<Shadow> {
+        let mut out = Vec::new();
+        for b in &self.bindings {
+            if b.context == KeyContext::Global {
+                continue;
+            }
+            let Some(global) = self
+                .bindings
+                .iter()
+                .find(|o| o.context == KeyContext::Global && o.chord == b.chord)
+            else {
+                continue;
+            };
+            // The same action bound twice shadows nothing: the chord does the
+            // same thing either way.
+            if global.action == b.action {
+                continue;
+            }
+            out.push(Shadow {
+                chord: b.chord.clone(),
+                context: b.context,
+                action: b.action.clone(),
+                shadowed: global.action.clone(),
+            });
         }
         out
     }
@@ -517,12 +569,14 @@ pub fn default_keymap() -> Keymap {
         row(Global, "J", "playback.shuttle.reverse"),
         row(Global, "K", "playback.shuttle.pause"),
         row(Global, "L", "playback.shuttle.forward"),
-        // The arrows step a frame as well as PageUp/PageDown. They are what
-        // the shell has always answered to and what every editor does; §15's
-        // table named only the page keys, which would have quietly taken the
-        // arrows away the day dispatch started going through the keymap.
-        row(Global, "ArrowRight", "playback.frame.next"),
-        row(Global, "ArrowLeft", "playback.frame.prev"),
+        // Stepping a frame is `Mod`+arrow, not the bare arrow (K-282). The
+        // bare arrows used to do it, which meant the app-wide transport owned
+        // the two keys every list, field and canvas wants for moving *within*
+        // itself — so nothing else could ever be given them. `Mod` is the
+        // platform's primary modifier, so this is Ctrl+arrow on Windows and
+        // Linux and Cmd+arrow on macOS, like every other `Mod` chord here.
+        row(Global, "Mod+ArrowRight", "playback.frame.next"),
+        row(Global, "Mod+ArrowLeft", "playback.frame.prev"),
         row(Global, "PageDown", "playback.frame.next"),
         row(Global, "PageUp", "playback.frame.prev"),
         row(Global, "Shift+PageDown", "playback.frame.next10"),
@@ -609,7 +663,13 @@ pub fn default_keymap() -> Keymap {
         row(Timeline, "E", "reveal.effects"),
         row(Timeline, "M", "reveal.masks"),
         row(Timeline, "U", "reveal.animated"),
-        row(Timeline, "Shift+L", "reveal.volume"),
+        // `L` opens a layer's Audio group; a second `L` adds its waveform lane,
+        // a third shuts the layer again (K-281). It shadows the J/K/L shuttle
+        // inside the Timeline and nowhere else — the panel where you reach for
+        // a layer's sound is the panel where you are least often shuttling.
+        // `Shift+L` keeps the After Effects habit pointed at the same cycle.
+        row(Timeline, "L", "reveal.audio"),
+        row(Timeline, "Shift+L", "reveal.audio"),
         row(Timeline, "[", "layer.move.in"),
         row(Timeline, "]", "layer.move.out"),
         row(Timeline, "Alt+[", "layer.trim.in"),
@@ -753,14 +813,28 @@ mod tests {
         });
         assert_eq!(km.conflicts().len(), 1);
 
-        // Global vs a scoped binding on the same chord → conflict (global fires
-        // in every context).
+        // Global under a scoped binding on the same chord → NOT a conflict
+        // (K-281): the panel gets first refusal and Global is the fallback, so
+        // the chord runs one action and which one is never in doubt. It is
+        // reported as a *shadow* instead, because the app-wide meaning does
+        // stop working in that one panel.
         let mut km = Keymap::default();
         km.bind(KeyContext::Global, chord("G"), "global".into());
         km.bind(KeyContext::Timeline, chord("G"), "timeline".into());
-        let c = km.conflicts();
-        assert_eq!(c.len(), 1);
-        assert_eq!(c[0].actions.len(), 2);
+        assert!(km.conflicts().is_empty());
+        let shadows = km.shadows();
+        assert_eq!(shadows.len(), 1);
+        assert_eq!(shadows[0].context, KeyContext::Timeline);
+        assert_eq!(shadows[0].action, ActionId::from("timeline"));
+        assert_eq!(shadows[0].shadowed, ActionId::from("global"));
+        assert_eq!(
+            km.lookup(KeyContext::Timeline, &chord("G")),
+            Some(&ActionId::from("timeline"))
+        );
+        assert_eq!(
+            km.lookup(KeyContext::Viewer, &chord("G")),
+            Some(&ActionId::from("global"))
+        );
 
         // Two *different* scoped contexts on the same chord → NOT a conflict
         // (the chord means different things in different panels).
@@ -769,11 +843,64 @@ mod tests {
         km.bind(KeyContext::Viewer, chord("H"), "viewer".into());
         assert!(km.conflicts().is_empty());
 
-        // The same action bound twice is not a conflict.
+        // The same action bound twice is neither a conflict nor a shadow.
         let mut km = Keymap::default();
         km.bind(KeyContext::Global, chord("Mod+S"), "file.save".into());
         km.bind(KeyContext::Timeline, chord("Mod+S"), "file.save".into());
         assert!(km.conflicts().is_empty());
+        assert!(km.shadows().is_empty());
+    }
+
+    /// Stepping a frame is `Mod`+arrow (K-282), and the bare arrows are free.
+    #[test]
+    fn a_frame_step_takes_the_primary_modifier() {
+        let km = default_keymap();
+        assert_eq!(
+            km.lookup(KeyContext::Global, &chord("Mod+ArrowRight")),
+            Some(&ActionId::from("playback.frame.next"))
+        );
+        assert_eq!(
+            km.lookup(KeyContext::Global, &chord("Mod+ArrowLeft")),
+            Some(&ActionId::from("playback.frame.prev"))
+        );
+        assert_eq!(km.lookup(KeyContext::Global, &chord("ArrowRight")), None);
+        assert_eq!(km.lookup(KeyContext::Timeline, &chord("ArrowLeft")), None);
+        // The page keys still step a frame unmodified — the chord moved, the
+        // other way of doing it did not.
+        assert_eq!(
+            km.lookup(KeyContext::Global, &chord("PageDown")),
+            Some(&ActionId::from("playback.frame.next"))
+        );
+    }
+
+    /// `L` reveals a layer's Audio in the Timeline and shuttles forward
+    /// everywhere else (K-281) — the one shadow the default ships with, and it
+    /// is deliberate.
+    #[test]
+    fn the_default_gives_the_timeline_l_and_leaves_the_shuttle_elsewhere() {
+        let km = default_keymap();
+        assert_eq!(
+            km.lookup(KeyContext::Timeline, &chord("L")),
+            Some(&ActionId::from("reveal.audio"))
+        );
+        assert_eq!(
+            km.lookup(KeyContext::Viewer, &chord("L")),
+            Some(&ActionId::from("playback.shuttle.forward"))
+        );
+        // The After Effects habit reaches the same cycle.
+        assert_eq!(
+            km.lookup(KeyContext::Timeline, &chord("Shift+L")),
+            Some(&ActionId::from("reveal.audio"))
+        );
+        let shadows = km.shadows();
+        assert_eq!(
+            shadows
+                .iter()
+                .map(|s| s.chord.to_string())
+                .collect::<Vec<_>>(),
+            vec!["L".to_string()],
+            "one deliberate shadow, and it is named in the docs"
+        );
     }
 
     #[test]
@@ -980,20 +1107,27 @@ mod tests {
             "one owner, so nothing to resolve"
         );
 
-        // Overlapping contexts: a Global binding is live inside the Timeline
-        // too, so both survive and the clash is reported instead.
+        // Across contexts: a Global binding stays live everywhere else, so both
+        // survive — and the panel taking the chord over is reported as a shadow
+        // rather than a clash (K-281), because which action fires is never in
+        // doubt.
         let mut km = Keymap::default();
         km.bind(KeyContext::Global, chord("D"), "global.thing".into());
         km.bind(KeyContext::Timeline, chord("F"), "timeline.thing".into());
         km.rebind_action(KeyContext::Timeline, &"timeline.thing".into(), chord("D"));
-        let clashes = km.conflicts();
-        assert_eq!(clashes.len(), 1, "the double claim is reported");
-        assert_eq!(clashes[0].chord, chord("D"));
-        assert_eq!(clashes[0].actions.len(), 2);
+        assert!(km.conflicts().is_empty(), "nothing ambiguous to resolve");
+        let shadows = km.shadows();
+        assert_eq!(shadows.len(), 1, "the takeover is still said out loud");
+        assert_eq!(shadows[0].chord, chord("D"));
         assert_eq!(
             km.lookup(KeyContext::Timeline, &chord("D")),
             Some(&ActionId::from("timeline.thing")),
             "and the focused panel still gets first refusal meanwhile"
+        );
+        assert_eq!(
+            km.lookup(KeyContext::Viewer, &chord("D")),
+            Some(&ActionId::from("global.thing")),
+            "while the app-wide meaning is untouched everywhere else"
         );
     }
 

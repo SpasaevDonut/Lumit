@@ -1507,6 +1507,68 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   and a precomp layer's own Volume scales everything inside it — the gains multiply down the
   chain, so it has the Volume row too. And a purely-audio layer (a music file) shows no eye
   in the outline at all: there is no picture to hide.
+- **Waveforms that sharpen as you zoom, and show what the sound *is* (K-280)** — a waveform
+  is not the sound itself, it is a summary of it: for each column of pixels, how far the
+  speaker cone swung up and down while that sliver of time went by. That means a summary is
+  only ever as detailed as the stretch it was taken over. The first version took one summary
+  of the whole file when you opened the lane and kept it, so zooming in stretched the same
+  coarse picture until the wave was a staircase of blocks — you could see roughly where the
+  loud bits were and never where the *hit* was, which is the one thing you zoom in for.
+  Now the sound is summarised once at three levels of detail at the same time — think of the
+  smaller pictures a phone keeps beside a photo so it can show a thumbnail without loading
+  the whole thing — and the lane asks for whichever level suits the stretch it is currently
+  showing, one bucket per pixel column. Zoom in and it asks again over a shorter stretch, so
+  the wave *gains* detail instead of stretching. A summary runs out somewhere, though: once a
+  pixel column is narrower than the smallest block, neighbouring columns start sharing one and
+  the wave goes blocky again — so a short file also keeps the *actual samples* beside its
+  summary, and once you are zoomed in that far the lane draws those instead. Fully zoomed, the
+  waveform becomes a single continuous line tracing the sound, which is what it should be. A
+  long file skips the sample copy: at Lumit's zoom ceiling you can never get close enough to
+  an hour-long podcast for the summary to run out, so keeping tens of megabytes to answer a
+  question nobody can ask would be waste. The summary is built once per file (a whole
+  track takes a moment to read) and kept for as long as the app is open, shared between every
+  layer cut from that file, with a firm ceiling on how much memory the lot may use.
+  Two other things came with it. **Clips on a Sequence layer now draw their own waveform**
+  inside their box — so a cut, which is a box on a row, finally shows the sound you are
+  cutting — and it travels with the clip when you drag it, because it is drawn from the clip's
+  own clock rather than pinned to the timeline. And the **multiwave**: instead of one wave, the
+  lane can draw three at once, splitting the sound into bass, middle and treble. This matters
+  because a modern mastered track is loud all the way through, so a single wave is a solid
+  block whatever is playing — the phrase for it is "a sausage". The three are drawn *on top of
+  each other* around the same centre line rather than side by side, getting brighter as the
+  pitch goes up: the bass fills a soft wide body, and the hats and other sharp sounds land as
+  bright thin spikes over it. The result is one waveform with its insides showing, so you can
+  cut to the kick or to the hat and see which is which.
+  There is a second switch beside it for **where the wave sits**. Normally it is centred, with
+  the sound drawn going up and down from a middle line — but the two halves are mirror images,
+  so half the row is saying the same thing twice. Turn *Waveforms rise from the bottom* on and
+  the wave is folded onto the floor of its row: every column starts at the bottom and reaches
+  up by however far the sound swung, which uses the whole row's height and is what a lot of
+  editors draw. It applies to the plain wave and the frequency stack alike, and it is only a
+  matter of drawing — nothing is re-read from the file when you flip it. It is on by default; Settings ▸ Interface ▸ Editing has a switch that puts the single
+  plain wave back. (The idea is BLICK's, an editor that does the same thing.)
+- **`L` opens a layer's sound (K-281)** — press `L` with layers selected and their **Audio**
+  group opens; press it again and the waveform lane opens under it; a third time shuts the
+  layer. The same three-tap shape `U` has for animated properties, and for the same reason:
+  what you want is usually one of three depths, and inventing a modifier for each would be
+  three shortcuts to remember instead of one key pressed once, twice or three times.
+  `L` is also "play forward" in the NLE keyboard Lumit borrows (`J` back, `K` stop, `L`
+  forward) — so inside the Timeline it now means the audio reveal, and everywhere else it
+  still moves time. (Stepping a single frame is `Ctrl`+arrow — see the note below.) That kind
+  of takeover used to be reported as a *clash* the user had to go
+  and fix; it is now reported as a *shadow* and left alone, because there was never any
+  ambiguity about which one runs — the panel you are in gets first refusal, and the app-wide
+  meaning is the fallback. Settings ▸ Keymap says so in a quiet line above the table
+  ("`L` — Reveal Audio in the Timeline, shuttle forward elsewhere") rather than a warning
+  box, so you can see it without being asked to fix it (K-283). Two shortcuts fighting inside the *same* panel is still a clash,
+  since nothing can tell those apart.
+- **Stepping a frame is `Ctrl`+arrow (K-282)** — it used to be the bare left and right arrow
+  keys. The trouble with that is that the arrows are *everybody's* keys: a list wants them to
+  move the highlight, a text field to move the cursor, a canvas to nudge what is selected. As
+  long as the app-wide transport owned them, nothing else could ever be given them without a
+  fight. So the frame step took a modifier and the bare arrows went back to being available.
+  `Page Down`/`Page Up` still step a frame with nothing held, so there is still a
+  one-key way to do it.
 - **Your project remembers where you were** — reopening a saved project no longer lands on a
   blank Viewer waiting for a playhead nudge. Which comp tabs were open, which one was in
   front, where the playhead sat, which layer was selected, and which twirls were unfurled all

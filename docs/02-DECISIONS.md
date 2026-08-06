@@ -5854,3 +5854,143 @@ bandwidth cap, and Cloudflare Pages serves the two static sites. There is no ser
 no scaling story to own. Revisit only if the site grows contributors who should not have
 to clone a Rust + Flutter tree — at which point Cloudflare's per-path build filters
 already prevent the two from triggering each other's builds.
+
+**K-280 · DECIDED · Waveforms are mip-mapped, window-fetched, and stacked by frequency.**
+Three things, one seam, because they are the same seam. **(1) The resolution follows the
+zoom.** K-172's lane asked once for 2 048 buckets across the whole source and kept them for
+the session, then stretched that one summary however far the Timeline was zoomed — so past
+about ten seconds on screen the wave became a staircase of blocks, which is the opposite of
+what zooming in is for. Now `lumit-audio::peaks::PeakPyramid` summarises a source at three
+levels of detail in one pass (256 / 4 096 / 65 536 samples per block, the tiers docs/09 §4
+always named), the bridge keeps one pyramid per **file path** for the session (bounded: four
+entries, 64 MB, least-recently-asked evicted — two layers cut from one song decode it once),
+and a lane asks for *the stretch it is showing* at one bucket per pixel column, again
+whenever a zoom or a scroll moves that window. The request rounds itself off and pads half a
+view either side, so scrolling a few pixels sends nothing.
+
+**(2) Clips draw their own waveform.** A Sequence layer's clips were coloured boxes; docs/09
+§4 has always said the clip waveform is "the primary visual for beat-checking an edit". Clip
+peaks are bucketed in the clip's own **placed** time rather than in source time, because a
+clip is the one thing on the timeline whose source clock is not a straight line — a ramp
+plays its middle slowly and its end fast, and buckets taken evenly in source time would put
+the transients in the wrong columns. The mapping is done in the engine, where the map lives.
+Sliding a clip moves box and picture together with nothing refetched; trimming an edge
+changes the mapping, so the peaks are asked for again when the trim commits (during the drag
+the picture holds still, which reads as the content staying put while the window moves over
+it — what a trim is).
+
+**(3) Multiwave.** One wave says how *loud* a moment is and nothing about what is in it: a
+mastered track is a solid block whether it is a kick, a snare or a vocal, and cutting to a
+block means cutting by ear alone. So the same pass also splits the signal into bass (below
+200 Hz), middle, and treble (above 2 kHz) with 24 dB/octave filters and summarises each; the
+lane stacks the three, bass at the bottom. The kick shows in the bottom band, the hats in the
+top, and a cut can be aimed at either. **On by default**, with Settings ▸ Interface ▸ Editing
+▸ *Waveforms show the frequency stack* returning the single wave unchanged — the plain
+picture stays a first-class choice, it is just no longer the only one. Prior art: BLICK's
+multiwave, which is where the idea came from.
+
+The waveform colours become their own theme grouping (`WaveformColours`: `rest` plus the
+three bands) rather than the roles the lane was borrowing — docs/15 §6.4 has a standing
+direction that each grouping splits out as its area is next touched, and §6.4 also says
+waveforms are *content, not state*, which the old lane broke by drawing in `accent`.
+
+Not done here, and still the design intent: writing the pyramid to the project sidecar keyed
+by content hash, so a reopened project does not decode again ([TODO.md](TODO.md)).
+
+**K-281 · DECIDED · `L` reveals a layer's Audio in the Timeline, and a panel shadowing an
+app-wide chord is not a conflict.** `L` on the selected layers opens their **Audio** group,
+`LL` opens the waveform lane inside it, `LLL` shuts them again — the same three-tap shape
+`U` already has, and the reason is the same: the thing you want is usually one of three
+depths, and a modifier for each is three chords to remember. A layer with no sound is left
+alone rather than opened onto a group it does not have. `Shift+L` (K-172's *Reveal Volume*)
+now reaches the same cycle, so the older habit still works.
+
+`L` is also J/K/L shuttle transport (docs/07 §15), which was bound app-wide, and the keymap's
+conflict detector treated *any* app-wide binding sharing a chord with a panel-scoped one as a
+clash — so the shipped default could never give a panel a plain letter transport already
+used. That rule is superseded: `Keymap::lookup` has always resolved the pair by a stated
+precedence (the focused panel gets first refusal, app-wide is the fallback), so the chord runs
+exactly one action and which one is never in doubt. `Keymap::shadows` reports those pairs
+instead, because the app-wide meaning genuinely stops working in that one panel and somebody
+reading their keymap should be able to see that. Two bindings in the **same** context remain a
+conflict — nothing can tell those apart.
+
+The cost is real and accepted: inside the Timeline, `L` no longer steps the playhead forward.
+The Timeline is the panel where you reach for a layer's sound and the least likely place to be
+shuttling; the arrows, `PageUp`/`PageDown` and `J`/`K` all still move time there, and `L`
+keeps its transport meaning in every other panel.
+
+**K-282 · DECIDED · Stepping a frame is `Mod`+arrow; the bare arrows belong to whatever has
+focus.** `ArrowRight`/`ArrowLeft` were bound app-wide to next/previous frame. That is one key
+each for the commonest transport move, which is why it was done — but the arrows are the two
+keys *every* focused thing wants for moving within itself: a list moving its highlight, a
+field moving its cursor, a canvas nudging a selection. An app-wide binding on them means none
+of those can ever be given the key without taking the transport away, and a panel-scoped
+binding that shadows it (K-281) would have to be added one panel at a time for ever. So the
+step moves to `Mod+ArrowRight` / `Mod+ArrowLeft` — Ctrl on Windows and Linux, Cmd on macOS,
+like every other `Mod` chord — and the bare arrows are unbound.
+
+Nothing is lost: `Page Down` / `Page Up` still step a frame with nothing held, `Shift` with
+them still steps ten, and `J`/`K`/`L` still shuttle (outside the Timeline, per K-281). This
+also supersedes K-281's aside that "the arrows … still move time" in the Timeline: they no
+longer move time anywhere without `Mod`.
+
+**K-283 · DECIDED · Settings → Keymap says a shadow out loud, quietly.** K-281 stopped
+reporting a panel-scoped binding that takes an app-wide chord as a conflict, which was right
+— nothing is ambiguous — but reporting *nothing* would have been wrong: the app-wide meaning
+really does stop working in that one panel, and finding that out by pressing the key is the
+worst way to learn it. So `Keymap::shadows` is surfaced (`keymap_shadows` on the bridge) as a
+plain muted line above the table — "`L` — Reveal Audio in the Timeline, shuttle forward
+elsewhere" — with no border and no warning colour, because it is a fact about the keymap and
+not something to go and fix. The bordered banner stays for real conflicts.
+
+One consequence worth writing down: a **rebind can no longer make a conflict at all**. Within
+one context the previous owner is evicted (K-200's one row, one chord), and across contexts
+the pair is a shadow — so the banner is now only ever tripped by an imported keymap file
+carrying a duplicate, which is where its regression test now goes.
+
+**K-284 · DECIDED · Past the finest tier the samples answer, and the multiwave is drawn
+through the wave rather than beside it.** Two corrections to K-280 from looking at it.
+
+**(1) Fully zoomed in, a waveform should be a line.** K-280 fixed the stretched-summary
+staircase but left a second one behind it: the finest tier is 256 samples a block, and the
+Timeline zooms to 64×, so on a short comp a pixel column ends up covering about seven
+samples — thirty-odd columns reading the same block, drawn as thirty-odd identical slabs. A
+mip-map cannot fix this, because there is nothing finer in it. So a short source now keeps
+its **mono mixdown** beside the pyramid (16-bit at the peak rate: 96 KB a second, half the
+memory of float and three ten-thousandths of a pixel of difference), and any query finer than
+one block per bucket is taken off it in one streaming pass — full band straight, the three
+split bands filtered on the way with a `SAMPLE_PREROLL` run-up so the filters are settled by
+the time the window starts. Below one sample per column, min and max meet and consecutive
+columns join into a continuous trace, which is the picture every editor shows at full zoom.
+**Short** is `SAMPLE_KEEP_SECONDS` (ten minutes): past that the 64× ceiling can never get a
+column under one block, so a sample copy would be tens of megabytes held to answer a question
+nobody can ask. The peak cache's budget rises to 96 MB to hold the copies, and it is a byte
+budget rather than a count precisely because the count no longer says anything about the cost.
+
+**(2) The stack goes through the wave, not beside it.** K-280 put the three bands in a third
+of the lane each. In a 22 px row that is six pixels a band, which is not a waveform, it is a
+smear — and it asks the reader to add three small pictures up in their head to get back the
+one they were already reading. Drawn instead **over one another around one centre line**, dim
+to bright as the frequency climbs, the bass fills a soft broad body and the treble lands as
+bright thin spikes on it: one silhouette with its inside showing, which is what the reference
+this came from actually looks like. The band colours become a brightness ramp rather than
+three hues for the same reason — hue-coded, they read as three unrelated waveforms — and band
+strokes are opaque, since three softened envelopes over one another blend into a wash and lose
+the ranking. The **single wave is untouched**: same softened envelope, same solid RMS core.
+
+**K-285 · DECIDED · Where a waveform sits is its own setting: centred, or standing on the
+floor.** A waveform is symmetrical about silence, so a centred one spends half its row
+drawing a mirror of the other half. In the Timeline's 22 px lane that is eleven pixels of
+information and eleven pixels of restating it. Settings ▸ Interface ▸ Editing ▸ *Waveforms
+rise from the bottom* folds it onto the baseline instead: each column reaches up by how far
+the signal swung either way, whichever was further, over the whole row's height.
+
+Kept as a **second, independent** switch rather than folded into the multiwave one, because
+the two answer different questions — *what is in the sound* and *how the row is spent* — and
+all four combinations are sensible. It is also purely a drawing decision: the peaks fetched
+are identical either way, so `WaveformStyle.needsBands` is what reaches the engine and
+flipping the baseline repaints without asking for anything.
+
+Centred stays the default. It is what Lumit has always drawn, it is what the eye expects of a
+*wave*, and defaults do not change under people for a preference.

@@ -72,6 +72,7 @@ LumitTheme _with(
   Color? timelineOutOfRange,
   Color? selectionFill,
   Color? marker,
+  WaveformColours? waveform,
 }) =>
     LumitTheme(
       mode: t.mode,
@@ -103,6 +104,7 @@ LumitTheme _with(
       timelineOutOfRange: timelineOutOfRange ?? t.timelineOutOfRange,
       selectionFill: selectionFill ?? t.selectionFill,
       marker: marker ?? t.marker,
+      waveform: waveform ?? t.waveform,
     );
 
 LayerColours _layerWith(
@@ -121,6 +123,20 @@ LayerColours _layerWith(
       solid: solid ?? l.solid,
       text: text ?? l.text,
       camera: camera ?? l.camera,
+    );
+
+WaveformColours _waveformWith(
+  WaveformColours w, {
+  Color? rest,
+  Color? low,
+  Color? mid,
+  Color? high,
+}) =>
+    WaveformColours(
+      rest: rest ?? w.rest,
+      low: low ?? w.low,
+      mid: mid ?? w.mid,
+      high: high ?? w.high,
     );
 
 /// One curve stroke by index, preserving the rest of the ramp.
@@ -307,6 +323,41 @@ final List<ThemeToken> themeTokens = [
     group: 'Roles',
     read: (t) => t.cacheDisk,
     write: (t, c) => _with(t, cacheDisk: c),
+  ),
+
+  // --- Waveforms ----------------------------------------------------------
+  ThemeToken(
+    key: 'waveformRest',
+    label: 'Waveform',
+    description: 'The single wave a layer or a clip draws. Content, not '
+        'state — never the accent.',
+    group: 'Waveforms',
+    read: (t) => t.waveform.rest,
+    write: (t, c) => _with(t, waveform: _waveformWith(t.waveform, rest: c)),
+  ),
+  ThemeToken(
+    key: 'waveformLow',
+    label: 'Multiwave, bass',
+    description: 'The bottom band of the multiwave stack — kicks and bass.',
+    group: 'Waveforms',
+    read: (t) => t.waveform.low,
+    write: (t, c) => _with(t, waveform: _waveformWith(t.waveform, low: c)),
+  ),
+  ThemeToken(
+    key: 'waveformMid',
+    label: 'Multiwave, middle',
+    description: 'The middle band — most of a voice, a snare\'s body.',
+    group: 'Waveforms',
+    read: (t) => t.waveform.mid,
+    write: (t, c) => _with(t, waveform: _waveformWith(t.waveform, mid: c)),
+  ),
+  ThemeToken(
+    key: 'waveformHigh',
+    label: 'Multiwave, treble',
+    description: 'The top band — hats, sibilance, transient edge.',
+    group: 'Waveforms',
+    read: (t) => t.waveform.high,
+    write: (t, c) => _with(t, waveform: _waveformWith(t.waveform, high: c)),
   ),
 
   // --- Graph curves -------------------------------------------------------
