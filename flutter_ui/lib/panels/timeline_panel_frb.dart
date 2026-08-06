@@ -58,6 +58,7 @@ import 'timeline_razor.dart';
 import 'effect_param_row_frb.dart';
 import 'keyframe_controls_frb.dart';
 import 'layer_fold_frb.dart';
+import 'waveform_frb.dart';
 import 'timeline_timings.dart';
 import 'transform_rows_frb.dart';
 
@@ -316,14 +317,26 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   /// answer arrives.
   final Map<String, bool> _hasAudio = {};
 
-  /// Each layer's source waveform peaks, by id — fetched once when its
-  /// Waveform twirl first opens (decoding a whole track is not work for a
-  /// build), then good for the session: peaks belong to the file, so trims
-  /// and drags never invalidate them (K-172).
+  /// Each layer's waveform peaks, by id — the stretch of its source the lanes
+  /// are currently showing, summarised to one bucket per pixel column (K-280).
+  ///
+  /// Refetched when the zoom or the scroll moves the window far enough to
+  /// matter, which is what keeps the drawn detail level with the zoom instead
+  /// of blocky. Peaks belong to the file, so the painter maps them through the
+  /// live in/out/offset and a drag or a trim carries the transients with it
+  /// without asking again (K-172).
   final Map<String, BridgeAudioPeaks> _peaks = {};
 
-  /// One lane's worth of buckets: plenty for any panel width.
-  static const int _peakBuckets = 2048;
+  /// What each layer's peaks were fetched for: the window, the bucket count
+  /// and the wave style. Equal keys mean the answer in hand is still the right
+  /// one, so nothing is asked again — a scroll of a few pixels rounds to the
+  /// same key by design ([WaveformRequest]).
+  final Map<String, String> _peakKeys = {};
+
+  /// The lanes' viewport width as the last layout measured it. Written during
+  /// build and never read to decide layout — it says how much audio a waveform
+  /// lane is showing, which is what the peak window is worked out from.
+  double _laneViewport = 0;
 
   /// Each Footage layer's source length in comp frames, by layer id. Cached
   /// for the same reason [_hasAudio] is: the answer comes from probing the
@@ -342,21 +355,97 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   /// is what keeps a rebuild free of bridge calls (K-184).
   BigInt? _boundsRevision;
 
-  /// Fetch peaks for any layer whose Waveform twirl is open and unanswered.
+  /// Whether waveforms draw as the three-band stack — Settings ▸ Interface ▸
+  /// Editing ▸ *Waveforms show the frequency stack* (K-280).
+  bool get _multiwave =>
+      Provider.of<LumitUiState>(context, listen: false)
+          .workspace
+          .interface
+          .multiwaveWaveforms;
+
+  /// Fetch peaks for every layer whose Waveform twirl is open, over the stretch
+  /// of audio the lanes are showing right now.
+  ///
+  /// **This is what makes the resolution follow the zoom.** The old lane asked
+  /// once for 2 048 buckets across the whole source and kept them for the
+  /// session, so zooming in stretched the same coarse summary until it was a
+  /// staircase (K-172, superseded here). Now the window is the visible one and
+  /// the buckets are the visible pixel columns, so a wave has as much detail as
+  /// there is room to show, at any zoom.
+  ///
+  /// Called from the build *and* from the lanes' scroll, because scrolling
+  /// moves the window without changing anything the panel rebuilds for. The
+  /// request rounds itself off, so an ordinary scroll asks nothing new and only
+  /// a real move sends a fetch.
   void _refreshPeaks(List<BridgeLayerEntry> layers) {
+    final ui = _ui;
+    if (ui == null) return;
+    final frames = ui.model.durationFrames;
+    final fps = ui.model.fps;
+    final width = _laneViewport * _zoom;
+    if (frames <= 0 || fps <= 0 || width <= 0 || _laneViewport <= 0) return;
+    final multiwave = _multiwave;
+    // The comp seconds under the lanes' window, from the same mapping the axis
+    // draws with.
+    final maxOffset = max(0.0, width - _laneViewport);
+    final offset =
+        _hLane.hasClients ? _hLane.offset.clamp(0.0, maxOffset) : 0.0;
+    final secondsPerPixel = frames / fps / width;
+    final viewStart = offset * secondsPerPixel;
+    final viewEnd = (offset + _laneViewport) * secondsPerPixel;
+
     for (final entry in layers) {
       final id = entry.layer.internallayerId.toString();
-      if (!_open.contains(waveformPath(id)) || _peaks.containsKey(id)) {
+      if (!_open.contains(waveformPath(id))) {
+        // A shut lane keeps nothing: the window it was fetched for is stale by
+        // the time it opens again, and the memory is a whole track's summary.
+        _peaks.remove(id);
+        _peakKeys.remove(id);
         continue;
       }
-      // Claim the slot first, so a rebuild mid-decode does not decode twice.
-      _peaks[id] = BridgeAudioPeaks(durationSeconds: 0, pairs: Float32List(0));
-      entry.layer.audioPeaks(buckets: _peakBuckets).then((peaks) {
-        if (!mounted) return;
+      final span = entry.info.span;
+      final startOffset =
+          span.startOffset.num / span.startOffset.den.toDouble();
+      // The layer's own source clock: comp time less where its source starts.
+      final request = WaveformRequest.forView(
+        startSeconds: viewStart - startOffset,
+        endSeconds: viewEnd - startOffset,
+        pixels: _laneViewport,
+      );
+      if (request == null) continue;
+      final key = '${request.key}|$multiwave';
+      // Claimed before the fetch starts, so a rebuild mid-decode does not ask
+      // twice for the same window.
+      if (_peakKeys[id] == key) continue;
+      _peakKeys[id] = key;
+      entry.layer
+          .audioPeaks(
+        startSeconds: request.startSeconds,
+        endSeconds: request.endSeconds,
+        buckets: request.buckets,
+        multiwave: multiwave,
+      )
+          .then((peaks) {
+        // A later window may already have been asked for while this one was
+        // decoding; the newest ask wins, so an old answer is dropped rather
+        // than drawn over a lane that has moved on.
+        if (!mounted || _peakKeys[id] != key) return;
         setState(() => _peaks[id] = peaks);
       });
     }
   }
+
+  /// The lanes scrolled: the visible window moved, so the waveforms may want a
+  /// finer summary of somewhere else. Nothing is rebuilt here — the fetch calls
+  /// `setState` only when an answer actually arrives.
+  void _onLaneScroll() {
+    if (_peakKeys.isEmpty && _peaks.isEmpty) return;
+    _refreshPeaks(_lastLayers);
+  }
+
+  /// The layers the last build drew, so a scroll can refresh their peaks
+  /// without a rebuild to hand them over.
+  List<BridgeLayerEntry> _lastLayers = const [];
 
   /// Work out how far every layer's ends may be dragged (K-211).
   ///
@@ -977,6 +1066,11 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     super.initState();
     _vOutline.addListener(() => _followScroll(_vOutline, _vLane));
     _vLane.addListener(() => _followScroll(_vLane, _vOutline));
+    // Scrolling sideways moves which stretch of audio the waveform lanes show,
+    // and a summary is only as detailed as the window it was taken over
+    // (K-280). Nothing else about the panel changes, so this listens rather
+    // than the panel rebuilding on every scrolled pixel.
+    _hLane.addListener(_onLaneScroll);
     HardwareKeyboard.instance.addHandler(_onKey);
     // Claim Delete for the finer selection this panel holds (K-234). The state
     // is kept, not looked up again: `dispose` runs after the element is
@@ -1127,6 +1221,9 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     }
     if (action == 'reveal.animated') {
       return _revealTap();
+    }
+    if (action == 'reveal.audio') {
+      return _revealAudioTap(ui);
     }
     // Enter renames the selected layer in place (docs/07 §15, K-243): the row
     // it names opens its own editor, which is why this sets a value rather
@@ -1344,6 +1441,55 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     return true;
   }
 
+  /// When the last `L` was pressed, and how many times in a row (K-281) — the
+  /// same shape as the `U` cycle, and for the same reason: three taps inside
+  /// the window are three different commands.
+  DateTime? _lastAudioReveal;
+  int _audioRevealTaps = 0;
+
+  /// One press of `L` on the selected layers: **L** opens their Audio group,
+  /// **LL** opens the waveform lane inside it, **LLL** shuts them again
+  /// (docs/07 §4.3).
+  ///
+  /// A layer with no sound is left alone rather than opened onto an Audio
+  /// group it does not have — the same answer `M` gives a layer with no masks.
+  /// Whether a layer carries sound is the cached probe the outline already
+  /// uses, so this costs no bridge call.
+  bool _revealAudioTap(LumitUiState ui) {
+    final selected = ui.selectedLayerIds;
+    if (selected.isEmpty) return false;
+    final now = DateTime.now();
+    final last = _lastAudioReveal;
+    _audioRevealTaps =
+        (last != null && now.difference(last) <= _revealWindow)
+            ? _audioRevealTaps + 1
+            : 1;
+    _lastAudioReveal = now;
+
+    setState(() {
+      for (final entry in ui.model.layers) {
+        if (!selected.contains(entry.layer.internallayerId)) continue;
+        final id = entry.layer.internallayerId.toString();
+        // Every tap starts from the layer closed, so the cycle shows exactly
+        // what it says rather than adding to whatever was already open.
+        _open.removeWhere((p) => p == id || isUnderPath(id, p));
+        _dropSelectionUnder(id);
+        if (_audioRevealTaps >= 3) continue;
+        if (!(_hasAudio[id] ?? false)) continue;
+        _open
+          ..add(id)
+          ..add(audioPath(id));
+        if (_audioRevealTaps >= 2) _open.add(waveformPath(id));
+      }
+      if (_audioRevealTaps >= 3) {
+        // LLL: shut, and the next L starts the cycle over.
+        _audioRevealTaps = 0;
+        _lastAudioReveal = null;
+      }
+    });
+    return true;
+  }
+
   /// Mirror one side's scroll onto the other, guarded against the echo.
   void _followScroll(ScrollController from, ScrollController to) {
     if (_syncingScroll || !from.hasClients || !to.hasClients) return;
@@ -1514,6 +1660,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
           e,
     ];
     _refreshAudio(layers);
+    _lastLayers = layers;
     _refreshPeaks(layers);
     // Every layer, not the filtered list: a bar hidden by the search box still
     // has ends, and they must be known the moment it comes back.
@@ -1637,6 +1784,15 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                       .clamp(1.0, 1e6);
                   final axis =
                       TimelineAxis(frames: frames, width: laneViewport * _zoom);
+                  // How wide the lanes are is how many buckets a waveform wants
+                  // (K-280). Measured here because this is where it is known;
+                  // acted on after the frame, since a build must not start one.
+                  if (_laneViewport != laneViewport) {
+                    _laneViewport = laneViewport;
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) _refreshPeaks(_lastLayers);
+                    });
+                  }
 
                   // Where the work area falls, read once and handed to the
                   // ruler, the lanes and the curves alike (K-203) — and null
@@ -2114,6 +2270,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                   ),
                                                   hasAudio: _hasAudio,
                                                   peaks: _peaks,
+                                                  multiwave: _multiwave,
                                                   fps: ui.model.fps,
                                                   fpsNum: fpsNum,
                                                   fpsDen: fpsDen,
@@ -3570,83 +3727,6 @@ class BarEndMarksPainter extends CustomPainter {
   @override
   bool shouldRepaint(BarEndMarksPainter old) =>
       old.atIn != atIn || old.atOut != atOut || old.colour != colour;
-}
-
-/// The waveform lane's painter: the layer's source peaks, mapped through its
-/// live in/out/offset so dragging or trimming the bar carries the transients
-/// with it in realtime (K-172). One vertical min-max line per pixel column.
-class _WaveformPainter extends CustomPainter {
-  final BridgeAudioPeaks? peaks;
-
-  /// The span as drawn — the document's frames plus any drag in flight.
-  final int inFrame;
-  final int outFrame;
-  final double startOffsetSeconds;
-  final TimelineAxis axis;
-  final double fps;
-  final Color colour;
-
-  const _WaveformPainter({
-    required this.peaks,
-    required this.inFrame,
-    required this.outFrame,
-    required this.startOffsetSeconds,
-    required this.axis,
-    required this.fps,
-    required this.colour,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final held = peaks;
-    if (held == null || held.pairs.isEmpty || held.durationSeconds <= 0) {
-      return;
-    }
-    final buckets = held.pairs.length ~/ 2;
-    final startOffset = startOffsetSeconds;
-    final left = axis.xOf(inFrame).clamp(0.0, size.width);
-    final right = axis.xOf(outFrame).clamp(0.0, size.width);
-    final mid = size.height / 2;
-    // Half a pixel of breathing room top and bottom.
-    final half = mid - 1;
-    final paintLine = Paint()
-      ..color = colour
-      ..strokeWidth = 1;
-
-    for (var x = left; x < right; x += 1) {
-      // Fractional, straight off the axis mapping: frameAt rounds to whole
-      // frames, which would staircase the waveform.
-      final compSec = x / axis.width * axis.frames / fps;
-      final srcSec = compSec - startOffset;
-      if (srcSec < 0 || srcSec >= held.durationSeconds) continue;
-      final bucket = (srcSec / held.durationSeconds * buckets)
-          .floor()
-          .clamp(0, buckets - 1);
-      final lo = held.pairs[bucket * 2].clamp(-1.0, 1.0);
-      final hi = held.pairs[bucket * 2 + 1].clamp(-1.0, 1.0);
-      canvas.drawLine(
-        Offset(x, mid - hi * half),
-        Offset(x, mid - lo * half),
-        paintLine,
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(_WaveformPainter old) =>
-      old.peaks != peaks ||
-      old.inFrame != inFrame ||
-      old.outFrame != outFrame ||
-      old.startOffsetSeconds != startOffsetSeconds ||
-      old.fps != fps ||
-      old.axis.frames != axis.frames ||
-      old.axis.width != axis.width;
-
-  /// A background painter's default is to absorb hits across its whole rect,
-  /// which would eat the keyframe marquee underneath. The lane is a picture,
-  /// not a control.
-  @override
-  bool? hitTest(Offset position) => false;
 }
 
 /// The outline's toolbar (docs/07 §4.1): the timecode and frame readouts, the
@@ -5171,6 +5251,10 @@ class _LayerArea extends StatelessWidget {
   /// Each layer's source peaks, for the waveform lanes.
   final Map<String, BridgeAudioPeaks> peaks;
 
+  /// Whether waveforms draw as the three-band stack (K-280) — the lanes' own
+  /// answer, handed down so an open Sequence view's clips agree with it.
+  final bool multiwave;
+
   /// The comp's rate, mapping the lane's pixels onto source seconds.
   final double fps;
   final TimelineAxis axis;
@@ -5248,6 +5332,7 @@ class _LayerArea extends StatelessWidget {
     this.onClipPreview,
     required this.hasAudio,
     required this.peaks,
+    required this.multiwave,
     required this.fps,
     required this.axis,
     required this.playhead,
@@ -5522,6 +5607,7 @@ class _LayerArea extends StatelessWidget {
                                                 fpsNum: fpsNum,
                                                 fpsDen: fpsDen,
                                                 hScroll: hScroll,
+                                                multiwave: multiwave,
                                                 razor: razor,
                                                 onRazor: (frame) =>
                                                     onRazor(layers[i], frame),
@@ -5641,19 +5727,28 @@ class _LayerArea extends StatelessWidget {
         builder: (context, preview, _) {
           final p = preview?.layerId == id ? preview : null;
           final span = entry.info.span;
+          // The span as drawn — the document's frames plus any drag in flight —
+          // and where its source starts, so a bar being dragged or trimmed
+          // carries its transients with it in realtime (K-172).
+          final inFrame = entry.info.inFrame.toInt() + (p?.deltaIn ?? 0);
+          final outFrame = entry.info.outFrame.toInt() + (p?.deltaOut ?? 0);
+          final startOffset =
+              span.startOffset.num / span.startOffset.den.toDouble() +
+                  (p?.offsetShift ?? 0) / fps;
+          final secondsPerPixel =
+              axis.width <= 0 ? 0.0 : axis.frames / fps / axis.width;
           return CustomPaint(
             key: ValueKey<String>('tl-wave-$id'),
             size: Size(axis.width, _rowHeight),
-            painter: _WaveformPainter(
+            painter: WaveformPainter(
               peaks: peaks[id],
-              inFrame: entry.info.inFrame.toInt() + (p?.deltaIn ?? 0),
-              outFrame: entry.info.outFrame.toInt() + (p?.deltaOut ?? 0),
-              startOffsetSeconds:
-                  span.startOffset.num / span.startOffset.den.toDouble() +
-                      (p?.offsetShift ?? 0) / fps,
-              axis: axis,
-              fps: fps,
-              colour: t.accent,
+              // Canvas x 0 is comp time 0, and the source's own clock runs
+              // from there less wherever the layer starts it.
+              originSeconds: -startOffset,
+              secondsPerPixel: secondsPerPixel,
+              left: axis.xOf(inFrame),
+              right: axis.xOf(outFrame),
+              colours: t.waveform,
             ),
           );
         },

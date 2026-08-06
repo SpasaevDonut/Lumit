@@ -246,10 +246,11 @@ on a light scheme means going *darker* while the surfaces go lighter).
 `accent`/`accent_hover`, `success`/`warning`/`error`, the `curve[4]` ramp, `layer`
 (`LayerColours`, §6.1) — plus two the code has split out that this listing does not yet name:
 `scope` (`ScopeColours`, the four scope-chrome accents), `cache_disk` (the disk tier of the
-cache bar, §6.3) and `marker` (comp markers on the time ruler, §6.4 — the first of the
-`marker` grouping to be split out, K-254; the beat variant still waits). Not yet split into their own tokens, and derived ad-hoc from existing roles in
+cache bar, §6.3), `marker` (comp markers on the time ruler, §6.4 — the first of the
+`marker` grouping to be split out, K-254; the beat variant still waits) and `waveform`
+(`WaveformColours`: `rest` plus the three multiwave bands, K-280). Not yet split into their own tokens, and derived ad-hoc from existing roles in
 v1: `disabled` and `fill_tonal` (the `cloud`/`oat` mappings below are reserved, not present);
-the `keyframe`, `overrun_hatch`, `waveform` and `selection` groupings (widgets reach
+the `keyframe`, `overrun_hatch` and `selection` groupings (widgets reach
 for `text_secondary`, `accent`, `warning`, etc. directly); and `shadow_float`. Splitting each
 into a named token — so no widget derives a semantic colour itself — is the standing direction,
 done as each area is next touched; the no-hex rule already holds regardless.
@@ -430,9 +431,17 @@ failure.
 - **Beat markers**: `marker.beat` = `#aef3e7` (mint) 1px ticks in the ruler with a small
   triangular head — still to come, and it needs a token of its own beside `marker`. Span
   markers draw a hairline-bounded band.
-- **Clip waveforms**: `waveform.rest` = `#5d8a96` (muted steel-cyan) filled envelope at 80%
-  opacity on `surface_2`; on selected clips the envelope brightens to `text_secondary`.
-  Waveforms never render in `accent` — they are content, not state.
+- **Clip waveforms (shipped, K-280)**: `waveform.rest` = `#5d8a96` (muted steel-cyan) filled
+  envelope at 80% opacity on `surface_2`, with the RMS core drawn solid inside it; on selected
+  clips the envelope brightens to `text_secondary` (still to come). Waveforms never render in
+  `accent` — they are content, not state, and the lane that did borrow `accent` was corrected
+  when this grouping became real tokens. The **multiwave** stack (K-280) adds three band
+  colours beside `rest`, running blue → green → mint as the frequency climbs because that is
+  the order a spectrum is read in: `waveform.low` `#4a7f9c`, `waveform.mid` `#6fa48c`,
+  `waveform.high` `#aef3e7` on a dark scheme (`#2f5f77` / `#44765f` / `#4f8d85` on a light
+  one). All four default from the mode rather than being restated per scheme, and all four are
+  editable like any other token. The stack draws bass at the bottom, one band per third of the
+  lane's height.
 
 ### 6.5 Selection, focus, drop targets
 

@@ -457,6 +457,23 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             }),
           ),
         ),
+        _row(
+          t,
+          'Waveforms show the frequency stack',
+          'A layer\'s waveform draws as three stacked waves — bass, middle '
+              'and treble — instead of one. A loud passage is a solid block on '
+              'a single wave whichever instrument is playing; the stack shows '
+              'the kick apart from the hats, so a cut can be aimed at either. '
+              'Turn it off for one plain wave.',
+          HouseCheckbox(
+            key: const ValueKey('settings-multiwave'),
+            value: settings.multiwaveWaveforms,
+            onChanged: (on) => setState(() {
+              settings.multiwaveWaveforms = on;
+              ui.workspace.settingsChanged();
+            }),
+          ),
+        ),
       ]),
     ];
   }

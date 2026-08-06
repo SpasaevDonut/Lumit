@@ -1507,6 +1507,42 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   and a precomp layer's own Volume scales everything inside it — the gains multiply down the
   chain, so it has the Volume row too. And a purely-audio layer (a music file) shows no eye
   in the outline at all: there is no picture to hide.
+- **Waveforms that sharpen as you zoom, and show what the sound *is* (K-280)** — a waveform
+  is not the sound itself, it is a summary of it: for each column of pixels, how far the
+  speaker cone swung up and down while that sliver of time went by. That means a summary is
+  only ever as detailed as the stretch it was taken over. The first version took one summary
+  of the whole file when you opened the lane and kept it, so zooming in stretched the same
+  coarse picture until the wave was a staircase of blocks — you could see roughly where the
+  loud bits were and never where the *hit* was, which is the one thing you zoom in for.
+  Now the sound is summarised once at three levels of detail at the same time — think of the
+  smaller pictures a phone keeps beside a photo so it can show a thumbnail without loading
+  the whole thing — and the lane asks for whichever level suits the stretch it is currently
+  showing, one bucket per pixel column. Zoom in and it asks again over a shorter stretch, so
+  the wave *gains* detail instead of stretching. The summary is built once per file (a whole
+  track takes a moment to read) and kept for as long as the app is open, shared between every
+  layer cut from that file, with a firm ceiling on how much memory the lot may use.
+  Two other things came with it. **Clips on a Sequence layer now draw their own waveform**
+  inside their box — so a cut, which is a box on a row, finally shows the sound you are
+  cutting — and it travels with the clip when you drag it, because it is drawn from the clip's
+  own clock rather than pinned to the timeline. And the **multiwave**: instead of one wave, the
+  lane can draw three stacked, splitting the sound into bass, middle and treble. This matters
+  because a modern mastered track is loud all the way through, so a single wave is a solid
+  block whatever is playing — the phrase for it is "a sausage". Split into bands, the kick
+  shows up in the bottom stripe and the hats in the top one, and you can cut to the one you
+  mean. It is on by default; Settings ▸ Interface ▸ Editing has a switch that puts the single
+  plain wave back. (The idea is BLICK's, an editor that does the same thing.)
+- **`L` opens a layer's sound (K-281)** — press `L` with layers selected and their **Audio**
+  group opens; press it again and the waveform lane opens under it; a third time shuts the
+  layer. The same three-tap shape `U` has for animated properties, and for the same reason:
+  what you want is usually one of three depths, and inventing a modifier for each would be
+  three shortcuts to remember instead of one key pressed once, twice or three times.
+  `L` is also "play forward" in the NLE keyboard Lumit borrows (`J` back, `K` stop, `L`
+  forward) — so inside the Timeline it now means the audio reveal, and everywhere else it
+  still moves time. That kind of takeover used to be reported as a *clash* the user had to go
+  and fix; it is now reported as a *shadow* and left alone, because there was never any
+  ambiguity about which one runs — the panel you are in gets first refusal, and the app-wide
+  meaning is the fallback. Two shortcuts fighting inside the *same* panel is still a clash,
+  since nothing can tell those apart.
 - **Your project remembers where you were** — reopening a saved project no longer lands on a
   blank Viewer waiting for a playhead nudge. Which comp tabs were open, which one was in
   front, where the playhead sat, which layer was selected, and which twirls were unfurled all

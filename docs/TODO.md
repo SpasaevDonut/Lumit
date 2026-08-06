@@ -73,11 +73,6 @@ Flutter is the only frontend (K-174, K-182); git history is the parity reference
 These are v1-scope surfaces it does not yet match.
 
 **Audio ([07-UI-SPEC.md](07-UI-SPEC.md) §10, [09-AUDIO.md](09-AUDIO.md)):**
-- Sequence-clip waveforms - a Sequence layer's clips draw none, so a clip in
-    the sequence view is a coloured box with its opening frame and its speed
-    on it. `audio_peaks` answers for a Footage layer only; a clip wants peaks
-    over its own trim of its own source, which is a new engine path beside the
-    decode-at-a-moment one the clip thumbnails already use (K-248).
 
 **Viewer bar ([07-UI-SPEC.md](07-UI-SPEC.md) §2.2):**
 - The wireframe/overlay *menu*; guides menu; region-of-interest;
@@ -545,8 +540,9 @@ list, not a re-statement of the roadmap.
 - **Audio - the largest gap** ([07-UI-SPEC.md](07-UI-SPEC.md) §10,
     [09-AUDIO.md](09-AUDIO.md)): the whole **Audio panel** and level meters; the
     beat-marker tuning controls (sensitivity, BPM-grid, range); **Beat tap**
-    (`8` during playback); persistent waveform peak files (peaks are computed on
-    demand today).
+    (`8` during playback); persistent waveform peak files (the multi-zoom summary is
+    built on demand and cached for the session, K-280 — it is not yet written to
+    the project sidecar, so it is rebuilt next time the project opens).
 - **File format ([10-FILE-FORMAT.md](10-FILE-FORMAT.md)).** Embedded `thumbs/`
     previews in the `.lum`; the per-project sidecar `proxies/`, `peaks/` and
     `flow/` directories (only `frames/` and the global media index exist).
