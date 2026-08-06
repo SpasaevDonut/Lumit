@@ -128,7 +128,12 @@ const roadmap = [
           Source
         </a>
       </div>
-      <p class="mt-4 text-[13.5px] text-fg-3" data-platnote>
+      <p class="mt-4 text-[13.5px]">
+        <a href="/download" class="text-fg-2 underline underline-offset-2 hover:text-fg">
+          View all download options</a
+        >
+      </p>
+      <p class="mt-2 text-[13.5px] text-fg-3" data-platnote>
         Windows, Linux, and macOS · GPLv3 · free forever
       </p>
     </div>
@@ -297,8 +302,16 @@ const roadmap = [
 </style>
 
 <script>
-  // Name the visitor's OS on the hero button. Pure enhancement: the button already
-  // links to /download, so a failure here changes nothing.
+  // Name the visitor's OS on the hero button and point it straight at that
+  // platform's installer. Pure enhancement: the button ships pointing at
+  // /download, and every failure here leaves it there. "View all download
+  // options" underneath is the route for everyone else.
+  const ASSET: Record<string, RegExp> = {
+    Windows: /windows.*\.exe$/i,
+    Linux: /linux.*\.tar\.gz$/i,
+    macOS: /\.dmg$/i,
+  };
+
   const ua = navigator.userAgent;
   const os = /Win/.test(ua)
     ? "Windows"
@@ -307,14 +320,30 @@ const roadmap = [
       : /Linux|X11/.test(ua)
         ? "Linux"
         : null;
+
+  const btn = document.querySelector<HTMLAnchorElement>("[data-dl]");
+
   if (os) {
-    const btn = document.querySelector<HTMLAnchorElement>("[data-dl]");
     if (btn) btn.textContent = `Download for ${os}`;
     if (os === "macOS") {
       const note = document.querySelector("[data-platnote]");
       if (note)
         note.textContent = "macOS build is unsigned - see the download page. GPLv3 · free forever";
     }
+
+    type Asset = { name: string; browser_download_url: string };
+    fetch("https://api.github.com/repos/luminalmvm/Lumit/releases/latest")
+      .then((r) => {
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json() as Promise<{ assets: Asset[] }>;
+      })
+      .then((rel) => {
+        const asset = rel.assets.find((a) => ASSET[os].test(a.name));
+        if (asset && btn) btn.href = asset.browser_download_url;
+      })
+      .catch(() => {
+        /* the /download link the button ships with stands */
+      });
   }
 
   // Feature clips play on hover. A clip that fails to load takes its whole media
