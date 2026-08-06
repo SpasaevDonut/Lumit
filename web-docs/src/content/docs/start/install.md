@@ -27,11 +27,24 @@ needs a certificate, which costs money the project does not currently spend.
 
 ## Linux
 
-Download the `.tar.gz`, unpack it anywhere, and run `./lumit_flutter` from inside the
-folder. FFmpeg ships inside the bundle, so there is nothing else to install.
+Download the `.flatpak` and install it:
 
-For a desktop menu entry and `.lum` file associations, see `INSTALL.txt` in the archive, or
-run `packaging/linux/install.sh` from a clone of the repository.
+```bash
+flatpak install lumit-*.flatpak
+```
+
+Lumit then appears in your applications menu like any other program. FFmpeg ships inside
+the bundle, so there is nothing else to install; the GNOME runtime it builds on is fetched
+from Flathub on first install if you do not already have it.
+
+Any distribution with Flatpak works — the point of shipping this way is that Lumit does not
+care whether you run Ubuntu, Fedora or Arch. If your distribution does not have Flatpak set
+up, [flathub.org/setup](https://flathub.org/setup) covers it in a couple of commands.
+
+`.lum` and `.lumfx` file associations are the one thing the Flatpak cannot give you:
+Flatpak only exports icons named after the application itself, so double-click-to-open
+needs a native install — run `packaging/linux/install.sh` from a clone of the repository
+instead.
 
 ## macOS
 

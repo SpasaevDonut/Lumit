@@ -539,11 +539,11 @@ list, not a re-statement of the roadmap.
     notarisation (K-033); it also owes `application:openFile:` (a double-clicked
     `.lum` opening, K-252) and adding `packaging/macos/*.icns` to the bundle's
     resources. The Metal/IOSurface Viewer path is unverified on real hardware.
-    The release workflow's macOS job stays `continue-on-error` until the pass
-    verifies the Metal Viewer on real hardware and adds signing/notarisation
-    (the DMG bundles its FFmpeg dylibs but is ad-hoc signed, so Gatekeeper
-    warns); signing the Windows installer; Linux distro packages
-    (deb/rpm/Flatpak) beyond `install.sh` and the release tarball.
+    Developer ID signing and notarisation for the DMG (it bundles its FFmpeg
+    dylibs but is ad-hoc signed, so Gatekeeper warns) — blocked on an Apple
+    Developer Program membership, not on code; signing the Windows installer,
+    likewise blocked on buying a certificate. A release ships three unsigned
+    artefacts until then (K-290).
 - **Website.** The release-notes page at `/releases` is built and empty: the notes
     themselves are written by hand, one Markdown file per version under
     `web/src/content/releases` (copy `_template.md`; see `web/README.md`). Until

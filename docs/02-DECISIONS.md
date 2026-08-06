@@ -6140,3 +6140,27 @@ project saved with Black migrates to Normal. The migration runs in
 no longer declares it and the panel cannot draw a row `set_value` refuses. The neutral
 passthroughs (Intensity 0, Mix 0) return before any of this, so they stay bit-exact
 whatever the menu holds.
+
+**K-290 · PROPOSED · A release is exactly three files, and every one of them gates it.**
+Supersedes the artefact list in K-252 (2026-08-03) and K-253 (2026-08-03): the Linux
+release tarball is withdrawn. A tagged release now publishes a Windows setup `.exe`, a
+macOS `.dmg` and a Linux `.flatpak` — one artefact per platform, nothing else. The
+tarball asked the user to clone the repository and run `install.sh` to get a menu entry
+and file associations; the Flatpak gives them both by installing, so the tarball was the
+worse of two Linux stories and its `INSTALL.txt` existed only to apologise for that. The
+staged bundle it was built from stays — the Flatpak is repacked from it.
+
+The `continue-on-error` flags come off the macOS job and the Flatpak step at the same
+time, and for the same reason: a release that quietly ships two files when three were
+promised is worse than one that fails loudly. This means a Homebrew or Flathub hiccup can
+now redden a tag, which is the intended trade. It also means the Flatpak added in K-253
+gets proved: it has never once run, having landed the day after v0.1.0 shipped, and CI
+builds no packaging at all — the first tag after this is its first execution. A tag
+carrying a suffix (`v0.2.0-rc1`) publishes as a pre-release, which is the rehearsal.
+
+Neither the installer nor the DMG is signed, and this entry does not change that. The DMG
+is ad-hoc signed because macOS will not run a bundle with vendored dylibs otherwise
+(`make-dmg.sh`), not because anyone has a certificate; Gatekeeper still warns, and
+SmartScreen still warns on Windows. Developer ID signing and notarisation stay where
+K-033 left them, waiting on an Apple Developer Program membership; Windows signing waits
+on a code-signing certificate. Both are purchases, not code, and neither blocks a release.

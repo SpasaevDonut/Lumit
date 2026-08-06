@@ -3029,9 +3029,10 @@ FFmpeg 6 — Ubuntu 24.04 LTS is the big one. On those, `cargo build` will compl
 newer distribution release, or building FFmpeg 7.1 from source and letting `pkg-config`
 find it.
 
-(There used to be a **Flatpak** here — a ready-to-install Linux bundle. It packaged the
-old egui application and was retired with it in K-182; Linux packaging for the Flutter
-app is tracked in [TODO.md](TODO.md).)
+(A **Flatpak** — a ready-to-install Linux bundle — is how releases ship for Linux, and
+since K-290 it is the *only* way they do. An earlier one packaged the old egui application
+and was retired with it in K-182; the current recipe, described under "Installers" below,
+is a different animal that compiles nothing.)
 
 One Linux-only difference worth knowing, because it looks like a bug otherwise: on Windows
 and macOS Lumit *starts as* the little splash card — that small frameless window you see
@@ -3048,8 +3049,13 @@ included, so "it builds on my machine" can never quietly drift from "it builds f
 The platform recipes above are exactly what CI does, written out by hand in
 `.github/workflows/ci.yml`. The Linux job goes a little further than the others: it installs
 Mesa's *lavapipe*, a Vulkan driver that renders on the CPU, so the GPU tests actually run on
-a machine with no graphics card in it. And a sixth job builds the Flatpak, which is how we
-know the packaging works and not just the code.
+a machine with no graphics card in it.
+
+One gap worth naming, because it is the kind of thing that surprises you at the worst
+moment: CI checks the *code* on every push, but it does not check the *packaging*. Nothing
+in `ci.yml` builds an installer, a disk image or a Flatpak — those live only in
+`release.yml`, which runs when you push a tag. So the first time a packaging change is
+proved is the first tag after it. That is what pre-release tags are for (below).
 
 A rule the FFmpeg episode above taught, worth stating on its own: **a CI job that sets up
 something a contributor would not have set up is not testing the contributor's build.** The
@@ -3580,11 +3586,13 @@ installers live in `packaging/` (decision K-252):
 - **Linux** — `packaging/linux/install.sh` copies a built bundle into
   `~/.local`, and installs the desktop entry, the file-type declarations, and
   the icons where any desktop environment looks for them. No root needed.
-  Releases also ship a Flatpak: a format that packs the app together with
-  everything it needs, so one file installs the same way on Ubuntu, Fedora or
-  Arch (`flatpak install lumit-….flatpak`). The recipe in `packaging/flatpak/`
-  does no building of its own — it repacks the already-built bundle, FFmpeg
-  included.
+  Releases themselves ship a Flatpak instead: a format that packs the app
+  together with everything it needs, so one file installs the same way on
+  Ubuntu, Fedora or Arch (`flatpak install lumit-….flatpak`). The recipe in
+  `packaging/flatpak/` does no building of its own — it repacks the
+  already-built bundle, FFmpeg included. The one thing it cannot do is the
+  `.lum` icons: Flatpak only publishes icons named after the application, so
+  document icons and double-click opening stay a job for `install.sh`.
 - **macOS** — `packaging/macos/make-dmg.sh` produces the usual drag-to-
   Applications disk image (on a Mac): a white window with the app on the
   left, the Applications folder on the right, and a curved arrow showing
@@ -3597,14 +3605,34 @@ into the executable) but registers nothing.
 
 Releases do not depend on your machines at all. Pushing a git tag that starts
 with `v` (say `v0.1.0`) wakes `.github/workflows/release.yml`, and GitHub's
-own computers do the work: a Windows machine builds the setup.exe, a Linux
-machine builds a run-anywhere bundle (FFmpeg's libraries ride inside it) plus
-a Flatpak repacked from it, and everything lands attached to a GitHub Release
-under that tag. Flutter cannot
-cross-build — a Windows machine can only make the Windows app — which is why
-the answer to "can I release everything from Windows" is "yes, by letting the
-tag do it". A macOS disk image builds too, marked experimental: the FFmpeg
-libraries are folded into the app itself (so it runs without Homebrew), but
-it carries no paid Apple signature yet, so macOS warns before first launch —
-the proper signing lands with the macOS pass in the TODO, and a release still
-publishes even if this job fails.
+own computers do the work: a Windows machine builds the setup.exe, a Mac
+builds the disk image, and a Linux machine builds a bundle and repacks it into
+the Flatpak. All three land attached to a GitHub Release under that tag, and
+those three files are the entire release (K-290) — one per platform, nothing
+else.
+
+This is the answer to "can I do a whole release from my Windows desktop": yes,
+but only by letting the tag do it. Flutter cannot cross-build — a Windows
+machine can only make the Windows app, and an Apple disk image can only be
+made on a Mac — so no single computer you own can produce all three. GitHub's
+runners are three computers pretending to be one button.
+
+Every job gates the release, so if any platform fails, no release appears at
+all. That is deliberate: a release quietly missing its Mac build looks exactly
+like a release that never had one, and you would find out from a user rather
+than from CI.
+
+Neither the installer nor the disk image is **signed**. Signing is the paid
+certificate that tells Windows and macOS "a known person made this"; without
+it, SmartScreen shows a blue warning panel and Gatekeeper refuses the first
+double-click (right-click → Open gets past it, once). The disk image *is*
+"ad-hoc signed", which sounds like signing but is not: it is an unnamed
+signature macOS demands before it will run an app carrying its own copies of
+FFmpeg at all. Real signing needs an Apple Developer membership and a Windows
+code-signing certificate — both purchases, neither of them code, and neither
+blocking a release.
+
+To rehearse all this without publishing anything real, tag a **pre-release**:
+any tag with a suffix, like `v0.2.0-rc1`, runs the identical pipeline but
+marks the result a pre-release, so the download page's "latest" ignores it.
+Delete it afterwards and tag the real version.
