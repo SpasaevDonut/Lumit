@@ -64,10 +64,40 @@ pub const SAMPLE_COUNTS: [u32; 3] = [8, 4, 2];
 /// red-alert states).
 #[must_use]
 pub fn supported_sample_count(adapter: &wgpu::Adapter, requested: u32) -> u32 {
+    // No device in hand, so only the counts every device must accept count.
     sample_count_from(
-        adapter.get_texture_format_features(WORKING_FORMAT).flags,
+        usable_sample_flags(
+            adapter.get_texture_format_features(WORKING_FORMAT).flags,
+            wgpu::Features::empty(),
+        ),
         requested,
     )
+}
+
+/// The counts an adapter reports that a device with `enabled` features will
+/// actually accept.
+///
+/// An adapter answers for the *hardware*: `get_texture_format_features` lists
+/// every count the card can do, including 2×, 8× and 16×. A device only accepts
+/// those if it was opened with `TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES`;
+/// without it, WebGPU guarantees 1 and 4 and nothing else, and asking for more
+/// is a validation error at `create_texture` — which is how an 8× project
+/// setting turned into a black frame on a card that advertises 8×.
+#[must_use]
+fn usable_sample_flags(
+    adapter_flags: wgpu::TextureFormatFeatureFlags,
+    enabled: wgpu::Features,
+) -> wgpu::TextureFormatFeatureFlags {
+    if enabled.contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES) {
+        return adapter_flags;
+    }
+    let mut flags = adapter_flags;
+    flags.remove(
+        wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X2
+            | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X8
+            | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X16,
+    );
+    flags
 }
 
 /// What the adapter said about multisampling, published the first time any
@@ -246,18 +276,25 @@ impl GpuContext {
         // not do (K-177). Open the device ourselves with them appended; if the
         // adapter cannot enable them, fall back to a plain device so the read-back
         // path still works (the DMA-BUF path then reports unavailable).
+        //
+        // The device also asks for the adapter's own format features where the
+        // card has them, which is what makes 8× anti-aliasing legal rather than
+        // merely advertised (see [`usable_sample_flags`]). A card without them
+        // opens as before and is held to 4×.
+        let descriptor = wgpu::DeviceDescriptor {
+            required_features: adapter.features()
+                & wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
+            ..Default::default()
+        };
         #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
         let (device, queue) = match shared_linux::open_device(&adapter) {
             Ok(dq) => dq,
-            Err(_) => {
-                pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
-                    .map_err(|e| GpuError::Device(e.to_string()))?
-            }
+            Err(_) => pollster::block_on(adapter.request_device(&descriptor, None))
+                .map_err(|e| GpuError::Device(e.to_string()))?,
         };
         #[cfg(not(all(target_os = "linux", feature = "shared-texture-linux")))]
-        let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
-                .map_err(|e| GpuError::Device(e.to_string()))?;
+        let (device, queue) = pollster::block_on(adapter.request_device(&descriptor, None))
+            .map_err(|e| GpuError::Device(e.to_string()))?;
 
         // Which adapter was picked is the first thing anyone asks when the
         // Viewer is black or a hybrid-GPU machine chose the wrong card — but it
@@ -288,7 +325,12 @@ impl GpuContext {
 
         // Ask the adapter once, here, while it is still in hand: nothing
         // downstream holds one, and the answer never changes for a given device.
-        let sample_flags = adapter.get_texture_format_features(WORKING_FORMAT).flags;
+        // Held to what *this device* will accept, not to what the card can do:
+        // the two differ whenever the adapter-specific feature is unavailable.
+        let sample_flags = usable_sample_flags(
+            adapter.get_texture_format_features(WORKING_FORMAT).flags,
+            device.features(),
+        );
         // Publish it for the reporting path (see `ADAPTER_SAMPLE_FLAGS`); the
         // first context to open wins and every later one agrees with it.
         let _ = ADAPTER_SAMPLE_FLAGS.set(sample_flags);
@@ -911,6 +953,36 @@ mod tests {
         assert!(!adapter_is_required(Some("0")), "0 turns it off explicitly");
         assert!(adapter_is_required(Some("1")), "CI sets 1");
         assert!(adapter_is_required(Some("yes")));
+    }
+
+    /// **What the card can do is not what the device will take.** A DX12
+    /// adapter reporting 8× while the device was opened without the
+    /// adapter-specific format features made an 8× project setting a
+    /// validation error at `create_texture`, and the frame came back empty.
+    #[test]
+    fn adapter_only_sample_counts_are_dropped_unless_the_device_enabled_them() {
+        let card = wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X2
+            | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4
+            | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X8
+            | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE;
+
+        let plain = usable_sample_flags(card, wgpu::Features::empty());
+        assert_eq!(sample_count_from(plain, 8), 4, "8× is not guaranteed");
+        assert_eq!(sample_count_from(plain, 2), 1, "nor is 2×");
+        assert!(
+            plain.contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE),
+            "unrelated flags survive the mask"
+        );
+
+        let asked = usable_sample_flags(
+            card,
+            wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
+        );
+        assert_eq!(
+            sample_count_from(asked, 8),
+            8,
+            "a device that asked gets 8×"
+        );
     }
 
     /// The gpu-foundation §7 golden: every 8-bit value survives
