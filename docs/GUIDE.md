@@ -3387,6 +3387,44 @@ cache" above). Changing it means the frames already made no longer answer, and
 the ones you look at next are made afresh. That is the same rule every other
 picture-changing edit follows; it is not the setting misbehaving.
 
+### Asking the graphics card once instead of thirty-two times
+
+Work does not go to the graphics card one instruction at a time. It is written
+into a **command buffer** — a list of things to do — and the whole list is then
+*submitted*. Handing a list over is a round trip through the graphics driver,
+and that round trip costs roughly the same whether the list has one item on it
+or a thousand.
+
+Lumit used to build a separate list for every step of a frame: one for each
+layer, one for each effect on it, one for the final combine. A composition with
+thirty-two layers handed over thirty-four lists to draw a single frame. All of
+that work was going to the same card in the same order anyway, so there was
+never a reason for it to travel separately.
+
+Now a frame writes one list and hands it over once. Measured on the same
+composition: thirty-four submissions became three, and — the part that matters —
+the number no longer grows when you add layers. Adding thirty-one more layers to
+a comp now adds *no* extra round trips.
+
+**Two places still have to hand work over early**, and both for the same reason:
+they need to *look* at what the card produced. You cannot read a picture the
+card has not drawn yet, and a list that has not been submitted has not been
+drawn. So reading a finished frame back, measuring a scope, and handing the
+picture to the Viewer each push the list through first.
+
+**The render-time column is the interesting exception.** It measures a layer by
+waiting for the card to finish that layer before reading the clock — but under
+one-list-per-frame there is nothing to wait for yet, so the wait would return
+instantly and every number would be wrong. So a *measured* frame deliberately
+goes back to handing work over layer by layer. That is not a bug: it is the same
+trade the stopwatch already makes, which is why measuring is a switch you turn
+on rather than something running all the time.
+
+The thing that keeps this honest is a **count**, not a stopwatch. Lumit counts
+every submission, and a test asserts that adding layers adds none. A timing test
+would prove nothing on the machines that check the code (they have no real
+graphics card), but a count is a count anywhere.
+
 ### The panels
 
 `state/comp_model.dart` is the read model: **one** bridge call returns the whole

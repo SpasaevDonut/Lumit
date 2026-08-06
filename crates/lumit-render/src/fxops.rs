@@ -1012,6 +1012,11 @@ pub fn run_ops(
             }
         }
         if let (Some(started), Some(into)) = (started, timings.as_mut()) {
+            // Same reason as the per-layer fence in `realise`: a frame's
+            // commands are batched, and timing a queue that has not been
+            // handed over would measure nothing. A measured frame gives the
+            // batching up, effect by effect.
+            ctx.flush();
             ctx.device.poll(wgpu::Maintain::Wait);
             into.push(started.elapsed().as_secs_f32() * 1000.0);
         }

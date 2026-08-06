@@ -49,21 +49,6 @@ These sit above everything else: they are what the editor feels like in the hand
     `sample_scalar` per animated row plus one `time_of_frame`. Batch per frame if
     it ever bites, the way `time_of_frame` already was.
     (`bridge_call_budget_test.dart` is the gate.)
-- **A frame gives the card one command buffer per layer, where one would do.**
-    Measured 2026-07-31: submits per frame = layers + 2 (3 at one layer, 10 at
-    eight, 34 at thirty-two). Every pass in `lumit-gpu` makes and submits its own
-    encoder (`composite.rs`, `fx/*`, the display pass), yet all of a frame's
-    passes are in order on one queue, so they can be encoded once and handed over
-    once. Each submit is a round trip to the driver, a cost that does not depend
-    on the card - which is why this is worth doing even though it cannot be
-    *timed* on a software rasteriser. It takes
-    [impl/playback-scheduler.md](impl/playback-scheduler.md) §2's one-submit-thread
-    rule further rather than conflicting with it. The shape: pass a
-    `&mut wgpu::CommandEncoder` down the realise walk and submit once at the top,
-    leaving the read-backs (`start_readback8`) and shared-texture copies alone -
-    both need their own submission to be waited on. **Re-measure on real hardware
-    either side**: the stopwatch that found it was on the dropped worker-pool
-    branch, and a change made for a number needs the number.
 
 ---
 
