@@ -6140,3 +6140,44 @@ project saved with Black migrates to Normal. The migration runs in
 no longer declares it and the panel cannot draw a row `set_value` refuses. The neutral
 passthroughs (Intensity 0, Mix 0) return before any of this, so they stay bit-exact
 whatever the menu holds.
+
+**K-290 · DECIDED · A frame is one command buffer, and a measured frame is not.** Every pass
+in `lumit-gpu` used to build its own command buffer and submit it, so a frame cost the graphics
+driver one round trip per layer and per effect — measured 2026-07-31 at `layers + 2`
+submissions, 34 at thirty-two layers. All of a frame's passes are already in order on one
+queue, so they are now encoded once and handed over once: 3 submissions, and flat in the layer
+count. This takes [impl/playback-scheduler.md](impl/playback-scheduler.md) §2's
+one-GPU-submit-thread rule further rather than conflicting with it — that rule says *who* may
+submit, this says *how often*.
+
+**Batching is a property of the context, not of a threaded parameter.** `GpuContext` holds the
+frame's encoder between `begin_frame` and `end_frame`, and `encoder()` hands it out; outside a
+batch it hands out a fresh, self-submitting one, so every pass called on its own behaves
+exactly as before and no test changed. The alternative — threading `&mut CommandEncoder`
+through the realise walk — would have rewritten every signature in the crate and every call
+site in the walk, for a walk that recurses through nested comps, adjustment staging and one
+whole render per motion-blur sample. `begin_frame` nests instead, so the recursive entry point
+opens the batch and the outermost caller closes it.
+
+**Anything that observes the GPU flushes first.** A command that has not been submitted has not
+run, so the read-backs, the scope trace and the three shared-texture present paths hand the
+batch over before their own submission and wait. These keep their own command buffers
+deliberately: each is followed by a fence, and a fence is the one thing batching cannot defer.
+
+**A measured frame gives the batching up, and that is the right trade.** The render-time
+column fences on the device at each layer and each effect; under batching that fence would
+wait on a queue nothing had been handed to, and every number would silently become the time
+Lumit takes to *describe* a layer rather than the time the card takes to draw it. So measuring
+flushes as it goes. K-276 already established that measuring costs the overlap between
+processor and card, which is why it is opt-in and never runs during playback; this is that same
+cost, not a new one.
+
+**The gate is a count, not a stopwatch.** `GpuContext::submits_so_far` counts every submission
+through the one choke point, and the regression tests assert the shape: an unmeasured frame's
+count does not grow with its layers, and a measured frame's does. A submit is a round trip
+whose cost does not depend on the card, so the count is the honest measure — and unlike a
+timing it means something on CI's software rasteriser. A fixed budget was deliberately not
+pinned; "adding thirty-one layers adds no submissions" is the property that was lost, and it is
+the one worth holding. **The wall-clock win is still unmeasured on real hardware**: the number
+that motivated this was a submission count, and what it buys in milliseconds wants a run on a
+real card either side.

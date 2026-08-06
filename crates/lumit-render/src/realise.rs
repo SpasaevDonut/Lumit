@@ -89,6 +89,14 @@ impl Realiser<'_> {
         };
         let ms = match started {
             Some(started) => {
+                // Hand this layer's work over before waiting on it. Batching
+                // holds a frame's commands back to the end, and a fence over an
+                // empty queue would time nothing — so a *measured* frame gives
+                // up the batching, layer by layer, which is the cost the
+                // stopwatch already declares (docs/13 §7.1, K-276: measuring
+                // waits for the card at each layer, which is why it is opt-in
+                // and never runs during playback).
+                self.ctx.flush();
                 self.ctx.device.poll(wgpu::Maintain::Wait);
                 started.elapsed().as_secs_f32() * 1000.0
             }
@@ -244,7 +252,14 @@ impl Realiser<'_> {
         if let Some(p) = self.profiler {
             p.enter_comp();
         }
+        // One command buffer for the whole walk, recursion included. Every pass
+        // below records into it and nothing reaches the driver until the
+        // outermost `end_frame`, so a frame costs one round trip rather than one
+        // per layer and per effect. `begin_frame` nests, which is what lets this
+        // sit on the recursive entry point rather than being threaded by hand.
+        self.ctx.begin_frame();
         let out = self.realise_at_depth(camera, width, height, background, layers);
+        self.ctx.end_frame();
         if let Some(p) = self.profiler {
             p.leave_comp();
         }
