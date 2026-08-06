@@ -236,16 +236,14 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
         dirt_b *= v_factor;
     }
 
-    var src_r = original.r;
-    var src_g = original.g;
-    var src_b = original.b;
-    var src_a = original.a;
+    var bg_r: f32 = 0.0;
+    var bg_g: f32 = 0.0;
+    var bg_b: f32 = 0.0;
 
     if (p.bg_mode > 0u) {
-        src_r = p.bg_colour.r;
-        src_g = p.bg_colour.g;
-        src_b = p.bg_colour.b;
-        src_a = p.bg_colour.a;
+        bg_r = p.bg_colour.r;
+        bg_g = p.bg_colour.g;
+        bg_b = p.bg_colour.b;
         if (p.bg_mode == 2u) {
             let min_dim = max(min(wf, hf), 1.0);
             let u = px / wf;
@@ -258,34 +256,43 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
             let halo = 1.0 / (1.0 + pow(sun_dist / max(p.sun_radius * 0.8, 0.001), 2.0));
             let sun_light = (core + halo) * p.sun_intensity;
 
-            src_r += tint.r * sun_light;
-            src_g += tint.g * sun_light;
-            src_b += tint.b * sun_light;
+            bg_r += tint.r * sun_light;
+            bg_g += tint.g * sun_light;
+            bg_b += tint.b * sun_light;
         }
     }
 
-    var out_r: f32 = 0.0;
+    let eff_r = bg_r + dirt_r;
+    let eff_g = bg_g + dirt_g;
+    let eff_b = bg_b + dirt_b;
 
+    let src_r = original.r;
+    let src_g = original.g;
+    let src_b = original.b;
+    let src_a = original.a;
+
+    var out_r: f32 = 0.0;
     var out_g: f32 = 0.0;
     var out_b: f32 = 0.0;
 
     if (blend_mode == 0u) {
-        out_r = 1.0 - (1.0 - src_r) * (1.0 - dirt_r);
-        out_g = 1.0 - (1.0 - src_g) * (1.0 - dirt_g);
-        out_b = 1.0 - (1.0 - src_b) * (1.0 - dirt_b);
+        out_r = 1.0 - (1.0 - src_r) * (1.0 - eff_r);
+        out_g = 1.0 - (1.0 - src_g) * (1.0 - eff_g);
+        out_b = 1.0 - (1.0 - src_b) * (1.0 - eff_b);
     } else if (blend_mode == 1u) {
-        out_r = src_r + dirt_r;
-        out_g = src_g + dirt_g;
-        out_b = src_b + dirt_b;
+        out_r = src_r + eff_r;
+        out_g = src_g + eff_g;
+        out_b = src_b + eff_b;
     } else if (blend_mode == 2u) {
-        if (src_r < 0.5) { out_r = 2.0 * src_r * (dirt_r + 0.5); } else { out_r = 1.0 - 2.0 * (1.0 - src_r) * (1.0 - (dirt_r + 0.5)); }
-        if (src_g < 0.5) { out_g = 2.0 * src_g * (dirt_g + 0.5); } else { out_g = 1.0 - 2.0 * (1.0 - src_g) * (1.0 - (dirt_g + 0.5)); }
-        if (src_b < 0.5) { out_b = 2.0 * src_b * (dirt_b + 0.5); } else { out_b = 1.0 - 2.0 * (1.0 - src_b) * (1.0 - (dirt_b + 0.5)); }
+        if (src_r < 0.5) { out_r = 2.0 * src_r * (eff_r + 0.5); } else { out_r = 1.0 - 2.0 * (1.0 - src_r) * (1.0 - (eff_r + 0.5)); }
+        if (src_g < 0.5) { out_g = 2.0 * src_g * (eff_g + 0.5); } else { out_g = 1.0 - 2.0 * (1.0 - src_g) * (1.0 - (eff_g + 0.5)); }
+        if (src_b < 0.5) { out_b = 2.0 * src_b * (eff_b + 0.5); } else { out_b = 1.0 - 2.0 * (1.0 - src_b) * (1.0 - (eff_b + 0.5)); }
     } else {
-        out_r = dirt_r;
-        out_g = dirt_g;
-        out_b = dirt_b;
+        out_r = eff_r;
+        out_g = eff_g;
+        out_b = eff_b;
     }
+
 
     var final_color: vec4<f32>;
     final_color.r = original.r * (1.0 - mix_amt) + out_r * mix_amt;

@@ -2089,12 +2089,12 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
                 dirt_b *= v_factor;
             }
 
-            let (src_r, src_g, src_b, src_a) = if p.bg_mode == 0 {
-                (original[idx], original[idx + 1], original[idx + 2], original[idx + 3])
+            let (bg_r, bg_g, bg_b) = if p.bg_mode == 0 {
+                (0.0f32, 0.0f32, 0.0f32)
             } else {
-                let mut bg_r = p.bg_colour[0];
-                let mut bg_g = p.bg_colour[1];
-                let mut bg_b = p.bg_colour[2];
+                let mut br = p.bg_colour[0];
+                let mut bg = p.bg_colour[1];
+                let mut bb = p.bg_colour[2];
                 if p.bg_mode == 2 {
                     let min_dim = wf.min(hf).max(1.0);
                     let u = px / wf;
@@ -2107,36 +2107,41 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
                     let halo = 1.0 / (1.0 + (sun_dist / (p.sun_radius * 0.8).max(0.001)).powi(2));
                     let sun_light = (core + halo) * p.sun_intensity;
 
-                    bg_r += tint[0] * sun_light;
-                    bg_g += tint[1] * sun_light;
-                    bg_b += tint[2] * sun_light;
+                    br += tint[0] * sun_light;
+                    bg += tint[1] * sun_light;
+                    bb += tint[2] * sun_light;
                 }
-                (bg_r, bg_g, bg_b, p.bg_colour[3])
+                (br, bg, bb)
             };
 
+            let eff_r = bg_r + dirt_r;
+            let eff_g = bg_g + dirt_g;
+            let eff_b = bg_b + dirt_b;
+
+            let src_r = original[idx];
+            let src_g = original[idx + 1];
+            let src_b = original[idx + 2];
+            let src_a = original[idx + 3];
 
             let (out_r, out_g, out_b) = match blend_mode {
                 0 => (
-                    1.0 - (1.0 - src_r) * (1.0 - dirt_r),
-                    1.0 - (1.0 - src_g) * (1.0 - dirt_g),
-                    1.0 - (1.0 - src_b) * (1.0 - dirt_b),
+                    1.0 - (1.0 - src_r) * (1.0 - eff_r),
+                    1.0 - (1.0 - src_g) * (1.0 - eff_g),
+                    1.0 - (1.0 - src_b) * (1.0 - eff_b),
                 ),
                 1 => (
-                    src_r + dirt_r,
-                    src_g + dirt_g,
-                    src_b + dirt_b,
+                    src_r + eff_r,
+                    src_g + eff_g,
+                    src_b + eff_b,
                 ),
                 2 => (
-                    if src_r < 0.5 { 2.0 * src_r * (dirt_r + 0.5) } else { 1.0 - 2.0 * (1.0 - src_r) * (1.0 - (dirt_r + 0.5)) },
-                    if src_g < 0.5 { 2.0 * src_g * (dirt_g + 0.5) } else { 1.0 - 2.0 * (1.0 - src_g) * (1.0 - (dirt_g + 0.5)) },
-                    if src_b < 0.5 { 2.0 * src_b * (dirt_b + 0.5) } else { 1.0 - 2.0 * (1.0 - src_b) * (1.0 - (dirt_b + 0.5)) },
+                    if src_r < 0.5 { 2.0 * src_r * (eff_r + 0.5) } else { 1.0 - 2.0 * (1.0 - src_r) * (1.0 - (eff_r + 0.5)) },
+                    if src_g < 0.5 { 2.0 * src_g * (eff_g + 0.5) } else { 1.0 - 2.0 * (1.0 - src_g) * (1.0 - (eff_g + 0.5)) },
+                    if src_b < 0.5 { 2.0 * src_b * (eff_b + 0.5) } else { 1.0 - 2.0 * (1.0 - src_b) * (1.0 - (eff_b + 0.5)) },
                 ),
-                _ => (
-                    dirt_r,
-                    dirt_g,
-                    dirt_b,
-                ),
+                _ => (eff_r, eff_g, eff_b),
             };
+
 
             rgba[idx] = original[idx] * (1.0 - mix) + out_r * mix;
             rgba[idx + 1] = original[idx + 1] * (1.0 - mix) + out_g * mix;
