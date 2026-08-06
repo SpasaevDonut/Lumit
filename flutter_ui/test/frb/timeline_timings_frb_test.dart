@@ -122,16 +122,21 @@ void main() {
       await tester.pump();
       expect(p.uiState.renderTimings.measuring, isTrue);
 
-      // The strip's clock stops it, and starts it again.
+      // The strip's clock stops it, and stopping takes the whole column with
+      // it — stale numbers must not sit on screen looking current.
       await tester.tap(find.byType(RenderTimingsToggle));
       await tester.pump();
       expect(p.uiState.renderTimings.measuring, isFalse);
-      expect(find.text('Time'), findsOneWidget,
-          reason: 'the header says what the column is when it is idle');
+      await tester.pump();
+      expect(find.byType(TimingsHeaderCell), findsNothing,
+          reason: 'switching measuring off takes the column with it');
 
       await tester.tap(find.byType(RenderTimingsToggle));
       await tester.pump();
       expect(p.uiState.renderTimings.measuring, isTrue);
+      await tester.pump();
+      expect(find.byType(TimingsHeaderCell), findsOneWidget,
+          reason: 'switching measuring back on brings the column back');
       await settleFrb(tester, minRounds: 4);
     });
 
