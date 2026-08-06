@@ -5981,3 +5981,79 @@ fn zz_debug_cells() {
         }
     }
 }
+
+#[test]
+fn lens_dirt_neutral_points_and_default_resolve() {
+    use crate::fx::cpu::lens_dirt;
+    use crate::fx::resolved::LensDirtParams;
+
+    let plain = instantiate("lens_dirt").unwrap();
+    assert_eq!(plain.effect.match_name, "lens_dirt");
+
+    let markers = MarkerContext::NONE;
+    let resolved = resolve_stack(&[plain], 0.0, 1000.0, 1.0, &markers).pop().unwrap();
+    if let Resolved::LensDirt(p) = resolved {
+        assert_eq!(p.intensity, 1.0);
+        assert_eq!(p.density, 50.0);
+        assert_eq!(p.scale, 1.0);
+        assert_eq!(p.defocus, 0.5);
+        assert_eq!(p.chromatic, 0.3);
+        assert_eq!(p.scratches, 0.4);
+        assert_eq!(p.tint, [1.0, 0.95, 0.85, 1.0]);
+        assert_eq!(p.vignette, 0.3);
+        assert_eq!(p.blend_mode, 0);
+        assert_eq!(p.mix, 1.0);
+    } else {
+        panic!("expected Resolved::LensDirt");
+    }
+
+    let mut image = vec![0.5f32; 16 * 16 * 4];
+    let copy = image.clone();
+    let p_zero = LensDirtParams {
+        intensity: 0.0,
+        density: 50.0,
+        scale: 1.0,
+        defocus: 0.5,
+        chromatic: 0.3,
+        scratches: 0.4,
+        tint: [1.0, 0.95, 0.85, 1.0],
+        vignette: 0.3,
+        blend_mode: 0,
+        seed: 42,
+        mix: 1.0,
+    };
+    lens_dirt(&mut image, 16, 16, &p_zero);
+    assert_eq!(image, copy, "intensity 0 must be bit-exact identity");
+}
+
+#[test]
+fn lens_dirt_seed_determinism() {
+    use crate::fx::cpu::lens_dirt;
+    use crate::fx::resolved::LensDirtParams;
+
+    let p = LensDirtParams {
+        intensity: 1.0,
+        density: 50.0,
+        scale: 1.0,
+        defocus: 0.5,
+        chromatic: 0.3,
+        scratches: 0.4,
+        tint: [1.0, 0.95, 0.85, 1.0],
+        vignette: 0.3,
+        blend_mode: 0,
+        seed: 12345,
+        mix: 1.0,
+    };
+    let mut img1 = vec![0.2f32; 32 * 32 * 4];
+    let mut img2 = vec![0.2f32; 32 * 32 * 4];
+    lens_dirt(&mut img1, 32, 32, &p);
+    lens_dirt(&mut img2, 32, 32, &p);
+    assert_eq!(img1, img2, "two runs with same seed must be bit-identical");
+
+    let p_diff = LensDirtParams { seed: 9999, ..p };
+    let mut img3 = vec![0.2f32; 32 * 32 * 4];
+    lens_dirt(&mut img3, 32, 32, &p_diff);
+    assert_ne!(img1, img3, "different seed must yield different pattern");
+}
+
+

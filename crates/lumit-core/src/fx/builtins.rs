@@ -2941,7 +2941,111 @@ pub const BUILTINS: &[EffectSchema] = &[
             MIX_PARAM,
         ],
     },
+    EffectSchema {
+        groups: &[],
+        match_name: "lens_dirt",
+        label: "Lens dirt",
+        version: 1,
+        category: FxCategory::Stylise,
+        traits: EffectTraits {
+            cost: CostClass::Moderate,
+            roi: Roi::Exact,
+            temporal: &[0],
+            premultiplied: true,
+            seeded: true,
+            beat_input: false,
+        },
+        params: &[
+            ParamSchema {
+                id: "intensity",
+                label: "Intensity",
+                kind: ParamKind::Float {
+                    default: 1.0,
+                    slider: (0.0, 4.0),
+                    hard: (Some(0.0), None),
+                },
+            },
+            ParamSchema {
+                id: "density",
+                label: "Density",
+                kind: ParamKind::Float {
+                    default: 50.0,
+                    slider: (0.0, 100.0),
+                    hard: (Some(0.0), Some(100.0)),
+                },
+            },
+            ParamSchema {
+                id: "scale",
+                label: "Scale",
+                kind: ParamKind::Float {
+                    default: 1.0,
+                    slider: (0.1, 5.0),
+                    hard: (Some(0.01), Some(20.0)),
+                },
+            },
+            ParamSchema {
+                id: "defocus",
+                label: "Defocus",
+                kind: ParamKind::Float {
+                    default: 0.5,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(1.0)),
+                },
+            },
+            ParamSchema {
+                id: "chromatic",
+                label: "Chromatic dispersion",
+                kind: ParamKind::Float {
+                    default: 0.3,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(2.0)),
+                },
+            },
+            ParamSchema {
+                id: "scratches",
+                label: "Scratches & dust",
+                kind: ParamKind::Float {
+                    default: 0.4,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(1.0)),
+                },
+            },
+            ParamSchema {
+                id: "tint",
+                label: "Tint",
+                kind: ParamKind::Colour {
+                    default: [1.0, 0.95, 0.85, 1.0],
+                    range: (0.0, 2.0),
+                },
+            },
+            ParamSchema {
+                id: "vignette",
+                label: "Optical vignette",
+                kind: ParamKind::Float {
+                    default: 0.3,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(1.0)),
+                },
+            },
+            ParamSchema {
+                id: "blend_mode",
+                label: "Blend mode",
+                kind: ParamKind::Choice {
+                    options: &["Screen", "Add", "Overlay", "Solo"],
+                    default: 0,
+                    dividers_after: &[],
+                },
+            },
+            ParamSchema {
+                id: "seed",
+                label: "Seed",
+                kind: ParamKind::Seed,
+            },
+            MIX_PARAM,
+        ],
+    },
 ];
+
 
 /// Look a schema up by its match name.
 pub fn schema(match_name: &str) -> Option<&'static EffectSchema> {

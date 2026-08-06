@@ -336,8 +336,7 @@ curation and custom-file pass K-264 — the remaining
 performance items sit in **Now** above, being preview-responsiveness work);
 still owed, each stable against the shipped parameters: the
 **Lights source wiring** (the mode is in the
-dropdown and resolves as Manual until light layers can act as flare sources); aperture
-**dirt / scratches** overlays and an **image aperture** file parameter; the **lens
+dropdown and resolves as Manual until light layers can act as flare sources); procedural **lens dirt (`lens_dirt`)** generator effect (shipped) and an **image aperture** file parameter; the **lens
 designer** (a window building a prescription element by element with a live lens
 diagram — the `lens_file` parameter landed in K-264, so the designer's output has a
 place to go); an **Occlusion layer** reference fading the flare when the light is

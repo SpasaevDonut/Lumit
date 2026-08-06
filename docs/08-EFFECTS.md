@@ -1587,6 +1587,32 @@ stable when they land.
 
 ---
 
+### 3.28 Lens dirt generator (`lens_dirt`)
+
+**In plain terms.** Procedurally generates organic camera lens dust specks, out-of-focus aperture bokeh disks, micro-hairline scratches, lens smudges, and optical vignetting, composited over the input layer (or output solo) to simulate light striking an uncleaned camera lens.
+
+**Match name:** `lens_dirt`  
+**Category:** Stylise (`FxCategory::Stylise`)  
+**Traits:** Moderate cost (`CostClass::Moderate`), Exact ROI (`Roi::Exact`), `{0}` temporal, premultiplied linear RGBA, seeded (`seeded: true`), no beat input.
+
+**Parameters:**
+- `intensity` (Float, default `1.0`, slider `0.0`..`4.0`, hard `0.0`..`None`): Master brightness scale. `0.0` is neutral passthrough.
+- `density` (Float, default `50.0`, slider `0.0`..`100.0`, hard `0.0`..`100.0`): Spatial density of dust specks and out-of-focus bokeh disks.
+- `scale` (Float, default `1.0`, slider `0.1`..`5.0`, hard `0.01`..`20.0`): Size multiplier for bokeh disks and dust specks.
+- `defocus` (Float, default `0.5`, slider `0.0`..`1.0`, hard `0.0`..`1.0`): Bokeh disc edge softness vs ring iris highlights.
+- `chromatic` (Float, default `0.3`, slider `0.0`..`1.0`, hard `0.0`..`2.0`): Spectral color dispersion at bokeh edges and dust spots.
+- `scratches` (Float, default `0.4`, slider `0.0`..`1.0`, hard `0.0`..`1.0`): Micro hairline scratches and glass smudge density.
+- `tint` (Colour, default `[1.0, 0.95, 0.85, 1.0]`, edit range `0.0`..`2.0`): Scene-linear RGBA highlight illumination tint.
+- `vignette` (Float, default `0.3`, slider `0.0`..`1.0`, hard `0.0`..`1.0`): Optical lens edge darkening / falloff.
+- `blend_mode` (Choice `["Screen", "Add", "Overlay", "Solo"]`, default `0` Screen): Compositing mode against source frame.
+- `seed` (Seed): Deterministic pseudo-random seed driving particle distribution.
+- `mix` (Float, default `100.0`, slider `0.0`..`100.0`, hard `0.0`..`100.0`): Host uniform blend.
+
+**Oracle & WGSL.** A grid-jittered procedural kernel generates bokeh disks, chromatic iris rings, scratch line SDFs, and smudge textures. CPU and WGSL implementations match within 2 fp16 ULPs.
+
+
+---
+
 ## 4. Tier 2 — AE parity direction (post-v1)
 
 One-line scope each; specs written when scheduled ([16-ROADMAP.md](16-ROADMAP.md)). Order

@@ -1,4 +1,5 @@
-use super::{MatteKeyParams, MbView, Resolved};
+use super::{LensDirtParams, MatteKeyParams, MbView, Resolved};
+
 
 /// Apply one resolved effect to an RGBA f32 image (premultiplied,
 /// linear light), in place.
@@ -224,8 +225,10 @@ pub fn apply(rgba: &mut [f32], w: u32, h: u32, fx: &Resolved) {
         // is staged in the lumit-gpu tests (trace at ULP, frame at the
         // perceptual bound) against `lens_flare::cpu_flare`/`cpu_combine`.
         Resolved::LensFlare(..) => {}
+        Resolved::LensDirt(p) => lens_dirt(rgba, w, h, p),
     }
 }
+
 
 /// Glow (docs/08 §3.3, v1 core): bright-pass every premultiplied channel
 /// through [`super::glow_bright`] — alpha included, so the halo carries
@@ -1894,3 +1897,180 @@ pub fn scanlines(
         }
     }
 }
+
+/// Lens Dirt Overlay Generator (docs/08 §3.28).
+/// Procedurally generates out-of-focus aperture bokeh disks, micro dust specks,
+/// hairline scratches, smudges, and optical vignetting overlay.
+pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
+    if p.intensity == 0.0 || p.mix == 0.0 {
+        return; // Neutral passthrough
+    }
+    let original = rgba.to_vec();
+    let wf = w as f32;
+    let hf = h as f32;
+    let diag = (wf * wf + hf * hf).sqrt().max(1.0);
+
+    let seed = p.seed;
+    let density_scale = (p.density / 50.0).clamp(0.0, 4.0);
+    let particle_size_base = p.scale * (diag * 0.04);
+    let scratch_amount = p.scratches;
+    let defocus = p.defocus;
+    let chromatic = p.chromatic;
+    let vignette_strength = p.vignette;
+    let blend_mode = p.blend_mode;
+    let mix = p.mix;
+    let intensity = p.intensity;
+    let tint = p.tint;
+
+    let h01 = |ch: u32, bx: i32, by: i32| {
+        super::block_hash01(seed, ch, bx, by, 0)
+    };
+
+    let cell_size = (diag * 0.08 / p.scale.sqrt().max(0.1)).clamp(16.0, 256.0);
+
+    for y in 0..h {
+        let py = y as f32 + 0.5;
+        let ny = (py / hf - 0.5) * 2.0;
+
+        for x in 0..w {
+            let px = x as f32 + 0.5;
+            let nx = (px / wf - 0.5) * 2.0;
+            let idx = ((y * w + x) * 4) as usize;
+
+            let mut dirt_r = 0.0f32;
+            let mut dirt_g = 0.0f32;
+            let mut dirt_b = 0.0f32;
+
+            // 1. Grid-jittered out-of-focus Bokeh disks & Dust specks
+            let gx = (px / cell_size).floor() as i32;
+            let gy = (py / cell_size).floor() as i32;
+
+            for dy in -1..=1 {
+                for dx in -1..=1 {
+                    let cx = gx + dx;
+                    let cy = gy + dy;
+
+                    let prob = h01(0, cx, cy);
+                    let max_p: f32 = (0.15 * density_scale).min(0.95);
+                    if prob > max_p {
+                        continue;
+                    }
+
+                    let center_x = (cx as f32 + h01(1, cx, cy)) * cell_size;
+                    let center_y = (cy as f32 + h01(2, cx, cy)) * cell_size;
+                    let radius = particle_size_base * (0.3 + 1.2 * h01(3, cx, cy));
+                    let p_intensity = 0.2 + 0.8 * h01(4, cx, cy);
+
+                    let dist_x = px - center_x;
+                    let dist_y = py - center_y;
+                    let dist_sq = dist_x * dist_x + dist_y * dist_y;
+                    let dist = dist_sq.sqrt();
+
+                    if dist <= radius {
+                        let norm_d = dist / radius;
+
+                        let ring = if defocus > 0.1 {
+                            let ring_pos = 1.0 - defocus * 0.35;
+                            let edge_t = ((norm_d - ring_pos) / (1.0 - ring_pos)).clamp(0.0, 1.0);
+                            0.6 + 0.8 * edge_t * edge_t
+                        } else {
+                            1.0 - norm_d * norm_d
+                        };
+
+                        let falloff = (1.0 - norm_d * norm_d).max(0.0) * ring * p_intensity;
+
+                        let fringe = 0.05 * chromatic * norm_d;
+                        let r_fall = (1.0 - (norm_d * (1.0 - fringe)).clamp(0.0, 1.0).powi(2)).clamp(0.0, 1.0) * falloff;
+                        let g_fall = falloff;
+                        let b_fall = (1.0 - (norm_d * (1.0 + fringe)).clamp(0.0, 1.0).powi(2)).clamp(0.0, 1.0) * falloff;
+
+                        dirt_r += r_fall;
+                        dirt_g += g_fall;
+                        dirt_b += b_fall;
+                    }
+                }
+            }
+
+            // 2. Micro hairline scratches & dust specks
+            if scratch_amount > 0.0 {
+                let scratch_cell_size = 48.0;
+                let sgx = (px / scratch_cell_size).floor() as i32;
+                let sgy = (py / scratch_cell_size).floor() as i32;
+                let sprob = h01(10, sgx, sgy);
+
+                let max_sprob: f32 = (0.25 * scratch_amount).min(0.8);
+                if sprob < max_sprob {
+                    let p1x = (sgx as f32 + h01(11, sgx, sgy)) * scratch_cell_size;
+                    let p1y = (sgy as f32 + h01(12, sgx, sgy)) * scratch_cell_size;
+                    let p2x = p1x + (h01(13, sgx, sgy) - 0.5) * 32.0;
+                    let p2y = p1y + (h01(14, sgx, sgy) - 0.5) * 32.0;
+
+                    let vx = p2x - p1x;
+                    let vy = p2y - p1y;
+                    let len_sq = (vx * vx + vy * vy).max(1e-4);
+                    let t_seg = (((px - p1x) * vx + (py - p1y) * vy) / len_sq).clamp(0.0, 1.0);
+                    let proj_x = p1x + t_seg * vx;
+                    let proj_y = p1y + t_seg * vy;
+                    let s_dist = (px - proj_x).hypot(py - proj_y);
+
+                    let scratch_width = 0.75 + 0.5 * h01(15, sgx, sgy);
+                    if s_dist < scratch_width {
+                        let line_val = (1.0 - s_dist / scratch_width) * scratch_amount * 0.7;
+                        dirt_r += line_val;
+                        dirt_g += line_val;
+                        dirt_b += line_val;
+                    }
+                }
+            }
+
+            // Apply Master Intensity & Tint
+            dirt_r *= intensity * tint[0];
+            dirt_g *= intensity * tint[1];
+            dirt_b *= intensity * tint[2];
+
+            // 3. Optical vignetting darkening
+            if vignette_strength > 0.0 {
+                let r_sq = nx * nx + ny * ny;
+                let v_factor: f32 = (1.0 - vignette_strength * 0.5 * r_sq).clamp(0.0, 1.0);
+                dirt_r *= v_factor;
+                dirt_g *= v_factor;
+                dirt_b *= v_factor;
+            }
+
+
+            let src_r = original[idx];
+            let src_g = original[idx + 1];
+            let src_b = original[idx + 2];
+            let src_a = original[idx + 3];
+
+            let (out_r, out_g, out_b) = match blend_mode {
+                0 => (
+                    1.0 - (1.0 - src_r) * (1.0 - dirt_r),
+                    1.0 - (1.0 - src_g) * (1.0 - dirt_g),
+                    1.0 - (1.0 - src_b) * (1.0 - dirt_b),
+                ),
+                1 => (
+                    src_r + dirt_r,
+                    src_g + dirt_g,
+                    src_b + dirt_b,
+                ),
+                2 => (
+                    if src_r < 0.5 { 2.0 * src_r * (dirt_r + 0.5) } else { 1.0 - 2.0 * (1.0 - src_r) * (1.0 - (dirt_r + 0.5)) },
+                    if src_g < 0.5 { 2.0 * src_g * (dirt_g + 0.5) } else { 1.0 - 2.0 * (1.0 - src_g) * (1.0 - (dirt_g + 0.5)) },
+                    if src_b < 0.5 { 2.0 * src_b * (dirt_b + 0.5) } else { 1.0 - 2.0 * (1.0 - src_b) * (1.0 - (dirt_b + 0.5)) },
+                ),
+                _ => (
+                    dirt_r,
+                    dirt_g,
+                    dirt_b,
+                ),
+            };
+
+            rgba[idx] = original[idx] * (1.0 - mix) + out_r * mix;
+            rgba[idx + 1] = original[idx + 1] * (1.0 - mix) + out_g * mix;
+            rgba[idx + 2] = original[idx + 2] * (1.0 - mix) + out_b * mix;
+            rgba[idx + 3] = src_a;
+        }
+    }
+}
+

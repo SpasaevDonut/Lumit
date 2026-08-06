@@ -481,4 +481,76 @@ impl FxEngine {
         );
         out
     }
+
+    /// Apply Lens Dirt procedural generator (docs/08 §3.28) to a linear working texture.
+    pub fn lens_dirt(
+        &self,
+        ctx: &GpuContext,
+        src: &wgpu::Texture,
+        w: u32,
+        h: u32,
+        op: &LensDirtOp,
+    ) -> wgpu::Texture {
+        let out = work_texture(ctx, w, h, "fx-lens-dirt-out");
+        self.dispatch(
+            ctx,
+            &self.lens_dirt,
+            src,
+            src,
+            &out,
+            w,
+            h,
+            bytemuck::bytes_of(&LensDirtParams {
+                tint: op.tint,
+                intensity: op.intensity,
+                density: op.density,
+                scale: op.scale,
+                defocus: op.defocus,
+                chromatic: op.chromatic,
+                scratches: op.scratches,
+                vignette: op.vignette,
+                blend_mode: op.blend_mode,
+                seed: op.seed,
+                mix_amt: op.mix,
+                _pad0: 0.0,
+                _pad1: 0.0,
+            }),
+        );
+        out
+    }
 }
+
+/// One resolved Lens Dirt generator (docs/08 §3.28).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LensDirtOp {
+    pub intensity: f32,
+    pub density: f32,
+    pub scale: f32,
+    pub defocus: f32,
+    pub chromatic: f32,
+    pub scratches: f32,
+    pub tint: [f32; 4],
+    pub vignette: f32,
+    pub blend_mode: u32,
+    pub seed: u32,
+    pub mix: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct LensDirtParams {
+    tint: [f32; 4],
+    intensity: f32,
+    density: f32,
+    scale: f32,
+    defocus: f32,
+    chromatic: f32,
+    scratches: f32,
+    vignette: f32,
+    blend_mode: u32,
+    seed: u32,
+    mix_amt: f32,
+    _pad0: f32,
+    _pad1: f32,
+}
+

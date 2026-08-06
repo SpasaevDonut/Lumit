@@ -70,6 +70,8 @@ pub struct FxEngine {
     glow_combine: wgpu::ComputePipeline,
     block_glitch: wgpu::ComputePipeline,
     scanlines: wgpu::ComputePipeline,
+    lens_dirt: wgpu::ComputePipeline,
+
     echo_accumulate: wgpu::ComputePipeline,
     echo_mix: wgpu::ComputePipeline,
     motion_blur: wgpu::ComputePipeline,

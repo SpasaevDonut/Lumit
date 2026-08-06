@@ -646,8 +646,37 @@ pub enum Resolved {
     /// through `lens_flare::bake`, cached GPU-side by [`lens_flare::bake_key`]
     /// — so nothing travels beside the op. GPU-only: the CPU degradation rung
     /// renders it as a labelled no-op (the K-114 LUT precedent).
+    /// Lens flare (docs/08 §3.27, docs/impl/lens-flare.md, K-256): traced
+    /// ghosts and the Fourier starburst. The op carries its full parameter
+    /// bundle ([`LensFlareParams`], all plain numbers); the baked resources
+    /// (disc/starburst textures, ghost ranking) derive from those numbers
+    /// through `lens_flare::bake`, cached GPU-side by [`lens_flare::bake_key`]
+    /// — so nothing travels beside the op. GPU-only: the CPU degradation rung
+    /// renders it as a labelled no-op (the K-114 LUT precedent).
     LensFlare(crate::fx::lens_flare::LensFlareParams),
+    /// Lens dirt generator (docs/08 §3.28): procedurally generates out-of-focus
+    /// aperture bokeh disks, micro dust specks, hairline scratches, smudges,
+    /// and optical vignetting overlay.
+    LensDirt(LensDirtParams),
 }
+
+/// Resolved parameters for the procedural Lens Dirt generator (docs/08 §3.28).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LensDirtParams {
+    pub intensity: f32,
+    pub density: f32,
+    pub scale: f32,
+    pub defocus: f32,
+    pub chromatic: f32,
+    pub scratches: f32,
+    pub tint: [f32; 4],
+    pub vignette: f32,
+    /// Blend mode wire code: 0 = Screen, 1 = Add, 2 = Overlay, 3 = Solo (dirt map only).
+    pub blend_mode: u32,
+    pub seed: u32,
+    pub mix: f32,
+}
+
 
 /// Resolve a layer's live stack at layer time `lt` for a raster whose
 /// diagonal is `diag_px` pixels; `px_scale` is raster pixels per comp pixel
@@ -751,9 +780,11 @@ pub fn rescale_px(ops: &mut [Resolved], f: f32) {
                 p.light[0] *= f;
                 p.light[1] *= f;
             }
+            Resolved::LensDirt(_) => {}
         }
     }
 }
+
 
 pub fn resolve_stack(
     effects: &[EffectInstance],
@@ -2009,6 +2040,43 @@ fn resolve_one(
                 mix,
             })
         }
+        "lens_dirt" => {
+            let intensity = (e.float_at("intensity", lt).unwrap_or(1.0) as f32).max(0.0);
+            let density = (e.float_at("density", lt).unwrap_or(50.0) as f32).clamp(0.0, 100.0);
+            let scale = (e.float_at("scale", lt).unwrap_or(1.0) as f32).clamp(0.01, 20.0);
+            let defocus = (e.float_at("defocus", lt).unwrap_or(0.5) as f32).clamp(0.0, 1.0);
+            let chromatic = (e.float_at("chromatic", lt).unwrap_or(0.3) as f32).clamp(0.0, 2.0);
+            let scratches = (e.float_at("scratches", lt).unwrap_or(0.4) as f32).clamp(0.0, 1.0);
+            let tint = match e.colour_at("tint", lt) {
+                Some(c) => [c[0] as f32, c[1] as f32, c[2] as f32, c[3] as f32],
+                None => [1.0, 0.95, 0.85, 1.0],
+            };
+
+            let vignette = (e.float_at("vignette", lt).unwrap_or(0.3) as f32).clamp(0.0, 1.0);
+            let blend_mode = match e.param("blend_mode") {
+                Some(EffectValue::Choice(c)) => (*c).min(3),
+                _ => 0,
+            };
+            let seed = match e.param("seed") {
+                Some(EffectValue::Seed(s)) => *s,
+                _ => 0,
+            };
+            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            Some(Resolved::LensDirt(LensDirtParams {
+                intensity,
+                density,
+                scale,
+                defocus,
+                chromatic,
+                scratches,
+                tint,
+                vignette,
+                blend_mode,
+                seed,
+                mix,
+            }))
+        }
         _ => None,
     }
 }
+
