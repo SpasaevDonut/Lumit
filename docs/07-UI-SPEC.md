@@ -1013,15 +1013,27 @@ plus `Ctrl`-hold to suspend during a drag.
 read, and it is gone (K-230, §1.7): a global switch belongs there once there is snapping
 outside the Timeline for it to govern.
 
-**Shipped (K-190):** the **magnet** in the lane bottom bar, on by default, covering the
-one snap that exists so far — a keyframe dragged on its lane lands on a whole frame. With
-it off the key may sit *between* frames: the time is quantised to a thousandth of a frame
-and built from the comp's exact rate, so it stays rational (docs/14 §2) rather than
-becoming a rounded double. The other sources and targets, and `Ctrl`-hold, are still to
-build. Snap distance is measured in screen pixels, not
-time, so zoom level controls precision. The snapped-to target MUST be indicated at the
-moment of capture. Beat-marker snapping is the beat-sync covenant's daily face: dragging an
-edit point near a beat marker lands exactly on it.
+**Shipped (K-190, K-292):** the **magnet** in the lane bottom bar, on by default. With it
+off a key may sit *between* frames: the time is quantised to a thousandth of a frame and
+built from the comp's exact rate, so it stays rational (docs/14 §2) rather than becoming a
+rounded double.
+
+With it on, a keyframe dragged on its lane lands on the nearest **target** within reach —
+edit points, layer in/out points, other keyframes, markers (composition and layer, **beat
+markers among them**), the playhead, and the work area edges — and on a whole frame when
+there is nothing near, which was K-190's original and much narrower behaviour. Beat-marker
+snapping is the beat-sync covenant's daily face, and it comes for free because a beat marker
+*is* a marker.
+
+Snap distance is measured in **screen pixels**, not time, so zoom level controls precision.
+The snapped-to target is indicated at the moment of capture — a line at what caught the drag.
+**`Ctrl` held suspends snapping** for as long as it is held, which is the way out when the
+wanted place is exactly where a snap will not allow.
+
+Still to build: snapping for the gestures other than a lane key drag — the layer **bar**
+drag, the razor, the work-area handles and marker drags all still land where the pointer
+puts them. The arithmetic is shared and pure (`panels/timeline_snap.dart`), so each is a
+wiring job rather than a design one.
 
 ### 4.6 Navigation, zoom, and scroll
 

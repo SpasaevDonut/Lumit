@@ -15,6 +15,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/theme/theme.dart';
 import 'package:uuid/uuid.dart';
+import 'package:lumit_flutter/state/comp_time.dart';
 import 'package:lumit_flutter/panels/project_panel_frb.dart';
 import 'package:lumit_flutter/panels/layer_fold_frb.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
@@ -1365,6 +1366,80 @@ void main() {
       final free = keys().first.time;
       expect(free.num * 60 % free.den, isNot(0),
           reason: 'with the magnet off it may land between frames');
+    });
+
+    /// **A key lands on the marker it is dragged near** (docs/07 §4.5). The
+    /// magnet used to cover exactly one snap — a whole frame — and the spec's
+    /// other sources and targets were still to build. This is the one that
+    /// matters most in use: beat-marker snapping is the beat-sync covenant's
+    /// daily face, and a beat marker is an ordinary marker.
+    testWidgets('a lane keyframe snaps onto a marker, and Ctrl lets it past',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.setTransform(
+        prop: BridgeTransformProp.opacity,
+        value: BridgeScalar.keyframed([
+          for (final f in [600, 2400])
+            BridgeKeyframe(
+              time: p.comp.timeOfFrame(frame: f),
+              value: f.toDouble(),
+              interpIn: const BridgeSideInterp.linear(),
+              interpOut: const BridgeSideInterp.linear(),
+            ),
+        ]),
+      );
+      // A marker a little past where a ten-frame drag would land, so the snap
+      // has to reach *forwards* for it rather than the drag happening to hit.
+      const markerFrame = 611;
+      writeMarkers(p.comp, [
+        BridgeMarker(
+          id: UuidValue.fromString(const Uuid().v4()),
+          time: p.comp.timeOfFrame(frame: markerFrame),
+          label: 'Beat',
+        ),
+      ]);
+      await mount(tester, p);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pump();
+      await tester.tap(find.text('Transform'));
+      await tester.pump();
+
+      List<BridgeKeyframe> keys() =>
+          (layer.getTransform().opacity as BridgeScalar_Keyframed).field0;
+      final laneKey = ValueKey<String>(
+          'tl-keys-${layer.internallayerId}/transform/opacity');
+      final handle = find.byKey(ValueKey<String>(
+          'tl-key-${layer.internallayerId}/transform/opacity#0'));
+      final perFrame =
+          tester.getRect(find.byKey(laneKey)).width / p.comp.durationFrames();
+
+      // Ten frames lands at 610 — one frame short of the marker, which at this
+      // zoom is well inside the eight-pixel reach.
+      await tester.drag(handle, Offset(perFrame * 10, 0));
+      await tester.pumpAndSettle();
+      expect(p.comp.frameAtTime(time: keys().first.time), markerFrame,
+          reason: 'the key landed ON the marker, not one frame short of it');
+
+      p.state.project!.undo();
+      expect(p.comp.frameAtTime(time: keys().first.time), 600);
+      // The lane draws from the read model, so it has to be told the undo
+      // happened before the next drag starts from where the key really is.
+      p.uiState.model.refresh();
+      await tester.pumpAndSettle();
+
+      // Ctrl held suspends the snap, so the same drag lands where it was aimed
+      // (docs/07 §4.5) — the way out when the wanted place is exactly where a
+      // snap will not allow.
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      addTearDown(() async =>
+          tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft));
+      await tester.drag(handle, Offset(perFrame * 10, 0));
+      await tester.pumpAndSettle();
+      expect(p.comp.frameAtTime(time: keys().first.time), 610,
+          reason: 'Ctrl held let the key past the marker');
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
     });
 
     /// **The undo regression.** A drag on a *keyframed* value used to commit
