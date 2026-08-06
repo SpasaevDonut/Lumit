@@ -77,8 +77,6 @@ These are v1-scope surfaces it does not yet match.
 **Viewer bar ([07-UI-SPEC.md](07-UI-SPEC.md) §2.2):**
 - The wireframe/overlay *menu*; guides menu; region-of-interest;
     colour-management indicator; background-colour swatch.
-- Click-to-edit timecode (read-only today) - decide whether it moves to the
-    Timeline's clock rather than being built twice.
 
 **Toolbar tools ([07-UI-SPEC.md](07-UI-SPEC.md) §1.7):** what is armed is a
 *tool*; what each tool then does is the backlog.

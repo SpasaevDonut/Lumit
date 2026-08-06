@@ -6034,3 +6034,45 @@ machine-local" needs no narrowing for it after all. The disk cache's *Applies to
 stays in Settings → Performance: its whole purpose is choosing between the two scopes, so it is
 the one control that has to stand with a foot in each. Colour management and export defaults
 land in the new window when they are built, rather than back in Settings.
+
+**K-287 · DECIDED · The bars that carry time hold still: fixed slots, the progress bar on
+the transport, typed timecode, and a Retime that reads as a clock.** From the owner
+(2026-08-06). Five changes, all of them the same complaint — the parts of the interface
+that report *time* were moving while time passed, which is distracting exactly when the
+picture is being watched.
+
+- **The Viewer's preview progress bar moves onto the right-hand end of the transport**
+  (docs/07 §2.5), instead of floating over the bottom of the picture. Over the picture it
+  covered the composition while a frame was being waited for, which is when the
+  composition is being looked at hardest. On the bar it has a place of its own: the
+  controls take the space that is left over, so the bar arriving and leaving moves none of
+  them.
+- **Every part of the Viewer's bar whose text varies gets a fixed slot** (docs/07 §2.2),
+  sized for the longest thing it can ever say, and a part that comes and goes — the
+  degradation badge — keeps its slot while it is away.
+- **The playback-mode button says the mode and nothing else**: "Adaptive res" or "Every
+  frame". It used to carry the settled tier beside the name ("Adaptive · Half"), so it
+  re-lettered itself as the engine felt its way up and down the ladder. Which tier a frame
+  was made at is the degradation badge's job (docs/13 §4 still stands: silent degradation
+  is a bug — the badge is what says it, and it says it only while there is something to
+  say).
+- **The Timeline's timecode and frame readouts get the same fixed slots, and both become
+  click-to-type** (docs/07 §4.1). They sit left of the layer search, and a readout that
+  resized itself as it counted shoved the search field sideways through every second of
+  playback. Typing a time in either moves the playhead — the timecode in the format it
+  already shows, the frame readout as a plain number with or without its `f` — and a time
+  outside the composition is **clamped to the nearest end** rather than refused. The
+  Viewer's own clock gains the same typing, which docs/07 §2.2 item 11 had always asked
+  for.
+- **The Retime row reads as `HH:MM:SS:FF`**, not as a number of seconds, realising K-075's
+  value lens for the outline row (docs/04 §9.3). It is dragged and typed in whole source
+  frames, at the composition's rate — the read model does not carry the footage's own rate
+  yet, and every other time in the panel is counted in comp frames; when it does, this
+  readout moves to the footage's timebase as K-075 asks, with no change to what is stored.
+  Settings ▸ Interface ▸ Editing ▸ *Retime values in seconds* puts the decimal seconds
+  field back, and is the only way to state a source position between two frames.
+
+The shared widget is `TimeReadout` (`flutter_ui/lib/widgets/time_readout.dart`): a slot
+measured in characters of the face it draws in, a click that turns it into a field holding
+exactly what was shown, and an optional drag for the places that were a drag field before
+they were a clock.

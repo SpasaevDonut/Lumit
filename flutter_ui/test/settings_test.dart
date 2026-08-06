@@ -30,6 +30,9 @@ void main() {
     // somebody who has not asked for it.
     expect(i.retimeOpensToSpeed, isFalse);
     expect(i.videoAsSequenceLayer, isFalse);
+    // The Retime row reads as a clock by default (K-287); seconds are the
+    // deviation, not the shipped state.
+    expect(i.retimeInSeconds, isFalse);
   });
 
   test('a settings file written before the Vegas pair loads as After Effects',
@@ -37,6 +40,12 @@ void main() {
     final i = InterfaceSettings.fromJson(const {'ui_scale': 1.25});
     expect(i.retimeOpensToSpeed, isFalse);
     expect(i.videoAsSequenceLayer, isFalse);
+    expect(i.retimeInSeconds, isFalse);
+  });
+
+  test('the Retime seconds preference round-trips', () {
+    final i = InterfaceSettings(retimeInSeconds: true);
+    expect(InterfaceSettings.fromJson(i.toJson()).retimeInSeconds, isTrue);
   });
 
   /// The returning playhead is the *new* default (K-254), so unlike the Vegas

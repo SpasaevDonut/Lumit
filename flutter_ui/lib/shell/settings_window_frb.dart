@@ -426,6 +426,22 @@ class _SettingsWindowState extends State<_SettingsWindow> {
         ),
         settingsRow(
           t,
+          'Retime values in seconds',
+          'The Retime row shows which moment of the source is playing as a '
+              'number of seconds, instead of as a timecode in the same '
+              'HH:MM:SS:FF form as every other time in the editor. Seconds '
+              'can say a position between two frames; a timecode cannot.',
+          HouseCheckbox(
+            key: const ValueKey('settings-retime-in-seconds'),
+            value: settings.retimeInSeconds,
+            onChanged: (on) => setState(() {
+              settings.retimeInSeconds = on;
+              ui.workspace.settingsChanged();
+            }),
+          ),
+        ),
+        settingsRow(
+          t,
           'Video arrives as a Sequence layer',
           'Video and image sequences added to a composition become a Sequence '
               'layer, which can be cut into clips on its own row. Still '

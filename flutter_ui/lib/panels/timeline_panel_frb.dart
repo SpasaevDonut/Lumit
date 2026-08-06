@@ -44,6 +44,7 @@ import '../state/tools.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 import '../widgets/marquee.dart';
+import '../widgets/time_readout.dart';
 // The ruler helpers moved with the ruler (shared with the graph editor); the
 // re-export keeps their long-standing import path alive for their tests.
 export 'timeline_extras_frb.dart' show rulerLabelStepSeconds, rulerLabelOf;
@@ -1870,6 +1871,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                               comp: comp,
                                               model: ui.model,
                                               playhead: ui.playheadFrame,
+                                              onSeek: ui.scrubTo,
                                               graph: _graph,
                                               onToggleGraph: () => setState(
                                                   () => _graph = !_graph),
@@ -3475,8 +3477,12 @@ class _RetimeRowState extends State<_RetimeRow> {
     final t = ThemeScope.of(context).theme;
     final scalar = widget.scalar;
     final animated = scalar is BridgeScalar_Keyframed;
-    final playhead =
-        Provider.of<LumitUiState>(context, listen: false).playheadFrame;
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    final playhead = ui.playheadFrame;
+    // Which face the row wears (K-287): the clock by default, seconds for
+    // anyone who asked for them in Settings ▸ Interface ▸ Editing.
+    final seconds = ui.workspace.interface.retimeInSeconds;
+    final (fpsNum, fpsDen) = ui.model.fpsExact;
 
     return ValueListenableBuilder<int>(
       valueListenable: playhead,
@@ -3510,33 +3516,56 @@ class _RetimeRowState extends State<_RetimeRow> {
             ),
             SizedBox(
               width: widget.valueColumn.width,
-              child: animated
-                  ? KeyedValueField(
-                      fieldKey: const ValueKey('tl-retime-seconds'),
-                      value: value,
-                      // The same open range a transform axis gets: a source
-                      // time before zero or past the end simply holds the end
-                      // frame (docs/04 §7), so clamping the field would only
-                      // fight the drag.
-                      min: -100000,
-                      max: 100000,
-                      decimals: 3,
-                      suffix: ' s',
-                      speed: 0.02,
-                      onCommit: (v) => _commitAt(scalar, v, frame),
-                    )
-                  : DragValueField(
+              child: seconds
+                  ? (animated
+                      ? KeyedValueField(
+                          fieldKey: const ValueKey('tl-retime-seconds'),
+                          value: value,
+                          // The same open range a transform axis gets: a
+                          // source time before zero or past the end simply
+                          // holds the end frame (docs/04 §7), so clamping the
+                          // field would only fight the drag.
+                          min: -100000,
+                          max: 100000,
+                          decimals: 3,
+                          suffix: ' s',
+                          speed: 0.02,
+                          onCommit: (v) => _commitAt(scalar, v, frame),
+                        )
+                      : DragValueField(
+                          key: const ValueKey('tl-retime-seconds'),
+                          value: value,
+                          min: -100000,
+                          max: 100000,
+                          decimals: 3,
+                          suffix: ' s',
+                          speed: 0.02,
+                          onChanged: (v) => _commitAt(scalar, v, frame),
+                          onChangeLive: (v) =>
+                              setState(() => _staged = v.toDouble()),
+                          onChangeEnd: (v) => _commitAt(scalar, v, frame),
+                          onDragCancel: () => setState(() => _staged = null),
+                        ))
+                  // The clock face (K-287, realising K-075): which moment of
+                  // the source is showing, written the way every other time in
+                  // the editor is written. Dragged and typed in whole source
+                  // frames — a timecode cannot say "between two frames", which
+                  // is what the seconds setting is for.
+                  : TimeReadout(
                       key: const ValueKey('tl-retime-seconds'),
-                      value: value,
-                      min: -100000,
-                      max: 100000,
-                      decimals: 3,
-                      suffix: ' s',
-                      speed: 0.02,
-                      onChanged: (v) => _commitAt(scalar, v, frame),
-                      onChangeLive: (v) =>
-                          setState(() => _staged = v.toDouble()),
-                      onChangeEnd: (v) => _commitAt(scalar, v, frame),
+                      frame: _frameOfSeconds(value, fpsNum, fpsDen),
+                      format: (f) => timecodeOfRateSigned(f, fpsNum, fpsDen),
+                      parse: (text) =>
+                          framesOfTimecodeSigned(text, fpsNum, fpsDen),
+                      widthChars: timecodeChars(fpsNum, fpsDen) + 1,
+                      style: t.mono,
+                      minFrame: -100000,
+                      maxFrame: 100000,
+                      draggable: true,
+                      onDragLive: (f) => setState(
+                          () => _staged = _secondsOfFrame(f, fpsNum, fpsDen)),
+                      onCommit: (f) => _commitAt(
+                          scalar, _secondsOfFrame(f, fpsNum, fpsDen), frame),
                       onDragCancel: () => setState(() => _staged = null),
                     ),
             ),
@@ -3546,6 +3575,18 @@ class _RetimeRowState extends State<_RetimeRow> {
       },
     );
   }
+
+  /// A source time in seconds as a whole source frame, and back.
+  ///
+  /// At the composition's rate: the read model does not carry the footage's own
+  /// rate yet, and every other time in the panel is counted in comp frames.
+  static int _frameOfSeconds(double seconds, int fpsNum, int fpsDen) {
+    if (fpsDen <= 0 || fpsNum <= 0) return 0;
+    return (seconds * fpsNum / fpsDen).round();
+  }
+
+  static double _secondsOfFrame(int frame, int fpsNum, int fpsDen) =>
+      fpsNum <= 0 ? 0 : frame * (fpsDen <= 0 ? 1 : fpsDen) / fpsNum;
 
   void _commitAt(BridgeScalar scalar, num value, int frame) {
     widget.layer.setRetimeProperty(
@@ -3747,6 +3788,11 @@ class _Toolbar extends StatelessWidget {
 
   /// Listened to, not read: only the two readouts redraw as it moves.
   final ValueListenable<int> playhead;
+
+  /// Where a typed time goes — the same take-hold-of-the-playhead move a drag
+  /// on the ruler makes, so typing a time also stops the transport.
+  final ValueChanged<int> onSeek;
+
   final bool graph;
   final VoidCallback onToggleGraph;
   final bool razor;
@@ -3760,6 +3806,7 @@ class _Toolbar extends StatelessWidget {
     required this.comp,
     required this.model,
     required this.playhead,
+    required this.onSeek,
     required this.graph,
     required this.onToggleGraph,
     required this.razor,
@@ -3775,6 +3822,7 @@ class _Toolbar extends StatelessWidget {
     final t = ThemeScope.of(context).theme;
     final (fpsNum, fpsDen) = model.fpsExact;
     final mbOn = model.motionBlurEnabled;
+    final lastFrame = model.durationFrames - 1;
     return Container(
       height: _toolbarHeight,
       color: t.surface1,
@@ -3783,20 +3831,44 @@ class _Toolbar extends StatelessWidget {
         children: [
           // The clock face and the frame count, both zero-based: frame 0 is
           // 00:00:00:00, so three seconds into a 24 fps comp reads f72.
+          //
+          // Both sit in slots wide enough for the longest thing they can say
+          // and both can be typed into (K-287): a readout that resized itself
+          // as it counted shoved the search field sideways through every
+          // second of playback, and a time you can read is a time you should
+          // be able to state. Anything outside the composition lands on its
+          // nearest end.
           ValueListenableBuilder<int>(
             valueListenable: playhead,
             builder: (context, frame, _) => Row(
               children: [
-                Text(
-                  timecodeOfRate(frame, fpsNum, fpsDen),
+                TimeReadout(
                   key: const ValueKey('tl-timecode'),
+                  frame: frame,
+                  format: (f) => timecodeOfRate(f, fpsNum, fpsDen),
+                  widthChars: timecodeChars(fpsNum, fpsDen),
                   style: t.mono,
+                  parse: (text) => framesOfTimecode(text, fpsNum, fpsDen),
+                  onCommit: onSeek,
+                  minFrame: 0,
+                  maxFrame: lastFrame,
+                  tooltip: 'The frame the playhead is on. '
+                      'Click to type a time.',
                 ),
-                const SizedBox(width: 6),
-                Text(
-                  'f$frame',
+                TimeReadout(
                   key: const ValueKey('tl-frame'),
+                  frame: frame,
+                  format: (f) => 'f$f',
+                  // The `f`, the digits of the last frame, and one spare so a
+                  // comp that grows past a power of ten does not start to
+                  // twitch before the next rebuild.
+                  widthChars: 2 + '${lastFrame < 0 ? 0 : lastFrame}'.length,
                   style: t.mono.copyWith(color: t.textMuted),
+                  parse: _frameOfTyped,
+                  onCommit: onSeek,
+                  minFrame: 0,
+                  maxFrame: lastFrame,
+                  tooltip: 'The frame number. Click to type one.',
                 ),
               ],
             ),
@@ -3857,6 +3929,14 @@ class _Toolbar extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  /// A typed frame number, with or without the `f` the readout wears. Null for
+  /// anything that is not a number at all, which leaves the readout alone.
+  static int? _frameOfTyped(String text) {
+    var trimmed = text.trim().toLowerCase();
+    if (trimmed.startsWith('f')) trimmed = trimmed.substring(1);
+    return int.tryParse(trimmed.trim());
   }
 
   Widget _iconButton(

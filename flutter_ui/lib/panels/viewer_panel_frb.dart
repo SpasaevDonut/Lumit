@@ -55,6 +55,7 @@ import '../state/timecode.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 import '../widgets/dropper_overlay.dart';
+import '../widgets/time_readout.dart';
 import 'placeholder.dart';
 import 'viewer_anchor.dart';
 import 'viewer_gizmo.dart';
@@ -315,15 +316,11 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
       ),
     );
 
-    // The picture, with the preview progress bar over the bottom of it
-    // (docs/07 §2.5). An overlay rather than a row of its own: a bar that only
-    // sometimes exists must not change where the picture sits, or every slow
-    // frame would nudge the composition up and down.
+    // The picture. The preview progress bar used to float over the bottom of
+    // it; it now rides on the right of the transport instead (K-287), where it
+    // covers nothing and has a place of its own that is always the same size.
     final stage = Expanded(
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          LayoutBuilder(
+      child: LayoutBuilder(
         builder: (context, constraints) {
           final size = facts.size;
           final fitted = _fittedRect(constraints, size);
@@ -409,14 +406,6 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
             ),
           );
         },
-          ),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: ViewerProgressBar(tracker: ui.previewProgress),
-          ),
-        ],
       ),
     );
 
@@ -1466,140 +1455,188 @@ class _Toolbar extends StatelessWidget {
         boxShadow: floating ? t.tokens.cardShadow : null,
       ),
       padding: const EdgeInsets.symmetric(horizontal: 6),
-      // Scrolls rather than overflowing: a Viewer docked narrow has less width
-      // than this bar wants, and an overflow stripe is not a design.
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            SizedBox(
-              width: 76,
-              child: BareDropdown<int>(
-                key: const ValueKey('viewer-zoom'),
-                // -1: a wheel zoom between the listed steps; the button shows
-                // the true percentage and the menu still offers the steps.
-                value: _zoomSteps.indexOf(zoom),
-                options: [for (var i = 0; i < _zoomSteps.length; i++) i],
-                label: (i) => i == -1
-                    ? '${((zoom ?? 1) * 100).round()}%'
-                    : _zoomSteps[i] == null
-                        ? 'Fit'
-                        : '${(_zoomSteps[i]! * 100).round()}%',
-                onChanged: (i) => onZoom(_zoomSteps[i]),
-              ),
+      child: Row(
+        children: [
+          // The controls, and the preview progress on the right of the same bar
+          // (K-287). The controls take the space that is left over, so the
+          // progress appearing and going never moves any of them.
+          Expanded(child: _controls(context, t)),
+          ViewerProgressBar(
+            tracker:
+                Provider.of<LumitUiState>(context, listen: false)
+                    .previewProgress,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Everything on the left of the bar: magnification, channel, the overlays,
+  /// the playback mode, the transport and the clock.
+  Widget _controls(BuildContext context, LumitTheme t) {
+    // Scrolls rather than overflowing: a Viewer docked narrow has less width
+    // than this bar wants, and an overflow stripe is not a design.
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          SizedBox(
+            width: 76,
+            child: BareDropdown<int>(
+              key: const ValueKey('viewer-zoom'),
+              // -1: a wheel zoom between the listed steps; the button shows
+              // the true percentage and the menu still offers the steps.
+              value: _zoomSteps.indexOf(zoom),
+              options: [for (var i = 0; i < _zoomSteps.length; i++) i],
+              label: (i) => i == -1
+                  ? '${((zoom ?? 1) * 100).round()}%'
+                  : _zoomSteps[i] == null
+                      ? 'Fit'
+                      : '${(_zoomSteps[i]! * 100).round()}%',
+              onChanged: (i) => onZoom(_zoomSteps[i]),
             ),
-            const SizedBox(width: 6),
-            SizedBox(
-              width: 76,
-              child: BareDropdown<ViewerChannel>(
-                key: const ValueKey('viewer-channel'),
-                value: channel,
-                options: ViewerChannel.values,
-                label: _channelLabel,
-                onChanged: onChannel,
-              ),
+          ),
+          const SizedBox(width: 6),
+          SizedBox(
+            width: 76,
+            child: BareDropdown<ViewerChannel>(
+              key: const ValueKey('viewer-channel'),
+              value: channel,
+              options: ViewerChannel.values,
+              label: _channelLabel,
+              onChanged: onChannel,
             ),
-            const SizedBox(width: 6),
-            LumitTooltip(
-              message: 'Show the transparency grid behind the picture',
-              child: HouseButton(
-                key: const ValueKey('viewer-grid'),
-                small: true,
-                frameless: true,
-                onPressed: onGrid,
-                child: Text('Grid',
-                    style: t.small.copyWith(color: grid ? t.accent : null)),
-              ),
-            ),
-            const SizedBox(width: 6),
-            // The layer controls switch (K-217): the boxes, handles and hover
-            // highlight over the picture. An icon rather than a word, because
-            // what it governs is a *mark* — and the mark is what it draws.
-            LumitTooltip(
-              message: wireframes
-                  ? 'Hide the layer controls over the picture'
-                  : 'Show the layer controls over the picture',
-              child: HouseButton(
-                key: const ValueKey('viewer-wireframes'),
-                small: true,
-                frameless: true,
-                onPressed: onWireframes,
-                child: lumitIcon(
-                  LumitIcon.wireframe,
-                  size: iconSize,
-                  color: wireframes ? t.accent : t.textSecondary,
-                ),
-              ),
-            ),
-            const SizedBox(width: 6),
-            _PlaybackModeButton(comp: comp, tier: tier),
-            // A fixed gap, not a Spacer: the bar scrolls when the panel is
-            // narrow, and a flex child cannot live inside a scroll view.
-            const SizedBox(width: 24),
-            HouseButton(
-              key: const ValueKey('viewer-home'),
+          ),
+          const SizedBox(width: 6),
+          LumitTooltip(
+            message: 'Show the transparency grid behind the picture',
+            child: HouseButton(
+              key: const ValueKey('viewer-grid'),
               small: true,
               frameless: true,
-              onPressed: () => onSeek(0),
-              child: Text('|◀', style: t.small),
+              onPressed: onGrid,
+              child: Text('Grid',
+                  style: t.small.copyWith(color: grid ? t.accent : null)),
             ),
-            HouseButton(
-              key: const ValueKey('viewer-step-back'),
+          ),
+          const SizedBox(width: 6),
+          // The layer controls switch (K-217): the boxes, handles and hover
+          // highlight over the picture. An icon rather than a word, because
+          // what it governs is a *mark* — and the mark is what it draws.
+          LumitTooltip(
+            message: wireframes
+                ? 'Hide the layer controls over the picture'
+                : 'Show the layer controls over the picture',
+            child: HouseButton(
+              key: const ValueKey('viewer-wireframes'),
               small: true,
               frameless: true,
-              onPressed: () => onSeek(frame - 1),
-              child: Text('◀', style: t.small),
-            ),
-            HouseButton(
-              key: const ValueKey('viewer-play'),
-              small: true,
-              onPressed: onPlayPause,
-              // The transport is the one place the spec asks for 20 (§5): it
-              // is the control the eye goes to without looking for it.
-              child: lumitIcon(playing ? LumitIcon.pause : LumitIcon.play,
-                  size: iconSizeTransport, color: t.textPrimary),
-            ),
-            HouseButton(
-              key: const ValueKey('viewer-step-forward'),
-              small: true,
-              frameless: true,
-              onPressed: () => onSeek(frame + 1),
-              child: Text('▶', style: t.small),
-            ),
-            HouseButton(
-              key: const ValueKey('viewer-end'),
-              small: true,
-              frameless: true,
-              onPressed: () => onSeek(comp.durationFrames() - 1),
-              child: Text('▶|', style: t.small),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              timecodeOf(frame, settings),
-              key: const ValueKey('viewer-timecode'),
-              style: t.mono,
-            ),
-            // The degradation badge (docs/13 §B5, docs/07 §2.2): when adaptive
-            // playback has dropped below Full, say so on the bar — a softer
-            // picture must never be a mystery. The tier rides in on the frame,
-            // so the bar draws it without asking anything.
-            if (playing && tier > 1) ...[
-              const SizedBox(width: 8),
-              Container(
-                key: const ValueKey('viewer-tier-badge'),
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                decoration: BoxDecoration(
-                  color: t.surface2,
-                  borderRadius: BorderRadius.circular(t.tokens.controlRadius),
-                ),
-                child: Text(
-                  _PlaybackModeButton._tierNames[tier.clamp(0, 4)],
-                  style: t.small.copyWith(color: t.warning),
-                ),
+              onPressed: onWireframes,
+              child: lumitIcon(
+                LumitIcon.wireframe,
+                size: iconSize,
+                color: wireframes ? t.accent : t.textSecondary,
               ),
-            ],
-          ],
-        ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          // A slot rather than a button sized to its own label: the two modes
+          // are two different words, and letting them size themselves moved
+          // the whole transport across whenever the mode changed.
+          const SizedBox(
+            width: _playbackModeWidth,
+            child: _PlaybackModeButton(),
+          ),
+          // A fixed gap, not a Spacer: the bar scrolls when the panel is
+          // narrow, and a flex child cannot live inside a scroll view.
+          const SizedBox(width: 24),
+          HouseButton(
+            key: const ValueKey('viewer-home'),
+            small: true,
+            frameless: true,
+            onPressed: () => onSeek(0),
+            child: Text('|◀', style: t.small),
+          ),
+          HouseButton(
+            key: const ValueKey('viewer-step-back'),
+            small: true,
+            frameless: true,
+            onPressed: () => onSeek(frame - 1),
+            child: Text('◀', style: t.small),
+          ),
+          HouseButton(
+            key: const ValueKey('viewer-play'),
+            small: true,
+            onPressed: onPlayPause,
+            // The transport is the one place the spec asks for 20 (§5): it
+            // is the control the eye goes to without looking for it.
+            child: lumitIcon(playing ? LumitIcon.pause : LumitIcon.play,
+                size: iconSizeTransport, color: t.textPrimary),
+          ),
+          HouseButton(
+            key: const ValueKey('viewer-step-forward'),
+            small: true,
+            frameless: true,
+            onPressed: () => onSeek(frame + 1),
+            child: Text('▶', style: t.small),
+          ),
+          HouseButton(
+            key: const ValueKey('viewer-end'),
+            small: true,
+            frameless: true,
+            onPressed: () => onSeek(comp.durationFrames() - 1),
+            child: Text('▶|', style: t.small),
+          ),
+          const SizedBox(width: 8),
+          // The clock, in a slot wide enough for the longest time this comp
+          // can show and clickable to type one (docs/07 §2.2 item 11). A
+          // time past either end of the composition lands on that end: the
+          // playhead cannot leave the comp, so asking for somewhere outside
+          // it means the nearest place inside.
+          TimeReadout(
+            key: const ValueKey('viewer-timecode'),
+            frame: frame,
+            format: (f) => timecodeOf(f, settings),
+            widthChars: timecodeChars(settings.fpsNum, settings.fpsDen),
+            style: t.mono,
+            parse: (text) =>
+                framesOfTimecode(text, settings.fpsNum, settings.fpsDen),
+            onCommit: onSeek,
+            minFrame: 0,
+            maxFrame: _lastFrameOf(settings),
+            tooltip: 'The frame on screen. Click to type a time.',
+          ),
+          // The degradation badge (docs/13 §B5, docs/07 §2.2): when adaptive
+          // playback has dropped below Full, say so on the bar — a softer
+          // picture must never be a mystery. The tier rides in on the frame,
+          // so the bar draws it without asking anything.
+          //
+          // Its slot is there whether or not the badge is: a box that comes
+          // and goes mid-playback would drag the bar about at the very
+          // moment the picture is being watched.
+          const SizedBox(width: 8),
+          SizedBox(
+            width: _tierBadgeWidth,
+            child: playing && tier > 1
+                ? Center(
+                    child: Container(
+                      key: const ValueKey('viewer-tier-badge'),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: t.surface2,
+                        borderRadius:
+                            BorderRadius.circular(t.tokens.controlRadius),
+                      ),
+                      child: Text(
+                        _PlaybackModeButton._tierNames[tier.clamp(0, 4)],
+                        style: t.small.copyWith(color: t.warning),
+                      ),
+                    ),
+                  )
+                : null,
+          ),
+        ],
       ),
     );
   }
@@ -1617,6 +1654,27 @@ class _Toolbar extends StatelessWidget {
 /// state/timecode.dart, bound to this comp's settings.
 String timecodeOf(int frame, BridgeCompSettings settings) =>
     timecodeOfRate(frame, settings.fpsNum, settings.fpsDen);
+
+/// The last frame of a comp, from its settings alone.
+///
+/// Worked out here rather than asked of the engine: this is read while the bar
+/// is being built, and the bar is built for every frame of playback (K-184).
+/// Whole-integer arithmetic, so a long comp at 29.97 cannot drift the way a
+/// double would.
+int _lastFrameOf(BridgeCompSettings settings) {
+  final den = settings.duration.den.toInt() * settings.fpsDen;
+  if (den <= 0) return 0;
+  final frames = settings.duration.num.toInt() * settings.fpsNum ~/ den;
+  return frames > 0 ? frames - 1 : 0;
+}
+
+/// The slot the playback-mode button sits in — wide enough for either of the
+/// two labels, so changing mode does not shuffle the transport sideways.
+const double _playbackModeWidth = 92;
+
+/// The slot the degradation badge sits in, kept whether or not the badge is
+/// showing.
+const double _tierBadgeWidth = 52;
 
 /// Which playback behaviour is in force, and a click to change it.
 ///
@@ -1639,14 +1697,16 @@ final String _transportName = switch (viewerTransport()) {
   BridgeViewerTransport.readBack => 'read-back (pixels copied)',
 };
 
-/// In adaptive mode the tier it has settled on is shown beside the name, so
-/// "why is it soft?" is answered on screen: Full, Half, Third or Quarter.
+/// Which of the two playback behaviours is in force — the name of the mode and
+/// nothing else (K-287).
+///
+/// It used to carry the settled tier beside the name ("Adaptive · Half"), which
+/// meant the button re-lettered itself as the engine felt its way up and down
+/// the ladder — a word changing under the pointer, in the corner of the eye,
+/// through every second of playback. Which tier a frame was made at is the
+/// degradation badge's job, and the badge already says it while it matters.
 class _PlaybackModeButton extends StatelessWidget {
-  final CompositionReference comp;
-
-  /// The tier off the last frame, given by the bar above (see [_Toolbar.tier]).
-  final int tier;
-  const _PlaybackModeButton({required this.comp, required this.tier});
+  const _PlaybackModeButton();
 
   static const _tierNames = ['Full', 'Full', 'Half', 'Third', 'Quarter'];
 
@@ -1655,9 +1715,7 @@ class _PlaybackModeButton extends StatelessWidget {
     final t = ThemeScope.of(context).theme;
     final ui = Provider.of<LumitUiState>(context);
     final adaptive = ui.workspace.performance.playback == PlaybackMode.adaptive;
-    final label = adaptive
-        ? 'Adaptive · ${_tierNames[tier.clamp(0, _tierNames.length - 1)]}'
-        : 'Every frame';
+    final label = adaptive ? 'Adaptive res' : 'Every frame';
 
     // Which route frames take to get here. A build without a zero-copy path
     // copies every pixel down, serialises it a byte at a time and uploads it
