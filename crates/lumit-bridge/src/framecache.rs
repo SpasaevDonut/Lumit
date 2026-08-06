@@ -530,6 +530,31 @@ pub(crate) mod vram {
 /// The disk tier's controls and mirror — the same shape as [`vram`], because the
 /// tier lives on the worker's IO thread and the settings ops run on whichever
 /// thread frb gave them.
+/// The decoded-source-frame pool's numbers, as the worker last published them.
+///
+/// Published rather than asked, for the same reason [`vram`] is: the pool lives
+/// on the worker's renderer, and a settings window must not reach across the
+/// loop to read it (K-184's rule, on the other side of the bridge).
+pub(crate) mod decode {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static USED: AtomicU64 = AtomicU64::new(0);
+    static DECODERS: AtomicU64 = AtomicU64::new(0);
+
+    pub(crate) fn publish(used: u64, decoders: u64) {
+        USED.store(used, Ordering::Relaxed);
+        DECODERS.store(decoders, Ordering::Relaxed);
+    }
+
+    /// `(used_bytes, open_decoders)`.
+    pub(crate) fn stats() -> (u64, u64) {
+        (
+            USED.load(Ordering::Relaxed),
+            DECODERS.load(Ordering::Relaxed),
+        )
+    }
+}
+
 pub(crate) mod disk {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -560,6 +585,18 @@ pub(crate) mod disk {
     static ENTRIES: AtomicU64 = AtomicU64::new(0);
     /// The wanted location, and a counter the worker watches so a change is
     /// noticed exactly once.
+    /// How many frames are in the write-behind queue, as the worker last
+    /// published — the depth K-277 bounded, in the memory report (K-295).
+    static PENDING_PARKS: AtomicU64 = AtomicU64::new(0);
+
+    pub(crate) fn publish_pending_parks(n: u64) {
+        PENDING_PARKS.store(n, Ordering::Relaxed);
+    }
+
+    pub(crate) fn pending_parks() -> u64 {
+        PENDING_PARKS.load(Ordering::Relaxed)
+    }
+
     static LOCATION: Mutex<Option<(u64, Location)>> = Mutex::new(None);
     static LOCATION_EPOCH: AtomicU64 = AtomicU64::new(0);
     /// The folder the tier actually resolved to, for Settings to show. `None`

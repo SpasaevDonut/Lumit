@@ -253,6 +253,12 @@ fn sync_caches(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
         state.fill_exhausted = false;
     }
     crate::framecache::publish_comp_decodes(state.renderer.decoded_frames());
+    // The decoded-frame pool's share of the memory report (K-295). Published on
+    // the same turn as the rest, so the numbers a report adds up were all read
+    // at one moment rather than across a second of drift.
+    let (decoded_bytes, decoders) = state.renderer.decode_memory();
+    crate::framecache::decode::publish(decoded_bytes as u64, decoders as u64);
+    crate::framecache::disk::publish_pending_parks(state.disk.pending_parks() as u64);
     let (used, _, entries) = state.renderer.frame_texture_stats();
     if (used as u64, entries as u64) != state.published_vram {
         state.published_vram = (used as u64, entries as u64);

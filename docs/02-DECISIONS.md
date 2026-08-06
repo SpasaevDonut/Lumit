@@ -6365,3 +6365,41 @@ deliberately painter-drawn glyph, and this is one.
 The − / + / Fit buttons are gone: the slider's two ends *are* Fit and full zoom, and a slider
 also says where you are between them, which three buttons never did. `HouseSlider` gained a
 width and a value-hiding option rather than a second slider being written for a toolbar.
+
+**K-295 · DECIDED · Memory is reported, not guessed at: every tier's bytes beside the
+process's own, and the difference named.** From the owner (2026-08-06), after a second
+report of Lumit holding tens of gigabytes on a Mac — 85 GB, following the 81 GB that
+K-277 bounded the write-behind queue for.
+
+The first question either time was the same, and neither time could it be answered from
+outside the process: **is a cache doing exactly what it was told, or is something holding
+memory nobody is counting?** Every tier already knew its own bytes and every one of them
+is byte-budgeted; what was missing was the total to weigh them against. So Settings ▸
+Performance opens with a **Memory** section: what the operating system says the process
+holds, what the frame cache and the decoded-frame cache hold, how many decoders are open,
+how deep the write-behind queue is, and **what is left over**.
+
+The left-over figure is the point. If the tiers sit at their budgets and the process is a
+hundred times larger, the search is not in this list at all — it is memory held below us
+(graphics allocations the driver has not reclaimed, a decoder's own buffers) and that is a
+different hunt with different tools. Turning a week of guessing into one screenshot is
+worth a syscall.
+
+- `resident_memory_bytes` asks each platform for its nearest equivalent of what the task
+  manager shows: `WorkingSetSize` on Windows, `VmRSS` on Linux, and **`phys_footprint`
+  from `TASK_VM_INFO`** on macOS. Resident size is the obvious macOS answer and the wrong
+  one — it leaves out the compressed pages and the IOSurface and Metal allocations a
+  graphics application lives on, which is most of what would be hunted. `phys_footprint`
+  is what Activity Monitor prints under *Memory*, and so the number a user reads back.
+- **VRAM is reported apart, never subtracted**: on unified memory it is inside the process
+  and on a discrete card it is not, so folding it in is wrong on half the machines Lumit
+  runs on. **Nothing is counted twice** — a frame in the write-behind queue shares its
+  allocation with the frame cache, so the queue reports a count. **What cannot be weighed
+  is counted** — an open decoder's buffers belong to FFmpeg and the driver, so the report
+  says how many are open rather than inventing bytes.
+- A platform that cannot answer returns 0 and the interface says "not known here". The
+  honest gap, per docs/15-DESIGN.md, beats a plausible number.
+
+This is a diagnostic, and it is deliberately not a fix: it does not reclaim a byte. It is
+the instrument the next report is read with, written down in docs/13 §7.0.1 as a standing
+rule — a tier that holds memory and does not report it is not finished.

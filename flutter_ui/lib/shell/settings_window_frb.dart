@@ -752,8 +752,63 @@ class _SettingsWindowState extends State<_SettingsWindow> {
     final stats = cacheStats();
     final vram = vramCacheStats();
     final tier = playbackTier();
+    final memory = memoryReport();
 
     return [
+      // Where the memory has gone (K-295). First on the page, above the tiers
+      // it weighs, because "Lumit is holding 85 GB" is the question this page
+      // is opened to answer and the tiers below are each only a part of it.
+      settingsSection(t, 'Memory', [
+        settingsRow(
+          t,
+          'This process',
+          'What the system says Lumit is holding, all in — the number '
+              'Activity Monitor and Task Manager show.',
+          Text(
+            memory.processBytes == BigInt.zero
+                ? 'not known here'
+                : _bytes(memory.processBytes),
+            key: const ValueKey('settings-memory-process'),
+            style: t.small,
+          ),
+        ),
+        settingsRow(
+          t,
+          'Not held by any cache',
+          'The process, less the finished frames and decoded frames below. '
+              'A large number here is not a cache to shrink: it is memory '
+              'nothing in this window is counting, and it is worth reporting.',
+          Text(
+            memory.processBytes == BigInt.zero
+                ? '—'
+                : _bytes(memory.unaccountedBytes),
+            key: const ValueKey('settings-memory-unaccounted'),
+            style: t.small,
+          ),
+        ),
+        settingsRow(
+          t,
+          'Open media decoders',
+          'One per footage item in play. Each holds buffers of its own that '
+              'no budget here covers.',
+          Text(
+            '${memory.openDecoders}',
+            key: const ValueKey('settings-memory-decoders'),
+            style: t.small,
+          ),
+        ),
+        settingsRow(
+          t,
+          'Frames waiting to be written',
+          'The write-behind queue to the disk cache, which is bounded at '
+              'eight frames.',
+          Text(
+            '${memory.parkQueueFrames}',
+            key: const ValueKey('settings-memory-parks'),
+            style: t.small,
+          ),
+        ),
+      ]),
       settingsSection(t, 'Playback', [
         settingsRow(
           t,
@@ -1119,6 +1174,14 @@ class _SettingsWindowState extends State<_SettingsWindow> {
   /// A round figure for a sentence: "32 GB", or megabytes when it is small.
   static String _gib(double mib) =>
       mib >= 1024 ? '${(mib / 1024).round()} GB' : '${mib.round()} MB';
+
+  /// Bytes as a person reads them — MB up to a gigabyte, GB above, one
+  /// decimal so 85.4 GB does not print as 85.
+  static String _bytes(BigInt bytes) {
+    final b = bytes.toDouble();
+    if (b >= 1 << 30) return '${(b / (1 << 30)).toStringAsFixed(1)} GB';
+    return '${(b / (1 << 20)).toStringAsFixed(0)} MB';
+  }
 
   static String _mib(int bytes) => (bytes / (1 << 20)).toStringAsFixed(0);
 

@@ -6,6 +6,27 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
+/// What this process is actually holding, in bytes, or 0 where it cannot be
+/// asked — the number the operating system's own monitor shows.
+///
+/// **Why this exists.** Lumit has now twice been reported holding tens of
+/// gigabytes (K-277, and again after it), and each time the first question took
+/// days to answer: is a cache doing exactly what it was told, or is something
+/// holding memory nobody is counting? Every tier already reports its own bytes;
+/// what was missing was the total to weigh them against. The difference between
+/// the two is the whole diagnosis, so it is worth one syscall.
+///
+/// Each platform's nearest equivalent of "what the task manager says":
+/// `PROCESS_MEMORY_COUNTERS.WorkingSetSize` on Windows, `VmRSS` from
+/// `/proc/self/status` on Linux, and `phys_footprint` from `TASK_VM_INFO` on
+/// macOS — which is the number Activity Monitor prints under **Memory**, and so
+/// the one a user reads back to us. Resident set size would have been the
+/// obvious macOS choice and is the wrong one: it omits the compressed pages and
+/// the IOSurface and Metal allocations a graphics application lives on, which
+/// is most of what we would be hunting.
+BigInt residentMemoryBytes() =>
+    BridgeLib.instance.api.crateApiSystemResidentMemoryBytes();
+
 /// The machine's installed memory in bytes, or 0 where it cannot be asked.
 BigInt systemMemoryBytes() =>
     BridgeLib.instance.api.crateApiSystemSystemMemoryBytes();

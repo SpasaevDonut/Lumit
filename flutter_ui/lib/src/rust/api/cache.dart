@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `read`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// The cache's live numbers.
 ///
@@ -16,6 +16,10 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 /// even so: the lock it takes is the one a render holds.
 BridgeCacheStats cacheStats() =>
     BridgeLib.instance.api.crateApiCacheCacheStats();
+
+/// Read the memory report. Cheap: five atomics, one lock and one syscall.
+BridgeMemoryReport memoryReport() =>
+    BridgeLib.instance.api.crateApiCacheMemoryReport();
 
 /// Resize the cache, returning what it holds afterwards.
 ///
@@ -197,6 +201,85 @@ class BridgeDiskCacheStats {
           budgetBytes == other.budgetBytes &&
           entries == other.entries &&
           root == other.root;
+}
+
+/// Where this process's memory has gone: what each tier admits to holding, and
+/// what the operating system says the process holds (K-295).
+///
+/// **The field that matters is [`Self::unaccounted_bytes`].** Every tier here
+/// is byte-budgeted and evicts to stay inside its budget, so a report where the
+/// tiers add up to their budgets and the process is a hundred times larger is
+/// not a cache problem at all — it is memory nobody in this list is counting,
+/// which is a different search entirely. Lumit has twice been reported holding
+/// tens of gigabytes (K-277 and after it), and both times that question took
+/// days to answer from the outside. It is one call from the inside.
+class BridgeMemoryReport {
+  /// What the operating system says this process holds — Activity Monitor's
+  /// **Memory** on macOS, the working set on Windows, `VmRSS` on Linux. 0
+  /// where the platform will not say ([`crate::api::system::resident_memory_bytes`]).
+  final BigInt processBytes;
+
+  /// Finished frames held in ordinary memory.
+  final BigInt frameCacheBytes;
+
+  /// Frames held on the graphics card. On a machine with unified memory (every
+  /// Apple Silicon Mac) these are part of `process_bytes` too; on a discrete
+  /// card they are not, which is why they are reported apart rather than
+  /// summed for you.
+  final BigInt vramCacheBytes;
+
+  /// Decoded source frames held for the compositor.
+  final BigInt decodeCacheBytes;
+
+  /// How many media decoders are open. Counted, not weighed: what a decoder
+  /// holds is FFmpeg's and the driver's business, and a made-up number of
+  /// bytes would be worse than an honest count.
+  final BigInt openDecoders;
+
+  /// How many frames are waiting to be written to disk — the write-behind
+  /// queue K-277 bounded at eight. A count rather than bytes on purpose: each
+  /// waiting frame shares its allocation with the frame cache above (one
+  /// `Arc`, both tiers), so charging it twice would make the report lie in
+  /// the one direction that matters.
+  final BigInt parkQueueFrames;
+
+  /// `process_bytes` less everything above that lives in ordinary memory.
+  /// Saturating at zero, since the platform's number and ours are read a
+  /// moment apart and a small negative is meaningless.
+  final BigInt unaccountedBytes;
+
+  const BridgeMemoryReport({
+    required this.processBytes,
+    required this.frameCacheBytes,
+    required this.vramCacheBytes,
+    required this.decodeCacheBytes,
+    required this.openDecoders,
+    required this.parkQueueFrames,
+    required this.unaccountedBytes,
+  });
+
+  @override
+  int get hashCode =>
+      processBytes.hashCode ^
+      frameCacheBytes.hashCode ^
+      vramCacheBytes.hashCode ^
+      decodeCacheBytes.hashCode ^
+      openDecoders.hashCode ^
+      parkQueueFrames.hashCode ^
+      unaccountedBytes.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeMemoryReport &&
+          runtimeType == other.runtimeType &&
+          processBytes == other.processBytes &&
+          frameCacheBytes == other.frameCacheBytes &&
+          vramCacheBytes == other.vramCacheBytes &&
+          decodeCacheBytes == other.decodeCacheBytes &&
+          openDecoders == other.openDecoders &&
+          parkQueueFrames == other.parkQueueFrames &&
+          unaccountedBytes == other.unaccountedBytes;
 }
 
 /// A cache location as a pair: which of the three, and the folder that goes with

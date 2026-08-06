@@ -55,6 +55,72 @@ pub fn cache_stats() -> BridgeCacheStats {
     read()
 }
 
+/// Where this process's memory has gone: what each tier admits to holding, and
+/// what the operating system says the process holds (K-295).
+///
+/// **The field that matters is [`Self::unaccounted_bytes`].** Every tier here
+/// is byte-budgeted and evicts to stay inside its budget, so a report where the
+/// tiers add up to their budgets and the process is a hundred times larger is
+/// not a cache problem at all — it is memory nobody in this list is counting,
+/// which is a different search entirely. Lumit has twice been reported holding
+/// tens of gigabytes (K-277 and after it), and both times that question took
+/// days to answer from the outside. It is one call from the inside.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BridgeMemoryReport {
+    /// What the operating system says this process holds — Activity Monitor's
+    /// **Memory** on macOS, the working set on Windows, `VmRSS` on Linux. 0
+    /// where the platform will not say ([`crate::api::system::resident_memory_bytes`]).
+    pub process_bytes: u64,
+    /// Finished frames held in ordinary memory.
+    pub frame_cache_bytes: u64,
+    /// Frames held on the graphics card. On a machine with unified memory (every
+    /// Apple Silicon Mac) these are part of `process_bytes` too; on a discrete
+    /// card they are not, which is why they are reported apart rather than
+    /// summed for you.
+    pub vram_cache_bytes: u64,
+    /// Decoded source frames held for the compositor.
+    pub decode_cache_bytes: u64,
+    /// How many media decoders are open. Counted, not weighed: what a decoder
+    /// holds is FFmpeg's and the driver's business, and a made-up number of
+    /// bytes would be worse than an honest count.
+    pub open_decoders: u64,
+    /// How many frames are waiting to be written to disk — the write-behind
+    /// queue K-277 bounded at eight. A count rather than bytes on purpose: each
+    /// waiting frame shares its allocation with the frame cache above (one
+    /// `Arc`, both tiers), so charging it twice would make the report lie in
+    /// the one direction that matters.
+    pub park_queue_frames: u64,
+    /// `process_bytes` less everything above that lives in ordinary memory.
+    /// Saturating at zero, since the platform's number and ours are read a
+    /// moment apart and a small negative is meaningless.
+    pub unaccounted_bytes: u64,
+}
+
+/// Read the memory report. Cheap: five atomics, one lock and one syscall.
+#[frb(sync)]
+#[must_use]
+pub fn memory_report() -> BridgeMemoryReport {
+    let (frame_cache, _, _, _, _) = crate::framecache::stats();
+    let (vram, _) = crate::framecache::vram::stats();
+    let (decode, decoders) = crate::framecache::decode::stats();
+    let park = crate::framecache::disk::pending_parks();
+    let process = crate::api::system::resident_memory_bytes();
+    // VRAM is deliberately not subtracted: on a discrete card it is not in the
+    // process at all, and on unified memory it is — counting it either way
+    // would be wrong on half the machines Lumit runs on.
+    let accounted = (frame_cache as u64).saturating_add(decode);
+    BridgeMemoryReport {
+        process_bytes: process,
+        frame_cache_bytes: frame_cache as u64,
+        vram_cache_bytes: vram,
+        decode_cache_bytes: decode,
+        open_decoders: decoders,
+        park_queue_frames: park,
+        unaccounted_bytes: process.saturating_sub(accounted),
+    }
+}
+
 /// Resize the cache, returning what it holds afterwards.
 ///
 /// Shrinking evicts oldest-first straight away rather than waiting for the next

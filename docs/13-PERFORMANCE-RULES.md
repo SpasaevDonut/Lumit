@@ -235,6 +235,33 @@ lives on `GpuContext` and is shared only with the handles of that same device, s
 measurement sees is one renderer's own submissions. Any future budget counted this way MUST be
 scoped the same: a number two tests can both write is not a measurement.
 
+### 7.0.1 The memory report (K-295)
+
+**Every tier that holds memory MUST report its bytes, and the process MUST report its
+total, in one place the user can read.** Settings ▸ Performance ▸ Memory shows what the
+operating system says Lumit is holding, what each byte-budgeted tier admits to, how many
+media decoders are open, and — the figure the section exists for — **what is left over**.
+
+This is a diagnostic obligation, not a nicety. Lumit has twice been reported holding tens
+of gigabytes (K-277, and again after it), and both times the first question — *is a cache
+doing what it was told, or is something holding memory nobody counts?* — took days to
+answer from outside the process. It is one syscall and five atomics from inside. A report
+whose tiers sit at their budgets while the process is a hundred times larger says the
+search is not in this list, which is the most valuable thing it can say.
+
+Rules the report keeps, so its arithmetic can be trusted:
+
+- **VRAM is reported, never subtracted.** On unified memory (every Apple Silicon Mac) the
+  card's frames are part of the process; on a discrete card they are not. Folding them in
+  either way would be wrong on half the machines Lumit runs on.
+- **Nothing is counted twice.** A frame waiting in the write-behind queue shares its
+  allocation with the frame cache (one `Arc`, both tiers), so the queue reports a *count*
+  of frames rather than bytes.
+- **What cannot be weighed is counted.** What an open media decoder holds is FFmpeg's and
+  the driver's business; the report says how many are open rather than inventing a size.
+- **A platform that cannot answer says zero**, and the interface says "not known here"
+  rather than printing a guess.
+
 ### 7.1 Per-node profiler
 
 A built-in profiler, surfaced in the UI — After Effects' composition profiler done properly:

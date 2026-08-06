@@ -41,7 +41,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1647207360;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1097566226;
 
 // Section: executor
 
@@ -6120,6 +6120,35 @@ fn wire__crate__api__effect__list_presets_impl(
         },
     )
 }
+fn wire__crate__api__cache__memory_report_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "memory_report",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Result::<_, ()>::Ok(crate::api::cache::memory_report())?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
 fn wire__crate__api__shell__playback_tier_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -6846,6 +6875,35 @@ fn wire__crate__api__shell__reset_realtime_impl(
             deserializer.end();
             transform_result_sse::<_, ()>((move || {
                 let output_ok = Result::<_, ()>::Ok(crate::api::shell::reset_realtime())?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__system__resident_memory_bytes_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "resident_memory_bytes",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Result::<_, ()>::Ok(crate::api::system::resident_memory_bytes())?;
                 Ok(output_ok)
             })())
         },
@@ -8152,6 +8210,28 @@ impl SseDecode for crate::api::footage::BridgeMediaInfo {
             fps_num: var_fpsNum,
             fps_den: var_fpsDen,
             duration: var_duration,
+        };
+    }
+}
+
+impl SseDecode for crate::api::cache::BridgeMemoryReport {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_processBytes = <u64>::sse_decode(deserializer);
+        let mut var_frameCacheBytes = <u64>::sse_decode(deserializer);
+        let mut var_vramCacheBytes = <u64>::sse_decode(deserializer);
+        let mut var_decodeCacheBytes = <u64>::sse_decode(deserializer);
+        let mut var_openDecoders = <u64>::sse_decode(deserializer);
+        let mut var_parkQueueFrames = <u64>::sse_decode(deserializer);
+        let mut var_unaccountedBytes = <u64>::sse_decode(deserializer);
+        return crate::api::cache::BridgeMemoryReport {
+            process_bytes: var_processBytes,
+            frame_cache_bytes: var_frameCacheBytes,
+            vram_cache_bytes: var_vramCacheBytes,
+            decode_cache_bytes: var_decodeCacheBytes,
+            open_decoders: var_openDecoders,
+            park_queue_frames: var_parkQueueFrames,
+            unaccounted_bytes: var_unaccountedBytes,
         };
     }
 }
@@ -9764,7 +9844,7 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        196 => wire__crate__api__project__project_reference_save_impl(
+        197 => wire__crate__api__project__project_reference_save_impl(
             port,
             ptr,
             rust_vec_len,
@@ -9949,42 +10029,44 @@ fn pde_ffi_dispatcher_sync_impl(
 178 => wire__crate__api__effect__list_parameter_groups_impl(ptr, rust_vec_len, data_len),
 179 => wire__crate__api__effect__list_parameters_impl(ptr, rust_vec_len, data_len),
 180 => wire__crate__api__effect__list_presets_impl(ptr, rust_vec_len, data_len),
-181 => wire__crate__api__shell__playback_tier_impl(ptr, rust_vec_len, data_len),
-182 => wire__crate__api__effect__presets_dir_path_impl(ptr, rust_vec_len, data_len),
-183 => wire__crate__api__project__project_reference_anti_aliasing_impl(ptr, rust_vec_len, data_len),
-184 => wire__crate__api__project__project_reference_anti_aliasing_in_use_impl(ptr, rust_vec_len, data_len),
-185 => wire__crate__api__project__project_reference_autosave_impl(ptr, rust_vec_len, data_len),
-186 => wire__crate__api__project__project_reference_cache_location_impl(ptr, rust_vec_len, data_len),
-187 => wire__crate__api__project__project_reference_get_items_impl(ptr, rust_vec_len, data_len),
-188 => wire__crate__api__project__project_reference_history_impl(ptr, rust_vec_len, data_len),
-189 => wire__crate__api__project__project_reference_import_footage_impl(ptr, rust_vec_len, data_len),
-190 => wire__crate__api__project__project_reference_is_dirty_impl(ptr, rust_vec_len, data_len),
-191 => wire__crate__api__project__project_reference_new_composition_impl(ptr, rust_vec_len, data_len),
-192 => wire__crate__api__project__project_reference_next_comp_name_impl(ptr, rust_vec_len, data_len),
-193 => wire__crate__api__project__project_reference_path_impl(ptr, rust_vec_len, data_len),
-194 => wire__crate__api__project__project_reference_redo_impl(ptr, rust_vec_len, data_len),
-195 => wire__crate__api__project__project_reference_restore_journal_impl(ptr, rust_vec_len, data_len),
-197 => wire__crate__api__project__project_reference_set_anti_aliasing_impl(ptr, rust_vec_len, data_len),
-198 => wire__crate__api__project__project_reference_set_cache_location_impl(ptr, rust_vec_len, data_len),
-199 => wire__crate__api__project__project_reference_set_ui_state_impl(ptr, rust_vec_len, data_len),
-200 => wire__crate__api__project__project_reference_start_worker_impl(ptr, rust_vec_len, data_len),
-201 => wire__crate__api__project__project_reference_ui_state_impl(ptr, rust_vec_len, data_len),
-202 => wire__crate__api__project__project_reference_undo_impl(ptr, rust_vec_len, data_len),
-203 => wire__crate__api__shell__reset_realtime_impl(ptr, rust_vec_len, data_len),
-204 => wire__crate__api__system__restore_frozen_cursor_impl(ptr, rust_vec_len, data_len),
-205 => wire__crate__api__effect__sample_scalar_impl(ptr, rust_vec_len, data_len),
-206 => wire__crate__api__cache__set_cache_budget_impl(ptr, rust_vec_len, data_len),
-207 => wire__crate__api__cache__set_disk_cache_budget_impl(ptr, rust_vec_len, data_len),
-208 => wire__crate__api__cache__set_disk_cache_location_impl(ptr, rust_vec_len, data_len),
-209 => wire__crate__api__cache__set_render_profiling_impl(ptr, rust_vec_len, data_len),
-210 => wire__crate__api__cache__set_vram_cache_budget_impl(ptr, rust_vec_len, data_len),
-211 => wire__crate__api__solid__solid_reference_get_definition_impl(ptr, rust_vec_len, data_len),
-212 => wire__crate__api__solid__solid_reference_set_definition_impl(ptr, rust_vec_len, data_len),
-213 => wire__crate__api__system__system_memory_bytes_impl(ptr, rust_vec_len, data_len),
-214 => wire__crate__api__system__thaw_cursor_impl(ptr, rust_vec_len, data_len),
-215 => wire__crate__api__system__video_memory_bytes_impl(ptr, rust_vec_len, data_len),
-216 => wire__crate__api__cache__viewer_transport_impl(ptr, rust_vec_len, data_len),
-217 => wire__crate__api__cache__vram_cache_stats_impl(ptr, rust_vec_len, data_len),
+181 => wire__crate__api__cache__memory_report_impl(ptr, rust_vec_len, data_len),
+182 => wire__crate__api__shell__playback_tier_impl(ptr, rust_vec_len, data_len),
+183 => wire__crate__api__effect__presets_dir_path_impl(ptr, rust_vec_len, data_len),
+184 => wire__crate__api__project__project_reference_anti_aliasing_impl(ptr, rust_vec_len, data_len),
+185 => wire__crate__api__project__project_reference_anti_aliasing_in_use_impl(ptr, rust_vec_len, data_len),
+186 => wire__crate__api__project__project_reference_autosave_impl(ptr, rust_vec_len, data_len),
+187 => wire__crate__api__project__project_reference_cache_location_impl(ptr, rust_vec_len, data_len),
+188 => wire__crate__api__project__project_reference_get_items_impl(ptr, rust_vec_len, data_len),
+189 => wire__crate__api__project__project_reference_history_impl(ptr, rust_vec_len, data_len),
+190 => wire__crate__api__project__project_reference_import_footage_impl(ptr, rust_vec_len, data_len),
+191 => wire__crate__api__project__project_reference_is_dirty_impl(ptr, rust_vec_len, data_len),
+192 => wire__crate__api__project__project_reference_new_composition_impl(ptr, rust_vec_len, data_len),
+193 => wire__crate__api__project__project_reference_next_comp_name_impl(ptr, rust_vec_len, data_len),
+194 => wire__crate__api__project__project_reference_path_impl(ptr, rust_vec_len, data_len),
+195 => wire__crate__api__project__project_reference_redo_impl(ptr, rust_vec_len, data_len),
+196 => wire__crate__api__project__project_reference_restore_journal_impl(ptr, rust_vec_len, data_len),
+198 => wire__crate__api__project__project_reference_set_anti_aliasing_impl(ptr, rust_vec_len, data_len),
+199 => wire__crate__api__project__project_reference_set_cache_location_impl(ptr, rust_vec_len, data_len),
+200 => wire__crate__api__project__project_reference_set_ui_state_impl(ptr, rust_vec_len, data_len),
+201 => wire__crate__api__project__project_reference_start_worker_impl(ptr, rust_vec_len, data_len),
+202 => wire__crate__api__project__project_reference_ui_state_impl(ptr, rust_vec_len, data_len),
+203 => wire__crate__api__project__project_reference_undo_impl(ptr, rust_vec_len, data_len),
+204 => wire__crate__api__shell__reset_realtime_impl(ptr, rust_vec_len, data_len),
+205 => wire__crate__api__system__resident_memory_bytes_impl(ptr, rust_vec_len, data_len),
+206 => wire__crate__api__system__restore_frozen_cursor_impl(ptr, rust_vec_len, data_len),
+207 => wire__crate__api__effect__sample_scalar_impl(ptr, rust_vec_len, data_len),
+208 => wire__crate__api__cache__set_cache_budget_impl(ptr, rust_vec_len, data_len),
+209 => wire__crate__api__cache__set_disk_cache_budget_impl(ptr, rust_vec_len, data_len),
+210 => wire__crate__api__cache__set_disk_cache_location_impl(ptr, rust_vec_len, data_len),
+211 => wire__crate__api__cache__set_render_profiling_impl(ptr, rust_vec_len, data_len),
+212 => wire__crate__api__cache__set_vram_cache_budget_impl(ptr, rust_vec_len, data_len),
+213 => wire__crate__api__solid__solid_reference_get_definition_impl(ptr, rust_vec_len, data_len),
+214 => wire__crate__api__solid__solid_reference_set_definition_impl(ptr, rust_vec_len, data_len),
+215 => wire__crate__api__system__system_memory_bytes_impl(ptr, rust_vec_len, data_len),
+216 => wire__crate__api__system__thaw_cursor_impl(ptr, rust_vec_len, data_len),
+217 => wire__crate__api__system__video_memory_bytes_impl(ptr, rust_vec_len, data_len),
+218 => wire__crate__api__cache__viewer_transport_impl(ptr, rust_vec_len, data_len),
+219 => wire__crate__api__cache__vram_cache_stats_impl(ptr, rust_vec_len, data_len),
                         _ => unreachable!(),
                     }
 }
@@ -11041,6 +11123,32 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::footage::BridgeMediaInfo>
     for crate::api::footage::BridgeMediaInfo
 {
     fn into_into_dart(self) -> crate::api::footage::BridgeMediaInfo {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::cache::BridgeMemoryReport {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.process_bytes.into_into_dart().into_dart(),
+            self.frame_cache_bytes.into_into_dart().into_dart(),
+            self.vram_cache_bytes.into_into_dart().into_dart(),
+            self.decode_cache_bytes.into_into_dart().into_dart(),
+            self.open_decoders.into_into_dart().into_dart(),
+            self.park_queue_frames.into_into_dart().into_dart(),
+            self.unaccounted_bytes.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::cache::BridgeMemoryReport
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::cache::BridgeMemoryReport>
+    for crate::api::cache::BridgeMemoryReport
+{
+    fn into_into_dart(self) -> crate::api::cache::BridgeMemoryReport {
         self
     }
 }
@@ -12774,6 +12882,19 @@ impl SseEncode for crate::api::footage::BridgeMediaInfo {
         <u32>::sse_encode(self.fps_num, serializer);
         <u32>::sse_encode(self.fps_den, serializer);
         <crate::api::effect::BridgeRational>::sse_encode(self.duration, serializer);
+    }
+}
+
+impl SseEncode for crate::api::cache::BridgeMemoryReport {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <u64>::sse_encode(self.process_bytes, serializer);
+        <u64>::sse_encode(self.frame_cache_bytes, serializer);
+        <u64>::sse_encode(self.vram_cache_bytes, serializer);
+        <u64>::sse_encode(self.decode_cache_bytes, serializer);
+        <u64>::sse_encode(self.open_decoders, serializer);
+        <u64>::sse_encode(self.park_queue_frames, serializer);
+        <u64>::sse_encode(self.unaccounted_bytes, serializer);
     }
 }
 

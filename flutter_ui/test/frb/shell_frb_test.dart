@@ -82,6 +82,26 @@ void main() {
       expect(find.byKey(const ValueKey('settings-tier')), findsOneWidget);
       expect(find.byKey(const ValueKey('settings-cache-used')), findsOneWidget);
 
+      // Where the memory has gone (K-295). The report is the first thing on
+      // the page, and the figure it exists for is the unaccounted one: a user
+      // asked "why is Lumit holding 85 GB" reads this row back to us.
+      expect(find.byKey(const ValueKey('settings-memory-process')),
+          findsOneWidget);
+      final unaccounted =
+          find.byKey(const ValueKey('settings-memory-unaccounted'));
+      expect(unaccounted, findsOneWidget);
+      expect(find.byKey(const ValueKey('settings-memory-decoders')),
+          findsOneWidget);
+      expect(find.byKey(const ValueKey('settings-memory-parks')),
+          findsOneWidget);
+      // A real number, not a placeholder: the platform under the test answers
+      // its own size, so the row must show bytes rather than an em dash.
+      expect(
+        (tester.widget<Text>(unaccounted).data ?? ''),
+        anyOf(contains('MB'), contains('GB')),
+        reason: 'the report is wired to the engine, not a stub',
+      );
+
       // The budget is a typed number now (K-194), not a pick from a list:
       // dragging it changes what the engine holds, not just the label.
       final before = cacheStats().budgetBytes.toInt();

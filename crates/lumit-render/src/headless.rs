@@ -929,6 +929,13 @@ impl HeadlessRenderer {
         self.retained = None;
     }
 
+    /// The decoded-frame cache's bytes and how many decoders are open — see
+    /// [`crate::decode::DecodePool::memory`].
+    #[must_use]
+    pub fn decode_memory(&self) -> (usize, usize) {
+        self.pool.memory()
+    }
+
     /// Resize the decoded-source-frame cache (Settings → Performance).
     pub fn set_decode_budget(&mut self, bytes: usize) {
         self.pool.set_budget(bytes);
