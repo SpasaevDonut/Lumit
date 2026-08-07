@@ -3300,9 +3300,16 @@ mod tests {
         let doc = store.snapshot();
 
         let (textures_before, buffers_before) = r.gpu_live_objects();
-        /// Frames per batch: far more than the budget above can hold, so the
-        /// great majority of them are evicted and dropped.
-        const BATCH: u64 = 120;
+        /// Frames per batch: still several times what the budget above can
+        /// hold, so the great majority of them are evicted and dropped.
+        ///
+        /// Two batches of sixty rather than two of a hundred and twenty, so the
+        /// whole test does the same hundred and twenty renders it always did.
+        /// The second batch is a *comparison*, not extra load, and on a backend
+        /// that is leaking the extra load is not free: at two hundred and forty
+        /// the Windows runner stopped asserting and started dying
+        /// (`STATUS_STACK_BUFFER_OVERRUN`), which measures nothing.
+        const BATCH: u64 = 60;
         let render_batch = |r: &mut HeadlessRenderer, batch: u64| {
             for i in 0..BATCH {
                 // A name of its own per frame: every render is a new entry, so
