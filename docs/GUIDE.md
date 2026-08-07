@@ -3870,16 +3870,19 @@ folder of loose PNGs instead of a bag.
 
 Nobody draws seven pictures by hand. The artwork is drawn **once**, as an SVG —
 a text file of drawing instructions ("a rounded square here, this gradient
-there") that can be rendered at any size without going blurry. The four SVGs in
+there") that can be rendered at any size without going blurry. The five SVGs in
 `assets/brand/` are the only files a human edits:
 
 - `lumit-mark.svg` — the mark itself: two keyframe diamonds overlapping, white
   where they cross. This bare form is the Windows and Linux icon.
 - `lumit-icon.svg` — the same mark sitting on a dark rounded tile. Only macOS
   uses this, because macOS expects every icon to bring its own tile.
-- `lumit-project.svg` and `lumit-preset.svg` — document icons for `.lum`
-  project files and `.lumfx` presets: a dark page with a folded corner and the
-  mark inside, like the little badge on any Photoshop or After Effects file.
+- `lumit-project.svg`, `lumit-preset.svg` and `lumit-theme.svg` — document
+  icons for `.lum` project files, `.lumfx` presets and `.lumtheme` colour
+  themes: a dark page with a folded corner and the mark inside, like the little
+  badge on any Photoshop or After Effects file. The theme one carries three
+  overlapping colour swatches instead of the mark, since colours are what is in
+  the file.
 
 `scripts/gen-icons.py` turns those four drawings into every pixel file the
 operating systems want (run `pip install resvg-py pillow` once, then
@@ -3896,8 +3899,8 @@ installers live in `packaging/` (decision K-252):
 - **Windows** — `packaging/windows/build-installer.ps1` builds a normal
   setup.exe (it needs the free Inno Setup tool once:
   `winget install JRSoftware.InnoSetup`). Installing it copies the app into
-  Program Files, writes the .lum/.lumfx entries into the Windows registry with
-  their icons, and puts Lumit in the Start menu. Double-clicking a `.lum` then
+  Program Files, writes the .lum/.lumfx/.lumtheme entries into the Windows
+  registry with their icons, and puts Lumit in the Start menu. Double-clicking a `.lum` then
   genuinely opens it: the association hands Lumit the file's path as a command
   line argument, and the app checks its command line at boot
   (`projectPathFromArgs` in `main.dart`).

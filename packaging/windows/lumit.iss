@@ -3,7 +3,7 @@
 ; or by hand: flutter build windows --release (from flutter_ui/), then
 ;   iscc packaging\windows\lumit.iss
 ;
-; Registers the .lum and .lumfx associations with their document icons
+; Registers the .lum, .lumfx and .lumtheme associations with their document icons
 ; (assets/brand, K-251) and an open command; Lumit itself reads the document
 ; path from the command line (projectPathFromArgs in flutter_ui/lib/main.dart).
 
@@ -48,6 +48,7 @@ Source: "..\..\flutter_ui\build\windows\x64\runner\Release\*"; DestDir: "{app}";
   Flags: recursesubdirs ignoreversion
 Source: "..\..\assets\brand\lumit-project.ico"; DestDir: "{app}\icons"
 Source: "..\..\assets\brand\lumit-preset.ico"; DestDir: "{app}\icons"
+Source: "..\..\assets\brand\lumit-theme.ico"; DestDir: "{app}\icons"
 
 [Icons]
 Name: "{group}\Lumit"; Filename: "{app}\{#MyAppExe}"
@@ -71,6 +72,14 @@ Root: HKA; Subkey: "Software\Classes\Lumit.Preset"; ValueType: string; \
   ValueData: "Lumit preset"; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\Classes\Lumit.Preset\DefaultIcon"; ValueType: string; \
   ValueData: "{app}\icons\lumit-preset.ico"
+; .lumtheme — shared colour themes (K-298). No open verb either: a theme is
+; taken in from Settings → Appearance → Import…, not opened as a document.
+Root: HKA; Subkey: "Software\Classes\.lumtheme"; ValueType: string; \
+  ValueData: "Lumit.Theme"; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\Lumit.Theme"; ValueType: string; \
+  ValueData: "Lumit theme"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\Lumit.Theme\DefaultIcon"; ValueType: string; \
+  ValueData: "{app}\icons\lumit-theme.ico"
 
 [Run]
 Filename: "{app}\{#MyAppExe}"; Description: "Launch Lumit"; \

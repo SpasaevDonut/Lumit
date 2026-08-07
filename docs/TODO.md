@@ -217,8 +217,9 @@ the commands or drop the bindings; do not leave the two disagreeing for long.
 
 **Appearance.** The seven built-in schemes still restate every colour
 individually; only the two Timeline tokens default from the mode. *Sharing
-landed with K-298: `.lumtheme` import/export, duplicate, save a copy, rename,
-and an eight-swatch strip beside the picker. What is still missing is a swatch
+landed with K-298: `.lumtheme` import/export (with its own document icon,
+registered on all three platforms), duplicate, save a copy, rename, and an
+eight-swatch strip beside the picker. What is still missing is a swatch
 strip per row **inside** the picker's menu — it previews the selection only —
 and a place to keep themes other than the workspace file, so an imported theme
 still travels with the machine's settings rather than with the user.*

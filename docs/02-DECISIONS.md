@@ -6612,3 +6612,15 @@ same branch made from inside the colours.
 grounds, the text on them, the accent, and success/warning/error — so a theme can be
 recognised before it is applied. Not every token: thirty-odd swatches is a colour chart, not
 a preview.
+
+**A new file type gets a file type's furniture.** `.lumtheme` joins `.lum` and `.lumfx`
+everywhere K-251 and K-252 put those two: a fifth brand SVG (`assets/brand/lumit-theme.svg`)
+rendered to `.ico` and `.icns` by `scripts/gen-icons.py`, a Windows registry association with
+its document icon, a freedesktop MIME type with a scalable icon installed by
+`packaging/linux/install.sh`, and a document type plus exported UTI in the macOS Info.plist.
+The artwork keeps the family's page and folded corner and swaps the keyframe mark for three
+overlapping swatches in the two key gradients and the core white, because what this file
+carries is colours — legible at 16 pixels, where the kicker is a smudge. Like `.lumfx` it
+registers **no open verb**: a theme is taken in from Settings, not opened as a document, and
+an icon that promises double-click would be a lie. Documented as §6 of
+`docs/10-FILE-FORMAT.md`.

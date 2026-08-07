@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <!-- File-type icon, .lumtheme (docs/15-DESIGN.md, brand; K-251, K-298).
+       The page and its folded corner are the family's; the glyph is three
+       overlapping swatches rather than the keyframe mark, because what this
+       file carries is colours. Three, and large, so the shape still reads as
+       swatches at 16 pixels where the label is a smudge. -->
+  <defs>
+    <linearGradient id="key-a" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#86e2ff"/><stop offset="1" stop-color="#2f6fe0"/>
+    </linearGradient>
+    <linearGradient id="key-b" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8a70ff"/><stop offset="1" stop-color="#ff4f9e"/>
+    </linearGradient>
+    <linearGradient id="key-c" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#c8dcf2"/>
+    </linearGradient>
+    <filter id="key-shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="7" stdDeviation="11" flood-color="#04060b" flood-opacity="0.4"/>
+    </filter>
+    <linearGradient id="doc-bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#181b21"/><stop offset="1" stop-color="#101217"/>
+    </linearGradient>
+  </defs>
+  <path d="M116 92 Q116 64 144 64 L318 64 L396 142 L396 420 Q396 448 368 448 L144 448 Q116 448 116 420 Z"
+        fill="url(#doc-bg)" stroke="#ffffff" stroke-opacity="0.08" stroke-width="3"/>
+  <path d="M318 64 L396 142 L332 142 Q318 142 318 128 Z" fill="#272b34"/>
+  <g filter="url(#key-shadow)"
+     transform="translate(256 234) scale(0.88) translate(-256 -234)">
+    <circle cx="214" cy="206" r="62" fill="url(#key-a)"
+            stroke="#0c0e14" stroke-opacity="0.25" stroke-width="8"/>
+    <circle cx="298" cy="206" r="62" fill="url(#key-b)"
+            stroke="#0c0e14" stroke-opacity="0.25" stroke-width="8"/>
+    <circle cx="256" cy="278" r="62" fill="url(#key-c)"
+            stroke="#0c0e14" stroke-opacity="0.25" stroke-width="8"/>
+  </g>
+  <text x="256" y="408" font-family="JetBrains Mono, Consolas, monospace" font-size="58"
+        font-weight="700" letter-spacing="6" fill="#aab6c6" text-anchor="middle">THEME</text>
+</svg>
