@@ -3716,6 +3716,44 @@ They are the same job, and the shared piece is written.
 Rearranging panels is deliberately *not* an edit: it goes through `set_ui_state`,
 a side door that skips undo, the journal and the dirty flag.
 
+### Themes you can pass around (K-298)
+
+A theme you make is a name, a light-or-dark base, and a bag of colours (K-202).
+Until now it lived only in the settings file, which is machine-local — so a theme
+was stuck on the computer it was made on, and the only way to try a variation was
+to save over the one you liked.
+
+Three things changed, all in the Flutter frontend and none of them touching the
+engine:
+
+- **A theme is a file.** `flutter_ui/lib/theme/theme_file.dart` writes one out as
+  `.lumtheme` — a short, indented JSON document you can read: what it is, a
+  version number, the theme's name, whether it is a light or a dark theme, and
+  every colour as a hex code like `#e05a72`. Settings → Appearance has **Export…**
+  and **Import…** beside the other theme buttons. Export works from a built-in
+  scheme too, because "the stock dark with my accent changed" is a perfectly good
+  thing to send somebody.
+- **Reading one is deliberately relaxed.** If the file was written by a newer
+  Lumit that has colours this build has never heard of, those are simply ignored
+  and everything else comes in — the theme still works, because any colour it does
+  not carry is taken from the base underneath it. That tolerance is the whole
+  reason a theme is stored as *changes over a base* rather than a copy of the
+  colour struct. A file that is not a theme at all is refused with a sentence
+  under the buttons, not an error box: picking the wrong file is a normal thing to
+  do.
+- **Nothing overwrites a theme you already have.** Import, Duplicate, Save a
+  copy and Rename all ask `Workspace.availableThemeName` for a free name first, so
+  importing a second "Ocean" gives you "Ocean 2" and says so. A theme's name is
+  its identity — the picker lists it and the settings file records the selection
+  by it — so two themes may never share one.
+
+Beside that sits the everyday half: **Duplicate** (copy the theme you are looking
+at, including a built-in, so you have something of your own to edit), **Rename…**
+and **Delete** (your own themes only — a built-in's name is Lumit's), and **Save a
+copy…** inside the colour editor, which branches a theme without first
+overwriting it. The picker also draws eight swatches of the selected theme beside
+its name, so you can recognise a theme without applying it.
+
 ### The rules that bite
 
 These are the ones a plausible-looking change breaks. Each has tests standing
@@ -3880,16 +3918,19 @@ folder of loose PNGs instead of a bag.
 
 Nobody draws seven pictures by hand. The artwork is drawn **once**, as an SVG —
 a text file of drawing instructions ("a rounded square here, this gradient
-there") that can be rendered at any size without going blurry. The four SVGs in
+there") that can be rendered at any size without going blurry. The five SVGs in
 `assets/brand/` are the only files a human edits:
 
 - `lumit-mark.svg` — the mark itself: two keyframe diamonds overlapping, white
   where they cross. This bare form is the Windows and Linux icon.
 - `lumit-icon.svg` — the same mark sitting on a dark rounded tile. Only macOS
   uses this, because macOS expects every icon to bring its own tile.
-- `lumit-project.svg` and `lumit-preset.svg` — document icons for `.lum`
-  project files and `.lumfx` presets: a dark page with a folded corner and the
-  mark inside, like the little badge on any Photoshop or After Effects file.
+- `lumit-project.svg`, `lumit-preset.svg` and `lumit-theme.svg` — document
+  icons for `.lum` project files, `.lumfx` presets and `.lumtheme` colour
+  themes: a dark page with a folded corner and the mark inside, like the little
+  badge on any Photoshop or After Effects file. The theme one carries three
+  overlapping colour swatches instead of the mark, since colours are what is in
+  the file.
 
 `scripts/gen-icons.py` turns those four drawings into every pixel file the
 operating systems want (run `pip install resvg-py pillow` once, then
@@ -3906,8 +3947,8 @@ installers live in `packaging/` (decision K-252):
 - **Windows** — `packaging/windows/build-installer.ps1` builds a normal
   setup.exe (it needs the free Inno Setup tool once:
   `winget install JRSoftware.InnoSetup`). Installing it copies the app into
-  Program Files, writes the .lum/.lumfx entries into the Windows registry with
-  their icons, and puts Lumit in the Start menu. Double-clicking a `.lum` then
+  Program Files, writes the .lum/.lumfx/.lumtheme entries into the Windows
+  registry with their icons, and puts Lumit in the Start menu. Double-clicking a `.lum` then
   genuinely opens it: the association hands Lumit the file's path as a command
   line argument, and the app checks its command line at boot
   (`projectPathFromArgs` in `main.dart`).

@@ -215,10 +215,14 @@ used to claim otherwise.*
 and **Effects** keymap contexts have real bindings and no commands. Either build
 the commands or drop the bindings; do not leave the two disagreeing for long.
 
-**Appearance.** Custom themes are per-machine - they live in the workspace file
-with no import/export *of a theme* (the keymap has one). No preview swatch strip
-and no duplicate-a-theme button. The seven built-in schemes still restate every
-colour individually; only the two Timeline tokens default from the mode.
+**Appearance.** The seven built-in schemes still restate every colour
+individually; only the two Timeline tokens default from the mode. *Sharing
+landed with K-298: `.lumtheme` import/export (with its own document icon,
+registered on all three platforms), duplicate, save a copy, rename, and an
+eight-swatch strip beside the picker. What is still missing is a swatch
+strip per row **inside** the picker's menu — it previews the selection only —
+and a place to keep themes other than the workspace file, so an imported theme
+still travels with the machine's settings rather than with the user.*
 
 **Shell and onboarding:**
 - **The boot splash is not mounted.** `flutter_ui/lib/shell/splash.dart` exists

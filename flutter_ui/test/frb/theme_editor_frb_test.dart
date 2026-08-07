@@ -142,6 +142,82 @@ void main() {
       await tester.pumpAndSettle();
     });
 
+    /// Duplicating is how a built-in becomes editable without the editor
+    /// having to ask for a name first, and renaming is how a copy stops being
+    /// called "copy" (K-298).
+    testWidgets('a theme can be duplicated and renamed from Settings',
+        (tester) async {
+      final p = await openAppearance(tester);
+      expect(p.uiState.workspace.customThemes, isEmpty);
+
+      await tester.tap(find.byKey(const ValueKey('settings-theme-duplicate')));
+      await tester.pumpAndSettle();
+      expect(p.uiState.workspace.customThemes.map((t) => t.name),
+          ['Dark copy']);
+      expect(p.uiState.workspace.customThemeName, 'Dark copy',
+          reason: 'the copy is what you are now editing');
+
+      await tester.tap(find.byKey(const ValueKey('settings-theme-rename')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.byKey(const ValueKey('theme-name-field')), 'Night');
+      await tester.tap(find.byKey(const ValueKey('theme-name-ok')));
+      await tester.pumpAndSettle();
+
+      expect(p.uiState.workspace.customThemes.map((t) => t.name), ['Night']);
+      expect(p.uiState.workspace.customThemeName, 'Night');
+    });
+
+    /// Rename and Delete are the two verbs that only make sense on one of the
+    /// user's own: a built-in scheme's name is Lumit's, not the user's.
+    testWidgets('rename and delete are offered only for your own themes',
+        (tester) async {
+      final p = await openAppearance(tester);
+      bool enabled(String key) =>
+          tester.widget<HouseButton>(find.byKey(ValueKey(key))).onPressed !=
+          null;
+
+      expect(enabled('settings-theme-rename'), isFalse);
+      expect(enabled('settings-theme-delete'), isFalse);
+      expect(enabled('settings-theme-duplicate'), isTrue,
+          reason: 'a built-in is exactly what you would copy to start from');
+
+      p.uiState.workspace
+          .saveCustomTheme(CustomTheme.from('Mine', LumitTheme.dark()));
+      await tester.pumpAndSettle();
+      expect(enabled('settings-theme-rename'), isTrue);
+      expect(enabled('settings-theme-delete'), isTrue);
+    });
+
+    /// Save a copy branches a theme instead of overwriting it — without it the
+    /// only way to keep both was to save over one and undo the edits by hand.
+    testWidgets('save a copy leaves the theme it was started from alone',
+        (tester) async {
+      final p = await openAppearance(tester);
+      p.uiState.workspace
+          .saveCustomTheme(CustomTheme.from('Mine', LumitTheme.dark()));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('settings-customise')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('theme-editor-save-copy')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('theme-name-field')), findsOneWidget);
+
+      await tester.enterText(
+          find.byKey(const ValueKey('theme-name-field')), 'Mine, brighter');
+      await tester.tap(find.byKey(const ValueKey('theme-name-ok')));
+      await tester.pumpAndSettle();
+
+      expect(p.uiState.workspace.customThemes.map((t) => t.name),
+          ['Mine', 'Mine, brighter']);
+      expect(p.uiState.workspace.customThemeName, 'Mine, brighter',
+          reason: 'the copy is what further saves go to');
+
+      await tester.tap(find.byKey(const ValueKey('theme-editor-close')));
+      await tester.pumpAndSettle();
+    });
+
     /// The scopes toggle is off by default — a scope is a measuring
     /// instrument first (docs/15-DESIGN §8) — and turning it on is what makes
     /// the trace take the theme's colours.

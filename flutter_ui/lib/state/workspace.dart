@@ -387,6 +387,59 @@ class Workspace extends ChangeNotifier {
     save();
   }
 
+  /// A name no saved theme holds: [wanted] itself when it is free, else the
+  /// same with a number after it. Two themes cannot share a name — the name
+  /// *is* the identity, both in the picker and in the workspace file — so
+  /// every route that adds one comes through here rather than overwriting
+  /// somebody's work by accident (K-298).
+  String availableThemeName(String wanted) {
+    final base = wanted.trim().isEmpty ? 'Theme' : wanted.trim();
+    var tried = base;
+    for (var n = 2; customThemes.any((t) => t.name == tried); n++) {
+      tried = '$base $n';
+    }
+    return tried;
+  }
+
+  /// Copy the theme in use into one of the user's own, and select it (K-298).
+  /// Returns the name it landed under.
+  ///
+  /// Works from a built-in scheme as well as from a custom theme: "start from
+  /// this one and change a few things" is the same wish either way, and it is
+  /// how a built-in becomes editable without the editor having to ask for a
+  /// name first.
+  String duplicateActiveTheme() {
+    final name = availableThemeName('${themeChoice.label} copy');
+    saveCustomTheme(CustomTheme.from(name, theme));
+    return name;
+  }
+
+  /// Take an imported theme in and select it (K-298). Returns the name it
+  /// landed under, which differs from the file's when a theme already had it —
+  /// an import never overwrites one of the user's own.
+  String importCustomTheme(CustomTheme imported) {
+    final name = availableThemeName(imported.name);
+    saveCustomTheme(imported.renamed(name));
+    return name;
+  }
+
+  /// Rename one of the user's themes, keeping its place in the list and the
+  /// selection on it. Returns the name it now has — [to] when that was free,
+  /// else [to] with a number after it — or null when [from] is not a saved
+  /// theme.
+  String? renameCustomTheme(String from, String to) {
+    final at = customThemes.indexWhere((t) => t.name == from);
+    if (at < 0) return null;
+    final wanted = to.trim();
+    if (wanted.isEmpty || wanted == from) return from;
+    final name = availableThemeName(wanted);
+    customThemes[at] = customThemes[at].renamed(name);
+    if (customThemeName == from) customThemeName = name;
+    recompose();
+    save();
+    return name;
+  }
+
   /// Forget a custom theme. Selecting it afterwards is impossible, so a
   /// session using it falls back to its built-in scheme.
   void deleteCustomTheme(String name) {

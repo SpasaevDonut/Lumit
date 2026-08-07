@@ -6570,6 +6570,61 @@ start. It is two rename calls wide, the start-up sweep puts it back for every fa
 of that, and the fallback is the installer, which is still published. Judged worth it
 against a UAC prompt on every update for ever.
 
+**K-298 · DECIDED · A theme is a file you can send somebody, and a theme you like is one
+you can copy.** From the owner (2026-08-07). K-202 made every colour editable and left the
+result trapped: a custom theme lived in the workspace file, which is machine-local, so a
+theme could not be posted, put in a repo, or carried to a second machine — and the only way
+to try a change without losing what you had was to save over it and undo by hand. The keymap
+has had a shareable file since K-199; a theme is the other thing in Lumit worth sharing.
+
+**The file.** `.lumtheme`, a small indented JSON document: a `format` marker, a `version`,
+and then exactly `CustomTheme.toJson` — name, light-or-dark base, and the colours as
+`#rrggbb`. The same shape the workspace file already stores, so the two forms cannot drift,
+and readable for the same reason the workspace one is: a theme is a thing people tinker
+with. **Export** writes the theme on screen, offered from a built-in scheme as well as from
+one of the user's own, because "the stock dark with my accent" is a perfectly good thing to
+send somebody. **Import** reads one and selects it.
+
+**Reading is forgiving one way and strict the other.** A file from a newer Lumit opens, with
+the colours this build knows and the rest taken from its base — that forward tolerance is
+the whole reason K-202 stored a theme *over* a base rather than as a copy of the struct, and
+this is where it earns its keep. A theme with no marker opens too, since a theme lifted
+straight out of a workspace file has the same fields and refusing it would be pedantry. What
+is refused is refused with a sentence under the buttons rather than an exception: picking
+the wrong file is a normal thing to do.
+
+**An import never overwrites one of the user's own.** A name is the identity of a theme —
+the picker shows it and the workspace stores the selection by it — so every route that adds
+one (import, duplicate, save a copy, rename) goes through `Workspace.availableThemeName`,
+which numbers a clash rather than silently replacing somebody's work. The settings page says
+so when it happens.
+
+**Duplicate, rename, delete, import, export** sit together under the theme rows as a wrapped
+row of buttons rather than one settings row each: they are five verbs about the same thing,
+and five rows saying *Rename* would be a list of buttons pretending to be settings.
+**Duplicate works from a built-in scheme too** — it is how a built-in becomes editable
+without the editor having to ask for a name first — while **Rename and Delete are offered
+only for the user's own**, because a built-in's name is Lumit's and two people describing
+different Darks helps nobody. The editor gains **Save a copy…** beside Save, which is the
+same branch made from inside the colours.
+
+**The picker shows what it is offering.** Eight swatches beside the dropdown — the three
+grounds, the text on them, the accent, and success/warning/error — so a theme can be
+recognised before it is applied. Not every token: thirty-odd swatches is a colour chart, not
+a preview.
+
+**A new file type gets a file type's furniture.** `.lumtheme` joins `.lum` and `.lumfx`
+everywhere K-251 and K-252 put those two: a fifth brand SVG (`assets/brand/lumit-theme.svg`)
+rendered to `.ico` and `.icns` by `scripts/gen-icons.py`, a Windows registry association with
+its document icon, a freedesktop MIME type with a scalable icon installed by
+`packaging/linux/install.sh`, and a document type plus exported UTI in the macOS Info.plist.
+The artwork keeps the family's page and folded corner and swaps the keyframe mark for three
+overlapping swatches in the two key gradients and the core white, because what this file
+carries is colours — legible at 16 pixels, where the kicker is a smudge. Like `.lumfx` it
+registers **no open verb**: a theme is taken in from Settings, not opened as a document, and
+an icon that promises double-click would be a lie. Documented as §6 of
+`docs/10-FILE-FORMAT.md`.
+
 **K-299 · DECIDED · An effect is copied from its heading, in both places it has one.**
 K-275 built copy and paste and named what it left: "the two places an effect is *picked*:
 **Copy effect** on an effect's heading in the Effect controls panel and on its row in the

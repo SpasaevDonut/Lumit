@@ -142,10 +142,11 @@ jobs:
           cp packaging/linux/io.github.luminalmvm.Lumit.desktop \
              packaging/linux/lumit-mime.xml "$stage/share/"
           cp assets/brand/lumit-mark.svg assets/brand/lumit-project.svg \
-             assets/brand/lumit-preset.svg "$stage/share/"
+             assets/brand/lumit-preset.svg assets/brand/lumit-theme.svg \
+             "$stage/share/"
           printf '%s\n' \
             "Run ./lumit_flutter from this directory." \
-            "For a menu entry and .lum/.lumfx file associations, clone the" \
+            "For a menu entry and .lum/.lumfx/.lumtheme associations, clone the" \
             "repository and run packaging/linux/install.sh after copying this" \
             "bundle over flutter_ui/build/linux/x64/release/bundle, or place" \
             "the files in share/ yourself (icons go to hicolor scalable)." \
