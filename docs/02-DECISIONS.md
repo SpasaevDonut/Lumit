@@ -6823,3 +6823,37 @@ shortcut labels the engine builds with a number in them ("Add marker 3 at the
 playhead") are not literals in Rust and so are not in the lookup table; they stay
 English until the engine hands their number over separately, and that is in
 [TODO.md](TODO.md).
+
+**K-304 · PROPOSED · A release is exactly three files, and every one of them gates it.**
+Supersedes the artefact list in K-252 (2026-08-03) and K-253 (2026-08-03): the Linux
+release tarball is withdrawn. A tagged release now publishes a Windows setup `.exe`, a
+macOS `.dmg` and a Linux `.flatpak` — one artefact per platform, nothing else. The
+tarball asked the user to clone the repository and run `install.sh` to get a menu entry
+and file associations; the Flatpak gives them both by installing, so the tarball was the
+worse of two Linux stories and its `INSTALL.txt` existed only to apologise for that. The
+staged bundle it was built from stays — the Flatpak is repacked from it.
+
+The `continue-on-error` flags come off the macOS job and the Flatpak step at the same
+time, and for the same reason: a release that quietly ships two files when three were
+promised is worse than one that fails loudly. This means a Homebrew or Flathub hiccup can
+now redden a tag, which is the intended trade. It also means the Flatpak added in K-253
+gets proved: it has never once run, having landed the day after v0.1.0 shipped, and CI
+builds no packaging at all — the first tag after this is its first execution. A tag
+carrying a suffix (`v0.2.0-rc1`) publishes as a pre-release, which is the rehearsal.
+
+Neither the installer nor the DMG is signed, and this entry does not change that. The DMG
+is ad-hoc signed because macOS will not run a bundle with vendored dylibs otherwise
+(`make-dmg.sh`), not because anyone has a certificate; Gatekeeper still warns, and
+SmartScreen still warns on Windows. Developer ID signing and notarisation stay where
+K-033 left them, waiting on an Apple Developer Program membership; Windows signing waits
+on a code-signing certificate. Both are purchases, not code, and neither blocks a release.
+
+**Reconciled with K-297 on merge.** This entry was written before in-place updating landed,
+and "nothing else" was written against a release that had nothing else in it. K-297 attaches
+a plain application archive per platform — a Windows `.zip` and a macOS `.zip` — for the
+updater to fetch. Those stay: they are not installers and are not offered as a way to
+install, so the count that matters is unchanged, and *three artefacts are installed, one per
+platform*. The Linux side needs no archive of its own, because a Flatpak is updated from the
+`.flatpak` bundle this entry already makes compulsory. `updates.dart` prefers
+`linux-x64.tar.gz` and falls back to `.flatpak`, so an installation made from the withdrawn
+tarball still finds something to offer.
