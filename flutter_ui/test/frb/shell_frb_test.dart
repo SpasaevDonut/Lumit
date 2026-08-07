@@ -100,7 +100,7 @@ void main() {
       await tester.pump();
       expect(playbackTier().tier, 1);
 
-      // Where the memory has gone (K-295), at the foot of the page: the rows
+      // Where the memory has gone (K-294), at the foot of the page: the rows
       // above each report one store, and this reports the whole process and
       // what none of them accounts for. Scrolled to, because the page is
       // taller than the window — and a memory report is a thing you go and

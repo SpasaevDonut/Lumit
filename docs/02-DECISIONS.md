@@ -6366,7 +6366,7 @@ The − / + / Fit buttons are gone: the slider's two ends *are* Fit and full zoo
 also says where you are between them, which three buttons never did. `HouseSlider` gained a
 width and a value-hiding option rather than a second slider being written for a toolbar.
 
-**K-295 · DECIDED · Memory is reported, not guessed at: every tier's bytes beside the
+**K-294 · DECIDED · Memory is reported, not guessed at: every tier's bytes beside the
 process's own, and the difference named.** From the owner (2026-08-06), after a second
 report of Lumit holding tens of gigabytes on a Mac — 85 GB, following the 81 GB that
 K-277 bounded the write-behind queue for.
@@ -6421,7 +6421,7 @@ This is a diagnostic, and it is deliberately not a fix: it does not reclaim a by
 the instrument the next report is read with, written down in docs/13 §7.0.1 as a standing
 rule — a tier that holds memory and does not report it is not finished.
 
-**K-294 · DECIDED · What the engine drops, the driver hands back on the next turn: the
+**K-295 · DECIDED · What the engine drops, the driver hands back on the next turn: the
 worker reclaims once a loop.** From the owner's readings on 2026-08-06, which caught the
 fault in the act: 6 GB held with **around 5 500 live graphics buffers**, then 2.9 GB and
 **8 buffers** moments later — because switching back to a settings page happened to make
@@ -6449,7 +6449,7 @@ side effect of an unrelated call is not freeing memory.
 Two things fell out of the same readings and are fixed with it:
 
 - **Frames on the card are counted against the process where the card's memory *is* the
-  process's memory.** K-293 reported VRAM apart from every tier on the grounds that a
+  process's memory.** K-294 reported VRAM apart from every tier on the grounds that a
   discrete card's frames are not in the process — true, but on the Apple Silicon Mac doing
   the reporting they are, so a cache doing exactly its job showed up inside the
   unaccounted figure and looked like the fault. The adapter now says which kind of memory

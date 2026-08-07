@@ -15,7 +15,7 @@ pollster = "0.4"
 thiserror = "2"
 # `counters` turns on wgpu's live-object tallies — how many textures and
 # buffers the driver is holding right now, which is what says whether a frame
-# the engine dropped was actually destroyed (K-293). Every backend keeps them;
+# the engine dropped was actually destroyed (K-294). Every backend keeps them;
 # unlike the allocator report, which is Vulkan and D3D12 only and answers
 # nothing at all on Metal, where the memory question was asked.
 wgpu = { version = "24", features = ["counters"] }

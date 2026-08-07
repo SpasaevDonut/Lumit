@@ -627,7 +627,7 @@ pub(crate) mod disk {
     /// The wanted location, and a counter the worker watches so a change is
     /// noticed exactly once.
     /// How many frames are in the write-behind queue, as the worker last
-    /// published — the depth K-277 bounded, in the memory report (K-295).
+    /// published — the depth K-277 bounded, in the memory report (K-294).
     static PENDING_PARKS: AtomicU64 = AtomicU64::new(0);
 
     pub(crate) fn publish_pending_parks(n: u64) {
@@ -793,6 +793,25 @@ mod tests {
     /// compares them. What the name MEANS — and the guarantee that an edit which
     /// cannot change a pixel produces the same name — is `lumit-render`'s to
     /// prove, and it does (`cache::tests`, `headless::tests`).
+    /// One test at a time through the process-wide cache.
+    ///
+    /// These tests share the one `CACHE` this module owns — they `clear()` it,
+    /// put frames in it and read them back — and cargo runs them in parallel
+    /// threads of one process. Two of them interleaving is a test clearing
+    /// another's frames out from under it, which shows up as one unrelated case
+    /// failing every so often and passing on a re-run: the worst kind, because
+    /// it teaches everybody to re-run rather than to look. Caught on this
+    /// branch's own suite (K-294), pre-existing rather than new.
+    ///
+    /// The lock is taken for the body of every test that touches the global; a
+    /// poisoned lock is recovered rather than propagated, so one genuine
+    /// failure does not cascade into "all the others failed too".
+    static CACHE_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn cache_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        CACHE_TESTS.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     const A: FrameKey = 1;
     const B: FrameKey = 2;
     const C: FrameKey = 3;
@@ -829,6 +848,7 @@ mod tests {
     /// local cache (deterministic, no GPU, no shared global).
     #[test]
     fn a_cached_frame_is_served_without_re_rendering() {
+        let _guard = cache_test_guard();
         let mut cache = Cache::new(DEFAULT_BUDGET_BYTES);
         let comp = uuid::Uuid::now_v7();
         let renders = std::cell::Cell::new(0u32);
@@ -860,6 +880,7 @@ mod tests {
     /// empties itself on every commit.
     #[test]
     fn a_changed_frame_name_misses_and_an_unchanged_one_hits() {
+        let _guard = cache_test_guard();
         let mut cache = Cache::new(DEFAULT_BUDGET_BYTES);
         let comp = uuid::Uuid::now_v7();
         cache.put(A, entry(16, at(comp, 0, 1000)));
@@ -877,6 +898,7 @@ mod tests {
     /// The byte budget evicts the least-recently-used frame first.
     #[test]
     fn the_budget_evicts_least_recently_used() {
+        let _guard = cache_test_guard();
         let comp = uuid::Uuid::now_v7();
         // Budget holds exactly two 16-byte frames.
         let mut cache = Cache::new(32);
@@ -898,6 +920,7 @@ mod tests {
     /// Shrinking the budget evicts immediately; clearing empties the cache.
     #[test]
     fn resizing_and_clearing_free_frames() {
+        let _guard = cache_test_guard();
         let comp = uuid::Uuid::now_v7();
         let mut cache = Cache::new(64);
         cache.put(A, entry(16, at(comp, 0, 1000)));
@@ -915,6 +938,7 @@ mod tests {
     /// A frame larger than the whole budget is refused rather than thrashing.
     #[test]
     fn an_oversized_frame_is_not_cached() {
+        let _guard = cache_test_guard();
         let mut cache = Cache::new(16);
         cache.put(A, entry(64, at(uuid::Uuid::now_v7(), 0, 1000)));
         assert_eq!(cache.stats().2, 0, "oversized frame skipped");
@@ -923,6 +947,7 @@ mod tests {
     /// The global FFI-facing controls round-trip: clear, set budget, stats.
     #[test]
     fn global_controls_round_trip() {
+        let _guard = cache_test_guard();
         clear();
         set_budget(123 * 1024 * 1024);
         let (used, budget, _entries, _hits, _misses) = stats();
@@ -940,6 +965,7 @@ mod tests {
     /// beside each entry is for.
     #[test]
     fn the_finest_held_picture_of_a_frame_is_reusable() {
+        let _guard = cache_test_guard();
         let comp = uuid::Uuid::now_v7();
         let other = uuid::Uuid::now_v7();
         clear();
@@ -967,6 +993,7 @@ mod tests {
     /// arrived, so the trip back up the ladder is still conversion-free.
     #[test]
     fn a_demoted_bgra_frame_reaches_the_scopes_as_rgba() {
+        let _guard = cache_test_guard();
         let comp = uuid::Uuid::now_v7();
         clear();
         with_cache(|c| {
@@ -1000,6 +1027,7 @@ mod tests {
     /// rate.
     #[test]
     fn a_disk_load_is_banked_in_memory_for_the_next_pass() {
+        let _guard = cache_test_guard();
         let comp = uuid::Uuid::now_v7();
         clear();
         let bytes = Arc::new(vec![9u8; 16]);
@@ -1017,6 +1045,7 @@ mod tests {
     /// handed over, or the bar would promise frames that do not exist.
     #[test]
     fn the_bar_reads_only_the_strip_it_asked_for() {
+        let _guard = cache_test_guard();
         let comp = uuid::Uuid::now_v7();
         let other = uuid::Uuid::now_v7();
         bar::publish(comp, 1000, vec![2, 2, 1, 4, 0]);

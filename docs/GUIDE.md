@@ -3736,7 +3736,7 @@ Viewer's degradation badge (the "Half" chip that appears when playback has had t
 soften the picture) keeps its empty slot when it is not showing, so it does not
 shove the bar sideways as it comes and goes.
 
-### Where the memory went (K-295)
+### Where the memory went (K-294)
 
 **The problem this solves.** Twice now Lumit has been found holding tens of
 gigabytes of memory on a Mac. Both times the hard part was not fixing it — it
@@ -3789,7 +3789,7 @@ and a shipped Lumit does not show it. Asking somebody editing a video to
 interpret a live texture count is handing them the engineering instead of the
 tool.
 
-### And the repair it found (K-294)
+### And the repair it found (K-295)
 
 Here is what the instrument caught. Telling the graphics card "I have finished
 with this picture" does not give the memory back. It marks it finished, and the

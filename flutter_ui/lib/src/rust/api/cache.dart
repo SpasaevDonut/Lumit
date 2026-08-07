@@ -204,7 +204,7 @@ class BridgeDiskCacheStats {
 }
 
 /// Where this process's memory has gone: what each tier admits to holding, and
-/// what the operating system says the process holds (K-295).
+/// what the operating system says the process holds (K-294).
 ///
 /// **The field that matters is [`Self::unaccounted_bytes`].** Every tier here
 /// is byte-budgeted and evicts to stay inside its budget, so a report where the

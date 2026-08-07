@@ -270,7 +270,7 @@ impl DecodePool {
     }
 
     /// What the decoded-frame cache is holding, and how many decoders are
-    /// open — the pool's share of the memory report (K-295).
+    /// open — the pool's share of the memory report (K-294).
     ///
     /// The decoders are counted rather than measured: what a `VideoDecoder`
     /// holds is FFmpeg's business (and, with hardware decode, the driver's), so

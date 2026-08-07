@@ -97,7 +97,7 @@ pub struct GpuContext {
     /// It decides one thing, and that one thing matters: whether the frames
     /// held on the card are *inside* this process's total or beside it. Report
     /// them the wrong way round and a cache doing exactly its job reads as
-    /// gigabytes nobody can account for (K-293).
+    /// gigabytes nobody can account for (K-294).
     pub unified_memory: bool,
     /// Shared with every [`Self::clone_handle`] of this context, because they
     /// are handles on the *same* device and queue: the realiser keeps one of
@@ -372,7 +372,7 @@ impl GpuContext {
 
     /// What the graphics driver is holding for this device: bytes live in
     /// allocations, and bytes reserved in the blocks they were carved from
-    /// (K-293's follow-up).
+    /// (K-294's follow-up).
     ///
     /// **Why the second number matters more than the first.** An allocator
     /// hands out blocks and sub-allocates within them; freeing every allocation
@@ -419,7 +419,7 @@ impl GpuContext {
     /// dropped frames sat un-freed until something asked the device a question
     /// for its own reasons.
     ///
-    /// Reported twice from a Mac at tens of gigabytes (K-277, K-293): the
+    /// Reported twice from a Mac at tens of gigabytes (K-277, K-294): the
     /// second reading caught it in the act — 5 000-odd live buffers and 6 GB
     /// held, then 8 buffers and 2.9 GB moments later, because opening a panel
     /// happened to poll. Memory that comes back only when the user does
@@ -1229,7 +1229,7 @@ impl ColourEngine {
 mod counter_tests {
     use super::*;
 
-    /// The live-object count moves with what is actually alive (K-293).
+    /// The live-object count moves with what is actually alive (K-294).
     ///
     /// This is the figure the memory report leans on for Metal, where the
     /// allocator report answers nothing, so a build where the counters were

@@ -2091,7 +2091,7 @@ fn the_razor_cuts_and_deletes_without_moving_the_other_clips() {
 }
 
 /// The memory report answers without a project, and its arithmetic holds
-/// (K-295).
+/// (K-294).
 ///
 /// The point of the report is the *unaccounted* figure — what the process holds
 /// that no tier here admits to — so what is pinned is that it is derived from

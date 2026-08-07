@@ -877,7 +877,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
         ),
       ]),
       ..._diskCache(t, ui),
-      // Where the memory has gone (K-295). Last on the page, under the tiers
+      // Where the memory has gone (K-294). Last on the page, under the tiers
       // it weighs: each section above reports one store, and this one reports
       // the whole process and what none of them accounts for. Read downwards it
       // is the summing-up, and it leaves every control above where the hand

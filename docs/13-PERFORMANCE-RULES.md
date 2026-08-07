@@ -235,7 +235,7 @@ lives on `GpuContext` and is shared only with the handles of that same device, s
 measurement sees is one renderer's own submissions. Any future budget counted this way MUST be
 scoped the same: a number two tests can both write is not a measurement.
 
-### 7.0.1 The memory report (K-295)
+### 7.0.1 The memory report (K-294)
 
 **Every tier that holds memory MUST report its bytes, and the process MUST report its
 total, in one place the user can read.** Settings ▸ Performance ▸ Memory shows what the
@@ -272,7 +272,7 @@ Rules the report keeps, so its arithmetic can be trusted:
 - **A platform that cannot answer says zero**, and the interface says "not known here"
   rather than printing a guess.
 
-### 7.0.2 Reclaiming what has been dropped (K-294)
+### 7.0.2 Reclaiming what has been dropped (K-295)
 
 **An engine that renders without presenting MUST maintain its graphics device on a
 schedule of its own.** Dropping a texture or a buffer only *marks* it destroyed; the

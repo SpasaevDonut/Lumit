@@ -3260,7 +3260,7 @@ mod tests {
         (solid, layer_id)
     }
 
-    /// **What the engine drops, the driver gets back** (K-294).
+    /// **What the engine drops, the driver gets back** (K-295).
     ///
     /// The failure this pins is not a slow leak: it is memory that comes back
     /// only when something unrelated happens. Dropping a texture or a buffer
