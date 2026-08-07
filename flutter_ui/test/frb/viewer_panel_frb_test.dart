@@ -1503,21 +1503,23 @@ void main() {
           );
 
       // Sweep the top two points, starting from empty space outside the
-      // picture — exactly as the mask case does.
+      // picture — exactly as the mask case does. Art coordinates are where the
+      // art is drawn (K-308): this layer's box starts at the art's own corner,
+      // so a point at art (400, 200) is at composition (400, 200).
       final panel = tester.getRect(find.byType(ViewerPanelFrb));
       final gesture =
           await tester.startGesture(panel.topLeft + const Offset(2, 2));
       await tester.pump();
-      await gesture.moveTo(onScreen(940, 440));
+      await gesture.moveTo(onScreen(500, 250));
       await tester.pump();
-      await gesture.moveTo(onScreen(1040, 470));
+      await gesture.moveTo(onScreen(700, 300));
       await tester.pump();
       await gesture.up();
       await tester.pumpAndSettle();
       expect(shape.getShapeContents().single.vertices.first.x, before.first.x,
           reason: 'a sweep only chooses; nothing has moved yet');
 
-      final drag = await tester.startGesture(onScreen(800, 400));
+      final drag = await tester.startGesture(onScreen(400, 200));
       await tester.pump();
       // Past the framework's pan slop, which is larger than the touch slop.
       for (var i = 0; i < 10; i++) {
@@ -1595,8 +1597,9 @@ void main() {
             fitted.top + y / 1080 * fitted.height,
           );
 
-      // Drag one of the ART's points. The mask must not follow.
-      final drag = await tester.startGesture(onScreen(800, 400));
+      // Drag one of the ART's points, at the composition coordinates it is
+      // drawn at (K-308). The mask must not follow.
+      final drag = await tester.startGesture(onScreen(400, 200));
       await tester.pump();
       for (var i = 0; i < 10; i++) {
         await drag.moveBy(const Offset(6, 0));

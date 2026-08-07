@@ -477,7 +477,11 @@ is keyframed draws no box: there is no single value for a drag to add to. **Mask
 drawn, listed, selected, inverted, faded, deleted (by menu or `Delete`), and their points
 selected and moved** (K-224, K-234), and **a shape layer's own art is drawn and edited by the
 same gesture** (K-307) — the two hold the same path type, so a point of either is aimed at,
-swept up and dragged alike. Not built: bezier **handles** on any path, mask or shape (the
+swept up and dragged alike. A shape point is drawn at the art's own coordinates less the
+art's bounding-box corner, because the layer's pixels start at that corner; a press within a
+point's reach beats a scale handle, the two sitting on the same corners; the drag previews
+the picture; and moving the box's edge moves the layer with it so the rest of the art holds
+still (K-308). Not built: bezier **handles** on any path, mask or shape (the
 model carries no linked/broken tangent flag, so it is a data-model change as well as a
 gesture); a **paint stroke's** points, a stroke being a stored gesture rather than a path; and
 mask paths cannot be keyframed.

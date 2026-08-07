@@ -1255,19 +1255,72 @@ impl LayerReference {
     ///
     /// A path of fewer than two vertices is refused, as a mask's is: it is not
     /// a shape, and it would be a Timeline row with nothing behind it.
+    ///
+    /// **The art that was not edited does not move** (K-308). A shape layer's
+    /// picture is its art's bounding box, and the layer's origin is that box's
+    /// top-left corner — so growing the box leftwards, which is what dragging
+    /// the left-most point left does, would slide every *other* point right by
+    /// the same amount. Position follows the corner to cancel that, in the same
+    /// op, so one drag is still one undo step.
     #[frb(sync)]
     pub fn set_shape_contents(&self, contents: Vec<BridgeShapeItem>) -> Result<(), BridgeError> {
-        let lumit_core::model::LayerKind::Shape { .. } = self.item()?.kind else {
+        let layer = self.item()?;
+        let lumit_core::model::LayerKind::Shape { contents: before } = &layer.kind else {
             return Err(BridgeError::NotShape);
         };
         if contents.iter().any(|i| i.vertices.len() < 2) {
             return Err(BridgeError::EmptyPath);
         }
-        self.commit(lumit_core::Op::SetShapeContents {
+        let items: Vec<lumit_core::shape::ShapeItem> =
+            contents.iter().map(BridgeShapeItem::write_item).collect();
+        let shift = match (
+            lumit_core::shape::contents_bounds(before),
+            lumit_core::shape::contents_bounds(&items),
+        ) {
+            (Some((x0, y0, _, _)), Some((x1, y1, _, _))) => (x1 - x0, y1 - y0),
+            // Art appearing or going away entirely leaves the layer where it
+            // is: there is no corner to follow.
+            _ => (0.0, 0.0),
+        };
+        let mut ops = vec![lumit_core::Op::SetShapeContents {
             comp: self.comp_id,
             layer: self.layer_id,
-            contents: contents.iter().map(BridgeShapeItem::write_item).collect(),
-        })
+            contents: items,
+        }];
+        // Only a still position can follow the corner: a keyframed one has no
+        // single value to add to, and moving one key of a curve is an edit the
+        // gesture never asked for.
+        for (prop, delta, property) in [
+            (
+                lumit_core::model::TransformProp::PositionX,
+                shift.0,
+                &layer.transform.position_x,
+            ),
+            (
+                lumit_core::model::TransformProp::PositionY,
+                shift.1,
+                &layer.transform.position_y,
+            ),
+        ] {
+            if delta == 0.0 || property.is_animated() {
+                continue;
+            }
+            let lumit_core::anim::Animation::Static(value) = &property.animation else {
+                continue;
+            };
+            ops.push(lumit_core::Op::SetTransformProperty {
+                comp: self.comp_id,
+                layer: self.layer_id,
+                prop,
+                animation: lumit_core::anim::Animation::Static(value + delta),
+            });
+        }
+        let op = if ops.len() == 1 {
+            ops.remove(0)
+        } else {
+            lumit_core::Op::Batch { ops }
+        };
+        self.commit(op)
     }
 
     /// Add one piece of art on top of this shape layer's stack.

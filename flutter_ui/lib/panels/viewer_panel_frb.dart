@@ -49,7 +49,7 @@ import '../l10n/engine_labels.dart';
 import '../l10n/strings.dart';
 import '../shell/tool_bar_frb.dart';
 import '../state/dropper.dart';
-import '../state/layer_bounds.dart' show textLayerBounds;
+import '../state/layer_bounds.dart' show shapeContentsRect, textLayerBounds;
 import '../state/preview_throttle.dart';
 import '../state/settings.dart';
 import '../state/tools.dart';
@@ -668,6 +668,10 @@ class _Stage extends StatelessWidget {
         rotationDegrees: rotation ?? 0,
         masks: entry.info.masks,
         shapeContents: entry.info.shapeContents,
+        // Where the art's box starts, which is where the layer's pixels do
+        // (K-308) — without it every drawn point sat a box away from its art.
+        artOrigin:
+            shapeContentsRect(entry.info.shapeContents)?.topLeft ?? Offset.zero,
       ));
     }
     return out;

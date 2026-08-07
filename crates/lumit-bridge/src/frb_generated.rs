@@ -2086,6 +2086,8 @@ fn wire__crate__api__composition__composition_reference_render_frame_with_shape_
             let api_layer = <crate::api::layer::LayerReference>::sse_decode(&mut deserializer);
             let api_contents =
                 <Vec<crate::api::layer::BridgeShapeItem>>::sse_decode(&mut deserializer);
+            let api_transform =
+                <Option<crate::api::layer::BridgeTransform>>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, BridgeError>((move || {
                 let output_ok =
@@ -2095,6 +2097,7 @@ fn wire__crate__api__composition__composition_reference_render_frame_with_shape_
                         api_scale,
                         api_layer,
                         api_contents,
+                        api_transform,
                     )?;
                 Ok(output_ok)
             })())
@@ -9750,6 +9753,19 @@ impl SseDecode for Option<crate::api::assets::BridgeTextDocument> {
     }
 }
 
+impl SseDecode for Option<crate::api::layer::BridgeTransform> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::layer::BridgeTransform>::sse_decode(
+                deserializer,
+            ));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<f64> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -14173,6 +14189,16 @@ impl SseEncode for Option<crate::api::assets::BridgeTextDocument> {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <crate::api::assets::BridgeTextDocument>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::api::layer::BridgeTransform> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::layer::BridgeTransform>::sse_encode(value, serializer);
         }
     }
 }

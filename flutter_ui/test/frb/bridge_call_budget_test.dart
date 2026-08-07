@@ -14,6 +14,7 @@
 // them, while another rebuild-the-world regression does.
 
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
@@ -29,6 +30,8 @@ import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/frb_generated.dart';
 import 'package:lumit_flutter/state/comp_time.dart';
 import 'package:lumit_flutter/state/tools.dart';
+import 'package:lumit_flutter/src/rust/api/assets.dart';
+import 'package:uuid/uuid.dart';
 
 import 'frb_test_support.dart';
 
@@ -696,6 +699,111 @@ void main() {
         counter.total,
         0,
         reason: 'hovering re-found the camera:\n${counter.ranking()}',
+      );
+    });
+
+    /// **A path drag shows the picture it is making (K-308).**
+    ///
+    /// Dragging a point used to move the wireframe and leave the picture until
+    /// the release, so an edit to a shape was a guess right up to the moment it
+    /// was committed. The preview is throttled like every other live drag, so
+    /// what this pins is that it happens at all — and that it stays a preview
+    /// rather than a write.
+    testWidgets('dragging a path point previews the picture', (tester) async {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      final shape = comp.addShapeLayer(
+        name: 'Square',
+        contents: [
+          BridgeShapeItem(
+            id: UuidValue.fromString(const Uuid().v4()),
+            name: 'Rectangle',
+            vertices: const [
+              BridgeVertex(
+                  x: 400, y: 200, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+              BridgeVertex(
+                  x: 600, y: 200, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+              BridgeVertex(
+                  x: 600, y: 400, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+              BridgeVertex(
+                  x: 400, y: 400, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+            ],
+            closed: true,
+            fill: const BridgeColourRgba(r: 1, g: 1, b: 1, a: 1),
+            stroke: null,
+            strokeWidth: 0,
+            opacity: 100,
+          ),
+        ],
+      );
+      p.uiState
+        ..setSelectedComp(comp)
+        ..setSelection([shape]);
+      p.uiState.model.refresh();
+
+      await tester.pumpWidget(hostPanel(
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(900, 600),
+        child: const ViewerPanelFrb(),
+      ));
+      await settleFrb(tester, minRounds: 8);
+
+      // Where the art is drawn: its own coordinates, because a shape layer's
+      // box starts at the art's own corner (K-308).
+      const barHeight = 26.0;
+      final panel = tester.getRect(find.byType(ViewerPanelFrb));
+      final stage = Rect.fromLTWH(
+          panel.left, panel.top, panel.width, panel.height - barHeight);
+      final size = comp.getSize();
+      final w = size.width.toDouble();
+      final h = size.height.toDouble();
+      final scale = math.min(stage.width / w, stage.height / h);
+      final fitted = Rect.fromCenter(
+        center: stage.center,
+        width: w * scale,
+        height: h * scale,
+      );
+      final at = Offset(
+        fitted.left + 400 / w * fitted.width,
+        fitted.top + 200 / h * fitted.height,
+      );
+
+      final gesture = await tester.startGesture(at);
+      await settleFrb(tester, minRounds: 4);
+      counter
+        ..reset()
+        ..counting = true;
+      for (var i = 0; i < 20; i++) {
+        await gesture.moveBy(const Offset(3, 2));
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      counter.counting = false;
+      await gesture.up();
+      await tester.pump();
+
+      // ignore: avoid_print
+      print('POINT DRAG COST ${counter.total} calls\n${counter.ranking()}');
+      expect(
+        counter
+                .calls['composition_reference_render_frame_with_shape_preview'] ??
+            0,
+        greaterThan(0),
+        reason: 'the drag showed no picture until it was let go:\n'
+            '${counter.ranking()}',
+      );
+      expect(
+        counter.calls['layer_reference_set_shape_contents'] ?? 0,
+        0,
+        reason: 'a drag previews and commits once, on release',
+      );
+      // Twenty movements, throttled: the preview and the transform it reads,
+      // not a request per pointer report.
+      expect(
+        counter.total,
+        lessThan(30),
+        reason: 'a point drag asked the engine too often:\n'
+            '${counter.ranking()}',
       );
     });
   }, skip: !engineAvailable);

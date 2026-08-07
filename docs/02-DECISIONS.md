@@ -6951,3 +6951,39 @@ has grown teeth since: `Vertex` has no linked/broken flag, corners being merely 
 zero, so an `Alt`-drag that re-links a pair needs a [03-DATA-MODEL.md](03-DATA-MODEL.md) change
 and a decision about what a file written before that flag means. It is not a gesture waiting to
 be wired.
+
+**K-308 · DECIDED · A shape point is drawn where its art is, the picture follows the drag,
+and the art nobody dragged does not move.** Three faults of one gesture, all of them the
+same misunderstanding about *whose coordinates a shape item's vertices are in*, found the
+first time K-307's editing was used on a real drawing.
+
+**A shape layer's picture is its art's bounding box** (docs/06 §1.2, `build.rs`): the
+raster is exactly that box, and the layer's own pixel (0, 0) is therefore the box's
+**top-left corner**, not the origin of the coordinates the vertices are stored in. A mask's
+vertex is already in layer pixels, so it goes straight through the layer's map; a shape
+item's is not, and the Viewer was pushing it through the same map unchanged — so every
+drawn point sat a whole bounding box away from the art it belonged to, while the wireframe
+box and the picture, which both read the *size*, agreed with each other. One subtraction,
+in one place (`LayerBox.shapePoint`), and the points land on the art.
+
+**Their outermost points sit exactly where the scale handles do**, which follows from the
+box being the art. K-224's press order put a handle first, so on a drawn square every
+corner was a scale and never a point edit — the gesture could not be performed at all on
+the shape most likely to be drawn. A press within a *point's* own reach now means the
+point; a handle's reach is twice as far, so nothing else about the order changes.
+
+**Position follows the corner, in the same op.** Dragging the left-most point left grows
+the box leftwards, which moves the corner the layer's pixels start at — so every *other*
+point would slide right by the same amount, an edit nobody asked for. `set_shape_contents`
+now commits the art and the position adjustment as one `Op::Batch`: one drag, one undo
+step, and the art that was not dragged stays where it was. A keyframed position is left
+alone — it has no single value to add to, and moving one key of a curve would be a worse
+surprise than the drift.
+
+**And the drag previews.** A point drag showed its wireframe and left the picture until the
+release, because the preview call had no room for a path — it has since (K-239, K-240), so
+it does now, throttled like every other live drag. Art and the compensating position ride
+in one request, because a preview of the art alone would show the untouched half sliding
+and the commit would put it back. One layer at a time, as with a move: the engine patches
+one layer into its clone. A layer whose mask *and* art are dragged together previews the
+art; the mask catches up on release.

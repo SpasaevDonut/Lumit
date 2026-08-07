@@ -71,8 +71,7 @@ These are v1-scope surfaces it does not yet match.
     in the toolbar's fill and stroke, listed in the Timeline under Contents.
     Still owed: nested groups and the shape **modifiers** (repeater, trim paths,
     wiggle, offset paths), gradient fills, dashed strokes, joins and caps other
-    than round, animated paths, and dragging a shape's points on the picture the
-    way a mask's drag.
+    than round, and animated paths.
 - **Path editing on the picture** - a *mask's* points drag (K-224) and now a
     **shape layer's** do too (K-307): both are aimed at, swept up and dragged by
     one piece of code, because a mask and a shape item hold the same path type.
@@ -84,8 +83,6 @@ These are v1-scope surfaces it does not yet match.
     decision, not just a gesture; and the Pen's add/delete/convert-vertex
     siblings and dragging a whole path by a segment, which edit a path that
     already exists and still cannot.
-- **Wireframes over a shape layer's own art** - a shape layer draws the box its
-    art fills, like every other layer, rather than the paths inside it.
 - **Mask paths cannot be keyframed** ([03-DATA-MODEL.md](03-DATA-MODEL.md) has
     them as animatable); there is no mask **mode** (add/subtract/intersect) -
     every mask adds; **mask feather** has neither a control nor a renderer path.
@@ -331,7 +328,6 @@ three small gaps:
 - **No CI check that the source file was pushed.** A string added here is invisible to
   translators until somebody runs `crowdin push sources` by hand. Worth a release-time
   step once the project exists.
-
 
 **Lens flare follow-ups (K-256..K-264, [impl/lens-flare.md](impl/lens-flare.md))** — the
 shipped core is docs/08 §3.27 (FlareSim model + 1299-lens library, K-261; artefact and

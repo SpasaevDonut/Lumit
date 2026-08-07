@@ -649,6 +649,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       dynamic raw);
 
   @protected
+  BridgeTransform? dco_decode_opt_box_autoadd_bridge_transform(dynamic raw);
+
+  @protected
   double? dco_decode_opt_box_autoadd_f_64(dynamic raw);
 
   @protected
@@ -1372,6 +1375,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeTextDocument? sse_decode_opt_box_autoadd_bridge_text_document(
+      SseDeserializer deserializer);
+
+  @protected
+  BridgeTransform? sse_decode_opt_box_autoadd_bridge_transform(
       SseDeserializer deserializer);
 
   @protected
@@ -2149,6 +2156,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_bridge_text_document(
       BridgeTextDocument? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_bridge_transform(
+      BridgeTransform? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_f_64(double? self, SseSerializer serializer);

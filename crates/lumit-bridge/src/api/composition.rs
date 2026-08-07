@@ -1699,6 +1699,11 @@ impl CompositionReference {
 
     /// Ask for `frame` with `layer`'s art replaced by `contents` — the shape
     /// layer's half of the call above (K-239).
+    ///
+    /// `transform` is for the one caller that needs both at once: a point drag
+    /// that moves the art's bounding box has to move the layer with it, or the
+    /// preview shows the untouched art sliding and the commit puts it back
+    /// (K-308). Every other caller passes `None`.
     #[frb(sync)]
     pub fn render_frame_with_shape_preview(
         &self,
@@ -1706,6 +1711,7 @@ impl CompositionReference {
         scale: f32,
         layer: LayerReference,
         contents: Vec<crate::api::layer::BridgeShapeItem>,
+        transform: Option<crate::api::layer::BridgeTransform>,
     ) -> Result<(), BridgeError> {
         self.dispatch(RenderCompWithPreview(RenderCompRequestWithPreview {
             comp: self.clone(),
@@ -1713,7 +1719,7 @@ impl CompositionReference {
             scale,
             layer,
             effects: None,
-            transform: None,
+            transform,
             text: None,
             paint: None,
             contents: Some(contents),

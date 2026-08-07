@@ -17,7 +17,7 @@
 // own size, and the answer arriving repaints whoever is listening.
 
 import 'dart:math' as math;
-import 'dart:ui' show Size;
+import 'dart:ui' show Rect, Size;
 
 import 'package:flutter/foundation.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
@@ -61,14 +61,20 @@ Size textLayerBounds(String text, double size) => Size(
       size,
     );
 
-/// The box a shape layer's art fills, in the layer's own coordinates, or null
+/// The box a shape layer's art fills, in the **art's** own coordinates, or null
 /// when there is no art (K-237).
 ///
 /// The **control points** bound the curve rather than the curve itself — a cubic
 /// never leaves its own control hull — which is the same rule `lumit-core`'s
 /// `shape::ShapeItem::bounds` follows. The two must agree: the engine sizes the
 /// raster with its version and the wireframe is drawn from this one.
-Size? shapeContentsBounds(List<BridgeShapeItem> contents) {
+///
+/// **Art coordinates are not layer pixels** (K-308). The engine draws a shape
+/// layer's picture as exactly this box, so the layer's pixel (0, 0) is this
+/// box's top-left corner — a vertex at art (x, y) is at layer pixel
+/// (x − left, y − top). [shapeContentsBounds] answers the size, which is all a
+/// wireframe box needs; anything drawing the *points* needs the corner too.
+Rect? shapeContentsRect(List<BridgeShapeItem> contents) {
   double? minX, minY, maxX, maxY;
   for (final item in contents) {
     final half = item.stroke != null ? item.strokeWidth / 2 : 0.0;
@@ -86,7 +92,15 @@ Size? shapeContentsBounds(List<BridgeShapeItem> contents) {
     }
   }
   if (minX == null || minY == null || maxX == null || maxY == null) return null;
-  return Size(math.max(maxX - minX, 1), math.max(maxY - minY, 1));
+  return Rect.fromLTRB(minX, minY, maxX, maxY);
+}
+
+/// The size of that box, floored at a pixel each way so a straight line still
+/// has a layer to be drawn on.
+Size? shapeContentsBounds(List<BridgeShapeItem> contents) {
+  final rect = shapeContentsRect(contents);
+  if (rect == null) return null;
+  return Size(math.max(rect.width, 1), math.max(rect.height, 1));
 }
 
 /// Every layer's own size, answered from the document and remembered.

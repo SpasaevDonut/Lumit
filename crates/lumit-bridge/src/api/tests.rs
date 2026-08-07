@@ -2888,6 +2888,70 @@ fn shape_contents_are_replaced_as_a_whole_and_undone_in_one_step() {
     );
 }
 
+/// Dragging the left-most point left grows the art's box leftwards, and the
+/// layer's origin **is** that box's corner — so without the position following
+/// it, every point nobody touched would slide the other way (K-308).
+#[test]
+fn moving_a_point_past_the_arts_edge_leaves_the_rest_of_it_where_it_was() {
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let shape = comp
+        .add_shape_layer(
+            "Art".into(),
+            vec![shape_item("Rectangle", 200.0, 100.0, 50.0)],
+        )
+        .expect("a shape layer");
+
+    let still = |s: &BridgeScalar| match s {
+        BridgeScalar::Static(v) => *v,
+        _ => panic!("not keyframed"),
+    };
+    // Where an untouched point is drawn: the layer's position plus its offset
+    // into the art's box.
+    let drawn_at = |index: usize| {
+        let contents = shape.get_shape_contents().expect("contents");
+        let items: Vec<_> = contents.iter().map(|i| i.write_item()).collect();
+        let (x0, y0, _, _) = lumit_core::shape::contents_bounds(&items).expect("a box");
+        let tf = shape.get_transform().expect("transform");
+        let v = &contents[0].vertices[index];
+        (
+            still(&tf.position_x) + v.x - x0,
+            still(&tf.position_y) + v.y - y0,
+        )
+    };
+    let before = drawn_at(2);
+
+    let mut contents = shape.get_shape_contents().expect("contents");
+    contents[0].vertices[0].x -= 30.0;
+    contents[0].vertices[0].y -= 20.0;
+    shape.set_shape_contents(contents).expect("set");
+
+    let tf = shape.get_transform().expect("transform");
+    assert_eq!(
+        still(&tf.position_x),
+        170.0,
+        "the layer followed the corner"
+    );
+    assert_eq!(still(&tf.position_y), 80.0);
+    let after = drawn_at(2);
+    assert!(
+        (after.0 - before.0).abs() < 1e-9 && (after.1 - before.1).abs() < 1e-9,
+        "the art nobody dragged stayed where it was: {before:?} became {after:?}"
+    );
+
+    project.undo().expect("undone");
+    let tf = shape.get_transform().expect("transform");
+    assert_eq!(
+        (still(&tf.position_x), still(&tf.position_y)),
+        (200.0, 100.0),
+        "the art and the layer went back together, in one step"
+    );
+    assert_eq!(
+        shape.get_shape_contents().expect("contents")[0].vertices[0].x,
+        200.0
+    );
+}
+
 #[test]
 fn shape_contents_ride_the_read_model() {
     let (project, layer) = project_with_layer();

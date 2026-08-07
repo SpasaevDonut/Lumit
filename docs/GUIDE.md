@@ -3555,6 +3555,28 @@ piece of code finds them, draws them and moves them. The only difference is
 which call writes the change back — and that difference is carried in the name
 each point is filed under, so a shape point can never be saved as a mask.
 
+**Where a shape's points are, and why that took a second go.** A shape layer is
+sized by the art it holds: the layer *is* the box the drawing fits into, and it
+grows and shrinks as the drawing is edited. That means the numbers stored for a
+point — where it sits in the drawing — are not the same as where it sits *on the
+layer*, which is measured from the box's top-left corner. The Viewer drew the
+points as though the two were the same, so they appeared a whole box away from
+the art, while the wireframe rectangle and the picture (which only need the box's
+*size*) looked right. Subtracting the corner puts them back on the art (K-308).
+
+Two things follow from the box being the drawing. The first: the outermost points
+of a shape sit exactly where the box's resize handles do, so on a drawn square
+every corner used to start a resize instead of an edit — a press close enough to a
+point now means the point, and the handles keep the rest of the reach. The second:
+dragging an outermost point *moves the box*, so everything else in the drawing
+would slide the other way. The engine now moves the layer by the same amount in
+the same edit, which is why the rest of the art stays put and why undo still puts
+everything back in one step.
+
+The picture also keeps up as you drag now, rather than waiting for you to let go:
+the drag asks the engine for a provisional frame, at most one every twenty
+milliseconds, exactly as dragging a layer about does.
+
 What you still cannot do is drag a point's **curve handles** — the two arms that
 decide how the line bends through it. You can pull them out while *placing* a
 point with the Pen, but not afterwards, on any path. That is not an oversight

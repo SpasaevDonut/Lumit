@@ -301,7 +301,8 @@ abstract class BridgeLibApi extends BaseApi {
       required BigInt frame,
       required double scale,
       required LayerReference layer,
-      required List<BridgeShapeItem> contents});
+      required List<BridgeShapeItem> contents,
+      BridgeTransform? transform});
 
   void crateApiCompositionCompositionReferenceRenderFrameWithTextPreview(
       {required CompositionReference that,
@@ -2435,7 +2436,8 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       required BigInt frame,
       required double scale,
       required LayerReference layer,
-      required List<BridgeShapeItem> contents}) {
+      required List<BridgeShapeItem> contents,
+      BridgeTransform? transform}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
@@ -2444,6 +2446,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         sse_encode_f_32(scale, serializer);
         sse_encode_box_autoadd_layer_reference(layer, serializer);
         sse_encode_list_bridge_shape_item(contents, serializer);
+        sse_encode_opt_box_autoadd_bridge_transform(transform, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 57)!;
       },
       codec: SseCodec(
@@ -2453,7 +2456,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       ),
       constMeta:
           kCrateApiCompositionCompositionReferenceRenderFrameWithShapePreviewConstMeta,
-      argValues: [that, frame, scale, layer, contents],
+      argValues: [that, frame, scale, layer, contents, transform],
       apiImpl: this,
     ));
   }
@@ -2462,7 +2465,14 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       get kCrateApiCompositionCompositionReferenceRenderFrameWithShapePreviewConstMeta =>
           const TaskConstMeta(
             debugName: "composition_reference_render_frame_with_shape_preview",
-            argNames: ["that", "frame", "scale", "layer", "contents"],
+            argNames: [
+              "that",
+              "frame",
+              "scale",
+              "layer",
+              "contents",
+              "transform"
+            ],
           );
 
   @override
@@ -8792,6 +8802,12 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  BridgeTransform? dco_decode_opt_box_autoadd_bridge_transform(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_bridge_transform(raw);
+  }
+
+  @protected
   double? dco_decode_opt_box_autoadd_f_64(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_f_64(raw);
@@ -11101,6 +11117,18 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  BridgeTransform? sse_decode_opt_box_autoadd_bridge_transform(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_bridge_transform(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   double? sse_decode_opt_box_autoadd_f_64(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
@@ -13071,6 +13099,17 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_box_autoadd_bridge_text_document(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_bridge_transform(
+      BridgeTransform? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_bridge_transform(self, serializer);
     }
   }
 

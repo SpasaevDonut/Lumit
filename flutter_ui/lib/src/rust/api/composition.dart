@@ -703,18 +703,25 @@ class CompositionReference {
 
   /// Ask for `frame` with `layer`'s art replaced by `contents` — the shape
   /// layer's half of the call above (K-239).
+  ///
+  /// `transform` is for the one caller that needs both at once: a point drag
+  /// that moves the art's bounding box has to move the layer with it, or the
+  /// preview shows the untouched art sliding and the commit puts it back
+  /// (K-308). Every other caller passes `None`.
   void renderFrameWithShapePreview(
           {required BigInt frame,
           required double scale,
           required LayerReference layer,
-          required List<BridgeShapeItem> contents}) =>
+          required List<BridgeShapeItem> contents,
+          BridgeTransform? transform}) =>
       BridgeLib.instance.api
           .crateApiCompositionCompositionReferenceRenderFrameWithShapePreview(
               that: this,
               frame: frame,
               scale: scale,
               layer: layer,
-              contents: contents);
+              contents: contents,
+              transform: transform);
 
   /// Ask for `frame` with `layer`'s text document replaced by `document` —
   /// the same live path as the two above, for the Type tool (K-225).

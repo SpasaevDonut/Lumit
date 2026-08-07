@@ -1566,6 +1566,13 @@ class LayerReference {
   ///
   /// A path of fewer than two vertices is refused, as a mask's is: it is not
   /// a shape, and it would be a Timeline row with nothing behind it.
+  ///
+  /// **The art that was not edited does not move** (K-308). A shape layer's
+  /// picture is its art's bounding box, and the layer's origin is that box's
+  /// top-left corner — so growing the box leftwards, which is what dragging
+  /// the left-most point left does, would slide every *other* point right by
+  /// the same amount. Position follows the corner to cancel that, in the same
+  /// op, so one drag is still one undo step.
   void setShapeContents({required List<BridgeShapeItem> contents}) =>
       BridgeLib.instance.api.crateApiLayerLayerReferenceSetShapeContents(
           that: this, contents: contents);

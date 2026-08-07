@@ -27,6 +27,7 @@ void main() {
     double viewScale = 1,
     List<BridgeMask> masks = const [],
     List<BridgeShapeItem> shapeContents = const [],
+    Offset artOrigin = Offset.zero,
   }) =>
       LayerBox(
         layer: LayerReference(
@@ -52,6 +53,7 @@ void main() {
         rotationDegrees: rotation,
         masks: masks,
         shapeContents: shapeContents,
+        artOrigin: artOrigin,
       );
 
   /// A square mask in the layer's own coordinates, all corners.
@@ -276,6 +278,29 @@ void main() {
 
     test('a layer with no art has no points to catch', () {
       expect(pathPointsOf(box()), isEmpty);
+    });
+
+    /// **The art's coordinates are not the layer's pixels** (K-308). The engine
+    /// draws a shape layer's picture as exactly its art's bounding box, so the
+    /// layer's pixel (0, 0) is that box's corner. Drawing the points straight
+    /// through the layer's map put every one of them a whole bounding box away
+    /// from the art it belonged to — the box and the picture agreed, and only
+    /// the points were somewhere else.
+    test('are drawn from the art\'s own corner, not the path\'s numbers', () {
+      // A 60x60 layer at (300, 200) anchored in its middle: its origin is at
+      // (270, 170) on screen. The art is the same square, drawn at (120, 80) —
+      // so its first point is the layer's origin and nowhere else.
+      final b = box(
+        size: const Size(60, 60),
+        shapeContents: [squareShape(left: 120, top: 80, side: 60)],
+        artOrigin: const Offset(120, 80),
+      );
+      final points = pathPointsOf(b);
+      expect(points.first.at, const Offset(270, 170));
+      expect(points[2].at, const Offset(330, 230),
+          reason: 'the far corner of the art is the far corner of the box');
+      expect(b.corners.first, points.first.at,
+          reason: 'which is the whole point: the box and the points agree');
     });
   });
 
