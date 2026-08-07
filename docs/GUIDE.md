@@ -4040,9 +4040,15 @@ installers live in `packaging/` (decision K-252):
 - **macOS** — `packaging/macos/make-dmg.sh` produces the usual drag-to-
   Applications disk image (on a Mac): a white window with the app on the
   left, the Applications folder on the right, and a curved arrow showing
-  the drag. The
-  file-type declarations are in the app's Info.plist already, but their icons
-  and double-click opening land with the larger macOS pass in the TODO.
+  the drag. macOS needs no registry writing and no install script: an app
+  *declares* the types it owns in its own Info.plist, and the system reads
+  that the first time it sees the app. The three document icons
+  (`packaging/macos/lumit-project.icns` and friends) are resources of the app
+  target, so they travel inside the bundle where those declarations point at
+  them. What is still missing is double-click *opening* — the declarations
+  tell macOS which app owns a `.lum`, but the app is handed the file through
+  `application:openFile:`, which it does not yet answer; that lands with the
+  larger macOS pass in the TODO.
 
 None of this runs on `flutter run` — a dev run shows the app icon (it is baked
 into the executable) but registers nothing.

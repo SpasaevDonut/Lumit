@@ -25,6 +25,9 @@
 		335BBD1B22A9A15E00E9071D /* GeneratedPluginRegistrant.swift in Sources */ = {isa = PBXBuildFile; fileRef = 335BBD1A22A9A15E00E9071D /* GeneratedPluginRegistrant.swift */; };
 		33CC10F12044A3C60003C045 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33CC10F02044A3C60003C045 /* AppDelegate.swift */; };
 		1A2B3C4D5E6F708192A3B4D1 /* lumit-icon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F708192A3B4D0 /* lumit-icon.icon */; };
+		1A2B3C4D5E6F708192A3B4F0 /* lumit-project.icns in Resources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F708192A3B4E0 /* lumit-project.icns */; };
+		1A2B3C4D5E6F708192A3B4F1 /* lumit-preset.icns in Resources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F708192A3B4E1 /* lumit-preset.icns */; };
+		1A2B3C4D5E6F708192A3B4F2 /* lumit-theme.icns in Resources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F708192A3B4E2 /* lumit-theme.icns */; };
 		33CC10F62044A3C60003C045 /* MainMenu.xib in Resources */ = {isa = PBXBuildFile; fileRef = 33CC10F42044A3C60003C045 /* MainMenu.xib */; };
 		33CC11132044BFA00003C045 /* MainFlutterWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33CC11122044BFA00003C045 /* MainFlutterWindow.swift */; };
 		1A2B3C4D5E6F708192A3B4C6 /* ViewerTextureBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F708192A3B4C5 /* ViewerTextureBridge.swift */; };
@@ -73,6 +76,9 @@
 		33CC10ED2044A3C60003C045 /* Lumit.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Lumit.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		33CC10F02044A3C60003C045 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		1A2B3C4D5E6F708192A3B4D0 /* lumit-icon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; name = "lumit-icon.icon"; path = "../../assets/brand/lumit-icon.icon"; sourceTree = "<group>"; };
+		1A2B3C4D5E6F708192A3B4E0 /* lumit-project.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; name = "lumit-project.icns"; path = "../../packaging/macos/lumit-project.icns"; sourceTree = "<group>"; };
+		1A2B3C4D5E6F708192A3B4E1 /* lumit-preset.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; name = "lumit-preset.icns"; path = "../../packaging/macos/lumit-preset.icns"; sourceTree = "<group>"; };
+		1A2B3C4D5E6F708192A3B4E2 /* lumit-theme.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; name = "lumit-theme.icns"; path = "../../packaging/macos/lumit-theme.icns"; sourceTree = "<group>"; };
 		33CC10F52044A3C60003C045 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.xib; name = Base; path = Base.lproj/MainMenu.xib; sourceTree = "<group>"; };
 		33CC10F72044A3C60003C045 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; name = Info.plist; path = Runner/Info.plist; sourceTree = "<group>"; };
 		33CC11122044BFA00003C045 /* MainFlutterWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainFlutterWindow.swift; sourceTree = "<group>"; };
@@ -159,6 +165,9 @@
 			isa = PBXGroup;
 			children = (
 				1A2B3C4D5E6F708192A3B4D0 /* lumit-icon.icon */,
+				1A2B3C4D5E6F708192A3B4E0 /* lumit-project.icns */,
+				1A2B3C4D5E6F708192A3B4E1 /* lumit-preset.icns */,
+				1A2B3C4D5E6F708192A3B4E2 /* lumit-theme.icns */,
 				33CC10F42044A3C60003C045 /* MainMenu.xib */,
 				33CC10F72044A3C60003C045 /* Info.plist */,
 			);
@@ -329,6 +338,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				1A2B3C4D5E6F708192A3B4D1 /* lumit-icon.icon in Resources */,
+				1A2B3C4D5E6F708192A3B4F0 /* lumit-project.icns in Resources */,
+				1A2B3C4D5E6F708192A3B4F1 /* lumit-preset.icns in Resources */,
+				1A2B3C4D5E6F708192A3B4F2 /* lumit-theme.icns in Resources */,
 				33CC10F62044A3C60003C045 /* MainMenu.xib in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

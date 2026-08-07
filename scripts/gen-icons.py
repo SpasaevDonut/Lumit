@@ -23,8 +23,13 @@
 #                                                      <- the same three SVGs
 #
 # The Windows installer (packaging/windows/lumit.iss) registers the .ico files
-# with the .lum/.lumfx/.lumtheme associations; the .icns files join the macOS bundle's
-# resources with the macOS pass (K-033, docs/TODO.md).
+# with the .lum/.lumfx/.lumtheme associations. The .icns files are resources of
+# the macOS Runner target, referenced in place from packaging/macos/, which is
+# where Info.plist's CFBundleTypeIconFile entries look for them.
+#
+# One honest caveat on the .icns: Pillow's ICNS writer takes a single image and
+# derives the smaller sizes itself, so unlike the .ico files above these are
+# downscaled from the 1024 render rather than drawn fresh at each size.
 
 import io
 from pathlib import Path
