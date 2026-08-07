@@ -3132,6 +3132,7 @@ fn a_text_layer_round_trips_its_document() {
 
     text.set_text(BridgeTextDocument {
         text: "Hello".into(),
+        expression: None,
         size: 48.0,
         fill: BridgeColourRgba {
             r: 1.0,
@@ -3160,6 +3161,7 @@ fn a_text_layer_round_trips_its_document() {
     assert!(matches!(
         layer.set_text(BridgeTextDocument {
             text: "no".into(),
+            expression: None,
             size: 1.0,
             fill: BridgeColourRgba {
                 r: 0.0,
@@ -3170,6 +3172,44 @@ fn a_text_layer_round_trips_its_document() {
         }),
         Err(BridgeError::NotText)
     ));
+}
+
+/// A text layer's words can be driven by an expression, and clearing the box
+/// hands the layer back to the words that were typed — an empty string is not
+/// an expression that says nothing, which would leave the layer blank forever.
+#[test]
+fn a_text_expression_round_trips_and_clears() {
+    use crate::api::assets::{BridgeColourRgba, BridgeTextDocument};
+
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let text = comp.add_text_layer().expect("a text layer");
+
+    let document = |expression: Option<&str>| BridgeTextDocument {
+        text: "typed".into(),
+        expression: expression.map(str::to_owned),
+        size: 48.0,
+        fill: BridgeColourRgba {
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+            a: 1.0,
+        },
+    };
+
+    text.set_text(document(Some("time * 2"))).expect("set");
+    let after = text.get_text().expect("text").expect("still text");
+    assert_eq!(after.expression.as_deref(), Some("time * 2"));
+    assert_eq!(after.text, "typed", "the typed words survive underneath");
+
+    text.set_text(document(Some("   "))).expect("cleared");
+    assert_eq!(
+        text.get_text().expect("text").expect("text").expression,
+        None,
+        "an empty box means no expression"
+    );
+    let _ = project;
+    let _ = layer;
 }
 
 /// A camera's zoom is animatable, so it takes a whole scalar like every other

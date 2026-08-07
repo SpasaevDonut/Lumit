@@ -21,7 +21,12 @@
 //! - **Algorithm version** (`ALGO_VERSION`) is bumped whenever rendering
 //!   output changes, invalidating every old entry by construction.
 
-use lumit_core::model::{Composition, Document, LayerKind, MatteChannel};
+use std::sync::Arc;
+
+use lumit_core::{
+    expression::ExpressionContext,
+    model::{Composition, Document, LayerKind, MatteChannel},
+};
 use uuid::Uuid;
 
 pub mod epoch;
@@ -86,7 +91,12 @@ pub fn comp_frame_key(
 ) -> Option<FrameKey> {
     let mut visited = Vec::new();
     let mut h = blake3::Hasher::new();
-    feed_comp(&mut h, doc, comp, t, quality, stamper, &mut visited)?;
+    // Taken once per key, not once per layer. An expression context needs an
+    // owned handle on the document, and cloning the project per layer is
+    // quadratic in layer count — 30ms a frame at two hundred layers, which is
+    // twice the whole 60fps budget spent before anything is drawn.
+    let doc = Arc::new(doc.clone());
+    feed_comp(&mut h, &doc, comp, t, quality, stamper, &mut visited)?;
     let bytes = h.finalize();
     let mut k = [0u8; 16];
     k.copy_from_slice(&bytes.as_bytes()[..16]);
@@ -95,7 +105,7 @@ pub fn comp_frame_key(
 
 fn feed_comp(
     h: &mut blake3::Hasher,
-    doc: &Document,
+    doc: &Arc<Document>,
     comp: &Composition,
     t: f64,
     quality: Quality,
@@ -188,7 +198,7 @@ fn feed_effect_stack(
     effects: &[lumit_core::model::EffectInstance],
     marker_layer: &lumit_core::model::Layer,
     comp: &Composition,
-    doc: &Document,
+    doc: &Arc<Document>,
     t: f64,
     lt: f64,
     quality: Quality,
@@ -200,6 +210,7 @@ fn feed_effect_stack(
         return Some(());
     }
     h.update(b"effects/");
+
     // The §1.4 marker context, built lazily (only marker-driven effects read
     // it) by the same shared constructor resolution uses (K-031), so the key
     // hashes exactly the beat times resolution sees.
@@ -298,7 +309,7 @@ fn feed_effect_stack(
                             h.update(&[1]);
                             h.update(src.id.as_bytes());
                             let slt = t - src.start_offset.0.to_f64();
-                            feed_source(h, doc, src, slt, quality, stamper, visited)?;
+                            feed_source(h, doc, comp, src, slt, t, quality, stamper, visited)?;
                             let dtr = &src.transform;
                             for v in [
                                 dtr.position_x.value_at(slt),
@@ -407,7 +418,7 @@ fn feed_effect_stack(
 #[allow(clippy::too_many_arguments)]
 fn feed_layer(
     h: &mut blake3::Hasher,
-    doc: &Document,
+    doc: &Arc<Document>,
     comp: &Composition,
     layer: &lumit_core::model::Layer,
     t: f64,
@@ -417,22 +428,30 @@ fn feed_layer(
     visited: &mut Vec<Uuid>,
 ) -> Option<()> {
     h.update(b"layer/");
-    feed_source(h, doc, layer, lt, quality, stamper, visited)?;
+    feed_source(h, doc, comp, layer, lt, t, quality, stamper, visited)?;
+
+    let context = Arc::new(ExpressionContext {
+        document: doc.clone(),
+        comp: Some(comp.id),
+        layer: Some(layer.id),
+        comp_time: t,
+        current_depth: 0,
+    });
 
     // Evaluated transform at the layer's local time — never keyframe data.
     let tr = &layer.transform;
     for v in [
-        tr.position_x.value_at(lt),
-        tr.position_y.value_at(lt),
-        tr.position_z.value_at(lt),
-        tr.anchor_x.value_at(lt),
-        tr.anchor_y.value_at(lt),
-        tr.scale_x.value_at(lt),
-        tr.scale_y.value_at(lt),
-        tr.rotation.value_at(lt),
-        tr.rotation_x.value_at(lt),
-        tr.rotation_y.value_at(lt),
-        tr.opacity.value_at(lt),
+        tr.position_x.value_at_with_context(lt, context.clone()),
+        tr.position_y.value_at_with_context(lt, context.clone()),
+        tr.position_z.value_at_with_context(lt, context.clone()),
+        tr.anchor_x.value_at_with_context(lt, context.clone()),
+        tr.anchor_y.value_at_with_context(lt, context.clone()),
+        tr.scale_x.value_at_with_context(lt, context.clone()),
+        tr.scale_y.value_at_with_context(lt, context.clone()),
+        tr.rotation.value_at_with_context(lt, context.clone()),
+        tr.rotation_x.value_at_with_context(lt, context.clone()),
+        tr.rotation_y.value_at_with_context(lt, context.clone()),
+        tr.opacity.value_at_with_context(lt, context.clone()),
     ] {
         feed_f64(h, v);
     }
@@ -616,7 +635,7 @@ fn feed_layer(
                     mr.source.key_byte(),
                 ]);
                 let mlt = t - src.start_offset.0.to_f64();
-                feed_source(h, doc, src, mlt, quality, stamper, visited)?;
+                feed_source(h, doc, comp, src, mlt, t, quality, stamper, visited)?;
                 let mtr = &src.transform;
                 for v in [
                     mtr.position_x.value_at(mlt),
@@ -702,11 +721,17 @@ fn blend_tag(b: lumit_core::model::BlendMode) -> u8 {
 
 /// The layer's source pixels as content (docs/06 §5.2 "node type id ‖
 /// algorithm version, evaluated parameters, key(inputs)").
+#[allow(clippy::too_many_arguments)]
 fn feed_source(
     h: &mut blake3::Hasher,
-    doc: &Document,
+    doc: &Arc<Document>,
+    // The comp the layer sits in — the expression context a text layer's words
+    // may be resolved through, so the key hashes the line the rasteriser will
+    // actually draw.
+    owner: &Composition,
     layer: &lumit_core::model::Layer,
     lt: f64,
+    comp_time: f64,
     quality: Quality,
     stamper: &dyn SourceStamper,
     visited: &mut Vec<Uuid>,
@@ -769,7 +794,18 @@ fn feed_source(
         },
         LayerKind::Text { document } => {
             h.update(b"text/");
-            h.update(document.text.as_bytes());
+            // The *resolved* line, not the stored one: an expression-driven
+            // caption says something different at every frame, and hashing the
+            // stored text would key them all the same and freeze the first
+            // frame it rendered on screen for the rest of the comp.
+            let context = ExpressionContext {
+                document: doc.clone(),
+                comp: Some(owner.id),
+                layer: Some(layer.id),
+                comp_time,
+                current_depth: 0,
+            };
+            h.update(document.resolved_text(Arc::new(context)).as_bytes());
             h.update(&[0]); // length delimiter: text then size never collide
             feed_f64(h, document.size);
             for c in document.fill.0 {
@@ -948,6 +984,7 @@ mod tests {
             kind: LayerKind::Text {
                 document: TextDocument {
                     text: text.into(),
+                    expression: None,
                     size: 72.0,
                     fill: LinearColour([1.0, 1.0, 1.0, 1.0]),
                     extra: serde_json::Map::new(),
@@ -1809,6 +1846,41 @@ mod tests {
             }
         }
         assert_ne!(base, key(&doc2, &parent, 1.0));
+    }
+
+    /// An expression-driven caption says something different at every frame, so
+    /// consecutive frames must key differently — otherwise the cache serves the
+    /// first line it rendered for the whole comp and the number on screen never
+    /// moves. This is the regression test for hashing the stored text.
+    #[test]
+    fn expression_driven_text_keys_per_frame() {
+        let doc = Document::new();
+        let mut l = text_layer("ignored", 0.0, 10.0, 0.0);
+        if let LayerKind::Text { document } = &mut l.kind {
+            document.expression = Some("time".into());
+        }
+        let comp = comp_with(vec![l]);
+        assert_ne!(key(&doc, &comp, 1.0), key(&doc, &comp, 2.0));
+        // Same time, same words, same key — the resolution stays deterministic.
+        assert_eq!(key(&doc, &comp, 1.0), key(&doc, &comp, 1.0));
+    }
+
+    /// The stored `text` is dead while an expression drives the layer: editing
+    /// it must not retire cached frames that look exactly the same.
+    #[test]
+    fn stored_text_is_inert_under_an_expression() {
+        let doc = Document::new();
+        let with_expression = |body: &str| {
+            let mut l = text_layer(body, 0.0, 10.0, 0.0);
+            if let LayerKind::Text { document } = &mut l.kind {
+                document.expression = Some("1 + 1".into());
+            }
+            comp_with(vec![l])
+        };
+        assert_eq!(
+            key(&doc, &with_expression("one"), 1.0),
+            key(&doc, &with_expression("another"), 1.0)
+        );
     }
 
     /// Unprobed footage → unkeyable (None), never a wrong key.

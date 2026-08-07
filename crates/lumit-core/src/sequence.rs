@@ -447,6 +447,14 @@ impl Clip {
                     animation: Animation::Static(v + shift),
                     extra: map.extra.clone(),
                 }),
+                // An expression-driven Retime cannot be shifted the way a
+                // number or a keyframe can: the source positions it produces
+                // are computed, so moving them means rewriting what the user
+                // typed — `(expr) + shift`, compounding on every slip. Refused
+                // rather than silently rewritten. Unreachable today (only
+                // transform and effect properties can be given expressions),
+                // and wants deciding properly if Retime ever offers one.
+                Animation::Expression(_) => return None,
             },
             None => None,
         };

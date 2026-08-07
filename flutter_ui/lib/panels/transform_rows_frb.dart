@@ -22,6 +22,7 @@
 
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
+import 'package:lumit_flutter/panels/effect_param_row_frb.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
@@ -380,6 +381,38 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
     // An animated property stays editable (docs/07 §4.3): the field shows the
     // value under the playhead, and a change writes it into the key sitting
     // there — or plants a new one — never flattening the curve.
+
+    if (scalar case BridgeScalar_Expression scalar) {
+      return Flexible(
+        child: EffectParamRowExpression(
+            value: scalar,
+            set: (value) {
+
+
+             final field = (value as BridgeEffectValue_Float).field0;
+
+             if ( field is BridgeScalar_Expression ) {
+              _commitExpression(axis.prop, field.field0);
+             }
+
+             if(field is BridgeScalar_Static) {
+              _commit(axis.prop, field.field0);
+             }
+
+            },
+            setLive: (value) {
+              _liveExpression(
+                  axis.prop,
+                  ((value as BridgeEffectValue_Float).field0
+                          as BridgeScalar_Expression)
+                      .field0);
+            },
+            comp: widget.comp,
+            frame: widget.playheadFrame,
+            layer: widget.layer),
+      );
+    }
+
     if (scalar is! BridgeScalar_Keyframed) {
       final static_ = (scalar as BridgeScalar_Static).field0;
       return SizedBox(
@@ -397,6 +430,9 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
           onChangeLive: (v) => _live(axis.prop, v.toDouble()),
           onChangeEnd: (v) => _commit(axis.prop, v.toDouble()),
           onDragCancel: () => setState(() => _staged = null),
+          setExpression: () {
+            _commitExpression(axis.prop, static_.toString());
+          },
         ),
       );
     }
@@ -446,12 +482,35 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
         ));
   }
 
+  void _liveExpression(BridgeTransformProp prop, String value) {
+    final staged = writeExpression(_staged ?? widget.transform, prop, value);
+    setState(() => _staged = staged);
+
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    _throttle.request(() => widget.comp.renderFrameWithTransformPreview(
+          frame: BigInt.from(ui.playheadFrame.value),
+          scale: ui.viewerScale,
+          layer: widget.layer,
+          transform: _staged ?? staged,
+        ));
+  }
+
   /// Release, or a typed value: one op for the one property that changed.
   void _commit(BridgeTransformProp prop, double value) {
     // The commit is the last word on this gesture: a held preview tick after it
     // would put the provisional picture back.
     _throttle.cancel();
     widget.layer.setTransform(prop: prop, value: BridgeScalar.static_(value));
+    setState(() => _staged = null);
+    widget.onChanged();
+  }
+
+  void _commitExpression(BridgeTransformProp prop, String value) {
+    // The commit is the last word on this gesture: a held preview tick after it
+    // would put the provisional picture back.
+    _throttle.cancel();
+    widget.layer
+        .setTransform(prop: prop, value: BridgeScalar.expression(value));
     setState(() => _staged = null);
     widget.onChanged();
   }
@@ -480,6 +539,27 @@ BridgeScalar read(BridgeTransform tf, BridgeTransformProp prop) =>
 BridgeTransform write(
     BridgeTransform tf, BridgeTransformProp prop, double value) {
   final replacement = BridgeScalar.static_(value);
+  BridgeScalar pick(BridgeTransformProp p, BridgeScalar current) =>
+      p == prop ? replacement : current;
+
+  return BridgeTransform(
+    anchorX: pick(BridgeTransformProp.anchorX, tf.anchorX),
+    anchorY: pick(BridgeTransformProp.anchorY, tf.anchorY),
+    positionX: pick(BridgeTransformProp.positionX, tf.positionX),
+    positionY: pick(BridgeTransformProp.positionY, tf.positionY),
+    positionZ: pick(BridgeTransformProp.positionZ, tf.positionZ),
+    scaleX: pick(BridgeTransformProp.scaleX, tf.scaleX),
+    scaleY: pick(BridgeTransformProp.scaleY, tf.scaleY),
+    rotation: pick(BridgeTransformProp.rotation, tf.rotation),
+    rotationX: pick(BridgeTransformProp.rotationX, tf.rotationX),
+    rotationY: pick(BridgeTransformProp.rotationY, tf.rotationY),
+    opacity: pick(BridgeTransformProp.opacity, tf.opacity),
+  );
+}
+
+BridgeTransform writeExpression(
+    BridgeTransform tf, BridgeTransformProp prop, String expression) {
+  final replacement = BridgeScalar.expression(expression);
   BridgeScalar pick(BridgeTransformProp p, BridgeScalar current) =>
       p == prop ? replacement : current;
 

@@ -2721,12 +2721,12 @@ fn apply_text_preview(
     document: crate::api::assets::BridgeTextDocument,
 ) {
     if let lumit_core::model::LayerKind::Text { document: existing } = kind {
-        *existing = lumit_core::model::TextDocument {
-            text: document.text,
-            size: document.size,
-            fill: crate::api::assets::linear_of(document.fill),
-            extra: serde_json::Map::new(),
-        };
+        // Through the one conversion, so the typing preview carries the
+        // expression and applies the same "an empty box is no expression"
+        // rule as a committed write. Rebuilding the document by hand here
+        // dropped the expression, so a preview frame of an expression-driven
+        // caption fell back to the typed words mid-keystroke.
+        *existing = crate::api::assets::text_document_of(document);
     }
 }
 
@@ -3772,6 +3772,7 @@ mod tests {
 
         let typed = BridgeTextDocument {
             text: "Hello".into(),
+            expression: None,
             size: 48.0,
             fill: BridgeColourRgba {
                 r: 1.0,
@@ -3784,6 +3785,7 @@ mod tests {
         let mut text = LayerKind::Text {
             document: TextDocument {
                 text: "Text".into(),
+                expression: None,
                 size: 72.0,
                 fill: LinearColour([1.0, 1.0, 1.0, 1.0]),
                 extra: serde_json::Map::new(),

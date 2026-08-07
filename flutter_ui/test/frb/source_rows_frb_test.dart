@@ -65,6 +65,34 @@ void main() {
       expect(text.getText()!.size, 96);
     });
 
+    testWidgets('a text layer can be driven by an expression', (tester) async {
+      final p = withComp();
+      final text = p.comp.addTextLayer();
+      p.uiState.selectedLayer.value = text;
+      await mount(tester, p);
+
+      await tester.enterText(
+          find.byKey(const ValueKey('src-text')), 'placeholder');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+
+      await tester.enterText(
+          find.byKey(const ValueKey('src-text-expression')), 'time * 2');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+      expect(text.getText()!.expression, 'time * 2');
+      expect(text.getText()!.text, 'placeholder',
+          reason: 'the typed words are kept underneath the expression');
+
+      // Emptying the box hands the layer back to its words.
+      await tester.enterText(
+          find.byKey(const ValueKey('src-text-expression')), '');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+      expect(text.getText()!.expression, isNull);
+      expect(text.getText()!.text, 'placeholder');
+    });
+
     testWidgets('a camera layer shows its zoom and commits it', (tester) async {
       final p = withComp();
       final camera = p.comp.addCameraLayer();

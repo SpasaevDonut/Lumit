@@ -6,11 +6,12 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/services.dart';
-import 'package:flutter/widgets.dart';
 
 import '../l10n/strings.dart';
 import '../state/workspace.dart';
 import '../theme/theme.dart';
+import 'package:flutter/material.dart';
+import 'package:lumit_flutter/widgets/autofill.dart';
 
 /// The theme + workspace scope: an InheritedNotifier the whole tree reads.
 /// The devices whose drags mean "move this thing" — **the trackpad's
@@ -912,6 +913,15 @@ class HouseTextField extends StatefulWidget {
   final TextEditingController controller;
   final double width;
   final ValueChanged<String>? onSubmitted;
+  final bool submitOnLostFocus;
+
+  /// A pointer went down somewhere that is not this field. What an inline
+  /// rename commits on: clicking away is a person finishing the edit, and a
+  /// field that kept what was typed only when `Enter` was pressed threw the
+  /// work away for everyone who clicks instead (K-243).
+  final VoidCallback? onTapOutside;
+  final TextStyle? style;
+  final AutofillGenerator? autofill;
 
   /// Grab focus on first build — for fields that appear in response to a
   /// gesture (an inline rename), where a second click to focus would be
@@ -922,41 +932,182 @@ class HouseTextField extends StatefulWidget {
   /// *for*, on fields whose surroundings do not already say.
   final String? hint;
 
-  /// A pointer went down somewhere that is not this field. What an inline
-  /// rename commits on: clicking away is a person finishing the edit, and a
-  /// field that kept what was typed only when `Enter` was pressed threw the
-  /// work away for everyone who clicks instead (K-243).
-  final VoidCallback? onTapOutside;
-
   const HouseTextField({
     super.key,
     required this.controller,
     this.width = 200,
     this.onSubmitted,
-    this.autofocus = false,
-    this.hint,
+    this.submitOnLostFocus = false,
     this.onTapOutside,
+    this.autofill,
+    this.autofocus = false,
+    this.style,
+    this.hint,
   });
 
   @override
   State<HouseTextField> createState() => _HouseTextFieldState();
 }
 
-class _HouseTextFieldState extends State<HouseTextField> {
-  final FocusNode _focus = FocusNode();
+class _HouseTextFieldState extends State<HouseTextField>
+    implements TextSelectionGestureDetectorBuilderDelegate {
+  late FocusNode _focus;
+  final GlobalKey<EditableTextState> textFieldKey = GlobalKey();
+  final layerLink = LayerLink();
+  OverlayEntry? _overlay;
 
   @override
   void initState() {
     super.initState();
+    _focus = FocusNode(onKeyEvent: onKeyEvent);
     // The hint draws only while empty, so emptiness changing must redraw.
     widget.controller.addListener(_changed);
   }
 
-  void _changed() => setState(() {});
+  List<dynamic> suggestions = List.empty();
+  int? highlightedSuggestion;
+
+  void _changed() {
+    if (widget.autofill == null) {
+      setState(() {});
+      return;
+    }
+
+    setState(() {
+      suggestions = widget.autofill!.getSuggestions(
+          widget.controller.text, widget.controller.selection.baseOffset);
+    });
+
+    if (suggestions.isEmpty) {
+      setState(() {
+        highlightedSuggestion = null;
+      });
+      hideOverlay();
+    } else {
+      showOverlay();
+    }
+  }
+
+  KeyEventResult onKeyEvent(FocusNode node, KeyEvent event) {
+    if (suggestions.isNotEmpty) {
+      if (event is! KeyDownEvent) {
+        return KeyEventResult.ignored;
+      }
+
+      if (event.logicalKey == LogicalKeyboardKey.tab) {
+        setState(() {
+          if (highlightedSuggestion == null) {
+            highlightedSuggestion = 0;
+          } else {
+            highlightedSuggestion =
+                (highlightedSuggestion! + 1) % suggestions.length;
+          }
+
+          showOverlay();
+        });
+        return KeyEventResult.handled;
+      }
+
+      if (event.logicalKey == LogicalKeyboardKey.enter) {
+        if (highlightedSuggestion != null) {
+          setState(() {
+            widget.autofill!.applySuggestion(
+                suggestions[highlightedSuggestion!], widget.controller);
+
+            highlightedSuggestion = null;
+          });
+
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            textFieldKey.currentState!.bringIntoView(
+                TextPosition(offset: widget.controller.selection.baseOffset));
+          });
+
+          hideOverlay();
+          return KeyEventResult.handled;
+        }
+      }
+    }
+
+    return KeyEventResult.ignored;
+  }
+
+  void showOverlay() {
+    if (_overlay != null) {
+      hideOverlay();
+    }
+
+    final t = ThemeScope.of(context);
+    _overlay?.remove();
+    _overlay = null;
+    _overlay = OverlayEntry(
+      canSizeOverlay: true,
+      builder: (c) {
+        return Stack(
+          children: [
+            Material(
+              // Fully transparent: the completion list draws its own surface
+              // below, and Material is here only for the text style and ink.
+              // Spelled as a zero colour rather than the Material palette's
+              // named constant, which is a hex by another route and so is
+              // refused by the design-token lint (docs/15-DESIGN.md §4.1).
+              color: const Color(0x00000000),
+              child: ThemeScope(
+                  theme: t.theme,
+                  animationLevel: t.animationLevel,
+                  showTooltips: t.showTooltips,
+                  child: CompositedTransformFollower(
+                    link: layerLink,
+                    offset: const Offset(-5, 16),
+                    child: Container(
+                      decoration: BoxDecoration(
+                          color: t.theme.surface0,
+                          border: BoxBorder.fromLTRB(
+                              left: BorderSide(color: t.theme.selectionFill),
+                              right: BorderSide(color: t.theme.selectionFill),
+                              bottom: BorderSide(color: t.theme.selectionFill)),
+                          borderRadius: t.theme.shape == ThemeShape.round
+                              ? BorderRadius.only(
+                                  bottomLeft: Radius.circular(8),
+                                  bottomRight: Radius.circular(8))
+                              : null),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          for (int i = 0; i < suggestions.length; i++)
+                            HouseButton(
+                              frameless: i != highlightedSuggestion,
+                              onPressed: () {},
+                              child: widget.autofill?.buildSuggestion(
+                                      suggestions[i], t.theme) ??
+                                  Text(suggestions[i].word),
+                            )
+                        ],
+                      ),
+                    ),
+                  )),
+            ),
+          ],
+        );
+      },
+    );
+
+    Overlay.of(context, rootOverlay: true).insert(_overlay!);
+  }
+
+  void hideOverlay() {
+    _overlay?.remove();
+    _overlay = null;
+  }
 
   @override
   void dispose() {
     widget.controller.removeListener(_changed);
+    // The completion list is an OverlayEntry, which lives in the Overlay rather
+    // than under this widget — so it outlives the field that opened it unless
+    // it is taken down here, and a field disposed with suggestions showing
+    // leaves them on screen over whatever comes next.
+    hideOverlay();
     _focus.dispose();
     super.dispose();
   }
@@ -965,6 +1116,7 @@ class _HouseTextFieldState extends State<HouseTextField> {
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
     final hint = widget.hint;
+
     return Container(
       width: widget.width,
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
@@ -977,23 +1129,48 @@ class _HouseTextFieldState extends State<HouseTextField> {
         children: [
           if (hint != null && widget.controller.text.isEmpty)
             Text(hint, style: t.body.copyWith(color: t.textMuted)),
-          EditableText(
-            controller: widget.controller,
-            focusNode: _focus,
-            autofocus: widget.autofocus,
-            style: t.bodyPrimary,
-            cursorColor: t.accent,
-            backgroundCursorColor: t.surface2,
-            selectionColor: t.accent.withValues(alpha: 0.5),
-            onSubmitted: widget.onSubmitted,
-            onTapOutside: widget.onTapOutside == null
-                ? null
-                : (_) => widget.onTapOutside!(),
-          ),
+          TextSelectionGestureDetectorBuilder(delegate: this)
+              .buildGestureDetector(
+            child: CompositedTransformTarget(
+              link: layerLink,
+              child: EditableText(
+                key: textFieldKey,
+                controller: widget.controller,
+                focusNode: _focus,
+                autofocus: widget.autofocus,
+                style: widget.style ?? t.bodyPrimary,
+                cursorColor: t.accent,
+                backgroundCursorColor: t.surface2,
+                selectionColor: t.accent.withValues(alpha: 0.5),
+                onSubmitted: widget.onSubmitted,
+                selectionControls: desktopTextSelectionHandleControls,
+                onTapOutside: (event) {
+                  if (widget.submitOnLostFocus) {
+                    widget.onSubmitted?.call(widget.controller.text);
+                  }
+                  // K-243: clicking away is a person finishing the edit, so an
+                  // inline rename commits on it rather than throwing the work
+                  // away for everyone who does not press Enter.
+                  widget.onTapOutside?.call();
+                  _focus.unfocus();
+                  hideOverlay();
+                },
+              ),
+            ),
+          )
         ],
       ),
     );
   }
+
+  @override
+  GlobalKey<EditableTextState> get editableTextKey => textFieldKey;
+
+  @override
+  bool get forcePressEnabled => false;
+
+  @override
+  bool get selectionEnabled => true;
 }
 
 /// A menu row that opens a submenu beside it (K-194).
@@ -1002,13 +1179,6 @@ class _HouseTextFieldState extends State<HouseTextField> {
 /// first would take this row's `BuildContext` with it, and the overlay the
 /// submenu needs is reached *through* that context. Picking something in the
 /// submenu dismisses both.
-///
-/// **Hovering is enough.** Resting on the row flies the submenu out and moving
-/// on to another row of the same menu takes it back, which is how every menu on
-/// every desktop behaves; clicking still works for anyone who clicks. The row
-/// cannot see the pointer leave for a sibling — the flyout's own barrier is in
-/// the way — so it watches the surface's hover state instead ([FloatSurface]),
-/// which the sibling sets when the pointer arrives on it.
 class SubmenuRow extends StatefulWidget {
   final Widget child;
 
@@ -1348,7 +1518,12 @@ class DragValueField extends StatefulWidget {
     this.onChangeLive,
     this.onChangeEnd,
     this.onDragCancel,
+    this.setExpression,
   });
+
+  /// Offered in the value's context menu when the property can take one.
+  /// Absent (and the menu entry with it) for a field that cannot.
+  final VoidCallback? setExpression;
 
   @override
   State<DragValueField> createState() => _DragValueFieldState();
@@ -1447,6 +1622,18 @@ class _DragValueFieldState extends State<DragValueField> {
                 },
                 child: Text(l10n.menuPaste),
               ),
+              // Only where the property can actually hold one, so the menu on
+              // a field that cannot never offers it.
+              if (widget.setExpression != null)
+                MenuRow(
+                  onPressed: () {
+                    close(null);
+                    widget.setExpression?.call();
+                  },
+                  // Not in l10n yet: the strings file has no key for it, and
+                  // adding one means an arb edit plus regeneration.
+                  child: const Text('Set expression'),
+                ),
             ],
           ),
         ),
@@ -1781,3 +1968,51 @@ class _HoverTipState extends State<_HoverTip> {
         child: widget.child,
       );
 }
+
+
+class AutofillSuggestion<T> {
+  T value;
+  String word;
+
+  AutofillSuggestion(this.value, this.word);
+}
+
+/// A single-line text box in the house style. The dialogs each grew their own
+/// copy of this; it belongs here.
+
+class HouseContextMenu extends StatelessWidget {
+  const HouseContextMenu({this.child, this.itemBuilder, super.key});
+  final Widget? child;
+  final List<MenuRow> Function(void Function() close)? itemBuilder;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+        child: GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onSecondaryTapDown: (d) => _contextMenu(context, d.globalPosition),
+      child: child,
+    ));
+  }
+
+  void _contextMenu(BuildContext context, Offset globalPos) {
+    showLumitPopup<void>(
+      context: context,
+      position: globalPos,
+      builder: (close) => FloatSurface(
+        child: IntrinsicWidth(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ...(itemBuilder?.call(() => close(())) ?? []),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A thin themed slider. `commitOnRelease` reproduces the UI-scale rule
+/// (K-117): the dragged value shows live but `onChanged` fires on release.

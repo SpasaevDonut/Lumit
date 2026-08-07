@@ -97,6 +97,7 @@ class _EffectsPresetsPanelFrbState extends State<EffectsPresetsPanelFrb> {
               const SizedBox(width: 6),
               Expanded(
                 child: HouseTextField(
+                  
                   key: const ValueKey('fx-search'),
                   controller: _search,
                   width: 160,

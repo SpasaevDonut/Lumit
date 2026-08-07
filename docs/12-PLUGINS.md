@@ -6,7 +6,7 @@ the `EffectNamespace` enum's `Ofx`/`Lfx`/`Placeholder` variants render as identi
 preserving parameters and keyframes (shared with [11-AE-IMPORT.md](11-AE-IMPORT.md) §6).
 This document specifies Lumit's extensibility surfaces: the OFX
 host (K-061), the LFX native plugin API (K-062), and the expression/scripting runtime
-(K-063) — see [02-DECISIONS.md](02-DECISIONS.md). Terminology follows
+(K-305, superseding K-063) — see [02-DECISIONS.md](02-DECISIONS.md). Terminology follows
 [01-GLOSSARY.md](01-GLOSSARY.md) exactly. RFC-2119 keywords (MUST, SHOULD, MAY) are
 binding. Process/thread architecture context: [05-ARCHITECTURE.md](05-ARCHITECTURE.md) §7;
 effect placeholder behaviour is shared with [11-AE-IMPORT.md](11-AE-IMPORT.md) §6.
@@ -284,87 +284,145 @@ search, same apply gestures, same Effect Controls layout rules
 
 ### 4.1 Engine
 
-**QuickJS-ng, embedded in `lumit-expr`** (K-063), ES2018 surface. Rationale over V8:
-trivially embeddable, byte-identical behaviour across machines and runs (no JIT tiers),
-built-in memory/time limits, and per-property snippets are interpreter-friendly — the
-host-call cost dominates, not JS execution. The engine version is pinned per project-file
-version so old projects evaluate identically forever. V8 remains the named escape hatch if
-profiling ever shows expression throughput as a real bottleneck.
+**Rhai, embedded in `lumit-core` (K-305).** Rhai is a small scripting language written for
+embedding in Rust: it compiles in as a normal crate with no C dependency, no separate
+runtime to sandbox, and no marshalling layer — a Lumit `f64` is a Rhai `f64`. It has no
+filesystem, network, or process surface to remove, because it never had one.
 
-An expression is a per-property script whose final statement's value replaces the
-property's keyframed value each frame, matching the property's dimension count. Expressions
-read the property graph; they never write it. AE expression compatibility is the point: the
-community's copy-paste knowledge (`wiggle`, `loopOut`, …) must transfer wholesale, and
-imported AE expressions ([11-AE-IMPORT.md](11-AE-IMPORT.md)) must run unmodified when they
-stay inside the implemented surface.
+This **supersedes K-063**, which chose JavaScript on QuickJS-ng. That entry gave one
+reason: QuickJS is a pure-software interpreter, so numbers are bit-identical on every
+machine. K-305 records why that no longer decides it — the same is already true of much of
+the engine, and emphatically of the GPU, where most of Lumit's arithmetic happens, so
+exactness in the evaluator alone does not buy exactness in the picture. See §4.3 for the
+promise that replaces it.
 
-### 4.2 Initial API subset
+**What that costs, stated plainly: Rhai is not JavaScript, so AE expressions do not run
+unmodified.** The earlier plan was for the community's copy-paste knowledge to transfer
+wholesale and for imported `.aep` expressions to work as-is. That is no longer on offer.
+Rhai's syntax is C-like and will look familiar, but `var`, `function`, JS objects and array
+methods are not there, and neither is AE's property-path traversal spelling. The intent
+that survives is **vocabulary, not syntax**: where Lumit provides a function AE also has,
+it keeps AE's name and semantics (`wiggle`, `loopOut`, `linear`, `clamp`), so what
+transfers is knowing *what to reach for*, not pasting the line.
 
-The v1 surface — the montage-expression core. Names and semantics match AE exactly:
+The consequence for import is real and belongs to [11-AE-IMPORT.md](11-AE-IMPORT.md) §8:
+an imported expression is stored verbatim and imported **disabled**, with the property
+holding its keyframed value and the import report naming it. Automatic translation of the
+AE subset is possible later — the vocabulary is deliberately kept compatible to leave that
+door open — but it is not specified here and nothing depends on it.
+
+An expression is a per-property script whose value replaces the property's keyframed value
+each frame. Expressions read the property graph; they never write it.
+
+### 4.2 API surface
+
+**What exists today** (`crates/lumit-core/src/expression/`; the authority is
+[impl/expressions.md](impl/expressions.md), not this table):
 
 | Area | Provided |
 |---|---|
-| Globals | `time` (comp time, seconds), `value`, `thisComp`, `thisLayer`, `thisProperty`, `comp("name")` |
-| Property access | read-only graph traversal: `thisComp.layer("x").transform.position`, `effect("name")("param")` — including OFX/LFX plugin parameters (§2.2, §3.2) |
-| Property methods | `valueAtTime(t)`, `numKeys`, `key(i)` (`.time`/`.value`/`.index`), `nearestKey(t)`, `speedAtTime(t)` |
-| Randomness | `wiggle(freq, amp, octaves, amp_mult, t)`, `seedRandom(seed, timeless)`, `random(...)`, `gaussRandom(...)`, `noise(...)` — all seeded-deterministic (§4.3) |
-| Loops | `loopIn`/`loopOut` (`"cycle"`, `"pingpong"`, `"offset"`, `"continue"`), `loopInDuration`/`loopOutDuration` |
-| Interpolation | `linear`, `ease`, `easeIn`, `easeOut`, `clamp` |
-| Time | `posterizeTime(fps)`, `timeToFrames`, `framesToTime` |
-| Vectors | `length`, `normalize`, `add`, `sub`, `mul`, `div`, `dot`, `cross`, `lookAt` |
-| Markers | `marker.key(i)`, `marker.nearestKey(t)` — beat-marker-driven animation is a first-class montage idiom |
+| Constants | `time` (comp time, seconds), `comp_width`, `comp_height`, `comp_fps`, `num_layers`, `num_markers`, `cut_in`, `cut_out` |
+| Maths | `sin`, `cos`, `sinh`, `cosh`, `floor`, `ceil`, `round`, `abs`, `clamp`, `noise`, `smoothstep`, `fit`, `fit_clamped`, `fit01` |
+| Composition | `comp()` → `.name` |
+| Layer | `layer()`, `layer("name")` → `.name`, `.time`, `.x`, `.y`, `.rotation`, `.scale_x`, `.scale_y`, `.anchor_x`, `.anchor_y`, `.opacity` |
+| Property kinds | **scalars only** — Float parameters and the scalar transform properties |
+| Text | a text layer's line may be an expression, of any result type (K-306) |
 
-Deliberately post-v1: `sampleImage` (pulls rendered pixels — serialises the graph),
-layer-space transforms (`toComp` et al. — needs the 2.5D matrix surface finalised),
-`sourceRectAtTime`, text/path creation APIs. An expression using an unimplemented name
-fails cleanly at first evaluation: the property falls back to its keyframed value, the
-expression is disabled with a calm badge naming the missing API, and the import report /
-Timeline filter can list all disabled expressions.
+`time` is comp time, matching AE. A layer's own clock is `layer().time`. A reference that
+does not resolve returns `-1.0` (or `"Invalid Layer Reference"`) rather than erroring,
+because a name is typed one character at a time and is wrong for most of that.
+
+**The intended surface**, in AE's vocabulary and Rhai's syntax. None of this is built; each
+line is a commitment to a name, not a schedule:
+
+| Area | Planned |
+|---|---|
+| Property access | traversal to another property's evaluated value, including effect parameters and OFX/LFX plugin parameters (§2.2, §3.2) |
+| Property methods | `value_at_time(t)`, `num_keys`, `key(i)` (`.time`/`.value`/`.index`), `nearest_key(t)`, `speed_at_time(t)` |
+| Randomness | `wiggle(freq, amp, octaves, amp_mult, t)`, `seed_random(seed, timeless)`, `random(...)`, `gauss_random(...)` — seeded-deterministic per §4.3 |
+| Loops | `loop_in`/`loop_out` (`"cycle"`, `"pingpong"`, `"offset"`, `"continue"`), `loop_in_duration`/`loop_out_duration` |
+| Interpolation | `linear`, `ease`, `ease_in`, `ease_out` |
+| Time | `posterize_time(fps)`, `time_to_frames`, `frames_to_time` |
+| Vectors | `length`, `normalize`, `add`, `sub`, `mul`, `div`, `dot`, `cross`, `look_at` — needs point and colour properties to be drivable first |
+| Markers | `marker.key(i)`, `marker.nearest_key(t)` — beat-marker-driven animation is a first-class montage idiom |
+
+Names are `snake_case` because that is Rhai's convention and the registered API already
+reads that way; the AE name stays recoverable by eye, which is the point.
+
+Deliberately post-v1: `sample_image` (pulls rendered pixels — serialises the graph),
+layer-space transforms (needs the 2.5D matrix surface finalised), `source_rect_at_time`,
+text and path creation.
+
+**An expression that fails is never a failed frame.** Today a numeric expression that
+errors resolves to `-1.0` and a text one prints nothing; neither is good enough, and
+[impl/expressions.md](impl/expressions.md) §8 carries it as a known gap. The specified
+behaviour is that the property falls back to its keyframed value and the expression is
+disabled with a calm badge naming what went wrong, so the import report and a Timeline
+filter can list every disabled expression.
 
 ### 4.3 Determinism rules
 
-Binding, because distributed and repeated exports MUST agree bit-for-bit:
+**The promise is reproducibility, not bit-identity (K-305).** Binding:
 
-- No `Date`, no wall clock, no filesystem, no network, no `import`/`require`, no
-  `setTimeout`, no locale-sensitive APIs. The global environment is frozen.
-- `Math.random` is replaced by the seeded model: the PRNG is keyed by
-  (property UUID, frame, user seed via `seedRandom`), exactly AE's semantics including
-  `timeless`. Same project, same frame, same value — on any machine, any run.
-- No JIT variance by construction (QuickJS is an interpreter); JS numbers are IEEE-754
-  doubles, bit-identical across x86/ARM for the exposed operations.
+- **Same project, same machine, same frames, every run.** This is what the frame cache key
+  relies on and what the tests assert. Nothing in the evaluator may break it.
+- No wall clock, no filesystem, no network, no ambient authority of any kind. `time` comes
+  from the render context; no system-clock function is registered and none may be added.
+- Randomness, when it arrives, is seeded by (property id, frame, user seed) exactly as AE
+  does, including `timeless`. The `noise(t)` that exists today is already a pure function
+  of `t`, with no seed and no state.
 - Evaluation order is fixed by the property dependency graph; expressions on different
-  properties MUST NOT observe each other's evaluation order. Cross-property reads see the
+  properties MUST NOT observe each other's evaluation order. A cross-property read sees the
   referenced property's evaluated value at the requested time, computed independently.
-- Each evaluation runs under a memory limit and an interrupt-based time budget; a runaway
-  expression is stopped, the property holds its last good value, and the expression gains
-  the disabled badge — never a frozen UI, never a killed export (an export completes with
-  the expression disabled and says so in the export log).
+- **Across operating systems and GPU vendors, Lumit aims to be as close as the hardware
+  allows and does not promise the last bit.** Rhai's `sin`/`cos` reach the platform's libm,
+  which may differ in the final ulp. Someone moving a project between platforms should
+  expect the same picture, not a byte-identical file. Distributed export across mixed
+  machines is the case that would reopen this, and it brings its own evidence (K-305).
+- Do not introduce host-side fast paths that shortcut through `f32`.
 
 ### 4.4 Performance model
 
-- Expressions evaluate per property per frame on worker threads (never the UI thread,
-  K-017), each in an isolated context.
-- **Constant-expression detection**: an expression whose result provably cannot vary with
-  time (no `time`, no property reads that vary, no randomness) is evaluated once per
-  snapshot and cached — AE's 17.0 optimisation, done at parse time.
-- `posterizeTime(fps)` clamps the evaluation clock, so wrapped expressions evaluate at the
-  posterised rate and intermediate frames reuse the cached result.
-- Expression results participate in content hashing: a property whose expression inputs
-  are unchanged hashes identically, so frames above it stay cached
-  ([05-ARCHITECTURE.md](05-ARCHITECTURE.md) §4.2).
-- A per-frame expression budget is measured by the profiler; the Timeline's render-time
-  view attributes cost to expression-heavy properties so users can find their own hot
-  spots. Budget numbers live in [13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md).
+Expressions evaluate per property per frame, on worker threads (never the UI thread,
+K-017) — and twice over, since the frame-cache key resolves them too.
+
+- **Engines are pooled, not built per evaluation.** Building one costs ~370µs against ~1µs
+  to run a typical expression, which is the difference between about forty driven
+  properties per frame and about fifteen thousand. The pool is thread-local, and is a stack
+  rather than one shared engine because expressions nest. The reasoning, and the three
+  properties of it that are load-bearing, are in [impl/expressions.md](impl/expressions.md)
+  §3.
+- Expression results participate in content hashing, so a property whose expression inputs
+  are unchanged hashes identically and frames above it stay cached
+  ([05-ARCHITECTURE.md](05-ARCHITECTURE.md) §4.2). A frame-varying expression keys per
+  frame and a constant one keys once, by construction rather than by configuration.
+
+Specified but **not built**, each a real gap rather than a nicety:
+
+- **No evaluation budget.** A runaway expression is not interrupted, so it can stall a
+  render thread. The requirement stands: an evaluation MUST be stoppable, the property MUST
+  hold its last good value, and an export MUST complete with the expression disabled and
+  say so in the log — never a frozen UI, never a killed export. Rhai offers
+  `Engine::on_progress` for exactly this; wiring it to the epoch token
+  ([impl/playback-scheduler.md](impl/playback-scheduler.md)) is the outstanding work.
+- **No compiled-AST cache.** Every evaluation re-parses. Cheap to add, and no longer the
+  expensive part now that engines are pooled.
+- **No constant-expression detection.** An expression that provably cannot vary with time
+  should be evaluated once per snapshot (AE's 17.0 optimisation, done at parse time).
+- **No `posterize_time` clamp** on the evaluation clock.
+- Per-frame expression cost is not yet attributed in the Timeline's render-time view.
+  Budget numbers live in [13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md).
 
 ### 4.5 App scripting (future)
 
 Project automation — batch import, layer generation, export-queue control, panels — is a
 **separate runtime** from expressions, post-v1. Sketch, recorded now so nothing forecloses
-it: same QuickJS engine, different embedding; scripts run against the command API
+it: the same Rhai engine, differently embedded; scripts run against the command API
 ([05-ARCHITECTURE.md](05-ARCHITECTURE.md) §3) so every scripted change is an undoable
-command; a Deno-style permission model — filesystem, network, and export rights granted
-per script, per session, with the grant UI naming exactly what was requested; no ambient
-authority. Expressions never gain these capabilities; the two runtimes stay distinct.
+command; a Deno-style permission model — filesystem, network, and export rights granted per
+script, per session, with the grant UI naming exactly what was requested; no ambient
+authority. Expressions never gain these capabilities: the two runtimes stay distinct, and
+an expression's engine has no such functions registered at all.
 
 ---
 
@@ -376,11 +434,17 @@ mean effects and expressions arrive from strangers by design.
 
 Boundaries:
 
-- **Expressions**: in-process but hermetic — no IO of any kind, no non-determinism (§4.3),
-  memory and time limits per evaluation. The worst an expression can do is compute the
-  wrong number slowly, once, then get disabled. Project files cannot smuggle capability:
-  there is no API to reach the filesystem, network, or other processes from expression
-  context at all.
+- **Expressions**: in-process but hermetic — no IO of any kind, no non-determinism (§4.3).
+  Project files cannot smuggle capability: there is no API to reach the filesystem,
+  network, or other processes from an expression at all, and the engine has no such
+  functions registered to remove. That part holds today.
+
+  **The time limit does not.** The intent is that the worst an expression can do is compute
+  the wrong number slowly, once, and then get disabled — but no evaluation budget is wired
+  up (§4.4), so a project from a stranger can currently stall a render thread with a loop
+  that does not end. It cannot read or reach anything, so this is a denial of service
+  against the person who opened the file, not an escape; it is nonetheless the one place
+  this section overstates what is built, and it is named rather than left implied.
 - **Plugins (OFX and LFX)**: process isolation is the primary boundary — a plugin process
   owns no project data beyond the frames and parameter values sent to it, and its death is
   routine (§2.3). The plugin server process SHOULD run with reduced privilege: on Windows a

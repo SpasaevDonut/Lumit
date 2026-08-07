@@ -93,9 +93,11 @@ machine". Exceptions require a decision entry in [02-DECISIONS.md](02-DECISIONS.
   hashing (`HashMap` iteration MUST NOT influence output; use ordered structures where order
   reaches pixels) anywhere in evaluation.
 - All randomness in effects and expressions is seeded from
-  `(node_uuid, property, local_time, user_seed)`. `wiggle`/`seedRandom` reproduce exactly
-  across runs and machines (K-063). No `Date`, no IO, no locale access in the expression
-  runtime.
+  `(node_uuid, property, local_time, user_seed)`. `wiggle`/`seed_random` reproduce exactly
+  across runs on a given machine (K-305). No wall clock, no IO, no locale access in the
+  expression runtime. Across platforms the target is as close as the hardware allows, not
+  bit-identity: libm and the GPU both differ in the last bit, so promising it in the
+  evaluator alone would be a promise the picture does not keep.
 - Scheduling MUST NOT change results: whichever thread, order, or tile split evaluates a
   node, the output hash is identical. Reductions with float accumulation MUST use a fixed
   association order (tree reduction), not "whatever order jobs finish".

@@ -17,17 +17,20 @@
 //! unchanged. That is what lets the panel treat "read the value, change one
 //! field, write it" as safe — the ordinary way every control in it works.
 
+use std::sync::Arc;
+
 use flutter_rust_bridge::frb;
 pub use lumit_core::model::EffectInstance;
 use lumit_core::{
     anim::{Animation, Keyframe, Property, SideInterp},
+    expression::ExpressionContext,
     model::{EffectParam, EffectValue, FileParam},
     time::Rational,
 };
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::api::BridgeError;
+use crate::api::{layer::LayerReference, state::PROJECTS, BridgeError};
 
 /// One built-in effect as the Add-effect menu needs it: the stable `name` to
 /// pass to [`crate::api::layer::LayerReference::add_effect`], the sentence-case
@@ -169,6 +172,111 @@ pub fn sample_scalar(scalar: BridgeScalar, time: BridgeRational) -> f64 {
                 .collect();
             lumit_core::anim::evaluate(&keys, seconds).unwrap_or(0.0)
         }
+        BridgeScalar::Expression(expr) => lumit_core::expression::evaluate(&expr, None),
+    }
+}
+
+#[frb(sync)]
+pub fn sample_scalar_with_context(
+    scalar: BridgeScalar,
+    time: BridgeRational,
+    layer: LayerReference,
+) -> f64 {
+    let seconds = if time.den == 0 {
+        0.0
+    } else {
+        time.num as f64 / time.den as f64
+    };
+    match scalar {
+        BridgeScalar::Static(value) => value,
+        BridgeScalar::Keyframed(keys) => {
+            let keys: Vec<Keyframe> = keys
+                .iter()
+                .map(|k| Keyframe {
+                    time: Rational::new(k.time.num, k.time.den).unwrap_or(Rational::ZERO),
+                    value: k.value,
+                    interp_in: k.interp_in.write(),
+                    interp_out: k.interp_out.write(),
+                })
+                .collect();
+            lumit_core::anim::evaluate(&keys, seconds).unwrap_or(0.0)
+        }
+        BridgeScalar::Expression(expr) => {
+            let Some(doc) = document_for(&layer) else {
+                return 0.0;
+            };
+
+            lumit_core::expression::evaluate(
+                &expr,
+                Some(Arc::new(ExpressionContext {
+                    document: doc.clone(),
+                    comp: Some(layer.comp_id),
+                    layer: Some(layer.layer_id),
+                    comp_time: Rational::new(time.num, time.den)
+                        .unwrap_or(Rational::ZERO)
+                        .to_f64(),
+                    current_depth: 0,
+                })),
+            )
+        }
+    }
+}
+
+/// The project document a layer reference points into.
+///
+/// `None` when the project has gone — closed between the panel asking and this
+/// answering, or a lock poisoned by an unrelated panic. Neither is worth taking
+/// the app down for from inside an FFI call, where a panic unwinds across the
+/// language boundary rather than into a handler, so the samplers below fall
+/// back to the un-driven value instead.
+fn document_for(layer: &LayerReference) -> Option<Arc<lumit_core::Document>> {
+    let projects = PROJECTS.read().ok()?;
+    let project = projects.get(&layer.project_id)?.clone();
+    drop(projects);
+    let state = project.read().ok()?;
+    Some(state.store.snapshot())
+}
+
+#[frb(sync)]
+pub fn sample_scalar_range_with_context(
+    scalar: BridgeScalar,
+    layer: LayerReference,
+    start: BridgeRational,
+    end: BridgeRational,
+    samples: i64,
+) -> Vec<f64> {
+    match scalar {
+        BridgeScalar::Expression(expr) => {
+            let Some(doc) = document_for(&layer) else {
+                return Vec::new();
+            };
+
+            let start = Rational::new(start.num, start.den)
+                .unwrap_or(Rational::ZERO)
+                .to_f64();
+
+            let end = Rational::new(end.num, end.den)
+                .unwrap_or(Rational::ZERO)
+                .to_f64();
+
+            lumit_core::expression::evaluate_range(
+                &expr,
+                Some(&ExpressionContext {
+                    document: doc.clone(),
+                    comp: Some(layer.comp_id),
+                    layer: Some(layer.layer_id),
+                    comp_time: 0.0, // this time will be overwritten internally,
+                    current_depth: 0,
+                }),
+                start,
+                end,
+                samples,
+            )
+        }
+        // Only an expression needs sampling by evaluation. A static value is
+        // flat and a keyframed one is drawn from its keys, both of which the
+        // graph editor already has without asking the engine.
+        _ => Vec::new(),
     }
 }
 
@@ -494,6 +602,7 @@ pub enum BridgeScalar {
     /// At least one key, strictly ascending in time — the invariant the
     /// engine's keyframe ops maintain, enforced here on the way in.
     Keyframed(Vec<BridgeKeyframe>),
+    Expression(String),
 }
 
 impl BridgeScalar {
@@ -518,6 +627,7 @@ impl BridgeScalar {
                     .map(|k| BridgeKeyframe::read_at(k, offset))
                     .collect(),
             ),
+            Animation::Expression(expr) => BridgeScalar::Expression(expr.clone()),
         }
     }
 
@@ -548,6 +658,7 @@ impl BridgeScalar {
                 }
                 Ok(Animation::Keyframed(out))
             }
+            BridgeScalar::Expression(expr) => Ok(Animation::Expression(expr.clone())),
         }
     }
 }

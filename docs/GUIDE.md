@@ -4264,3 +4264,115 @@ The list names each language in its own language: Deutsch, Қазақша, Ук�
 简体中文. That is deliberate. Somebody who has set Lumit to a language they turn
 out not to read needs to be able to find their way back, and they will not do it
 by looking for the word "German".
+### A text layer that says whatever the expression works out
+
+Until now a text layer said one fixed thing. You typed some words, and those
+words were what appeared, for the whole length of the layer. Everything else on
+a layer can be animated — position, opacity, an effect's knob — and now, with
+expressions in, animated by a little sum instead of by keyframes. The words were
+the one thing that could not move.
+
+A text layer now has a second box next to its words: **Expression**. Leave it
+empty and nothing changes; the layer says what you typed. Put something in it —
+`time`, or `time * 30`, or `"frame " + (time * comp_fps)` — and the layer says
+whatever that works out to, freshly, at every frame. It is the same little
+language the numeric knobs use. The only difference is what happens to the
+answer: a knob *measures* it, and a text layer *prints* it.
+
+That is deliberately the whole feature. It is there so a number can be put on
+screen — a counter, a readout, and above all the value of an expression you are
+in the middle of writing, which is much easier to debug when you can watch it
+rather than infer it. Letters do not fly in one at a time; that is per-character
+animation and it belongs with the styled-text work, later.
+
+Three details are worth knowing, because each is a trap avoided rather than a
+feature added:
+
+**Your typed words are kept.** Setting an expression does not overwrite them.
+They sit underneath, and clearing the Expression box hands the layer straight
+back to them. An empty box means "no expression", never "an expression that
+produces nothing" — otherwise emptying the field would leave you with a blank
+layer and no way back.
+
+**A broken expression prints nothing rather than stopping the render.** You will
+be typing these while the preview is live, and half a typed expression is not
+valid for most of the time it takes to write one. An unreadable caption for a
+moment is a much smaller problem than a render that falls over, and an empty
+line is the same thing the editor already shows you for empty text.
+
+**The cache is told the truth.** Lumit keeps rendered frames and reuses them,
+and it decides whether two frames are the same by hashing everything that went
+into them. If it hashed the *typed* words for a layer whose words come from an
+expression, every frame of that layer would hash identically — and the number on
+screen would freeze on whatever it read the first time, which is the exact bug
+this feature would otherwise ship with. So the rasteriser and the cache key ask
+the same one function for the line, and by construction cannot disagree: a
+counter keys a new frame each frame, and an expression that always says the same
+thing keys once and is reused, with nothing to configure either way.
+
+### Expressions, and why the engine is kept rather than built
+
+An expression is a line of code sitting where a number would normally sit. A
+property — position, rotation, opacity, an effect's knob — usually holds either
+a fixed value or a row of keyframes. With an expression it holds a small sum
+instead, and the answer is worked out afresh every time the property is read:
+`time * 90` spins a layer at ninety degrees a second without a single keyframe.
+
+The language is [Rhai](https://rhai.rs), a small scripting language that embeds
+into Rust. An expression can read a handful of things about where it is —
+`time`, `comp_width`, `comp_fps`, `cut_in` — and it can reach other layers:
+`layer("Sun").x` is the horizontal position of the layer called Sun, at this
+moment. That last one is what makes expressions worth having rather than a
+novelty, and it is also what makes them awkward to implement, for two reasons
+that are worth spelling out.
+
+**Expressions nest.** Asking for `layer("Sun").x` means evaluating Sun's own x
+property, and Sun's x may itself be an expression. So evaluating one expression
+can start another, part-way through, before the first has finished. In
+programming terms the evaluator is *re-entrant*: it has to cope with being
+called again while it is already running.
+
+**And they can chase their own tail.** If layer A's position reads layer B's,
+and B's reads A's, that nesting never bottoms out. Lumit counts how deep it has
+gone and gives up at a hundred, which is far more nesting than any real rig uses
+and far less than it takes to exhaust the stack and crash.
+
+Now the part that looks odd in the code. To run an expression you need an
+*engine* — the Rhai interpreter, with all of Lumit's functions (`sin`, `noise`,
+`layer`, `comp`) registered into it so expressions can call them. Building one
+is not cheap: registering those functions takes roughly 370 microseconds, which
+sounds like nothing until you notice how often expressions run.
+
+They run *constantly*. Every driven property is re-evaluated for every frame,
+and twice over: once by the renderer to draw the picture, and once by the frame
+cache to work out whether this frame is one it has already got. At sixty frames
+a second, a rig with a few dozen driven properties is tens of thousands of
+evaluations a second. At 370µs each, forty-odd of them would use up the entire
+budget for a frame before anything was drawn.
+
+The obvious fix is to build one engine and keep it. That does not quite work
+here, because the engine is where the *context* is parked — which comp, which
+layer, what time — and a nested evaluation needs a different context from the
+one that is running. One shared engine would have the inner expression trample
+the outer one's context.
+
+So Lumit keeps a small **pool**: a pile of ready-built engines. An evaluation
+takes one off the pile, uses it, and puts it back. A nested evaluation takes a
+second one, so the two never share. In practice the pile ends up as deep as the
+deepest nesting, which is nearly always one. The cost per evaluation drops from
+about 370 microseconds to about one — the engine is built once and then simply
+handed round.
+
+The same instinct applies a little further out. An expression needs to be able
+to look at the project — that is how `layer("Sun")` finds Sun — so it holds a
+reference to the document. Handing it a *copy* of the project would be tidy but
+ruinous: copying a two-hundred-layer project takes about 150µs, and doing that
+once per layer per frame is thirty milliseconds a frame, which is twice the
+whole budget, spent entirely on copying. So the project is shared rather than
+copied (an `Arc`, in Rust's terms — a single copy that many things can point at
+safely), and the sharing is set up once per frame rather than once per layer.
+
+The general lesson, which applies well beyond expressions: anything on the
+per-frame path is run tens of thousands of times a second, so the question is
+never "is this fast enough once", it is "what is this multiplied by sixty, by
+the number of layers".

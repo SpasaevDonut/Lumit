@@ -25,8 +25,10 @@ use crate::draw::{
 };
 use crate::export::mask_rgba;
 use crate::realise::Realiser;
+use lumit_core::expression::ExpressionContext;
 use lumit_core::pixels::{px_tile, solid_rgba};
 use std::collections::HashMap;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// One layer's source pixels ready for a draw: `(rgba, tex_w, tex_h, natural
@@ -136,6 +138,7 @@ pub fn parent_world_placement(
     comp: &lumit_core::model::Composition,
     layer: &lumit_core::model::Layer,
     t_comp: f64,
+    context: Arc<ExpressionContext>,
 ) -> Option<[[f32; 4]; 4]> {
     layer.parent?;
     let chain = lumit_core::model::layer_parent_chain(comp, layer.id);
@@ -148,23 +151,30 @@ pub fn parent_world_placement(
         };
         let alt = t_comp - a.start_offset.0.to_f64();
         let tr = &a.transform;
+        // An ancestor's own expressions are about the ancestor: `layer()`,
+        // `cut_in` and `cut_out` must resolve to the layer being evaluated, not
+        // to the child that started the walk up the chain.
+        let context = Arc::new(ExpressionContext {
+            layer: Some(a.id),
+            ..(*context).clone()
+        });
         let p = lumit_gpu::place_matrix(
             (
-                tr.position_x.value_at(alt) as f32,
-                tr.position_y.value_at(alt) as f32,
+                tr.position_x.value_at_with_context(alt, context.clone()) as f32,
+                tr.position_y.value_at_with_context(alt, context.clone()) as f32,
             ),
             (
-                tr.anchor_x.value_at(alt) as f32,
-                tr.anchor_y.value_at(alt) as f32,
+                tr.anchor_x.value_at_with_context(alt, context.clone()) as f32,
+                tr.anchor_y.value_at_with_context(alt, context.clone()) as f32,
             ),
             (
-                tr.scale_x.value_at(alt) as f32,
-                tr.scale_y.value_at(alt) as f32,
+                tr.scale_x.value_at_with_context(alt, context.clone()) as f32,
+                tr.scale_y.value_at_with_context(alt, context.clone()) as f32,
             ),
-            tr.rotation.value_at(alt) as f32,
-            tr.position_z.value_at(alt) as f32,
-            tr.rotation_x.value_at(alt) as f32,
-            tr.rotation_y.value_at(alt) as f32,
+            tr.rotation.value_at_with_context(alt, context.clone()) as f32,
+            tr.position_z.value_at_with_context(alt, context.clone()) as f32,
+            tr.rotation_x.value_at_with_context(alt, context.clone()) as f32,
+            tr.rotation_y.value_at_with_context(alt, context.clone()) as f32,
         );
         world = Some(match world {
             Some(w) => lumit_gpu::concat_place(w, p),
@@ -190,6 +200,7 @@ pub fn motion_blur_samples(
     comp: &lumit_core::model::Composition,
     layer: &lumit_core::model::Layer,
     t_comp: f64,
+    context: Arc<ExpressionContext>,
 ) -> Vec<lumit_gpu::MbSample> {
     if !layer.switches.motion_blur {
         return Vec::new();
@@ -201,27 +212,36 @@ pub fn motion_blur_samples(
     let dt = 1.0 / comp.frame_rate.fps().max(1.0);
     let start_offset = layer.start_offset.0.to_f64();
     let tr = &layer.transform;
+
     offsets
         .iter()
         .map(|off| {
             let lt = t_comp + off * dt - start_offset;
+            // Each shutter sample is a different moment, so an expression that
+            // reads `time` has to be evaluated at that moment. Reusing the
+            // frame's context would return the same placement for every sample
+            // and an expression-driven layer would simply not smear.
+            let context = Arc::new(ExpressionContext {
+                comp_time: t_comp + off * dt,
+                ..(*context).clone()
+            });
             lumit_gpu::MbSample {
                 position: (
-                    tr.position_x.value_at(lt) as f32,
-                    tr.position_y.value_at(lt) as f32,
+                    tr.position_x.value_at_with_context(lt, context.clone()) as f32,
+                    tr.position_y.value_at_with_context(lt, context.clone()) as f32,
                 ),
                 anchor: (
-                    tr.anchor_x.value_at(lt) as f32,
-                    tr.anchor_y.value_at(lt) as f32,
+                    tr.anchor_x.value_at_with_context(lt, context.clone()) as f32,
+                    tr.anchor_y.value_at_with_context(lt, context.clone()) as f32,
                 ),
                 scale: (
-                    tr.scale_x.value_at(lt) as f32,
-                    tr.scale_y.value_at(lt) as f32,
+                    tr.scale_x.value_at_with_context(lt, context.clone()) as f32,
+                    tr.scale_y.value_at_with_context(lt, context.clone()) as f32,
                 ),
-                rotation_deg: tr.rotation.value_at(lt) as f32,
-                z: tr.position_z.value_at(lt) as f32,
-                rotation_x_deg: tr.rotation_x.value_at(lt) as f32,
-                rotation_y_deg: tr.rotation_y.value_at(lt) as f32,
+                rotation_deg: tr.rotation.value_at_with_context(lt, context.clone()) as f32,
+                z: tr.position_z.value_at_with_context(lt, context.clone()) as f32,
+                rotation_x_deg: tr.rotation_x.value_at_with_context(lt, context.clone()) as f32,
+                rotation_y_deg: tr.rotation_y.value_at_with_context(lt, context.clone()) as f32,
             }
         })
         .collect()
@@ -264,7 +284,18 @@ pub fn build_comp_draws_at(
     let in_span = |l: &lumit_core::model::Layer| {
         t_comp >= l.in_point.0.to_f64() && t_comp < l.out_point.0.to_f64()
     };
+
+    let expr_doc = Arc::new(doc.clone());
+
     let pixels_for = |layer: &lumit_core::model::Layer| -> Option<LayerPixels> {
+        let context = Arc::new(ExpressionContext {
+            document: expr_doc.clone(),
+            layer: Some(layer.id),
+            comp: Some(comp.id),
+            comp_time: t_comp,
+            current_depth: 0,
+        });
+
         let raw = match &layer.kind {
             // Neither kind has pixels of its own. An Adjustment layer is a
             // pass-through until its effect stack exists; a Null never draws at
@@ -305,8 +336,12 @@ pub fn build_comp_draws_at(
             }),
             LayerKind::Text { document } => in_span(layer).then(|| {
                 let fill = solid_rgba(document.fill);
+                // The words at *this* layer time — a plain document hands back
+                // what was typed; an expression-driven one is evaluated here,
+                // which is what makes a caption able to print a live value.
+
                 let r = lumit_text::rasterise_line(
-                    &document.text,
+                    &document.resolved_text(context.clone()),
                     document.size as f32,
                     [fill[0], fill[1], fill[2]],
                 );
@@ -470,6 +505,16 @@ pub fn build_comp_draws_at(
                                 ((comp.width as f32).powi(2) + (comp.height as f32).powi(2)).sqrt();
                             let scale = tex_w as f32 / natural.0.max(1.0);
                             let markers = lumit_core::fx::MarkerContext::for_layer(comp, src);
+                            // The referenced layer's own effects, so its own
+                            // expressions resolve about it rather than about
+                            // the layer that pointed at it.
+                            let context = Arc::new(ExpressionContext {
+                                document: expr_doc.clone(),
+                                comp: Some(comp.id),
+                                layer: Some(src.id),
+                                comp_time: t_comp,
+                                current_depth: 0,
+                            });
                             (
                                 lumit_core::fx::resolve_stack(
                                     &src.effects,
@@ -477,6 +522,7 @@ pub fn build_comp_draws_at(
                                     comp_diag * scale,
                                     scale,
                                     &markers,
+                                    context,
                                 ),
                                 lut_files(&src.effects, slt),
                             )
@@ -551,6 +597,16 @@ pub fn build_comp_draws_at(
                                 ((comp.width as f32).powi(2) + (comp.height as f32).powi(2)).sqrt();
                             let scale = tex_w as f32 / natural.0.max(1.0);
                             let markers = lumit_core::fx::MarkerContext::for_layer(comp, src);
+                            // The referenced layer's own effects, so its own
+                            // expressions resolve about it rather than about
+                            // the layer that pointed at it.
+                            let context = Arc::new(ExpressionContext {
+                                document: expr_doc.clone(),
+                                comp: Some(comp.id),
+                                layer: Some(src.id),
+                                comp_time: t_comp,
+                                current_depth: 0,
+                            });
                             (
                                 lumit_core::fx::resolve_stack(
                                     &src.effects,
@@ -558,6 +614,7 @@ pub fn build_comp_draws_at(
                                     comp_diag * scale,
                                     scale,
                                     &markers,
+                                    context,
                                 ),
                                 lut_files(&src.effects, slt),
                             )
@@ -583,6 +640,14 @@ pub fn build_comp_draws_at(
     let any_solo = lumit_core::model::any_solo(comp);
     let mut draws: Vec<CompLayerDraw> = Vec::new();
     for (idx, layer) in comp.layers.iter().enumerate().rev() {
+        let context = Arc::new(ExpressionContext {
+            document: expr_doc.clone(),
+            comp: Some(comp.id),
+            layer: Some(layer.id),
+            comp_time: t_comp,
+            current_depth: 0,
+        });
+
         if !layer.switches.visible || !in_span(layer) || (any_solo && !layer.switches.solo) {
             continue;
         }
@@ -625,28 +690,31 @@ pub fn build_comp_draws_at(
                     let mut inner =
                         build_comp_draws_at(doc, nested, lt, frame_lt, pixels_by_layer, visited);
                     visited.pop();
+
                     let own = lumit_gpu::place_matrix(
                         (
-                            tr.position_x.value_at(lt) as f32,
-                            tr.position_y.value_at(lt) as f32,
+                            tr.position_x.value_at_with_context(lt, context.clone()) as f32,
+                            tr.position_y.value_at_with_context(lt, context.clone()) as f32,
                         ),
                         (
-                            tr.anchor_x.value_at(lt) as f32,
-                            tr.anchor_y.value_at(lt) as f32,
+                            tr.anchor_x.value_at_with_context(lt, context.clone()) as f32,
+                            tr.anchor_y.value_at_with_context(lt, context.clone()) as f32,
                         ),
                         (
-                            tr.scale_x.value_at(lt) as f32,
-                            tr.scale_y.value_at(lt) as f32,
+                            tr.scale_x.value_at_with_context(lt, context.clone()) as f32,
+                            tr.scale_y.value_at_with_context(lt, context.clone()) as f32,
                         ),
-                        tr.rotation.value_at(lt) as f32,
-                        tr.position_z.value_at(lt) as f32,
-                        tr.rotation_x.value_at(lt) as f32,
-                        tr.rotation_y.value_at(lt) as f32,
+                        tr.rotation.value_at_with_context(lt, context.clone()) as f32,
+                        tr.position_z.value_at_with_context(lt, context.clone()) as f32,
+                        tr.rotation_x.value_at_with_context(lt, context.clone()) as f32,
+                        tr.rotation_y.value_at_with_context(lt, context.clone()) as f32,
                     );
                     // If the collapsed precomp is itself parented, its parent's
                     // world placement wraps its own before it wraps the inner
                     // draws (K-103).
-                    let parent = match parent_world_placement(comp, layer, t_comp) {
+
+                    let parent = match parent_world_placement(comp, layer, t_comp, context.clone())
+                    {
                         Some(pw) => lumit_gpu::concat_place(pw, own),
                         None => own,
                     };
@@ -719,6 +787,7 @@ pub fn build_comp_draws_at(
                         comp_diag,
                         1.0,
                         &markers,
+                        context.clone(),
                     )
                     .into_iter()
                     .unzip()
@@ -758,27 +827,28 @@ pub fn build_comp_draws_at(
                 if fx.is_empty() && temporal_below.is_none() && accumulation_below.is_none() {
                     continue;
                 }
+
                 draws.push(CompLayerDraw {
                     layer: layer.id,
                     source: DrawSource::Adjust,
                     natural_size: (comp.width as f32, comp.height as f32),
                     position: (
-                        tr.position_x.value_at(lt) as f32,
-                        tr.position_y.value_at(lt) as f32,
+                        tr.position_x.value_at_with_context(lt, context.clone()) as f32,
+                        tr.position_y.value_at_with_context(lt, context.clone()) as f32,
                     ),
                     anchor: (
-                        tr.anchor_x.value_at(lt) as f32,
-                        tr.anchor_y.value_at(lt) as f32,
+                        tr.anchor_x.value_at_with_context(lt, context.clone()) as f32,
+                        tr.anchor_y.value_at_with_context(lt, context.clone()) as f32,
                     ),
                     scale: (
-                        tr.scale_x.value_at(lt) as f32,
-                        tr.scale_y.value_at(lt) as f32,
+                        tr.scale_x.value_at_with_context(lt, context.clone()) as f32,
+                        tr.scale_y.value_at_with_context(lt, context.clone()) as f32,
                     ),
-                    rotation_deg: tr.rotation.value_at(lt) as f32,
-                    opacity: tr.opacity.value_at(lt) as f32,
-                    z: tr.position_z.value_at(lt) as f32,
-                    rotation_x_deg: tr.rotation_x.value_at(lt) as f32,
-                    rotation_y_deg: tr.rotation_y.value_at(lt) as f32,
+                    rotation_deg: tr.rotation.value_at_with_context(lt, context.clone()) as f32,
+                    opacity: tr.opacity.value_at_with_context(lt, context.clone()) as f32,
+                    z: tr.position_z.value_at_with_context(lt, context.clone()) as f32,
+                    rotation_x_deg: tr.rotation_x.value_at_with_context(lt, context.clone()) as f32,
+                    rotation_y_deg: tr.rotation_y.value_at_with_context(lt, context.clone()) as f32,
                     three_d: layer.switches.three_d,
                     matte: None,
                     blend: lumit_gpu::Blend::Normal,
@@ -797,7 +867,7 @@ pub fn build_comp_draws_at(
                             comp.height,
                         )
                     }),
-                    pre: parent_world_placement(comp, layer, t_comp),
+                    pre: parent_world_placement(comp, layer, t_comp, context.clone()),
                     fx,
                     fx_ids,
                     // Adjustment layers process the composite below, not
@@ -880,6 +950,7 @@ pub fn build_comp_draws_at(
             } else if mr.source.folds_effects() && src.switches.fx {
                 let comp_diag = ((comp.width as f32).powi(2) + (comp.height as f32).powi(2)).sqrt();
                 let scale = m_w as f32 / m_nat.0.max(1.0);
+
                 let markers = lumit_core::fx::MarkerContext::for_layer(comp, src);
                 (
                     lumit_core::fx::resolve_stack(
@@ -888,6 +959,7 @@ pub fn build_comp_draws_at(
                         comp_diag * scale,
                         scale,
                         &markers,
+                        context.clone(),
                     ),
                     lut_files(&src.effects, mlt),
                 )
@@ -900,22 +972,22 @@ pub fn build_comp_draws_at(
                 tex_h: m_h,
                 natural_size: m_nat,
                 position: (
-                    mtr.position_x.value_at(mlt) as f32,
-                    mtr.position_y.value_at(mlt) as f32,
+                    mtr.position_x.value_at_with_context(mlt, context.clone()) as f32,
+                    mtr.position_y.value_at_with_context(mlt, context.clone()) as f32,
                 ),
                 anchor: (
-                    mtr.anchor_x.value_at(mlt) as f32,
-                    mtr.anchor_y.value_at(mlt) as f32,
+                    mtr.anchor_x.value_at_with_context(mlt, context.clone()) as f32,
+                    mtr.anchor_y.value_at_with_context(mlt, context.clone()) as f32,
                 ),
                 scale: (
-                    mtr.scale_x.value_at(mlt) as f32,
-                    mtr.scale_y.value_at(mlt) as f32,
+                    mtr.scale_x.value_at_with_context(mlt, context.clone()) as f32,
+                    mtr.scale_y.value_at_with_context(mlt, context.clone()) as f32,
                 ),
-                rotation_deg: mtr.rotation.value_at(mlt) as f32,
-                opacity: mtr.opacity.value_at(mlt) as f32,
-                z: mtr.position_z.value_at(mlt) as f32,
-                rotation_x_deg: mtr.rotation_x.value_at(mlt) as f32,
-                rotation_y_deg: mtr.rotation_y.value_at(mlt) as f32,
+                rotation_deg: mtr.rotation.value_at_with_context(mlt, context.clone()) as f32,
+                opacity: mtr.opacity.value_at_with_context(mlt, context.clone()) as f32,
+                z: mtr.position_z.value_at_with_context(mlt, context.clone()) as f32,
+                rotation_x_deg: mtr.rotation_x.value_at_with_context(mlt, context.clone()) as f32,
+                rotation_y_deg: mtr.rotation_y.value_at_with_context(mlt, context.clone()) as f32,
                 three_d: src.switches.three_d,
                 luma: matches!(mr.channel, lumit_core::model::MatteChannel::Luma),
                 inverted: mr.inverted,
@@ -952,6 +1024,7 @@ pub fn build_comp_draws_at(
                     comp_diag * scale,
                     scale,
                     &markers,
+                    context.clone(),
                 )
                 .into_iter()
                 .unzip()
@@ -988,27 +1061,28 @@ pub fn build_comp_draws_at(
                 .as_ref()
                 .map(|(u, v, conf)| (u.clone(), v.clone(), conf.clone(), lp.width, lp.height))
         });
+
         draws.push(CompLayerDraw {
             layer: layer.id,
             source,
             natural_size: natural,
             position: (
-                tr.position_x.value_at(lt) as f32,
-                tr.position_y.value_at(lt) as f32,
+                tr.position_x.value_at_with_context(lt, context.clone()) as f32,
+                tr.position_y.value_at_with_context(lt, context.clone()) as f32,
             ),
             anchor: (
-                tr.anchor_x.value_at(lt) as f32,
-                tr.anchor_y.value_at(lt) as f32,
+                tr.anchor_x.value_at_with_context(lt, context.clone()) as f32,
+                tr.anchor_y.value_at_with_context(lt, context.clone()) as f32,
             ),
             scale: (
-                tr.scale_x.value_at(lt) as f32,
-                tr.scale_y.value_at(lt) as f32,
+                tr.scale_x.value_at_with_context(lt, context.clone()) as f32,
+                tr.scale_y.value_at_with_context(lt, context.clone()) as f32,
             ),
-            rotation_deg: tr.rotation.value_at(lt) as f32,
-            opacity: tr.opacity.value_at(lt) as f32,
-            z: tr.position_z.value_at(lt) as f32,
-            rotation_x_deg: tr.rotation_x.value_at(lt) as f32,
-            rotation_y_deg: tr.rotation_y.value_at(lt) as f32,
+            rotation_deg: tr.rotation.value_at_with_context(lt, context.clone()) as f32,
+            opacity: tr.opacity.value_at_with_context(lt, context.clone()) as f32,
+            z: tr.position_z.value_at_with_context(lt, context.clone()) as f32,
+            rotation_x_deg: tr.rotation_x.value_at_with_context(lt, context.clone()) as f32,
+            rotation_y_deg: tr.rotation_y.value_at_with_context(lt, context.clone()) as f32,
             three_d: layer.switches.three_d,
             matte,
             blend: blend_of(layer.blend),
@@ -1029,7 +1103,7 @@ pub fn build_comp_draws_at(
                 }
                 _ => None,
             },
-            pre: parent_world_placement(comp, layer, t_comp),
+            pre: parent_world_placement(comp, layer, t_comp, context.clone()),
             fx,
             fx_ids,
             neighbours,
@@ -1048,7 +1122,7 @@ pub fn build_comp_draws_at(
             // Per-layer motion blur (docs/06 §4, K-120): the layer's own
             // transform sampled across the open shutter, empty unless it blurs.
             // Built the same way export does, so the two smear identically.
-            mb: motion_blur_samples(comp, layer, t_comp),
+            mb: motion_blur_samples(comp, layer, t_comp, context.clone()),
             // Ordinary layers never carry a temporal re-render — that is an
             // adjustment-only capability in v1 (docs/08 §3.25, §3.26).
             temporal_below: None,
@@ -1380,10 +1454,14 @@ mod parent_placement_tests {
         let child = layer(5.0, 5.0, Some(parent.id));
         let c = comp(vec![gp.clone(), parent.clone(), child.clone()]);
         // No parent → no placement.
-        assert!(parent_world_placement(&c, &gp, 0.0).is_none());
+        assert!(
+            parent_world_placement(&c, &gp, 0.0, Arc::new(ExpressionContext::detached())).is_none()
+        );
         // The child's world placement is grandparent × parent (top outermost),
         // exactly the manual concat — proving the walk and fold order.
-        let world = parent_world_placement(&c, &child, 0.0).unwrap();
+        let world =
+            parent_world_placement(&c, &child, 0.0, Arc::new(ExpressionContext::detached()))
+                .unwrap();
         let expected = lumit_gpu::concat_place(place_of(&gp), place_of(&parent));
         assert_eq!(world, expected);
     }
@@ -1399,7 +1477,9 @@ mod parent_placement_tests {
         null.name = "Null".into();
         let child = layer(5.0, 5.0, Some(null.id));
         let c = comp(vec![null.clone(), child.clone()]);
-        let world = parent_world_placement(&c, &child, 0.0).unwrap();
+        let world =
+            parent_world_placement(&c, &child, 0.0, Arc::new(ExpressionContext::detached()))
+                .unwrap();
         assert_eq!(world, place_of(&null));
     }
 }
@@ -1425,6 +1505,7 @@ mod render_below_at_tests {
             kind: LayerKind::Text {
                 document: TextDocument {
                     text: "hello".into(),
+                    expression: None,
                     size: 48.0,
                     fill: LinearColour([1.0, 0.5, 0.2, 1.0]),
                     extra: serde_json::Map::new(),
@@ -1451,6 +1532,48 @@ mod render_below_at_tests {
             switches: Switches::default(),
             extra: serde_json::Map::new(),
         }
+    }
+
+    // An expression-driven text layer must actually rasterise the line the
+    // expression works out, at the time the frame is being drawn — otherwise
+    // the feature is a document field the picture never reads. The two times
+    // give lines of different lengths, so the raster's own size proves it
+    // without inspecting glyphs.
+    #[test]
+    fn expression_driven_text_rasterises_the_line_at_this_time() {
+        let mut l = text_layer(0.0);
+        if let LayerKind::Text { document } = &mut l.kind {
+            document.expression = Some("time * 100000".into());
+        }
+        let comp = Composition {
+            id: Uuid::now_v7(),
+            name: "c".into(),
+            width: 320,
+            height: 180,
+            frame_rate: FrameRate::new(30, 1).unwrap(),
+            duration: Duration(Rational::new(10, 1).unwrap()),
+            background: LinearColour::BLACK,
+            work_area: None,
+            layers: vec![l],
+            markers: Vec::new(),
+            motion_blur: Default::default(),
+            extra: serde_json::Map::new(),
+        };
+        let doc = Document::new();
+        let pixels: HashMap<Uuid, &CompLayerPixels> = HashMap::new();
+
+        let width_at = |t: f64| {
+            let mut visited = vec![comp.id];
+            let draws = build_comp_draws(&doc, &comp, t, &pixels, &mut visited);
+            match &draws.first().expect("one draw").source {
+                DrawSource::Pixels { tex_w, .. } => *tex_w,
+                _ => panic!("a text layer draws its own pixels"),
+            }
+        };
+
+        // "0.0" against "500000.0" — a longer line, so a wider raster.
+        assert!(width_at(5.0) > width_at(0.0));
+        assert_eq!(width_at(5.0), width_at(5.0), "and it is deterministic");
     }
 
     // docs/impl/temporal-rerender.md §7 step 1: a re-render of a still scene at
