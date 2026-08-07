@@ -8,6 +8,7 @@ import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
+import '../l10n/strings.dart';
 import '../state/workspace.dart';
 import '../theme/theme.dart';
 
@@ -312,9 +313,11 @@ class BareDropdown<T> extends StatelessWidget {
                   for (var i = 0; i < options.length; i++) ...[
                     if (group != null &&
                         group!(options[i]) != null &&
-                        (i == 0 || group!(options[i - 1]) != group!(options[i])))
+                        (i == 0 ||
+                            group!(options[i - 1]) != group!(options[i])))
                       Padding(
-                        padding: EdgeInsets.fromLTRB(10, i == 0 ? 6 : 10, 10, 2),
+                        padding:
+                            EdgeInsets.fromLTRB(10, i == 0 ? 6 : 10, 10, 2),
                         child: Text(
                           group!(options[i])!,
                           style: t.small.copyWith(color: t.textMuted),
@@ -375,8 +378,9 @@ class BareSearchDropdown extends StatelessWidget {
   /// The heading an option sits under, or null for none.
   final String? Function(String)? group;
 
-  /// Placeholder for the search field — what the user is looking for.
-  final String hint;
+  /// Placeholder for the search field — what the user is looking for. Null
+  /// takes the plain word "Search", which is what most callers want.
+  final String? hint;
 
   const BareSearchDropdown({
     super.key,
@@ -384,7 +388,7 @@ class BareSearchDropdown extends StatelessWidget {
     required this.options,
     required this.onChanged,
     this.group,
-    this.hint = 'Search',
+    this.hint,
   });
 
   @override
@@ -403,7 +407,7 @@ class BareSearchDropdown extends StatelessWidget {
               value: value,
               options: options,
               group: group,
-              hint: hint,
+              hint: hint ?? l10n.search,
               onPick: close,
             ),
           ),
@@ -466,11 +470,8 @@ class _SearchPickerBodyState extends State<_SearchPickerBody> {
   /// (case-insensitively, all terms), with a heading each time the group
   /// changes. Flattened so the list builder stays lazy.
   List<_PickerEntry> _build(String query) {
-    final terms = query
-        .toLowerCase()
-        .split(' ')
-        .where((w) => w.isNotEmpty)
-        .toList();
+    final terms =
+        query.toLowerCase().split(' ').where((w) => w.isNotEmpty).toList();
     final out = <_PickerEntry>[];
     String? lastGroup;
     for (var i = 0; i < widget.options.length; i++) {
@@ -517,7 +518,7 @@ class _SearchPickerBodyState extends State<_SearchPickerBody> {
             child: _entries.isEmpty
                 ? Center(
                     child: Text(
-                      'No matches',
+                      l10n.noMatches,
                       style: t.small.copyWith(color: t.textMuted),
                     ),
                   )
@@ -529,7 +530,8 @@ class _SearchPickerBodyState extends State<_SearchPickerBody> {
                       final heading = e.heading;
                       if (heading != null) {
                         return Padding(
-                          padding: EdgeInsets.fromLTRB(10, i == 0 ? 2 : 8, 10, 2),
+                          padding:
+                              EdgeInsets.fromLTRB(10, i == 0 ? 2 : 8, 10, 2),
                           child: Text(
                             heading,
                             style: t.small.copyWith(color: t.textMuted),
@@ -762,8 +764,7 @@ class _MovableWindowState extends State<_MovableWindow> {
     _openModals++;
     _size = widget.initialSize;
     final id = widget.id;
-    final saved =
-        id == null ? null : modalPlacementStore?.windowPlacements[id];
+    final saved = id == null ? null : modalPlacementStore?.windowPlacements[id];
     if (saved != null) {
       _offset = saved.offset;
       // A fixed-size window keeps its natural size however big it was when the
@@ -1424,14 +1425,14 @@ class _DragValueFieldState extends State<DragValueField> {
                     widget.onChanged(
                         widget.resetTo!.clamp(widget.min, widget.max));
                   },
-                  child: const Text('Reset'),
+                  child: Text(l10n.reset),
                 ),
               MenuRow(
                 onPressed: () {
                   close(null);
                   Clipboard.setData(ClipboardData(text: _plain(widget.value)));
                 },
-                child: const Text('Copy'),
+                child: Text(l10n.menuCopy),
               ),
               MenuRow(
                 onPressed: () async {
@@ -1444,7 +1445,7 @@ class _DragValueFieldState extends State<DragValueField> {
                     widget.onChanged(parsed.clamp(widget.min, widget.max));
                   }
                 },
-                child: const Text('Paste'),
+                child: Text(l10n.menuPaste),
               ),
             ],
           ),
@@ -1551,7 +1552,24 @@ class HouseSlider extends StatefulWidget {
   final int decimals;
   final String? suffix;
   final bool commitOnRelease;
+
+  /// How wide the track is drawn. The default suits a settings row; a control
+  /// in a toolbar wants less.
+  final double width;
+
+  /// Whether the number is drawn beside the track.
+  ///
+  /// Off for a slider whose value is already said elsewhere — the Timeline's
+  /// zoom says it in a tooltip, and a readout repeating it would cost the
+  /// bottom bar room it does not have.
+  final bool showValue;
   final ValueChanged<double> onChanged;
+
+  /// Called instead of [onChanged] while the handle is being **dragged**, for
+  /// a control whose live value costs something the committed one does not —
+  /// the Timeline's zoom applies a drag at once and only flies for a tap
+  /// (K-293). Unset, a drag reports through [onChanged] as it always did.
+  final ValueChanged<double>? onChangeLive;
 
   const HouseSlider({
     super.key,
@@ -1563,6 +1581,9 @@ class HouseSlider extends StatefulWidget {
     this.decimals = 2,
     this.suffix,
     this.commitOnRelease = false,
+    this.width = 140,
+    this.showValue = true,
+    this.onChangeLive,
   });
 
   @override
@@ -1585,7 +1606,7 @@ class _HouseSliderState extends State<HouseSlider> {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    const width = 140.0;
+    final width = widget.width;
     final frac =
         ((_shown - widget.min) / (widget.max - widget.min)).clamp(0.0, 1.0);
     return Row(
@@ -1599,7 +1620,7 @@ class _HouseSliderState extends State<HouseSlider> {
             if (widget.commitOnRelease) {
               setState(() => _pending = v);
             } else {
-              widget.onChanged(v);
+              (widget.onChangeLive ?? widget.onChanged)(v);
             }
           },
           onHorizontalDragEnd: (_) {
@@ -1621,11 +1642,13 @@ class _HouseSliderState extends State<HouseSlider> {
             ),
           ),
         ),
-        const SizedBox(width: 8),
-        Text(
-          '${_shown.toStringAsFixed(widget.decimals)}${widget.suffix ?? ''}',
-          style: t.bodyPrimary,
-        ),
+        if (widget.showValue) ...[
+          const SizedBox(width: 8),
+          Text(
+            '${_shown.toStringAsFixed(widget.decimals)}${widget.suffix ?? ''}',
+            style: t.bodyPrimary,
+          ),
+        ],
       ],
     );
   }

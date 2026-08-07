@@ -244,7 +244,7 @@ pub fn readback_linear_f32(
             depth_or_array_layers: 1,
         },
     );
-    ctx.queue.submit([enc.finish()]);
+    ctx.submit([enc.finish()]);
     let slice = buf.slice(..);
     let (tx, rx) = std::sync::mpsc::channel();
     slice.map_async(wgpu::MapMode::Read, move |r| {

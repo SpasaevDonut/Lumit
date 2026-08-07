@@ -50,7 +50,7 @@ Nothing is hosted here. `web/src/pages/download.astro` asks the GitHub releases 
 for the newest release and points the three buttons at its assets:
 
 - `lumit-<version>-windows-x64-setup.exe`
-- `lumit-<version>-linux-x64.tar.gz`
+- `lumit-<version>-linux-x64.flatpak`
 - `lumit-<version>-macos-arm64.dmg`
 
 So **tagging a release updates the site with no deploy** - `.github/workflows/release.yml`
@@ -62,10 +62,10 @@ If the API call fails or is rate-limited (60 requests/hour per IP, unauthenticat
 every button falls back to the releases page, which is a hard-coded `href` in the
 markup. The page is still fully usable with JavaScript disabled.
 
-> **Note.** The macOS `.dmg` in v0.1.0 was not produced by CI - `release.yml` has no
-> macOS job (deliberately, see the comment at the top of that file). Future tags will
-> not produce one until that job exists or someone runs `packaging/macos/make-dmg.sh`
-> by hand and attaches the result.
+> **Note.** Those three names are the whole release (K-304) - `release.yml` builds one
+> artefact per platform and no others, and every job gates the tag, so a release that
+> publishes at all publishes all three. The Linux asset was a `.tar.gz` up to and
+> including v0.1.0.
 
 ## Release notes
 

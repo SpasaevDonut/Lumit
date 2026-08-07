@@ -82,17 +82,56 @@ same decoded ring, so it is warm wherever the cache bar is warm.
 ## 4. Waveforms
 
 - Waveform peaks (min/max/RMS per block) are **computed on demand** from the decoded audio
-  (`lumit-audio::mix::waveform_peaks`). The design intent is a background pass that writes a
-  persistent **peak file** at multiple zoom tiers (samples-per-block 256 / 4 096 / 65 536) to
-  the project sidecar keyed by content hash; that persistent cache is **not yet built**
-  ([TODO.md](TODO.md)).
+  and held as a multi-zoom **peak pyramid** (`lumit-audio::peaks::PeakPyramid`, K-280): one
+  pass over the samples fills the finest tier and the coarser ones fold down from it, at the
+  samples-per-block sizes 256 / 4 096 / 65 536. The pyramid is built once per file and kept
+  for the session by the bridge's own bounded cache (`lumit-bridge::peaks`, keyed by path so
+  two layers cut from one song decode it once). Writing it to the project sidecar as a
+  persistent **peak file** keyed by content hash is still the design intent and **not yet
+  built** ([TODO.md](TODO.md)) — so it is rebuilt the next time the project opens.
 - Waveforms render 0(pixels) from the peak buckets - never from raw decode. Rendering follows
   [15-DESIGN.md](15-DESIGN.md): filled min/max body with RMS core, no per-sample spikes.
+- **The resolution follows the zoom** (K-280). A lane asks for the stretch of source it is
+  currently showing, at one bucket per pixel column, and asks again when a zoom or a scroll
+  moves that window far enough to matter; the pyramid answers from whichever tier is coarse
+  enough that a bucket costs a handful of block merges. Zooming in therefore *gains* detail
+  rather than stretching a summary taken at import — the failure the original fixed
+  2 048-bucket strip had.
+- **Past the finest tier, the samples answer** (K-284). A summary runs out somewhere: below
+  one block per column, neighbouring columns share a block and the wave becomes a staircase
+  of flat slabs. So a short source keeps its **mono mixdown** beside the pyramid (16-bit, at
+  the peak rate — `SAMPLE_KEEP_SECONDS`, about ten minutes, past which the 64× zoom ceiling
+  can never out-resolve the finest tier anyway), and a query finer than one block per bucket
+  is taken straight off it in one streaming pass. Fully zoomed in, the lane then draws the
+  signal itself — a continuous trace, which is what a waveform is supposed to become. The
+  three bands are filtered on the fly over the same pass, run up from
+  `SAMPLE_PREROLL` samples before the window so the filters are settled by the time it
+  starts.
+- **Multiwave** (K-280, redrawn by K-284): alongside the plain wave, the sound is split into
+  three bands — bass (below 200 Hz), middle, treble (above 2 kHz) — with 24 dB/octave
+  filters, and each is summarised the same way. The lane draws all three **over one another
+  around one centre line**, ranked dim to bright as the frequency climbs: the bass fills a
+  soft broad body and the treble lands as bright thin spikes on top of it. So what is in a
+  loud passage is visible where one wave would be a solid block — the kick in the body, the
+  hats in the highlights — and a cut can be aimed at either. Overlaid rather than in three
+  separate lanes, because the point is to see inside the wave you are already reading, and
+  because three lanes in a 22 px row are six pixels each and say nothing. On by default;
+  Settings ▸ Interface ▸ Editing ▸ *Waveforms show the frequency stack* returns the single
+  wave.
+- **Where the wave sits** is a second, independent choice (K-285). Centred about silence by
+  default; Settings ▸ Interface ▸ Editing ▸ *Waveforms rise from the bottom* stands it on the
+  floor of its row instead, rectified — each column reaching up by how far the signal swung
+  either way, whichever was further. Half of a centred wave is a mirror of the other half, so
+  folding it spends the whole row's height on the half that carries information, which reads
+  better in a short row. It applies to the single wave and the stack alike, and it changes
+  nothing about what is fetched: the peaks are the same either way, so switching it repaints
+  and asks the engine for nothing.
 - Waveforms appear: on Audio layers (always), on Footage layers with audio (expandable
   lane), and **inside Sequence layer clips** — each clip draws the waveform of its own
   source range, so a cut's audio content is visible exactly where the clip sits. Clip
-  waveforms account for the clip's trim; they are the primary visual for beat-checking an
-  edit.
+  waveforms account for the clip's trim and its speed map (they are bucketed in the clip's
+  own placed time, so a ramp's transients land where they are heard) and travel with the
+  clip when it is slid; they are the primary visual for beat-checking an edit.
 
 ## 5. Markers and beat detection
 
@@ -132,7 +171,9 @@ same decoded ring, so it is warm wherever the cache bar is warm.
   and the baked mixdown (playback == export, pinned by test); it lives in the layer's
   **Audio** group in the timeline outline, beside a **Waveform** twirl that draws that
   layer's own peaks in its lane (replacing the comp-wide strip — the per-layer lane
-  follows a dragged bar in realtime, where the strip only refreshed on re-mix).
+  follows a dragged bar in realtime, where the strip only refreshed on re-mix). `L` opens
+  that group on the selected layers, `LL` opens the waveform lane inside it, `LLL` shuts
+  them again (K-281).
 - **Mute / solo** via the audible and solo switches ([01-GLOSSARY.md](01-GLOSSARY.md) §2).
   Solo on any layer silences non-soloed audio, matching video solo semantics.
 - **Audio from video footage**: a Footage layer with audio exposes its audio as part of

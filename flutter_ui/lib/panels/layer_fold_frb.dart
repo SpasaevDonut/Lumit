@@ -16,6 +16,9 @@
 // only the one you want — which is what the spec asks for and what keeps a busy
 // comp from becoming a wall of numbers.
 
+import 'package:flutter/services.dart';
+
+import 'package:lumit_flutter/l10n/strings.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
@@ -292,7 +295,17 @@ String effectPath(String layerId, String effectId) =>
 /// The effect instance a fold path names, or null when the path is not one
 /// effect's heading (it is the Effects group itself, one parameter under an
 /// effect, or something else entirely). Used by the render-time indicator to
-/// put an effect's measured cost on its own row (docs/13 §7.1).
+/// put an effect's measured cost on its own row (docs/13 §7.1), and by the
+/// Timeline's heading menu to know which rows can be copied from (K-275).
+/// Whether a click is carrying one of the selection modifiers — Ctrl (Cmd) or
+/// Shift. A heading twirls on a plain click and only *picks* on a modified one
+/// (K-300): a Shift-click running over a stack of effects must not open every
+/// heading it passes.
+bool get isModifiedClick =>
+    HardwareKeyboard.instance.isControlPressed ||
+    HardwareKeyboard.instance.isMetaPressed ||
+    HardwareKeyboard.instance.isShiftPressed;
+
 String? effectIdOfPath(String path) {
   final parts = path.split('/');
   if (parts.length != 3 || parts[1] != 'effects') return null;
@@ -348,7 +361,7 @@ List<LayerFoldRow> layerFoldRows({
 
   rows.add(FoldGroupRow(
     path: transformPath(id),
-    label: 'Transform',
+    label: l10n.transformSection,
     open: transformOpen,
     depth: 1,
   ));
@@ -365,7 +378,7 @@ List<LayerFoldRow> layerFoldRows({
     final contentsOpen = open.contains(contentsPath(id));
     rows.add(FoldGroupRow(
       path: contentsPath(id),
-      label: 'Contents',
+      label: l10n.foldContents,
       open: contentsOpen,
       depth: 1,
     ));
@@ -385,7 +398,7 @@ List<LayerFoldRow> layerFoldRows({
     final masksOpen = open.contains(masksPath(id));
     rows.add(FoldGroupRow(
       path: masksPath(id),
-      label: 'Masks',
+      label: l10n.foldMasks,
       open: masksOpen,
       depth: 1,
     ));
@@ -403,7 +416,7 @@ List<LayerFoldRow> layerFoldRows({
     final paintOpen = open.contains(paintPath(id));
     rows.add(FoldGroupRow(
       path: paintPath(id),
-      label: 'Paint',
+      label: l10n.foldPaint,
       open: paintOpen,
       depth: 1,
     ));
@@ -420,7 +433,7 @@ List<LayerFoldRow> layerFoldRows({
     final effectsOpen = open.contains(effectsPath(id));
     rows.add(FoldGroupRow(
       path: effectsPath(id),
-      label: 'Effects',
+      label: l10n.workspaceEffects,
       open: effectsOpen,
       depth: 1,
     ));
@@ -448,7 +461,7 @@ List<LayerFoldRow> layerFoldRows({
     final audioOpen = open.contains(audioPath(id));
     rows.add(FoldGroupRow(
       path: audioPath(id),
-      label: 'Audio',
+      label: l10n.workspaceAudio,
       open: audioOpen,
       depth: 1,
     ));
@@ -459,7 +472,7 @@ List<LayerFoldRow> layerFoldRows({
       final waveOpen = open.contains(waveformPath(id));
       rows.add(FoldGroupRow(
         path: waveformPath(id),
-        label: 'Waveform',
+        label: l10n.foldWaveform,
         open: waveOpen,
         depth: 2,
       ));

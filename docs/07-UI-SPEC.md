@@ -228,6 +228,17 @@ panel layout is.
 - **Effect** MUST offer one submenu per effect category, each item applying to *every* selected
   layer (K-217), and the whole menu MUST be disabled with nothing selected.
 - **File ▸ Open recent** lists the ten most recent project paths, newest first.
+- **Help ▸ Check for updates** MUST carry the whole update sequence in the one row (K-296):
+  disabled and reading "Checking for updates…" while a check runs, then either
+  "Click to update - v*X.Y.Z*" or back to "Check for updates" with *Lumit is up to date* in
+  the status line. Pressing it MUST NOT close the menu, and the row MUST redraw in place as
+  the state changes. Downloading MUST show progress in the same row, and a downloaded update
+  MUST read "Restart to finish updating" until it is applied.
+- **How an update is applied** follows where Lumit is installed (K-297), and the restart
+  window MUST say which it is: swapped in place and restarted (a per-user installation, the
+  normal case), handed to the installer (anywhere Lumit cannot write to its own files), or
+  handed to Flatpak with the install command, in which case Lumit MUST NOT offer to restart
+  because it is not replacing anything.
 
 ---
 
@@ -299,9 +310,20 @@ A single compact bar at the bottom of the Viewer holds, left to right:
    steps. Users MUST be able to tell a degraded frame from a final one at a glance.
 10. **Background colour** swatch: per-comp background (project state), plus quick black /
     grey / custom.
-11. **Current time** readout in the comp's timecode; click to type a time.
+11. **Current time** readout in the comp's timecode; click to type a time. A time outside
+    the composition lands on the nearest end rather than being refused (K-287).
 
 The bar MUST remain one row; overflow collapses from the right into a chevron menu.
+
+**Nothing on the bar may move as the picture changes (K-287).** Every part of it whose
+text varies — the clock, the playback-mode button, the degradation badge, the preview
+progress — sits in a slot sized for the longest thing it can ever say, and a part that
+comes and goes keeps its slot while it is away. The bar is read while playback runs, and a
+control that re-letters or resizes itself sixty times a second is movement in the corner
+of the eye that means nothing. For the same reason the **playback-mode button says only
+which mode is in force** ("Adaptive res" or "Every frame") and never the tier it has
+settled on: which tier a frame was made at is item 9's badge, which appears only when
+there is something to say.
 
 ### 2.3 Layer controls: the wireframe and the transform gizmo (K-217)
 
@@ -454,7 +476,7 @@ selection moves, and shows a box per layer), and motion paths (§2.4). A layer w
 is keyframed draws no box: there is no single value for a drag to add to. **Masks can be
 drawn, listed, selected, inverted, faded, deleted (by menu or `Delete`), and their points
 selected and moved** (K-224, K-234), and **a shape layer's own art is drawn and edited by the
-same gesture** (K-283) — the two hold the same path type, so a point of either is aimed at,
+same gesture** (K-307) — the two hold the same path type, so a point of either is aimed at,
 swept up and dragged alike. Not built: bezier **handles** on any path, mask or shape (the
 model carries no linked/broken tangent flag, so it is a data-model change as well as a
 gesture); a **paint stroke's** points, a stroke being a stored gesture rather than a path; and
@@ -605,11 +627,16 @@ the transport (§11) and cache system. During scrubs the Viewer shows latest-win
 results (K-017); stale frames MUST never be presented as current without the degradation
 indicator lit.
 
-**Preview progress (K-276).** A frame the user is waiting on — a scrub, a playhead move, a
-dragged value — MUST be able to say how far it has got: a slim bar across the bottom of the
-picture, filling as the engine works through the frame, labelled with the stage it is in
-(preparing, reading media, reading the composition, compositing, showing). Three rules make
-it a help rather than noise:
+**Preview progress (K-276, moved by K-287).** A frame the user is waiting on — a scrub, a
+playhead move, a dragged value — MUST be able to say how far it has got: a slim bar on the
+**right-hand end of the Viewer's transport bar**, filling as the engine works through the
+frame, labelled with the stage it is in (preparing, reading media, reading the
+composition, compositing, showing). It MUST NOT be drawn over the picture: the one thing
+the Viewer exists to show is the picture, and covering its bottom edge exactly while a
+frame is being waited for covers it when it is being looked at hardest. The bar's place on
+the transport is its own — the controls take the space that is left, so the bar arriving
+and leaving MUST NOT move any of them. Three further rules make it a help rather than
+noise:
 
 - It MUST NOT appear during playback. A frame due in sixteen milliseconds has no use for a
   progress bar, and one blinking per frame would be the busiest thing on screen.
@@ -745,7 +772,9 @@ project's: a tab dragged onto another takes its place, and the order rides along
 session. Right-clicking a tab opens **Composition settings…** for that comp, the same
 dialog the Project panel's context menu opens, reached from the comp being worked in. Below them the outline carries two header rows
 of its own: the **toolbar** (the playhead as `HH:MM:SS:FF` timecode plus a zero-based
-frame readout `f72`, the layer search, the master motion-blur button, the shy filter, the
+frame readout `f72` — both in **fixed-width slots** and both **click-to-type**, per K-287:
+a time typed into either moves the playhead, and one outside the composition lands on the
+nearest end — the layer search, the master motion-blur button, the shy filter, the
 Lane and Graph view buttons, and a ⋯ menu with the layer / razor / work-area / marker /
 beat commands) and the **column-group header** (§4.2). The lane side gives those two
 rows' height to a taller, labelled time ruler — a bigger playhead grab — with the cache
@@ -878,6 +907,13 @@ measurement — the panel shows the numbers, it does not turn them on.
   tidy list of section headings, each in its own subtle full-width bar, and you open only the
   group you want. In Effect Controls (and the Effects group here) an effect's name is a drag
   handle for reordering the stack.
+- **A section heading is selected by clicking its name, and twirled by the same click**
+  (K-300). A *modified* click — `Ctrl` to toggle, `Shift` to extend the run — only selects, so
+  picking several effects does not open every one of them on the way past; the twirl mark
+  beside the name always twirls and never selects. An **effect's** heading picked this way is
+  what **Copy**, **Cut** and **Copy effect** act on, and the pick is shared with the Effect
+  controls panel (§6), so an effect chosen in one place is lit in the other. Several picked
+  effects copy as one `.lumfx` document in stack order.
 - Each animatable property lane shows: stopwatch (keyframing on/off), value with
   **scrub-drag** and click-to-type numeric entry, expression toggle, and its keyframes as
   diamonds on the lane. Keyframe icons reflect interpolation (hold/linear/bezier), matching
@@ -999,20 +1035,65 @@ plus `Ctrl`-hold to suspend during a drag.
 read, and it is gone (K-230, §1.7): a global switch belongs there once there is snapping
 outside the Timeline for it to govern.
 
-**Shipped (K-190):** the **magnet** in the lane bottom bar, on by default, covering the
-one snap that exists so far — a keyframe dragged on its lane lands on a whole frame. With
-it off the key may sit *between* frames: the time is quantised to a thousandth of a frame
-and built from the comp's exact rate, so it stays rational (docs/14 §2) rather than
-becoming a rounded double. The other sources and targets, and `Ctrl`-hold, are still to
-build. Snap distance is measured in screen pixels, not
-time, so zoom level controls precision. The snapped-to target MUST be indicated at the
-moment of capture. Beat-marker snapping is the beat-sync covenant's daily face: dragging an
-edit point near a beat marker lands exactly on it.
+**Shipped (K-190, K-292):** the **magnet** in the lane bottom bar, on by default. With it
+off a key may sit *between* frames: the time is quantised to a thousandth of a frame and
+built from the comp's exact rate, so it stays rational (docs/14 §2) rather than becoming a
+rounded double.
+
+With it on, a keyframe dragged on its lane lands on the nearest **target** within reach —
+edit points, layer in/out points, other keyframes, markers (composition and layer, **beat
+markers among them**), the playhead, and the work area edges — and on a whole frame when
+there is nothing near, which was K-190's original and much narrower behaviour. Beat-marker
+snapping is the beat-sync covenant's daily face, and it comes for free because a beat marker
+*is* a marker.
+
+Snap distance is measured in **screen pixels**, not time, so zoom level controls precision.
+The snapped-to target is indicated at the moment of capture — a line at what caught the drag.
+**`Ctrl` held suspends snapping** for as long as it is held, which is the way out when the
+wanted place is exactly where a snap will not allow.
+
+**The razor snaps too, and its line says where the edge bites** (owner, 2026-08-06). A cut
+was always quantised — it lands on a whole frame — while the blade's line followed the pointer
+continuously, so the two disagreed by up to half a frame. Both now read one function: the line
+stands exactly where the cut will land, and with the magnet on the cut takes the nearest target
+in reach before falling back to the nearest frame. A cut is a clip boundary, so it lands on a
+whole frame even when what caught it sits between two.
+
+Still to build: snapping for the gestures other than a lane key drag and the razor — the layer
+**bar** drag, the work-area handles and marker drags all still land where the pointer puts
+them. The arithmetic is shared and pure (`panels/timeline_snap.dart`), so each is a
+wiring job rather than a design one.
 
 ### 4.6 Navigation, zoom, and scroll
 
 - Plain wheel scrolls vertically. `Shift+wheel` scrolls horizontally. `Ctrl+wheel` zooms
   time about the pointer. The wheel MUST never zoom without a modifier (no scroll hijack).
+- **Zoom flies rather than cutting** (K-293): magnification is a place changing, not a value
+  being nudged, so it animates — geometrically, because zoom is a ratio and equal time should
+  buy equal ratio. Notches arriving quickly are worth more, so a rolled wheel covers ground
+  while a clicked one stays precise; when the hand stops, the flight finishes and settles
+  rather than stopping where the last notch fell. The frame under the pointer is held there
+  for the whole flight, not merely at its ends.
+- **The bottom bar's zoom is a slider** between a small landscape glyph and a large one — the
+  pair After Effects flanks its own zoom slider with, painter-drawn so the small end can sit
+  under K-209's 16px floor without crunching (K-293). Its left end is the whole composition;
+  its right end shows **20 frames** across the lanes, whatever the composition's length — a
+  count of frames rather than a magnification, because that is what the number means to a
+  person. It runs on the logarithm of the zoom, so equal travel buys equal ratio.
+- **A slider zoom holds the playhead still; `Ctrl+wheel` holds the frame under the pointer**
+  (K-293). The slider has no pointer to zoom about, and the playhead is where the work is —
+  the same thing After Effects zooms its timeline about. A playhead in view keeps the screen
+  position it has; a playhead out of view is brought to the middle of the lanes.
+- **The scroll correction that holds the anchor MUST happen inside layout** (K-293): the
+  offset that keeps a frame still is only valid for the width the zoom has just produced, so
+  moving it before that width is laid out leaves the view scrolled past its own end for a
+  frame — which springs back, and draws the scrollbar's thumb from a position and a length
+  that disagree.
+- **A dragged zoom control MUST NOT animate** (K-293). The flight fills the gap between zooms
+  that arrive in steps — a wheel notch, a tap on the track. A drag is already continuous, so
+  it applies at once, and the handle is drawn from the zoom being asked for rather than from
+  the flight's current value; animating a drag makes the lanes trail the finger by a flight's
+  length and restart before arriving.
 - **A trackpad's two-finger scroll MUST scroll the panel** (K-278). It arrives as a pan
   *gesture* rather than as the wheel's signal, so the panel — which otherwise gives drags to
   the keyframe marquee — MUST admit exactly the trackpad as a drag-scroll device, and every
@@ -1040,12 +1121,12 @@ with its own thumb. Each thumb lives in a fixed-width **gutter** down the right 
 half, outside the horizontal scroller so it stays pinned to the viewport edge, and the
 outline reserves the same gutter with an undraggable block level with its toolbar and
 column header — so the columns never shift as the view changes. The lane bottom bar
-carries − / + / Fit time zoom, the magnet, and the horizontal scrollbar. **The wheel
+carries the time-zoom slider, the magnet, and the horizontal scrollbar. **The wheel
 scrolls, dragging never does**: a plain wheel moves the rows, `Shift+wheel` scrolls
 sideways, `Ctrl+wheel` zooms time about the pointer, and a drag on empty lane space is the
-keyframe marquee. A zoom with no pointer to zoom about — the bottom bar's − / + — holds
-the middle of the visible lanes still instead of the left edge, so what is being looked at
-stays on screen. Still to build: `=`/`-`/`\`, and edge-follow during playback.
+keyframe marquee. A zoom with no pointer to zoom about — the slider — holds the playhead
+still instead (§4.6, K-293), so what is being worked on stays on screen. Still to build:
+`=`/`-`/`\`, and edge-follow during playback.
 
 ### 4.7 Editing behaviours
 
@@ -1055,6 +1136,16 @@ stays on screen. Still to build: `=`/`-`/`\`, and edge-follow during playback.
   **Shipped (K-193):** dragging a layer's **bar** moves it in time, and dragging a layer's
   **name** in the outline moves it up or down the stack — drop it on a row and it takes
   that row's place, as one undo step. A locked layer neither drags nor accepts a drop.
+
+  **What the lock means (K-291).** A locked layer refuses every edit to what it *is* — its
+  transform, effects, masks, paint, art, text, clips, markers, blend, matte, parent, retime,
+  volume, its switches, its span, its place in the stack and its existence. The refusal is in
+  the **engine**, so it holds for every caller, not only the gestures the Timeline happens to
+  guard; the property rows are also shown read-only, so the interface never offers a gesture
+  that would only be refused. A *group* heading in the fold-out stays live: twirling one open
+  is navigation, not editing. Three things a locked layer still accepts, because they are the
+  Timeline's own bookkeeping rather than the composition: the **lock** itself (or it could
+  never be undone), **shy**, and the **label** colour.
   Footage or a comp dragged in from the Project panel lands **where it was dropped** —
   the slot the pointer let go over, by the same midpoint rule — rather than always at the
   top of the stack; a drop past the last layer lands at the bottom.
@@ -1237,6 +1328,15 @@ Shows the **effect stack** of the selected layer (tab per recently viewed layer,
   that space: moving an effect is a handful of acts in a session, and what it costs is read
   continuously while a comp is being made faster. The menu lists only the moves that effect
   can make.
+
+  **An effect's name selects it** (K-300), taking the selection fill across the heading bar —
+  plain replaces, `Ctrl` toggles, `Shift` extends the run down the stack. Selecting an effect
+  **does not fold it**: the twirl mark is the only thing that opens and shuts a card, because
+  a click that did both would take the parameters away at the moment you said which effect you
+  meant. It is the same selection the Timeline's fold-out shows (§4.3),
+  so an effect picked in either place is lit in both, and it is what **Copy**, **Cut** and the
+  heading's **Copy effect** act on. Source and Transform are not part of a stack and so are
+  not selectable; their headings twirl as they always did.
 
   **Round shape keeps its bubble** (K-092): the same rows, wrapped in floating-card chrome.
   The two shapes differ in chrome, not in layout.
@@ -1442,8 +1542,19 @@ The v1 sync toolkit (K-050); the Composer workspace is future work specified in
 - **Waveforms in the Timeline**: every audible layer MAY show its waveform inside its row
   (twirl the Audio group, or a per-layer waveform toggle); the Audio workspace defaults
   them on. Waveform rendering MUST stay responsive at any zoom (mip-mapped peaks).
-  **Shipped (K-172):** the Audio group (Volume + Waveform twirl) in the layer outline; the
-  lane draws the item's 2048-bucket peak strip through the layer's live offset each paint.
+  **Shipped (K-172, K-280):** the Audio group (Volume + Waveform twirl) in the layer
+  outline; the lane draws the layer's own peaks through its live offset each paint. The
+  peaks are **mip-mapped and window-fetched** (K-280): the lane asks the engine for the
+  stretch of source it is showing at one bucket per pixel column, and asks again when the
+  zoom or the scroll moves that window, so the drawn detail follows the zoom instead of
+  stretching one fixed summary. Sequence-layer **clips** draw their own waveform inside
+  their box, bucketed through the clip's own map so a ramp's transients land where they are
+  heard, and carried along when the clip is slid. Waveforms draw as a three-band
+  **multiwave** stack (bass / middle / treble) by default, drawn over one another around one
+  centre line rather than in separate lanes (K-284); Settings ▸ Interface ▸ Editing ▸
+  *Waveforms show the frequency stack* turns it off for one plain wave, and *Waveforms rise
+  from the bottom* stands either of them on the floor of the row rather than centring it
+  (K-285).
   The earlier comp-wide strip under the ruler is gone — it was one mixed-down waveform for
   the whole comp, went stale during a drag, and stopped earning its row once every layer
   could carry its own.
@@ -1542,7 +1653,10 @@ no-wizard rule below.
 
 The **v1 build** (K-246) ships the minimal form of this screen: two plain choices,
 **AE-style** and **Vegas-style**, where Vegas ticks the two K-246 settings (Retime opens to
-speed; video arrives as a Sequence layer) and AE ticks neither. The four cards above, with a
+speed; video arrives as a Sequence layer) and AE ticks neither. Along the bottom sits one
+tick, **on by default**, for automatic update checks (K-296) — the same setting as
+Settings ▸ General ▸ Updates, asked here because it is a decision about how Lumit behaves
+from now on. Skipping the screen leaves it on. The four cards above, with a
 small image over each choice, remain the destination (polish tracked in TODO).
 
 ### 13.2 Empty states
@@ -1555,8 +1669,15 @@ small image over each choice, remain the destination (polish tracked in TODO).
   press the new-Sequence-layer / new-Solid shortcuts). Hints disappear at first content
   and never return unprompted.
 - **Tooltips policy**: every icon control has a tooltip with its name and current shortcut,
-  on a ~500 ms hover delay. Rich tooltips (a sentence + *Learn more* link) are reserved for
-  concepts with Lumit-specific behaviour (Retime, overrun, matte, adaptive degradation).
+  on a ~500 ms hover delay. **A tooltip is a name, not an explanation: under five words,
+  two where two will do** (K-303). *Add keyframe*, not *Add a keyframe here*; *Reset all
+  parameters*, not *Put every parameter back to its default, removing its keyframes*. A
+  control whose state changes says the state — *Visible* / *Hidden*, *Locked* / *Lock* —
+  rather than narrating the click. Rich tooltips (a sentence + *Learn more* link) are
+  reserved for concepts with Lumit-specific behaviour (Retime, overrun, matte, adaptive
+  degradation) and for the readouts that carry live figures or warn that a click throws
+  work away; each one is named, with its reason, in `flutter_ui/test/l10n/arb_test.dart`,
+  which fails any other tooltip that runs long.
   Tooltips MUST never block input, auto-play media, or step users through forced tours.
   A single setting disables all tooltips.
 - No multi-step onboarding wizard or forced tour. The single first-run screen (§13.1),
@@ -1616,7 +1737,26 @@ attribute choice is remembered but overridden by a multiple selection, which can
 refusal from the engine leaves the dialogue open saying so, rather than closing on a move that
 did not happen.
 
-### 13.5 Floating windows (K-242)
+### 13.5 The Project settings window (K-286)
+
+**File ▸ Project settings…** (`Mod+Alt+Shift+K`), disabled with no project open, holds the
+values that belong to the *project* rather than to this machine — saved inside the `.lum`,
+undoable like any other edit, and the same when the file is opened somewhere else. It is a
+plain form in the same shape as a Settings page (a named section, rows of what-it-is,
+what-it-does, control-on-the-right) in a window of its own, and it exists so that §15's
+"almost every value there is machine-local" can go back to being simply true.
+
+- **Anti-aliasing** — the number of coverage samples per pixel the composite is drawn with
+  (Off / 2 / 4 / 8, default 8). **One value serves the preview and the export**, which is the
+  K-031 identity. Where the graphics card cannot manage the count asked for, a second row
+  states what is being used instead, in the calm voice; the project keeps the value its author
+  chose and nothing is rewritten behind the user's back.
+
+Colour management and export defaults land here when they are built, not in Settings. The disk
+cache's *Applies to* row stays in Settings ▸ Performance (K-215): choosing between the two
+scopes is that control's whole job, so it is the one that stands in both.
+
+### 13.6 Floating windows (K-242)
 
 Every window that floats over the shell — Settings, the theme editor, Export, Composition
 settings, New composition, Pre-compose — opens centred and **can be dragged anywhere in the
@@ -1674,8 +1814,10 @@ Binding, from the household mandate; these override convenience everywhere.
 
 ### Settings inventory (K-031/K-032 anchors)
 
-The Settings window groups, minimum set — every value here is machine-local (never in the
-project file, [10-FILE-FORMAT.md](10-FILE-FORMAT.md) §2):
+The Settings window groups, minimum set. Almost every value here is machine-local (never in
+the project file, [10-FILE-FORMAT.md](10-FILE-FORMAT.md) §2); the exceptions are the few that
+change what a composition *looks like* or where its own frames are parked, which have to
+travel in the `.lum` and are marked below:
 
 - **Performance**: RAM budget for Lumit (default 60% of system, slider + absolute),
   VRAM budget (default 70%), CUDA acceleration on/off (per K-014 it is only ever an
@@ -1690,6 +1832,17 @@ project file, [10-FILE-FORMAT.md](10-FILE-FORMAT.md) §2):
   header text so users understand what the app guarantees.
 - **Export**: default preset, export priority default (background/balanced/fast), encoder
   preference order, filename template.
+- **Rendering** — *not here at all*: it is the project's, not this machine's, so it lives in
+  the **Project settings** window instead (§13.5, K-286).
+- **Updates** (K-296), under General: *Automatic updates* — look for a new version at
+  launch, at most once a day — on by default, plus a readout of the installed version and a
+  button driving the same check the Help row does. Checking is all "on" means; the download
+  always waits to be asked for.
+- **Language** (K-303), under Interface: which language the interface is written in.
+  Defaults to the machine's own and stores nothing until chosen, so an unset Lumit follows
+  the operating system for ever rather than freezing whichever language it first opened in.
+  The list names each language in its own language — Deutsch, Қазақша, Українська, 简体中文
+  — so somebody who has chosen one they cannot read can find their way back.
 - **Keymap**, **Interface** (UI scale, tooltips, reduced motion follows OS or override),
   **Autosave** (interval, copies kept), **Plugins** (search paths, disabled list,
   per-plugin overrides).
@@ -1697,8 +1850,13 @@ project file, [10-FILE-FORMAT.md](10-FILE-FORMAT.md) §2):
 **The window (K-193, K-194).** It opens from **Window → Settings…** or **Ctrl/Cmd+comma** — a
 sidebar of pages, each a stack of named sections, each section a card of rows carrying what
 the setting is, a line saying what it does, and its control on the right. Its pages are
-**General** (reset workspace, version and build), **Appearance** (colour scheme, corners,
-interface motion), **Interface** (UI scale, tooltips, and whether the Effect controls panel
+**General** (reset workspace, version and build), **Appearance** (colour scheme with an
+eight-swatch preview beside it, the theme shelf — Duplicate, Rename…, Delete, Import… and
+Export… (K-298) — corners,
+interface motion, and the Scopes and Viewer toggles — themed scope colours, themed surround,
+and whether the Viewer smooths the picture when it is zoomed past 1:1, all three off by
+default: a magnified pixel is a square, because looking at the pixels is what zooming in is
+for), **Interface** (UI scale, tooltips, and whether the Effect controls panel
 repeats the layer's Source, Transform and Retime rows — off by default, since the Timeline's
 fold-out already shows them), and **Performance** (playback mode, quality tier and reset,
 and the RAM and VRAM frame-cache budgets with their readouts and Clear buttons). The two
@@ -1730,6 +1888,19 @@ display); the keymap serialises to a shareable file. An "After Effects" alternat
 ships for muscle-memory cases where Lumit's default deviates. Notable deviations from AE:
 `J/K/L` are shuttle transport (the audience's NLE habit, per the layout brief), so keyframe
 navigation moves to `,`/`.`; Viewer zoom therefore lives on `Ctrl+=`/`Ctrl+-` and the wheel.
+Inside the **Timeline** `L` reveals a layer's Audio instead (K-281) — the panel where you
+reach for a layer's sound is the panel where you are least often shuttling — and the
+transport keeps it in every other context.
+
+**Shadowing is not a clash (K-281).** A binding scoped to a panel takes a chord over from an
+app-wide one while that panel is focused; which action fires is decided by a stated rule (the
+focused panel gets first refusal, app-wide is the fallback), so Settings → Keymap reports
+those as *shadows* — a quiet note above the table reading "`Ctrl+Z` — Zoom time in in the
+Timeline, Undo elsewhere", not a bordered warning — rather than as conflicts to resolve. It is
+said at all because the app-wide meaning does stop working in that one panel. Two bindings in
+the *same* context, which nothing can tell apart, remain a conflict and keep the banner; a
+rebind cannot make one (the previous owner is evicted), so in practice the banner is what an
+imported keymap file trips.
 
 **Shipped (K-199).** Settings → Keymap is a table, grouped by the context a binding is live
 in, with the action's name on the left and its chords on the right — click a chord cell and
@@ -1738,7 +1909,8 @@ shipped chord back. Above it: a search box that matches what the table *shows* a
 the ids underneath, the two presets, and Import / Export for the shareable file. A chord
 another action already holds is taken rather than refused (refusing would make swapping two
 actions' keys impossible) — within one context the previous owner's row simply goes blank,
-and across overlapping contexts a banner names the clash. One row, one chord (K-200): no
+and across contexts sharing a chord the panel-scoped one simply wins where it is focused
+(K-281, reported as a shadow note rather than a banner). One row, one chord (K-200): no
 shipped action carries two, and a user who wants a second spelling of a command binds it
 themselves.
 
@@ -1751,15 +1923,16 @@ Two honest gaps. The **Project**, **Panels** and **Effects** contexts have rows
 in the table and nothing behind them — those commands are not built on this frontend, so the
 bindings are real and pressing them does nothing. The **Tools** context arms the toolbar's
 tools (§1.7) and cycles a group on a repeat press, but what most tools then *do* is not built
-either, so the chord lands and the picture stays as it was. And the arrows step a frame alongside
-`Page Down`/`Page Up`; the table below did not name them, which would have quietly taken
-them away the day dispatch started going through the keymap.
+either, so the chord lands and the picture stays as it was. Stepping a frame has a second
+chord alongside `Page Down`/`Page Up` — `Ctrl`+arrow (K-282); the **bare** arrows do nothing
+app-wide, so a list, a field or a canvas is free to use them for moving within itself.
 
 | Context | Key | Action |
 |---|---|---|
 | Global | `Space` | Play / pause |
 | Global | `J` / `K` / `L` | Shuttle reverse / pause / forward (repeat `J`/`L` steps ×2, ×4, ×8) |
 | Global | `Page Down` / `Page Up` | Next / previous frame |
+| Global | `Ctrl+→` / `Ctrl+←` | Next / previous frame (K-282; `Cmd` on macOS) |
 | Global | `Shift+Page Down` / `Shift+Page Up` | ±10 frames |
 | Global | `Home` / `End` | Comp start / end |
 | Global | `Shift+Home` / `Shift+End` | Work area start / end |
@@ -1774,12 +1947,14 @@ them away the day dispatch started going through the keymap.
 | Global | `Ctrl+Shift+P` | Command palette |
 | Global | `Ctrl+M` | Add active comp to export queue |
 | Global | `Ctrl+K` | Composition settings |
+| Global | `Ctrl+Alt+Shift+K` | Project settings (K-286) |
 | Global | `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / redo |
 | Global | `Ctrl+Alt+N` / `Ctrl+N` | New project / new composition (After Effects' pairing) |
 | Global | `Ctrl+O` | Open a project |
 | Global | `Ctrl+S` / `Ctrl+Shift+S` | Save / Save as |
 | Global | `Ctrl+I` | Import footage |
 | Global | `Ctrl+Alt+M` | Export the composition |
+| Global | `Ctrl+X` / `Ctrl+C` / `Ctrl+V` | Cut / copy / paste the selection — picked keyframes, else the selected property rows (their keys, or their plain value where they have none, K-301), else the picked effects, else the layer (K-300) |
 | Global | `Ctrl+A` / `Ctrl+Shift+A` | Select all layers / deselect all |
 | Global | `Ctrl+Alt+;` | Settings (Preferences) |
 | Global | `Alt+Shift+1…9` | Switch workspace |
@@ -1800,7 +1975,7 @@ them away the day dispatch started going through the keymap.
 | Timeline | `P` `S` `R` `T` `A` | Reveal position / scale / rotation / opacity / anchor |
 | Timeline | `E` / `M` | Reveal effects / masks |
 | Timeline | `U` / `UU` | Reveal animated / modified properties |
-| Timeline | `Shift+L` | Reveal volume (audio) |
+| Timeline | `L` / `LL` / `LLL` | Reveal Audio / and its waveform / shut again (K-281; `Shift+L` does the same). Inside the Timeline this takes `L` from the shuttle transport, which keeps it everywhere else |
 | Timeline | `[` / `]` | Move layer in / out to playhead |
 | Timeline | `Alt+[` / `Alt+]` | Trim layer in / out at playhead |
 | Timeline | `Ctrl+Shift+D` | Split layer / cut clip at playhead |

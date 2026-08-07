@@ -292,6 +292,10 @@ impl FrameProfiler {
     pub fn span<T>(&self, ctx: &lumit_gpu::GpuContext, f: impl FnOnce() -> T) -> (T, f32) {
         let started = std::time::Instant::now();
         let out = f();
+        // The span may have recorded into a batched frame buffer; hand it over
+        // before fencing, or the wait returns on an empty queue and the number
+        // is meaningless.
+        ctx.flush();
         ctx.device.poll(wgpu::Maintain::Wait);
         (out, started.elapsed().as_secs_f32() * 1000.0)
     }

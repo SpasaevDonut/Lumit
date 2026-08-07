@@ -362,6 +362,43 @@ the mode can land later without moving any shipped parameter. Full-image convolu
 seconds-per-frame offline technique, not an interactive effect; the top-K model is what
 fits a compositor.
 
+### 6a. Which layer the matte reads (K-288)
+
+The Matte layer parameter defaults to **this layer** — the layer the effect is on — and
+that reference does not render a second picture: it binds the effect's own input at its
+point in the stack (`fxops::LayerInput::ThisLayer`, chosen by the draw builder when the
+reference equals the owning layer's id). Two things fall out of that, and both were
+broken before it:
+
+- **Alignment is free.** The effect's input is already at the raster the flare writes,
+  so no resample stands between the picture and the detection grid. A separately
+  rendered layer has to be stretched to the working raster first.
+- **Adjustment layers work at all.** An adjustment layer has no picture of its own, so
+  the old "point at another layer" model had no correct answer there: whatever you
+  picked, you detected lights in the wrong image. Its input *is* the composite of
+  everything below it, which is exactly the picture an adjustment-layer flare is meant
+  to flare.
+
+Pointing the parameter at any other layer keeps the K-257 behaviour unchanged (rendered
+alone at this raster, its own masks and effects per the K-142 source mode). See K-288
+for the general rule, which covers every layer-input parameter, not just this one.
+
+### 6b. Blending the element in (K-289)
+
+The combine stage no longer asks Transparent-or-Black. It builds the flare **element** —
+`rgb = (ghosts + starbursts) × Intensity`, `a =` that element's Rec. 709 luma, a
+premultiplied black-backed overlay — and hands it to `flare_blend(mode, layer, element)`,
+whose thirteen modes mirror Echo's arithmetic order exactly (per channel, all four
+channels, premultiplied linear). The alpha saturates at 1 afterwards, and Mix lerps the
+whole thing against the untouched input as before.
+
+Add is `layer + element`, which reproduces the pre-menu combine bit for bit, so the
+default moves nothing. Normal returns `(element.rgb, 1)`, ignoring the layer — the flare
+on opaque black, which is what Background = Black produced on the empty layer that
+option was for. `lumit-gpu` keeps its own `BLEND_COUNT` (it does not depend on
+lumit-core) and a test pins it to `BLEND_OPTIONS.len()`, so a mode added to one and not
+the other cannot silently clamp to Divide.
+
 ## 7. Traps (learned the hard way — do not rediscover)
 
 - **Sub-pixel quads are silently dropped by every rasteriser.** The caustic flux that
@@ -465,8 +502,19 @@ fits a compositor.
    "custom file" bakes identically to picking it; the bake key separates library /
    custom / edited-custom; unparsable text degrades to the picked lens bit-for-bit
    (`lens_flare_custom_lens_file_overrides_and_degrades`).
-8. **Neutrals and background**: Black background flips alpha only while live; the
-   passthroughs ignore it.
+8. **Neutrals and blend (K-289)**: Normal shows the element alone on opaque black; Add
+   reproduces the historical `in + flare` with saturating alpha; every option resolves
+   and an index past the menu clamps; the blend table matches its formulas by hand; the
+   Intensity-0 / Mix-0 passthroughs are bit-exact whatever the menu holds. Migration:
+   a saved Transparent becomes Add, a saved Black becomes Normal, the dead parameter
+   goes, and loading twice changes nothing
+   (`lens_flare_background_migrates_to_the_blend_menu`).
+8b. **This layer (K-288)**: a fresh flare's Matte layer points at the layer it was added
+   to, a preset's stays unset, DoF's depth is untouched
+   (`lens_flare_matte_defaults_to_the_layer_it_is_added_to`); the draw builder answers
+   `ThisLayer` for a self-reference on an ordinary layer AND on an adjustment layer, and
+   `Absent` while Source is Manual or the reference is unset
+   (`a_flare_matte_pointed_at_its_own_layer_reads_this_layers_input`).
 9. **Focus**: the thin-lens shift is 0 at infinity, `f²/(1000·d − f)` near, ≤ f always.
 10. **Shader validity** (K-263, `lumit-gpu/tests/wgsl_validates.rs`): every `.wgsl` in
    the crate parses and validates through naga, with no graphics card involved — so a

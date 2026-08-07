@@ -14,9 +14,11 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/shell/menu_bar_frb.dart';
+import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:lumit_flutter/state/workspace.dart';
 
 import 'frb_test_support.dart';
@@ -152,5 +154,67 @@ void main() {
         reason: 'the arrangement came out of the file');
     expect(otherUi.selectedComp?.internalid, scene.internalid,
         reason: 'and so did the comp that was open in it');
+  });
+
+  /// **A progress timer must not outlive the state that started it.**
+  ///
+  /// `PreviewProgressTracker` waits a moment before drawing a bar, so that a
+  /// frame which arrives quickly never flashes one. That wait is a timer, and
+  /// a timer nobody cancels keeps running after the thing that set it has gone
+  /// — in the application a small leak per project session, and in this suite
+  /// a failure that lands somewhere else entirely: the tracker of a discarded
+  /// UI state fires inside whatever test happens to be running, which then
+  /// fails on a pending timer it never created. `cache_bar_frb_test` went red
+  /// on main exactly that way while passing on the identical tree elsewhere.
+  ///
+  /// The test framework fails any test that ends with a timer outstanding, so
+  /// starting one and then disposing the state is the whole assertion: without
+  /// the `previewProgress.dispose()` in `LumitUiState.dispose`, this reports a
+  /// pending timer.
+  testWidgets('a preview-progress timer does not outlive its UI state',
+      (tester) async {
+    final state = LumitState()..newProject();
+    final ui = LumitUiState(state, workspace: Workspace());
+
+    // A frame worth waiting for, which is what arms the delay. Not `done`:
+    // a finished frame cancels it again and would prove nothing.
+    ui.previewProgress.report(BridgeRenderProgress(
+      frame: BigInt.from(3),
+      stage: 1,
+      fraction: 0.25,
+      done: false,
+    ));
+
+    ui.dispose();
+  });
+
+  /// The other half, and the one the fix above cannot reach. A test that keeps
+  /// its UI state to the end — which is every test using `freshProject`, since
+  /// that disposes on tear-down — can still finish inside the tracker's delay.
+  /// `addTearDown` runs *after* `flutter_test` unmounts the tree, pumps, and
+  /// asserts that no timer is pending, so disposing there is too late: the
+  /// assertion has already fired.
+  ///
+  /// `hostPanel` therefore stops the tracker as the tree comes down, which
+  /// happens inside that unmount. Reporting progress and simply ending is the
+  /// whole assertion — without that, this reports a pending timer, which is how
+  /// `cache_bar_frb_test` failed on the Linux runner while passing on Windows.
+  testWidgets('a mounted panel leaves no progress timer behind', (tester) async {
+    final p = freshProject();
+    await tester.pumpWidget(hostPanel(
+      state: p.state,
+      uiState: p.uiState,
+      child: const SizedBox(),
+    ));
+    await tester.pump();
+
+    // Arms the 150 ms delay and leaves it armed: not `done`, and nothing here
+    // waits for `previewProgress.idle`.
+    p.uiState.previewProgress.report(BridgeRenderProgress(
+      frame: BigInt.from(7),
+      stage: 2,
+      fraction: 0.5,
+      done: false,
+    ));
   });
 }

@@ -36,6 +36,8 @@
 //!   disk), which back the Settings cache controls and the Timeline's cache bar.
 //! - `profiling` — whether the worker is measuring per-layer and per-effect
 //!   render times for the indicators (docs/13 §7.1).
+//! - [`peaks`] — the session's waveform peak cache: one multi-zoom summary per
+//!   audio file, so a lane redraws at any zoom without decoding again (K-280).
 //! - [`realtime`] — the adaptive playback tier decision core (K-171).
 //! - [`audio`] — comp audio playback and the sample clock (`media` feature).
 //! - [`export`] — the export runner and its progress reporting.
@@ -64,6 +66,7 @@ mod export;
 mod framecache;
 mod media;
 mod names;
+mod peaks;
 mod playback;
 mod prefetch;
 mod profiling;

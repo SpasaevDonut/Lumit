@@ -5,7 +5,7 @@ const RELEASES = "https://github.com/luminalmvm/Lumit/releases";
 
 const platforms = [
   { key: "win", name: "Windows", meta: "10 / 11, 64-bit · installer", cta: "Download .exe", soft: false },
-  { key: "lin", name: "Linux", meta: "x86-64 · portable bundle", cta: "Download .tar.gz", soft: false },
+  { key: "lin", name: "Linux", meta: "x86-64 · Flatpak", cta: "Download .flatpak", soft: false },
   { key: "mac", name: "macOS", meta: "Apple silicon · unsigned", cta: "Download .dmg", soft: true },
 ];
 
@@ -20,7 +20,7 @@ const notes = [
   },
   {
     th: "Linux",
-    td: "Unpack and run ./lumit_flutter. FFmpeg ships inside the bundle. For a menu entry and file associations, see INSTALL.txt in the archive.",
+    td: "Install with flatpak install lumit-*.flatpak, then launch it from your applications menu. FFmpeg ships inside the bundle. Any distribution with Flatpak works; the GNOME runtime is fetched on first install.",
   },
   {
     th: "macOS",
@@ -99,7 +99,7 @@ const notes = [
   // back to /releases/latest, so a failed or rate-limited fetch simply leaves those.
   const MATCH: Record<string, RegExp> = {
     win: /windows.*\.exe$/i,
-    lin: /linux.*\.tar\.gz$/i,
+    lin: /linux.*\.flatpak$/i,
     mac: /\.dmg$/i,
   };
 

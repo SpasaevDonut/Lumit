@@ -144,6 +144,14 @@ other side of this boundary.
     only that subtree rebuilds. This is the whole difference from the previous
     transport, which returned a refreshed snapshot of the entire document after
     every edit.
+- **A capability is not document state, and reads as its own answer.** Most reads
+    ask the document; a few ask the *machine*, and the two must not be conflated.
+    `ProjectReference::anti_aliasing` returns what the project asks for;
+    `anti_aliasing_in_use` returns what this graphics card will actually give
+    (K-274, K-286). Keeping them as two calls is what lets a limited adapter be
+    reported without rewriting the project — and the capability read takes no
+    engine lock, because a panel asking what the card can do must never queue
+    behind a frame.
 - **Rational time crosses as integers.** Frame counts and rates cross as exact
     `{num, den}` pairs or integer frame indices derived from a composition's own
     frame rate, never as floating-point seconds
@@ -228,6 +236,27 @@ path, documented beside the types in
     (`api::cache::set_render_profiling`, read per frame): measuring fences the
     graphics card at each node, so an unasked-for frame costs exactly what it
     did before this existed.
+
+## Display text crosses the bridge in English (K-303)
+
+Some of what the bridge sends is meant to be read by a person: `BridgeEffectInfo`'s
+`label` and `category_label`, the parameter and choice labels in an effect's schema, and
+the keymap's `description` and context headings. **These stay British English on the wire
+and are always sent alongside the stable id they belong to** (`match_name`, the parameter
+`id`, the action id). The engine has no notion of a language and is not being given one.
+
+The frontend translates them on arrival, by looking the English text up in
+`flutter_ui/lib/l10n/engine_labels.dart`. Two consequences bind anything added here:
+
+- **A new display string in the engine needs a matching entry in that table**, in the same
+  commit. `flutter_ui/test/l10n/engine_labels_test.dart` reads the Rust sources and fails
+  otherwise, so it cannot be forgotten quietly.
+- **Build a display string with `format!` and it cannot be translated**, because the
+  lookup is by whole text. Send the pieces and let the frontend assemble them, or give the
+  string a stable id of its own.
+
+Nothing else the bridge sends is display text: a layer name, a comp name, a file path and
+a preset name are the *user's* words, and are passed through untouched.
 
 ## Feature gates
 

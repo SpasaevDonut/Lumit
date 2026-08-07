@@ -235,7 +235,15 @@ Appearance → Customise…, and a saved custom theme is *a name, a light-or-dar
 colours over it* — so a theme keeps working when a token is added, taking the new one from
 its base. `flutter_ui/lib/theme/theme_tokens.dart` is the single declaration of what is
 editable (a test counts it against the struct); `viewer_surround` is deliberately absent for
-the §2.1 reason. Two tokens were added with it, both defaulting from the mode rather than
+the §2.1 reason.
+
+**Sharing a theme (K-298).** A theme is also a file: `.lumtheme`, an indented JSON document
+carrying a format marker, a version, and the same name/base/colours the workspace file
+stores (`flutter_ui/lib/theme/theme_file.dart`). Settings → Appearance offers **Duplicate,
+Rename…, Delete, Import… and Export…** beside **Customise…**, the editor offers **Save a
+copy…**, and the picker carries an eight-swatch preview of the selection. A theme read from
+a file is applied over its base like any other, so one written by a newer Lumit still opens
+with the colours this build knows; a name already taken is numbered rather than overwritten. Two tokens were added with it, both defaulting from the mode rather than
 being restated per scheme: `timeline_out_of_range` (the Timeline's ground outside the work
 area) and `selection_fill` (under a selected row, half-strength under a highlighted one —
 its own colour because a selection has to out-contrast whichever ground it lands on, which
@@ -246,10 +254,11 @@ on a light scheme means going *darker* while the surfaces go lighter).
 `accent`/`accent_hover`, `success`/`warning`/`error`, the `curve[4]` ramp, `layer`
 (`LayerColours`, §6.1) — plus two the code has split out that this listing does not yet name:
 `scope` (`ScopeColours`, the four scope-chrome accents), `cache_disk` (the disk tier of the
-cache bar, §6.3) and `marker` (comp markers on the time ruler, §6.4 — the first of the
-`marker` grouping to be split out, K-254; the beat variant still waits). Not yet split into their own tokens, and derived ad-hoc from existing roles in
+cache bar, §6.3), `marker` (comp markers on the time ruler, §6.4 — the first of the
+`marker` grouping to be split out, K-254; the beat variant still waits) and `waveform`
+(`WaveformColours`: `rest` plus the three multiwave bands, K-280). Not yet split into their own tokens, and derived ad-hoc from existing roles in
 v1: `disabled` and `fill_tonal` (the `cloud`/`oat` mappings below are reserved, not present);
-the `keyframe`, `overrun_hatch`, `waveform` and `selection` groupings (widgets reach
+the `keyframe`, `overrun_hatch` and `selection` groupings (widgets reach
 for `text_secondary`, `accent`, `warning`, etc. directly); and `shadow_float`. Splitting each
 into a named token — so no widget derives a semantic colour itself — is the standing direction,
 done as each area is next touched; the no-hex rule already holds regardless.
@@ -430,9 +439,20 @@ failure.
 - **Beat markers**: `marker.beat` = `#aef3e7` (mint) 1px ticks in the ruler with a small
   triangular head — still to come, and it needs a token of its own beside `marker`. Span
   markers draw a hairline-bounded band.
-- **Clip waveforms**: `waveform.rest` = `#5d8a96` (muted steel-cyan) filled envelope at 80%
-  opacity on `surface_2`; on selected clips the envelope brightens to `text_secondary`.
-  Waveforms never render in `accent` — they are content, not state.
+- **Clip waveforms (shipped, K-280)**: `waveform.rest` = `#5d8a96` (muted steel-cyan) filled
+  envelope at 80% opacity on `surface_2`, with the RMS core drawn solid inside it; on selected
+  clips the envelope brightens to `text_secondary` (still to come). Waveforms never render in
+  `accent` — they are content, not state, and the lane that did borrow `accent` was corrected
+  when this grouping became real tokens. The **multiwave** stack (K-280, K-284) adds three band
+  colours beside `rest`, drawn **over one another in one lane around one centre line** and so
+  ranked by *brightness* rather than by hue — the bass a dim broad body, the treble bright and
+  thin over it, which is how the reference reads: one silhouette with its inside showing.
+  `waveform.low` `#3c5c66`, `waveform.mid` `#6d9aa6`, `waveform.high` `#d4f0f6` on a dark
+  scheme; on a light one the ramp runs the other way (`#9dbac2` / `#598794` / `#14333c`),
+  because *darker* is what stands out on white. Band strokes are opaque — three softened
+  envelopes over one another blend into a wash and lose the ranking — and only the single wave
+  keeps the 80% envelope with the solid RMS core over it. All four default from the mode
+  rather than being restated per scheme, and all four are editable like any other token.
 
 ### 6.5 Selection, focus, drop targets
 
@@ -537,7 +557,11 @@ section's 4/8/12/16px scale) does not vary by shape; only radius, gap, inset and
 ## 10. Voice and copy
 
 - British English, sentence case, calm, no exclamation marks, no emoji. UI strings go through
-  the i18n table (K-005).
+  the i18n table (K-005) — `flutter_ui/lib/l10n/app_en.arb`, translated on Crowdin (K-303).
+  British English is the source and stays the source; there is no en-US.
+- **A tooltip is a name, not a lesson**: under five words, two where two will do
+  ([07-UI-SPEC.md](07-UI-SPEC.md) §13.2, K-303). Explanation belongs in the settings row's
+  own sentence, in an empty state, or nowhere.
 - The app is **"Lumit"** — never abbreviated in UI. Features use glossary names exactly:
   Retime (not time remap), speed (not velocity), clip (not event), layer (not track), export
   (not render), playhead (not CTI). [01-GLOSSARY.md](01-GLOSSARY.md) §9 is binding for copy.
@@ -666,6 +690,7 @@ Files, all in `assets/brand/`, all regenerated by `scripts/gen-icons.py`:
 | `lumit-icon.svg` | The mark on the dark rounded tile — macOS only |
 | `lumit-project.svg` / `.ico` | `.lum` project documents: dark folded-corner file, the twin keys, `LUM` kicker |
 | `lumit-preset.svg` / `.ico` | `.lumfx` presets: same chassis, a single violet key (one applied stack), `LUMFX` kicker |
+| `lumit-theme.svg` / `.ico` | `.lumtheme` colour themes (K-298): same chassis, three overlapping swatches in the two key gradients and the core white — colours rather than keyframes, because that is what the file carries — `THEME` kicker. The centres sit on an equilateral triangle whose circumradius **is** the swatch radius, so all three circles pass through the one point at the centre and share no area — which is what makes them equally visible, each giving up the same lens to each neighbour. They overlap **cyclically**: blue over white, violet over blue, white over violet, which no painting order can produce, so the violet swatch is clipped to outside the white circle instead. Nothing is painted where something else will cover it: a hidden shape still shows its softened edge pixels through the join as a hairline, two quarter-opacity rims stacking read as a blot, and a rim drawn as two arcs meeting end to end leaves a seam |
 
 The SVG sources carry the mark's own palette and are the only permitted hex values
 outside the theme module: keys `#86e2ff→#2f6fe0` (blue) and `#8a70ff→#ff4f9e`

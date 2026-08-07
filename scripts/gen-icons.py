@@ -17,11 +17,12 @@
 #                                                      <- lumit-icon.svg (tile)
 #   assets/brand/lumit-project.ico                     <- lumit-project.svg (.lum)
 #   assets/brand/lumit-preset.ico                      <- lumit-preset.svg (.lumfx)
-#   packaging/macos/lumit-project.icns, lumit-preset.icns
-#                                                      <- the same two SVGs
+#   assets/brand/lumit-theme.ico                       <- lumit-theme.svg (.lumtheme)
+#   packaging/macos/lumit-project.icns, lumit-preset.icns, lumit-theme.icns
+#                                                      <- the same three SVGs
 #
 # The Windows installer (packaging/windows/lumit.iss) registers the .ico files
-# with the .lum/.lumfx associations; the .icns files join the macOS bundle's
+# with the .lum/.lumfx/.lumtheme associations; the .icns files join the macOS bundle's
 # resources with the macOS pass (K-033, docs/TODO.md).
 
 import io
@@ -60,6 +61,7 @@ def main() -> None:
     )
     write_ico(BRAND / "lumit-project.svg", BRAND / "lumit-project.ico")
     write_ico(BRAND / "lumit-preset.svg", BRAND / "lumit-preset.ico")
+    write_ico(BRAND / "lumit-theme.svg", BRAND / "lumit-theme.ico")
 
     iconset = (
         ROOT / "flutter_ui" / "macos" / "Runner" / "Assets.xcassets" / "AppIcon.appiconset"
@@ -68,7 +70,7 @@ def main() -> None:
         render(BRAND / "lumit-icon.svg", s).save(iconset / f"app_icon_{s}.png")
     print(f"{iconset.relative_to(ROOT)}: {MAC_SIZES}")
 
-    for name in ["lumit-project", "lumit-preset"]:
+    for name in ["lumit-project", "lumit-preset", "lumit-theme"]:
         out = ROOT / "packaging" / "macos" / f"{name}.icns"
         render(BRAND / f"{name}.svg", 1024).save(out, format="ICNS")
         print(f"{out.relative_to(ROOT)}")

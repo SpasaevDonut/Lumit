@@ -19,7 +19,7 @@ from the plan and are worth knowing:
 
 Not built: nested groups and the shape modifiers, gradient fills, dashed strokes,
 joins and caps other than round, and animated paths. Dragging a shape's points on
-the picture **is** built (K-283): the gesture K-224 gave mask points serves shape
+the picture **is** built (K-307): the gesture K-224 gave mask points serves shape
 contents too, since both hold the same `BezierPath`.
 
 ## In plain terms

@@ -35,6 +35,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
+import 'package:lumit_flutter/l10n/strings.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
@@ -334,8 +335,16 @@ class _ViewerCameraLayerState extends State<ViewerCameraLayer> {
       double still(BridgeScalar s) =>
           s is BridgeScalar_Static ? s.field0 : double.nan;
       final pose = CameraPose(
-        position: (still(tf.positionX), still(tf.positionY), still(tf.positionZ)),
-        rotation: (still(tf.rotationX), still(tf.rotationY), still(tf.rotation)),
+        position: (
+          still(tf.positionX),
+          still(tf.positionY),
+          still(tf.positionZ)
+        ),
+        rotation: (
+          still(tf.rotationX),
+          still(tf.rotationY),
+          still(tf.rotation)
+        ),
         distance: _distanceOf(entry.layer),
       );
       // A camera whose placement is keyframed has no single value for a drag to
@@ -431,7 +440,7 @@ class _ViewerCameraLayerState extends State<ViewerCameraLayer> {
   }
 
   void _sayNoCamera() => widget.state.postNotice(
-        'No camera to move — add a camera layer first',
+        l10n.noCameraToMove,
       );
 
   void _onPanStart(DragStartDetails details) {

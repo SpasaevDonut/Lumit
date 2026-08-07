@@ -300,6 +300,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeKeyContext dco_decode_bridge_key_context(dynamic raw);
 
   @protected
+  BridgeKeyShadow dco_decode_bridge_key_shadow(dynamic raw);
+
+  @protected
   BridgeKeyframe dco_decode_bridge_keyframe(dynamic raw);
 
   @protected
@@ -340,6 +343,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeMediaInfo dco_decode_bridge_media_info(dynamic raw);
+
+  @protected
+  BridgeMemoryReport dco_decode_bridge_memory_report(dynamic raw);
 
   @protected
   BridgePaintMode dco_decode_bridge_paint_mode(dynamic raw);
@@ -504,6 +510,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   List<BridgeKeyConflict> dco_decode_list_bridge_key_conflict(dynamic raw);
+
+  @protected
+  List<BridgeKeyShadow> dco_decode_list_bridge_key_shadow(dynamic raw);
 
   @protected
   List<BridgeKeyframe> dco_decode_list_bridge_keyframe(dynamic raw);
@@ -955,6 +964,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeKeyContext sse_decode_bridge_key_context(SseDeserializer deserializer);
 
   @protected
+  BridgeKeyShadow sse_decode_bridge_key_shadow(SseDeserializer deserializer);
+
+  @protected
   BridgeKeyframe sse_decode_bridge_keyframe(SseDeserializer deserializer);
 
   @protected
@@ -1001,6 +1013,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeMediaInfo sse_decode_bridge_media_info(SseDeserializer deserializer);
+
+  @protected
+  BridgeMemoryReport sse_decode_bridge_memory_report(
+      SseDeserializer deserializer);
 
   @protected
   BridgePaintMode sse_decode_bridge_paint_mode(SseDeserializer deserializer);
@@ -1183,6 +1199,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   List<BridgeKeyConflict> sse_decode_list_bridge_key_conflict(
+      SseDeserializer deserializer);
+
+  @protected
+  List<BridgeKeyShadow> sse_decode_list_bridge_key_shadow(
       SseDeserializer deserializer);
 
   @protected
@@ -1680,6 +1700,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeKeyContext self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_key_shadow(
+      BridgeKeyShadow self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_keyframe(
       BridgeKeyframe self, SseSerializer serializer);
 
@@ -1731,6 +1755,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_bridge_media_info(
       BridgeMediaInfo self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_memory_report(
+      BridgeMemoryReport self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_paint_mode(
@@ -1932,6 +1960,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_list_bridge_key_conflict(
       List<BridgeKeyConflict> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_bridge_key_shadow(
+      List<BridgeKeyShadow> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_bridge_keyframe(

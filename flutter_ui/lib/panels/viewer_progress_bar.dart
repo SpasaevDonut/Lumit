@@ -1,9 +1,16 @@
-// The Viewer's preview progress bar (docs/07 §2.5).
+// The Viewer's preview progress bar (docs/07 §2.5, K-287).
 //
 // **In plain terms.** When a frame takes long enough to notice, this says so: a
-// slim bar across the bottom of the picture that fills as the engine works
-// through the frame, with a word for what it is doing. When the frame arrives
-// the bar goes.
+// slim bar on the right-hand end of the Viewer's transport that fills as the
+// engine works through the frame, with a word for what it is doing. When the
+// frame arrives the bar goes.
+//
+// **Where it lives.** On the transport, at the far right, not floating over the
+// picture. Over the picture it covered the bottom of the composition — the one
+// thing the Viewer exists to show — and it did so exactly while a frame was
+// being waited on, which is when people are looking hardest. On the bar it has
+// a place of its own: the controls take the space that is left, so the bar
+// arriving and leaving moves none of them.
 //
 // **What it is not.** It is not a playback indicator — nothing appears while
 // the transport is running (the engine sends no reports then), because a bar
@@ -24,6 +31,7 @@ import 'package:flutter/widgets.dart';
 import '../state/preview_progress.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
+import '../widgets/time_readout.dart';
 
 /// How tall the bar's own track is.
 const double _trackHeight = 3;
@@ -34,9 +42,14 @@ const Duration _fillDuration = Duration(milliseconds: 180);
 /// One sweep of the sheen along the fill.
 const Duration _sheenPeriod = Duration(milliseconds: 1400);
 
-/// The transport's own height (`_Toolbar`), which the bar clears in round mode
-/// where the transport floats over the picture rather than sitting below it.
-const double _transportHeight = 26;
+/// How wide the track is on the transport. Fixed, so the percentage beside it
+/// never moves as the fill grows.
+const double _trackWidth = 64;
+
+/// How much room the stage name gets. The longest of them ("Reading the
+/// composition") is longer than this and is shortened with an ellipsis rather
+/// than being allowed to push the bar about.
+const double _labelWidth = 110;
 
 class ViewerProgressBar extends StatefulWidget {
   final PreviewProgressTracker tracker;
@@ -103,37 +116,28 @@ class _ViewerProgressBarState extends State<ViewerProgressBar>
     if (!tracker.visible) return const SizedBox.shrink();
     final still = scope.animationLevel == AnimationLevel.none;
 
-    // In round mode the transport floats over the bottom of the picture (its
-    // 26 px plus the window inset), so the bar steps up over it rather than
-    // hiding underneath; in sharp mode the transport is a strip below the
-    // picture and there is nothing to clear.
-    final floatingTransport = t.tokens.windowInset > 0;
     return IgnorePointer(
       child: Padding(
-        padding: EdgeInsets.fromLTRB(
-          t.tokens.windowInset + 8,
-          6,
-          t.tokens.windowInset + 8,
-          floatingTransport ? t.tokens.windowInset * 2 + _transportHeight : 6,
-        ),
-        child: Column(
+        padding: const EdgeInsets.only(left: 12),
+        child: Row(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              children: [
-                Text(tracker.label, style: t.small),
-                const Spacer(),
-                Text(
-                  '${(tracker.fraction * 100).round()}%',
-                  style: t.small,
-                ),
-              ],
+            SizedBox(
+              width: _labelWidth,
+              child: Text(
+                tracker.label,
+                style: t.small,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                softWrap: false,
+                textAlign: TextAlign.right,
+              ),
             ),
-            const SizedBox(height: 4),
+            const SizedBox(width: 6),
             ClipRRect(
               borderRadius: BorderRadius.circular(t.tokens.controlRadius),
               child: SizedBox(
+                width: _trackWidth,
                 height: _trackHeight,
                 child: Stack(
                   children: [
@@ -148,6 +152,19 @@ class _ViewerProgressBarState extends State<ViewerProgressBar>
                     ),
                   ],
                 ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            // A fixed slot for the percentage: it counts up while the frame is
+            // being waited for, and a number that resized itself as it counted
+            // would jog the whole bar (the same rule the clock readouts keep).
+            SizedBox(
+              width: monoSlotWidth(t.small, 4),
+              child: Text(
+                '${(tracker.fraction * 100).round()}%',
+                style: t.small,
+                maxLines: 1,
+                textAlign: TextAlign.right,
               ),
             ),
           ],

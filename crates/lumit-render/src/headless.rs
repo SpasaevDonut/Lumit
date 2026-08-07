@@ -733,15 +733,17 @@ impl HeadlessRenderer {
         };
         let out = {
             let realiser = crate::realise::Realiser {
-                ctx: lumit_gpu::GpuContext::from_parts(
-                    self.gpu.device.clone(),
-                    self.gpu.queue.clone(),
-                ),
+                ctx: self.gpu.clone_handle(),
                 engine: &parts.colour,
                 compositor: &parts.compositor,
                 fx: &parts.fx,
                 lut_cache: &parts.lut_cache,
                 render_scale: composite_scale(quality),
+                // The project's setting, resolved against what this adapter
+                // will actually give (K-274). Preview and export both read the
+                // same document field — unlike `render_scale`, which is a
+                // preview-only reduction — so the two stay the same picture.
+                samples: self.gpu.sample_count(doc.anti_aliasing.samples()),
                 profiler: watcher.as_ref(),
             };
             let pixels_by_layer: HashMap<Uuid, &crate::decode::CompLayerPixels> = retained
@@ -925,6 +927,47 @@ impl HeadlessRenderer {
     /// alone cannot see that.
     pub fn forget_retained(&mut self) {
         self.retained = None;
+    }
+
+    /// The decoded-frame cache's bytes and how many decoders are open — see
+    /// [`crate::decode::DecodePool::memory`].
+    #[must_use]
+    pub fn decode_memory(&self) -> (usize, usize) {
+        self.pool.memory()
+    }
+
+    /// What the graphics driver holds for this renderer's device — see
+    /// [`lumit_gpu::GpuContext::allocator_bytes`].
+    #[must_use]
+    pub fn gpu_allocator_bytes(&self) -> Option<(u64, u64)> {
+        self.gpu.allocator_bytes()
+    }
+
+    /// Whether the card's memory is this process's memory — see
+    /// [`lumit_gpu::GpuContext::unified_memory`].
+    #[must_use]
+    pub fn unified_memory(&self) -> bool {
+        self.gpu.unified_memory
+    }
+
+    /// How many textures and buffers the driver is still holding for this
+    /// renderer — see [`lumit_gpu::GpuContext::live_objects`].
+    #[must_use]
+    pub fn gpu_live_objects(&self) -> (u64, u64) {
+        self.gpu.live_objects()
+    }
+
+    /// Give the driver a turn to reclaim what has been dropped — see
+    /// [`lumit_gpu::GpuContext::reclaim`]. Called once per worker turn.
+    pub fn reclaim_gpu(&self) {
+        self.gpu.reclaim();
+    }
+
+    /// Wait for the card to catch up and then reclaim — see
+    /// [`lumit_gpu::GpuContext::settle`]. For measuring what is held at rest,
+    /// and for an engine with nothing left to draw; never on a frame path.
+    pub fn settle_gpu(&self) {
+        self.gpu.settle();
     }
 
     /// Resize the decoded-source-frame cache (Settings → Performance).
@@ -3025,6 +3068,20 @@ mod tests {
                 comp.layers.insert(0, adj);
                 (doc, comp_id, 15)
             }),
+            // The anti-aliasing row (K-274, docs/impl/anti-aliasing.md §5,
+            // test 3): the count is a PROJECT property, so both walks read the
+            // same one — an export that anti-aliased differently from the
+            // preview is exactly what this matrix exists to catch. A rotated
+            // layer, because a rotated edge is what the setting changes.
+            ("anti-aliasing on a rotated layer", |w, h, red, blue| {
+                let (mut doc, comp_id, _) = matrix_base(w, h, red);
+                doc.anti_aliasing = lumit_core::model::AntiAliasing::X4;
+                let (_, top) = matrix_top(&mut doc, comp_id, blue);
+                let comp = doc.comp_mut(comp_id).unwrap();
+                let l = comp.layers.iter_mut().find(|l| l.id == top).unwrap();
+                l.transform.rotation = Property::fixed(17.0);
+                (doc, comp_id, 0)
+            }),
             ("camera over a 3d layer", |w, h, red, blue| {
                 let (mut doc, comp_id, _) = matrix_base(w, h, red);
                 let (_, top) = matrix_top(&mut doc, comp_id, blue);
@@ -3208,6 +3265,198 @@ mod tests {
             comp.layers.insert(0, layer);
         }
         (solid, layer_id)
+    }
+
+    /// **What the engine drops, the driver gets back** (K-295).
+    ///
+    /// The failure this pins is not a slow leak: it is memory that comes back
+    /// only when something unrelated happens. Dropping a texture or a buffer
+    /// marks it destroyed; the driver reclaims it on the device's next
+    /// maintain, and an engine that renders into a cache on a worker thread —
+    /// never presenting, often idle — asks for one only by accident. Reported
+    /// from a Mac twice, the second time caught mid-act: 5 000 live buffers and
+    /// 6 GB, then 8 buffers and 2.9 GB moments later because a panel was
+    /// opened.
+    ///
+    /// **This test earns its keep on macOS**, where the reclamation actually
+    /// went wrong and where no allocator report exists to see it — the counts
+    /// are what every backend keeps. It renders far more frames than the cache
+    /// can hold, so the great majority are evicted and dropped, and then asks
+    /// the driver what it still has.
+    ///
+    /// It asks *twice*, a batch apart, and that is the measurement: how many
+    /// objects a backend rests on differs between drivers by a factor of
+    /// several, but a driver that never hands a dropped frame back grows by one
+    /// object per frame, whichever driver it is. So the gate is that the second
+    /// batch leaves the resting set where the first did — not a count tuned to
+    /// whichever backend happened to run when it was written.
+    #[test]
+    fn what_the_engine_drops_the_driver_gets_back() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                lumit_gpu::no_adapter();
+                return;
+            }
+        };
+        // A budget of a few frames, so nearly every render below is evicted.
+        r.set_frame_texture_budget(32 * 1024 * 1024);
+        let (cw, ch) = (960u32, 540u32);
+        let (doc, comp_id, _) = matrix_base(cw, ch, LinearColour([0.8, 0.1, 0.1, 1.0]));
+        let store = DocumentStore::new(doc);
+        let doc = store.snapshot();
+
+        let (textures_before, buffers_before) = r.gpu_live_objects();
+        /// Frames per batch: still several times what the budget above can
+        /// hold, so the great majority of them are evicted and dropped.
+        ///
+        /// Two batches of sixty rather than two of a hundred and twenty, so the
+        /// whole test does the same hundred and twenty renders it always did.
+        /// The second batch is a *comparison*, not extra load, and on a backend
+        /// that is leaking the extra load is not free: at two hundred and forty
+        /// the Windows runner stopped asserting and started dying
+        /// (`STATUS_STACK_BUFFER_OVERRUN`), which measures nothing.
+        const BATCH: u64 = 60;
+        let render_batch = |r: &mut HeadlessRenderer, batch: u64| {
+            for i in 0..BATCH {
+                // A name of its own per frame: every render is a new entry, so
+                // the store must evict, exactly as a long session makes it.
+                let name = batch * BATCH + i;
+                let _ = r
+                    .render_prepared_named(
+                        &doc,
+                        comp_id,
+                        0,
+                        Quality::default(),
+                        true,
+                        Some(name as u128),
+                    )
+                    .expect("render");
+                // The worker's own turn does this once a loop; the whole point
+                // is that it is what makes the dropping stick.
+                r.reclaim_gpu();
+            }
+        };
+        // The reading is of the engine *at rest*, and at rest means the card
+        // has finished: work is submitted and runs later, so a CPU that has run
+        // ahead of it is holding every frame the card has not reached yet, and
+        // a non-blocking reclaim cannot free those however many times it is
+        // called. Reading after one is reading the backlog — which is why the
+        // first version of this measurement grew with the frame count on Metal
+        // and D3D12 and stayed flat on the software rasteriser, where the CPU
+        // never gets ahead.
+        //
+        // So the measurement waits. What is still held once the queue is empty
+        // is what is genuinely still held, and that is the only number a leak
+        // can be read off.
+        let settle = |r: &mut HeadlessRenderer| {
+            r.settle_gpu();
+            r.gpu_live_objects()
+        };
+        render_batch(&mut r, 0);
+        let (textures_one, buffers_one) = settle(&mut r);
+        render_batch(&mut r, 1);
+        let (textures, buffers) = settle(&mut r);
+
+        // What the engine holds at rest — the frames still in the card's cache,
+        // the pooled upload textures, the shared present targets, and one
+        // frame's intermediates — is a *backend's* number, not a fact about
+        // this engine: 18 textures and 8 buffers on the software rasteriser
+        // against 2 and 5 before the first batch, several times that on Metal
+        // and on D3D12, both of which keep more of their own bookkeeping alive
+        // between maintains. Pinning one of those numbers is what this test did
+        // first, and it is why it failed on macOS at 65 having passed at 63 the
+        // run before: it was measuring the backend rather than the leak.
+        //
+        // The leak has a shape no backend changes. Memory that is dropped and
+        // never handed back grows by one object per frame for ever — that is
+        // what "5 000 live buffers" was — so the resting set after the second
+        // batch is the resting set after the first, whatever that set happens
+        // to be on this driver. A little slack for what a busier one defers;
+        // nothing like the batch of frames that went through it.
+        let slack = BATCH / 4;
+        assert!(
+            textures <= textures_one + slack,
+            "a second batch of {BATCH} frames must not leave a texture each \
+             behind: {textures_before} before, {textures_one} after one batch, \
+             {textures} after two"
+        );
+        assert!(
+            buffers <= buffers_one + slack,
+            "nor a buffer each: {buffers_before} before, {buffers_one} after \
+             one batch, {buffers} after two"
+        );
+        // And the card's cache is the thing that decides how many frames are
+        // held, not the number of frames that have been made.
+        let (used, budget, _) = r.frame_texture_stats();
+        assert!(
+            used <= budget,
+            "the cache stays inside its budget: {used} of {budget}"
+        );
+    }
+
+    /// **A frame is one command buffer, however many layers it has.**
+    ///
+    /// Every pass in `lumit-gpu` used to make its own encoder and submit it, so
+    /// a frame cost the driver one round trip per layer and per effect —
+    /// measured 2026-07-31 at `layers + 2`. All of a frame's passes are in
+    /// order on one queue, so they are encoded once and handed over once.
+    ///
+    /// The gate is the *count*, not a stopwatch. A submit is a round trip whose
+    /// cost does not depend on the card, so the number is the honest measure and
+    /// it runs anywhere — including on the software rasteriser CI uses, where a
+    /// timing would prove nothing (docs/16-ROADMAP.md standing rules).
+    ///
+    /// What is asserted is the **shape**: the count does not grow with the layer
+    /// count. A fixed budget would be a fragile thing to pin, but "adding thirty
+    /// layers adds no submissions" is exactly the property that was lost.
+    ///
+    /// The count is read off **this renderer's own context**. It used to be a
+    /// process-wide counter, which quietly made this test a measurement of
+    /// whatever else the suite happened to be rendering at the same moment:
+    /// green here, red on CI, where there are cores enough for two GPU tests to
+    /// overlap (docs/13 §7.0).
+    #[test]
+    fn a_frame_submits_once_however_many_layers_it_has() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                lumit_gpu::no_adapter();
+                return;
+            }
+        };
+        let (cw, ch) = (32u32, 16u32);
+
+        // One render's submissions, for a comp with `extra` layers over the base.
+        let mut submits_for = |extra: usize| -> u64 {
+            let (mut doc, comp_id, _) = matrix_base(cw, ch, LinearColour([0.8, 0.1, 0.1, 1.0]));
+            for _ in 0..extra {
+                matrix_top(&mut doc, comp_id, LinearColour([0.1, 0.2, 0.9, 1.0]));
+            }
+            let store = DocumentStore::new(doc);
+            let doc = store.snapshot();
+            // A first render warms every lazily-built pipeline and cache, so
+            // what the second one submits is the steady state.
+            let _ = r.render_rgba(&doc, comp_id, 0, 1.0).unwrap();
+            let before = r.gpu.submits_so_far();
+            let _ = r.render_rgba(&doc, comp_id, 0, 1.0).unwrap();
+            r.gpu.submits_so_far() - before
+        };
+
+        let one = submits_for(0);
+        let many = submits_for(31);
+        assert_eq!(
+            one, many,
+            "a frame's submissions must not grow with its layers: \
+             1 layer submitted {one}, 32 layers submitted {many}"
+        );
+        // And the constant is small — the walk's one buffer plus the read-back
+        // the export path ends with, not a per-pass tail hiding under the
+        // equality above.
+        assert!(
+            one <= 4,
+            "a frame should cost a handful of submissions, not {one}"
+        );
     }
 
     /// A consumer layer matted by a hidden source carrying a mask and an
@@ -3449,6 +3698,77 @@ mod tests {
         assert!(
             layer.ms >= 0.0 && layer.effects[0].ms >= 0.0,
             "measured times are real durations"
+        );
+    }
+
+    /// **Measuring gives the batching up, deliberately.**
+    ///
+    /// A frame's passes are recorded into one command buffer and submitted at
+    /// the end, so a fence taken mid-walk would wait on a queue that has not
+    /// been handed over and time nothing real. A *measured* frame therefore
+    /// flushes at each layer and each effect before it fences — which is the
+    /// cost the stopwatch already declares (K-276: measuring waits for the card
+    /// at each layer, which is why it is opt-in and never runs during playback).
+    ///
+    /// So the property is the opposite of the unmeasured one: an unmeasured
+    /// frame's submissions do not grow with its layers, and a measured frame's
+    /// do. Asserting both together is what stops a future change from
+    /// "optimising" the flush away and silently turning the render-time column
+    /// into a measure of how long Lumit takes to *describe* a layer.
+    #[test]
+    fn a_measured_frame_hands_its_work_over_layer_by_layer() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                lumit_gpu::no_adapter();
+                return;
+            }
+        };
+        let (cw, ch) = (32u32, 16u32);
+        let (mut doc, comp_id, _) = matrix_base(cw, ch, LinearColour([0.8, 0.1, 0.1, 1.0]));
+        for _ in 0..15 {
+            matrix_top(&mut doc, comp_id, LinearColour([0.1, 0.2, 0.9, 1.0]));
+        }
+        let store = DocumentStore::new(doc);
+        let doc = store.snapshot();
+        // A frame is only measured when the switch is on *and* the numbers have
+        // somewhere to go, so the sink is part of turning measuring on.
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<crate::profile::FrameProfile>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let into = std::sync::Arc::clone(&seen);
+        r.set_profile_sink(Some(std::sync::Arc::new(move |p| {
+            if let Ok(mut got) = into.lock() {
+                got.push(p);
+            }
+        })));
+        // Warm the lazily-built pipelines first, so neither count below
+        // includes one-off setup.
+        let _ = r.render_rgba(&doc, comp_id, 0, 1.0).expect("render");
+
+        let before = r.gpu.submits_so_far();
+        let _ = r.render_rgba(&doc, comp_id, 0, 1.0).expect("render");
+        let unmeasured = r.gpu.submits_so_far() - before;
+
+        r.measure_frames(true);
+        let before = r.gpu.submits_so_far();
+        let _ = r.render_rgba(&doc, comp_id, 1, 1.0).expect("render");
+        let measured = r.gpu.submits_so_far() - before;
+        r.measure_frames(false);
+
+        assert!(
+            !seen.lock().expect("profiles").is_empty(),
+            "the frame was supposed to be measured; without that this proves nothing"
+        );
+        assert!(
+            measured > unmeasured,
+            "a measured frame must hand its work over as it goes, or its \
+             numbers are encoding time rather than GPU time \
+             (measured {measured}, unmeasured {unmeasured})"
+        );
+        assert!(
+            unmeasured <= 4,
+            "an ordinary frame is one command buffer plus its read-back, \
+             not {unmeasured}"
         );
     }
 

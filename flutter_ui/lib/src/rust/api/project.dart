@@ -50,6 +50,33 @@ class ProjectReference {
     required this.internalid,
   });
 
+  /// How hard the renderer works at the edges of transformed layers, as the
+  /// number of coverage samples per pixel: 1, 2, 4 or 8, where 1 is off
+  /// (K-274, docs/impl/anti-aliasing.md).
+  ///
+  /// The project's own setting, exactly as stored — **what the current
+  /// machine can actually draw is a separate question**, answered by
+  /// [`Self::anti_aliasing_in_use`]. Keeping the two apart is what stops a
+  /// card that cannot manage the asked-for count from quietly rewriting the
+  /// project when it is opened.
+  int antiAliasing() =>
+      BridgeLib.instance.api.crateApiProjectProjectReferenceAntiAliasing(
+        that: this,
+      );
+
+  /// The count this machine is actually drawing with — the project's setting
+  /// resolved against what the graphics card offers.
+  ///
+  /// Equal to [`Self::anti_aliasing`] on any adapter that can manage what was
+  /// asked for, which is the ordinary case. Where it differs, the difference
+  /// is a fact about the machine and never an error: the Settings row shows
+  /// what is being used beside what is set, in the calm voice
+  /// (docs/15-DESIGN.md), and the project keeps the value its author chose.
+  int antiAliasingInUse() =>
+      BridgeLib.instance.api.crateApiProjectProjectReferenceAntiAliasingInUse(
+        that: this,
+      );
+
   /// Write a rotating autosave beside `project_path`, keeping `keep` slots.
   ///
   /// Deliberately does **not** move the project's own path: an autosave is a
@@ -167,6 +194,18 @@ class ProjectReference {
   /// *between* saves, so once the document is on disk it is redundant.
   Future<String> save({required String path}) => BridgeLib.instance.api
       .crateApiProjectProjectReferenceSave(that: this, path: path);
+
+  /// Set how hard the renderer works at the edges of transformed layers.
+  ///
+  /// Takes a sample count — 1, 2, 4 or 8. Anything else reads as 1 (off)
+  /// rather than failing: an unknown count is not a reason to refuse an edit.
+  /// An ordinary op, so it is undoable, journalled and saved in the `.lum`,
+  /// which is the point of it living in the document — it changes what the
+  /// comp looks like, so it must travel with the file and match on another
+  /// machine (K-274).
+  void setAntiAliasing({required int samples}) =>
+      BridgeLib.instance.api.crateApiProjectProjectReferenceSetAntiAliasing(
+          that: this, samples: samples);
 
   /// Give this project its own cache location, or clear it so the project
   /// follows the application-wide choice again (`location: None`).

@@ -134,6 +134,17 @@ class InterfaceSettings {
   /// unaffected either way; this is a Retime-only preference.
   bool retimeOpensToSpeed;
 
+  /// Whether the Retime row shows its source position in **seconds** rather
+  /// than as a timecode (K-287).
+  ///
+  /// Off by default: a Retime says which moment of the source is showing, and
+  /// every other time in the editor says that as `HH:MM:SS:FF` — a lone
+  /// decimal number of seconds meant doing arithmetic to line a retime up with
+  /// anything else (K-075 asked for the timecode). On is for the people who
+  /// think in seconds, and for the sub-frame precision a whole-frame clock
+  /// face cannot show.
+  bool retimeInSeconds;
+
   /// Whether video footage and image sequences added to a comp arrive as a
   /// one-clip Sequence layer rather than a Footage layer (K-246).
   ///
@@ -160,27 +171,69 @@ class InterfaceSettings {
   /// it either way: a copied animation is placed by its first keyframe.
   bool pasteLayersAtOriginalTime;
 
+  /// Whether a waveform draws as the three-band **multiwave** stack rather
+  /// than one plain wave (K-280).
+  ///
+  /// On by default: a single wave says how loud a moment is and nothing about
+  /// what is in it, and a mastered track is one solid block whichever
+  /// instrument is playing. The stack splits it into bass, middle and treble,
+  /// so a kick and a hi-hat are told apart at a glance — which is what an edit
+  /// is aimed at. Off gives the plain wave back, unchanged.
+  bool multiwaveWaveforms;
+
+  /// Whether a waveform stands on the floor of its row rather than being
+  /// centred about silence (K-285).
+  ///
+  /// Off by default: centred is what the eye expects of a *wave*, and it is
+  /// what Lumit has always drawn. On, each column is folded onto the baseline
+  /// and reaches up by how far the signal swung either way — half of a
+  /// centred wave is a mirror of the other half, so folding it spends the
+  /// whole row's height on the half that carries the information. Applies to
+  /// the single wave and the stack alike.
+  bool waveformsFromBottom;
+
+  /// The interface language, as a BCP-47 tag (`en`, `de`, `zh`), or null to
+  /// follow whatever the machine is set to (K-303).
+  ///
+  /// Null by default and stored only once chosen, so a user who never opens the
+  /// picker follows their operating system for ever — including after they
+  /// change it — rather than being frozen into whatever language they happened
+  /// to launch Lumit in the first time. A tag Lumit has no strings for resolves
+  /// to English at load rather than refusing to open (see `l10n/strings.dart`).
+  String? language;
+
   InterfaceSettings({
+    this.language,
     this.uiScale = 1.0,
     this.showTooltips = true,
     this.transformInEffectControls = false,
     this.retimeOpensToSpeed = false,
+    this.retimeInSeconds = false,
     this.videoAsSequenceLayer = false,
     this.playheadStaysOnStop = false,
     this.pasteLayersAtOriginalTime = false,
+    this.multiwaveWaveforms = true,
+    this.waveformsFromBottom = false,
   });
 
   Map<String, dynamic> toJson() => {
+        if (language != null) 'language': language,
         'ui_scale': uiScale,
         'show_tooltips': showTooltips,
         'transform_in_effect_controls': transformInEffectControls,
         'retime_opens_to_speed': retimeOpensToSpeed,
+        'retime_in_seconds': retimeInSeconds,
         'video_as_sequence_layer': videoAsSequenceLayer,
         'playhead_stays_on_stop': playheadStaysOnStop,
         'paste_layers_at_original_time': pasteLayersAtOriginalTime,
+        'multiwave_waveforms': multiwaveWaveforms,
+        'waveforms_from_bottom': waveformsFromBottom,
       };
   factory InterfaceSettings.fromJson(Map<String, dynamic> j) =>
       InterfaceSettings(
+        // Absent means "follow the machine", which is what every settings file
+        // written before this field existed was doing.
+        language: j['language'] as String?,
         uiScale: (j['ui_scale'] as num?)?.toDouble() ?? 1.0,
         showTooltips: j['show_tooltips'] as bool? ?? true,
         transformInEffectControls:
@@ -189,6 +242,9 @@ class InterfaceSettings {
         // before these existed — a settings file written by an older build
         // must not silently change how the editor works.
         retimeOpensToSpeed: j['retime_opens_to_speed'] as bool? ?? false,
+        // Absent means off: the timecode readout is the new default, so a
+        // settings file written before this field existed adopts it.
+        retimeInSeconds: j['retime_in_seconds'] as bool? ?? false,
         videoAsSequenceLayer: j['video_as_sequence_layer'] as bool? ?? false,
         // Absent means off here too, but for the opposite reason: the returning
         // playhead is the *new* default (K-254), so a settings file written
@@ -199,5 +255,12 @@ class InterfaceSettings {
         // settings file written before this field existed already did.
         pasteLayersAtOriginalTime:
             j['paste_layers_at_original_time'] as bool? ?? false,
+        // Absent means on: the multiwave stack is the new default (K-280),
+        // and a settings file written before this field existed should get
+        // the better picture rather than be pinned to the old one.
+        multiwaveWaveforms: j['multiwave_waveforms'] as bool? ?? true,
+        // Absent means off: centred is what a settings file written before
+        // this field existed was already drawing.
+        waveformsFromBottom: j['waveforms_from_bottom'] as bool? ?? false,
       );
 }

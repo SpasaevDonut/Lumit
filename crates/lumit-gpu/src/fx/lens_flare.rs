@@ -82,8 +82,9 @@ pub struct LensFlareOp {
     pub light_tint: [f32; 3],
     /// Matte/Lights: whether a detected source's own colour tints its flare.
     pub use_source_colour: bool,
-    /// 1 = Black background: the output is made opaque (K-258).
-    pub background: u32,
+    /// How the flare element combines with the layer under it — an index
+    /// into `lumit_core::fx::lens_flare::BLEND_OPTIONS` (K-289).
+    pub blend: u32,
     /// 0..1.
     pub mix: f32,
     /// `lumit_core::fx::lens_flare::bake_key` of the op — the bake cache key.
@@ -273,6 +274,11 @@ impl<T: Clone> BakeCache<T> {
     }
 }
 
+/// How many blend modes the combine kernel's `flare_blend` implements — the
+/// length of `lumit_core::fx::lens_flare::BLEND_OPTIONS` (K-289), pinned by
+/// test. An index past the last option clamps rather than faulting.
+pub const BLEND_COUNT: u32 = 13;
+
 /// Most flare sources a frame renders — must equal
 /// `lumit_core::fx::lens_flare::MAX_LIGHTS` (pinned by test).
 pub const MAX_LIGHTS: u32 = 16;
@@ -382,7 +388,7 @@ struct CombineParams {
     fscale: f32,
     mix_amt: f32,
     light_count: u32,
-    background: u32,
+    blend: u32,
 }
 
 #[repr(C)]
@@ -1077,11 +1083,7 @@ impl FxEngine {
         let flare_tex = work_texture(ctx, fpw, fph, "fx-lens-flare-buffer");
         let msaa_tex = live.then(|| lf.take_msaa(ctx, fpw, fph));
 
-        let mut encoder = ctx
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("fx-lens-flare-enc"),
-            });
+        let mut encoder = ctx.encoder("fx-lens-flare-enc");
 
         // Matte-mode source detection (impl note §6): tile maxima, then the
         // serial top-K pick — both before any trace pass reads the lights.
@@ -1436,14 +1438,15 @@ impl FxEngine {
                     // submission the operating system would kill (see
                     // [`STEPS_PER_SUBMIT`]).
                     if flushes[bi] {
-                        let done = std::mem::replace(
-                            &mut encoder,
-                            ctx.device
-                                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                                    label: Some("fx-lens-flare-enc"),
-                                }),
-                        );
-                        ctx.queue.submit([done.finish()]);
+                        // The guard is dropped first because the flush needs
+                        // the batch it borrows. Inside a frame batch this
+                        // submits the frame so far and opens a fresh buffer;
+                        // outside one it submits this pass's own. Either way
+                        // the reason is unchanged — the scratch below is
+                        // recycled once this work has gone to the driver.
+                        drop(encoder);
+                        ctx.flush();
+                        encoder = ctx.encoder("fx-lens-flare-enc");
                     }
                 }
                 lf.put_scratch(scratch);
@@ -1544,7 +1547,7 @@ impl FxEngine {
             fscale,
             mix_amt: op.mix,
             light_count,
-            background: op.background.min(1),
+            blend: op.blend.min(BLEND_COUNT - 1),
         };
         let cp_buf = ctx
             .device
@@ -1600,7 +1603,7 @@ impl FxEngine {
             cpass.set_bind_group(0, &combine_bind, &[]);
             cpass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
         }
-        ctx.queue.submit([encoder.finish()]);
+        drop(encoder);
         if let Some(tex) = msaa_tex {
             lf.put_msaa(tex, fpw, fph);
         }
@@ -1799,7 +1802,7 @@ impl FxEngine {
             cpass.dispatch_workgroups(ray_count.div_ceil(64), combos.len() as u32, 1);
         }
         enc.copy_buffer_to_buffer(&rays_buf, 0, &read_buf, 0, rays_size);
-        ctx.queue.submit([enc.finish()]);
+        ctx.submit([enc.finish()]);
         let slice = read_buf.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |r| {

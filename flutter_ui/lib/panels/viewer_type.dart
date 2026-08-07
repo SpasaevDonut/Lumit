@@ -35,6 +35,7 @@ import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/state/tools.dart';
 
+import '../l10n/strings.dart';
 import '../state/layer_bounds.dart' show estimatedTextWidth;
 import '../state/preview_throttle.dart';
 import '../widgets/controls.dart';
@@ -113,8 +114,7 @@ class _ViewerTypeLayerState extends State<ViewerTypeLayer> {
 
   /// The point size and fill the edit is using, from the toolbar's options.
   double _size = 72;
-  BridgeColourRgba _fill =
-      const BridgeColourRgba(r: 1, g: 1, b: 1, a: 1);
+  BridgeColourRgba _fill = const BridgeColourRgba(r: 1, g: 1, b: 1, a: 1);
 
   /// Where the pointer is, for the drawn beam vertical type wears (K-226).
   Offset? _pointer;
@@ -255,7 +255,7 @@ class _ViewerTypeLayerState extends State<ViewerTypeLayer> {
   void _onTapUp(TapUpDetails details) {
     if (widget.tool == ToolMode.typeVertical) {
       widget.state.postNotice(
-        'Vertical type is not built yet — the engine lays out one horizontal line',
+        l10n.typeVerticalNotBuilt,
       );
       return;
     }
@@ -313,7 +313,7 @@ class _ViewerTypeLayerState extends State<ViewerTypeLayer> {
       _begin(layer, at, created: true);
       widget.onChanged();
     } catch (_) {
-      widget.state.postNotice('Could not add a text layer', error: true);
+      widget.state.postNotice(l10n.couldNotAddTextLayer, error: true);
     }
   }
 

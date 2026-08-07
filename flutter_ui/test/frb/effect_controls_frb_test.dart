@@ -9,10 +9,13 @@
 // Every document operation is genuine; see frb_test_support.dart.
 
 import 'package:flutter/gestures.dart' show kSecondaryButton;
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/widgets/controls.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
+import 'package:lumit_flutter/shell/menu_bar_frb.dart';
+import 'package:lumit_flutter/state/clipboard.dart';
 import 'package:lumit_flutter/panels/effect_controls_panel_frb.dart';
 import 'package:lumit_flutter/panels/effect_param_row_frb.dart' show effectLabelOf;
 import 'package:lumit_flutter/src/rust/api/effect.dart';
@@ -151,6 +154,76 @@ void main() {
       expect(nul.getEffects().length, 1);
       expect(find.text('Gaussian blur'), findsOneWidget,
           reason: 'the stack draws as it does on any other layer');
+    });
+
+    /// **Copying one effect** (K-275). The engine has taken one or a whole
+    /// stack since copy/paste landed — `copy_effects(Some(id))` — and the Edit
+    /// menu's Copy takes the *layer*, so until this row existed there was no
+    /// way to pick a single effect and no way to reach the call.
+    testWidgets('an effect heading copies that one effect', (tester) async {
+      final p = withLayer();
+      p.layer.addEffect(name: 'blur');
+      p.layer.addEffect(name: 'invert');
+      await mount(tester, p);
+
+      expect(p.uiState.clipboard.kind, isNull, reason: 'nothing copied yet');
+
+      final second = p.layer.getEffects()[1];
+      await tester.tapAt(
+        tester.getCenter(find.text(effectLabelOf(second.name()))),
+        buttons: kSecondaryButton,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+          find.byKey(ValueKey<String>('fx-menu-copy-${second.id()}')));
+      await tester.pumpAndSettle();
+
+      expect(p.uiState.clipboard.kind, ClipboardKind.effects,
+          reason: 'it goes on the same clipboard a whole stack does — both are '
+              '.lumfx, so Paste needs no idea which it holds');
+      // And it is *one* effect, not the stack: pasting onto a bare layer adds
+      // exactly one.
+      final bare = p.uiState.selectedComp!.addSolidLayer();
+      bare.pasteEffects(
+        text: p.uiState.clipboard.text!,
+        atFrame: 0,
+      );
+      expect(bare.getEffects(), hasLength(1),
+          reason: 'the picked effect alone, not the two on the layer');
+      expect(bare.getEffects().single.name(), second.name());
+    });
+
+    /// **An effect's name picks it** (K-300). Clicking a heading only twirled
+    /// it before, so an effect could not be selected here at all — and Copy,
+    /// which acts on the selection, had nothing to take but the whole layer.
+    /// Shift takes the run between, the way it does in every other list here.
+    testWidgets('clicking an effect name picks it, and Shift takes the run',
+        (tester) async {
+      final p = withLayer();
+      for (final name in ['blur', 'invert', 'vignette']) {
+        p.layer.addEffect(name: name);
+      }
+      await mount(tester, p);
+      final stack = p.layer.getEffects();
+
+      await tester.tap(find.text(effectLabelOf(stack.first.name())));
+      await tester.pumpAndSettle();
+      expect(p.uiState.selectedEffects.value, [stack.first.id()]);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.tap(find.text(effectLabelOf(stack[2].name())));
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pumpAndSettle();
+      expect(p.uiState.selectedEffects.value,
+          [for (final e in stack) e.id()],
+          reason: 'Shift extended the pick down the stack, in stack order');
+
+      // And that is what Copy takes: three effects, one .lumfx document.
+      expect(copySelectionFrb(p.uiState), isTrue);
+      expect(p.uiState.clipboard.kind, ClipboardKind.effects);
+      final bare = p.uiState.selectedComp!.addSolidLayer();
+      bare.pasteEffects(text: p.uiState.clipboard.text!, atFrame: 0);
+      expect(bare.getEffects(), hasLength(3));
     });
 
     testWidgets('a selection made in the Viewer switches the panel to it',
@@ -336,14 +409,21 @@ void main() {
       expect(find.text('Radius'), findsOneWidget,
           reason: 'a newly applied effect arrives open');
 
-      // The heading is the twirl: anywhere on it, not only the caret.
+      // **Only the twirl folds it** (K-300). The name picks the effect, and a
+      // click that also collapsed the card took the parameters away at the
+      // moment you said which effect you meant.
       await tester.tap(find.text('Gaussian blur'));
+      await tester.pump();
+      expect(find.text('Radius'), findsOneWidget,
+          reason: 'picking an effect does not shut it');
+
+      await tester.tap(find.byKey(ValueKey<String>('fx-twirl-$id')));
       await tester.pump();
       expect(find.text('Radius'), findsNothing);
       expect(find.byKey(ValueKey<String>('fx-enabled-$id')), findsOneWidget,
           reason: 'a shut effect still shows its heading and its switch');
 
-      await tester.tap(find.text('Gaussian blur'));
+      await tester.tap(find.byKey(ValueKey<String>('fx-twirl-$id')));
       await tester.pump();
       expect(find.text('Radius'), findsOneWidget);
     });
@@ -550,6 +630,13 @@ void main() {
       expect(find.text('Threshold'), findsOneWidget);
       expect(find.text('Threshold softness'), findsOneWidget);
 
+      // The Matte layer starts pointed at the layer the effect is ON
+      // (K-288), and the picker says so. Before this it defaulted to None
+      // and the effect sat there detecting nothing until you went hunting
+      // for another layer — which on an adjustment layer, whose only
+      // picture is the composite below, was always the wrong one.
+      expect(find.textContaining('(this layer)'), findsOneWidget);
+
       // Light tint is a source-mode-independent row (K-259); Use source
       // colour appears with Matte and would with Lights.
       expect(find.text('Light tint'), findsOneWidget);
@@ -566,6 +653,22 @@ void main() {
       expect(find.text('Light tint'), findsOneWidget);
       expect(find.text('Use source colour'), findsNothing);
       expect(find.text('Matte layer'), findsNothing);
+    });
+
+    // Blend (K-289): the Transparent/Black Background pair became a blend
+    // menu, defaulting to Add — the behaviour every flare already had.
+    testWidgets('the lens flare offers a blend menu, defaulting to Add',
+        (tester) async {
+      final p = withLayer();
+      p.layer.addEffect(name: 'lens_flare');
+      p.uiState.model.refresh();
+      await mount(tester, p, transform: false);
+
+      expect(find.text('Background'), findsNothing,
+          reason: 'the two-option Background choice is gone');
+      expect(find.text('Blend'), findsOneWidget);
+      expect(find.text('Add'), findsWidgets,
+          reason: 'a fresh flare adds its light, as it always did');
     });
 
     // The Lens picker (K-262, curated K-264). Twenty entries sit well

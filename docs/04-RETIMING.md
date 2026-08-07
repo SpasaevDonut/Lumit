@@ -488,6 +488,12 @@ vertically after the edited segment.
 
 ### 9.3 Numeric entry and readouts
 
+- **The Retime row's own value reads as a timecode** (`HH:MM:SS:FF`, with a leading minus
+  for a source time before zero), not as a number of seconds — K-287, realising K-075's
+  value lens for the outline row. It is dragged and typed in whole source frames, at the
+  composition's rate until the read model carries the footage's own. Settings ▸ Interface ▸
+  Editing ▸ *Retime values in seconds* puts the decimal seconds field back, which is also
+  the only way to state a position between two frames.
 - Graph editor header: speed at the playhead (per cent, one decimal), resolved source
   timecode, and the segment's type chip (RATE / MAP) with its ease name.
 - Typing digits with a segment selected opens constant-speed entry (§9.2). Typing with a
