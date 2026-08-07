@@ -1124,6 +1124,14 @@ class LumitUiState extends ChangeNotifier {
     _changes?.cancel();
     tools.dispose();
     layerBounds.dispose();
+    // The progress tracker owns a timer — the delay that decides whether a
+    // slow frame is slow enough to draw a bar for. Cancelling the subscription
+    // above stops new reports, but a report that arrived a moment earlier has
+    // already started one, and an uncancelled timer outlives the thing that
+    // set it. In the application that is a small leak per project session; in
+    // the frb tests it is a failure, and one that lands on whichever test
+    // happens to be running when it fires rather than the one that caused it.
+    previewProgress.dispose();
     model.dispose();
     cacheChanged.dispose();
     previewTier.dispose();

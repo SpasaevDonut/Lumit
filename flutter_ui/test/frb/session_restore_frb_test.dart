@@ -17,6 +17,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/shell/menu_bar_frb.dart';
+import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:lumit_flutter/state/workspace.dart';
 
 import 'frb_test_support.dart';
@@ -152,5 +153,37 @@ void main() {
         reason: 'the arrangement came out of the file');
     expect(otherUi.selectedComp?.internalid, scene.internalid,
         reason: 'and so did the comp that was open in it');
+  });
+
+  /// **A progress timer must not outlive the state that started it.**
+  ///
+  /// `PreviewProgressTracker` waits a moment before drawing a bar, so that a
+  /// frame which arrives quickly never flashes one. That wait is a timer, and
+  /// a timer nobody cancels keeps running after the thing that set it has gone
+  /// — in the application a small leak per project session, and in this suite
+  /// a failure that lands somewhere else entirely: the tracker of a discarded
+  /// UI state fires inside whatever test happens to be running, which then
+  /// fails on a pending timer it never created. `cache_bar_frb_test` went red
+  /// on main exactly that way while passing on the identical tree elsewhere.
+  ///
+  /// The test framework fails any test that ends with a timer outstanding, so
+  /// starting one and then disposing the state is the whole assertion: without
+  /// the `previewProgress.dispose()` in `LumitUiState.dispose`, this reports a
+  /// pending timer.
+  testWidgets('a preview-progress timer does not outlive its UI state',
+      (tester) async {
+    final state = LumitState()..newProject();
+    final ui = LumitUiState(state, workspace: Workspace());
+
+    // A frame worth waiting for, which is what arms the delay. Not `done`:
+    // a finished frame cancels it again and would prove nothing.
+    ui.previewProgress.report(BridgeRenderProgress(
+      frame: BigInt.from(3),
+      stage: 1,
+      fraction: 0.25,
+      done: false,
+    ));
+
+    ui.dispose();
   });
 }
