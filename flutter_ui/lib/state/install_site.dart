@@ -120,7 +120,12 @@ class InstallSite {
   /// Work out where we are from the running executable.
   ///
   /// [executablePath] and the two probes are injected so a test can describe an
-  /// installation that does not exist on the machine running the test.
+  /// installation that does not exist on the machine running the test — which
+  /// is why the path is taken apart *here* rather than with `File.parent`: that
+  /// splits on whatever separator the machine running the code uses, so a
+  /// Windows path handed to it on any other platform comes back as `.`, and the
+  /// whole install site is then nonsense. The operating system is a parameter,
+  /// so the separator has to be one too.
   static InstallSite detect({
     String? executablePath,
     String? operatingSystem,
@@ -129,6 +134,21 @@ class InstallSite {
     final exe = executablePath ?? Platform.resolvedExecutable;
     final os = operatingSystem ?? Platform.operatingSystem;
     final flatpak = isFlatpak ?? (path) => File(path).existsSync();
+    // Windows accepts both separators; everywhere else a backslash is an
+    // ordinary character in a name and must not split anything.
+    // Escaped rather than raw: a raw string cannot end in a backslash.
+    final sep = os == 'windows' ? '\\' : '/';
+    final split = os == 'windows' ? RegExp(r'[/\\]') : RegExp(r'/');
+
+    String parentOf(String path) {
+      final parts = path.split(split);
+      if (parts.length <= 1) return path;
+      parts.removeLast();
+      // A leading empty part is the root slash, and joining keeps it.
+      return parts.join(sep);
+    }
+
+    String join(String dir, String name) => '$dir$sep$name';
 
     // A Flatpak announces itself with a file the sandbox always carries. Asked
     // first, because inside the sandbox the paths below look perfectly ordinary
@@ -136,38 +156,39 @@ class InstallSite {
     if (os == 'linux' && flatpak('/.flatpak-info')) {
       return InstallSite(
         kind: InstallKind.flatpak,
-        root: File(exe).parent,
+        root: Directory(parentOf(exe)),
         launcher: File(exe),
       );
     }
 
     if (os == 'macos') {
-      // …/Lumit.app/Contents/MacOS/lumit_flutter — the bundle is three levels
-      // up, and only if the layout really is a bundle.
-      final macos = File(exe).parent;
-      final contents = macos.parent;
-      final app = contents.parent;
-      if (macos.path.endsWith('MacOS') &&
-          contents.path.endsWith('Contents') &&
-          app.path.endsWith('.app')) {
+      // …/Lumit.app/Contents/MacOS/Lumit — the bundle is three levels up, and
+      // only if the layout really is a bundle.
+      final macos = parentOf(exe);
+      final contents = parentOf(macos);
+      final app = parentOf(contents);
+      if (macos.endsWith('MacOS') &&
+          contents.endsWith('Contents') &&
+          app.endsWith('.app')) {
         return InstallSite(
           kind: InstallKind.bundle,
-          root: Directory(app.path),
-          launcher: File('${app.path}/Contents/MacOS/${_name(exe)}'),
+          root: Directory(app),
+          launcher: File(join(join(join(app, 'Contents'), 'MacOS'),
+              _name(exe))),
         );
       }
       return InstallSite(
         kind: InstallKind.unknown,
-        root: File(exe).parent,
+        root: Directory(parentOf(exe)),
         launcher: File(exe),
       );
     }
 
-    final folder = File(exe).parent;
+    final folder = parentOf(exe);
     return InstallSite(
       kind: InstallKind.folder,
-      root: Directory(folder.path),
-      launcher: File('${folder.path}${Platform.pathSeparator}${_name(exe)}'),
+      root: Directory(folder),
+      launcher: File(join(folder, _name(exe))),
     );
   }
 
