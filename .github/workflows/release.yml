@@ -1,17 +1,22 @@
-# Release pipeline (K-252): push a tag like v0.1.0 and this builds the Windows
-# installer and the Linux bundle on GitHub's own runners and attaches both to a
+# Release pipeline (K-252, K-304): push a tag like v0.1.0 and this builds all
+# three platform artefacts on GitHub's own runners and attaches them to a
 # GitHub Release — no local cross-building, which Flutter cannot do anyway.
+#
+# Three things are *installed* (K-304): a Windows setup .exe, a macOS .dmg and a
+# Linux .flatpak — one per platform, and the Linux tarball is withdrawn. Beside
+# them ride the plain application archives the in-place updater fetches (K-297):
+# a Windows .zip and a macOS .zip, which are not installers and are not offered
+# as a way to install. Every job gates the release; nothing is
+# continue-on-error, so a partial release is never published quietly.
 #
 # Toolchain steps mirror ci.yml's `windows` and `flutter-linux` jobs exactly
 # (same FFmpeg 7.1 shared build, same LLVM 18 pin, same Flutter 3.44.7); when
 # one changes, change the other.
 #
-# The macOS job is EXPERIMENTAL (continue-on-error): make-dmg.sh bundles the
-# Homebrew FFmpeg dylibs into the .app and re-signs ad hoc, so the DMG runs
-# without Homebrew — but it is unsigned (Gatekeeper warns) and the Metal
-# Viewer is unverified on real hardware. Signing and notarisation land with
-# the macOS pass (K-033, docs/TODO.md); a release still publishes if this job
-# fails, just without the DMG.
+# Neither the installer nor the DMG is signed. make-dmg.sh bundles the Homebrew
+# FFmpeg dylibs into the .app and re-signs ad hoc, so the DMG runs without
+# Homebrew, but Gatekeeper still warns; Developer ID signing and notarisation
+# land with the macOS pass (K-033, docs/TODO.md) once there is a certificate.
 
 name: release
 
@@ -144,21 +149,12 @@ jobs:
           cp assets/brand/lumit-mark.svg assets/brand/lumit-project.svg \
              assets/brand/lumit-preset.svg assets/brand/lumit-theme.svg \
              "$stage/share/"
-          printf '%s\n' \
-            "Run ./lumit_flutter from this directory." \
-            "For a menu entry and .lum/.lumfx/.lumtheme associations, clone the" \
-            "repository and run packaging/linux/install.sh after copying this" \
-            "bundle over flutter_ui/build/linux/x64/release/bundle, or place" \
-            "the files in share/ yourself (icons go to hicolor scalable)." \
-            > "$stage/INSTALL.txt"
-          tar czf "$stage.tar.gz" "$stage"
       - name: Build the Flatpak
         # Repacks the staged bundle (FFmpeg libs included) via the manifest in
         # packaging/flatpak/ into a single-file .flatpak anyone can install
-        # with `flatpak install lumit-*.flatpak`. continue-on-error: this job
-        # gates the whole release (publish needs it), and a Flatpak hiccup
-        # should cost the release the .flatpak, not the tar.gz and setup.exe.
-        continue-on-error: true
+        # with `flatpak install lumit-*.flatpak`. This is the whole Linux
+        # release (K-304), so a failure here fails the release rather than
+        # publishing a Linux-shaped hole.
         run: |
           version="${GITHUB_REF_NAME#v}"
           version="${version:-0.0.0}"
@@ -177,15 +173,12 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: linux-bundle
-          path: |
-            lumit-*-linux-x64.tar.gz
-            lumit-*-linux-x64.flatpak
+          path: lumit-*-linux-x64.flatpak
           if-no-files-found: error
 
   macos-dmg:
-    name: macOS disk image (experimental)
+    name: macOS disk image
     runs-on: macos-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -239,6 +232,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # A tag with a suffix (v0.2.0-rc1) publishes as a pre-release, so a
+          # dry run of the whole pipeline never becomes the download page's
+          # "latest". Plain v0.2.0 is the real thing.
+          case "$GITHUB_REF_NAME" in *-*) prerelease=--prerelease ;; *) prerelease= ;; esac
           gh release create "$GITHUB_REF_NAME" dist/* \
             --title "Lumit $GITHUB_REF_NAME" \
-            --generate-notes
+            --generate-notes $prerelease
