@@ -4,7 +4,7 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show File;
+import 'dart:io' show File, Platform;
 import 'dart:ui' show AppExitResponse;
 
 import 'package:flutter/material.dart';
@@ -16,6 +16,7 @@ import 'package:lumit_flutter/panels/viewer_texture_controller.dart';
 import 'package:lumit_flutter/shell/comp_settings_frb.dart';
 import 'package:lumit_flutter/shell/precompose_dialog_frb.dart';
 import 'package:lumit_flutter/shell/dock_widget.dart';
+import 'package:lumit_flutter/shell/about_window_frb.dart';
 import 'package:lumit_flutter/shell/first_run_frb.dart';
 import 'package:lumit_flutter/shell/menu_bar_frb.dart';
 import 'package:lumit_flutter/shell/project_settings_frb.dart';
@@ -41,7 +42,9 @@ import 'package:lumit_flutter/state/layer_bounds.dart';
 import 'package:lumit_flutter/state/preview_progress.dart';
 import 'package:lumit_flutter/state/render_timings.dart';
 import 'package:lumit_flutter/state/settings.dart';
+import 'package:lumit_flutter/state/install_site.dart';
 import 'package:lumit_flutter/state/tools.dart';
+import 'package:lumit_flutter/state/updates.dart';
 import 'package:lumit_flutter/state/workspace.dart';
 import 'package:lumit_flutter/theme/theme.dart';
 import 'package:lumit_flutter/widgets/controls.dart';
@@ -191,6 +194,12 @@ String? projectPathFromArgs(List<String> args) {
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Sweep up after an update before anything else happens (K-297): delete the
+  // version we have just replaced, now that nothing is holding its files, and
+  // put it back if a swap was cut in half. Never throws and never blocks — a
+  // tidying problem is not a reason for an editor not to open.
+  tidyAfterUpdate(InstallSite.detect());
 
   await BridgeLib.init(handler: CustomHandler());
 
@@ -430,6 +439,15 @@ class LumitUiState extends ChangeNotifier {
   /// The keyboard map every shortcut is looked up in (docs/07 §15, K-199).
   late final KeymapState keymap;
 
+  /// Whether there is a newer Lumit, and fetching it (K-296).
+  ///
+  /// One for the session, here, because the Help menu and Settings ▸ General
+  /// are two views of the same check and neither owns it. The version is passed
+  /// as a function, not a string: it comes over the bridge, and a widget test
+  /// that builds this state must not call the engine merely by existing.
+  late final UpdateService updates =
+      UpdateService(currentVersion: () => versionFromBootLine(lumitVersion()));
+
   /// How big each layer's content is, for the Viewer's boxes and hit-testing
   /// (K-217). Held here because the answer is the document's, not a panel's,
   /// and probing a clip is disk work that must happen once rather than per
@@ -478,6 +496,23 @@ class LumitUiState extends ChangeNotifier {
   final ValueNotifier<int> togglePlayRequest = ValueNotifier(0);
 
   void requestTogglePlay() => togglePlayRequest.value++;
+
+  /// Look for a newer Lumit on launch, if that is switched on and it has been
+  /// a day since the last look (K-296).
+  ///
+  /// Only ever a *look*: what it finds ends up as the wording of the Help menu
+  /// row, and downloading anything still waits for a click. Failure is silent —
+  /// a machine with no network has not done anything wrong, and an editor that
+  /// opened with a complaint about the internet would be insufferable.
+  Future<void> maybeCheckForUpdates() async {
+    if (!workspace.autoUpdate) return;
+    // Never under `flutter test`: a suite that mounts the shell would otherwise
+    // reach the network, which is slow, flaky, and none of a test's business.
+    if (Platform.environment.containsKey('FLUTTER_TEST')) return;
+    if (!updates.dueForCheck(workspace.lastUpdateCheckMs)) return;
+    await updates.check();
+    workspace.rememberUpdateCheck(DateTime.now().millisecondsSinceEpoch);
+  }
 
   /// Bumped when `Ctrl+Shift+P` asks for the command palette.
   ///
@@ -1412,7 +1447,11 @@ class _LumitAppViewState extends State<LumitAppView> {
     // Overlay to put it in. It asks nothing on any later launch.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      maybeShowFirstRunFrb(context, context.read<LumitUiState>().workspace);
+      final ui = context.read<LumitUiState>();
+      // The update check follows the question rather than racing it: the
+      // setup screen is where somebody may have just switched it off (K-296).
+      maybeShowFirstRunFrb(context, ui.workspace)
+          .then((_) => ui.maybeCheckForUpdates());
     });
   }
 

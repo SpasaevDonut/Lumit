@@ -46,6 +46,7 @@ import 'export_dialog_frb.dart';
 import 'recovery_dialog_frb.dart';
 import 'project_settings_frb.dart';
 import 'settings_window_frb.dart';
+import 'update_dialog_frb.dart';
 
 /// One row of a menu: a label with an action, a submenu, or a divider.
 ///
@@ -62,6 +63,13 @@ class MenuEntry {
   final bool todo;
   final bool? checked;
 
+  /// What this row watches, for the few rows whose wording changes while the
+  /// menu is open. Null for every ordinary row — see [MenuEntry.live].
+  final Listenable? live;
+
+  /// How to rebuild this row when [live] fires. Null unless [live] is set.
+  final MenuEntry Function()? rebuild;
+
   const MenuEntry(
     this.label,
     this.onPressed, {
@@ -69,7 +77,9 @@ class MenuEntry {
     this.checked,
   })  : isDivider = false,
         children = null,
-        todo = false;
+        todo = false,
+        live = null,
+        rebuild = null;
 
   const MenuEntry.divider()
       : label = null,
@@ -78,14 +88,18 @@ class MenuEntry {
         isDivider = true,
         action = null,
         todo = false,
-        checked = null;
+        checked = null,
+        live = null,
+        rebuild = null;
 
   const MenuEntry.submenu(this.label, this.children)
       : onPressed = null,
         isDivider = false,
         action = null,
         todo = false,
-        checked = null;
+        checked = null,
+        live = null,
+        rebuild = null;
 
   /// A command the specification has and the build has not.
   const MenuEntry.todo(this.label, {this.action})
@@ -93,7 +107,32 @@ class MenuEntry {
         children = null,
         isDivider = false,
         todo = true,
+        checked = null,
+        live = null,
+        rebuild = null;
+
+  /// A row that redraws itself while its menu is open, from [rebuild], every
+  /// time [live] fires — and which does *not* close the menu when pressed.
+  ///
+  /// Only for rows where the press has visible consequences in the row itself:
+  /// Check for updates is the one, and it is the whole reason this exists
+  /// (K-296). Pressing it starts a check, the row greys and says so, and the
+  /// answer arrives in the same row a second or two later. A row that closed
+  /// the menu would leave the user pressing Help again to find out what
+  /// happened, and one that did not redraw would still say "Check for updates"
+  /// while it was checking.
+  const MenuEntry.live(Listenable this.live, MenuEntry Function() this.rebuild)
+      : label = null,
+        onPressed = null,
+        children = null,
+        isDivider = false,
+        action = null,
+        todo = false,
         checked = null;
+
+  /// This row as it currently reads. The same row for everything except a
+  /// [MenuEntry.live] one, which asks its builder.
+  MenuEntry get current => rebuild == null ? this : rebuild!();
 
   /// What the row reads as, suffix and all.
   String get text => todo ? '$label (Not implemented)' : (label ?? '');
@@ -130,9 +169,15 @@ class LumitMenuBarFrb extends StatelessWidget {
     // ValueNotifier that does not notify the shell state. Without this the bar
     // would keep whatever selection it was last built with, and every one of
     // those rows would be greyed out with a layer plainly selected.
+    // The updater is the second thing outside the shell state that a menu row
+    // reads (K-296): the Help row says what it is doing, and on macOS the whole
+    // tree is handed to the system, where there is no rebuilding a single row.
     return ValueListenableBuilder<List<LayerReference>>(
       valueListenable: context.read<LumitUiState>().selectedLayers,
-      builder: (context, _, __) => _bar(context),
+      builder: (context, _, __) => ListenableBuilder(
+        listenable: context.read<LumitUiState>().updates,
+        builder: (context, _) => _bar(context),
+      ),
     );
   }
 
@@ -619,7 +664,10 @@ List<MenuSection> lumitMenus(
     ]),
     (title: 'Help', items: [
       MenuEntry('About Lumit', () => showAboutWindowFrb(context)),
-      const MenuEntry.todo('Check for updates'),
+      MenuEntry.live(
+        ui.updates,
+        () => updateMenuEntry(context, app, ui, savePicker: savePicker),
+      ),
       const MenuEntry.divider(),
       const MenuEntry.todo('Lumit help'),
       const MenuEntry.todo('Lumit online guides'),
@@ -885,6 +933,34 @@ Future<void> saveProjectFrb(
   app.notifyDocumentChanged();
 }
 
+/// The Help ▸ Check for updates row, reading whatever the updater is doing
+/// (K-296).
+///
+/// Built fresh every time the service notifies, which is what makes one row
+/// carry the whole sequence: check, offer, download, restart. Disabled while
+/// something is in flight — a second press during a check would start a second
+/// one, and there is nothing useful for it to do.
+MenuEntry updateMenuEntry(
+  BuildContext context,
+  LumitState app,
+  LumitUiState ui, {
+  Future<String?> Function()? savePicker,
+}) {
+  final updates = ui.updates;
+  return MenuEntry(
+    updates.menuLabel,
+    updates.busy
+        ? null
+        : () => pressUpdateRow(
+              context,
+              updates: updates,
+              notice: app.postNotice,
+              projectIsDirty: () => app.project?.isDirty() ?? false,
+              saveProject: () => saveProjectFrb(app, ui, picker: savePicker),
+            ),
+  );
+}
+
 // --- The macOS renderer ---------------------------------------------------
 
 /// The same tree as native macOS menus.
@@ -910,11 +986,16 @@ List<PlatformMenuItem> platformMenusFor(
       group = [];
     }
 
-    for (final item in items) {
-      if (item.isDivider) {
+    for (final raw in items) {
+      if (raw.isDivider) {
         flush();
         continue;
       }
+      // A live row resolves to whatever it currently reads. The Mac menu is
+      // rebuilt whenever the bar is, and the bar watches the same object the
+      // row does, so this stays in step without the in-app renderer's
+      // rebuild-in-place machinery.
+      final item = raw.current;
       final label = switch (item.checked) {
         true => '✓ ${item.text}',
         false => '  ${item.text}',
@@ -1155,6 +1236,19 @@ class _MenuList extends StatelessWidget {
                     submenu: (dismiss) =>
                         _MenuList(items: children, close: dismiss),
                     child: _label(t, item, ticks: ticks, shortcut: null),
+                  )
+                else if (item.live case final listenable?)
+                  // Stays open and redraws in place: the point of a live row is
+                  // to watch what pressing it did (K-296).
+                  ListenableBuilder(
+                    listenable: listenable,
+                    builder: (context, _) {
+                      final row = item.current;
+                      return MenuRow(
+                        onPressed: row.onPressed ?? () {},
+                        child: _label(t, row, ticks: ticks, shortcut: null),
+                      );
+                    },
                   )
                 else
                   MenuRow(

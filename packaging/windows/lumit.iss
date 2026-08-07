@@ -20,7 +20,17 @@ AppName=Lumit
 AppVersion={#MyAppVersion}
 AppPublisher=Lumit
 AppPublisherURL=https://github.com/luminalmvm/Lumit
-DefaultDirName={autopf}\Lumit
+; Per user, not per machine (K-297). This is what lets Lumit update itself the
+; way Chrome and VS Code do: {localappdata} belongs to the person running it, so
+; the application can put a new version down beside the old one and swap them
+; over without an administrator and without running this installer again.
+; `PrivilegesRequired=lowest` means no UAC prompt to install in the first place.
+PrivilegesRequired=lowest
+DefaultDirName={localappdata}\Programs\Lumit
+; An existing installation keeps its folder, wherever a previous version put it
+; — including the old {autopf} one, which simply carries on being updated by
+; this installer rather than in place.
+UsePreviousAppDir=yes
 DefaultGroupName=Lumit
 LicenseFile=..\..\LICENSE
 OutputDir=dist
