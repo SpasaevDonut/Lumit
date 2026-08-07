@@ -3,7 +3,25 @@
        The page and its folded corner are the family's; the glyph is three
        overlapping swatches rather than the keyframe mark, because what this
        file carries is colours. Three, and large, so the shape still reads as
-       swatches at 16 pixels where the label is a smudge. -->
+       swatches at 16 pixels where the label is a smudge.
+
+       **The three overlap in a ring, not a stack**: blue over white, violet
+       over blue, white over violet. No painting order can produce a cycle, so
+       the white swatch is painted twice — once under the other two, and once
+       more over the violet one.
+
+       **Every rim is drawn exactly once**, and only where its own swatch is the
+       one in front. Two rims at a quarter opacity stacking is what turns a
+       crossing into a dark blot; a rim left under the swatch in front of it is
+       what puts a grey line across that swatch; and one rim drawn as two arcs
+       meeting end to end leaves a seam where their softened ends meet. So each
+       swatch paints its fill before its own rim, covering the rim of whatever it
+       is in front of, and the white swatch — which is painted twice — takes its
+       rim last, in one piece, clipped to where it is not behind the blue one.
+
+       The second white's fill reaches a hair past the violet circle: clipped to
+       exactly the same circle, the violet swatch's own softened edge pixels show
+       through the join as a hairline. -->
   <defs>
     <linearGradient id="key-a" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#86e2ff"/><stop offset="1" stop-color="#2f6fe0"/>
@@ -17,15 +35,15 @@
     <filter id="key-shadow" x="-30%" y="-30%" width="160%" height="160%">
       <feDropShadow dx="0" dy="7" stdDeviation="11" flood-color="#04060b" flood-opacity="0.4"/>
     </filter>
-    <!-- The two clips that close the cycle. Painting order gives blue over
-         white and violet over blue; the last pair, white over violet, cannot
-         come from an order at all — so the white swatch is painted a second
-         time, kept inside the violet one and outside the blue one. -->
-    <clipPath id="sw-violet">
-      <circle cx="298" cy="206" r="62"/>
-    </clipPath>
+    <clipPath id="sw-blue"><circle cx="214" cy="206" r="62"/></clipPath>
+    <clipPath id="sw-violet"><circle cx="298" cy="206" r="62"/></clipPath>
+    <clipPath id="sw-white"><circle cx="256" cy="278" r="62"/></clipPath>
+    <!-- The violet swatch grown by a hair, for the second white's fill. -->
+    <clipPath id="sw-violet-over"><circle cx="298" cy="206" r="63.5"/></clipPath>
+    <!-- Everything but the blue swatch, likewise grown: where the white swatch
+         is in front, and so where its rim belongs. -->
     <clipPath id="sw-outside-blue">
-      <path d="M0 0 H512 V512 H0 Z M148 206 a66 66 0 1 0 132 0 a66 66 0 1 0 -132 0 Z"
+      <path d="M0 0 H512 V512 H0 Z M150.5 206 a63.5 63.5 0 1 0 127 0 a63.5 63.5 0 1 0 -127 0 Z"
             clip-rule="evenodd"/>
     </clipPath>
     <linearGradient id="doc-bg" x1="0" y1="0" x2="0" y2="1">
@@ -37,18 +55,34 @@
   <path d="M318 64 L396 142 L332 142 Q318 142 318 128 Z" fill="#272b34"/>
   <g filter="url(#key-shadow)"
      transform="translate(256 234) scale(0.88) translate(-256 -234)">
-    <!-- White, then blue over it, then violet over blue. -->
-    <circle cx="256" cy="278" r="62" fill="url(#key-c)"
-            stroke="#0c0e14" stroke-opacity="0.25" stroke-width="8"/>
-    <circle cx="214" cy="206" r="62" fill="url(#key-a)"
-            stroke="#0c0e14" stroke-opacity="0.25" stroke-width="8"/>
-    <circle cx="298" cy="206" r="62" fill="url(#key-b)"
-            stroke="#0c0e14" stroke-opacity="0.25" stroke-width="8"/>
-    <!-- And white back over violet, closing the ring. -->
+    <!-- White, under everything. Its rim comes last, in one piece. -->
+    <circle cx="256" cy="278" r="62" fill="url(#key-c)"/>
+    <!-- Blue over white. -->
+    <g clip-path="url(#sw-blue)">
+      <circle cx="214" cy="206" r="62" fill="url(#key-a)"/>
+      <circle cx="214" cy="206" r="62" fill="none"
+              stroke="#0c0e14" stroke-opacity="0.25" stroke-width="10"/>
+    </g>
+    <!-- Violet over blue. -->
     <g clip-path="url(#sw-violet)">
-      <circle cx="256" cy="278" r="62" clip-path="url(#sw-outside-blue)"
-              fill="url(#key-c)" stroke="#0c0e14" stroke-opacity="0.25"
-              stroke-width="8"/>
+      <circle cx="298" cy="206" r="62" fill="url(#key-b)"/>
+      <circle cx="298" cy="206" r="62" fill="none"
+              stroke="#0c0e14" stroke-opacity="0.25" stroke-width="10"/>
+    </g>
+    <!-- White again, over violet: the ring closes. -->
+    <g clip-path="url(#sw-white)">
+      <g clip-path="url(#sw-violet-over)">
+        <circle cx="256" cy="278" r="62" fill="url(#key-c)"/>
+      </g>
+    </g>
+    <!-- The white swatch's rim, drawn once and last, wherever the white swatch
+         is the one in front. Once, because two arcs meeting end to end leave a
+         seam across the rim where their softened ends meet. -->
+    <g clip-path="url(#sw-white)">
+      <g clip-path="url(#sw-outside-blue)">
+        <circle cx="256" cy="278" r="62" fill="none"
+                stroke="#0c0e14" stroke-opacity="0.25" stroke-width="10"/>
+      </g>
     </g>
   </g>
   <text x="256" y="408" font-family="JetBrains Mono, Consolas, monospace" font-size="58"
