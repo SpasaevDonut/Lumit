@@ -355,7 +355,7 @@ class _RestartToFinish extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
     return FloatSurface(
-      width: 420,
+      width: 460,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -385,8 +385,15 @@ class _RestartToFinish extends StatelessWidget {
           const SizedBox(height: 14),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
+            // A Wrap rather than a Row: with unsaved work there are three
+            // buttons and one of them is a whole sentence, which overflowed the
+            // window and pushed Save and restart off the right edge. Wrapping
+            // holds however wide the UI scale makes these labels, rather than
+            // depending on a width that happens to fit at 100%.
+            child: Wrap(
+              alignment: WrapAlignment.end,
+              spacing: 8,
+              runSpacing: 8,
               children: [
                 HouseButton(
                   key: const ValueKey('update-restart-later'),
@@ -395,7 +402,6 @@ class _RestartToFinish extends StatelessWidget {
                   onPressed: () => onChoose(_RestartAnswer.later),
                   child: Text('Later', style: t.small),
                 ),
-                const SizedBox(width: 8),
                 if (quits && dirty) ...[
                   HouseButton(
                     key: const ValueKey('update-restart-now'),
@@ -404,7 +410,6 @@ class _RestartToFinish extends StatelessWidget {
                     onPressed: () => onChoose(_RestartAnswer.restart),
                     child: Text('Restart without saving', style: t.small),
                   ),
-                  const SizedBox(width: 8),
                   HouseButton(
                     key: const ValueKey('update-save-restart'),
                     small: true,

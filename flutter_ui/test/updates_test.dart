@@ -169,12 +169,20 @@ void main() {
     });
 
     test('a check is good for a day', () {
-      var now = 1000000;
+      // An ordinary moment, not a small number: "a day since never" is only
+      // true if now is itself more than a day past the epoch.
+      const morning = 1770000000000;
+      var now = morning;
       final service = _service(now: () => now);
-      expect(service.dueForCheck(0), isTrue);
-      expect(service.dueForCheck(now), isFalse);
+      expect(service.dueForCheck(0), isTrue, reason: 'never looked');
+      expect(service.dueForCheck(now), isFalse, reason: 'just looked');
+      expect(
+        service.dueForCheck(now - updateCheckInterval.inMilliseconds + 1),
+        isFalse,
+        reason: 'a minute short of a day is still too soon',
+      );
       now += updateCheckInterval.inMilliseconds;
-      expect(service.dueForCheck(1000000), isTrue);
+      expect(service.dueForCheck(morning), isTrue, reason: 'a day later');
     });
   });
 
