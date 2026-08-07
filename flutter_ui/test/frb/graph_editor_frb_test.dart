@@ -453,6 +453,34 @@ void main() {
       expect(frames, hasLength(3));
     });
 
+    /// **A row with no keyframes still has a value, and Copy takes it**
+    /// (K-301). With the row selected and no individual key picked, `Ctrl+C`
+    /// used to find nothing to copy, give up, and quietly copy the whole layer
+    /// instead — so the one thing the user was pointing at was the one thing
+    /// that did not travel.
+    testWidgets('a static row copies its value, and pasting puts it back',
+        (tester) async {
+      final p = withLayer();
+      p.layer.setTransform(
+          prop: BridgeTransformProp.opacity,
+          value: const BridgeScalar.static_(40));
+      await mountGraph(tester, p);
+
+      expect(p.uiState.copyClaim!(), isTrue,
+          reason: 'the selected row is what Copy takes, keys or no keys');
+
+      p.layer.setTransform(
+          prop: BridgeTransformProp.opacity,
+          value: const BridgeScalar.static_(90));
+      p.uiState.model.refresh();
+      await tester.pump();
+
+      expect(p.uiState.pasteClaim!(), isTrue);
+      await tester.pumpAndSettle();
+      expect(p.layer.getTransform().opacity, const BridgeScalar.static_(40),
+          reason: 'the copied value came back as a value, not as a keyframe');
+    });
+
     /// Copy and paste belong to the keyframes, not to the graph: a selection
     /// boxed up on a *lane* copies and pastes the same way (K-196).
     testWidgets('copy and paste work from the lane view too', (tester) async {

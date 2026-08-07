@@ -1326,8 +1326,10 @@ Shows the **effect stack** of the selected layer (tab per recently viewed layer,
   can make.
 
   **An effect's name selects it** (K-300), taking the selection fill across the heading bar —
-  plain replaces, `Ctrl` toggles, `Shift` extends the run down the stack, and only a plain
-  click also twirls the card. It is the same selection the Timeline's fold-out shows (§4.3),
+  plain replaces, `Ctrl` toggles, `Shift` extends the run down the stack. Selecting an effect
+  **does not fold it**: the twirl mark is the only thing that opens and shuts a card, because
+  a click that did both would take the parameters away at the moment you said which effect you
+  meant. It is the same selection the Timeline's fold-out shows (§4.3),
   so an effect picked in either place is lit in both, and it is what **Copy**, **Cut** and the
   heading's **Copy effect** act on. Source and Transform are not part of a stack and so are
   not selectable; their headings twirl as they always did.
@@ -1934,7 +1936,7 @@ app-wide, so a list, a field or a canvas is free to use them for moving within i
 | Global | `Ctrl+S` / `Ctrl+Shift+S` | Save / Save as |
 | Global | `Ctrl+I` | Import footage |
 | Global | `Ctrl+Alt+M` | Export the composition |
-| Global | `Ctrl+X` / `Ctrl+C` / `Ctrl+V` | Cut / copy / paste the selection — keyframes when a panel has claimed them, else the picked effects, else the layer (K-300) |
+| Global | `Ctrl+X` / `Ctrl+C` / `Ctrl+V` | Cut / copy / paste the selection — picked keyframes, else the selected property rows (their keys, or their plain value where they have none, K-301), else the picked effects, else the layer (K-300) |
 | Global | `Ctrl+A` / `Ctrl+Shift+A` | Select all layers / deselect all |
 | Global | `Ctrl+Alt+;` | Settings (Preferences) |
 | Global | `Alt+Shift+1…9` | Switch workspace |

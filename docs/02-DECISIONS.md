@@ -6611,10 +6611,13 @@ round. It follows the same three click rules as every other list here — plain 
 toggles, Shift extends the run — and picking a different layer clears it, because an effect
 belongs to a layer and Copy must never act on something no longer on screen.
 
-**A heading twirls *and* picks.** A plain click on a heading still opens it, which is what it
-has always done and how the outline is navigated; a *modified* click only picks, so
-Shift-clicking a run of effects does not flap every one of them open on the way past. The
-twirl mark beside the name always twirls.
+**A heading picks; the twirl folds.** In the **Effect controls panel** the name only picks —
+a click that also collapsed the card took the parameters away at the moment you said which
+effect you meant, which is the opposite of what selecting one is for, and the twirl mark is
+right there. In the **Timeline** a plain click still opens the heading as well, because the
+fold is how that outline is navigated and it has always worked that way; a *modified* click
+there only picks, so Shift-clicking a run of effects does not flap every one of them open on
+the way past. The twirl mark always folds and never picks, in both places.
 
 **Copy takes the finest selection.** Keyframes when a panel has claimed them, else the picked
 effects, else the layer — the ladder Delete has followed since K-234, and through the same
@@ -6636,3 +6639,27 @@ guess.
 any other row but are not copyable — Copy falls through to the layer, which is what a
 transform copy would have to mean anyway. Cutting an effect removes it from the stack; cutting
 with nothing but a layer selected still deletes the layer.
+
+**K-301 · DECIDED · A row that is not animated still copies — its value is the thing being
+copied.** K-300 made Copy take the finest selection there is, and left one hole in the
+ladder: at the property level it took *keyframes*, so a row with none copied nothing, gave
+up, and fell through to copying the whole layer. The one thing the user was pointing at was
+the one thing that did not travel.
+
+**Copy with rows selected and no individual key picked copies the rows whole**: every key of
+an animated one, the plain value of one with no keyframes at all. Picking individual
+keyframes still copies exactly those, which is K-196 unchanged.
+
+**A copied value pastes as a value.** Onto a target that is not animated it replaces the
+number; onto one that is, it sets a key at the playhead — which is what "put this value
+here" can only mean on a row that already moves. A value has no time, so this paste is the
+one that does not shift anything onto the playhead.
+
+**The system clipboard gets the plain numbers** when nothing copied was animated,
+tab-joined — the same text a value field's own right-click Copy writes, so a value copied
+out of a row and a value copied out of a field are the same thing to everything else on the
+machine. With anything animated in the set, the keyframe table is written as before.
+
+**The other levels already carried their values** and are unchanged: `copy_layer`
+serialises the whole layer and `copy_effects` the whole `.lumfx`, both including every
+parameter that is a plain number. This entry is only about the property row.

@@ -409,14 +409,21 @@ void main() {
       expect(find.text('Radius'), findsOneWidget,
           reason: 'a newly applied effect arrives open');
 
-      // The heading is the twirl: anywhere on it, not only the caret.
+      // **Only the twirl folds it** (K-300). The name picks the effect, and a
+      // click that also collapsed the card took the parameters away at the
+      // moment you said which effect you meant.
       await tester.tap(find.text('Gaussian blur'));
+      await tester.pump();
+      expect(find.text('Radius'), findsOneWidget,
+          reason: 'picking an effect does not shut it');
+
+      await tester.tap(find.byKey(ValueKey<String>('fx-twirl-$id')));
       await tester.pump();
       expect(find.text('Radius'), findsNothing);
       expect(find.byKey(ValueKey<String>('fx-enabled-$id')), findsOneWidget,
           reason: 'a shut effect still shows its heading and its switch');
 
-      await tester.tap(find.text('Gaussian blur'));
+      await tester.tap(find.byKey(ValueKey<String>('fx-twirl-$id')));
       await tester.pump();
       expect(find.text('Radius'), findsOneWidget);
     });

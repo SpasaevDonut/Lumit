@@ -3470,12 +3470,21 @@ shell stands down.
 An **effect is selected by clicking its name**, in the Effect controls panel or on its
 row in the Timeline's fold-out; `Ctrl` adds one, `Shift` takes the run between. There
 is only one such selection, held by the shell rather than by either panel, which is why
-an effect picked in one place lights up in the other. A plain click also twirls the
-heading open, the way it always did; a modified click only selects, so `Shift`-clicking
-down a stack of effects does not flap all of them open on the way. Copying several
+an effect picked in one place lights up in the other. In the Effect controls panel picking
+an effect leaves it open — the twirl mark is the only thing that folds a card there. In the
+Timeline a plain click also twirls, the way it always has, and a modified click only
+selects, so `Shift`-clicking down a stack does not flap all of them open. Copying several
 effects produces a single `.lumfx` document — the same kind of document a preset is —
 holding them in stack order rather than click order, so pasting puts them back the way
 they were drawn.
+
+**A row with no keyframes copies too (K-301).** Copy at the property level used to mean
+"the selected keyframes", so a row that was never animated had nothing to give and the
+chord quietly copied the whole layer instead. Now selecting rows and pressing Copy takes
+those rows whole: every key of an animated one, the plain number of one that has none. A
+copied number pastes as a number onto a row that is not animated, and as a key at the
+playhead onto one that is. The other levels always carried their values — a copied layer
+or a copied effect is the document itself, animated parts and plain numbers alike.
 
 **Scrolling it, and why a trackpad needed its own answer (K-278).** Dragging in
 the lanes draws a selection box round keyframes, so the panel switches off

@@ -1437,10 +1437,12 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
   ///
   /// The same call the row's own context menu makes, so there is one way a mask
   /// is deleted. One op per mask, as deleting several layers is one op each.
-  /// Copy claims the chord only when keyframes are actually selected (K-300,
-  /// K-196's copy under the claim the shell asks). With nothing keyed picked
-  /// the chord falls through to the shell, which copies the picked effects or
-  /// the layer.
+  /// Copy claims the chord when keyframes are selected (K-300, K-196's copy
+  /// under the claim the shell asks) — and when whole property *rows* are, with
+  /// no individual keys picked, in which case it copies those rows: every key
+  /// of an animated one, the plain value of one with no keyframes at all
+  /// (K-301). With neither the chord falls through to the shell, which copies
+  /// the picked effects or the layer.
   bool _copySelectedKeys() {
     if (!mounted) return false;
     final ui = Provider.of<LumitUiState>(context, listen: false);
@@ -1448,7 +1450,9 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     if (comp == null) return false;
     final channels = _channelsNow();
     final selection = _actionKeySelection(channels);
-    if (selection.isEmpty) return false;
+    if (selection.isEmpty) {
+      return copyChannels(comp: comp, channels: channels, fps: ui.model.fps);
+    }
     copySelectedKeys(
       comp: comp,
       channels: channels,

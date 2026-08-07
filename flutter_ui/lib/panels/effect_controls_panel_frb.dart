@@ -490,6 +490,7 @@ class _EffectSection extends StatelessWidget {
       onToggle: onToggle,
       selected: selected,
       onSelect: onSelect,
+      twirlKey: ValueKey<String>('fx-twirl-$id'),
       leading: LumitTooltip(
         message: info.enabled ? 'Disable this effect' : 'Enable it',
         child: HouseCheckbox(

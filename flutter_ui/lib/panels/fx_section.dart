@@ -23,7 +23,6 @@
 import 'package:flutter/widgets.dart';
 
 import '../icons/icons.dart';
-import 'layer_fold_frb.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 
@@ -65,6 +64,10 @@ class FxSection extends StatelessWidget {
   /// does, so one effect chosen in either place reads the same in both.
   final bool selected;
 
+  /// The twirl mark's own key — it is the only thing that folds a selectable
+  /// section, so it is worth being able to point at.
+  final Key? twirlKey;
+
   /// This section's place in its list, when the heading may be **dragged** to
   /// another place in it (docs/07 §6's drag-to-reorder). Null — Source,
   /// Transform, anything that does not sit in a reorderable stack — leaves the
@@ -90,6 +93,7 @@ class FxSection extends StatelessWidget {
     this.onContextMenu,
     this.onSelect,
     this.selected = false,
+    this.twirlKey,
     this.dragIndex,
     this.onDropped,
   });
@@ -167,14 +171,12 @@ class FxSection extends StatelessWidget {
 
   Widget _heading(LumitTheme t) => GestureDetector(
         behavior: HitTestBehavior.opaque,
-        // The name picks the section as well as twirling it (K-300) — and on a
-        // modified click it only picks, so Ctrl- and Shift-clicking a run of
-        // effects does not flap every card open on the way past. A section that
-        // cannot be picked (Source, Transform) twirls as it always did.
-        onTap: () {
-          onSelect?.call();
-          if (onSelect == null || !isModifiedClick) onToggle();
-        },
+        // **The name picks the effect; only the twirl folds it** (K-300). A
+        // click that both picked and collapsed took the parameters away at the
+        // moment you said which effect you meant, which is the opposite of what
+        // selecting one is for. A section that cannot be picked (Source,
+        // Transform) twirls on its name as it always did.
+        onTap: onSelect ?? onToggle,
         onSecondaryTapUp: onContextMenu == null
             ? null
             : (details) => onContextMenu!(details.globalPosition),
@@ -188,6 +190,7 @@ class FxSection extends StatelessWidget {
                 child: Row(
                   children: [
                     GestureDetector(
+                      key: twirlKey,
                       behavior: HitTestBehavior.opaque,
                       onTap: onToggle,
                       child: Padding(
