@@ -1063,13 +1063,21 @@ class LayerReference {
       );
 
   /// This layer's effects as a `.lumfx` document, for [`Self::paste_effects`]
-  /// (K-275). `effect` copies that one; `None` copies the whole stack.
+  /// (K-275). `effects` copies those; an empty list copies the whole stack.
+  ///
+  /// A list rather than one id (K-300), because an effect selection can hold
+  /// several — and they come out in **stack order**, not in the order they
+  /// were picked, so a copied group pastes back in the order it was drawn in.
+  /// Ids that name nothing on this layer are ignored; naming none of them at
+  /// all is [`BridgeError::InvalidEffect`] rather than a silent whole-stack
+  /// copy.
   ///
   /// Deliberately the **same document a preset is**, so an effect copied from
   /// one layer can be saved as a preset and a preset can be pasted as an
   /// effect — one shape, not two that drift.
-  String copyEffects({UuidValue? effect}) => BridgeLib.instance.api
-      .crateApiLayerLayerReferenceCopyEffects(that: this, effect: effect);
+  String copyEffects({required List<UuidValue> effects}) =>
+      BridgeLib.instance.api
+          .crateApiLayerLayerReferenceCopyEffects(that: this, effects: effects);
 
   /// This layer as text, for [`crate::api::composition::CompositionReference::
   /// paste_layer`] — the clipboard's payload (K-275).

@@ -802,7 +802,72 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
         final cut = path.indexOf('/');
         if (cut > 0) _highlighted = path.substring(0, cut);
         _openRetimeInItsDefaultLens(path);
+        _publishEffectSelection();
       });
+
+  /// The other direction: an effect picked in the Effect controls panel lights
+  /// its row here (K-300). A no-op when the selection is already what this
+  /// panel published, which is what keeps the two from bouncing.
+  void _onEffectSelectionChanged() {
+    if (!mounted) return;
+    final ui = _ui!;
+    final owner = ui.selectedEffectsLayer?.internallayerId.toString();
+    final wanted = owner == null
+        ? const <String>[]
+        : [for (final id in ui.selectedEffects.value) effectPath(owner, '$id')];
+    final held = [
+      for (final path in _selectedProperties)
+        if (effectIdOfPath(path) != null) path,
+    ];
+    if (held.length == wanted.length &&
+        List.generate(held.length, (i) => held[i] == wanted[i])
+            .every((same) => same)) {
+      return;
+    }
+    setState(() {
+      _selectedProperties
+        ..clear()
+        ..addAll(wanted);
+      _graphKeySelection.clear();
+      if (owner != null) _highlighted = owner;
+    });
+  }
+
+  /// Hand the effect headings among the selected rows to the shell (K-300), so
+  /// Copy — and the Effect controls panel, which lights the same effects —
+  /// sees what was picked here.
+  ///
+  /// Derived from the row selection rather than kept beside it: the Timeline
+  /// has one idea of what is selected, and an effect heading is a row in it.
+  /// Rows on more than one layer resolve to the first layer with an effect
+  /// picked, because a `.lumfx` document is one layer's stack.
+  void _publishEffectSelection() {
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    String? layerId;
+    final picked = <UuidValue>[];
+    for (final path in _selectedProperties) {
+      final effect = effectIdOfPath(path);
+      if (effect == null) continue;
+      final owner = path.substring(0, path.indexOf('/'));
+      layerId ??= owner;
+      if (owner == layerId) picked.add(UuidValue.fromString(effect));
+    }
+    if (layerId == null) {
+      ui.clearEffectSelection();
+      return;
+    }
+    for (final entry in _lastLayers) {
+      if (entry.layer.internallayerId.toString() != layerId) continue;
+      // Stack order, not click order: the same rule the engine's copy follows.
+      final stack = [for (final e in entry.info.effects) e.id];
+      ui.setEffectSelection(
+        entry.layer,
+        [for (final id in stack) if (picked.contains(id)) id],
+      );
+      return;
+    }
+    ui.clearEffectSelection();
+  }
 
   /// Opening a **Retime** row lands in the lens the user asked for (K-246):
   /// with *Retime opens to Velocity* on, the speed view — which in that mode
@@ -1148,6 +1213,11 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     // deactivated, where an ancestor lookup is no longer safe.
     _ui = Provider.of<LumitUiState>(context, listen: false);
     _ui!.deleteClaim = _deleteSelectedMasks;
+    _ui!.copyClaim = _copySelectedKeys;
+    _ui!.pasteClaim = _pasteKeysIntoSelection;
+    // An effect can be picked in the Effect controls panel too (K-300), and one
+    // selection means the row here lights up when it is.
+    _ui!.selectedEffects.addListener(_onEffectSelectionChanged);
     // The selection can change from outside this panel — a click on the
     // picture in the Viewer is the everyday case (K-275). The property
     // selection, the graph's key selection and the row highlight all belong to
@@ -1271,14 +1341,10 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
             focused.findAncestorWidgetOfExactType<EditableText>() != null)) {
       return false;
     }
-    final keyboard = HardwareKeyboard.instance;
-    final ctrl = keyboard.isControlPressed || keyboard.isMetaPressed;
-    final key = event.logicalKey;
-
     // What this chord means in the Timeline — or in the graph editor while it
     // is open, which has bindings of its own (K-199). The engine answers;
-    // nothing here compares keys except the copy/paste pair below, which §15
-    // does not name and so has no action to look up.
+    // nothing here compares keys at all since K-300 took the last two
+    // comparisons out (copy and paste, now bound actions like everything else).
     final ui = Provider.of<LumitUiState>(context, listen: false);
     // This panel is one surface with two views, so a chord bound in either
     // context works in both — the view's own context first, the other as the
@@ -1341,45 +1407,14 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
       );
       return true;
     }
-    // Copy and paste work wherever keyframes are selected — the lane view's
-    // marquee catch as much as the graph's (K-196).
-    if (ctrl && key == LogicalKeyboardKey.keyC) {
-      final ui = Provider.of<LumitUiState>(context, listen: false);
-      final comp = ui.selectedComp;
-      if (comp == null) return false;
-      final channels = _channelsNow();
-      final selection = _actionKeySelection(channels);
-      if (selection.isEmpty) return false;
-      copySelectedKeys(
-        comp: comp,
-        channels: channels,
-        selectedKeys: selection,
-        fps: ui.model.fps,
-      );
-      return true;
-    }
-    if (ctrl && key == LogicalKeyboardKey.keyV) {
-      final ui = Provider.of<LumitUiState>(context, listen: false);
-      final channels = _channelsNow();
-      if (channels.isEmpty) return false;
-      final (fpsNum, fpsDen) = ui.model.fpsExact;
-      pasteKeysAtPlayhead(
-        channels: channels,
-        playheadFrame: ui.playheadFrame.value,
-        fps: ui.model.fps,
-        fpsNum: fpsNum,
-        fpsDen: fpsDen,
-      ).then((pasted) {
-        if (pasted && mounted) ui.model.refresh();
-      });
-      return true;
-    }
-
     // Delete with a mask row selected is not handled here: every one of these
     // handlers runs, in registration order, so a `true` from this one would not
     // stop the shell's Delete removing the layer as well. The Timeline claims
     // the key through [LumitUiState.deleteClaim] instead, which the shell asks
-    // *before* it deletes anything (K-234).
+    // *before* it deletes anything (K-234). Copy and paste are claimed the same
+    // way (K-300): they used to be compared against `Ctrl+C`/`Ctrl+V` here,
+    // which was fine while the shell had no copy of its own and became a
+    // double action the moment it did.
 
     if (!_graph) return false;
 
@@ -1402,6 +1437,53 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
   ///
   /// The same call the row's own context menu makes, so there is one way a mask
   /// is deleted. One op per mask, as deleting several layers is one op each.
+  /// Copy claims the chord when keyframes are selected (K-300, K-196's copy
+  /// under the claim the shell asks) — and when whole property *rows* are, with
+  /// no individual keys picked, in which case it copies those rows: every key
+  /// of an animated one, the plain value of one with no keyframes at all
+  /// (K-301). With neither the chord falls through to the shell, which copies
+  /// the picked effects or the layer.
+  bool _copySelectedKeys() {
+    if (!mounted) return false;
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    final comp = ui.selectedComp;
+    if (comp == null) return false;
+    final channels = _channelsNow();
+    final selection = _actionKeySelection(channels);
+    if (selection.isEmpty) {
+      return copyChannels(comp: comp, channels: channels, fps: ui.model.fps);
+    }
+    copySelectedKeys(
+      comp: comp,
+      channels: channels,
+      selectedKeys: selection,
+      fps: ui.model.fps,
+    );
+    return true;
+  }
+
+  /// Paste claims it when there are channels to paste *into* and keyframes to
+  /// paste — or when nothing else is on the clipboard at all, which is what
+  /// leaves keyframe text copied out of another tool a way in.
+  bool _pasteKeysIntoSelection() {
+    if (!mounted) return false;
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    final channels = _channelsNow();
+    if (channels.isEmpty) return false;
+    if (graphKeyClipboard.isEmpty && !ui.clipboard.isEmpty) return false;
+    final (fpsNum, fpsDen) = ui.model.fpsExact;
+    pasteKeysAtPlayhead(
+      channels: channels,
+      playheadFrame: ui.playheadFrame.value,
+      fps: ui.model.fps,
+      fpsNum: fpsNum,
+      fpsDen: fpsDen,
+    ).then((pasted) {
+      if (pasted && mounted) ui.model.refresh();
+    });
+    return true;
+  }
+
   bool _deleteSelectedMasks() {
     if (!mounted) return false;
     final ui = Provider.of<LumitUiState>(context, listen: false);
@@ -1585,6 +1667,9 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     _ui?.selectedLayer.removeListener(_onPrimaryChanged);
     _ui?.renderTimings.removeListener(_onTimingsChanged);
     if (_ui?.deleteClaim == _deleteSelectedMasks) _ui!.deleteClaim = null;
+    if (_ui?.copyClaim == _copySelectedKeys) _ui!.copyClaim = null;
+    if (_ui?.pasteClaim == _pasteKeysIntoSelection) _ui!.pasteClaim = null;
+    _ui?.selectedEffects.removeListener(_onEffectSelectionChanged);
     _boundTools?.removeListener(_onToolChanged);
     _zoomMotion.dispose();
     _barDrag.dispose();
@@ -1805,6 +1890,10 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     // The property rows on screen, in display order — what a Shift+click
     // range runs along — and the graph channels the selection resolves to,
     // each with its stroke colour for the outline's labels to match.
+    //
+    // Headings are in the list too since K-300: an effect's heading is a row
+    // that can be picked (and copied), so a Shift+click has to be able to run
+    // over one. Waveforms are not a row anything selects.
     _visiblePropertyPaths = [
       for (final e in layers)
         if (_open.contains(e.layer.internallayerId.toString()))
@@ -1813,7 +1902,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
             open: _open,
             hasAudio: _hasAudio[e.layer.internallayerId.toString()] ?? false,
           ))
-            if (row is! FoldGroupRow && row is! FoldWaveformRow)
+            if (row is! FoldWaveformRow)
               foldRowPath(e.layer.internallayerId.toString(), row),
     ];
     final channels =
@@ -2719,6 +2808,42 @@ class _FoldRow extends StatelessWidget {
     );
   }
 
+  /// Copy the effect this heading names (K-275) — or, when it is one of
+  /// several picked, all of them (K-300). The Timeline's half of the pair, the
+  /// Effect controls panel's heading carrying the other.
+  void _effectMenu(BuildContext context, Offset at, String effectId) {
+    showLumitPopup<void>(
+      context: context,
+      position: at,
+      builder: (close) => FloatSurface(
+        width: 190,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            MenuRow(
+              key: ValueKey<String>('tl-fx-menu-copy-$effectId'),
+              onPressed: () {
+                close(null);
+                final ui = Provider.of<LumitUiState>(context, listen: false);
+                try {
+                  ui.copyEffectsToClipboard(layer.copyEffects(
+                    effects: ui.effectsToCopy(
+                        layer, UuidValue.fromString(effectId)),
+                  ));
+                } catch (_) {
+                  // The effect went away between the menu opening and this row
+                  // being chosen; the clipboard keeps whatever it had.
+                }
+              },
+              child: const Text('Copy effect'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _control(BuildContext context) {
     final t = ThemeScope.of(context).theme;
     return switch (row) {
@@ -2726,13 +2851,45 @@ class _FoldRow extends StatelessWidget {
       FoldGroupRow(:final path, :final label, :final open) => GestureDetector(
           key: ValueKey<String>('tl-group-$path'),
           behavior: HitTestBehavior.opaque,
-          onTap: () => onToggle(path),
+          // **A heading is picked as well as twirled** (K-300). Until this, a
+          // click on one only twirled, so an effect could not be selected here
+          // at all and Copy had nothing to take. A plain click still opens the
+          // heading, because that is what it has always done and the fold is
+          // how the outline is navigated; a *modified* click only picks, so
+          // Ctrl- and Shift-clicking a run of effects does not flap every one
+          // of them open on the way past.
+          onTap: () {
+            onSelectProperty(path);
+            if (!isModifiedClick) onToggle(path);
+          },
+          // An *effect's* heading offers to copy the picked effects (K-275,
+          // K-300). The other headings — Transform, Effects, Masks, Audio — are
+          // groupings rather than things that can be copied, and
+          // `effectIdOfPath` is what tells them apart: only an effect's path
+          // carries an id.
+          onSecondaryTapUp: effectIdOfPath(path) == null
+              ? null
+              : (details) => _effectMenu(
+                    context,
+                    details.globalPosition,
+                    effectIdOfPath(path)!,
+                  ),
           child: Row(
             children: [
-              lumitIcon(
-                open ? LumitIcon.twirlOpen : LumitIcon.twirlClosed,
-                size: iconSize,
-                color: open ? t.textPrimary : t.textMuted,
+              GestureDetector(
+                key: ValueKey<String>('tl-twirl-$path'),
+                behavior: HitTestBehavior.opaque,
+                onTap: () => onToggle(path),
+                child: SizedBox(
+                  // Wider than the glyph: the twirl is now the only way to open
+                  // a heading, so it has to be worth aiming at.
+                  width: iconSize + 6,
+                  child: lumitIcon(
+                    open ? LumitIcon.twirlOpen : LumitIcon.twirlClosed,
+                    size: iconSize,
+                    color: open ? t.textPrimary : t.textMuted,
+                  ),
+                ),
               ),
               const SizedBox(width: 4),
               // An effect's own heading carries what that effect cost, in the

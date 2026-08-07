@@ -188,14 +188,14 @@ of holding a `SmoothZoom` and reading its value, with no design left in them.
 - **The audio mix is rebuilt from scratch** whenever the comp's audio signature
     changes, rather than patched.
 
-**Copy and paste: the effect-header commands are still to wire (K-275).** Layers copy
-and paste from the **Edit** menu (Cut/Copy/Paste, with *Paste layers at their original
-time* in Settings → Interface), and the engine takes one effect or a whole stack
-(`copy_effects`/`paste_effects`). What is owed is the two places an effect is *picked*:
-**Copy effect** on an effect's heading in the Effect controls panel and on its row in the
-Timeline, both calling `copy_effects(Some(id))` and putting it on the same clipboard.
-Copying between two running Lumit windows wants the system clipboard rather than the
-in-app one; decide when it is asked for.
+**Copy and paste (K-275): the selection and the chords are wired (K-299, K-300).** Layers
+copy and paste from the **Edit** menu and from `Ctrl+X`/`Ctrl+C`/`Ctrl+V`, which are keymap
+actions like everything else; an effect is **selected** by clicking its name in either place
+it is drawn, with `Ctrl` and `Shift` picking several, and Copy takes the finest selection
+there is — keyframes, else the picked effects, else the layer. `copy_effects` takes a list
+and returns them in stack order. Every copy is mirrored to the **system clipboard** and a
+paste reads it back when the in-app tray is empty (K-302), which is what makes copying
+between two running Lumit windows work — the item this entry used to leave owed.
 
 **Retime follow-up after K-249.** **The eased ramp shapes are gone from
 clips** — `Clip::with_ramp` takes two speeds and runs straight between them,

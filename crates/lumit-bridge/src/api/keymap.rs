@@ -295,10 +295,7 @@ pub fn keymap_rebind(
 pub fn keymap_unbind(context: BridgeKeyContext, action: String) -> Vec<BridgeKeymapGroup> {
     let action = ActionId(action);
     let context: KeyContext = context.into();
-    with_keymap(|km| {
-        km.bindings
-            .retain(|b| !(b.context == context && b.action == action));
-    });
+    with_keymap(|km| km.unbind_action(context, &action));
     keymap_groups()
 }
 
@@ -350,6 +347,14 @@ pub fn keymap_to_json() -> String {
 ///
 /// Rejects anything that is not a keymap rather than half-applying it, so a
 /// corrupt stored blob or somebody else's JSON leaves the current map alone.
+///
+/// **Laid over the shipped defaults, not swapped for them** (K-302). A file
+/// only knows the actions that existed when it was written, and it used to
+/// replace the map whole — so every action added since was left with no chord
+/// at all for anyone who had ever saved a keymap. That is how `Ctrl+C` came to
+/// do nothing in a build whose every test passed. An action the file names
+/// keeps the file's chord and an action it deliberately unbound stays unbound;
+/// only the ones it never heard of take their default.
 pub fn keymap_from_json(json: String) -> Result<Vec<BridgeKeymapGroup>, BridgeError> {
     let parsed: Keymap =
         serde_json::from_str(&json).map_err(|e| BridgeError::InvalidKeymapFile(e.to_string()))?;
@@ -358,6 +363,6 @@ pub fn keymap_from_json(json: String) -> Result<Vec<BridgeKeymapGroup>, BridgeEr
             "the file holds no bindings".to_string(),
         ));
     }
-    with_keymap(|km| *km = parsed);
+    with_keymap(|km| *km = lumit_keymap::with_new_defaults(parsed));
     Ok(keymap_groups())
 }
