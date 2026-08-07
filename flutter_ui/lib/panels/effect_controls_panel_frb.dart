@@ -123,9 +123,15 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
     // redo, or the same property dragged in the Timeline's fold-out.
     return ValueListenableBuilder<int>(
       valueListenable: ui.playheadFrame,
-      builder: (context, playhead, _) => ListenableBuilder(
-        listenable: ui.model,
-        builder: (context, _) => _rows(context, comp, layer, playhead),
+      // Which effects are picked is the shell's (K-300) — the Timeline picks
+      // them too — so the headings redraw when that changes, wherever the click
+      // happened.
+      builder: (context, playhead, _) => ValueListenableBuilder<List<UuidValue>>(
+        valueListenable: ui.selectedEffects,
+        builder: (context, picked, _) => ListenableBuilder(
+          listenable: ui.model,
+          builder: (context, _) => _rows(context, comp, layer, playhead, picked),
+        ),
       ),
     );
   }
@@ -135,6 +141,7 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
     CompositionReference comp,
     LayerReference layer,
     int playhead,
+    List<UuidValue> picked,
   ) {
     final t = ThemeScope.of(context).theme;
     final ui = Provider.of<LumitUiState>(context, listen: false);
@@ -245,6 +252,12 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
                         info: info.effects[index],
                         open: _isOpen('fx-${info.effects[index].id}'),
                         onToggle: () => _toggle('fx-${info.effects[index].id}'),
+                        selected: picked.contains(info.effects[index].id),
+                        onSelect: () => ui.pickEffect(
+                          layer,
+                          info.effects[index].id,
+                          order: [for (final e in info.effects) e.id],
+                        ),
                         stagedValue: _effects.stagedValue,
                         index: index,
                         count: info.effects.length,
@@ -382,6 +395,12 @@ class _EffectSection extends StatelessWidget {
   final bool open;
   final VoidCallback onToggle;
 
+  /// Picked out of the stack, and the click that picks it (K-300). The same
+  /// selection the Timeline's fold-out shows, so an effect chosen in one place
+  /// is lit in the other — and Copy takes it from either.
+  final bool selected;
+  final VoidCallback onSelect;
+
   /// The drag in flight's staged value for (effect, param), or null — overlaid
   /// on the model's value so the number under the pointer is the staged one.
   final BridgeEffectValue? Function(UuidValue effect, String param) stagedValue;
@@ -412,6 +431,8 @@ class _EffectSection extends StatelessWidget {
     required this.info,
     required this.open,
     required this.onToggle,
+    required this.selected,
+    required this.onSelect,
     required this.stagedValue,
     required this.index,
     required this.count,
@@ -467,6 +488,9 @@ class _EffectSection extends StatelessWidget {
       title: effectLabelOf(info.name),
       open: open,
       onToggle: onToggle,
+      selected: selected,
+      onSelect: onSelect,
+      twirlKey: ValueKey<String>('fx-twirl-$id'),
       leading: LumitTooltip(
         message: info.enabled ? 'Disable this effect' : 'Enable it',
         child: HouseCheckbox(
@@ -680,6 +704,23 @@ class _EffectSection extends StatelessWidget {
   /// removing it. Reordering is a handful of acts in a session, so it lives
   /// here rather than in two buttons on every heading — and unlike the arrows
   /// it can send an effect to the top or the bottom in one go.
+  /// Put this effect on the clipboard (K-275) — with the rest of the picked run
+  /// when it is part of one (K-300).
+  ///
+  /// A failure is swallowed the way the neighbouring effect commands' are: the
+  /// effect went away between the menu opening and the row being chosen, and an
+  /// error about a thing that is no longer there helps nobody.
+  void _copyEffect(BuildContext context) {
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    try {
+      ui.copyEffectsToClipboard(
+        layer.copyEffects(effects: ui.effectsToCopy(layer, info.id)),
+      );
+    } catch (_) {
+      // The effect is gone; the clipboard keeps whatever it had.
+    }
+  }
+
   void _stackMenu(BuildContext context, Offset at) {
     final id = info.id;
     void move(int to) {
@@ -735,6 +776,20 @@ class _EffectSection extends StatelessWidget {
                 child: const Text('Move to bottom'),
               ),
             ],
+            // **Copy this one effect** (K-275). The engine has taken one or a
+            // whole stack since copy/paste landed — `copy_effects(Some(id))` —
+            // and the Edit menu's Copy takes the *layer*, so until now there
+            // was no way to pick a single effect and no way to reach the call.
+            // It goes on the same clipboard a stack does: both are `.lumfx`, so
+            // both paste the same way, and Paste needs no idea which it holds.
+            MenuRow(
+              key: ValueKey<String>('fx-menu-copy-$id'),
+              onPressed: () {
+                close(null);
+                _copyEffect(context);
+              },
+              child: const Text('Copy effect'),
+            ),
             MenuRow(
               key: ValueKey<String>('fx-menu-remove-$id'),
               onPressed: () {

@@ -3612,11 +3612,11 @@ fn wire__crate__api__layer__layer_reference_copy_effects_impl(
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_that = <crate::api::layer::LayerReference>::sse_decode(&mut deserializer);
-            let api_effect = <Option<uuid::Uuid>>::sse_decode(&mut deserializer);
+            let api_effects = <Vec<uuid::Uuid>>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, BridgeError>((move || {
                 let output_ok =
-                    crate::api::layer::LayerReference::copy_effects(&api_that, api_effect)?;
+                    crate::api::layer::LayerReference::copy_effects(&api_that, api_effects)?;
                 Ok(output_ok)
             })())
         },

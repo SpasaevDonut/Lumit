@@ -3457,6 +3457,54 @@ Panels can be popped out into their own desktop window (`desktop_multi_window`);
 each gets its own Flutter engine but opens a handle to the *same* engine state,
 so edits share one undo history.
 
+**What "the selection" means when Copy is pressed (K-300).** Three different things
+can be selected at once: some keyframes, an effect, and the layer they all sit on.
+Copy has to pick one, and it picks the *finest* — keyframes if any are selected,
+otherwise the effects picked out of the stack, otherwise the whole layer. Delete has
+worked this way since K-234, and it works through the same trick: Flutter runs every
+keyboard handler on every key, so a panel cannot claim a key simply by handling it
+first. Instead the Timeline leaves a small function with the shell — a *claim* — and
+the shell calls it before doing anything itself. If the claim says "I took that", the
+shell stands down.
+
+An **effect is selected by clicking its name**, in the Effect controls panel or on its
+row in the Timeline's fold-out; `Ctrl` adds one, `Shift` takes the run between. There
+is only one such selection, held by the shell rather than by either panel, which is why
+an effect picked in one place lights up in the other. In the Effect controls panel picking
+an effect leaves it open — the twirl mark is the only thing that folds a card there. In the
+Timeline a plain click also twirls, the way it always has, and a modified click only
+selects, so `Shift`-clicking down a stack does not flap all of them open. Copying several
+effects produces a single `.lumfx` document — the same kind of document a preset is —
+holding them in stack order rather than click order, so pasting puts them back the way
+they were drawn.
+
+**A row with no keyframes copies too (K-301).** Copy at the property level used to mean
+"the selected keyframes", so a row that was never animated had nothing to give and the
+chord quietly copied the whole layer instead. Now selecting rows and pressing Copy takes
+those rows whole: every key of an animated one, the plain number of one that has none. A
+copied number pastes as a number onto a row that is not animated, and as a key at the
+playhead onto one that is. The other levels always carried their values — a copied layer
+or a copied effect is the document itself, animated parts and plain numbers alike.
+
+**Where a copy actually goes (K-302).** Lumit keeps its own tray, because what is being
+copied is a piece of a Lumit document and the system clipboard is shared with every other
+program on the machine. But a copy that leaves *nothing* on the system clipboard is
+indistinguishable from a copy that failed — paste into a text editor and you get an empty
+line — so every copy is mirrored there as its own text, and a paste that finds the tray
+empty reads the system clipboard and takes a Lumit document back off it. That is also what
+lets two Lumit windows copy between each other. Ordinary text is left alone: only the two
+document shapes the engine's paste calls accept are recognised.
+
+**And a lesson worth more than the feature.** The reason `Ctrl+C` did nothing in the real
+app while every test passed: a saved keymap was restored by *replacing* the whole keymap,
+and a saved file only knows the actions that existed when it was written — so every
+shortcut added in a later version was silently missing for anyone who had ever changed a
+key. Restored state is now **laid over** the current defaults rather than swapped for them,
+which is the shape any "remember what the user had" code should have: the user's choices
+win, and everything they never had an opinion about comes from the running build. Telling
+"they turned this off" apart from "this did not exist yet" is the part that needs storing
+on purpose.
+
 **Scrolling it, and why a trackpad needed its own answer (K-278).** Dragging in
 the lanes draws a selection box round keyframes, so the panel switches off
 drag-to-scroll — which on a Mac also switched off the trackpad, because a

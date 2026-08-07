@@ -16,6 +16,8 @@
 // only the one you want — which is what the spec asks for and what keeps a busy
 // comp from becoming a wall of numbers.
 
+import 'package:flutter/services.dart';
+
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
@@ -289,10 +291,21 @@ String effectsPath(String layerId) => '$layerId/effects';
 String effectPath(String layerId, String effectId) =>
     '$layerId/effects/$effectId';
 
+
 /// The effect instance a fold path names, or null when the path is not one
 /// effect's heading (it is the Effects group itself, one parameter under an
 /// effect, or something else entirely). Used by the render-time indicator to
-/// put an effect's measured cost on its own row (docs/13 §7.1).
+/// put an effect's measured cost on its own row (docs/13 §7.1), and by the
+/// Timeline's heading menu to know which rows can be copied from (K-275).
+/// Whether a click is carrying one of the selection modifiers — Ctrl (Cmd) or
+/// Shift. A heading twirls on a plain click and only *picks* on a modified one
+/// (K-300): a Shift-click running over a stack of effects must not open every
+/// heading it passes.
+bool get isModifiedClick =>
+    HardwareKeyboard.instance.isControlPressed ||
+    HardwareKeyboard.instance.isMetaPressed ||
+    HardwareKeyboard.instance.isShiftPressed;
+
 String? effectIdOfPath(String path) {
   final parts = path.split('/');
   if (parts.length != 3 || parts[1] != 'effects') return null;

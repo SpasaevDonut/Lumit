@@ -14,6 +14,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/shell/menu_bar_frb.dart';
@@ -185,5 +186,35 @@ void main() {
     ));
 
     ui.dispose();
+  });
+
+  /// The other half, and the one the fix above cannot reach. A test that keeps
+  /// its UI state to the end — which is every test using `freshProject`, since
+  /// that disposes on tear-down — can still finish inside the tracker's delay.
+  /// `addTearDown` runs *after* `flutter_test` unmounts the tree, pumps, and
+  /// asserts that no timer is pending, so disposing there is too late: the
+  /// assertion has already fired.
+  ///
+  /// `hostPanel` therefore stops the tracker as the tree comes down, which
+  /// happens inside that unmount. Reporting progress and simply ending is the
+  /// whole assertion — without that, this reports a pending timer, which is how
+  /// `cache_bar_frb_test` failed on the Linux runner while passing on Windows.
+  testWidgets('a mounted panel leaves no progress timer behind', (tester) async {
+    final p = freshProject();
+    await tester.pumpWidget(hostPanel(
+      state: p.state,
+      uiState: p.uiState,
+      child: const SizedBox(),
+    ));
+    await tester.pump();
+
+    // Arms the 150 ms delay and leaves it armed: not `done`, and nothing here
+    // waits for `previewProgress.idle`.
+    p.uiState.previewProgress.report(BridgeRenderProgress(
+      frame: BigInt.from(7),
+      stage: 2,
+      fraction: 0.5,
+      done: false,
+    ));
   });
 }

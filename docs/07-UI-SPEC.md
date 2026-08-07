@@ -903,6 +903,13 @@ measurement — the panel shows the numbers, it does not turn them on.
   tidy list of section headings, each in its own subtle full-width bar, and you open only the
   group you want. In Effect Controls (and the Effects group here) an effect's name is a drag
   handle for reordering the stack.
+- **A section heading is selected by clicking its name, and twirled by the same click**
+  (K-300). A *modified* click — `Ctrl` to toggle, `Shift` to extend the run — only selects, so
+  picking several effects does not open every one of them on the way past; the twirl mark
+  beside the name always twirls and never selects. An **effect's** heading picked this way is
+  what **Copy**, **Cut** and **Copy effect** act on, and the pick is shared with the Effect
+  controls panel (§6), so an effect chosen in one place is lit in the other. Several picked
+  effects copy as one `.lumfx` document in stack order.
 - Each animatable property lane shows: stopwatch (keyframing on/off), value with
   **scrub-drag** and click-to-type numeric entry, expression toggle, and its keyframes as
   diamonds on the lane. Keyframe icons reflect interpolation (hold/linear/bezier), matching
@@ -1317,6 +1324,15 @@ Shows the **effect stack** of the selected layer (tab per recently viewed layer,
   that space: moving an effect is a handful of acts in a session, and what it costs is read
   continuously while a comp is being made faster. The menu lists only the moves that effect
   can make.
+
+  **An effect's name selects it** (K-300), taking the selection fill across the heading bar —
+  plain replaces, `Ctrl` toggles, `Shift` extends the run down the stack. Selecting an effect
+  **does not fold it**: the twirl mark is the only thing that opens and shuts a card, because
+  a click that did both would take the parameters away at the moment you said which effect you
+  meant. It is the same selection the Timeline's fold-out shows (§4.3),
+  so an effect picked in either place is lit in both, and it is what **Copy**, **Cut** and the
+  heading's **Copy effect** act on. Source and Transform are not part of a stack and so are
+  not selectable; their headings twirl as they always did.
 
   **Round shape keeps its bubble** (K-092): the same rows, wrapped in floating-card chrome.
   The two shapes differ in chrome, not in layout.
@@ -1922,6 +1938,7 @@ app-wide, so a list, a field or a canvas is free to use them for moving within i
 | Global | `Ctrl+S` / `Ctrl+Shift+S` | Save / Save as |
 | Global | `Ctrl+I` | Import footage |
 | Global | `Ctrl+Alt+M` | Export the composition |
+| Global | `Ctrl+X` / `Ctrl+C` / `Ctrl+V` | Cut / copy / paste the selection — picked keyframes, else the selected property rows (their keys, or their plain value where they have none, K-301), else the picked effects, else the layer (K-300) |
 | Global | `Ctrl+A` / `Ctrl+Shift+A` | Select all layers / deselect all |
 | Global | `Ctrl+Alt+;` | Settings (Preferences) |
 | Global | `Alt+Shift+1…9` | Switch workspace |
