@@ -3486,6 +3486,25 @@ copied number pastes as a number onto a row that is not animated, and as a key a
 playhead onto one that is. The other levels always carried their values — a copied layer
 or a copied effect is the document itself, animated parts and plain numbers alike.
 
+**Where a copy actually goes (K-302).** Lumit keeps its own tray, because what is being
+copied is a piece of a Lumit document and the system clipboard is shared with every other
+program on the machine. But a copy that leaves *nothing* on the system clipboard is
+indistinguishable from a copy that failed — paste into a text editor and you get an empty
+line — so every copy is mirrored there as its own text, and a paste that finds the tray
+empty reads the system clipboard and takes a Lumit document back off it. That is also what
+lets two Lumit windows copy between each other. Ordinary text is left alone: only the two
+document shapes the engine's paste calls accept are recognised.
+
+**And a lesson worth more than the feature.** The reason `Ctrl+C` did nothing in the real
+app while every test passed: a saved keymap was restored by *replacing* the whole keymap,
+and a saved file only knows the actions that existed when it was written — so every
+shortcut added in a later version was silently missing for anyone who had ever changed a
+key. Restored state is now **laid over** the current defaults rather than swapped for them,
+which is the shape any "remember what the user had" code should have: the user's choices
+win, and everything they never had an opinion about comes from the running build. Telling
+"they turned this off" apart from "this did not exist yet" is the part that needs storing
+on purpose.
+
 **Scrolling it, and why a trackpad needed its own answer (K-278).** Dragging in
 the lanes draws a selection box round keyframes, so the panel switches off
 drag-to-scroll — which on a Mac also switched off the trackpad, because a

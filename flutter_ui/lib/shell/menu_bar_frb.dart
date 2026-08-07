@@ -883,13 +883,17 @@ bool cutSelectionFrb(LumitState app, LumitUiState ui) {
 /// The Edit menu's own row stays on [_pasteAction]: keyframes have never been
 /// one of its cases, and a row that greys on the clipboard being empty must not
 /// ungrey merely because the Timeline is open.
-bool pasteSelectionFrb(
+Future<bool> pasteSelectionFrb(
   LumitState app,
   LumitUiState ui,
   CompositionReference? comp,
   LayerReference? layer,
-) {
+) async {
   if (ui.pasteClaim?.call() ?? false) return true;
+  // Nothing in the tray: something may have been copied in another Lumit
+  // window, or in this one before something else on the machine overwrote the
+  // tray's mirror (K-302).
+  if (ui.clipboard.isEmpty) await ui.adoptSystemClipboard();
   final paste = _pasteAction(app, ui, comp, layer);
   if (paste == null) return false;
   paste();

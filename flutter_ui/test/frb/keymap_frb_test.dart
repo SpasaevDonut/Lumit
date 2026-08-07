@@ -291,6 +291,33 @@ void main() {
       expect(find.textContaining('runs two things'), findsOneWidget);
     });
 
+    /// **A keymap saved by an older build must not take a new key away**
+    /// (K-302). This is what actually broke `Ctrl+C` in the owner's app while
+    /// every test here passed: a stored keymap replaced the whole map on
+    /// start-up, so `edit.copy` — added after that file was written — had no
+    /// chord at all. Tests start from the shipped defaults; only a real session
+    /// has a file.
+    testWidgets('a stored keymap without Copy in it still copies',
+        (tester) async {
+      final map = jsonDecode(keymapToJson()) as Map<String, dynamic>;
+      (map['bindings'] as List<dynamic>).removeWhere((b) =>
+          ((b as Map)['action'] as String).startsWith('edit.c') ||
+          b['action'] == 'edit.paste');
+      unawaited(keymapFromJson(json: jsonEncode(map)));
+      await tester.pumpWidget(const SizedBox.shrink());
+      await settleFrb(
+        tester,
+        until: () =>
+            keymapLookup(context: BridgeKeyContext.global, chord: 'Mod+C') !=
+            null,
+      );
+
+      expect(keymapLookup(context: BridgeKeyContext.global, chord: 'Mod+C'),
+          'edit.copy',
+          reason: 'the stored file is laid over the defaults, not swapped for '
+              'them, so an action it never heard of keeps its key');
+    });
+
     /// The search box filters on the words the table shows, not only the ids
     /// underneath — searching for what you can see must find it.
     testWidgets('search filters the table by what it shows', (tester) async {

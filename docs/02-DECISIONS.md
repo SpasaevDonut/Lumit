@@ -6663,3 +6663,39 @@ machine. With anything animated in the set, the keyframe table is written as bef
 **The other levels already carried their values** and are unchanged: `copy_layer`
 serialises the whole layer and `copy_effects` the whole `.lumfx`, both including every
 parameter that is a plain number. This entry is only about the property row.
+
+**K-302 · DECIDED · A copy leaves a trace the machine can see, and a stored keymap can
+never take a key away.** Two faults found the same afternoon by the owner, one hiding the
+other.
+
+**The keymap fault, which is the serious one.** A stored keymap replaced the session's map
+whole (`keymap_from_json`: `*km = parsed`). A keymap file only knows the actions that
+existed when it was written, so **every action added to Lumit afterwards had no chord at
+all** for anybody who had ever saved one — and the workspace saves one on the first rebind.
+K-300 bound `Mod+C`, every test passed, and the owner's `Ctrl+C` did nothing, because the
+tests start from the shipped defaults and only a real session has a file.
+
+A stored keymap is now **laid over the defaults**: the file's chord wins for every action it
+names, and an action it never heard of keeps its default. That needed a way to tell "I took
+that key away" apart from "that action did not exist yet", so `Keymap` gained `unbound` — a
+list of deliberately silent actions — and unbinding records itself there. Absent from an
+older file, which is right: nothing in one was ever a deliberate unbind that survived a
+restart, because the whole map was being replaced anyway.
+
+The general rule this is a case of: **restored state is laid over the current defaults, never
+swapped for them.** Anything the user did not choose must come from the running build.
+
+**The clipboard fault.** Layer and effect copies went into Lumit's own tray and nowhere else
+(K-275's deliberate choice). Paste into a text editor and nothing arrives — which is
+indistinguishable from Copy having done nothing, and is the first thing anybody checks. So
+every copy is now **mirrored to the system clipboard as its document text**, and a paste that
+finds the tray empty reads the system clipboard and takes a Lumit document back off it
+(sniffed: a layer document says `kind`, an effect document is the `.lumfx` shape, and
+anything else is somebody's shopping list and is left alone). The window also picks up a
+document when it comes back to the front, so Paste is live rather than greyed over something
+that is genuinely there.
+
+The tray still comes first, because it holds the exact text this session copied — no round
+trip, and nothing else on the machine can have overwritten it. K-275's cost line, "copying
+between two running Lumit windows does not work yet", is paid off by this: the second window
+takes the document off the system clipboard.

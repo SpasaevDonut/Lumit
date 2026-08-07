@@ -369,6 +369,17 @@ pub struct Conflict {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Keymap {
     pub bindings: Vec<Binding>,
+
+    /// Actions deliberately left with **no** chord (K-302), so a stored keymap
+    /// can tell "I took that key away" apart from "that action did not exist
+    /// when I was written". [`with_new_defaults`] needs the difference: the
+    /// first must stay unbound, the second must pick up its default.
+    ///
+    /// Absent from an older file, which is exactly right — nothing in one was
+    /// ever a deliberate unbind that outlived a restart, because the whole map
+    /// was replaced on load.
+    #[serde(default)]
+    pub unbound: Vec<(KeyContext, ActionId)>,
 }
 
 impl Keymap {
@@ -527,7 +538,27 @@ impl Keymap {
     pub fn rebind_action(&mut self, context: KeyContext, action: &ActionId, chord: Chord) {
         self.bindings
             .retain(|b| !(b.context == context && &b.action == action));
+        // It has a key again, so it is no longer one of the deliberately
+        // silent ones (K-302).
+        self.unbound
+            .retain(|(c, a)| !(*c == context && a == action));
         self.bind(context, chord, action.clone());
+    }
+
+    /// Leave `action` with no chord at all, and **remember that it was meant**
+    /// (K-302) — otherwise the next start would hand it its default back, since
+    /// a missing binding is also what an action added since this file was
+    /// written looks like.
+    pub fn unbind_action(&mut self, context: KeyContext, action: &ActionId) {
+        self.bindings
+            .retain(|b| !(b.context == context && &b.action == action));
+        if !self
+            .unbound
+            .iter()
+            .any(|(c, a)| *c == context && a == action)
+        {
+            self.unbound.push((context, action.clone()));
+        }
     }
 
     /// Bindings whose action id or chord text contains `query`
@@ -738,7 +769,41 @@ pub fn default_keymap() -> Keymap {
             bindings.push(b);
         }
     }
-    Keymap { bindings }
+    Keymap {
+        bindings,
+        unbound: Vec::new(),
+    }
+}
+
+/// A **stored** keymap laid over the shipped defaults (K-302): the file's chord
+/// wins for every action it names, and an action it never heard of — one added
+/// to Lumit after that file was written — keeps its default binding.
+///
+/// **The bug this exists for.** A stored keymap used to replace the map whole,
+/// so the first release to add an action left it unbound for everybody who had
+/// ever saved a keymap: their app simply did not have the key. It was found
+/// when `Ctrl+C` did nothing in a build whose tests all passed — the tests
+/// start from the defaults, and only a real session has a stored file.
+///
+/// An action the user deliberately unbound stays unbound: that is what
+/// [`Keymap::unbound`] records, and why it had to exist.
+#[must_use]
+pub fn with_new_defaults(stored: Keymap) -> Keymap {
+    let mut out = stored;
+    for binding in default_keymap().bindings {
+        let known = out
+            .bindings
+            .iter()
+            .any(|b| b.context == binding.context && b.action == binding.action)
+            || out
+                .unbound
+                .iter()
+                .any(|(c, a)| *c == binding.context && *a == binding.action);
+        if !known {
+            out.bindings.push(binding);
+        }
+    }
+    out
 }
 
 /// The "After Effects" muscle-memory preset (docs/07 §15): starts from the
@@ -1005,6 +1070,45 @@ mod tests {
         assert_eq!(
             km.lookup(KeyContext::Timeline, &chord("M")),
             Some(&"reveal.masks".into())
+        );
+    }
+
+    /// **A keymap stored by an older build must not hide a new action**
+    /// (K-302). This is the bug the owner hit: `Ctrl+C` did nothing in their
+    /// app while every test passed, because their saved keymap — written before
+    /// `edit.copy` existed — replaced the whole map on start, and an action
+    /// that is not in the file had no chord at all.
+    #[test]
+    fn a_stored_keymap_keeps_the_defaults_for_actions_it_never_heard_of() {
+        // Their file, in miniature: today's map with the copy family removed,
+        // and one chord moved so the file's own opinions can be checked too.
+        let mut older = default_keymap();
+        older
+            .bindings
+            .retain(|b| !matches!(b.action.0.as_str(), "edit.copy" | "edit.cut" | "edit.paste"));
+        older.rebind_action(
+            KeyContext::Global,
+            &"edit.undo".into(),
+            "Mod+Alt+Z".parse().unwrap(),
+        );
+        // And one they deliberately took away.
+        older.unbind_action(KeyContext::Global, &"marker.add".into());
+
+        let restored = with_new_defaults(older);
+        assert_eq!(
+            restored.lookup(KeyContext::Global, &"Mod+C".parse().unwrap()),
+            Some(&"edit.copy".into()),
+            "an action added since the file was written takes its default"
+        );
+        assert_eq!(
+            restored.binding_for(KeyContext::Global, &"edit.undo".into()),
+            Some(&"Mod+Alt+Z".parse().unwrap()),
+            "and the file's own rebinding still wins"
+        );
+        assert_eq!(
+            restored.binding_for(KeyContext::Global, &"marker.add".into()),
+            None,
+            "a key taken away on purpose stays away — that is what unbound is for"
         );
     }
 

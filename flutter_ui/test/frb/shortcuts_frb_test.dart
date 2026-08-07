@@ -432,6 +432,51 @@ void main() {
           reason: 'and Ctrl+V put the copy back into the composition');
     });
 
+    /// **A copy has to leave a trace the machine can see** (K-302). The layer
+    /// and effect clipboard was in-app only, so copying a layer and pasting
+    /// into a text editor produced nothing — which reads exactly like Copy
+    /// having done nothing at all, and was the first thing the owner tried.
+    testWidgets('a copied layer is on the system clipboard too',
+        (tester) async {
+      // The plugin channel is not wired in a widget test; stand in for the
+      // platform's clipboard so what Lumit writes can be read back.
+      String? written;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            written = (call.arguments as Map)['text'] as String?;
+          }
+          if (call.method == 'Clipboard.getData') return {'text': written};
+          return null;
+        },
+      );
+      addTearDown(() => tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null));
+
+      final p = await mount(tester);
+      final comp = p.uiState.selectedComp!;
+      p.uiState.setSelection([comp.addSolidLayer()]);
+      await tester.pump();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+
+      expect(written, isNotNull,
+          reason: 'something reached the system clipboard');
+      expect(lumitDocumentKind(written!), ClipboardKind.layer,
+          reason: 'and it is the layer document, which another Lumit window '
+              'can take straight back off it');
+
+      // The round trip: an empty tray, a document on the system clipboard —
+      // the state a second Lumit window is in — still pastes.
+      p.uiState.clipboard.clear();
+      expect(await p.uiState.adoptSystemClipboard(), isTrue);
+      expect(p.uiState.clipboard.kind, ClipboardKind.layer);
+    });
+
     /// With an effect picked out of a stack, the chord takes *that*, not the
     /// layer under it (K-300) — the finest selection wins, exactly as Delete
     /// has done since K-234.

@@ -775,15 +775,44 @@ class LumitUiState extends ChangeNotifier {
   final LumitClipboard clipboard = LumitClipboard();
 
   /// Copy a layer, and tell the interface so Paste ungreys.
+  ///
+  /// **Mirrored to the system clipboard** (K-302): a copy that leaves no trace
+  /// anywhere the machine can see reads exactly like a copy that did nothing —
+  /// paste into a text editor and nothing arrives. The document is the text.
   void copyLayerToClipboard(String text) {
     clipboard.putLayer(text);
+    Clipboard.setData(ClipboardData(text: text));
     notifyListeners();
   }
 
-  /// Copy one effect or a whole stack, same repaint.
+  /// Copy one effect or a whole stack, same repaint, same mirror.
   void copyEffectsToClipboard(String text) {
     clipboard.putEffects(text);
+    Clipboard.setData(ClipboardData(text: text));
     notifyListeners();
+  }
+
+  /// Take a Lumit document off the **system** clipboard into the tray, if
+  /// there is one there and the tray has nothing of its own (K-302).
+  ///
+  /// This is how a copy made in another Lumit window arrives, and how a paste
+  /// still works after something else on the machine has been copied in
+  /// between. Ordinary text is left alone — [lumitDocumentKind] only answers
+  /// for the two shapes the engine's paste calls accept.
+  Future<bool> adoptSystemClipboard() async {
+    final text = (await Clipboard.getData(Clipboard.kTextPlain))?.text;
+    if (text == null) return false;
+    if (text == clipboard.text) return !clipboard.isEmpty;
+    switch (lumitDocumentKind(text)) {
+      case ClipboardKind.layer:
+        clipboard.putLayer(text);
+      case ClipboardKind.effects:
+        clipboard.putEffects(text);
+      case null:
+        return false;
+    }
+    notifyListeners();
+    return true;
   }
 
   /// The whole selection, primary first (K-217).
@@ -1538,6 +1567,13 @@ class _LumitAppViewState extends State<LumitAppView> {
     // funeral). A hardware-keyboard handler fires wherever focus is; the
     // focused-text-field guard inside _onKey keeps typing safe.
     HardwareKeyboard.instance.addHandler(_handleKey);
+    // A Lumit document copied while this window was away — in another Lumit
+    // window, most of all — is picked up when the window comes back (K-302), so
+    // Paste is live rather than greyed over something that is genuinely there.
+    _clipboardWatch = AppLifecycleListener(
+      onShow: () => context.read<LumitUiState>().adoptSystemClipboard(),
+      onRestart: () => context.read<LumitUiState>().adoptSystemClipboard(),
+    );
     // The first-run question (K-246), after the first frame so there is an
     // Overlay to put it in. It asks nothing on any later launch.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1550,9 +1586,12 @@ class _LumitAppViewState extends State<LumitAppView> {
     });
   }
 
+  AppLifecycleListener? _clipboardWatch;
+
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_handleKey);
+    _clipboardWatch?.dispose();
     super.dispose();
   }
 
@@ -1745,7 +1784,9 @@ class _LumitAppViewState extends State<LumitAppView> {
       case 'edit.cut':
         handled = cutSelectionFrb(state, ui);
       case 'edit.paste':
-        handled = pasteSelectionFrb(state, ui, comp, ui.selectedLayer.value);
+        // Reading the system clipboard is asynchronous, so the chord is taken
+        // and the paste lands a frame later rather than being declined here.
+        pasteSelectionFrb(state, ui, comp, ui.selectedLayer.value);
       case 'edit.select.all':
         if (comp == null) {
           handled = false;
