@@ -711,8 +711,19 @@ class ExpressionTextEditingController extends TextEditingController {
       {required BuildContext context,
       TextStyle? style,
       required bool withComposing}) {
+    final theme = ThemeScope.of(context).theme.mode == ThemeMode2.dark
+        ? darkTheme
+        : lightTheme;
 
-        final theme = ThemeScope.of(context).theme.mode == ThemeMode2.dark ? darkTheme! : lightTheme!;
+    // Highlighting is loaded asynchronously at startup by
+    // `initSyntaxHighlighting`, so there is a window in which it is not there
+    // yet — and a widget test never runs that startup at all. Draw the line
+    // plainly until it is ready rather than throwing, which is the same choice
+    // the completion list already makes when the engine has not answered.
+    if (theme == null) {
+      return super.buildTextSpan(
+          context: context, style: style, withComposing: withComposing);
+    }
 
     var highlighter = Highlighter(
       language: 'dart',
