@@ -10,6 +10,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Run it by hand from the Actions tab. GitHub occasionally does not deliver
+  # the `pull_request` event for a push — a branch sits at "pending" with no run
+  # against its head and nothing to re-run, since re-running needs a run to
+  # exist. This is the way out of that, and the way to re-run a job that failed
+  # on something outside the tree (a runner hiccup, a registry timeout).
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always

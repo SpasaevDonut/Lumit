@@ -494,9 +494,16 @@ entry above.
     command with a place waiting for it: Close project, History, Cut/Copy/Paste,
     layer settings and the mask/transform/blending/matte/style families, the
     whole Animation menu, the View menu's zoom/resolution/grid/ruler rows,
-    Trim and Crop comp to work area, Add to export queue, Check for updates and
-    the help links. Delete each mark as the command lands. Suggested chords for
-    the AE-shaped ones are in K-244.
+    Trim and Crop comp to work area, Add to export queue and the help links
+    (Check for updates is built — K-296). Delete each mark as the command
+    lands. Suggested chords for the AE-shaped ones are in K-244.
+
+- **A Flatpak remote, so `flatpak update` has something to update from (K-297).**
+    Releases ship a single-file `.flatpak` bundle, which installs perfectly well
+    and then never updates: `flatpak update` needs a remote. Export an OSTree
+    repo in `release.yml`, publish it (Cloudflare Pages beside the site, K-279)
+    and ship a `.flatpakref`, or submit to Flathub and let it host. Until then
+    Lumit tells Flatpak users the install command rather than offering a button.
 
 ## Later - roadmap features not yet built
 

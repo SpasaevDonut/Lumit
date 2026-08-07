@@ -130,6 +130,37 @@ void main() {
     Workspace.storeOverride = null;
   });
 
+  // Automatic update checks (K-296): on by default, for a fresh install and
+  // for a settings file written before the setting existed alike.
+  test('update checks default to on and survive a restart', () {
+    expect(Workspace().autoUpdate, isTrue);
+    expect(
+        (Workspace()..applyJson(<String, dynamic>{'ui_scale': 1.0})).autoUpdate,
+        isTrue,
+        reason: 'a file that predates the setting still gets the default');
+
+    final path = _scratchStore('auto-update');
+    File(path).parent.createSync(recursive: true);
+    if (File(path).existsSync()) File(path).deleteSync();
+    Workspace.storeOverride = path;
+
+    (Workspace()..load()).setAutoUpdate(false);
+    expect((Workspace()..load()).autoUpdate, isFalse);
+    Workspace.storeOverride = null;
+  });
+
+  test('when the last update check happened is remembered', () {
+    final path = _scratchStore('update-check');
+    File(path).parent.createSync(recursive: true);
+    if (File(path).existsSync()) File(path).deleteSync();
+    Workspace.storeOverride = path;
+
+    expect((Workspace()..load()).lastUpdateCheckMs, 0);
+    (Workspace()..load()).rememberUpdateCheck(1234567);
+    expect((Workspace()..load()).lastUpdateCheckMs, 1234567);
+    Workspace.storeOverride = null;
+  });
+
   test('an unknown playback name falls back to adaptive', () {
     final p = PerformanceSettings.fromJson(const {'playback': 'warp-speed'});
     expect(p.playback, PlaybackMode.adaptive);

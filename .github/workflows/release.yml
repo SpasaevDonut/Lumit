@@ -65,10 +65,26 @@ jobs:
           $version = "$env:GITHUB_REF_NAME".TrimStart('v')
           if (-not $version) { $version = '0.0.0' }
           & packaging/windows/build-installer.ps1 -Version $version
+      # The same files the installer lays down, as a plain archive (K-297).
+      # This is what a per-user installation fetches to update itself: no
+      # installer to run, no elevation, no questions already answered once.
+      - name: Package the app for in-place updates
+        shell: pwsh
+        run: |
+          $version = "$env:GITHUB_REF_NAME".TrimStart('v')
+          if (-not $version) { $version = '0.0.0' }
+          $stage = "$env:RUNNER_TEMP\lumit-package"
+          New-Item -ItemType Directory -Force -Path "$stage\icons" | Out-Null
+          Copy-Item -Recurse -Force flutter_ui\build\windows\x64\runner\Release\* $stage
+          Copy-Item assets\brand\lumit-project.ico, assets\brand\lumit-preset.ico "$stage\icons"
+          Compress-Archive -Path "$stage\*" -Force `
+            -DestinationPath "packaging/windows/dist/lumit-$version-windows-x64.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: windows-installer
-          path: packaging/windows/dist/*.exe
+          path: |
+            packaging/windows/dist/*.exe
+            packaging/windows/dist/*.zip
           if-no-files-found: error
 
   linux-bundle:
@@ -188,10 +204,24 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           packaging/macos/make-dmg.sh "${version:-0.0.0}"
+      # The bundle on its own, for in-place updates (K-297). `ditto` rather than
+      # `zip`: an .app carries symbolic links, code signatures and executable
+      # bits, and an archiver that drops those produces a bundle macOS refuses
+      # to open.
+      - name: Package the bundle for in-place updates
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          version="${version:-0.0.0}"
+          app="flutter_ui/build/macos/Build/Products/Release/Lumit.app"
+          mkdir -p packaging/macos/dist
+          ditto -c -k --keepParent "$app" \
+            "packaging/macos/dist/lumit-$version-macos-$(uname -m).zip"
       - uses: actions/upload-artifact@v4
         with:
           name: macos-dmg
-          path: packaging/macos/dist/*.dmg
+          path: |
+            packaging/macos/dist/*.dmg
+            packaging/macos/dist/*.zip
           if-no-files-found: error
 
   publish:

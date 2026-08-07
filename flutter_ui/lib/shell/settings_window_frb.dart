@@ -41,12 +41,16 @@ import 'package:provider/provider.dart';
 import '../state/file_dialogs.dart';
 import '../state/keymap.dart';
 import '../state/settings.dart';
+import '../state/updates.dart';
 import '../state/workspace.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
+import 'about_window_frb.dart';
 import 'cache_confirm_frb.dart';
+import 'menu_bar_frb.dart';
 import 'settings_rows.dart';
 import 'theme_editor_frb.dart';
+import 'update_dialog_frb.dart';
 
 /// The smallest budget worth setting, in MiB. Below this the cache holds a
 /// frame or two and costs more in bookkeeping than it saves.
@@ -210,9 +214,71 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ),
           ),
         ]),
+        // The same updater the Help menu drives, seen from the other side
+        // (K-296): one service, two views, so they can never disagree about
+        // whether a check is running or an update is waiting.
+        settingsSection(t, 'Updates', [
+          settingsRow(
+            t,
+            'Automatic updates',
+            'Look for a new version of Lumit when it starts, at most once a '
+                'day. Nothing is downloaded until you ask for it.',
+            HouseCheckbox(
+              key: const ValueKey('settings-auto-update'),
+              value: ui.workspace.autoUpdate,
+              onChanged: (on) =>
+                  setState(() => ui.workspace.setAutoUpdate(on)),
+            ),
+          ),
+          // The whole row watches the service, not just its button: the line
+          // under the title is the part that says what was found, and a stale
+          // sentence beside a live button would be worse than either alone.
+          ListenableBuilder(
+            listenable: ui.updates,
+            builder: (context, _) => settingsRow(
+              t,
+              'This version',
+              _updateStatusLine(ui),
+              HouseButton(
+                key: const ValueKey('settings-check-updates'),
+                small: true,
+                onPressed: ui.updates.busy
+                    ? null
+                    : () => pressUpdateRow(
+                          context,
+                          updates: ui.updates,
+                          notice: context.read<LumitState>().postNotice,
+                          projectIsDirty: () =>
+                              context.read<LumitState>().project?.isDirty() ??
+                              false,
+                          saveProject: () =>
+                              saveProjectFrb(context.read<LumitState>(), ui),
+                        ),
+                child: Text(ui.updates.menuLabel, style: t.small),
+              ),
+            ),
+          ),
+        ]),
         // About used to sit here. It is Help ▸ About Lumit now (K-244):
         // Settings is for what you change, and a version number is not that.
       ];
+
+  /// The line under "This version": what is installed, and what the last check
+  /// made of it. Rebuilt with the row, so it follows the service too.
+  String _updateStatusLine(LumitUiState ui) {
+    final installed = 'Lumit ${versionFromBootLine(lumitVersion()) ?? '?'}';
+    return switch (ui.updates.stage) {
+      UpdateStage.upToDate => '$installed — the newest there is.',
+      UpdateStage.available =>
+        '$installed. Lumit ${ui.updates.release?.version} is available.',
+      UpdateStage.ready =>
+        '$installed. Lumit ${ui.updates.release?.version} is downloaded and '
+            'installs when Lumit restarts.',
+      UpdateStage.failed =>
+        '$installed. ${ui.updates.failure ?? 'The last check did not finish.'}',
+      _ => installed,
+    };
+  }
 
   List<Widget> _appearance(LumitTheme t, LumitUiState ui) => [
         settingsSection(t, 'Theme', [

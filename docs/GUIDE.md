@@ -3876,3 +3876,143 @@ libraries are folded into the app itself (so it runs without Homebrew), but
 it carries no paid Apple signature yet, so macOS warns before first launch —
 the proper signing lands with the macOS pass in the TODO, and a release still
 publishes even if this job fails.
+
+## 11. Keeping Lumit up to date, in plain terms
+
+Every release already ends up in the same place: a GitHub Release, tagged `v0.1.0`
+or whatever the version is, with the finished installers hanging off it — a
+`setup.exe` for Windows, a disk image for macOS, a bundle and a Flatpak for
+Linux. That is the whole raw material the updater needs, and it means Lumit has
+no update server to run and nothing to pay for.
+
+**What "check for updates" actually does.** GitHub will answer a small,
+public question — *what is the newest release of this repository, and what is
+attached to it?* — over the same sort of web request a browser makes. Lumit asks
+it, reads the tag (`v0.2.0`), strips the `v`, and compares that with the version
+this build reports on start-up: the very first line of the boot log, the one the
+About window shows. Comparing versions is fiddlier than it looks — `0.10.0` is
+newer than `0.9.0` even though it sorts earlier as text, and `0.2.0-rc.1` is
+*older* than `0.2.0` because a release candidate comes before the release. There
+is a small function for exactly that, and a test for each of those traps.
+
+**One menu row does everything.** Help ▸ Check for updates is not a button that
+opens an update window; it is the update, in a row. Press it and it goes grey and
+says *Checking for updates…*. A second later it either says *Click to update -
+v0.2.0* or goes back to *Check for updates*, with "Lumit is up to date" in the
+status line at the bottom. Press the offered version and Lumit asks whether to
+fetch it, tells you how big it is, and shows a bar while it comes; the row
+counts along too, in case you closed the window and went back to editing. When it
+has arrived the row says *Restart to finish updating* until you do.
+
+Making a menu row behave like that needed one new trick: menus in Lumit are
+normally a list of labels decided the moment the menu opens, and pressing any row
+closes the menu. This one row is a `MenuEntry.live` — it redraws itself while the
+menu is open and it stays open when pressed, because the whole point of pressing
+it is to watch what happens. It is the only row like that, deliberately.
+
+**Automatic updates.** There is a tick on the setup screen, and the same tick in
+Settings ▸ General ▸ Updates. It is on to begin with, and it means one specific
+thing: when Lumit starts, and no more than once a day, it *looks*. It never
+downloads anything on its own. If there is something newer, all that happens is
+that the Help row is already saying so the next time you open the menu. Someone
+editing on a hotel connection should never discover Lumit quietly spending their
+data allowance.
+
+**Why the whole installer, rather than a patch.** Patches are smaller, and that
+is genuinely nice; the price is publishing a separate patch for every pair of
+versions people might be coming from, writing the tool that applies them, and
+then writing the fallback for when somebody's particular pair does not exist.
+That is three new things that can be broken in order to save bandwidth GitHub
+gives us for free. So: the whole installer, every time, on a click you made.
+
+**What stops a bad download from being run.** The release says how many bytes the
+installer is and — where GitHub provides one — its SHA-256, which is a
+fingerprint of the file's contents: change one byte and the fingerprint changes
+completely. Lumit checks both before it will run anything, and deletes the file
+if either disagrees. An installer is the most dangerous file Lumit ever touches;
+a truncated download or a swapped file is caught here or not at all.
+
+**Why you have to restart.** An installer cannot overwrite a program that is
+running, which is a rule of the operating system rather than a choice of ours. So
+the last window says *Restart to finish updating*. If you have unsaved work open,
+it offers **Save and restart** as well as **Restart without saving** — losing an
+evening's work to a version number would be an absurd way to lose it — and
+**Later**, which keeps the downloaded installer so you can finish whenever you
+like. On Windows the installer runs itself quietly and Lumit closes; on macOS the
+disk image opens and Lumit closes; on Linux Lumit only shows you the downloaded
+file, because unpacking a bundle or installing a Flatpak is something you do
+where you want it, not something an editor should do behind you.
+
+**Where the code is (K-296).** `flutter_ui/lib/state/updates.dart` knows about versions,
+downloads and files; `flutter_ui/lib/shell/update_dialog_frb.dart` is the windows
+you see. None of it is in Rust: the engine has no business knowing about the
+internet, and this way nothing that renders frames grows a network dependency.
+Every point where the updater touches the outside world — asking GitHub,
+downloading, running an installer, quitting — is a swappable seam, which is how
+the tests exercise the entire sequence without ever going near a network or
+actually running anything.
+
+### Updating without an installer (K-297)
+
+The section above describes updating by downloading the installer and running
+it. That still happens in some cases, but it is no longer the normal one — and
+the reason is not clever code, it is *where Lumit lives*.
+
+**Why Chrome never shows you an installer.** Programs on Windows traditionally
+go in `Program Files`, a folder only an administrator may write to. That is why
+updating one always involves a prompt: the program cannot change its own files,
+so it has to ask an installer, and the installer has to ask Windows for
+permission. Chrome, VS Code and Discord sidestep the whole ceremony by
+installing somewhere *you* own — a folder inside your own user profile. A
+program running as you can rewrite a folder belonging to you without asking
+anybody. Lumit now installs there too (`%LOCALAPPDATA%\Programs\Lumit`).
+
+**What a release now carries.** As well as the installer for each platform,
+every release publishes the application *by itself* as a plain archive: a zip of
+the Windows files, a zip of the macOS `Lumit.app`, and the Linux tarball that
+already existed. That archive is what Lumit downloads to update itself. Nothing
+in it is an installer — it is simply the new version of the same files.
+
+**How the swap works, and why it is done that way.** The obvious approach is to
+copy the new files over the old ones. Do not: that is several hundred separate
+operations, and if anything interrupts it half way — a crash, a flat battery —
+you are left with a Lumit that is half one version and half another, which may
+not start at all. Instead Lumit unpacks the whole new version *beside* the old
+one, then does two renames:
+
+1. `Lumit` becomes `Lumit.old`
+2. `Lumit.new` becomes `Lumit`
+
+A rename is a single filesystem operation: it either happened or it did not,
+with nothing in between. So at every moment there is a complete, working Lumit
+on disk — the old one, or the new one. If the second rename fails, the first is
+undone on the spot, and the code doing the undoing is already loaded in memory,
+so it does not need the files it is moving.
+
+The old folder is deliberately left lying there. Windows will not let anyone
+delete a `.dll` that is currently loaded, and at that moment Lumit is still
+running from those very files. So it is swept up on the *next* launch, by the
+new version, when nothing is holding it — that is the first thing `main()` does.
+The same sweep also puts the old version back if it ever finds the install
+folder missing, which is what a machine dying between those two renames would
+leave behind.
+
+**Three ways an update can be applied**, and Lumit works out which by looking at
+where it is actually installed:
+
+- **In place** — the swap above. Requires a folder Lumit can write beside, which
+  it checks by genuinely writing a small file there rather than guessing from
+  the path.
+- **By installer** — for an older installation still in `Program Files`, or a
+  macOS disk image. Exactly the K-296 behaviour, kept as the fallback so nobody
+  is stranded.
+- **Handed to Flatpak** — see below.
+
+**Flatpak is the exception, and honestly so.** A Flatpak runs in a sandbox whose
+files are read-only on purpose: that is the security model, not an oversight. An
+application inside one genuinely cannot replace its own files, and the ways to
+reach out to the host and do it anyway require permissions no video editor
+should be asking for. So on Flatpak, Lumit downloads the new bundle, shows you
+the one command that installs it, and stays open. Making this a real
+`flatpak update` needs Lumit published to a Flatpak *remote* rather than as a
+single downloadable bundle — that is written down in TODO as the next step.

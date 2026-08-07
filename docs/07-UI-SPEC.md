@@ -228,6 +228,17 @@ panel layout is.
 - **Effect** MUST offer one submenu per effect category, each item applying to *every* selected
   layer (K-217), and the whole menu MUST be disabled with nothing selected.
 - **File ▸ Open recent** lists the ten most recent project paths, newest first.
+- **Help ▸ Check for updates** MUST carry the whole update sequence in the one row (K-296):
+  disabled and reading "Checking for updates…" while a check runs, then either
+  "Click to update - v*X.Y.Z*" or back to "Check for updates" with *Lumit is up to date* in
+  the status line. Pressing it MUST NOT close the menu, and the row MUST redraw in place as
+  the state changes. Downloading MUST show progress in the same row, and a downloaded update
+  MUST read "Restart to finish updating" until it is applied.
+- **How an update is applied** follows where Lumit is installed (K-297), and the restart
+  window MUST say which it is: swapped in place and restarted (a per-user installation, the
+  normal case), handed to the installer (anywhere Lumit cannot write to its own files), or
+  handed to Flatpak with the install command, in which case Lumit MUST NOT offer to restart
+  because it is not replacing anything.
 
 ---
 
@@ -1622,7 +1633,10 @@ no-wizard rule below.
 
 The **v1 build** (K-246) ships the minimal form of this screen: two plain choices,
 **AE-style** and **Vegas-style**, where Vegas ticks the two K-246 settings (Retime opens to
-speed; video arrives as a Sequence layer) and AE ticks neither. The four cards above, with a
+speed; video arrives as a Sequence layer) and AE ticks neither. Along the bottom sits one
+tick, **on by default**, for automatic update checks (K-296) — the same setting as
+Settings ▸ General ▸ Updates, asked here because it is a decision about how Lumit behaves
+from now on. Skipping the screen leaves it on. The four cards above, with a
 small image over each choice, remain the destination (polish tracked in TODO).
 
 ### 13.2 Empty states
@@ -1793,6 +1807,10 @@ travel in the `.lum` and are marked below:
   preference order, filename template.
 - **Rendering** — *not here at all*: it is the project's, not this machine's, so it lives in
   the **Project settings** window instead (§13.5, K-286).
+- **Updates** (K-296), under General: *Automatic updates* — look for a new version at
+  launch, at most once a day — on by default, plus a readout of the installed version and a
+  button driving the same check the Help row does. Checking is all "on" means; the download
+  always waits to be asked for.
 - **Keymap**, **Interface** (UI scale, tooltips, reduced motion follows OS or override),
   **Autosave** (interval, copies kept), **Plugins** (search paths, disabled list,
   per-plugin overrides).
