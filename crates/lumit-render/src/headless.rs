@@ -3275,8 +3275,14 @@ mod tests {
     /// went wrong and where no allocator report exists to see it — the counts
     /// are what every backend keeps. It renders far more frames than the cache
     /// can hold, so the great majority are evicted and dropped, and then asks
-    /// the driver what it still has. A handful is right; hundreds means the
-    /// dropped ones were never handed back.
+    /// the driver what it still has.
+    ///
+    /// It asks *twice*, a batch apart, and that is the measurement: how many
+    /// objects a backend rests on differs between drivers by a factor of
+    /// several, but a driver that never hands a dropped frame back grows by one
+    /// object per frame, whichever driver it is. So the gate is that the second
+    /// batch leaves the resting set where the first did — not a count tuned to
+    /// whichever backend happened to run when it was written.
     #[test]
     fn what_the_engine_drops_the_driver_gets_back() {
         let mut r = match HeadlessRenderer::new() {
@@ -3294,36 +3300,73 @@ mod tests {
         let doc = store.snapshot();
 
         let (textures_before, buffers_before) = r.gpu_live_objects();
-        for i in 0..120u64 {
-            // A name of its own per frame: every render is a new entry, so the
-            // store must evict, exactly as a long session makes it.
-            let _ = r
-                .render_prepared_named(&doc, comp_id, 0, Quality::default(), true, Some(i as u128))
-                .expect("render");
-            // The worker's own turn does this once a loop; the whole point is
-            // that it is what makes the dropping stick.
-            r.reclaim_gpu();
-        }
-        let (textures, buffers) = r.gpu_live_objects();
+        /// Frames per batch: far more than the budget above can hold, so the
+        /// great majority of them are evicted and dropped.
+        const BATCH: u64 = 120;
+        let render_batch = |r: &mut HeadlessRenderer, batch: u64| {
+            for i in 0..BATCH {
+                // A name of its own per frame: every render is a new entry, so
+                // the store must evict, exactly as a long session makes it.
+                let name = batch * BATCH + i;
+                let _ = r
+                    .render_prepared_named(
+                        &doc,
+                        comp_id,
+                        0,
+                        Quality::default(),
+                        true,
+                        Some(name as u128),
+                    )
+                    .expect("render");
+                // The worker's own turn does this once a loop; the whole point
+                // is that it is what makes the dropping stick.
+                r.reclaim_gpu();
+            }
+        };
+        // The reading is of the engine *at rest*, so both batches are read at
+        // the same point in the cycle: a few maintains after the last frame,
+        // which is where a backend that defers its reclamation to the next one
+        // has caught up. Without this the two counts are measured in different
+        // states and the comparison below is between a settled set and an
+        // unsettled one.
+        let settle = |r: &mut HeadlessRenderer| {
+            for _ in 0..4 {
+                r.reclaim_gpu();
+            }
+            r.gpu_live_objects()
+        };
+        render_batch(&mut r, 0);
+        let (textures_one, buffers_one) = settle(&mut r);
+        render_batch(&mut r, 1);
+        let (textures, buffers) = settle(&mut r);
 
-        // What the engine legitimately holds at rest: the frames still in the
-        // card's cache, the pooled upload textures, the shared present targets,
-        // and one frame's intermediates. Tens, not the hundred-and-twenty
-        // frames that went through, and nothing like the thousands a session
-        // reached before this.
-        // Measured at 18 textures and 8 buffers on the software rasteriser CI
-        // runs, against 2 and 5 before the loop; the ceilings are generous
-        // enough for a busier backend's own bookkeeping and nowhere near the
-        // hundred-and-twenty frames that went through, which is the number a
-        // driver that never reclaimed would be sitting on.
+        // What the engine holds at rest — the frames still in the card's cache,
+        // the pooled upload textures, the shared present targets, and one
+        // frame's intermediates — is a *backend's* number, not a fact about
+        // this engine: 18 textures and 8 buffers on the software rasteriser
+        // against 2 and 5 before the first batch, several times that on Metal
+        // and on D3D12, both of which keep more of their own bookkeeping alive
+        // between maintains. Pinning one of those numbers is what this test did
+        // first, and it is why it failed on macOS at 65 having passed at 63 the
+        // run before: it was measuring the backend rather than the leak.
+        //
+        // The leak has a shape no backend changes. Memory that is dropped and
+        // never handed back grows by one object per frame for ever — that is
+        // what "5 000 live buffers" was — so the resting set after the second
+        // batch is the resting set after the first, whatever that set happens
+        // to be on this driver. A little slack for what a busier one defers;
+        // nothing like the batch of frames that went through it.
+        let slack = BATCH / 4;
         assert!(
-            textures < 64,
-            "120 rendered frames must not leave a texture each behind: \
-             {textures_before} before, {textures} after"
+            textures <= textures_one + slack,
+            "a second batch of {BATCH} frames must not leave a texture each \
+             behind: {textures_before} before, {textures_one} after one batch, \
+             {textures} after two"
         );
         assert!(
-            buffers < 64,
-            "nor a buffer each: {buffers_before} before, {buffers} after"
+            buffers <= buffers_one + slack,
+            "nor a buffer each: {buffers_before} before, {buffers_one} after \
+             one batch, {buffers} after two"
         );
         // And the card's cache is the thing that decides how many frames are
         // held, not the number of frames that have been made.
