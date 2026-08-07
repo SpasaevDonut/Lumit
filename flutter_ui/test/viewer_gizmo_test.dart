@@ -26,6 +26,7 @@ void main() {
     Offset origin = Offset.zero,
     double viewScale = 1,
     List<BridgeMask> masks = const [],
+    List<BridgeShapeItem> shapeContents = const [],
   }) =>
       LayerBox(
         layer: LayerReference(
@@ -50,6 +51,7 @@ void main() {
         scalable: true,
         rotationDegrees: rotation,
         masks: masks,
+        shapeContents: shapeContents,
       );
 
   /// A square mask in the layer's own coordinates, all corners.
@@ -73,6 +75,34 @@ void main() {
         ],
         closed: true,
         inverted: false,
+        opacity: 100,
+      );
+
+  /// The same square, as a shape layer's own art rather than a mask. The two
+  /// hold the same path type, which is the whole reason one set of helpers can
+  /// serve both.
+  BridgeShapeItem squareShape({
+    double left = 20,
+    double top = 20,
+    double side = 60,
+  }) =>
+      BridgeShapeItem(
+        id: UuidValue.fromString(const Uuid().v4()),
+        name: 'Rectangle',
+        vertices: [
+          for (final (x, y) in [
+            (left, top),
+            (left + side, top),
+            (left + side, top + side),
+            (left, top + side),
+          ])
+            BridgeVertex(
+                x: x, y: y, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+        ],
+        closed: true,
+        fill: null,
+        stroke: null,
+        strokeWidth: 0,
         opacity: 100,
       );
 
@@ -139,7 +169,7 @@ void main() {
       // The layer is 200x100 at (300, 200), so its own origin is at (200, 150)
       // on screen and a vertex at (20, 20) lands at (220, 170).
       final b = box(masks: [squareMask()]);
-      final points = maskPointsOf(b);
+      final points = pathPointsOf(b);
       expect(points.length, 4);
       expect(points.first.at, const Offset(220, 170));
       expect(points.first.index, 0);
@@ -150,18 +180,18 @@ void main() {
       final b = box(rotation: 90, masks: [squareMask()]);
       // The vertex sits 80 left and 30 above the anchor; a quarter turn puts
       // it 30 right and 80 above instead.
-      final at = maskPointsOf(b).first.at;
+      final at = pathPointsOf(b).first.at;
       expect(at.dx, closeTo(330, 1e-9));
       expect(at.dy, closeTo(120, 1e-9));
     });
 
     test('a press near one names it, and one far away names nothing', () {
       final b = box(masks: [squareMask()]);
-      final hit = maskPointAt([b], const Offset(223, 172));
+      final hit = pathPointAt([b], const Offset(223, 172));
       expect(hit, isNotNull);
       expect(hit!.index, 0);
       expect(hit.key, maskPointKey(b.id, b.masks.single.id, 0));
-      expect(maskPointAt([b], const Offset(250, 200)), isNull,
+      expect(pathPointAt([b], const Offset(250, 200)), isNull,
           reason: 'the middle of the mask is not one of its points');
     });
 
@@ -169,25 +199,83 @@ void main() {
       final b = box(masks: [squareMask(side: 8)]);
       // The four vertices are 8 px apart; a press to the right of the second
       // one must name the second, not the first.
-      expect(maskPointAt([b], const Offset(229, 170))!.index, 1);
-      expect(maskPointAt([b], const Offset(221, 170))!.index, 0);
+      expect(pathPointAt([b], const Offset(229, 170))!.index, 1);
+      expect(pathPointAt([b], const Offset(221, 170))!.index, 0);
     });
 
     test('a sweep gathers every point inside it and no others', () {
       final b = box(masks: [squareMask()]);
       // The top edge only: the two points at y = 170, not the two at y = 230.
       final caught =
-          maskPointsInRect([b], const Rect.fromLTRB(200, 150, 300, 200));
+          pathPointsInRect([b], const Rect.fromLTRB(200, 150, 300, 200));
       expect(caught, {
         maskPointKey(b.id, b.masks.single.id, 0),
         maskPointKey(b.id, b.masks.single.id, 1),
       });
-      expect(maskPointsInRect([b], const Rect.fromLTRB(0, 0, 10, 10)), isEmpty);
+      expect(pathPointsInRect([b], const Rect.fromLTRB(0, 0, 10, 10)), isEmpty);
     });
 
     test('a layer with no mask has no points to catch', () {
-      expect(maskPointsOf(box()), isEmpty);
-      expect(maskPointAt([box()], const Offset(300, 200)), isNull);
+      expect(pathPointsOf(box()), isEmpty);
+      expect(pathPointAt([box()], const Offset(300, 200)), isNull);
+    });
+  });
+
+  /// A shape layer's own art is editable on the picture by the same gesture
+  /// (K-237's "the same gesture over shape contents is the next piece"). The
+  /// arithmetic is shared with masks; what these pin is that a shape item's
+  /// points are found, named apart from a mask's, and swept up the same way.
+  group("A shape layer's points", () {
+    test('sit where a mask\'s would, because the path type is the same', () {
+      final b = box(shapeContents: [squareShape()]);
+      final points = pathPointsOf(b);
+      expect(points.length, 4);
+      expect(points.first.at, const Offset(220, 170));
+      expect(points.first.shape, isTrue,
+          reason: 'the point knows which list it came from, because that is '
+              'what decides where the edit is written back');
+      expect(points[2].at, const Offset(280, 230));
+    });
+
+    test('a press near one names it', () {
+      final b = box(shapeContents: [squareShape()]);
+      final hit = pathPointAt([b], const Offset(223, 172));
+      expect(hit, isNotNull);
+      expect(hit!.index, 0);
+      expect(hit.shape, isTrue);
+      expect(hit.key, shapePointKey(b.id, b.shapeContents.single.id, 0));
+    });
+
+    test('a shape point and a mask point are never the same point', () {
+      final id = UuidValue.fromString(const Uuid().v4());
+      final layer = UuidValue.fromString(const Uuid().v4());
+      // Same layer, same path id, same index — and still two different points,
+      // because one is written back with setMask and the other with
+      // setShapeContents. Without the prefix a selection could not tell them
+      // apart and one would be committed as the other.
+      expect(maskPointKey(layer, id, 0), isNot(shapePointKey(layer, id, 0)));
+    });
+
+    test('a layer carrying both offers the points of both', () {
+      final b = box(masks: [squareMask()], shapeContents: [squareShape()]);
+      final points = pathPointsOf(b);
+      expect(points.length, 8);
+      expect(points.where((p) => p.shape).length, 4);
+      expect(points.where((p) => !p.shape).length, 4);
+    });
+
+    test('a sweep gathers a shape\'s points as readily as a mask\'s', () {
+      final b = box(shapeContents: [squareShape()]);
+      final caught =
+          pathPointsInRect([b], const Rect.fromLTRB(200, 150, 300, 200));
+      expect(caught, {
+        shapePointKey(b.id, b.shapeContents.single.id, 0),
+        shapePointKey(b.id, b.shapeContents.single.id, 1),
+      });
+    });
+
+    test('a layer with no art has no points to catch', () {
+      expect(pathPointsOf(box()), isEmpty);
     });
   });
 

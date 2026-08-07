@@ -73,13 +73,17 @@ These are v1-scope surfaces it does not yet match.
     wiggle, offset paths), gradient fills, dashed strokes, joins and caps other
     than round, animated paths, and dragging a shape's points on the picture the
     way a mask's drag.
-- **Path editing on the picture** - a *mask's* points drag (K-224); a **shape
-    layer's** and a **stroke's** do not, so art can be drawn but not reshaped
-    without redrawing it. No path's bezier **handles** can be dragged either, so
-    the `Alt`-drag that re-links a broken tangent pair exists only while a point
-    is being *placed*. One piece of work with the Pen's add/delete/convert-vertex
-    siblings and dragging a whole path by a segment: all of them edit a path that
-    already exists, and none of them can today.
+- **Path editing on the picture** - a *mask's* points drag (K-224) and now a
+    **shape layer's** do too (K-307): both are aimed at, swept up and dragged by
+    one piece of code, because a mask and a shape item hold the same path type.
+    Still owed: a **paint stroke's** points, which are a stored gesture rather
+    than a path and so are their own piece of work; no path's bezier **handles**
+    can be dragged, so the `Alt`-drag that re-links a broken tangent pair exists
+    only while a point is being *placed* - and the model has no linked/broken
+    flag, so adding one is a [03-DATA-MODEL.md](03-DATA-MODEL.md) change and a
+    decision, not just a gesture; and the Pen's add/delete/convert-vertex
+    siblings and dragging a whole path by a segment, which edit a path that
+    already exists and still cannot.
 - **Wireframes over a shape layer's own art** - a shape layer draws the box its
     art fills, like every other layer, rather than the paths inside it.
 - **Mask paths cannot be keyframed** ([03-DATA-MODEL.md](03-DATA-MODEL.md) has

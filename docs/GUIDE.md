@@ -3541,6 +3541,27 @@ bridge (K-222, K-237), paint strokes stored as the *drag* rather than the pixels
 and re-stamped at render resolution (K-227), the razor (K-221), pan behind
 (K-220), the type tool (K-225) and camera tools (K-229).
 
+**Correcting a path after it is drawn.** With the Selection tool and the
+wireframes on, every point of a selected layer's masks — and of a shape layer's
+own art — is drawn as a small square you can aim at. Click one to pick it,
+sweep a box over several to pick those, and drag to move them; the marks follow
+the pointer and the picture catches up when you let go. A sweep that catches no
+points is still the ordinary layer sweep it always was, so it is one gesture
+doing two jobs depending on what is actually under it (K-224, K-307).
+
+The reason masks and shape art behave identically is that they are the same
+thing underneath: both are a list of points with two curve handles each, so one
+piece of code finds them, draws them and moves them. The only difference is
+which call writes the change back — and that difference is carried in the name
+each point is filed under, so a shape point can never be saved as a mask.
+
+What you still cannot do is drag a point's **curve handles** — the two arms that
+decide how the line bends through it. You can pull them out while *placing* a
+point with the Pen, but not afterwards, on any path. That is not an oversight
+waiting to be wired: the file format has no way to say "these two arms are
+linked" versus "this is a corner", so adding the gesture means adding that to
+the format first, and deciding what an older project means without it.
+
 ### What the lock switch actually does
 
 Locking a layer used to stop you dragging its bar, cutting it, renaming it,
