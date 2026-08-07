@@ -284,6 +284,14 @@ search, same apply gestures, same Effect Controls layout rules
 
 ### 4.1 Engine
 
+> **Superseded in part (K-305).** The shipping engine is **Rhai**, in `lumit-core`, not
+> QuickJS-ng in `lumit-expr` — see [impl/expressions.md](impl/expressions.md) for what
+> actually exists. The determinism claim below is also narrowed: Lumit promises the same
+> frames from the same project on the same machine, not bit-identity across platforms.
+> The rest of this section — the AE-compatible API, `wiggle`, `loopOut`, the import
+> requirement — remains the **target**, and almost none of it is built. Read it as a
+> specification of where expressions are going, not a description of where they are.
+
 **QuickJS-ng, embedded in `lumit-expr`** (K-063), ES2018 surface. Rationale over V8:
 trivially embeddable, byte-identical behaviour across machines and runs (no JIT tiers),
 built-in memory/time limits, and per-property snippets are interpreter-friendly — the
