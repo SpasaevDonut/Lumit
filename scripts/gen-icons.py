@@ -3,18 +3,19 @@
 #
 # In plain terms: the SVGs are the only artwork anyone edits. The operating
 # systems want pixels, not drawings — Windows wants one .ico holding several
-# PNG sizes, macOS wants loose PNGs — so this script renders each SVG at every
-# needed size and packs the results. Each size is rendered straight from the
-# SVG (not scaled down from a big render), which is what keeps the small sizes
-# crisp.
+# PNG sizes — so this script renders each SVG at every needed size and packs
+# the results. Each size is rendered straight from the SVG (not scaled down
+# from a big render), which is what keeps the small sizes crisp.
+#
+# The macOS APPLICATION icon is NOT made here: it is the layered Icon Composer
+# document assets/brand/lumit-icon.icon, compiled by Xcode (K-309). Everything
+# below is Windows, Linux, and the document icons.
 #
 #   pip install resvg-py pillow
 #   python scripts/gen-icons.py
 #
 # Outputs (all committed):
 #   flutter_ui/windows/runner/resources/app_icon.ico   <- lumit-mark.svg (bare)
-#   flutter_ui/macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_*.png
-#                                                      <- lumit-icon.svg (tile)
 #   assets/brand/lumit-project.ico                     <- lumit-project.svg (.lum)
 #   assets/brand/lumit-preset.ico                      <- lumit-preset.svg (.lumfx)
 #   assets/brand/lumit-theme.ico                       <- lumit-theme.svg (.lumtheme)
@@ -35,7 +36,6 @@ ROOT = Path(__file__).resolve().parent.parent
 BRAND = ROOT / "assets" / "brand"
 
 ICO_SIZES = [256, 128, 64, 48, 32, 24, 16]
-MAC_SIZES = [16, 32, 64, 128, 256, 512, 1024]
 
 
 def render(svg_path: Path, size: int) -> Image.Image:
@@ -62,13 +62,6 @@ def main() -> None:
     write_ico(BRAND / "lumit-project.svg", BRAND / "lumit-project.ico")
     write_ico(BRAND / "lumit-preset.svg", BRAND / "lumit-preset.ico")
     write_ico(BRAND / "lumit-theme.svg", BRAND / "lumit-theme.ico")
-
-    iconset = (
-        ROOT / "flutter_ui" / "macos" / "Runner" / "Assets.xcassets" / "AppIcon.appiconset"
-    )
-    for s in MAC_SIZES:
-        render(BRAND / "lumit-icon.svg", s).save(iconset / f"app_icon_{s}.png")
-    print(f"{iconset.relative_to(ROOT)}: {MAC_SIZES}")
 
     for name in ["lumit-project", "lumit-preset", "lumit-theme"]:
         out = ROOT / "packaging" / "macos" / f"{name}.icns"
