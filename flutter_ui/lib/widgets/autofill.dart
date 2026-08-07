@@ -1,9 +1,7 @@
-import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:lumit_flutter/data/expressions_metadata.dart';
 import 'package:lumit_flutter/theme/theme.dart';
-import 'package:lumit_flutter/widgets/controls.dart';
 
 abstract class AutofillGenerator<T> {
   List<T> getSuggestions(String text, int cursor);

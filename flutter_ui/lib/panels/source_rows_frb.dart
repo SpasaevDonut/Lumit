@@ -11,7 +11,6 @@
 // does.
 
 import 'package:flutter/widgets.dart';
-import 'package:lumit_flutter/data/expressions_metadata.dart';
 import 'package:lumit_flutter/panels/effect_param_row_frb.dart';
 import 'package:lumit_flutter/src/rust/api/assets.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';

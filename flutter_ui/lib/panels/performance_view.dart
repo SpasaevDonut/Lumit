@@ -1,7 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
-import 'package:lumit_flutter/panels/debug_panel.dart';
 import 'package:lumit_flutter/widgets/controls.dart';
 
 class PerformanceMonitor extends StatefulWidget {
