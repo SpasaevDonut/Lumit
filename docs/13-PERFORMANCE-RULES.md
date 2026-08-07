@@ -289,13 +289,20 @@ something else polled.
 Anything that frees memory only as a side effect of an unrelated call is not freeing
 memory. The regression gate is `what_the_engine_drops_the_driver_gets_back`, which renders
 many times the cache's capacity and then asks the driver how many objects it still holds —
-**twice, a batch apart**, and compares the two. How many objects a backend rests on is a
-fact about that backend, not about this engine: the software rasteriser settles at 18
-textures where Metal and D3D12 hold several times that in their own bookkeeping, so a gate
-written as a fixed ceiling measures the driver and fails when it is run on a different one.
-Memory that is dropped and never handed back grows by one object per frame on every
-backend there is, so the resting set after the second batch is what is asserted against the
-resting set after the first.
+**twice, a batch apart**, and compares the two.
+
+Both readings are taken through `GpuContext::settle`, the blocking sibling of `reclaim`,
+and that is not a detail. Work is submitted and runs later, so a CPU that has run ahead of
+the card is still holding every frame the card has not reached; a non-blocking poll cannot
+free those, however many times it is called. Reading there reads the backlog, and the
+backlog grows with the frame count — which is what this gate did when it was first written,
+reporting 113 live textures on Metal and 577 on D3D12 against 18 on the software
+rasteriser, where the CPU never gets ahead and nothing looked wrong. What is held once the
+queue is empty is what is genuinely held.
+
+The comparison is the assertion, not a ceiling. How many objects a backend rests on is a
+fact about that backend; memory that is dropped and never handed back grows by one object
+per frame on every backend there is.
 
 ### 7.1 Per-node profiler
 

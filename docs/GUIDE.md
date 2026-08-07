@@ -3804,6 +3804,24 @@ happened to ask. Now the engine asks once per turn of its own loop, whether
 anything is on screen or not, which costs nothing when there is nothing to
 collect and means the pile is never more than a moment old.
 
+**Two ways to ask, and the test needed the other one.** Asking the card to tidy
+up comes in two forms. "Collect anything you have finished with, and don't keep
+me waiting" is the one the loop uses, because a loop that must produce a picture
+cannot afford to stand still. But work handed to a graphics card does not happen
+when you hand it over — it happens when the card gets to it, and a computer can
+hand over frames far faster than a card draws them. So there is always a queue,
+and everything still in that queue is memory the card cannot possibly release
+yet. Ask the impatient way and the answer includes the queue.
+
+The other form is "finish what you have, *then* collect", and it waits. That is
+wrong inside a loop and exactly right for two other moments: an engine with
+nothing left to draw, and a **measurement**. This matters because a test was
+asking the impatient question and reading the queue as though it were a leak: on
+a Mac it saw 113 abandoned pictures where the truth was a handful, and on Windows
+577, while the same test on the build machine — which has no real graphics card,
+so nothing ever queues — saw eighteen and looked perfectly healthy. The number
+only means anything once the card has caught up.
+
 ## 10. The app icon and the brand files
 
 The icon you see in the taskbar is not one picture — it is a small bag of
