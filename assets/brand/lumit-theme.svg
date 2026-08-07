@@ -17,6 +17,17 @@
     <filter id="key-shadow" x="-30%" y="-30%" width="160%" height="160%">
       <feDropShadow dx="0" dy="7" stdDeviation="11" flood-color="#04060b" flood-opacity="0.4"/>
     </filter>
+    <!-- The two clips that close the cycle. Painting order gives blue over
+         white and violet over blue; the last pair, white over violet, cannot
+         come from an order at all — so the white swatch is painted a second
+         time, kept inside the violet one and outside the blue one. -->
+    <clipPath id="sw-violet">
+      <circle cx="298" cy="206" r="62"/>
+    </clipPath>
+    <clipPath id="sw-outside-blue">
+      <path d="M0 0 H512 V512 H0 Z M148 206 a66 66 0 1 0 132 0 a66 66 0 1 0 -132 0 Z"
+            clip-rule="evenodd"/>
+    </clipPath>
     <linearGradient id="doc-bg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#181b21"/><stop offset="1" stop-color="#101217"/>
     </linearGradient>
@@ -26,12 +37,19 @@
   <path d="M318 64 L396 142 L332 142 Q318 142 318 128 Z" fill="#272b34"/>
   <g filter="url(#key-shadow)"
      transform="translate(256 234) scale(0.88) translate(-256 -234)">
+    <!-- White, then blue over it, then violet over blue. -->
+    <circle cx="256" cy="278" r="62" fill="url(#key-c)"
+            stroke="#0c0e14" stroke-opacity="0.25" stroke-width="8"/>
     <circle cx="214" cy="206" r="62" fill="url(#key-a)"
             stroke="#0c0e14" stroke-opacity="0.25" stroke-width="8"/>
     <circle cx="298" cy="206" r="62" fill="url(#key-b)"
             stroke="#0c0e14" stroke-opacity="0.25" stroke-width="8"/>
-    <circle cx="256" cy="278" r="62" fill="url(#key-c)"
-            stroke="#0c0e14" stroke-opacity="0.25" stroke-width="8"/>
+    <!-- And white back over violet, closing the ring. -->
+    <g clip-path="url(#sw-violet)">
+      <circle cx="256" cy="278" r="62" clip-path="url(#sw-outside-blue)"
+              fill="url(#key-c)" stroke="#0c0e14" stroke-opacity="0.25"
+              stroke-width="8"/>
+    </g>
   </g>
   <text x="256" y="408" font-family="JetBrains Mono, Consolas, monospace" font-size="58"
         font-weight="700" letter-spacing="6" fill="#aab6c6" text-anchor="middle">THEME</text>
