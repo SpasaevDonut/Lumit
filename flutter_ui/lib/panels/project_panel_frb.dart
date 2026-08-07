@@ -36,6 +36,7 @@ import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:provider/provider.dart';
 
 import '../icons/icons.dart';
+import '../l10n/strings.dart';
 import '../state/drag_payloads.dart';
 import '../shell/comp_settings_frb.dart';
 import '../state/file_dialogs.dart';
@@ -256,7 +257,7 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 240),
                   child: Text(
-                    'No items yet — import footage or create a composition',
+                    l10n.projectEmpty,
                     style: t.small,
                     textAlign: TextAlign.center,
                   ),
@@ -389,7 +390,7 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
           key: const ValueKey('project-search'),
           controller: _searchController,
           width: double.infinity,
-          hint: 'Search project',
+          hint: l10n.searchProject,
         ),
       );
 
@@ -417,14 +418,14 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
         child: Row(
           children: [
             LumitTooltip(
-              message: 'Import footage',
+              message: l10n.importFootage,
               child: HouseButton(
                 key: const ValueKey('project-import'),
                 small: true,
                 frameless: true,
                 onPressed: _import,
-                child:
-                    lumitIcon(LumitIcon.folder, size: iconSize, color: t.textMuted),
+                child: lumitIcon(LumitIcon.folder,
+                    size: iconSize, color: t.textMuted),
               ),
             ),
             const SizedBox(width: 4),
@@ -439,14 +440,14 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
                     ? null
                     : BoxDecoration(border: Border.all(color: t.accent)),
                 child: LumitTooltip(
-                  message: 'New composition',
+                  message: l10n.newComposition,
                   child: HouseButton(
                     key: const ValueKey('project-new-comp'),
                     small: true,
                     frameless: true,
                     onPressed: _newComposition,
-                    child:
-                        lumitIcon(LumitIcon.comp, size: iconSize, color: t.textMuted),
+                    child: lumitIcon(LumitIcon.comp,
+                        size: iconSize, color: t.textMuted),
                   ),
                 ),
               ),
@@ -727,9 +728,7 @@ class _MissingHeaderFrb extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
     return LumitTooltip(
-      message: active
-          ? 'Showing only missing footage — click to show everything'
-          : 'Show only missing footage',
+      message: active ? l10n.tipShowEverything : l10n.tipMissingOnly,
       child: GestureDetector(
         key: const ValueKey('missing-toggle'),
         behavior: HitTestBehavior.opaque,
@@ -995,13 +994,13 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
                   Text('missing', style: t.small.copyWith(color: t.warning)),
                   const SizedBox(width: 6),
                   LumitTooltip(
-                    message: 'Relink this file to its new location',
+                    message: l10n.relink,
                     child: HouseButton(
                       key: ValueKey<String>('relink-${_idOf(item)}'),
                       small: true,
                       onPressed: () =>
                           _doRelink((item as ItemReference_Footage).field0),
-                      child: Text('Relink…', style: t.small),
+                      child: Text(l10n.relinkEllipsis, style: t.small),
                     ),
                   ),
                 ],
@@ -1188,33 +1187,33 @@ Future<void> showProjectMenuFrb({
           if (isComp)
             MenuRow(
               onPressed: () => close(_ProjectMenuAction.compSettings),
-              child: const Text('Composition settings…'),
+              child: Text(l10n.compositionSettingsEllipsis),
             ),
           // Every kind can be renamed from here. It matters most for a comp,
           // whose second click opens it rather than renaming it.
           MenuRow(
             key: const ValueKey('project-menu-rename'),
             onPressed: () => close(_ProjectMenuAction.rename),
-            child: const Text('Rename'),
+            child: Text(l10n.rename),
           ),
           // Relink is offered only on a row that is actually broken.
           if (isFootage && missing)
             MenuRow(
               onPressed: () => close(_ProjectMenuAction.relink),
-              child: const Text('Relink…'),
+              child: Text(l10n.relinkEllipsis),
             ),
           if (isFootage)
             MenuRow(
               onPressed: () => close(_ProjectMenuAction.findMissing),
-              child: const Text('Find missing footage'),
+              child: Text(l10n.findMissingFootage),
             ),
           MenuRow(
             onPressed: () => close(_ProjectMenuAction.moveToRoot),
-            child: const Text('Move to root'),
+            child: Text(l10n.moveToRoot),
           ),
           MenuRow(
             onPressed: () => close(_ProjectMenuAction.delete),
-            child: const Text('Delete'),
+            child: Text(l10n.delete),
           ),
         ],
       ),

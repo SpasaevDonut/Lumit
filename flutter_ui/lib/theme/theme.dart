@@ -9,6 +9,7 @@
 // compared side by side.
 
 import 'package:flutter/material.dart';
+import 'package:lumit_flutter/l10n/strings.dart';
 
 Color _rgb(int r, int g, int b) => Color.fromARGB(0xff, r, g, b);
 
@@ -41,9 +42,9 @@ enum LumitColorScheme {
 
   /// Sentence-case display name for menus and settings.
   String get label => switch (this) {
-        LumitColorScheme.dark => 'Dark',
-        LumitColorScheme.darkBlue => 'Dark blue',
-        LumitColorScheme.light => 'Light',
+        LumitColorScheme.dark => l10n.schemeDark,
+        LumitColorScheme.darkBlue => l10n.schemeDarkBlue,
+        LumitColorScheme.light => l10n.schemeLight,
         LumitColorScheme.gruvboxDark => 'Gruvbox dark',
         LumitColorScheme.gruvboxLight => 'Gruvbox light',
         LumitColorScheme.catppuccinMocha => 'Catppuccin Mocha',
@@ -322,9 +323,8 @@ class LumitTheme {
   /// it has to read against the ruler's ground *and* the work-area wash over
   /// it, so it is pinned to the two values that do, not derived from one of
   /// the things it must stand out from.
-  static Color defaultMarker(ThemeMode2 mode) => mode == ThemeMode2.dark
-      ? _rgb(0xc4, 0xc4, 0xc4)
-      : _rgb(0x56, 0x56, 0x56);
+  static Color defaultMarker(ThemeMode2 mode) =>
+      mode == ThemeMode2.dark ? _rgb(0xc4, 0xc4, 0xc4) : _rgb(0x56, 0x56, 0x56);
 
   /// The waveform palette. A fixed set per mode rather than a shift off the
   /// surface ramp, for the same reason the marker grey is: a wave has to read

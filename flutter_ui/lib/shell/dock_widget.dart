@@ -8,6 +8,7 @@
 import 'package:flutter/rendering.dart' show RenderOffstage;
 import 'package:flutter/widgets.dart';
 
+import '../l10n/strings.dart';
 import '../state/dock.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
@@ -801,7 +802,7 @@ class _PaneGripState extends State<_PaneGrip> {
       panel: widget.panel,
       drag: widget.drag,
       child: LumitTooltip(
-        message: 'Drag to move this panel',
+        message: l10n.tipMovePanel,
         child: MouseRegion(
           cursor: SystemMouseCursors.grab,
           onEnter: (_) => setState(() => _hover = true),

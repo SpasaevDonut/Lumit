@@ -6569,3 +6569,73 @@ machine loses power inside it: the install folder would be `Lumit.old` and nothi
 start. It is two rename calls wide, the start-up sweep puts it back for every failure short
 of that, and the fallback is the installer, which is still published. Judged worth it
 against a UAC prompt on every update for ever.
+
+**K-298 · DECIDED · Lumit's words leave the code: one British-English `.arb` is the
+source, Crowdin is where translation happens, and the engine's own labels come along
+by lookup.** K-005 said UI strings go through an i18n table "from day one" and
+[14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md) §7 made it binding — *no string
+literal shown to a user lives in code*. Neither was ever true: the words lived inline
+across ninety Dart files, and the rule had no test behind it. This makes it true, and
+puts a gate under it.
+
+**One file, in en-GB, written by hand.** `flutter_ui/lib/l10n/app_en.arb` holds every
+phrase Lumit shows, each with an `@key` note saying where it appears and what
+constrains it — the only context a translator gets. The other `app_*.arb` files beside
+it come back from Crowdin and are never edited in this repo; a wrong translation is
+fixed on Crowdin or the next sync overwrites the fix. `crowdin.yml` at the repo root is
+the whole configuration: one source file, four target languages, credentials from the
+environment because this repo is public. British English is the source and stays the
+source (K-005); there is no en-US.
+
+**Reached through a plain global, not through `BuildContext`.** Code writes
+`l10n.importFootage`. A good third of Lumit's text is decided outside a widget — the
+keymap, the tool table, the settings model — where the usual `Strings.of(context)` has
+nothing to ask, and threading a context through all of it would be a large change for
+no gain: Lumit has one window's worth of language at a time, and no case where two
+halves of the screen want different ones. The cost is that changing the language does
+not by itself repaint anything; it does not need to, because the only caller is the
+settings model, whose `notifyListeners` already rebuilds the shell on the same frame.
+
+**The engine's labels are translated by lookup on the English text.** Effect and
+parameter names live in `lumit-core`'s schema, shortcut descriptions in `lumit-keymap`,
+and both reach the interface over the bridge as plain English —
+`lib/l10n/engine_labels.dart` maps each to a key. Rust is untouched: it learns nothing
+about languages, no second set of identifiers has to be kept in step with the schema,
+and a word with no entry comes back as it arrived rather than blanking a panel. The
+limit is that the lookup is by word rather than by place, so two controls both called
+"Scale" in English take one translation; the fix, when it bites, is to give the
+affected label distinct English text in the schema, which is better practice anyway.
+`test/l10n/engine_labels_test.dart` reads both Rust sources and fails if either can
+send a word the table has no entry for, so a new effect or shortcut cannot quietly
+ship untranslated.
+
+**Tooltips shrank, because the spec always said they should.**
+[07-UI-SPEC.md](07-UI-SPEC.md) §13.2 has always asked for the control's name and its
+shortcut, with the sentence-length "rich" tooltip reserved for Lumit-specific
+behaviour. What had grown instead was explanation — *"Put every parameter back to its
+default, removing its keyframes"* on a button already labelled Reset. Every tooltip is
+now under five words and most are two, and `test/l10n/arb_test.dart` keeps them there:
+six exceptions are named in that test with their reasons — the three cache meters,
+whose tooltips carry live numbers and warn that clicking throws work away, and the two
+playback modes, which are the adaptive degradation §13.2 names outright. The same test
+holds every string to the glossary, which is how *"Retime opens to Velocity"* and
+*"Keyframe velocity…"* were caught and corrected to **speed** (§9 is binding for copy,
+not only for identifiers).
+
+**Settings ▸ Interface ▸ Language**, defaulting to the machine's own language and
+storing nothing until the user chooses. Following the operating system for ever — and
+after they change it — is the better default than freezing whichever language they
+happened to launch in. The picker lists each language under its own name (Deutsch,
+Қазақша, Українська, 简体中文) rather than under an English one, so somebody who has
+set Lumit to a language they cannot read can still find their way back.
+
+**What this costs.** Roughly a thousand keys to keep in order, and a `const` widget
+constructor wherever a literal used to sit — a real but negligible allocation cost in
+a shell that rebuilds on a notifier anyway. Simplified Chinese lands as plain `zh`
+rather than `zh_Hans`, because Flutter requires a script-less base file to fall back
+to and there is only one Chinese script to translate into; adding Traditional later
+means adding `zh-TW: zh_Hant` to `crowdin.yml` and leaving `zh` as the base. The two
+shortcut labels the engine builds with a number in them ("Add marker 3 at the
+playhead") are not literals in Rust and so are not in the lookup table; they stay
+English until the engine hands their number over separately, and that is in
+[TODO.md](TODO.md).

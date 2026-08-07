@@ -617,10 +617,10 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey<String>('menu-Animation')));
       await tester.pump();
-      expect(find.text('Keyframe velocity… (Not implemented)'), findsOneWidget);
+      expect(find.text('Keyframe speed… (Not implemented)'), findsOneWidget);
       expect(
         tester
-            .widget<Text>(find.text('Keyframe velocity… (Not implemented)'))
+            .widget<Text>(find.text('Keyframe speed… (Not implemented)'))
             .style
             ?.color,
         t.textDisabled,

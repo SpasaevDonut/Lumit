@@ -23,6 +23,7 @@ import 'package:flutter/widgets.dart';
 import 'package:provider/provider.dart';
 
 import '../icons/icons.dart';
+import '../l10n/strings.dart';
 import '../main.dart';
 import '../state/render_timings.dart';
 import '../widgets/controls.dart';
@@ -54,17 +55,14 @@ class TimingsHeaderCell extends StatelessWidget {
         final on = timings.measuring;
         final total = timings.totalMs;
         return LumitTooltip(
-          message: on
-              ? 'Render time — the whole frame, with each layer below. The '
-                  'clock in the bottom strip stops measuring'
-              : 'Render time — the clock in the bottom strip starts measuring',
+          message: l10n.tipRenderTime,
           child: Align(
             alignment: Alignment.centerRight,
             child: Padding(
               padding: const EdgeInsets.only(right: 4),
               child: Text(
                 !on
-                    ? 'Time'
+                    ? l10n.timeColumn
                     : total == null
                         ? '…'
                         : formatRenderMs(total),
@@ -99,11 +97,7 @@ class RenderTimingsToggle extends StatelessWidget {
       builder: (context, _) {
         final on = timings.measuring;
         return LumitTooltip(
-          message: on
-              ? 'Measuring render times — each layer and effect in the '
-                  'Timeline. Click to stop; measuring slows the frames it '
-                  'measures'
-              : 'Render times are not being measured. Click to start',
+          message: on ? l10n.tipStopMeasuring : l10n.tipMeasureRenderTimes,
           child: GestureDetector(
             key: const ValueKey('status-render-timings'),
             behavior: HitTestBehavior.opaque,

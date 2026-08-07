@@ -18,6 +18,7 @@
 
 import 'package:flutter/widgets.dart';
 
+import '../l10n/strings.dart';
 import '../main.dart';
 import '../theme/custom_theme.dart';
 import '../theme/theme.dart';
@@ -70,8 +71,8 @@ class _ThemeEditorState extends State<_ThemeEditor> {
 
   LumitTheme _baseTheme() {
     final workspace = widget.ui.workspace;
-    final scheme = workspace.activeCustomTheme?.baseScheme ??
-        workspace.colorScheme;
+    final scheme =
+        workspace.activeCustomTheme?.baseScheme ?? workspace.colorScheme;
     return LumitTheme.forScheme(scheme, workspace.themeShape);
   }
 
@@ -108,8 +109,9 @@ class _ThemeEditorState extends State<_ThemeEditor> {
                   Expanded(
                     child: Text(
                       widget.ui.workspace.customThemeName == null
-                          ? 'Customise theme'
-                          : 'Customise ${widget.ui.workspace.customThemeName}',
+                          ? l10n.themeEditorTitle
+                          : l10n.themeEditorTitleNamed(
+                              '${widget.ui.workspace.customThemeName}'),
                       style: t.bodyPrimary,
                     ),
                   ),
@@ -117,7 +119,7 @@ class _ThemeEditorState extends State<_ThemeEditor> {
                     key: const ValueKey('theme-editor-save'),
                     small: true,
                     onPressed: _save,
-                    child: const Text('Save'),
+                    child: Text(l10n.save),
                   ),
                   const SizedBox(width: 6),
                   HouseButton(
@@ -125,7 +127,7 @@ class _ThemeEditorState extends State<_ThemeEditor> {
                     small: true,
                     frameless: true,
                     onPressed: _close,
-                    child: const Text('Close'),
+                    child: Text(l10n.close),
                   ),
                 ],
               ),
@@ -206,7 +208,7 @@ class _ThemeEditorState extends State<_ThemeEditor> {
     final workspace = widget.ui.workspace;
     var name = workspace.customThemeName;
     if (name == null) {
-      name = await _askName(context, suggested: 'My theme');
+      name = await _askName(context, suggested: l10n.themeDefaultName);
       if (name == null || !mounted) return;
     }
     workspace.clearPreview();
@@ -237,7 +239,7 @@ class _ThemeEditorState extends State<_ThemeEditor> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('Save your changes to this theme?',
+              Text(l10n.themeSaveChanges,
                   style: ThemeScope.of(context).theme.body),
               const SizedBox(height: 12),
               Row(
@@ -248,14 +250,14 @@ class _ThemeEditorState extends State<_ThemeEditor> {
                     small: true,
                     frameless: true,
                     onPressed: () => close(false),
-                    child: const Text('Discard'),
+                    child: Text(l10n.discard),
                   ),
                   const SizedBox(width: 6),
                   HouseButton(
                     key: const ValueKey('theme-editor-save-on-close'),
                     small: true,
                     onPressed: () => close(true),
-                    child: const Text('Save'),
+                    child: Text(l10n.save),
                   ),
                 ],
               ),
@@ -331,8 +333,7 @@ Future<String?> _askName(BuildContext context,
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('Name this theme',
-                style: ThemeScope.of(context).theme.body),
+            Text(l10n.themeNameThis, style: ThemeScope.of(context).theme.body),
             const SizedBox(height: 10),
             HouseTextField(
               key: const ValueKey('theme-name-field'),
@@ -349,14 +350,14 @@ Future<String?> _askName(BuildContext context,
                   small: true,
                   frameless: true,
                   onPressed: () => close(null),
-                  child: const Text('Cancel'),
+                  child: Text(l10n.cancel),
                 ),
                 const SizedBox(width: 6),
                 HouseButton(
                   key: const ValueKey('theme-name-ok'),
                   small: true,
                   onPressed: () => close(controller.text),
-                  child: const Text('Save'),
+                  child: Text(l10n.save),
                 ),
               ],
             ),

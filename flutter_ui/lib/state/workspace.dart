@@ -9,6 +9,7 @@ import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
 
+import '../l10n/strings.dart';
 import '../theme/custom_theme.dart';
 import '../theme/theme.dart';
 import 'dock.dart';
@@ -741,10 +742,10 @@ class ThemeChoice {
   /// The heading this choice sits under. Light and dark first because that is
   /// what anyone is choosing by; the user's own last, because they are theirs.
   String get group => scheme == null
-      ? 'Custom'
+      ? l10n.custom
       : scheme!.mode == ThemeMode2.light
-          ? 'Light'
-          : 'Dark';
+          ? l10n.schemeLight
+          : l10n.schemeDark;
 
   @override
   bool operator ==(Object other) =>

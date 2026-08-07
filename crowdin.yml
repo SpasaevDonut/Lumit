@@ -1,0 +1,44 @@
+# Crowdin, file-based project (K-298).
+#
+# One file goes up — flutter_ui/lib/l10n/app_en.arb, British English, the only
+# copy of Lumit's user-facing text that a person writes by hand. Everything else
+# in lib/l10n/ comes back down from Crowdin and is never edited in this repo: a
+# wrong translation is fixed on Crowdin, or the next sync overwrites the fix.
+#
+# The two credentials are read from the environment rather than written here,
+# because this repo is public:
+#
+#   CROWDIN_PROJECT_ID       the numeric project id, from Tools -> API on Crowdin
+#   CROWDIN_PERSONAL_TOKEN   a personal access token with "Projects" scope
+#
+# Upload the source after changing app_en.arb:   crowdin push sources
+# Pull finished translations back down:          crowdin pull translations
+#
+# Target languages are chosen in the Crowdin project's own settings; the mapping
+# below only says what each one is called on disk, because Crowdin's locale names
+# (zh-CN) and Flutter's (zh) disagree.
+project_id_env: CROWDIN_PROJECT_ID
+api_token_env: CROWDIN_PERSONAL_TOKEN
+
+# One source file, so there is no folder tree worth mirroring: translators see
+# app_en.arb at the top of the project rather than four levels of Flutter layout.
+preserve_hierarchy: false
+
+files:
+  - source: /flutter_ui/lib/l10n/app_en.arb
+    translation: /flutter_ui/lib/l10n/app_%locale_with_underscore%.arb
+    # ARB carries its own notes: every key has an "@key" entry beside it whose
+    # "description" says where the string appears and what constrains it. Crowdin
+    # shows those to the translator as context, which is the whole reason the
+    # descriptions are written the way they are.
+    languages_mapping:
+      locale_with_underscore:
+        # Crowdin id -> the name Flutter's generator expects. Simplified Chinese
+        # lands as plain `zh` rather than `zh_Hans`: Flutter requires a
+        # script-less base file to fall back to, and with only one Chinese script
+        # translated, `zh` is that base. Adding Traditional later means adding
+        # `zh-TW: zh_Hant` here and leaving this line as the fallback.
+        zh-CN: zh
+        kk: kk
+        de: de
+        uk: uk

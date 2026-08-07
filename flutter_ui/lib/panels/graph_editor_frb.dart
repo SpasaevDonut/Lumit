@@ -25,6 +25,7 @@ import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/shell.dart';
 
+import '../l10n/strings.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 import '../widgets/marquee.dart';
@@ -345,11 +346,11 @@ void copySelectedKeys({
       done.add(clip);
       groups.add(LumitClipGroup(
         property: [
-          'Effects',
+          l10n.workspaceEffects,
           effectLabelOf(clip.source.effect?.name ?? ''),
           clip.source.param?.label ?? '',
         ],
-        columns: const ['Value'],
+        columns: [l10n.clipboardValueColumn],
         rows: [
           for (final k in clip.keys)
             LumitClipRow(
@@ -377,21 +378,27 @@ LumitClipGroup _transformClipGroup(
     GraphChannel lead, List<GraphClipChannel> axes, double fps) {
   final (name, unit) = switch (lead.prop!) {
     BridgeTransformProp.anchorX || BridgeTransformProp.anchorY => (
-        'Anchor Point',
-        'pixels'
+        l10n.transformAnchorPoint,
+        l10n.unitPixels
       ),
     BridgeTransformProp.positionX ||
     BridgeTransformProp.positionY ||
     BridgeTransformProp.positionZ =>
-      ('Position', 'pixels'),
+      (l10n.transformPosition, l10n.unitPixels),
     BridgeTransformProp.scaleX || BridgeTransformProp.scaleY => (
-        'Scale',
-        'percent'
+        l10n.transformScale,
+        l10n.unitPercent
       ),
-    BridgeTransformProp.rotation => ('Rotation', 'degrees'),
-    BridgeTransformProp.rotationX => ('X Rotation', 'degrees'),
-    BridgeTransformProp.rotationY => ('Y Rotation', 'degrees'),
-    BridgeTransformProp.opacity => ('Opacity', 'percent'),
+    BridgeTransformProp.rotation => (l10n.transformRotation, l10n.unitDegrees),
+    BridgeTransformProp.rotationX => (
+        l10n.transformRotationX,
+        l10n.unitDegrees
+      ),
+    BridgeTransformProp.rotationY => (
+        l10n.transformRotationY,
+        l10n.unitDegrees
+      ),
+    BridgeTransformProp.opacity => (l10n.transformOpacity, l10n.unitPercent),
   };
   // The union of the axes' key frames: an axis with no key on some frame
   // contributes the value its curve reads there, so every row is complete.
@@ -419,7 +426,7 @@ LumitClipGroup _transformClipGroup(
   }
 
   return LumitClipGroup(
-    property: ['Transform', name],
+    property: [l10n.transformSection, name],
     columns: columns,
     rows: [
       for (final f in sorted)
@@ -1025,7 +1032,8 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
       } else {
         drawn = channel.isStatic
             ? 0
-            : evaluateKeysSpeed(keys, seconds) * (isEnvelope(channel) ? 100 : 1);
+            : evaluateKeysSpeed(keys, seconds) *
+                (isEnvelope(channel) ? 100 : 1);
       }
       final d = (_yOf(drawn, range, height) - local.dy).abs();
       if (d < best) {
@@ -1570,13 +1578,11 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             MenuRow(
-                onPressed: () => close('linear'), child: const Text('Linear')),
+                onPressed: () => close('linear'), child: Text(l10n.easeLinear)),
+            MenuRow(onPressed: () => close('ease'), child: Text(l10n.easeEasy)),
+            MenuRow(onPressed: () => close('hold'), child: Text(l10n.easeHold)),
             MenuRow(
-                onPressed: () => close('ease'), child: const Text('Easy ease')),
-            MenuRow(onPressed: () => close('hold'), child: const Text('Hold')),
-            MenuRow(
-                onPressed: () => close('delete'),
-                child: const Text('Delete key')),
+                onPressed: () => close('delete'), child: Text(l10n.deleteKey)),
           ],
         ),
       ),
@@ -1684,21 +1690,21 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
                   // sits beside it; the framing catches up when the drag ends.
                   builder: (context, _) => ClipRect(
                     child: CustomPaint(
-                    painter: _GraphPainter(
-                      channels: widget.channels,
-                      shownKeys: [
-                        for (final c in widget.channels) _shownKeys(c)
-                      ],
-                      lens: widget.lens,
-                      axis: widget.axis,
-                      fps: widget.fps,
-                      range: range,
-                      palette: t.curve,
-                      grid: t.hairline,
-                      label: t.small.copyWith(color: t.textMuted),
-                      viewportLeft: _viewportLeft,
-                      vegas: widget.vegas,
-                    ),
+                      painter: _GraphPainter(
+                        channels: widget.channels,
+                        shownKeys: [
+                          for (final c in widget.channels) _shownKeys(c)
+                        ],
+                        lens: widget.lens,
+                        axis: widget.axis,
+                        fps: widget.fps,
+                        range: range,
+                        palette: t.curve,
+                        grid: t.hairline,
+                        label: t.small.copyWith(color: t.textMuted),
+                        viewportLeft: _viewportLeft,
+                        vegas: widget.vegas,
+                      ),
                     ),
                   ),
                 ),
@@ -1749,8 +1755,7 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
                   child: IgnorePointer(
                     child: Center(
                       child: Text(
-                        'Select a property to see its curve — click its name '
-                        'in the outline; Ctrl/Shift-click adds more',
+                        l10n.graphEditorEmpty,
                         style: t.small,
                         textAlign: TextAlign.center,
                       ),

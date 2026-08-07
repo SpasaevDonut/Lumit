@@ -308,6 +308,23 @@ frame anyone is waiting for), and an **export**'s progress still has its own pat
 
 ## Next - engine/bridge follow-ups
 
+**Localisation follow-ups (K-298).** The seam is built and the strings are out of the
+code (`flutter_ui/lib/l10n/`, `crowdin.yml`); what is left is other people's turn and
+three small gaps:
+
+- **Create the Crowdin project and point it at this repo.** File-based, source
+  `app_en.arb`, targets German, Kazakh, Ukrainian and Simplified Chinese. Then set
+  `CROWDIN_PROJECT_ID` and `CROWDIN_PERSONAL_TOKEN` and run `crowdin push sources`. The
+  four `app_*.arb` files here are empty placeholders until the first `pull`.
+- **The two numbered shortcut labels stay English.** `lumit-keymap` builds "Add marker
+  {n} at the playhead" and "Go to marker {n}" with `format!`, so they are not literals
+  the lookup table can hold (`lib/l10n/engine_labels.dart`). Give the bridge the number
+  separately, or the label a stable id, and they join the rest.
+- **No CI check that the source file was pushed.** A string added here is invisible to
+  translators until somebody runs `crowdin push sources` by hand. Worth a release-time
+  step once the project exists.
+
+
 **Lens flare follow-ups (K-256..K-264, [impl/lens-flare.md](impl/lens-flare.md))** — the
 shipped core is docs/08 §3.27 (FlareSim model + 1299-lens library, K-261; artefact and
 picker pass K-262; bounded-submission and batching pass K-263; smooth-shading,

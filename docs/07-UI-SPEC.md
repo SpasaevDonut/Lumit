@@ -1649,8 +1649,15 @@ small image over each choice, remain the destination (polish tracked in TODO).
   press the new-Sequence-layer / new-Solid shortcuts). Hints disappear at first content
   and never return unprompted.
 - **Tooltips policy**: every icon control has a tooltip with its name and current shortcut,
-  on a ~500 ms hover delay. Rich tooltips (a sentence + *Learn more* link) are reserved for
-  concepts with Lumit-specific behaviour (Retime, overrun, matte, adaptive degradation).
+  on a ~500 ms hover delay. **A tooltip is a name, not an explanation: under five words,
+  two where two will do** (K-298). *Add keyframe*, not *Add a keyframe here*; *Reset all
+  parameters*, not *Put every parameter back to its default, removing its keyframes*. A
+  control whose state changes says the state — *Visible* / *Hidden*, *Locked* / *Lock* —
+  rather than narrating the click. Rich tooltips (a sentence + *Learn more* link) are
+  reserved for concepts with Lumit-specific behaviour (Retime, overrun, matte, adaptive
+  degradation) and for the readouts that carry live figures or warn that a click throws
+  work away; each one is named, with its reason, in `flutter_ui/test/l10n/arb_test.dart`,
+  which fails any other tooltip that runs long.
   Tooltips MUST never block input, auto-play media, or step users through forced tours.
   A single setting disables all tooltips.
 - No multi-step onboarding wizard or forced tour. The single first-run screen (§13.1),
@@ -1811,6 +1818,11 @@ travel in the `.lum` and are marked below:
   launch, at most once a day — on by default, plus a readout of the installed version and a
   button driving the same check the Help row does. Checking is all "on" means; the download
   always waits to be asked for.
+- **Language** (K-298), under Interface: which language the interface is written in.
+  Defaults to the machine's own and stores nothing until chosen, so an unset Lumit follows
+  the operating system for ever rather than freezing whichever language it first opened in.
+  The list names each language in its own language — Deutsch, Қазақша, Українська, 简体中文
+  — so somebody who has chosen one they cannot read can find their way back.
 - **Keymap**, **Interface** (UI scale, tooltips, reduced motion follows OS or override),
   **Autosave** (interval, copies kept), **Plugins** (search paths, disabled list,
   per-plugin overrides).

@@ -192,7 +192,18 @@ class InterfaceSettings {
   /// the single wave and the stack alike.
   bool waveformsFromBottom;
 
+  /// The interface language, as a BCP-47 tag (`en`, `de`, `zh`), or null to
+  /// follow whatever the machine is set to (K-298).
+  ///
+  /// Null by default and stored only once chosen, so a user who never opens the
+  /// picker follows their operating system for ever — including after they
+  /// change it — rather than being frozen into whatever language they happened
+  /// to launch Lumit in the first time. A tag Lumit has no strings for resolves
+  /// to English at load rather than refusing to open (see `l10n/strings.dart`).
+  String? language;
+
   InterfaceSettings({
+    this.language,
     this.uiScale = 1.0,
     this.showTooltips = true,
     this.transformInEffectControls = false,
@@ -206,6 +217,7 @@ class InterfaceSettings {
   });
 
   Map<String, dynamic> toJson() => {
+        if (language != null) 'language': language,
         'ui_scale': uiScale,
         'show_tooltips': showTooltips,
         'transform_in_effect_controls': transformInEffectControls,
@@ -219,6 +231,9 @@ class InterfaceSettings {
       };
   factory InterfaceSettings.fromJson(Map<String, dynamic> j) =>
       InterfaceSettings(
+        // Absent means "follow the machine", which is what every settings file
+        // written before this field existed was doing.
+        language: j['language'] as String?,
         uiScale: (j['ui_scale'] as num?)?.toDouble() ?? 1.0,
         showTooltips: j['show_tooltips'] as bool? ?? true,
         transformInEffectControls:

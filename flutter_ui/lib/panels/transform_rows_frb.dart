@@ -27,6 +27,7 @@ import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:provider/provider.dart';
 
+import '../l10n/strings.dart';
 import '../state/comp_time.dart';
 import '../state/preview_throttle.dart';
 import '../state/timeline_columns.dart';
@@ -72,31 +73,31 @@ class TransformGroup {
 /// know *how many* rows a layer will take before it draws them — its lanes have
 /// to leave exactly that much room or the bars stop lining up with the names.
 List<TransformGroup> transformGroups({required bool threeD}) => [
-      const TransformGroup('Anchor point', [
+      TransformGroup(l10n.transformAnchorPoint, const [
         TransformAxis(BridgeTransformProp.anchorX),
         TransformAxis(BridgeTransformProp.anchorY),
       ]),
-      TransformGroup('Position', [
+      TransformGroup(l10n.transformPosition, [
         const TransformAxis(BridgeTransformProp.positionX),
         const TransformAxis(BridgeTransformProp.positionY),
         if (threeD) const TransformAxis(BridgeTransformProp.positionZ),
       ]),
-      const TransformGroup('Scale', [
+      TransformGroup(l10n.transformScale, const [
         TransformAxis(BridgeTransformProp.scaleX, suffix: '%'),
         TransformAxis(BridgeTransformProp.scaleY, suffix: '%'),
       ]),
-      const TransformGroup('Rotation', [
+      TransformGroup(l10n.transformRotation, const [
         TransformAxis(BridgeTransformProp.rotation, suffix: '°', speed: 0.5),
       ]),
       if (threeD) ...[
-        const TransformGroup('Rotation x', [
+        TransformGroup(l10n.transformRotationX, const [
           TransformAxis(BridgeTransformProp.rotationX, suffix: '°', speed: 0.5),
         ]),
-        const TransformGroup('Rotation y', [
+        TransformGroup(l10n.transformRotationY, const [
           TransformAxis(BridgeTransformProp.rotationY, suffix: '°', speed: 0.5),
         ]),
       ],
-      const TransformGroup('Opacity', [
+      TransformGroup(l10n.transformOpacity, [
         TransformAxis(BridgeTransformProp.opacity,
             suffix: '%', min: 0, max: 100, decimals: 0, speed: 0.5),
       ]),

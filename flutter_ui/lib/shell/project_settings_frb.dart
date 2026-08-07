@@ -17,6 +17,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/src/rust/api/project.dart';
 
+import '../l10n/strings.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 import 'settings_rows.dart';
@@ -25,7 +26,8 @@ import 'settings_rows.dart';
 /// implements, which is why this is a pick rather than a free number.
 const List<int> _aaCounts = [1, 2, 4, 8];
 
-String _aaLabel(int samples) => samples <= 1 ? 'Off' : '$samples samples';
+String _aaLabel(int samples) =>
+    samples <= 1 ? l10n.off : l10n.samples('$samples');
 
 const Size _windowSize = Size(560, 300);
 
@@ -66,12 +68,12 @@ class _ProjectSettingsWindowState extends State<_ProjectSettingsWindow> {
               child: Row(
                 children: [
                   Expanded(
-                      child: Text('Project settings', style: t.bodyPrimary)),
+                      child: Text(l10n.projectSettings, style: t.bodyPrimary)),
                   HouseButton(
                     key: const ValueKey('project-settings-close'),
                     small: true,
                     onPressed: widget.onClose,
-                    child: const Text('Done'),
+                    child: Text(l10n.done),
                   ),
                 ],
               ),
@@ -95,12 +97,11 @@ class _ProjectSettingsWindowState extends State<_ProjectSettingsWindow> {
     final set = project.antiAliasing();
     final inUse = project.antiAliasingInUse();
     return [
-      settingsSection(t, 'Rendering', [
+      settingsSection(t, l10n.settingsGroupRendering, [
         settingsRow(
           t,
-          'Anti-aliasing',
-          'Smooths the edges of rotated and scaled layers. Saved in the '
-              'project, and the same for the preview and the export.',
+          l10n.settingsAntiAliasing,
+          l10n.settingsHelpAntiAliasing,
           SizedBox(
             width: 130,
             child: BareDropdown<int>(
@@ -119,9 +120,8 @@ class _ProjectSettingsWindowState extends State<_ProjectSettingsWindow> {
         if (inUse != set)
           settingsRow(
             t,
-            'In use on this machine',
-            'This graphics card does not offer the setting above, so Lumit '
-                'is using the highest it does. The project is unchanged.',
+            l10n.settingsAntiAliasingInUse,
+            l10n.settingsHelpAntiAliasingInUse,
             Text(
               _aaLabel(inUse),
               key: const ValueKey('project-anti-aliasing-in-use'),
