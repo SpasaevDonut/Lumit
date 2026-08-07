@@ -347,6 +347,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeMediaInfo dco_decode_bridge_media_info(dynamic raw);
 
   @protected
+  BridgeMemoryReport dco_decode_bridge_memory_report(dynamic raw);
+
+  @protected
   BridgePaintMode dco_decode_bridge_paint_mode(dynamic raw);
 
   @protected
@@ -1012,6 +1015,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeMediaInfo sse_decode_bridge_media_info(SseDeserializer deserializer);
+
+  @protected
+  BridgeMemoryReport sse_decode_bridge_memory_report(
+      SseDeserializer deserializer);
 
   @protected
   BridgePaintMode sse_decode_bridge_paint_mode(SseDeserializer deserializer);
@@ -1750,6 +1757,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_bridge_media_info(
       BridgeMediaInfo self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_memory_report(
+      BridgeMemoryReport self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_paint_mode(

@@ -235,6 +235,61 @@ lives on `GpuContext` and is shared only with the handles of that same device, s
 measurement sees is one renderer's own submissions. Any future budget counted this way MUST be
 scoped the same: a number two tests can both write is not a measurement.
 
+### 7.0.1 The memory report (K-294)
+
+**Every tier that holds memory MUST report its bytes, and the process MUST report its
+total, in one place the user can read.** Settings ▸ Performance ▸ Memory shows what the
+operating system says Lumit is holding, what each byte-budgeted tier admits to, how many
+media decoders are open, and — the figure the section exists for — **what is left over**.
+
+This is a diagnostic obligation, not a nicety. Lumit has twice been reported holding tens
+of gigabytes (K-277, and again after it), and both times the first question — *is a cache
+doing what it was told, or is something holding memory nobody counts?* — took days to
+answer from outside the process. It is one syscall and five atomics from inside. A report
+whose tiers sit at their budgets while the process is a hundred times larger says the
+search is not in this list, which is the most valuable thing it can say.
+
+Rules the report keeps, so its arithmetic can be trusted:
+
+- **VRAM is reported, never subtracted.** On unified memory (every Apple Silicon Mac) the
+  card's frames are part of the process; on a discrete card they are not. Folding them in
+  either way would be wrong on half the machines Lumit runs on.
+- **The graphics driver reports what it holds.** Two ways, because one of them does not
+  exist everywhere. **Live objects** — how many textures and buffers the driver still has
+  — are kept by every backend, Metal included, and a handful at rest against thousands is
+  the difference between a cache doing its job and frames the engine dropped never being
+  destroyed. **Bytes in use and reserved** come from the allocator report, which is Vulkan
+  and D3D12 only: on macOS it answers nothing at all, so that row is not drawn there
+  rather than printing zeroes somebody might reason from. The first draft of this reported
+  only the bytes, and on the one platform the question had been asked on it read *"not
+  reported by this driver"* — a hole is worth knowing about, but a report that only works
+  where there is no problem is not an instrument.
+- **Nothing is counted twice.** A frame waiting in the write-behind queue shares its
+  allocation with the frame cache (one `Arc`, both tiers), so the queue reports a *count*
+  of frames rather than bytes.
+- **What cannot be weighed is counted.** What an open media decoder holds is FFmpeg's and
+  the driver's business; the report says how many are open rather than inventing a size.
+- **A platform that cannot answer says zero**, and the interface says "not known here"
+  rather than printing a guess.
+
+### 7.0.2 Reclaiming what has been dropped (K-295)
+
+**An engine that renders without presenting MUST maintain its graphics device on a
+schedule of its own.** Dropping a texture or a buffer only *marks* it destroyed; the
+driver hands the memory back on the device's next maintain. A renderer that draws to a
+window gets those for free from presenting — Lumit renders into caches, on a worker
+thread, and idles, so it gets none.
+
+The worker calls `GpuContext::reclaim` (a non-blocking `Maintain::Poll`) once per turn.
+It is cheap when there is nothing to drain, and it makes reclamation a property of time
+passing rather than of the user happening to open a panel — which is exactly what was
+observed before it: 5 500 live buffers and 6 GB held, then 8 buffers and 2.9 GB the moment
+something else polled.
+
+Anything that frees memory only as a side effect of an unrelated call is not freeing
+memory. The regression gate is `what_the_engine_drops_the_driver_gets_back`, which renders
+many times the cache's capacity and then asks the driver how many objects it still holds.
+
 ### 7.1 Per-node profiler
 
 A built-in profiler, surfaced in the UI — After Effects' composition profiler done properly:

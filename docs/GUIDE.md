@@ -3736,6 +3736,74 @@ Viewer's degradation badge (the "Half" chip that appears when playback has had t
 soften the picture) keeps its empty slot when it is not showing, so it does not
 shove the bar sideways as it comes and goes.
 
+### Where the memory went (K-294)
+
+**The problem this solves.** Twice now Lumit has been found holding tens of
+gigabytes of memory on a Mac. Both times the hard part was not fixing it — it
+was working out *what* was holding it. Lumit keeps several stores of pictures:
+finished frames in memory, finished frames on the graphics card, decoded frames
+from video files, frames queued to be written to disk. Each has a budget and
+each throws things away to stay inside it. So either one of them was misbehaving,
+or something outside all of them was holding memory nobody was counting — and
+from outside the program those two look identical.
+
+**The fix is a subtraction.** Settings ▸ Performance now opens with a Memory
+section: the total the operating system says Lumit is holding, then what each
+store admits to, and then the difference. If the stores add up to half a gigabyte
+and the total says eighty-five, the answer is "none of these" — which sounds like
+nothing but is most of the investigation, because it rules out everything with a
+budget and points at the layers underneath (the graphics driver, the video
+decoders).
+
+Three details that keep the arithmetic honest, all of which were tempting to get
+wrong:
+
+- **Frames on the graphics card are shown but not subtracted.** On an Apple
+  Silicon Mac the graphics memory *is* the system memory, so those frames are
+  already inside the total; on a PC with a separate graphics card they are not.
+  Subtracting them would be right on one machine and wrong on the other, so the
+  report shows the figure and lets you read it.
+- **Nothing is counted twice.** A frame waiting to be written to disk is the
+  same piece of memory as the copy in the frame cache — one picture, two lists —
+  so the queue reports how many frames are waiting, not how many bytes.
+- **What cannot be measured is counted instead.** Nobody outside FFmpeg knows how
+  much memory an open video decoder holds, so the report says how many are open
+  rather than inventing a number.
+
+One more row asks the **graphics driver** how many pictures and buffers it is
+still holding for Lumit. A handful is normal: the frames kept on the card, and
+the working pictures of whatever frame is being made right now. Thousands would
+mean pictures Lumit had finished with were never actually destroyed — which is a
+different fault from any cache being too big, and on a Mac that memory is inside
+the total at the top.
+
+Counting them, rather than measuring them, is deliberate. The first version of
+this row asked the driver for bytes, and on a Mac the answer was "not reported
+by this driver" — that particular question only has an answer on Windows and
+Linux. A count is a count on every machine, and it happens to be the sharper
+question anyway: it distinguishes a big cache from a leak, which bytes alone
+cannot.
+
+The report is a **debug-build tool**: it is there while a fault is being hunted,
+and a shipped Lumit does not show it. Asking somebody editing a video to
+interpret a live texture count is handing them the engineering instead of the
+tool.
+
+### And the repair it found (K-295)
+
+Here is what the instrument caught. Telling the graphics card "I have finished
+with this picture" does not give the memory back. It marks it finished, and the
+memory returns the next time the program asks the card to tidy up. A program
+that is drawing to a window asks constantly, without meaning to, because showing
+a frame *is* asking. Lumit spends much of its time drawing into its caches
+instead — no window, no asking, and so a pile of finished pictures nobody had
+collected.
+
+That is why the memory came back when the owner switched panels: the switch
+happened to ask. Now the engine asks once per turn of its own loop, whether
+anything is on screen or not, which costs nothing when there is nothing to
+collect and means the pile is never more than a moment old.
+
 ## 10. The app icon and the brand files
 
 The icon you see in the taskbar is not one picture — it is a small bag of

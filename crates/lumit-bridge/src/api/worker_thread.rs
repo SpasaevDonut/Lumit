@@ -253,6 +253,31 @@ fn sync_caches(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
         state.fill_exhausted = false;
     }
     crate::framecache::publish_comp_decodes(state.renderer.decoded_frames());
+    // The decoded-frame pool's share of the memory report (K-294). Published on
+    // the same turn as the rest, so the numbers a report adds up were all read
+    // at one moment rather than across a second of drift.
+    let (decoded_bytes, decoders) = state.renderer.decode_memory();
+    crate::framecache::decode::publish(decoded_bytes as u64, decoders as u64);
+    crate::framecache::disk::publish_pending_parks(state.disk.pending_parks() as u64);
+    // Hand back what this turn dropped (K-295). A frame that has been evicted,
+    // a read-back that has been taken, an intermediate the compositor finished
+    // with: all of them are only *marked* destroyed when they are dropped, and
+    // the driver reclaims them on the device's next maintain. Rendering into a
+    // cache on a worker thread never asks for one, so without this line they
+    // sat un-freed until something else happened to poll — which is how the
+    // editor reached tens of gigabytes while idle.
+    //
+    // Non-blocking, and once a turn: it drains what has already finished.
+    state.renderer.reclaim_gpu();
+
+    // The driver's own accounting. The byte figures are Vulkan and D3D12 only
+    // — Metal keeps none — so the live-object counts ride with them: those
+    // every backend keeps, and they are what says whether a dropped frame was
+    // actually destroyed (K-294).
+    let (allocated, reserved) = state.renderer.gpu_allocator_bytes().unwrap_or((0, 0));
+    let (textures, buffers) = state.renderer.gpu_live_objects();
+    crate::framecache::gpu::publish(allocated, reserved, textures, buffers);
+    crate::framecache::gpu::publish_unified(state.renderer.unified_memory());
     let (used, _, entries) = state.renderer.frame_texture_stats();
     if (used as u64, entries as u64) != state.published_vram {
         state.published_vram = (used as u64, entries as u64);

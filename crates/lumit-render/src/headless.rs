@@ -929,6 +929,40 @@ impl HeadlessRenderer {
         self.retained = None;
     }
 
+    /// The decoded-frame cache's bytes and how many decoders are open — see
+    /// [`crate::decode::DecodePool::memory`].
+    #[must_use]
+    pub fn decode_memory(&self) -> (usize, usize) {
+        self.pool.memory()
+    }
+
+    /// What the graphics driver holds for this renderer's device — see
+    /// [`lumit_gpu::GpuContext::allocator_bytes`].
+    #[must_use]
+    pub fn gpu_allocator_bytes(&self) -> Option<(u64, u64)> {
+        self.gpu.allocator_bytes()
+    }
+
+    /// Whether the card's memory is this process's memory — see
+    /// [`lumit_gpu::GpuContext::unified_memory`].
+    #[must_use]
+    pub fn unified_memory(&self) -> bool {
+        self.gpu.unified_memory
+    }
+
+    /// How many textures and buffers the driver is still holding for this
+    /// renderer — see [`lumit_gpu::GpuContext::live_objects`].
+    #[must_use]
+    pub fn gpu_live_objects(&self) -> (u64, u64) {
+        self.gpu.live_objects()
+    }
+
+    /// Give the driver a turn to reclaim what has been dropped — see
+    /// [`lumit_gpu::GpuContext::reclaim`]. Called once per worker turn.
+    pub fn reclaim_gpu(&self) {
+        self.gpu.reclaim();
+    }
+
     /// Resize the decoded-source-frame cache (Settings → Performance).
     pub fn set_decode_budget(&mut self, bytes: usize) {
         self.pool.set_budget(bytes);
@@ -3224,6 +3258,80 @@ mod tests {
             comp.layers.insert(0, layer);
         }
         (solid, layer_id)
+    }
+
+    /// **What the engine drops, the driver gets back** (K-295).
+    ///
+    /// The failure this pins is not a slow leak: it is memory that comes back
+    /// only when something unrelated happens. Dropping a texture or a buffer
+    /// marks it destroyed; the driver reclaims it on the device's next
+    /// maintain, and an engine that renders into a cache on a worker thread —
+    /// never presenting, often idle — asks for one only by accident. Reported
+    /// from a Mac twice, the second time caught mid-act: 5 000 live buffers and
+    /// 6 GB, then 8 buffers and 2.9 GB moments later because a panel was
+    /// opened.
+    ///
+    /// **This test earns its keep on macOS**, where the reclamation actually
+    /// went wrong and where no allocator report exists to see it — the counts
+    /// are what every backend keeps. It renders far more frames than the cache
+    /// can hold, so the great majority are evicted and dropped, and then asks
+    /// the driver what it still has. A handful is right; hundreds means the
+    /// dropped ones were never handed back.
+    #[test]
+    fn what_the_engine_drops_the_driver_gets_back() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                lumit_gpu::no_adapter();
+                return;
+            }
+        };
+        // A budget of a few frames, so nearly every render below is evicted.
+        r.set_frame_texture_budget(32 * 1024 * 1024);
+        let (cw, ch) = (960u32, 540u32);
+        let (doc, comp_id, _) = matrix_base(cw, ch, LinearColour([0.8, 0.1, 0.1, 1.0]));
+        let store = DocumentStore::new(doc);
+        let doc = store.snapshot();
+
+        let (textures_before, buffers_before) = r.gpu_live_objects();
+        for i in 0..120u64 {
+            // A name of its own per frame: every render is a new entry, so the
+            // store must evict, exactly as a long session makes it.
+            let _ = r
+                .render_prepared_named(&doc, comp_id, 0, Quality::default(), true, Some(i as u128))
+                .expect("render");
+            // The worker's own turn does this once a loop; the whole point is
+            // that it is what makes the dropping stick.
+            r.reclaim_gpu();
+        }
+        let (textures, buffers) = r.gpu_live_objects();
+
+        // What the engine legitimately holds at rest: the frames still in the
+        // card's cache, the pooled upload textures, the shared present targets,
+        // and one frame's intermediates. Tens, not the hundred-and-twenty
+        // frames that went through, and nothing like the thousands a session
+        // reached before this.
+        // Measured at 18 textures and 8 buffers on the software rasteriser CI
+        // runs, against 2 and 5 before the loop; the ceilings are generous
+        // enough for a busier backend's own bookkeeping and nowhere near the
+        // hundred-and-twenty frames that went through, which is the number a
+        // driver that never reclaimed would be sitting on.
+        assert!(
+            textures < 64,
+            "120 rendered frames must not leave a texture each behind: \
+             {textures_before} before, {textures} after"
+        );
+        assert!(
+            buffers < 64,
+            "nor a buffer each: {buffers_before} before, {buffers} after"
+        );
+        // And the card's cache is the thing that decides how many frames are
+        // held, not the number of frames that have been made.
+        let (used, budget, _) = r.frame_texture_stats();
+        assert!(
+            used <= budget,
+            "the cache stays inside its budget: {used} of {budget}"
+        );
     }
 
     /// **A frame is one command buffer, however many layers it has.**
