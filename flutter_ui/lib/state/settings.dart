@@ -193,7 +193,7 @@ class InterfaceSettings {
   bool waveformsFromBottom;
 
   /// The interface language, as a BCP-47 tag (`en`, `de`, `zh`), or null to
-  /// follow whatever the machine is set to (K-298).
+  /// follow whatever the machine is set to (K-303).
   ///
   /// Null by default and stored only once chosen, so a user who never opens the
   /// picker follows their operating system for ever — including after they

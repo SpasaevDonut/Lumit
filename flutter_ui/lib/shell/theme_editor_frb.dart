@@ -10,7 +10,9 @@
 // **What it saves.** A named custom theme: the name, the light-or-dark base,
 // and the colours. Saving from a built-in scheme asks for a name and makes a
 // new theme; saving while one of your own is selected updates that one, which
-// is what "select it, customise it, save" ought to mean.
+// is what "select it, customise it, save" ought to mean. **Save a copy…**
+// (K-298) writes the edits down under a new name instead, so a theme can be
+// branched without first being overwritten.
 //
 // One colour is not offered: the Viewer's surround. It is strictly neutral by
 // spec (docs/15-DESIGN §2.1/§11) because a grade cannot be judged against a
@@ -25,6 +27,7 @@ import '../theme/theme.dart';
 import '../theme/theme_tokens.dart';
 import '../widgets/colour_picker.dart';
 import '../widgets/controls.dart';
+import 'theme_name_dialog.dart';
 
 /// Open the editor over [ui]'s current theme. Returns when it closes.
 Future<void> showThemeEditorFrb(BuildContext context, LumitUiState ui) =>
@@ -115,6 +118,14 @@ class _ThemeEditorState extends State<_ThemeEditor> {
                       style: t.bodyPrimary,
                     ),
                   ),
+                  HouseButton(
+                    key: const ValueKey('theme-editor-save-copy'),
+                    small: true,
+                    frameless: true,
+                    onPressed: _saveCopy,
+                    child: Text(l10n.themeSaveACopy),
+                  ),
+                  const SizedBox(width: 6),
                   HouseButton(
                     key: const ValueKey('theme-editor-save'),
                     small: true,
@@ -208,9 +219,35 @@ class _ThemeEditorState extends State<_ThemeEditor> {
     final workspace = widget.ui.workspace;
     var name = workspace.customThemeName;
     if (name == null) {
-      name = await _askName(context, suggested: l10n.themeDefaultName);
+      name = await askThemeName(context,
+          title: l10n.themeNameThis, suggested: l10n.themeDefaultName);
       if (name == null || !mounted) return;
+      name = workspace.availableThemeName(name);
     }
+    _saveAs(name);
+  }
+
+  /// Save a copy: the edits as they stand, under a new name, leaving whatever
+  /// was open where it was (K-298). What "I like this theme, but…" wants —
+  /// without it, the only way to branch a theme was to overwrite it and undo
+  /// the edits by hand.
+  Future<void> _saveCopy() async {
+    final workspace = widget.ui.workspace;
+    final asked = await askThemeName(
+      context,
+      title: l10n.themeNameTheCopy,
+      suggested: workspace.availableThemeName(l10n.themeCopySuffix(
+          workspace.customThemeName ?? workspace.themeChoice.label)),
+    );
+    if (asked == null || !mounted) return;
+    _saveAs(workspace.availableThemeName(asked));
+  }
+
+  /// Write the edits down under [name] and select it. The one place that
+  /// builds the stored theme, so Save and Save a copy cannot disagree about
+  /// what a save is.
+  void _saveAs(String name) {
+    final workspace = widget.ui.workspace;
     workspace.clearPreview();
     workspace.saveCustomTheme(CustomTheme(
       name: name,
@@ -316,57 +353,4 @@ class _Swatch extends StatelessWidget {
       ),
     );
   }
-}
-
-/// Ask for a theme name. Returns null when dismissed or left blank — a theme
-/// with no name could not be selected again.
-Future<String?> _askName(BuildContext context,
-    {required String suggested}) async {
-  final controller = TextEditingController(text: suggested);
-  final name = await showLumitModal<String>(
-    context: context,
-    builder: (close) => FloatSurface(
-      width: 340,
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(l10n.themeNameThis, style: ThemeScope.of(context).theme.body),
-            const SizedBox(height: 10),
-            HouseTextField(
-              key: const ValueKey('theme-name-field'),
-              controller: controller,
-              width: 300,
-              autofocus: true,
-              onSubmitted: close,
-            ),
-            const SizedBox(height: 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                HouseButton(
-                  small: true,
-                  frameless: true,
-                  onPressed: () => close(null),
-                  child: Text(l10n.cancel),
-                ),
-                const SizedBox(width: 6),
-                HouseButton(
-                  key: const ValueKey('theme-name-ok'),
-                  small: true,
-                  onPressed: () => close(controller.text),
-                  child: Text(l10n.save),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
-  controller.dispose();
-  final trimmed = name?.trim();
-  return (trimmed == null || trimmed.isEmpty) ? null : trimmed;
 }

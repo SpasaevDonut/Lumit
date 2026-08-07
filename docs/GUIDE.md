@@ -3457,6 +3457,54 @@ Panels can be popped out into their own desktop window (`desktop_multi_window`);
 each gets its own Flutter engine but opens a handle to the *same* engine state,
 so edits share one undo history.
 
+**What "the selection" means when Copy is pressed (K-300).** Three different things
+can be selected at once: some keyframes, an effect, and the layer they all sit on.
+Copy has to pick one, and it picks the *finest* — keyframes if any are selected,
+otherwise the effects picked out of the stack, otherwise the whole layer. Delete has
+worked this way since K-234, and it works through the same trick: Flutter runs every
+keyboard handler on every key, so a panel cannot claim a key simply by handling it
+first. Instead the Timeline leaves a small function with the shell — a *claim* — and
+the shell calls it before doing anything itself. If the claim says "I took that", the
+shell stands down.
+
+An **effect is selected by clicking its name**, in the Effect controls panel or on its
+row in the Timeline's fold-out; `Ctrl` adds one, `Shift` takes the run between. There
+is only one such selection, held by the shell rather than by either panel, which is why
+an effect picked in one place lights up in the other. In the Effect controls panel picking
+an effect leaves it open — the twirl mark is the only thing that folds a card there. In the
+Timeline a plain click also twirls, the way it always has, and a modified click only
+selects, so `Shift`-clicking down a stack does not flap all of them open. Copying several
+effects produces a single `.lumfx` document — the same kind of document a preset is —
+holding them in stack order rather than click order, so pasting puts them back the way
+they were drawn.
+
+**A row with no keyframes copies too (K-301).** Copy at the property level used to mean
+"the selected keyframes", so a row that was never animated had nothing to give and the
+chord quietly copied the whole layer instead. Now selecting rows and pressing Copy takes
+those rows whole: every key of an animated one, the plain number of one that has none. A
+copied number pastes as a number onto a row that is not animated, and as a key at the
+playhead onto one that is. The other levels always carried their values — a copied layer
+or a copied effect is the document itself, animated parts and plain numbers alike.
+
+**Where a copy actually goes (K-302).** Lumit keeps its own tray, because what is being
+copied is a piece of a Lumit document and the system clipboard is shared with every other
+program on the machine. But a copy that leaves *nothing* on the system clipboard is
+indistinguishable from a copy that failed — paste into a text editor and you get an empty
+line — so every copy is mirrored there as its own text, and a paste that finds the tray
+empty reads the system clipboard and takes a Lumit document back off it. That is also what
+lets two Lumit windows copy between each other. Ordinary text is left alone: only the two
+document shapes the engine's paste calls accept are recognised.
+
+**And a lesson worth more than the feature.** The reason `Ctrl+C` did nothing in the real
+app while every test passed: a saved keymap was restored by *replacing* the whole keymap,
+and a saved file only knows the actions that existed when it was written — so every
+shortcut added in a later version was silently missing for anyone who had ever changed a
+key. Restored state is now **laid over** the current defaults rather than swapped for them,
+which is the shape any "remember what the user had" code should have: the user's choices
+win, and everything they never had an opinion about comes from the running build. Telling
+"they turned this off" apart from "this did not exist yet" is the part that needs storing
+on purpose.
+
 **Scrolling it, and why a trackpad needed its own answer (K-278).** Dragging in
 the lanes draws a selection box round keyframes, so the panel switches off
 drag-to-scroll — which on a Mac also switched off the trackpad, because a
@@ -3668,6 +3716,44 @@ They are the same job, and the shared piece is written.
 Rearranging panels is deliberately *not* an edit: it goes through `set_ui_state`,
 a side door that skips undo, the journal and the dirty flag.
 
+### Themes you can pass around (K-298)
+
+A theme you make is a name, a light-or-dark base, and a bag of colours (K-202).
+Until now it lived only in the settings file, which is machine-local — so a theme
+was stuck on the computer it was made on, and the only way to try a variation was
+to save over the one you liked.
+
+Three things changed, all in the Flutter frontend and none of them touching the
+engine:
+
+- **A theme is a file.** `flutter_ui/lib/theme/theme_file.dart` writes one out as
+  `.lumtheme` — a short, indented JSON document you can read: what it is, a
+  version number, the theme's name, whether it is a light or a dark theme, and
+  every colour as a hex code like `#e05a72`. Settings → Appearance has **Export…**
+  and **Import…** beside the other theme buttons. Export works from a built-in
+  scheme too, because "the stock dark with my accent changed" is a perfectly good
+  thing to send somebody.
+- **Reading one is deliberately relaxed.** If the file was written by a newer
+  Lumit that has colours this build has never heard of, those are simply ignored
+  and everything else comes in — the theme still works, because any colour it does
+  not carry is taken from the base underneath it. That tolerance is the whole
+  reason a theme is stored as *changes over a base* rather than a copy of the
+  colour struct. A file that is not a theme at all is refused with a sentence
+  under the buttons, not an error box: picking the wrong file is a normal thing to
+  do.
+- **Nothing overwrites a theme you already have.** Import, Duplicate, Save a
+  copy and Rename all ask `Workspace.availableThemeName` for a free name first, so
+  importing a second "Ocean" gives you "Ocean 2" and says so. A theme's name is
+  its identity — the picker lists it and the settings file records the selection
+  by it — so two themes may never share one.
+
+Beside that sits the everyday half: **Duplicate** (copy the theme you are looking
+at, including a built-in, so you have something of your own to edit), **Rename…**
+and **Delete** (your own themes only — a built-in's name is Lumit's), and **Save a
+copy…** inside the colour editor, which branches a theme without first
+overwriting it. The picker also draws eight swatches of the selected theme beside
+its name, so you can recognise a theme without applying it.
+
 ### The rules that bite
 
 These are the ones a plausible-looking change breaks. Each has tests standing
@@ -3832,16 +3918,19 @@ folder of loose PNGs instead of a bag.
 
 Nobody draws seven pictures by hand. The artwork is drawn **once**, as an SVG —
 a text file of drawing instructions ("a rounded square here, this gradient
-there") that can be rendered at any size without going blurry. The four SVGs in
+there") that can be rendered at any size without going blurry. The five SVGs in
 `assets/brand/` are the only files a human edits:
 
 - `lumit-mark.svg` — the mark itself: two keyframe diamonds overlapping, white
   where they cross. This bare form is the Windows and Linux icon.
 - `lumit-icon.svg` — the same mark sitting on a dark rounded tile. Only macOS
   uses this, because macOS expects every icon to bring its own tile.
-- `lumit-project.svg` and `lumit-preset.svg` — document icons for `.lum`
-  project files and `.lumfx` presets: a dark page with a folded corner and the
-  mark inside, like the little badge on any Photoshop or After Effects file.
+- `lumit-project.svg`, `lumit-preset.svg` and `lumit-theme.svg` — document
+  icons for `.lum` project files, `.lumfx` presets and `.lumtheme` colour
+  themes: a dark page with a folded corner and the mark inside, like the little
+  badge on any Photoshop or After Effects file. The theme one carries three
+  overlapping colour swatches instead of the mark, since colours are what is in
+  the file.
 
 `scripts/gen-icons.py` turns those four drawings into every pixel file the
 operating systems want (run `pip install resvg-py pillow` once, then
@@ -3858,8 +3947,8 @@ installers live in `packaging/` (decision K-252):
 - **Windows** — `packaging/windows/build-installer.ps1` builds a normal
   setup.exe (it needs the free Inno Setup tool once:
   `winget install JRSoftware.InnoSetup`). Installing it copies the app into
-  Program Files, writes the .lum/.lumfx entries into the Windows registry with
-  their icons, and puts Lumit in the Start menu. Double-clicking a `.lum` then
+  Program Files, writes the .lum/.lumfx/.lumtheme entries into the Windows
+  registry with their icons, and puts Lumit in the Start menu. Double-clicking a `.lum` then
   genuinely opens it: the association hands Lumit the file's path as a command
   line argument, and the app checks its command line at boot
   (`projectPathFromArgs` in `main.dart`).

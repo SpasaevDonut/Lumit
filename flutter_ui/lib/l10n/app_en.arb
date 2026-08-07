@@ -1,6 +1,6 @@
 {
   "@@locale": "en",
-  "@@x-notes": "Lumit's user-facing text, British English (K-005), the single source translation works from (K-298). Edit this file; every other app_*.arb in this folder comes back from Crowdin and is overwritten by the next sync. Voice: sentence case, calm, no exclamation marks, no emoji, glossary terms exactly (docs/01-GLOSSARY.md section 9 - layer not track, speed not velocity, Retime not time remap, export not render, playhead not CTI). Tooltips are the control's name, not a sentence about it (docs/07-UI-SPEC.md section 13.2): under five words, two where two will do.",
+  "@@x-notes": "Lumit's user-facing text, British English (K-005), the single source translation works from (K-303). Edit this file; every other app_*.arb in this folder comes back from Crowdin and is overwritten by the next sync. Voice: sentence case, calm, no exclamation marks, no emoji, glossary terms exactly (docs/01-GLOSSARY.md section 9 - layer not track, speed not velocity, Retime not time remap, export not render, playhead not CTI). Tooltips are the control's name, not a sentence about it (docs/07-UI-SPEC.md section 13.2): under five words, two where two will do.",
   "aboutBlurb": "A motion-graphics and compositing editor. Free software under the GNU General Public Licence, version 3.",
   "@aboutBlurb": {
     "description": "About window: what Lumit is, and its licence. The licence name is a proper noun — keep it recognisable, and do not translate \"GNU\"."
@@ -153,6 +153,10 @@
   "compositionSettingsEllipsis": "Composition settings…",
   "@compositionSettingsEllipsis": {
     "description": "Context-menu item; the ellipsis means a dialogue opens."
+  },
+  "copyEffect": "Copy effect",
+  "@copyEffect": {
+    "description": "Context-menu item on an effect heading: put the effect on the clipboard."
   },
   "copySequenceShape": "Copy sequence shape",
   "@copySequenceShape": {
@@ -446,6 +450,10 @@
   "fileTypeProject": "Lumit project",
   "@fileTypeProject": {
     "description": "A file type in the system's Open dialogue: Lumit's own .lum project files."
+  },
+  "fileTypeTheme": "Lumit theme",
+  "@fileTypeTheme": {
+    "description": "A file type in the system’s file dialogues: a .lumtheme colour scheme."
   },
   "findMissingFootage": "Find missing footage",
   "@findMissingFootage": {
@@ -1383,6 +1391,14 @@
   "@keyCompositionSettings": {
     "description": "Settings → Keymap: what a shortcut does, in the table’s left column."
   },
+  "keyCopyTheSelection": "Copy the selection",
+  "@keyCopyTheSelection": {
+    "description": "Settings → Keymap: what a shortcut does, in the table’s left column."
+  },
+  "keyCutTheSelection": "Cut the selection",
+  "@keyCutTheSelection": {
+    "description": "Settings → Keymap: what a shortcut does, in the table’s left column."
+  },
   "keyDeleteTheSelection": "Delete the selection",
   "@keyDeleteTheSelection": {
     "description": "Settings → Keymap: what a shortcut does, in the table’s left column."
@@ -1538,6 +1554,10 @@
   "keyPanels": "Panels",
   "@keyPanels": {
     "description": "Settings → Keymap: a heading saying where these shortcuts are live."
+  },
+  "keyPaste": "Paste",
+  "@keyPaste": {
+    "description": "Settings → Keymap: what a shortcut does, in the table’s left column."
   },
   "keyPenTool": "Pen tool",
   "@keyPenTool": {
@@ -1971,9 +1991,9 @@
   "@menuKeyframeInterpolation": {
     "description": "Menu item."
   },
-  "menuKeyframeVelocity": "Keyframe speed…",
-  "@menuKeyframeVelocity": {
-    "description": "Menu item."
+  "menuKeyframeSpeed": "Keyframe speed…",
+  "@menuKeyframeSpeed": {
+    "description": "Menu item (a feature that is not built yet). Speed, never velocity (docs/01-GLOSSARY.md)."
   },
   "menuLayer": "Layer",
   "@menuLayer": {
@@ -2478,6 +2498,10 @@
   "@rename": {
     "description": "Context-menu item."
   },
+  "renameEllipsis": "Rename…",
+  "@renameEllipsis": {
+    "description": "Button that opens a dialogue asking for a new name."
+  },
   "reset": "Reset",
   "@reset": {
     "description": "Button that puts an effect's parameters back to their defaults."
@@ -2883,6 +2907,10 @@
   "@settingsHelpWhenTheMachineCannotKeep": {
     "description": "Settings window: the sentence under the settingsWhenTheMachineCannotKeep setting."
   },
+  "settingsHelpYourThemes": "Duplicate one to change it without losing the original, or send one to somebody as a file.",
+  "@settingsHelpYourThemes": {
+    "description": "Settings window: the sentence under the Your themes heading."
+  },
   "settingsInUse": "In use",
   "@settingsInUse": {
     "description": "Settings window: the name of a row showing how full a cache is."
@@ -2943,8 +2971,8 @@
   "@settingsQualityTier": {
     "description": "Settings window: the name of one setting."
   },
-  "settingsRetimeOpensToVelocity": "Retime opens to Speed",
-  "@settingsRetimeOpensToVelocity": {
+  "settingsRetimeOpensToSpeed": "Retime opens to Speed",
+  "@settingsRetimeOpensToSpeed": {
     "description": "Settings window: the name of the setting that opens a Retime channel showing playback speed. Speed, never velocity (docs/01-GLOSSARY.md)."
   },
   "settingsRetimeValuesInSeconds": "Retime values in seconds",
@@ -3002,6 +3030,10 @@
   "settingsWhere": "Where",
   "@settingsWhere": {
     "description": "Settings window: the name of the row showing which folder frames are parked in."
+  },
+  "settingsYourThemes": "Your themes",
+  "@settingsYourThemes": {
+    "description": "Settings window: heading over the theme duplicate/rename/import/export buttons."
   },
   "shapeMask": "Mask",
   "@shapeMask": {
@@ -3111,9 +3143,36 @@
   "@switchVisible": {
     "description": "Layer switch: the layer is drawn. One or two words — it is a tooltip."
   },
+  "themeCopiedTo": "Copied to {name}.",
+  "@themeCopiedTo": {
+    "description": "Shown after duplicating a theme. {name} is the new theme name.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "themeCopySuffix": "{name} copy",
+  "@themeCopySuffix": {
+    "description": "The name suggested for a duplicated theme. {name} is the original’s name.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "themeDefaultName": "My theme",
   "@themeDefaultName": {
     "description": "The name suggested when saving a custom theme for the first time."
+  },
+  "themeDeleted": "{name} deleted.",
+  "@themeDeleted": {
+    "description": "Shown after deleting a custom theme. {name} is its name.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
   },
   "themeEditorTitle": "Customise theme",
   "@themeEditorTitle": {
@@ -3128,13 +3187,92 @@
       }
     }
   },
+  "themeExported": "{name} exported.",
+  "@themeExported": {
+    "description": "Shown after writing a theme out as a file. {name} is the theme name.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "themeFileNoColours": "That theme file carries no colours.",
+  "@themeFileNoColours": {
+    "description": "Refusal when a theme file has a name but nothing to draw with."
+  },
+  "themeFileNoName": "That theme file has no name, so there would be nothing to select.",
+  "@themeFileNoName": {
+    "description": "Refusal when a theme file is valid but unnamed."
+  },
+  "themeFileNotATheme": "That file is not a Lumit theme.",
+  "@themeFileNotATheme": {
+    "description": "Refusal when opening a file that is not a .lumtheme."
+  },
+  "themeImported": "{name} imported, and selected.",
+  "@themeImported": {
+    "description": "Shown after reading a theme file in. {name} is the theme name.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "themeImportedRenamed": "A theme was already called {wanted}, so this one came in as {name}.",
+  "@themeImportedRenamed": {
+    "description": "Shown when an imported theme collided with an existing one; an import never overwrites the user’s own.",
+    "placeholders": {
+      "wanted": {
+        "type": "String"
+      },
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "themeNameTaken": "A theme was already called {wanted}, so this one is {name}.",
+  "@themeNameTaken": {
+    "description": "Shown when a rename collided with an existing theme and Lumit picked a free name instead.",
+    "placeholders": {
+      "wanted": {
+        "type": "String"
+      },
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "themeNameTheCopy": "Name the copy",
+  "@themeNameTheCopy": {
+    "description": "Title of the dialogue asking what a duplicated theme is called."
+  },
   "themeNameThis": "Name this theme",
   "@themeNameThis": {
     "description": "Label over the field that names a custom theme."
   },
+  "themeRenameTitle": "Rename this theme",
+  "@themeRenameTitle": {
+    "description": "Title of the dialogue that renames a custom theme."
+  },
+  "themeRenamedTo": "Renamed to {name}.",
+  "@themeRenamedTo": {
+    "description": "Shown after renaming a theme. {name} is the new name.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "themeSaveACopy": "Save a copy…",
+  "@themeSaveACopy": {
+    "description": "Button in the theme editor: keep the edits under a new name, leaving the original as it was."
+  },
   "themeSaveChanges": "Save your changes to this theme?",
   "@themeSaveChanges": {
     "description": "Asked when closing the theme editor with unsaved changes."
+  },
+  "themeUnnamed": "Theme",
+  "@themeUnnamed": {
+    "description": "The name a custom theme falls back to when the user gave it none."
   },
   "thisLayerSuffix": "{name} (this layer)",
   "@thisLayerSuffix": {

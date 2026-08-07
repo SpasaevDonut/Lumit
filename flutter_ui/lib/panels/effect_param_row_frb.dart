@@ -326,7 +326,8 @@ class EffectParamRowFrb extends StatelessWidget {
                       final i = label.indexOf(' · ');
                       return i > 0 ? label.substring(0, i) : null;
                     },
-                    hint: l10n.searchFor(engineLabel(param.label).toLowerCase()),
+                    hint:
+                        l10n.searchFor(engineLabel(param.label).toLowerCase()),
                     onChanged: (i) => _set(BridgeEffectValue.choice(i)),
                   )
                 : BareDropdown<int>(

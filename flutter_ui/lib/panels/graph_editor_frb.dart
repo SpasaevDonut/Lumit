@@ -235,6 +235,29 @@ void commitChannelEdits(Map<GraphChannel, BridgeScalar> edits) {
   }
 }
 
+/// [keys] with a key of [value] at [frame] — replacing the one already there,
+/// because two keys at one time is not a curve the engine will take (K-301).
+List<BridgeKeyframe> _withKeyAt(
+  List<BridgeKeyframe> keys,
+  double frame,
+  double value,
+  double fps,
+  int fpsNum,
+  int fpsDen,
+) {
+  final merged = <double, BridgeKeyframe>{
+    for (final k in keys) _keyFrame(k, fps): k,
+  };
+  merged[frame] = BridgeKeyframe(
+    time: timeOfSubframe(frame, fpsNum, fpsDen),
+    value: value,
+    interpIn: const BridgeSideInterp.linear(),
+    interpOut: const BridgeSideInterp.linear(),
+  );
+  final frames = merged.keys.toList()..sort();
+  return [for (final f in frames) merged[f]!];
+}
+
 /// A key's position on the frame axis, fractional (a key may sit between
 /// frames with the magnet off).
 double _keyFrame(BridgeKeyframe key, double fps) =>
@@ -279,10 +302,15 @@ void applyInterpToSelection({
 
 /// One copied channel: where it came from (for the AE text's property line)
 /// and its keys with full easing fidelity.
+///
+/// A row with **no keyframes at all** copies too (K-301): it has a value, and
+/// a value is the thing being copied. Such a clip carries [staticValue] and no
+/// keys, and pastes as a value rather than as a curve.
 class GraphClipChannel {
   final GraphChannel source;
   final List<BridgeKeyframe> keys;
-  const GraphClipChannel(this.source, this.keys);
+  final double? staticValue;
+  const GraphClipChannel(this.source, this.keys, {this.staticValue});
 }
 
 /// The in-app keyframe clipboard: full fidelity, and the one a paste prefers.
@@ -371,6 +399,64 @@ void copySelectedKeys({
       groups: groups,
     ),
   ));
+}
+
+/// Copy **whole rows** — every key of an animated channel, or the plain value
+/// of one that has none (K-301). What `Ctrl+C` does with property rows selected
+/// and no individual keyframes picked.
+///
+/// A row that is not animated still has a value, and that value is what a user
+/// selecting the row and pressing Copy is asking for; before this the chord
+/// found no keys, gave up, and quietly copied the whole layer instead.
+///
+/// Returns whether anything was copied.
+bool copyChannels({
+  required CompositionReference comp,
+  required List<GraphChannel> channels,
+  required double fps,
+}) {
+  if (channels.isEmpty) return false;
+  graphKeyClipboard = [
+    for (final channel in channels)
+      if (channel.scalar case BridgeScalar_Static(:final field0))
+        GraphClipChannel(channel, const [], staticValue: field0)
+      else
+        GraphClipChannel(channel, channel.keys),
+  ];
+
+  // The system clipboard gets the keyframe table for whatever is animated, and
+  // — when nothing is — the plain numbers, tab-joined, which is what a value
+  // copied out of Lumit is useful as anywhere else (it is also exactly what a
+  // value field's own right-click Copy writes).
+  final animated = [
+    for (final clip in graphKeyClipboard)
+      if (clip.keys.isNotEmpty) clip,
+  ];
+  if (animated.isEmpty) {
+    Clipboard.setData(ClipboardData(
+      text: graphKeyClipboard.map((c) => '${c.staticValue}').join('\t'),
+    ));
+    return true;
+  }
+  copySelectedKeys(
+    comp: comp,
+    channels: [for (final clip in animated) clip.source],
+    selectedKeys: {
+      for (final clip in animated)
+        for (var i = 0; i < clip.keys.length; i++) '${clip.source.id}#$i',
+    },
+    fps: fps,
+  );
+  // `copySelectedKeys` has just replaced the in-app clipboard with the animated
+  // rows alone; put the full set — static rows included — back.
+  graphKeyClipboard = [
+    for (final channel in channels)
+      if (channel.scalar case BridgeScalar_Static(:final field0))
+        GraphClipChannel(channel, const [], staticValue: field0)
+      else
+        GraphClipChannel(channel, channel.keys),
+  ];
+  return true;
 }
 
 /// The property line and columns for a transform property's copied axes.
@@ -465,6 +551,14 @@ Future<bool> pasteKeysAtPlayhead({
 }) async {
   if (channels.isEmpty) return false;
 
+  // A value copied from a row with no keyframes pastes as a value (K-301): onto
+  // a target that is not animated it simply replaces the number, and onto one
+  // that is it sets a key at the playhead — which is what "put this value here"
+  // means on a row that already moves.
+  final statics = <double?>[
+    for (final clip in graphKeyClipboard) clip.staticValue,
+  ];
+
   // (channel keys to merge in) per target channel, times as comp frames.
   var sources = <List<(double, BridgeKeyframe)>>[];
   if (graphKeyClipboard.isNotEmpty) {
@@ -510,12 +604,31 @@ Future<bool> pasteKeysAtPlayhead({
       if (frame < earliest) earliest = frame;
     }
   }
-  if (!earliest.isFinite) return false;
-  final shift = playheadFrame - earliest;
+  // Values only: nothing has a time, so there is no shift to work out and the
+  // paste is not about the playhead at all.
+  if (!earliest.isFinite && statics.every((v) => v == null)) return false;
+  final shift = earliest.isFinite ? playheadFrame - earliest : 0.0;
 
   final edits = <GraphChannel, BridgeScalar>{};
   for (var i = 0; i < channels.length && i < sources.length; i++) {
     final channel = channels[i];
+    final value = i < statics.length ? statics[i] : null;
+    if (value != null) {
+      edits[channel] = channel.isStatic
+          ? BridgeScalar.static_(value)
+          : BridgeScalar.keyframed([
+              for (final k in _withKeyAt(
+                channel.keys,
+                playheadFrame.toDouble(),
+                value,
+                fps,
+                fpsNum,
+                fpsDen,
+              ))
+                k,
+            ]);
+      continue;
+    }
     // Merge on frames: a pasted key replaces one already at its frame — two
     // keys at one time is not a curve the engine will take.
     final merged = <double, BridgeKeyframe>{

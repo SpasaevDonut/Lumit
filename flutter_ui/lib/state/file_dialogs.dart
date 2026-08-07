@@ -6,6 +6,8 @@
 import 'package:file_selector/file_selector.dart';
 import 'package:lumit_flutter/l10n/strings.dart';
 
+import '../theme/theme_file.dart' show themeFileExtension;
+
 /// The `.lum` project type group (docs/10 §1). The egui open filter also lists
 /// the pre-rename `kir` leftover; a fresh frontend only ever offers `.lum`.
 XTypeGroup _projectGroup() =>
@@ -105,6 +107,28 @@ XTypeGroup _keymapGroup() =>
 Future<String?> pickKeymapToOpen() async {
   final file = await openFile(acceptedTypeGroups: [_keymapGroup()]);
   return file?.path;
+}
+
+/// The shared-theme type group (K-298), the theme's counterpart of the
+/// keymap's. Lumit's own extension rather than a plain `.json`, so the picker
+/// can offer just themes.
+XTypeGroup _themeGroup() => XTypeGroup(
+    label: l10n.fileTypeTheme, extensions: const [themeFileExtension]);
+
+/// Pick a theme file to import, or null when the dialogue was cancelled.
+Future<String?> pickThemeToOpen() async {
+  final file = await openFile(acceptedTypeGroups: [_themeGroup()]);
+  return file?.path;
+}
+
+/// Choose where to write a theme, defaulting the name to the theme's own
+/// ([suggestedName], from `themeFileName`), or null when cancelled.
+Future<String?> pickThemeSaveLocation(String suggestedName) async {
+  final location = await getSaveLocation(
+    acceptedTypeGroups: [_themeGroup()],
+    suggestedName: suggestedName,
+  );
+  return location?.path;
 }
 
 /// Pick a folder — Settings → Performance's cache location, where the disk tier

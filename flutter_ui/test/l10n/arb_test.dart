@@ -1,4 +1,4 @@
-// What app_en.arb is allowed to say (K-298, docs/07-UI-SPEC.md §13.2).
+// What app_en.arb is allowed to say (K-303, docs/07-UI-SPEC.md §13.2).
 //
 // The .arb is the one file a translator reads, so the rules that used to live in
 // reviewers' heads live here instead: a tooltip is the control's name, not a

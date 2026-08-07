@@ -1,4 +1,4 @@
-// The engine's own words have to reach the translators too (K-298).
+// The engine's own words have to reach the translators too (K-303).
 //
 // Effect names, parameter names, choice options and the Add-effect menu's
 // category headings are written in Rust, in `crates/lumit-core/src/fx/`, and

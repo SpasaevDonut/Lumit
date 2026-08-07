@@ -113,7 +113,7 @@ enum ToolMode {
   ///
   /// A getter rather than a constructor argument: an enum constant is built
   /// once, when the program starts, and the interface language can change
-  /// after that (K-298).
+  /// after that (K-303).
   String get label => switch (this) {
         ToolMode.select => l10n.toolSelect,
         ToolMode.hand => l10n.toolHand,

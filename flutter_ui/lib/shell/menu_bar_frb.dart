@@ -437,18 +437,16 @@ List<MenuSection> lumitMenus(
             action: 'edit.redo'),
         MenuEntry.todo(l10n.menuHistory),
         MenuEntry.divider(),
-        // Copy takes the selected layer whole — transform, keyframes, masks,
-        // paint, effects and switches — as the document text the engine hands
-        // back (K-275). Cut is that plus the delete, so the two can never
-        // disagree about what "the selection" was.
-        MenuEntry(l10n.menuCut, onLayer((l) {
-          ui.copyLayerToClipboard(l.copyLayer());
-          l.delete();
-          ui.clearSelection();
-          app.notifyDocumentChanged();
-        }), action: 'edit.cut'),
+        // Copy takes the finest thing that is selected (K-300): the keyframes a
+        // panel has claimed, else the picked effects, else the selected layer
+        // whole — transform, keyframes, masks, paint, effects and switches — as
+        // the document text the engine hands back (K-275). Cut is that plus the
+        // delete, so the two can never disagree about what "the selection" was.
+        MenuEntry(l10n.menuCut,
+            _somethingSelected(ui) ? () => cutSelectionFrb(app, ui) : null,
+            action: 'edit.cut'),
         MenuEntry(l10n.menuCopy,
-            onLayer((l) => ui.copyLayerToClipboard(l.copyLayer())),
+            _somethingSelected(ui) ? () => copySelectionFrb(ui) : null,
             action: 'edit.copy'),
         // Paste puts a layer at the playhead — or at the time it was copied
         // from, for the person rebuilding a moment in a second comp (Settings →
@@ -617,7 +615,7 @@ List<MenuSection> lumitMenus(
         MenuEntry.todo(l10n.menuSetKeyframe),
         MenuEntry.todo(l10n.menuToggleHoldKeyframe),
         MenuEntry.todo(l10n.menuKeyframeInterpolation),
-        MenuEntry.todo(l10n.menuKeyframeVelocity),
+        MenuEntry.todo(l10n.menuKeyframeSpeed),
         MenuEntry.divider(),
         MenuEntry.todo(l10n.menuAnimateText),
         MenuEntry.todo(l10n.menuAddTextSelector),
@@ -712,10 +710,10 @@ List<MenuSection> lumitMenus(
 /// there is nowhere for an effect to go.
 List<MenuEntry> _effectMenu(LumitState app, List<LayerReference> layers) => [
       for (final group in _effectGroups().entries)
-        MenuEntry.submenu(group.key, [
+        MenuEntry.submenu(engineLabel(group.key), [
           for (final effect in group.value)
             MenuEntry(
-              effect.label,
+              engineLabel(effect.label),
               layers.isEmpty
                   ? null
                   : () {
@@ -836,6 +834,65 @@ void redoFrb(LumitState app) {
   app.notifyDocumentChanged();
 }
 
+/// Whether Cut and Copy have anything to act on — an effect picked out of a
+/// stack, or a layer. Keyframes are not counted: the panel holding them claims
+/// the chord, and a menu row that ungreyed on a selection the menu cannot see
+/// would be guessing.
+bool _somethingSelected(LumitUiState ui) =>
+    ui.selectedEffects.value.isNotEmpty || ui.selectedLayer.value != null;
+
+/// What Copy takes, finest selection first (K-300): the keyframes a panel has
+/// claimed, else the picked effects, else the selected layer. Returns whether
+/// anything was copied, so the keyboard can leave the chord unhandled when
+/// there was nothing to take.
+///
+/// One function for the Edit menu and the `Mod+C` chord, because a menu row and
+/// a shortcut that disagreed about what "the selection" is would be the bug
+/// this fixes, one layer down.
+bool copySelectionFrb(LumitUiState ui) {
+  if (ui.copyClaim?.call() ?? false) return true;
+  if (ui.selectedEffectsLayer case final layer?
+      when ui.selectedEffects.value.isNotEmpty) {
+    try {
+      ui.copyEffectsToClipboard(
+          layer.copyEffects(effects: ui.selectedEffects.value));
+      return true;
+    } catch (_) {
+      // The effects went away under the selection; the clipboard keeps what it
+      // had, and the layer below is not a silent substitute for what was asked.
+      return false;
+    }
+  }
+  final layer = ui.selectedLayer.value;
+  if (layer == null) return false;
+  ui.copyLayerToClipboard(layer.copyLayer());
+  return true;
+}
+
+/// Cut is Copy plus the removal, so the two can never disagree about what the
+/// selection was (K-275, extended to effects by K-300).
+bool cutSelectionFrb(LumitState app, LumitUiState ui) {
+  final effects = ui.selectedEffects.value;
+  final effectsLayer = ui.selectedEffectsLayer;
+  final layer = ui.selectedLayer.value;
+  if (!copySelectionFrb(ui)) return false;
+  if (effectsLayer != null && effects.isNotEmpty) {
+    for (final instance in effectsLayer.getEffects()) {
+      if (effects.contains(instance.getInfo().id)) {
+        effectsLayer.removeEffect(effect: instance);
+      }
+    }
+    ui.clearEffectSelection();
+    app.notifyDocumentChanged();
+    return true;
+  }
+  if (layer == null) return false;
+  layer.delete();
+  ui.clearSelection();
+  app.notifyDocumentChanged();
+  return true;
+}
+
 /// What Paste does with whatever is on the clipboard (K-275), or `null` when
 /// there is nothing to paste — or nowhere to put it.
 ///
@@ -843,6 +900,30 @@ void redoFrb(LumitState app) {
 /// at the time it was copied from when Settings → Interface says so. An effect
 /// goes onto the selected layer, always with its first keyframe at the
 /// playhead.
+/// Paste for the `Mod+V` chord: a panel holding keyframes takes it first
+/// (K-300, the same claim Delete has used since K-234), else the clipboard's
+/// layer or effects go in. Returns whether anything was pasted.
+///
+/// The Edit menu's own row stays on [_pasteAction]: keyframes have never been
+/// one of its cases, and a row that greys on the clipboard being empty must not
+/// ungrey merely because the Timeline is open.
+Future<bool> pasteSelectionFrb(
+  LumitState app,
+  LumitUiState ui,
+  CompositionReference? comp,
+  LayerReference? layer,
+) async {
+  if (ui.pasteClaim?.call() ?? false) return true;
+  // Nothing in the tray: something may have been copied in another Lumit
+  // window, or in this one before something else on the machine overwrote the
+  // tray's mirror (K-302).
+  if (ui.clipboard.isEmpty) await ui.adoptSystemClipboard();
+  final paste = _pasteAction(app, ui, comp, layer);
+  if (paste == null) return false;
+  paste();
+  return true;
+}
+
 VoidCallback? _pasteAction(
   LumitState app,
   LumitUiState ui,

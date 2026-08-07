@@ -1685,7 +1685,7 @@ fn a_pasted_effect_starts_its_animation_at_the_playhead() {
         .expect("animated");
     source.set_effects(staged).expect("committed");
 
-    let text = source.copy_effects(None).expect("copied");
+    let text = source.copy_effects(Vec::new()).expect("copied");
     let target = comp.add_solid_layer().expect("somewhere to paste");
     // 12 seconds at 30 fps.
     target.paste_effects(text, 360).expect("pasted");
@@ -1709,6 +1709,45 @@ fn a_pasted_effect_starts_its_animation_at_the_playhead() {
     );
 }
 
+/// **Several picked effects copy as one document, in stack order** (K-300).
+/// The Effect controls panel and the Timeline both let a Shift-click take a run
+/// of headings, so the call takes a list — and what comes back is the order the
+/// stack is drawn in, not the order the clicks happened in, or a copied group
+/// would paste back shuffled.
+#[test]
+fn copying_several_effects_takes_them_in_stack_order() {
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let source = comp.add_solid_layer().expect("a layer");
+    source.add_effect("blur".into()).expect("first");
+    source.add_effect("sharpen".into()).expect("second");
+    source.add_effect("vignette".into()).expect("third");
+    let stack = source.get_effects().expect("effects");
+    let ids: Vec<_> = stack.iter().map(|e| e.id()).collect();
+
+    // Picked bottom-up: the third, then the first.
+    let text = source
+        .copy_effects(vec![ids[2], ids[0]])
+        .expect("copied both");
+    let target = comp.add_solid_layer().expect("somewhere to paste");
+    target.paste_effects(text, 0).expect("pasted");
+
+    let pasted: Vec<_> = target
+        .get_effects()
+        .expect("effects")
+        .iter()
+        .map(|e| e.get_info().name)
+        .collect();
+    assert_eq!(
+        pasted,
+        vec!["blur".to_string(), "vignette".to_string()],
+        "the two picked effects arrive, in the order the stack held them"
+    );
+
+    // Naming nothing that is on this layer is a refusal, not a whole-stack copy.
+    assert!(source.copy_effects(vec![Uuid::nil()]).is_err());
+}
+
 /// An effect with no animation at all pastes unchanged — there is no timing to
 /// place, and inventing one would move a look that was never in motion (K-275).
 #[test]
@@ -1721,7 +1760,7 @@ fn a_pasted_effect_with_no_keyframes_is_left_where_it_is() {
         .get_value("radius".into())
         .expect("radius");
 
-    let text = source.copy_effects(None).expect("copied");
+    let text = source.copy_effects(Vec::new()).expect("copied");
     let target = comp.add_solid_layer().expect("somewhere to paste");
     target.paste_effects(text, 120).expect("pasted");
 

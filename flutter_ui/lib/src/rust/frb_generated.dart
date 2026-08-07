@@ -465,7 +465,7 @@ abstract class BridgeLibApi extends BaseApi {
       {required LayerReference that});
 
   String crateApiLayerLayerReferenceCopyEffects(
-      {required LayerReference that, UuidValue? effect});
+      {required LayerReference that, required List<UuidValue> effects});
 
   String crateApiLayerLayerReferenceCopyLayer({required LayerReference that});
 
@@ -3698,12 +3698,12 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
 
   @override
   String crateApiLayerLayerReferenceCopyEffects(
-      {required LayerReference that, UuidValue? effect}) {
+      {required LayerReference that, required List<UuidValue> effects}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_box_autoadd_layer_reference(that, serializer);
-        sse_encode_opt_Uuid(effect, serializer);
+        sse_encode_list_Uuid(effects, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 103)!;
       },
       codec: SseCodec(
@@ -3712,7 +3712,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
             sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError,
       ),
       constMeta: kCrateApiLayerLayerReferenceCopyEffectsConstMeta,
-      argValues: [that, effect],
+      argValues: [that, effects],
       apiImpl: this,
     ));
   }
@@ -3720,7 +3720,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   TaskConstMeta get kCrateApiLayerLayerReferenceCopyEffectsConstMeta =>
       const TaskConstMeta(
         debugName: "layer_reference_copy_effects",
-        argNames: ["that", "effect"],
+        argNames: ["that", "effects"],
       );
 
   @override

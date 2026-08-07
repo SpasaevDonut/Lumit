@@ -903,6 +903,13 @@ measurement — the panel shows the numbers, it does not turn them on.
   tidy list of section headings, each in its own subtle full-width bar, and you open only the
   group you want. In Effect Controls (and the Effects group here) an effect's name is a drag
   handle for reordering the stack.
+- **A section heading is selected by clicking its name, and twirled by the same click**
+  (K-300). A *modified* click — `Ctrl` to toggle, `Shift` to extend the run — only selects, so
+  picking several effects does not open every one of them on the way past; the twirl mark
+  beside the name always twirls and never selects. An **effect's** heading picked this way is
+  what **Copy**, **Cut** and **Copy effect** act on, and the pick is shared with the Effect
+  controls panel (§6), so an effect chosen in one place is lit in the other. Several picked
+  effects copy as one `.lumfx` document in stack order.
 - Each animatable property lane shows: stopwatch (keyframing on/off), value with
   **scrub-drag** and click-to-type numeric entry, expression toggle, and its keyframes as
   diamonds on the lane. Keyframe icons reflect interpolation (hold/linear/bezier), matching
@@ -1318,6 +1325,15 @@ Shows the **effect stack** of the selected layer (tab per recently viewed layer,
   continuously while a comp is being made faster. The menu lists only the moves that effect
   can make.
 
+  **An effect's name selects it** (K-300), taking the selection fill across the heading bar —
+  plain replaces, `Ctrl` toggles, `Shift` extends the run down the stack. Selecting an effect
+  **does not fold it**: the twirl mark is the only thing that opens and shuts a card, because
+  a click that did both would take the parameters away at the moment you said which effect you
+  meant. It is the same selection the Timeline's fold-out shows (§4.3),
+  so an effect picked in either place is lit in both, and it is what **Copy**, **Cut** and the
+  heading's **Copy effect** act on. Source and Transform are not part of a stack and so are
+  not selectable; their headings twirl as they always did.
+
   **Round shape keeps its bubble** (K-092): the same rows, wrapped in floating-card chrome.
   The two shapes differ in chrome, not in layout.
 
@@ -1650,7 +1666,7 @@ small image over each choice, remain the destination (polish tracked in TODO).
   and never return unprompted.
 - **Tooltips policy**: every icon control has a tooltip with its name and current shortcut,
   on a ~500 ms hover delay. **A tooltip is a name, not an explanation: under five words,
-  two where two will do** (K-298). *Add keyframe*, not *Add a keyframe here*; *Reset all
+  two where two will do** (K-303). *Add keyframe*, not *Add a keyframe here*; *Reset all
   parameters*, not *Put every parameter back to its default, removing its keyframes*. A
   control whose state changes says the state — *Visible* / *Hidden*, *Locked* / *Lock* —
   rather than narrating the click. Rich tooltips (a sentence + *Learn more* link) are
@@ -1818,7 +1834,7 @@ travel in the `.lum` and are marked below:
   launch, at most once a day — on by default, plus a readout of the installed version and a
   button driving the same check the Help row does. Checking is all "on" means; the download
   always waits to be asked for.
-- **Language** (K-298), under Interface: which language the interface is written in.
+- **Language** (K-303), under Interface: which language the interface is written in.
   Defaults to the machine's own and stores nothing until chosen, so an unset Lumit follows
   the operating system for ever rather than freezing whichever language it first opened in.
   The list names each language in its own language — Deutsch, Қазақша, Українська, 简体中文
@@ -1830,7 +1846,9 @@ travel in the `.lum` and are marked below:
 **The window (K-193, K-194).** It opens from **Window → Settings…** or **Ctrl/Cmd+comma** — a
 sidebar of pages, each a stack of named sections, each section a card of rows carrying what
 the setting is, a line saying what it does, and its control on the right. Its pages are
-**General** (reset workspace, version and build), **Appearance** (colour scheme, corners,
+**General** (reset workspace, version and build), **Appearance** (colour scheme with an
+eight-swatch preview beside it, the theme shelf — Duplicate, Rename…, Delete, Import… and
+Export… (K-298) — corners,
 interface motion, and the Scopes and Viewer toggles — themed scope colours, themed surround,
 and whether the Viewer smooths the picture when it is zoomed past 1:1, all three off by
 default: a magnified pixel is a square, because looking at the pixels is what zooming in is
@@ -1932,6 +1950,7 @@ app-wide, so a list, a field or a canvas is free to use them for moving within i
 | Global | `Ctrl+S` / `Ctrl+Shift+S` | Save / Save as |
 | Global | `Ctrl+I` | Import footage |
 | Global | `Ctrl+Alt+M` | Export the composition |
+| Global | `Ctrl+X` / `Ctrl+C` / `Ctrl+V` | Cut / copy / paste the selection — picked keyframes, else the selected property rows (their keys, or their plain value where they have none, K-301), else the picked effects, else the layer (K-300) |
 | Global | `Ctrl+A` / `Ctrl+Shift+A` | Select all layers / deselect all |
 | Global | `Ctrl+Alt+;` | Settings (Preferences) |
 | Global | `Alt+Shift+1…9` | Switch workspace |

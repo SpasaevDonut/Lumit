@@ -563,7 +563,9 @@ void main() {
       // Ten renders were asked for; let the last of them come back before the
       // test ends, or the progress tracker's timer is still pending. Waiting on
       // the condition rather than a round count keeps this independent of how
-      // long a frame happens to take on the machine running it.
+      // long a frame happens to take — which under the load of the whole suite
+      // is longer than for this file alone, and is why it failed there and
+      // passed here.
       await settleFrb(
         tester,
         until: () => p.uiState.previewProgress.idle,

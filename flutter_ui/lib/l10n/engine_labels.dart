@@ -345,4 +345,7 @@ Map<String, String> get _table => {
       "Graph editor": l10n.keyGraphEditor,
       "Panels": l10n.keyPanels,
       "Effect controls": l10n.keyEffectControls,
+      "Copy the selection": l10n.keyCopyTheSelection,
+      "Cut the selection": l10n.keyCutTheSelection,
+      "Paste": l10n.keyPaste,
     };

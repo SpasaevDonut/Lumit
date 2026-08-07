@@ -64,7 +64,8 @@ class PreviewProgressTracker extends ChangeNotifier {
   /// Distinct from [`visible`], which is false both before a slow frame's bar
   /// appears and after any frame finishes. A test that has asked for a render
   /// waits on *this* rather than on a round count, so a frame that takes longer
-  /// on one machine than another does not decide whether the test passes.
+  /// on one machine — or under the load of a whole suite — than another does
+  /// not decide whether the test passes.
   bool get idle => !_outstanding;
 
   /// How far the frame has got, 0..1 — the engine's own estimate.

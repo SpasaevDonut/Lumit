@@ -237,7 +237,7 @@ path, documented beside the types in
     graphics card at each node, so an unasked-for frame costs exactly what it
     did before this existed.
 
-## Display text crosses the bridge in English (K-298)
+## Display text crosses the bridge in English (K-303)
 
 Some of what the bridge sends is meant to be read by a person: `BridgeEffectInfo`'s
 `label` and `category_label`, the parameter and choice labels in an effect's schema, and

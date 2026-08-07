@@ -38,20 +38,23 @@ import 'package:lumit_flutter/src/rust/api/shell.dart';
 import 'package:lumit_flutter/src/rust/api/system.dart';
 import 'package:provider/provider.dart';
 
-import '../l10n/engine_labels.dart';
 import '../l10n/strings.dart';
 import '../state/file_dialogs.dart';
 import '../state/keymap.dart';
 import '../state/settings.dart';
 import '../state/updates.dart';
 import '../state/workspace.dart';
+import '../theme/custom_theme.dart';
 import '../theme/theme.dart';
+import '../theme/theme_file.dart';
 import '../widgets/controls.dart';
+import '../widgets/theme_swatches.dart';
 import 'about_window_frb.dart';
 import 'cache_confirm_frb.dart';
 import 'menu_bar_frb.dart';
 import 'settings_rows.dart';
 import 'theme_editor_frb.dart';
+import 'theme_name_dialog.dart';
 import 'update_dialog_frb.dart';
 
 /// The smallest budget worth setting, in MiB. Below this the cache holds a
@@ -294,19 +297,31 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             t,
             l10n.settingsColourScheme,
             l10n.settingsHelpColourScheme,
-            SizedBox(
-              width: 150,
-              child: BareDropdown<ThemeChoice>(
-                key: const ValueKey('settings-scheme'),
-                value: ui.workspace.themeChoice,
-                options: ui.workspace.themeChoices,
-                label: (c) => c.label,
-                // Dark, Light, then the user's own (K-202): seven built-ins
-                // and a growing list of custom themes is a long flat menu,
-                // and light/dark is the first thing anyone is choosing by.
-                group: (c) => c.group,
-                onChanged: (c) => setState(() => ui.workspace.choose(c)),
-              ),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 150,
+                  child: BareDropdown<ThemeChoice>(
+                    key: const ValueKey('settings-scheme'),
+                    value: ui.workspace.themeChoice,
+                    options: ui.workspace.themeChoices,
+                    label: (c) => c.label,
+                    // Dark, Light, then the user's own (K-202): seven built-ins
+                    // and a growing list of custom themes is a long flat menu,
+                    // and light/dark is the first thing anyone is choosing by.
+                    group: (c) => c.group,
+                    onChanged: (c) => setState(() => ui.workspace.choose(c)),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // What the selection actually looks like, beside its name
+                // (K-298).
+                ThemeSwatchStrip(
+                  key: const ValueKey('settings-theme-swatches'),
+                  theme: ui.workspace.theme,
+                ),
+              ],
             ),
           ),
           settingsRow(
@@ -316,32 +331,17 @@ class _SettingsWindowState extends State<_SettingsWindow> {
                 ? l10n.settingsHelpCustomColours
                 : l10n.settingsHelpEditingTheme(
                     '${ui.workspace.customThemeName}'),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (ui.workspace.customThemeName != null) ...[
-                  HouseButton(
-                    key: const ValueKey('settings-theme-delete'),
-                    small: true,
-                    frameless: true,
-                    onPressed: () => setState(() => ui.workspace
-                        .deleteCustomTheme(ui.workspace.customThemeName!)),
-                    child: Text(l10n.delete, style: t.small),
-                  ),
-                  const SizedBox(width: 6),
-                ],
-                HouseButton(
-                  key: const ValueKey('settings-customise'),
-                  small: true,
-                  onPressed: () async {
-                    await showThemeEditorFrb(context, ui);
-                    if (mounted) setState(() {});
-                  },
-                  child: Text(l10n.customiseEllipsis, style: t.small),
-                ),
-              ],
+            HouseButton(
+              key: const ValueKey('settings-customise'),
+              small: true,
+              onPressed: () async {
+                await showThemeEditorFrb(context, ui);
+                if (mounted) setState(() {});
+              },
+              child: Text(l10n.customiseEllipsis, style: t.small),
             ),
           ),
+          _themeShelf(t, ui),
           settingsRow(
             t,
             l10n.settingsCorners,
@@ -417,6 +417,161 @@ class _SettingsWindowState extends State<_SettingsWindow> {
           ),
         ]),
       ];
+
+  // ---- Your themes (K-298) -------------------------------------------------
+
+  /// What the last theme import, export or rename said. Kept beside the
+  /// buttons like the keymap page's message, and for the same reason: a file
+  /// that would not read is a fact about the file, not an emergency.
+  String? _themeMessage;
+
+  /// The block under the theme rows: everything you can do to a theme that is
+  /// not changing one of its colours. Laid out as a wrapped row of buttons
+  /// rather than one control per settings row, because these are five verbs
+  /// about the same thing, and five rows saying "Duplicate", "Rename" and so
+  /// on would be a list of buttons pretending to be settings.
+  Widget _themeShelf(LumitTheme t, LumitUiState ui) {
+    final workspace = ui.workspace;
+    final custom = workspace.customThemeName;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(l10n.settingsYourThemes, style: t.body),
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(
+              l10n.settingsHelpYourThemes,
+              style: t.small.copyWith(color: t.textMuted),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              HouseButton(
+                key: const ValueKey('settings-theme-duplicate'),
+                small: true,
+                onPressed: () => setState(() {
+                  final name = workspace.duplicateActiveTheme();
+                  _themeMessage = l10n.themeCopiedTo(name);
+                }),
+                child: Text(l10n.menuDuplicate, style: t.small),
+              ),
+              HouseButton(
+                key: const ValueKey('settings-theme-rename'),
+                small: true,
+                // Only one of the user's own can be renamed: a built-in
+                // scheme's name is Lumit's, not the user's, and renaming it
+                // would leave two people describing different Darks.
+                onPressed: custom == null ? null : () => _renameTheme(ui),
+                child: Text(l10n.renameEllipsis, style: t.small),
+              ),
+              HouseButton(
+                key: const ValueKey('settings-theme-delete'),
+                small: true,
+                frameless: true,
+                onPressed: custom == null
+                    ? null
+                    : () => setState(() {
+                          workspace.deleteCustomTheme(custom);
+                          _themeMessage = l10n.themeDeleted(custom);
+                        }),
+                child: Text(l10n.delete, style: t.small),
+              ),
+              HouseButton(
+                key: const ValueKey('settings-theme-import'),
+                small: true,
+                onPressed: () => _importTheme(ui),
+                child: Text(l10n.menuImport, style: t.small),
+              ),
+              HouseButton(
+                key: const ValueKey('settings-theme-export'),
+                small: true,
+                onPressed: () => _exportTheme(ui),
+                child: Text(l10n.menuExport, style: t.small),
+              ),
+            ],
+          ),
+          if (_themeMessage != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                _themeMessage!,
+                key: const ValueKey('settings-theme-message'),
+                style: t.small.copyWith(color: t.textMuted),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Rename the selected theme. The workspace decides the name it lands under,
+  /// so a clash with another of the user's own is numbered rather than refused.
+  Future<void> _renameTheme(LumitUiState ui) async {
+    final workspace = ui.workspace;
+    final from = workspace.customThemeName;
+    if (from == null) return;
+    final asked = await askThemeName(context,
+        title: l10n.themeRenameTitle, suggested: from, confirm: l10n.rename);
+    if (asked == null || !mounted) return;
+    final now = workspace.renameCustomTheme(from, asked);
+    setState(() => _themeMessage = now == null || now == from
+        ? null
+        : now == asked.trim()
+            ? l10n.themeRenamedTo(now)
+            : l10n.themeNameTaken(asked.trim(), now));
+  }
+
+  /// Read a theme file and take it in under a name nothing else holds — an
+  /// import never overwrites one of the user's own.
+  Future<void> _importTheme(LumitUiState ui) async {
+    final path = await pickThemeToOpen();
+    if (path == null) return;
+    String text;
+    try {
+      text = await File(path).readAsString();
+    } catch (e) {
+      if (mounted) {
+        setState(() => _themeMessage = l10n.keymapFileUnreadable);
+      }
+      return;
+    }
+    final read = readThemeFile(text);
+    if (!mounted) return;
+    final theme = read.theme;
+    if (theme == null) {
+      setState(() => _themeMessage = read.refusal);
+      return;
+    }
+    final wanted = theme.name.trim();
+    final name = ui.workspace.importCustomTheme(theme);
+    setState(() => _themeMessage = name == wanted
+        ? l10n.themeImported(name)
+        : l10n.themeImportedRenamed(wanted, name));
+  }
+
+  /// Write the theme in use out as a file. Offered from a built-in scheme too:
+  /// what is exported is the colours on screen, and "the stock dark with my
+  /// accent" is a perfectly good thing to send somebody.
+  Future<void> _exportTheme(LumitUiState ui) async {
+    final workspace = ui.workspace;
+    final name = workspace.customThemeName ?? workspace.themeChoice.label;
+    final path = await pickThemeSaveLocation(themeFileName(name));
+    if (path == null) return;
+    try {
+      await File(path)
+          .writeAsString(encodeThemeFile(CustomTheme.from(name, ui.theme)));
+      if (mounted) setState(() => _themeMessage = l10n.themeExported(name));
+    } catch (e) {
+      if (mounted) {
+        setState(() => _themeMessage = l10n.keymapFileUnwritable);
+      }
+    }
+  }
 
   List<Widget> _interface(LumitTheme t, LumitUiState ui) {
     final settings = ui.workspace.interface;
@@ -501,7 +656,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
       settingsSection(t, l10n.settingsGroupEditing, [
         settingsRow(
           t,
-          l10n.settingsRetimeOpensToVelocity,
+          l10n.settingsRetimeOpensToSpeed,
           l10n.settingsHelpRetimeOpensToVelocity,
           HouseCheckbox(
             key: const ValueKey('settings-retime-speed-lens'),
@@ -737,11 +892,11 @@ class _SettingsWindowState extends State<_SettingsWindow> {
               style: t.small.copyWith(color: t.textMuted)),
         ),
       for (final group in groups)
-        settingsSection(t, engineLabel(group.label), [
+        settingsSection(t, group.label, [
           for (final binding in group.bindings)
             settingsRow(
               t,
-              engineLabel(binding.description),
+              binding.description,
               '',
               _ChordCell(
                 key: ValueKey('keymap-chord-${binding.context.name}-'
@@ -1140,7 +1295,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
   static String _locationLabel(BridgeCacheLocation l) => switch (l) {
         BridgeCacheLocation.appData => l10n.cacheLocationWithLumit,
         BridgeCacheLocation.besideProject => l10n.cacheLocationBesideProject,
-        BridgeCacheLocation.custom => l10n.cacheLocationChosenFolder,
+        BridgeCacheLocation.custom => 'A folder I choose',
       };
 
   /// Point the cache somewhere, at whichever scope is in force. The project's own
