@@ -42,13 +42,12 @@ const roadmap = [
   {
     label: "Currently in-progress",
     items: [
+      "Expressions",
       "Optical-flow retiming",
       "Beat detection and snapping",
       "Mask modes and feather",
-      "Anti-aliasing",
       "Motion paths in the Viewer",
-      "Proxy generation",
-      "Colour management",
+      "Shape modifiers and path editing",
       "Smooth zooming everywhere",
       "The macOS pass",
     ],
@@ -60,6 +59,7 @@ const roadmap = [
       "Per-layer motion blur",
       "Beat-triggered camera shake",
       "GPU scopes",
+      "Proxy generation",
       "First-run setup",
       "Signed installers",
     ],
@@ -68,7 +68,6 @@ const roadmap = [
     label: "After 1.0",
     dashed: true,
     items: [
-      "Expressions",
       "OFX plugin hosting",
       "After Effects import",
       "3D cameras and lights",
@@ -81,6 +80,7 @@ const roadmap = [
       "Composer audio workspace",
       "Node view",
       "Scripting",
+      "Colour management",
     ],
   },
 ];
@@ -220,12 +220,10 @@ const roadmap = [
   {/* ---------- close ---------- */}
   <section class="border-t border-line py-16 text-center sm:py-24">
     <div class="wrap">
-      <h2 class="text-[clamp(26px,3.6vw,40px)] leading-[1.1]">
-        Keep editing while Lumit exports.
-      </h2>
+      <h2 class="text-[clamp(26px,3.6vw,40px)] leading-[1.1]">Free, forever.</h2>
       <p class="mx-auto mt-4 max-w-[620px]">
-        Free, open source, and yours to keep. Windows and Linux builds are ready now;
-        macOS is close behind.
+        Open source under GPLv3, and yours to keep. Windows, Linux and macOS builds are
+        all ready now - no account, no licence key.
       </p>
       <div class="mt-9 flex flex-wrap justify-center gap-3">
         <a class="btn" href="/download">Download Lumit</a>
@@ -269,28 +267,32 @@ const roadmap = [
     font-size: 11px;
     line-height: 1;
   }
+  /* Each item is its own bubble. A shared grid with hairline gaps left the
+     empty cells of a partial last row showing as a grey block, and no item
+     count fixes that while the columns are responsive. */
   .items {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
-    gap: 1px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
     margin: 0;
     padding: 0;
     list-style: none;
-    overflow: hidden;
-    border: 1px solid var(--color-line);
-    border-radius: 12px;
-    background: var(--color-line);
   }
   .items li {
-    padding: 11px 14px;
+    padding: 10px 15px;
+    border: 1px solid var(--color-line);
+    border-radius: 999px;
     background: var(--color-ink);
     color: var(--color-fg-2);
     font-size: 14px;
     line-height: 1.35;
-    transition: color 0.15s;
+    transition:
+      color 0.15s,
+      border-color 0.15s;
   }
   .items li:hover {
     color: var(--color-fg);
+    border-color: var(--color-line-2);
   }
   @media (min-width: 768px) {
     .stage {
