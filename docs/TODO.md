@@ -17,6 +17,18 @@ this file is the concrete backlog underneath it.
 
 These sit above everything else: they are what the editor feels like in the hand.
 
+- **The reclamation gate does not hold on D3D12 — CI is red on Windows (K-295).**
+    `what_the_engine_drops_the_driver_gets_back` renders 120 frames against a
+    32 MB budget and asserts fewer than 64 live textures afterwards. The
+    software rasteriser leaves 18; the Windows runner leaves ~575, three runs
+    running (`crates/lumit-render/src/headless.rs`). Either the hand-back does
+    not reach D3D12's deferred destruction — in which case the leak K-295 was
+    written to catch is still there on the platform Lumit ships first — or the
+    live count means something different per backend. Needs a machine with a
+    real graphics card: the test skips where there is no adapter, so it cannot
+    be judged from CI logs alone. Until it is settled, every Windows CI run
+    fails and the gate guards nothing.
+
 - **Take the lens flare's bake off the render thread.** Choosing a lens blocks
     the picture for about half a second of pure CPU optics (measured, K-263) -
     the single longest stall the effect has - and the bake is still a closure the
