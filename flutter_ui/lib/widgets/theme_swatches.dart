@@ -13,6 +13,7 @@
 import 'package:flutter/widgets.dart';
 
 import '../theme/theme.dart';
+import 'controls.dart';
 
 /// The colours the strip shows, in reading order: grounds, then what sits on
 /// them, then the accents.

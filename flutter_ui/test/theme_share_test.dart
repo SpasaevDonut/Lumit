@@ -89,9 +89,22 @@ void main() {
       }));
       expect(read.theme, isNotNull);
       expect(read.theme!.colours['accent'], const Color(0xff112233));
-      expect(read.theme!.colours.containsKey('a.token.from.the.future'),
-          isFalse,
-          reason: 'unknown keys are dropped, not carried');
+
+      // The unknown key is *carried*, not dropped. Dropping it here would make
+      // this build quietly strip a newer Lumit's colours the next time it wrote
+      // the workspace file — the same parser reads both — which is the data
+      // loss forward tolerance exists to prevent. What matters is that it
+      // changes nothing: `applyTokens` names the tokens it knows and never
+      // consults a key it does not.
+      final built = read.theme!.build(ThemeShape.sharp);
+      final base = LumitColorScheme.dark.build().copyWith(
+            shape: ThemeShape.sharp,
+            tokens: ShapeTokens.of(ThemeShape.sharp),
+          );
+      expect(built.accent, const Color(0xff112233),
+          reason: 'the colour this build knows is taken from the file');
+      expect(built.surface0, base.surface0,
+          reason: 'and everything else still comes from the base');
     });
 
     /// A theme lifted straight out of a workspace file has the same three

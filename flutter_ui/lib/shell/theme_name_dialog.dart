@@ -8,7 +8,6 @@
 
 import 'package:flutter/widgets.dart';
 
-import '../theme/theme.dart';
 import '../widgets/controls.dart';
 
 /// Ask for a theme name, seeded with [suggested] and headed by [title].
