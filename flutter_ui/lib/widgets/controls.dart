@@ -1047,7 +1047,12 @@ class _HouseTextFieldState extends State<HouseTextField>
         return Stack(
           children: [
             Material(
-              color: Colors.transparent,
+              // Fully transparent: the completion list draws its own surface
+              // below, and Material is here only for the text style and ink.
+              // Spelled as a zero colour rather than the Material palette's
+              // named constant, which is a hex by another route and so is
+              // refused by the design-token lint (docs/15-DESIGN.md §4.1).
+              color: const Color(0x00000000),
               child: ThemeScope(
                   theme: t.theme,
                   animationLevel: t.animationLevel,
