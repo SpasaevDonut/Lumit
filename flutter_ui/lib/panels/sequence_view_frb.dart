@@ -98,6 +98,12 @@ class SequenceViewFrb extends StatefulWidget {
   final bool razor;
   final void Function(int frame)? onRazor;
 
+  /// Where a cut at screen x lands, in comp frames — the same function the
+  /// Timeline's blade line is drawn with, so a cut inside a sequence agrees
+  /// with the mark above it (docs/07 §4.5). Null falls back to the axis's own
+  /// rounding, which is what it always did.
+  final double Function(double x)? razorFrameAt;
+
   /// Select this layer, and close the view — the bar's other duties, which
   /// the view takes on while it is standing in for it.
   final VoidCallback? onSelect;
@@ -127,6 +133,7 @@ class SequenceViewFrb extends StatefulWidget {
     this.style = const WaveformStyle(),
     this.razor = false,
     this.onRazor,
+    this.razorFrameAt,
     this.onSelect,
     this.onClose,
     this.graphHeight = sequenceEnvelopeStrip,
@@ -294,7 +301,10 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
             // where it was clicked (docs/07 §4.4).
             onTapUp: (d) {
               if (widget.razor) {
-                widget.onRazor?.call(widget.axis.frameAt(d.localPosition.dx));
+                widget.onRazor?.call(
+                  widget.razorFrameAt?.call(d.localPosition.dx).round() ??
+                      widget.axis.frameAt(d.localPosition.dx),
+                );
                 return;
               }
               widget.onSelect?.call();

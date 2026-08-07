@@ -1,9 +1,12 @@
-# Release pipeline (K-252, K-290): push a tag like v0.1.0 and this builds all
+# Release pipeline (K-252, K-300): push a tag like v0.1.0 and this builds all
 # three platform artefacts on GitHub's own runners and attaches them to a
 # GitHub Release — no local cross-building, which Flutter cannot do anyway.
 #
-# A release is exactly three files (K-290): a Windows setup .exe, a macOS .dmg
-# and a Linux .flatpak. Every job gates the release; nothing is
+# Three things are *installed* (K-300): a Windows setup .exe, a macOS .dmg and a
+# Linux .flatpak — one per platform, and the Linux tarball is withdrawn. Beside
+# them ride the plain application archives the in-place updater fetches (K-297):
+# a Windows .zip and a macOS .zip, which are not installers and are not offered
+# as a way to install. Every job gates the release; nothing is
 # continue-on-error, so a partial release is never published quietly.
 #
 # Toolchain steps mirror ci.yml's `windows` and `flutter-linux` jobs exactly
@@ -67,10 +70,26 @@ jobs:
           $version = "$env:GITHUB_REF_NAME".TrimStart('v')
           if (-not $version) { $version = '0.0.0' }
           & packaging/windows/build-installer.ps1 -Version $version
+      # The same files the installer lays down, as a plain archive (K-297).
+      # This is what a per-user installation fetches to update itself: no
+      # installer to run, no elevation, no questions already answered once.
+      - name: Package the app for in-place updates
+        shell: pwsh
+        run: |
+          $version = "$env:GITHUB_REF_NAME".TrimStart('v')
+          if (-not $version) { $version = '0.0.0' }
+          $stage = "$env:RUNNER_TEMP\lumit-package"
+          New-Item -ItemType Directory -Force -Path "$stage\icons" | Out-Null
+          Copy-Item -Recurse -Force flutter_ui\build\windows\x64\runner\Release\* $stage
+          Copy-Item assets\brand\lumit-project.ico, assets\brand\lumit-preset.ico "$stage\icons"
+          Compress-Archive -Path "$stage\*" -Force `
+            -DestinationPath "packaging/windows/dist/lumit-$version-windows-x64.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: windows-installer
-          path: packaging/windows/dist/*.exe
+          path: |
+            packaging/windows/dist/*.exe
+            packaging/windows/dist/*.zip
           if-no-files-found: error
 
   linux-bundle:
@@ -133,7 +152,7 @@ jobs:
         # Repacks the staged bundle (FFmpeg libs included) via the manifest in
         # packaging/flatpak/ into a single-file .flatpak anyone can install
         # with `flatpak install lumit-*.flatpak`. This is the whole Linux
-        # release (K-290), so a failure here fails the release rather than
+        # release (K-300), so a failure here fails the release rather than
         # publishing a Linux-shaped hole.
         run: |
           version="${GITHUB_REF_NAME#v}"
@@ -178,10 +197,24 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           packaging/macos/make-dmg.sh "${version:-0.0.0}"
+      # The bundle on its own, for in-place updates (K-297). `ditto` rather than
+      # `zip`: an .app carries symbolic links, code signatures and executable
+      # bits, and an archiver that drops those produces a bundle macOS refuses
+      # to open.
+      - name: Package the bundle for in-place updates
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          version="${version:-0.0.0}"
+          app="flutter_ui/build/macos/Build/Products/Release/Lumit.app"
+          mkdir -p packaging/macos/dist
+          ditto -c -k --keepParent "$app" \
+            "packaging/macos/dist/lumit-$version-macos-$(uname -m).zip"
       - uses: actions/upload-artifact@v4
         with:
           name: macos-dmg
-          path: packaging/macos/dist/*.dmg
+          path: |
+            packaging/macos/dist/*.dmg
+            packaging/macos/dist/*.zip
           if-no-files-found: error
 
   publish:

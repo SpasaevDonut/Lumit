@@ -977,11 +977,7 @@ impl Compositor {
             })
             .collect();
 
-        let mut encoder = ctx
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("composite"),
-            });
+        let mut encoder = ctx.encoder("composite");
 
         // Draw in pass segments: shader-computed blends need the accumulated
         // target copied out first (a copy cannot happen inside a pass).
@@ -1149,7 +1145,12 @@ impl Compositor {
                 ..Default::default()
             });
         }
-        ctx.queue.submit([encoder.finish()]);
+        // Recording ends here; whether the buffer goes to the driver now or at
+        // the end of the frame's batch is the encoder guard's business (K-290).
+        // The seed's buffer and bind group are released after it either way —
+        // the recorded commands hold their own references to what they use, so
+        // the deferred submission still has them.
+        drop(encoder);
         drop(seed_keep);
         target
     }
@@ -1395,11 +1396,7 @@ impl Compositor {
 
         let mut keep: Vec<wgpu::Buffer> = Vec::with_capacity(binds.len() + 1);
         let mut add_binds: Vec<wgpu::BindGroup> = Vec::with_capacity(binds.len());
-        let mut encoder = ctx
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("mb-average"),
-            });
+        let mut encoder = ctx.encoder("mb-average");
         // The running sum starts at zero.
         encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("mb-accum-clear"),
@@ -1534,7 +1531,7 @@ impl Compositor {
             rp.set_bind_group(0, &copy_bind, &[]);
             rp.draw(0..6, 0..1);
         }
-        ctx.queue.submit([encoder.finish()]);
+        drop(encoder);
         drop((keep, add_binds));
         target
     }
@@ -1634,11 +1631,7 @@ impl Compositor {
 
         // Buffers must outlive the encoder they feed; hold them until submit.
         let mut keep: Vec<wgpu::Buffer> = Vec::with_capacity(layers.len() + 1);
-        let mut encoder = ctx
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("accumulate"),
-            });
+        let mut encoder = ctx.encoder("accumulate");
 
         // The running sum starts at zero: clear accum_a (the first pass's prev).
         encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1760,7 +1753,7 @@ impl Compositor {
             rpass.set_bind_group(0, &copy_bind, &[]);
             rpass.draw(0..6, 0..1);
         }
-        ctx.queue.submit([encoder.finish()]);
+        drop(encoder);
         drop(keep);
         target
     }

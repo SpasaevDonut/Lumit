@@ -228,6 +228,17 @@ panel layout is.
 - **Effect** MUST offer one submenu per effect category, each item applying to *every* selected
   layer (K-217), and the whole menu MUST be disabled with nothing selected.
 - **File ▸ Open recent** lists the ten most recent project paths, newest first.
+- **Help ▸ Check for updates** MUST carry the whole update sequence in the one row (K-296):
+  disabled and reading "Checking for updates…" while a check runs, then either
+  "Click to update - v*X.Y.Z*" or back to "Check for updates" with *Lumit is up to date* in
+  the status line. Pressing it MUST NOT close the menu, and the row MUST redraw in place as
+  the state changes. Downloading MUST show progress in the same row, and a downloaded update
+  MUST read "Restart to finish updating" until it is applied.
+- **How an update is applied** follows where Lumit is installed (K-297), and the restart
+  window MUST say which it is: swapped in place and restarted (a per-user installation, the
+  normal case), handed to the installer (anywhere Lumit cannot write to its own files), or
+  handed to Flatpak with the install command, in which case Lumit MUST NOT offer to restart
+  because it is not replacing anything.
 
 ---
 
@@ -1013,20 +1024,65 @@ plus `Ctrl`-hold to suspend during a drag.
 read, and it is gone (K-230, §1.7): a global switch belongs there once there is snapping
 outside the Timeline for it to govern.
 
-**Shipped (K-190):** the **magnet** in the lane bottom bar, on by default, covering the
-one snap that exists so far — a keyframe dragged on its lane lands on a whole frame. With
-it off the key may sit *between* frames: the time is quantised to a thousandth of a frame
-and built from the comp's exact rate, so it stays rational (docs/14 §2) rather than
-becoming a rounded double. The other sources and targets, and `Ctrl`-hold, are still to
-build. Snap distance is measured in screen pixels, not
-time, so zoom level controls precision. The snapped-to target MUST be indicated at the
-moment of capture. Beat-marker snapping is the beat-sync covenant's daily face: dragging an
-edit point near a beat marker lands exactly on it.
+**Shipped (K-190, K-292):** the **magnet** in the lane bottom bar, on by default. With it
+off a key may sit *between* frames: the time is quantised to a thousandth of a frame and
+built from the comp's exact rate, so it stays rational (docs/14 §2) rather than becoming a
+rounded double.
+
+With it on, a keyframe dragged on its lane lands on the nearest **target** within reach —
+edit points, layer in/out points, other keyframes, markers (composition and layer, **beat
+markers among them**), the playhead, and the work area edges — and on a whole frame when
+there is nothing near, which was K-190's original and much narrower behaviour. Beat-marker
+snapping is the beat-sync covenant's daily face, and it comes for free because a beat marker
+*is* a marker.
+
+Snap distance is measured in **screen pixels**, not time, so zoom level controls precision.
+The snapped-to target is indicated at the moment of capture — a line at what caught the drag.
+**`Ctrl` held suspends snapping** for as long as it is held, which is the way out when the
+wanted place is exactly where a snap will not allow.
+
+**The razor snaps too, and its line says where the edge bites** (owner, 2026-08-06). A cut
+was always quantised — it lands on a whole frame — while the blade's line followed the pointer
+continuously, so the two disagreed by up to half a frame. Both now read one function: the line
+stands exactly where the cut will land, and with the magnet on the cut takes the nearest target
+in reach before falling back to the nearest frame. A cut is a clip boundary, so it lands on a
+whole frame even when what caught it sits between two.
+
+Still to build: snapping for the gestures other than a lane key drag and the razor — the layer
+**bar** drag, the work-area handles and marker drags all still land where the pointer puts
+them. The arithmetic is shared and pure (`panels/timeline_snap.dart`), so each is a
+wiring job rather than a design one.
 
 ### 4.6 Navigation, zoom, and scroll
 
 - Plain wheel scrolls vertically. `Shift+wheel` scrolls horizontally. `Ctrl+wheel` zooms
   time about the pointer. The wheel MUST never zoom without a modifier (no scroll hijack).
+- **Zoom flies rather than cutting** (K-293): magnification is a place changing, not a value
+  being nudged, so it animates — geometrically, because zoom is a ratio and equal time should
+  buy equal ratio. Notches arriving quickly are worth more, so a rolled wheel covers ground
+  while a clicked one stays precise; when the hand stops, the flight finishes and settles
+  rather than stopping where the last notch fell. The frame under the pointer is held there
+  for the whole flight, not merely at its ends.
+- **The bottom bar's zoom is a slider** between a small landscape glyph and a large one — the
+  pair After Effects flanks its own zoom slider with, painter-drawn so the small end can sit
+  under K-209's 16px floor without crunching (K-293). Its left end is the whole composition;
+  its right end shows **20 frames** across the lanes, whatever the composition's length — a
+  count of frames rather than a magnification, because that is what the number means to a
+  person. It runs on the logarithm of the zoom, so equal travel buys equal ratio.
+- **A slider zoom holds the playhead still; `Ctrl+wheel` holds the frame under the pointer**
+  (K-293). The slider has no pointer to zoom about, and the playhead is where the work is —
+  the same thing After Effects zooms its timeline about. A playhead in view keeps the screen
+  position it has; a playhead out of view is brought to the middle of the lanes.
+- **The scroll correction that holds the anchor MUST happen inside layout** (K-293): the
+  offset that keeps a frame still is only valid for the width the zoom has just produced, so
+  moving it before that width is laid out leaves the view scrolled past its own end for a
+  frame — which springs back, and draws the scrollbar's thumb from a position and a length
+  that disagree.
+- **A dragged zoom control MUST NOT animate** (K-293). The flight fills the gap between zooms
+  that arrive in steps — a wheel notch, a tap on the track. A drag is already continuous, so
+  it applies at once, and the handle is drawn from the zoom being asked for rather than from
+  the flight's current value; animating a drag makes the lanes trail the finger by a flight's
+  length and restart before arriving.
 - **A trackpad's two-finger scroll MUST scroll the panel** (K-278). It arrives as a pan
   *gesture* rather than as the wheel's signal, so the panel — which otherwise gives drags to
   the keyframe marquee — MUST admit exactly the trackpad as a drag-scroll device, and every
@@ -1054,12 +1110,12 @@ with its own thumb. Each thumb lives in a fixed-width **gutter** down the right 
 half, outside the horizontal scroller so it stays pinned to the viewport edge, and the
 outline reserves the same gutter with an undraggable block level with its toolbar and
 column header — so the columns never shift as the view changes. The lane bottom bar
-carries − / + / Fit time zoom, the magnet, and the horizontal scrollbar. **The wheel
+carries the time-zoom slider, the magnet, and the horizontal scrollbar. **The wheel
 scrolls, dragging never does**: a plain wheel moves the rows, `Shift+wheel` scrolls
 sideways, `Ctrl+wheel` zooms time about the pointer, and a drag on empty lane space is the
-keyframe marquee. A zoom with no pointer to zoom about — the bottom bar's − / + — holds
-the middle of the visible lanes still instead of the left edge, so what is being looked at
-stays on screen. Still to build: `=`/`-`/`\`, and edge-follow during playback.
+keyframe marquee. A zoom with no pointer to zoom about — the slider — holds the playhead
+still instead (§4.6, K-293), so what is being worked on stays on screen. Still to build:
+`=`/`-`/`\`, and edge-follow during playback.
 
 ### 4.7 Editing behaviours
 
@@ -1069,6 +1125,16 @@ stays on screen. Still to build: `=`/`-`/`\`, and edge-follow during playback.
   **Shipped (K-193):** dragging a layer's **bar** moves it in time, and dragging a layer's
   **name** in the outline moves it up or down the stack — drop it on a row and it takes
   that row's place, as one undo step. A locked layer neither drags nor accepts a drop.
+
+  **What the lock means (K-291).** A locked layer refuses every edit to what it *is* — its
+  transform, effects, masks, paint, art, text, clips, markers, blend, matte, parent, retime,
+  volume, its switches, its span, its place in the stack and its existence. The refusal is in
+  the **engine**, so it holds for every caller, not only the gestures the Timeline happens to
+  guard; the property rows are also shown read-only, so the interface never offers a gesture
+  that would only be refused. A *group* heading in the fold-out stays live: twirling one open
+  is navigation, not editing. Three things a locked layer still accepts, because they are the
+  Timeline's own bookkeeping rather than the composition: the **lock** itself (or it could
+  never be undone), **shy**, and the **label** colour.
   Footage or a comp dragged in from the Project panel lands **where it was dropped** —
   the slot the pointer let go over, by the same midpoint rule — rather than always at the
   top of the stack; a drop past the last layer lands at the bottom.
@@ -1567,7 +1633,10 @@ no-wizard rule below.
 
 The **v1 build** (K-246) ships the minimal form of this screen: two plain choices,
 **AE-style** and **Vegas-style**, where Vegas ticks the two K-246 settings (Retime opens to
-speed; video arrives as a Sequence layer) and AE ticks neither. The four cards above, with a
+speed; video arrives as a Sequence layer) and AE ticks neither. Along the bottom sits one
+tick, **on by default**, for automatic update checks (K-296) — the same setting as
+Settings ▸ General ▸ Updates, asked here because it is a decision about how Lumit behaves
+from now on. Skipping the screen leaves it on. The four cards above, with a
 small image over each choice, remain the destination (polish tracked in TODO).
 
 ### 13.2 Empty states
@@ -1738,6 +1807,10 @@ travel in the `.lum` and are marked below:
   preference order, filename template.
 - **Rendering** — *not here at all*: it is the project's, not this machine's, so it lives in
   the **Project settings** window instead (§13.5, K-286).
+- **Updates** (K-296), under General: *Automatic updates* — look for a new version at
+  launch, at most once a day — on by default, plus a readout of the installed version and a
+  button driving the same check the Help row does. Checking is all "on" means; the download
+  always waits to be asked for.
 - **Keymap**, **Interface** (UI scale, tooltips, reduced motion follows OS or override),
   **Autosave** (interval, copies kept), **Plugins** (search paths, disabled list,
   per-plugin overrides).

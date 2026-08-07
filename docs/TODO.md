@@ -49,21 +49,6 @@ These sit above everything else: they are what the editor feels like in the hand
     `sample_scalar` per animated row plus one `time_of_frame`. Batch per frame if
     it ever bites, the way `time_of_frame` already was.
     (`bridge_call_budget_test.dart` is the gate.)
-- **A frame gives the card one command buffer per layer, where one would do.**
-    Measured 2026-07-31: submits per frame = layers + 2 (3 at one layer, 10 at
-    eight, 34 at thirty-two). Every pass in `lumit-gpu` makes and submits its own
-    encoder (`composite.rs`, `fx/*`, the display pass), yet all of a frame's
-    passes are in order on one queue, so they can be encoded once and handed over
-    once. Each submit is a round trip to the driver, a cost that does not depend
-    on the card - which is why this is worth doing even though it cannot be
-    *timed* on a software rasteriser. It takes
-    [impl/playback-scheduler.md](impl/playback-scheduler.md) §2's one-submit-thread
-    rule further rather than conflicting with it. The shape: pass a
-    `&mut wgpu::CommandEncoder` down the realise walk and submit once at the top,
-    leaving the read-backs (`start_readback8`) and shared-texture copies alone -
-    both need their own submission to be waited on. **Re-measure on real hardware
-    either side**: the stopwatch that found it was on the dropped worker-pool
-    branch, and a change made for a number needs the number.
 
 ---
 
@@ -129,11 +114,12 @@ These are v1-scope surfaces it does not yet match.
 - **The workspace strip shows no preset after a restart** -
     `Workspace.activePreset` is session-only.
 
-**Smooth zooming everywhere else.** The Viewer's magnification flies; the
-Timeline's time zoom (`=`/`-`, `Ctrl+wheel`, `\`), the graph editor's zoom and
-auto-fit, and the Project panel's thumbnail scaling all still cut. Lift the
-Viewer's shape into one shared helper rather than writing it three more times.
-The Timeline matters most - it is zoomed constantly while cutting.
+**Smooth zooming everywhere else.** The shared helper is built
+(`widgets/smooth_zoom.dart`, K-293) and the **Timeline** reads it — the one that
+matters most, since it is zoomed constantly while cutting — along with its zoom
+slider. Still cutting rather than flying: the **graph editor's** zoom and
+auto-fit, and the **Project panel's** thumbnail scaling. Both are now a matter
+of holding a `SmoothZoom` and reading its value, with no design left in them.
 
 **Layer controls in the Viewer ([07-UI-SPEC.md](07-UI-SPEC.md) §2.3):**
 - **Motion paths** (§2.4) - a keyed position draws no path and its keys cannot be
@@ -260,9 +246,6 @@ colour individually; only the two Timeline tokens default from the mode.
     in [04-RETIMING.md](04-RETIMING.md).
 - **The Flow column is reserved, not wired** - per-layer optical flow has no
     engine backing. Build the engine model first, then the fold-out's Flow group.
-- **Lock guards the gestures, not the property rows** - a locked layer's bar,
-    razor, rename, reorder and delete refuse; its transform/effect/volume rows are
-    still editable. Guard the rows or enforce in the engine ops; decide which.
 - **The Timeline's two halves are built twice and kept in step by hand.**
     `_Outline` and `_LayerArea` are separate widget trees walking the same layer
     list, aligned only because both read the same numbers, with vertical scroll
@@ -286,10 +269,13 @@ colour individually; only the two Timeline tokens default from the mode.
 - **Beat tap has no key left** - [07-UI-SPEC.md](07-UI-SPEC.md) §10 wants `8`
     during playback to tap a beat, and K-254 gave the bare digits to the numbered
     markers. Needs its own chord or a modal reading.
-- **The magnet snaps keyframes to frames and nothing else**
-    ([07-UI-SPEC.md](07-UI-SPEC.md) §4.5 wants edit points, in/out points,
-    markers, beat markers, the playhead and work-area edges, plus `Ctrl`-hold to
-    suspend mid-drag).
+- **Snapping covers the lane key drag only** (K-292). A key now lands on edit
+    points, in/out points, other keyframes, markers (beat markers among them),
+    the playhead and the work-area edges, with `Ctrl`-hold to suspend and the
+    caught target drawn; the **razor** snaps the same way and its line now
+    stands where the cut lands. The other gestures still land where the pointer
+    puts them: the layer **bar** drag, the work-area handles and marker drags. The arithmetic is shared and pure (`panels/timeline_snap.dart`), so
+    each is wiring rather than design.
 - **Volume keyframes draw no lane diamonds and no graph curve** - volume is not
     in the comp read model; fold it into `BridgeLayerInfo` if either matters.
 
@@ -508,9 +494,16 @@ entry above.
     command with a place waiting for it: Close project, History, Cut/Copy/Paste,
     layer settings and the mask/transform/blending/matte/style families, the
     whole Animation menu, the View menu's zoom/resolution/grid/ruler rows,
-    Trim and Crop comp to work area, Add to export queue, Check for updates and
-    the help links. Delete each mark as the command lands. Suggested chords for
-    the AE-shaped ones are in K-244.
+    Trim and Crop comp to work area, Add to export queue and the help links
+    (Check for updates is built — K-296). Delete each mark as the command
+    lands. Suggested chords for the AE-shaped ones are in K-244.
+
+- **A Flatpak remote, so `flatpak update` has something to update from (K-297).**
+    Releases ship a single-file `.flatpak` bundle, which installs perfectly well
+    and then never updates: `flatpak update` needs a remote. Export an OSTree
+    repo in `release.yml`, publish it (Cloudflare Pages beside the site, K-279)
+    and ship a `.flatpakref`, or submit to Flathub and let it host. Until then
+    Lumit tells Flatpak users the install command rather than offering a button.
 
 ## Later - roadmap features not yet built
 
@@ -543,7 +536,7 @@ list, not a re-statement of the roadmap.
     dylibs but is ad-hoc signed, so Gatekeeper warns) — blocked on an Apple
     Developer Program membership, not on code; signing the Windows installer,
     likewise blocked on buying a certificate. A release ships three unsigned
-    artefacts until then (K-290).
+    artefacts until then (K-300).
 - **Website.** The release-notes page at `/releases` is built and empty: the notes
     themselves are written by hand, one Markdown file per version under
     `web/src/content/releases` (copy `_template.md`; see `web/README.md`). Until

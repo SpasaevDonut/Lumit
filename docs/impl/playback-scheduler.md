@@ -45,6 +45,37 @@ work-stealing is right for DAG fan-out, and cancellation is our epoch tokens, no
 Channels: `crossbeam::channel::bounded` everywhere; every `send` on a full queue is
 back-pressure by design. Choose capacities once, in one constants module, documented.
 
+### 2.1 One command buffer per frame
+
+The one-GPU-submit-thread rule above says *who* may hand work to the driver. This says *how
+often*: **once per frame, not once per pass.**
+
+Every pass in `lumit-gpu` used to make its own command encoder and submit it, so a frame cost
+the driver one round trip per layer and per effect — measured 2026-07-31 at `layers + 2`
+submissions (3 at one layer, 34 at thirty-two). All of a frame's passes are already in order
+on one queue, so they are encoded into one buffer and handed over once.
+
+- `GpuContext::begin_frame` / `end_frame` open and close the batch; `encoder()` hands back
+  the frame's encoder inside one and a fresh, self-submitting one outside. So a pass called
+  on its own — a test, a scope trace — behaves exactly as it did.
+- `begin_frame` **nests**, which is what lets the realise walk open it at its recursive entry
+  point rather than threading an encoder by hand through nested comps, adjustment staging and
+  one whole render per motion-blur sample.
+- **Anything that then observes the GPU must flush first**, because a command that has not
+  been submitted has not run: the read-backs, the scope trace, and the shared-texture present
+  paths all call `flush()` before their own submission and wait.
+- **A measured frame gives the batching up.** The profiler fences on the device at each layer
+  and each effect, and a fence over a queue that has not been handed over times nothing — so
+  measuring flushes as it goes. That is the cost the stopwatch already declares (K-276:
+  measuring waits for the card at each layer, which is why it is opt-in and never runs during
+  playback).
+
+The gate is a **count**, not a stopwatch: `GpuContext::submits_so_far` counts every submission,
+and the regression test asserts that an unmeasured frame's count does not grow with its layer
+count while a measured frame's does. A submit is a round trip whose cost does not depend on
+the card, so the count is the honest measure and it runs on CI's software rasteriser, where a
+timing would prove nothing.
+
 ## 3. The document snapshot handoff
 
 UI thread applies operations → new immutable snapshot (`Arc<Document>`) → publish with

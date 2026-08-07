@@ -269,6 +269,17 @@ impl DecodePool {
         self.comp_decodes
     }
 
+    /// What the decoded-frame cache is holding, and how many decoders are
+    /// open — the pool's share of the memory report (K-294).
+    ///
+    /// The decoders are counted rather than measured: what a `VideoDecoder`
+    /// holds is FFmpeg's business (and, with hardware decode, the driver's), so
+    /// a number of them is honest where a number of bytes would be invented.
+    #[must_use]
+    pub fn memory(&self) -> (usize, usize) {
+        (self.frame_cache.used_bytes(), self.decoders.len())
+    }
+
     /// Resize the decoded-frame cache (its slice of the one RAM budget).
     pub fn set_budget(&mut self, bytes: usize) {
         self.frame_cache.set_budget(bytes);

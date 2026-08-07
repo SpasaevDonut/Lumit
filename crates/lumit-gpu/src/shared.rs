@@ -244,6 +244,9 @@ impl SharedTexture {
     /// before Flutter is told it is ready. `display` must match the shared
     /// texture's dimensions (the caller recreates on a size change).
     pub fn present(&self, gpu: &GpuContext, display: &wgpu::Texture) {
+        // The frame that produced `display` may still be sitting in the
+        // batch; a copy of work that has not been submitted copies nothing.
+        gpu.flush();
         let mut encoder = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -258,7 +261,7 @@ impl SharedTexture {
                 depth_or_array_layers: 1,
             },
         );
-        gpu.queue.submit([encoder.finish()]);
+        gpu.submit([encoder.finish()]);
         // Wait for the D3D12 write to land before D3D11 reads it below: `submit`
         // only queues the copy (see the module note on synchronisation). Zero
         // *CPU* pixel work still — the bytes never leave the card.

@@ -27,6 +27,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
@@ -40,12 +41,16 @@ import 'package:provider/provider.dart';
 import '../state/file_dialogs.dart';
 import '../state/keymap.dart';
 import '../state/settings.dart';
+import '../state/updates.dart';
 import '../state/workspace.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
+import 'about_window_frb.dart';
 import 'cache_confirm_frb.dart';
+import 'menu_bar_frb.dart';
 import 'settings_rows.dart';
 import 'theme_editor_frb.dart';
+import 'update_dialog_frb.dart';
 
 /// The smallest budget worth setting, in MiB. Below this the cache holds a
 /// frame or two and costs more in bookkeeping than it saves.
@@ -209,9 +214,71 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ),
           ),
         ]),
+        // The same updater the Help menu drives, seen from the other side
+        // (K-296): one service, two views, so they can never disagree about
+        // whether a check is running or an update is waiting.
+        settingsSection(t, 'Updates', [
+          settingsRow(
+            t,
+            'Automatic updates',
+            'Look for a new version of Lumit when it starts, at most once a '
+                'day. Nothing is downloaded until you ask for it.',
+            HouseCheckbox(
+              key: const ValueKey('settings-auto-update'),
+              value: ui.workspace.autoUpdate,
+              onChanged: (on) =>
+                  setState(() => ui.workspace.setAutoUpdate(on)),
+            ),
+          ),
+          // The whole row watches the service, not just its button: the line
+          // under the title is the part that says what was found, and a stale
+          // sentence beside a live button would be worse than either alone.
+          ListenableBuilder(
+            listenable: ui.updates,
+            builder: (context, _) => settingsRow(
+              t,
+              'This version',
+              _updateStatusLine(ui),
+              HouseButton(
+                key: const ValueKey('settings-check-updates'),
+                small: true,
+                onPressed: ui.updates.busy
+                    ? null
+                    : () => pressUpdateRow(
+                          context,
+                          updates: ui.updates,
+                          notice: context.read<LumitState>().postNotice,
+                          projectIsDirty: () =>
+                              context.read<LumitState>().project?.isDirty() ??
+                              false,
+                          saveProject: () =>
+                              saveProjectFrb(context.read<LumitState>(), ui),
+                        ),
+                child: Text(ui.updates.menuLabel, style: t.small),
+              ),
+            ),
+          ),
+        ]),
         // About used to sit here. It is Help ▸ About Lumit now (K-244):
         // Settings is for what you change, and a version number is not that.
       ];
+
+  /// The line under "This version": what is installed, and what the last check
+  /// made of it. Rebuilt with the row, so it follows the service too.
+  String _updateStatusLine(LumitUiState ui) {
+    final installed = 'Lumit ${versionFromBootLine(lumitVersion()) ?? '?'}';
+    return switch (ui.updates.stage) {
+      UpdateStage.upToDate => '$installed — the newest there is.',
+      UpdateStage.available =>
+        '$installed. Lumit ${ui.updates.release?.version} is available.',
+      UpdateStage.ready =>
+        '$installed. Lumit ${ui.updates.release?.version} is downloaded and '
+            'installs when Lumit restarts.',
+      UpdateStage.failed =>
+        '$installed. ${ui.updates.failure ?? 'The last check did not finish.'}',
+      _ => installed,
+    };
+  }
 
   List<Widget> _appearance(LumitTheme t, LumitUiState ui) => [
         settingsSection(t, 'Theme', [
@@ -752,6 +819,9 @@ class _SettingsWindowState extends State<_SettingsWindow> {
     final stats = cacheStats();
     final vram = vramCacheStats();
     final tier = playbackTier();
+    // Only read when it is going to be drawn: the report is a debug-build
+    // instrument, and a release build should not be making the call at all.
+    final memory = kDebugMode ? memoryReport() : null;
 
     return [
       settingsSection(t, 'Playback', [
@@ -873,6 +943,99 @@ class _SettingsWindowState extends State<_SettingsWindow> {
         ),
       ]),
       ..._diskCache(t, ui),
+      // Where the memory has gone (K-294). Last on the page, under the tiers
+      // it weighs: each section above reports one store, and this one reports
+      // the whole process and what none of them accounts for. Read downwards it
+      // is the summing-up, and it leaves every control above where the hand
+      // already knows to find it.
+      //
+      // **Debug builds only** (owner, 2026-08-06). It is an instrument for
+      // hunting a fault, not a setting: a shipped editor asking its user to
+      // interpret live texture counts has handed them the engineering rather
+      // than the tool. `kDebugMode` is false in both profile and release
+      // builds, so what ships is the page without it.
+      if (memory != null) settingsSection(t, 'Memory', [
+        settingsRow(
+          t,
+          'This process',
+          'What the system says Lumit is holding, all in — the number '
+              'Activity Monitor and Task Manager show.',
+          Text(
+            memory.processBytes == BigInt.zero
+                ? 'not known here'
+                : _bytes(memory.processBytes),
+            key: const ValueKey('settings-memory-process'),
+            style: t.small,
+          ),
+        ),
+        settingsRow(
+          t,
+          'Not held by any cache',
+          'The process, less every store above that is inside it — which on '
+              'this machine includes the frames on the card. A large number '
+              'here is not a cache to shrink: it is memory nothing in this '
+              'window is counting, and it is worth reporting.',
+          Text(
+            memory.processBytes == BigInt.zero
+                ? '—'
+                : _bytes(memory.unaccountedBytes),
+            key: const ValueKey('settings-memory-unaccounted'),
+            style: t.small,
+          ),
+        ),
+        settingsRow(
+          t,
+          'Held by the graphics driver',
+          'Pictures and buffers the driver still has for Lumit. A handful is '
+              'normal — the frames on the card, the ones being made. Thousands '
+              'means pictures the engine finished with were never destroyed, '
+              'and on a Mac that memory is inside the total above.',
+          Text(
+            '${memory.gpuTextures} pictures, ${memory.gpuBuffers} buffers',
+            key: const ValueKey('settings-memory-gpu'),
+            style: t.small,
+          ),
+        ),
+        // The byte figures are Vulkan and D3D12 only, so the row is not drawn
+        // at all on a Mac rather than printing two zeroes and inviting the
+        // reader to draw a conclusion from them.
+        if (memory.gpuReservedBytes != BigInt.zero)
+          settingsRow(
+            t,
+            'Graphics memory reserved',
+            'What the driver has taken from the system for those, and how much '
+                'of it is in use. The gap is memory Lumit has released and the '
+                'driver has not handed back.',
+            Text(
+              '${_bytes(memory.gpuReservedBytes)} reserved, '
+              '${_bytes(memory.gpuAllocatedBytes)} in use',
+              key: const ValueKey('settings-memory-gpu-bytes'),
+              style: t.small,
+            ),
+          ),
+        settingsRow(
+          t,
+          'Open media decoders',
+          'One per footage item in play. Each holds buffers of its own that '
+              'no budget here covers.',
+          Text(
+            '${memory.openDecoders}',
+            key: const ValueKey('settings-memory-decoders'),
+            style: t.small,
+          ),
+        ),
+        settingsRow(
+          t,
+          'Frames waiting to be written',
+          'The write-behind queue to the disk cache, which is bounded at '
+              'eight frames.',
+          Text(
+            '${memory.parkQueueFrames}',
+            key: const ValueKey('settings-memory-parks'),
+            style: t.small,
+          ),
+        ),
+      ]),
     ];
   }
 
@@ -1119,6 +1282,14 @@ class _SettingsWindowState extends State<_SettingsWindow> {
   /// A round figure for a sentence: "32 GB", or megabytes when it is small.
   static String _gib(double mib) =>
       mib >= 1024 ? '${(mib / 1024).round()} GB' : '${mib.round()} MB';
+
+  /// Bytes as a person reads them — MB up to a gigabyte, GB above, one
+  /// decimal so 85.4 GB does not print as 85.
+  static String _bytes(BigInt bytes) {
+    final b = bytes.toDouble();
+    if (b >= 1 << 30) return '${(b / (1 << 30)).toStringAsFixed(1)} GB';
+    return '${(b / (1 << 20)).toStringAsFixed(0)} MB';
+  }
 
   static String _mib(int bytes) => (bytes / (1 << 20)).toStringAsFixed(0);
 

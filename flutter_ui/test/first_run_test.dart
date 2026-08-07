@@ -87,6 +87,39 @@ void main() {
     expect(workspace.firstRunDone, isTrue);
   });
 
+  testWidgets('the update tick is on, and the answer carries it', (tester) async {
+    await tester.pumpWidget(host());
+    await tester.pumpAndSettle();
+
+    // Ticked before anything is touched (K-296): the default is that Lumit
+    // looks for new versions.
+    await tester.tap(find.byKey(const ValueKey('first-run-ae')));
+    await tester.pumpAndSettle();
+    expect(workspace.autoUpdate, isTrue);
+  });
+
+  testWidgets('unticking the update box is remembered', (tester) async {
+    await tester.pumpWidget(host());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('first-run-auto-update')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('first-run-vegas')));
+    await tester.pumpAndSettle();
+
+    expect(workspace.autoUpdate, isFalse);
+    // The editing answer is unaffected: two questions, one screen.
+    expect(workspace.interface.videoAsSequenceLayer, isTrue);
+  });
+
+  testWidgets('skipping leaves update checks on', (tester) async {
+    await tester.pumpWidget(host());
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('first-run-skip')));
+    await tester.pumpAndSettle();
+    expect(workspace.autoUpdate, isTrue);
+  });
+
   testWidgets('a machine that has answered is never asked again',
       (tester) async {
     workspace.firstRunDone = true;

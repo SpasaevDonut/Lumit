@@ -3393,6 +3393,44 @@ cache" above). Changing it means the frames already made no longer answer, and
 the ones you look at next are made afresh. That is the same rule every other
 picture-changing edit follows; it is not the setting misbehaving.
 
+### Asking the graphics card once instead of thirty-two times
+
+Work does not go to the graphics card one instruction at a time. It is written
+into a **command buffer** — a list of things to do — and the whole list is then
+*submitted*. Handing a list over is a round trip through the graphics driver,
+and that round trip costs roughly the same whether the list has one item on it
+or a thousand.
+
+Lumit used to build a separate list for every step of a frame: one for each
+layer, one for each effect on it, one for the final combine. A composition with
+thirty-two layers handed over thirty-four lists to draw a single frame. All of
+that work was going to the same card in the same order anyway, so there was
+never a reason for it to travel separately.
+
+Now a frame writes one list and hands it over once. Measured on the same
+composition: thirty-four submissions became three, and — the part that matters —
+the number no longer grows when you add layers. Adding thirty-one more layers to
+a comp now adds *no* extra round trips.
+
+**Two places still have to hand work over early**, and both for the same reason:
+they need to *look* at what the card produced. You cannot read a picture the
+card has not drawn yet, and a list that has not been submitted has not been
+drawn. So reading a finished frame back, measuring a scope, and handing the
+picture to the Viewer each push the list through first.
+
+**The render-time column is the interesting exception.** It measures a layer by
+waiting for the card to finish that layer before reading the clock — but under
+one-list-per-frame there is nothing to wait for yet, so the wait would return
+instantly and every number would be wrong. So a *measured* frame deliberately
+goes back to handing work over layer by layer. That is not a bug: it is the same
+trade the stopwatch already makes, which is why measuring is a switch you turn
+on rather than something running all the time.
+
+The thing that keeps this honest is a **count**, not a stopwatch. Lumit counts
+every submission, and a test asserts that adding layers adds none. A timing test
+would prove nothing on the machines that check the code (they have no real
+graphics card), but a count is a count anywhere.
+
 ### The panels
 
 `state/comp_model.dart` is the read model: **one** bridge call returns the whole
@@ -3454,6 +3492,168 @@ Built on top of that: masks and shape layers sharing one path type across the
 bridge (K-222, K-237), paint strokes stored as the *drag* rather than the pixels
 and re-stamped at render resolution (K-227), the razor (K-221), pan behind
 (K-220), the type tool (K-225) and camera tools (K-229).
+
+### What the lock switch actually does
+
+Locking a layer used to stop you dragging its bar, cutting it, renaming it,
+reordering it or deleting it — but you could still open its twirl-down and
+change its position, its effects or its volume. The switch said "no edits until
+unlocked" and meant something narrower.
+
+Now the refusal lives in the **engine**, in the one place every edit passes
+through on its way into the document. That matters more than it sounds: there
+are twenty-nine different kinds of edit a layer can receive, and guarding them
+one interface control at a time means remembering to do it again every time a
+new control is added — which is exactly how the hole opened, since the three
+kinds of row that leaked are the three newest.
+
+The rows are also shown greyed and untouchable, so you are not offered a gesture
+that would only be refused. Headings still open and close: looking inside a
+locked layer is not editing it.
+
+Three things a locked layer still accepts, because none of them changes the
+composition: **unlocking it** (or you could never get back), the **shy** flag
+(which only hides the row from the Timeline's list) and its **label colour**.
+Everything else waits until you unlock it.
+
+Undo still works across a lock, and the reason is worth knowing because it is
+what makes the whole approach safe: an edit can only have been made while the
+layer was *unlocked*, so walking backwards through your history always reaches
+the unlock before it reaches the edit underneath.
+
+### Why a keyframe jumps onto things
+
+Drag a keyframe along its lane with the magnet on — the horseshoe in the bar
+under the Timeline — and it now wants to land on the things already there: the
+start or end of a layer, a cut inside a sequence, another keyframe, a marker,
+the playhead, the edges of the work area. Before, the only thing it wanted was
+a whole frame.
+
+**The reach is measured in screen pixels, not in time**, and that is the part
+worth understanding. Zoomed right out, a hundred frames might be ten pixels
+apart, and a snap that reached "two frames" would be useless. Zoomed right in,
+one frame might be fifty pixels, and a snap that reached two frames would drag
+your key somewhere you never pointed. Measuring the reach on the screen instead
+means how far you are zoomed *is* how precise you are being — which is the thing
+your hand already understands, so there is no second setting to learn.
+
+When something catches the drag, a line is drawn at it. Without that, a key
+that leaps to a spot the pointer wasn't looks like a bug rather than a service.
+
+Two escapes. The magnet switch turns the whole thing off for as long as you like
+— and with it off a key may sit *between* frames, which is occasionally exactly
+what you want. Hold **Ctrl** during a drag and snapping stops just for that
+moment, for the one time in ten when the place you want is precisely where a
+snap will not let you put it.
+
+Beat markers need no special mention in any of this, and that is by design: beat
+detection writes ordinary markers, so dragging near a beat lands on it because
+it lands on markers.
+
+One thing the indicator broke on its way in, now fixed. The line is a piece of
+the lane that only exists while a snap is holding the drag, and it was drawn
+*before* the diamonds rather than after them. Flutter keeps a widget's identity
+by its position in a list unless you name it, so a line appearing at the front
+of that list shunted every diamond one place along, and each of them was rebuilt
+as though it were a different diamond — including the one your pointer was
+holding. A control rebuilt mid-drag loses the pointer, and losing the pointer
+ends the drag: the key committed the two or three pixels it had travelled by
+then and ignored the rest of the gesture. That is what "a keyframe will only
+move one frame, and dragging it again puts it back" was — the second drag being
+caught by the same target and landing back on it. The diamonds and the line are
+named now, so each is rebuilt as itself and a drag lasts until you let go.
+
+Right now this covers dragging a keyframe on its lane. Dragging a layer's bar,
+the razor, the work-area handles and markers themselves still land wherever you
+point. The arithmetic is written once and shared, so each of those is wiring
+rather than a fresh design.
+
+### Zooming that flies, and a slider that means something
+
+**The zoom moves rather than jumping.** Magnification is a *place* changing, not
+a number being nudged: jump straight from one zoom to another and you lose where
+you were. The Viewer has moved smoothly for a while; the Timeline used to cut.
+It now uses the same piece of code.
+
+Three details in that motion, each there for a reason:
+
+- It moves **geometrically**. Going from 1× to 16×, halfway through is 4×, not
+  8.5×. Zoom is a ratio, so equal time should buy equal ratio — interpolate it
+  the other way and the start lurches and the end crawls.
+- **Rolling Ctrl+wheel faster zooms further.** A notch counts for more the
+  sooner it follows the last one, up to four times. There is a ceiling on
+  purpose: without one a quick flick crosses the entire zoom range and you
+  cannot find your way back.
+- **The frame under your pointer stays under your pointer** for the whole
+  flight, not just at the ends. The lanes are growing the entire time, so the
+  scroll position has to be corrected on every single frame of the animation —
+  hold it still and whatever you were aiming at slides away from the cursor.
+
+**The bottom bar's zoom is a slider**, between a small landscape and a large
+one — the same pair After Effects puts either side of its own. Those two marks
+are drawn by hand rather than taken from the icon set, for a reason worth
+knowing: the icon set's glyphs are line drawings, and below about 16 pixels the
+line is thinner than a pixel, so it gets smeared across two at half strength.
+That is what "crunchy" small icons are. A filled shape has no line to lose, so
+it stays clean at nine pixels, which is what lets the small end be plainly
+smaller than the large one.
+
+The slider's two ends are promises: all the way left is the whole composition,
+and all the way right is **twenty frames** across the lanes.
+
+Twenty *frames*, not a percentage, and that is the point. "6400%" tells you
+nothing unless you also know how long the comp is; "twenty frames" means the
+same thing on a five-second clip and a ten-minute one. So the right-hand end
+moves with the composition rather than being a fixed number.
+
+The slider also runs on the logarithm of the zoom, for the same reason the
+motion does. A plain linear slider on a ten-minute comp would spend nine tenths
+of its length inside the last handful of frames, and every zoom you actually
+wanted would be crushed into the first centimetre.
+
+The two ways of zooming hold different things still, deliberately. Ctrl and the
+wheel keeps the **frame under the cursor** where it is, because there the cursor
+is the whole gesture. The slider has no cursor to work from, so it keeps the
+**playhead** where it is — that is where the work is happening, and it is what
+After Effects zooms its timeline about. If the playhead has been scrolled out of
+sight, the zoom brings it to the middle instead, because magnifying about
+something you cannot see leaves you nowhere.
+
+**A dragged slider does not animate**, and that is not laziness. The flight
+exists to fill the gap between two zooms that arrive as *steps* — a wheel notch,
+a click on the track. A drag is already a continuous motion, so animating it
+means the lanes are always chasing a target your finger has already moved,
+starting a new 120-millisecond journey before the last one arrived. It feels
+like the panel is stuck to treacle. Dragged, the zoom simply is where the finger
+put it.
+
+**The scrollbar stops twitching, and the reason is where the correction
+happens.** Keeping something still while the lanes grow means moving the scroll
+position to match the new width. Do that the instant the zoom changes and you
+have moved it to a place that only makes sense for a width the panel has not
+laid out yet — so for the rest of that frame the view is scrolled past its own
+end, Flutter starts pulling it back, and the little thumb in the bottom bar is
+drawn from two numbers that do not agree. That is the jitter. Flutter tells a
+scroll how big its content is *during* layout, and offers a way to say "I have
+moved the offset, lay out again" — so the correction now happens there, where
+the width and the offset are known at the same time, and nothing outside that
+moment ever sees a mismatch.
+
+**And a zoom only rebuilds the lanes.** This is the other half of the same
+problem. The Timeline is two halves of one table: the layer names on the left,
+the bars on the right. Nothing on the left depends on the zoom — but the panel
+used to redraw *all* of it every time the zoom moved a fraction, which during an
+animation is sixty times a second, and each of those redraws asked the engine
+again for the work area, the render cache and more. Now the right-hand half
+listens for the zoom by itself and the left-hand half sits still. The Timeline
+already did exactly this for the playhead, for exactly the same reason.
+
+A plain wheel still scrolls, as it always did — it never zooms without a
+modifier, which is a rule the specification is firm about and this did not
+change.
+
+The graph editor and the Project panel's thumbnails still cut rather than fly.
+They are the same job, and the shared piece is written.
 
 ### What is remembered, and where
 
@@ -3541,6 +3741,92 @@ The same "reserve the space" rule applies to things that are not text: the
 Viewer's degradation badge (the "Half" chip that appears when playback has had to
 soften the picture) keeps its empty slot when it is not showing, so it does not
 shove the bar sideways as it comes and goes.
+
+### Where the memory went (K-294)
+
+**The problem this solves.** Twice now Lumit has been found holding tens of
+gigabytes of memory on a Mac. Both times the hard part was not fixing it — it
+was working out *what* was holding it. Lumit keeps several stores of pictures:
+finished frames in memory, finished frames on the graphics card, decoded frames
+from video files, frames queued to be written to disk. Each has a budget and
+each throws things away to stay inside it. So either one of them was misbehaving,
+or something outside all of them was holding memory nobody was counting — and
+from outside the program those two look identical.
+
+**The fix is a subtraction.** Settings ▸ Performance now opens with a Memory
+section: the total the operating system says Lumit is holding, then what each
+store admits to, and then the difference. If the stores add up to half a gigabyte
+and the total says eighty-five, the answer is "none of these" — which sounds like
+nothing but is most of the investigation, because it rules out everything with a
+budget and points at the layers underneath (the graphics driver, the video
+decoders).
+
+Three details that keep the arithmetic honest, all of which were tempting to get
+wrong:
+
+- **Frames on the graphics card are shown but not subtracted.** On an Apple
+  Silicon Mac the graphics memory *is* the system memory, so those frames are
+  already inside the total; on a PC with a separate graphics card they are not.
+  Subtracting them would be right on one machine and wrong on the other, so the
+  report shows the figure and lets you read it.
+- **Nothing is counted twice.** A frame waiting to be written to disk is the
+  same piece of memory as the copy in the frame cache — one picture, two lists —
+  so the queue reports how many frames are waiting, not how many bytes.
+- **What cannot be measured is counted instead.** Nobody outside FFmpeg knows how
+  much memory an open video decoder holds, so the report says how many are open
+  rather than inventing a number.
+
+One more row asks the **graphics driver** how many pictures and buffers it is
+still holding for Lumit. A handful is normal: the frames kept on the card, and
+the working pictures of whatever frame is being made right now. Thousands would
+mean pictures Lumit had finished with were never actually destroyed — which is a
+different fault from any cache being too big, and on a Mac that memory is inside
+the total at the top.
+
+Counting them, rather than measuring them, is deliberate. The first version of
+this row asked the driver for bytes, and on a Mac the answer was "not reported
+by this driver" — that particular question only has an answer on Windows and
+Linux. A count is a count on every machine, and it happens to be the sharper
+question anyway: it distinguishes a big cache from a leak, which bytes alone
+cannot.
+
+The report is a **debug-build tool**: it is there while a fault is being hunted,
+and a shipped Lumit does not show it. Asking somebody editing a video to
+interpret a live texture count is handing them the engineering instead of the
+tool.
+
+### And the repair it found (K-295)
+
+Here is what the instrument caught. Telling the graphics card "I have finished
+with this picture" does not give the memory back. It marks it finished, and the
+memory returns the next time the program asks the card to tidy up. A program
+that is drawing to a window asks constantly, without meaning to, because showing
+a frame *is* asking. Lumit spends much of its time drawing into its caches
+instead — no window, no asking, and so a pile of finished pictures nobody had
+collected.
+
+That is why the memory came back when the owner switched panels: the switch
+happened to ask. Now the engine asks once per turn of its own loop, whether
+anything is on screen or not, which costs nothing when there is nothing to
+collect and means the pile is never more than a moment old.
+
+**Two ways to ask, and the test needed the other one.** Asking the card to tidy
+up comes in two forms. "Collect anything you have finished with, and don't keep
+me waiting" is the one the loop uses, because a loop that must produce a picture
+cannot afford to stand still. But work handed to a graphics card does not happen
+when you hand it over — it happens when the card gets to it, and a computer can
+hand over frames far faster than a card draws them. So there is always a queue,
+and everything still in that queue is memory the card cannot possibly release
+yet. Ask the impatient way and the answer includes the queue.
+
+The other form is "finish what you have, *then* collect", and it waits. That is
+wrong inside a loop and exactly right for two other moments: an engine with
+nothing left to draw, and a **measurement**. This matters because a test was
+asking the impatient question and reading the queue as though it were a leak: on
+a Mac it saw 113 abandoned pictures where the truth was a handful, and on Windows
+577, while the same test on the build machine — which has no real graphics card,
+so nothing ever queues — saw eighteen and looked perfectly healthy. The number
+only means anything once the card has caught up.
 
 ## 10. The app icon and the brand files
 
@@ -3636,3 +3922,145 @@ To rehearse all this without publishing anything real, tag a **pre-release**:
 any tag with a suffix, like `v0.2.0-rc1`, runs the identical pipeline but
 marks the result a pre-release, so the download page's "latest" ignores it.
 Delete it afterwards and tag the real version.
+
+## 11. Keeping Lumit up to date, in plain terms
+
+Every release already ends up in the same place: a GitHub Release, tagged `v0.1.0`
+or whatever the version is, with the finished installers hanging off it — a
+`setup.exe` for Windows, a disk image for macOS, and a Flatpak for Linux
+(K-300). That is the whole raw material the updater needs, and it means Lumit has
+no update server to run and nothing to pay for.
+
+**What "check for updates" actually does.** GitHub will answer a small,
+public question — *what is the newest release of this repository, and what is
+attached to it?* — over the same sort of web request a browser makes. Lumit asks
+it, reads the tag (`v0.2.0`), strips the `v`, and compares that with the version
+this build reports on start-up: the very first line of the boot log, the one the
+About window shows. Comparing versions is fiddlier than it looks — `0.10.0` is
+newer than `0.9.0` even though it sorts earlier as text, and `0.2.0-rc.1` is
+*older* than `0.2.0` because a release candidate comes before the release. There
+is a small function for exactly that, and a test for each of those traps.
+
+**One menu row does everything.** Help ▸ Check for updates is not a button that
+opens an update window; it is the update, in a row. Press it and it goes grey and
+says *Checking for updates…*. A second later it either says *Click to update -
+v0.2.0* or goes back to *Check for updates*, with "Lumit is up to date" in the
+status line at the bottom. Press the offered version and Lumit asks whether to
+fetch it, tells you how big it is, and shows a bar while it comes; the row
+counts along too, in case you closed the window and went back to editing. When it
+has arrived the row says *Restart to finish updating* until you do.
+
+Making a menu row behave like that needed one new trick: menus in Lumit are
+normally a list of labels decided the moment the menu opens, and pressing any row
+closes the menu. This one row is a `MenuEntry.live` — it redraws itself while the
+menu is open and it stays open when pressed, because the whole point of pressing
+it is to watch what happens. It is the only row like that, deliberately.
+
+**Automatic updates.** There is a tick on the setup screen, and the same tick in
+Settings ▸ General ▸ Updates. It is on to begin with, and it means one specific
+thing: when Lumit starts, and no more than once a day, it *looks*. It never
+downloads anything on its own. If there is something newer, all that happens is
+that the Help row is already saying so the next time you open the menu. Someone
+editing on a hotel connection should never discover Lumit quietly spending their
+data allowance.
+
+**Why the whole installer, rather than a patch.** Patches are smaller, and that
+is genuinely nice; the price is publishing a separate patch for every pair of
+versions people might be coming from, writing the tool that applies them, and
+then writing the fallback for when somebody's particular pair does not exist.
+That is three new things that can be broken in order to save bandwidth GitHub
+gives us for free. So: the whole installer, every time, on a click you made.
+
+**What stops a bad download from being run.** The release says how many bytes the
+installer is and — where GitHub provides one — its SHA-256, which is a
+fingerprint of the file's contents: change one byte and the fingerprint changes
+completely. Lumit checks both before it will run anything, and deletes the file
+if either disagrees. An installer is the most dangerous file Lumit ever touches;
+a truncated download or a swapped file is caught here or not at all.
+
+**Why you have to restart.** An installer cannot overwrite a program that is
+running, which is a rule of the operating system rather than a choice of ours. So
+the last window says *Restart to finish updating*. If you have unsaved work open,
+it offers **Save and restart** as well as **Restart without saving** — losing an
+evening's work to a version number would be an absurd way to lose it — and
+**Later**, which keeps the downloaded installer so you can finish whenever you
+like. On Windows the installer runs itself quietly and Lumit closes; on macOS the
+disk image opens and Lumit closes; on Linux Lumit only shows you the downloaded
+file, because unpacking a bundle or installing a Flatpak is something you do
+where you want it, not something an editor should do behind you.
+
+**Where the code is (K-296).** `flutter_ui/lib/state/updates.dart` knows about versions,
+downloads and files; `flutter_ui/lib/shell/update_dialog_frb.dart` is the windows
+you see. None of it is in Rust: the engine has no business knowing about the
+internet, and this way nothing that renders frames grows a network dependency.
+Every point where the updater touches the outside world — asking GitHub,
+downloading, running an installer, quitting — is a swappable seam, which is how
+the tests exercise the entire sequence without ever going near a network or
+actually running anything.
+
+### Updating without an installer (K-297)
+
+The section above describes updating by downloading the installer and running
+it. That still happens in some cases, but it is no longer the normal one — and
+the reason is not clever code, it is *where Lumit lives*.
+
+**Why Chrome never shows you an installer.** Programs on Windows traditionally
+go in `Program Files`, a folder only an administrator may write to. That is why
+updating one always involves a prompt: the program cannot change its own files,
+so it has to ask an installer, and the installer has to ask Windows for
+permission. Chrome, VS Code and Discord sidestep the whole ceremony by
+installing somewhere *you* own — a folder inside your own user profile. A
+program running as you can rewrite a folder belonging to you without asking
+anybody. Lumit now installs there too (`%LOCALAPPDATA%\Programs\Lumit`).
+
+**What a release now carries.** As well as the installer for each platform,
+every release publishes the application *by itself* as a plain archive: a zip of
+the Windows files and a zip of the macOS `Lumit.app`. That archive is what Lumit
+downloads to update itself. Nothing in it is an installer — it is simply the new
+version of the same files. Linux needs no archive of its own: a Flatpak is
+updated from the `.flatpak` bundle the release already carries, and the Linux
+tarball this section used to name is withdrawn (K-300).
+
+**How the swap works, and why it is done that way.** The obvious approach is to
+copy the new files over the old ones. Do not: that is several hundred separate
+operations, and if anything interrupts it half way — a crash, a flat battery —
+you are left with a Lumit that is half one version and half another, which may
+not start at all. Instead Lumit unpacks the whole new version *beside* the old
+one, then does two renames:
+
+1. `Lumit` becomes `Lumit.old`
+2. `Lumit.new` becomes `Lumit`
+
+A rename is a single filesystem operation: it either happened or it did not,
+with nothing in between. So at every moment there is a complete, working Lumit
+on disk — the old one, or the new one. If the second rename fails, the first is
+undone on the spot, and the code doing the undoing is already loaded in memory,
+so it does not need the files it is moving.
+
+The old folder is deliberately left lying there. Windows will not let anyone
+delete a `.dll` that is currently loaded, and at that moment Lumit is still
+running from those very files. So it is swept up on the *next* launch, by the
+new version, when nothing is holding it — that is the first thing `main()` does.
+The same sweep also puts the old version back if it ever finds the install
+folder missing, which is what a machine dying between those two renames would
+leave behind.
+
+**Three ways an update can be applied**, and Lumit works out which by looking at
+where it is actually installed:
+
+- **In place** — the swap above. Requires a folder Lumit can write beside, which
+  it checks by genuinely writing a small file there rather than guessing from
+  the path.
+- **By installer** — for an older installation still in `Program Files`, or a
+  macOS disk image. Exactly the K-296 behaviour, kept as the fallback so nobody
+  is stranded.
+- **Handed to Flatpak** — see below.
+
+**Flatpak is the exception, and honestly so.** A Flatpak runs in a sandbox whose
+files are read-only on purpose: that is the security model, not an oversight. An
+application inside one genuinely cannot replace its own files, and the ways to
+reach out to the host and do it anyway require permissions no video editor
+should be asking for. So on Flatpak, Lumit downloads the new bundle, shows you
+the one command that installs it, and stays open. Making this a real
+`flatpak update` needs Lumit published to a Flatpak *remote* rather than as a
+single downloadable bundle — that is written down in TODO as the next step.

@@ -6141,7 +6141,436 @@ no longer declares it and the panel cannot draw a row `set_value` refuses. The n
 passthroughs (Intensity 0, Mix 0) return before any of this, so they stay bit-exact
 whatever the menu holds.
 
-**K-290 · PROPOSED · A release is exactly three files, and every one of them gates it.**
+**K-290 · DECIDED · A frame is one command buffer, and a measured frame is not.** Every pass
+in `lumit-gpu` used to build its own command buffer and submit it, so a frame cost the graphics
+driver one round trip per layer and per effect — measured 2026-07-31 at `layers + 2`
+submissions, 34 at thirty-two layers. All of a frame's passes are already in order on one
+queue, so they are now encoded once and handed over once: 3 submissions, and flat in the layer
+count. This takes [impl/playback-scheduler.md](impl/playback-scheduler.md) §2's
+one-GPU-submit-thread rule further rather than conflicting with it — that rule says *who* may
+submit, this says *how often*.
+
+**Batching is a property of the context, not of a threaded parameter.** `GpuContext` holds the
+frame's encoder between `begin_frame` and `end_frame`, and `encoder()` hands it out; outside a
+batch it hands out a fresh, self-submitting one, so every pass called on its own behaves
+exactly as before and no test changed. The alternative — threading `&mut CommandEncoder`
+through the realise walk — would have rewritten every signature in the crate and every call
+site in the walk, for a walk that recurses through nested comps, adjustment staging and one
+whole render per motion-blur sample. `begin_frame` nests instead, so the recursive entry point
+opens the batch and the outermost caller closes it.
+
+**Anything that observes the GPU flushes first.** A command that has not been submitted has not
+run, so the read-backs, the scope trace and the three shared-texture present paths hand the
+batch over before their own submission and wait. These keep their own command buffers
+deliberately: each is followed by a fence, and a fence is the one thing batching cannot defer.
+
+**A measured frame gives the batching up, and that is the right trade.** The render-time
+column fences on the device at each layer and each effect; under batching that fence would
+wait on a queue nothing had been handed to, and every number would silently become the time
+Lumit takes to *describe* a layer rather than the time the card takes to draw it. So measuring
+flushes as it goes. K-276 already established that measuring costs the overlap between
+processor and card, which is why it is opt-in and never runs during playback; this is that same
+cost, not a new one.
+
+**The gate is a count, not a stopwatch.** `GpuContext::submits_so_far` counts every submission
+through the one choke point, and the regression tests assert the shape: an unmeasured frame's
+count does not grow with its layers, and a measured frame's does. A submit is a round trip
+whose cost does not depend on the card, so the count is the honest measure — and unlike a
+timing it means something on CI's software rasteriser. A fixed budget was deliberately not
+pinned; "adding thirty-one layers adds no submissions" is the property that was lost, and it is
+the one worth holding. **The wall-clock win is still unmeasured on real hardware**: the number
+that motivated this was a submission count, and what it buys in milliseconds wants a run on a
+real card either side.
+
+**K-291 · DECIDED · The lock is enforced in the engine, and it protects the work rather than
+the housekeeping.** The Timeline guarded the *gestures* a locked layer offers — its bar, the
+razor, rename, reorder, delete — while the fold-out's transform, effect and volume rows went on
+editing it. So the switch did not mean what its own tooltip says ("Locked — no edits until
+unlocked"), and the backlog carried the open question: guard the rows, or enforce in the engine?
+
+**Enforce in the engine.** One guard at the top of `apply` covers every op, every caller, and
+every op yet to be written. A guard per row has to be remembered each time a row is added, and
+forgetting one is precisely how this hole opened — the rows that leaked are the three *newest*
+families of row. The refusal is `OpError::LayerLocked`, which crosses the bridge as an ordinary
+op error.
+
+**And guard the rows anyway, for the interface's sake.** A locked layer's property rows are now
+shown but not touchable: the numbers are still the document's and the curves still draw, but
+nothing on the row takes a pointer. That is not belt-and-braces for its own sake — without it
+the interface would go on offering a gesture the engine would only refuse, which is a worse
+answer than not offering it. *Group* rows stay live: twirling one open is navigation, not
+editing, and a locked layer you could not look inside would be worse than one you can.
+
+**Lock protects the work, not the housekeeping.** A locked layer refuses every edit to what it
+*is* — transform, effects, masks, paint, art, text, clips, markers, blend, matte, parent,
+retime, volume, its switches, its span, its place in the stack, its existence. It still accepts
+three: the **lock itself** (or it could never be undone), **shy** (a filter on the Timeline's
+list, changing no pixel and no timing) and the **label** colour. That line is drawn where it is
+because "locked means the composition does not change" is a sentence a user can hold, and
+neither of the other two changes the composition. If it turns out to be the wrong line, it is
+the reversible half of this decision — the guard's shape does not depend on it.
+
+**Undo still crosses a lock, which is what makes the guard safe to put in the applier.** An
+edit can only have been made while the layer was unlocked, so the journal always holds the
+unlock *after* the edit, and walking backwards meets the unlock first. A `Batch` is guarded by
+its members — each passes through `apply` on its way in, and a refusal rolls the whole batch
+back, so a batch stays all or nothing. Both are pinned by tests.
+
+**K-292 · DECIDED · Snapping reaches in pixels, reports what caught it, and lets `Ctrl`
+past.** [07-UI-SPEC.md](07-UI-SPEC.md) §4.5 has always asked for snapping across edit points,
+layer in/out points, keyframes, markers, beat markers, the playhead and the work area edges.
+K-190 shipped the magnet covering exactly one of them — a whole frame — and the rest waited.
+They are built now, for the lane key drag.
+
+**The reach is measured in screen pixels, not in time**, which is the spec's rule and the one
+that makes a single slop feel right everywhere. Zoomed out, a hundred frames may be ten pixels
+apart and snapping should be eager; zoomed in, one frame may be fifty pixels and it must not
+reach across three of them. Eight pixels is the distance: a little under half a row, close
+enough that landing on a marker takes no aim and far enough that the frame either side stays
+reachable at any useful zoom. Magnification is therefore the precision control, and there is no
+second setting for it.
+
+**What caught the drag is part of the answer, not a side effect.** `snapFrame` returns the
+target as well as the frame, because the spec requires the capture to be *indicated* — a key
+that jumps to a place the pointer was not reads as a fault unless something says why. The lane
+draws a line at what took it, for as long as it holds it.
+
+**A whole frame is the fallback, not a target.** With nothing in reach the drag rounds, exactly
+as K-190 made it. That keeps the magnet's original meaning intact for the common case — an
+empty comp has nothing to snap to and behaves precisely as before — and it is why the
+whole-frame landing reports *no* caught target and so draws no indicator: it is not news.
+
+**A lane's own keys are excluded.** A key that could snap to itself would be pinned where it
+started, which reads as a broken drag rather than as a snap. A neighbour already on the same
+frame goes with it, since being taken to where you already are is not a service either.
+
+**`Ctrl` held suspends it, rather than a second toggle.** It is wanted for a moment inside a
+gesture, not for a session; the magnet in the bottom bar remains the session-length switch.
+
+**Beat markers are markers.** Beat detection writes ordinary markers, so beat snapping — the
+beat-sync covenant's daily face — arrives by being marker snapping rather than by being a
+separate kind with a separate list.
+
+**The razor reads the same function, and that fixed a disagreement nobody had written down**
+(owner, 2026-08-06). A cut was always quantised — `TimelineAxis.frameAt` rounds — but the line
+drawn under the blade followed the pointer continuously, so the mark stood up to half a frame
+from where the edge actually bit. One function now answers for both, so they cannot part. A cut
+is a clip boundary and therefore a whole frame, so the razor rounds *after* snapping: a target
+that sits between frames still takes the cut, and the cut still lands on a frame.
+
+**The layer bar drag, the work-area handles and marker drags still land where the pointer puts
+them.** That is a deliberate stopping point rather
+than an oversight: the arithmetic is pure and shared (`panels/timeline_snap.dart`, tested on
+its own), so each remaining gesture is a wiring job with no design left in it, and doing them
+one at a time keeps each one's regression test honest. TODO carries the list.
+
+**K-293 · DECIDED · Zoom flies, and the Timeline's zoom is a slider whose ends mean
+something.** From the owner (2026-08-06), in three parts: the zoom should move rather than
+cut, faster input should zoom further and settle when the hand stops, and the bottom bar's
+− / + / Fit buttons should be a slider.
+
+**The wheel still never zooms without a modifier.** This was briefly built the other way, on a
+reading of the owner's first message that they corrected the same day: docs/07 §4.6's "no
+scroll hijack" MUST stands, plain wheel scrolls, `Ctrl+wheel` zooms. Recorded because the
+supersede was written and then withdrawn, and a reader finding half of it in the history should
+know it never applied.
+
+**The motion is the Viewer's, lifted out.** `widgets/smooth_zoom.dart` is K-218's shape shared:
+the Viewer has flown since then while the Timeline, the graph editor and the Project panel all
+cut. It interpolates **geometrically**, because magnification is a *ratio* — lerp 1 → 16
+linearly and half the flight is spent between 8 and 16, which reads as a lurch then a crawl.
+The Timeline reads it now; the graph editor and Project panel are named in TODO and are a
+matter of holding one and reading its value.
+
+**A fast roll goes further, with a ceiling.** A notch is worth more the sooner it follows the
+last — linear in the gap, which is the thing the hand controls directly — up to 4×. The ceiling
+is not a detail: without one a flick crosses the whole zoom range in a single gesture and there
+is no way back to where you were. A notch arriving mid-flight extends the *target* rather than
+restarting from wherever the flight had reached, which is what makes a rolled wheel one
+continuous motion instead of hops that never arrive. When the hand stops, the flight finishes
+and settles.
+
+**The anchor is held for the whole flight, not just its ends.** The frame under the pointer
+stays under it on every tick, because the lanes grow all the way through — hold the scroll
+offset still instead and the anchor slides out from under the cursor, which is the drift the
+Viewer's own note warns about. The correction runs in the same turn as the rebuild: deferring
+it to a post-frame callback paints one whole frame at the new width with the old offset, a
+visible sideways slide.
+
+**The slider's ends are a promise, and one of them is a count of frames.** Left is the whole
+composition. Right is **twenty frames across the lanes** — not a magnification like "6400%",
+because a magnification means nothing without knowing the comp's length, while "twenty frames"
+means the same thing on a five-second comp and a ten-minute one. The visible span is
+`frames / zoom` whatever the panel's width, so the ceiling is simply `frames / 20`, and it
+moves with the composition. The slider runs on the **logarithm** of the zoom for the same
+reason the flight does: linear, nine tenths of its length would sit inside the last handful of
+frames of a long comp and every useful zoom would be crushed into the first centimetre.
+
+**Two zooms, two anchors, and that is deliberate.** `Ctrl+wheel` holds the frame **under the
+pointer**, because there the pointer is the whole gesture. The slider has no pointer, so it
+holds the **playhead** — corrected by the owner the same day from the middle of the visible
+lanes, which was their own first suggestion and which they withdrew: the middle of the
+scrollbar is a place nobody is looking at, while the playhead is where the work is happening,
+and it is what After Effects zooms its own timeline about. In view, the playhead keeps exactly
+the screen position it has, so nothing under the eye moves at all; out of view, it is brought
+to the middle of the lanes, because magnifying about something you cannot see leaves you
+nowhere.
+
+**A dragged slider does not fly.** The flight is for input that arrives in *steps* — a wheel
+notch, a tap on the track — where the gap between two zooms has to be filled. A drag is
+already the motion, and animating towards a target the finger moves every few milliseconds
+meant the lanes trailed the handle by a whole flight, restarting before they ever arrived:
+reported by the owner as the slider being "super super laggy". So a drag sets the zoom at
+once, and the handle is drawn from where the zoom is *going* rather than from where a flight
+has reached, which is what keeps it under the finger. `HouseSlider` gained `onChangeLive` for
+this; a tap on its track still flies.
+
+**Zoom rebuilds the lanes, not the panel.** The other half of that lag: the zoom was a plain
+field and every tick called `setState`, so a flight rebuilt the outline's every row, its
+toolbar and its column header sixty times a second — along with the work-area read, the fold
+tables and the cache-bar read that come with a full rebuild. Nothing left of the seam depends
+on the zoom. The zoom is a `Listenable` and only the lane side listens to it, which is a
+standing shape for this panel rather than a patch: the playhead is already handled this way,
+and for the same reason. docs/13's S1 budgets a Timeline scroll/zoom frame at 8 ms, and the
+bridge-call budget suite is what holds this: a zoom drag now has its own entry there, and
+what it asserts is that the count does not scale with the number of steps dragged. Three things found in the same pass and fixed with it — the cache bar
+was asking the engine for the whole composition's cache map on every rebuild despite its own
+note saying it never polls (it now holds one read until a frame arrives), the merged
+"something changed" listenable was allocated fresh per build so every cache bar
+resubscribed, and the row-divider painter compared its blanks by identity against a list
+rebuilt each time, so it always repainted.
+
+**The scroll correction belongs inside layout.** Holding the anchor meant moving the scroll
+offset the moment the zoom changed — and that offset is only valid for the *new* lane width,
+which has not been laid out yet. For the rest of that frame the position sat past its own end,
+so Flutter began springing it back, and the bottom bar's thumb was drawn from a position and a
+length that disagreed: a thumb that twitched all the way through a drag (owner, 2026-08-06,
+"jumps around a bit"). A scroll position is told its new content size during layout, in
+`applyContentDimensions`, which is the one moment the width and the offset are known together —
+and that method is *documented* to return false when it has moved the offset, so layout runs
+again with the corrected one. `widgets/zoom_anchored_scroll.dart` is a `ScrollController` that
+does exactly that, and the anchor it holds is **one-shot**: an anchor that outlived its zoom
+would be applied by the next unrelated layout — a window resize — and drag the view back to a
+zoom the reader had since scrolled away from. A zoom still in flight simply asks again on its
+next tick, which it does anyway, because every tick is a new width.
+
+**The slider's ends are landscapes, drawn rather than looked up.** A small one and a large one,
+the pair After Effects flanks its own zoom slider with, replacing two sizes of magnifying
+glass. Two reasons, both mattering: at the sizes that make the pair read as "less / more" the
+small end is well under 16px, and K-209's floor exists because an Iconoir glyph's 1.5-unit
+stroke lands on less than a pixel there and crunches — which is exactly what the 13px
+magnifier did. A filled silhouette has no stroke to lose. docs/15 §5 already allows a
+deliberately painter-drawn glyph, and this is one.
+
+The − / + / Fit buttons are gone: the slider's two ends *are* Fit and full zoom, and a slider
+also says where you are between them, which three buttons never did. `HouseSlider` gained a
+width and a value-hiding option rather than a second slider being written for a toolbar.
+
+**K-294 · DECIDED · Memory is reported, not guessed at: every tier's bytes beside the
+process's own, and the difference named.** From the owner (2026-08-06), after a second
+report of Lumit holding tens of gigabytes on a Mac — 85 GB, following the 81 GB that
+K-277 bounded the write-behind queue for.
+
+The first question either time was the same, and neither time could it be answered from
+outside the process: **is a cache doing exactly what it was told, or is something holding
+memory nobody is counting?** Every tier already knew its own bytes and every one of them
+is byte-budgeted; what was missing was the total to weigh them against. So Settings ▸
+Performance opens with a **Memory** section: what the operating system says the process
+holds, what the frame cache and the decoded-frame cache hold, how many decoders are open,
+how deep the write-behind queue is, and **what is left over**.
+
+The left-over figure is the point. If the tiers sit at their budgets and the process is a
+hundred times larger, the search is not in this list at all — it is memory held below us
+(graphics allocations the driver has not reclaimed, a decoder's own buffers) and that is a
+different hunt with different tools. Turning a week of guessing into one screenshot is
+worth a syscall.
+
+- `resident_memory_bytes` asks each platform for its nearest equivalent of what the task
+  manager shows: `WorkingSetSize` on Windows, `VmRSS` on Linux, and **`phys_footprint`
+  from `TASK_VM_INFO`** on macOS. Resident size is the obvious macOS answer and the wrong
+  one — it leaves out the compressed pages and the IOSurface and Metal allocations a
+  graphics application lives on, which is most of what would be hunted. `phys_footprint`
+  is what Activity Monitor prints under *Memory*, and so the number a user reads back.
+- **The graphics driver's own accounting rides beside the tiers.** The first reading in
+  anger made the case: 12 GB held, 11 GB of it unaccounted, with ~405 frames decoded —
+  which cleared every byte-budgeted tier at a glance and left the layer underneath, where
+  the tiers' own numbers cannot reach.
+  - It was first written as bytes alone (`Device::generate_allocator_report`), and on the
+    Mac it was written for it read **"not reported by this driver"**: that report is
+    Vulkan and D3D12 only, and Metal does its own allocation. An instrument that works
+    only where there is no problem is not an instrument, so the report now leads with
+    **live object counts** — how many textures and buffers the driver is holding — which
+    every backend keeps. A handful at rest against thousands is exactly the difference
+    between a cache doing its job and frames the engine dropped never being destroyed.
+  - The byte figures stay for the platforms that have them, and that row is **not drawn**
+    where they are zero: a zero nobody can distinguish from a real answer is worse than a
+    missing row (docs/15-DESIGN.md — the honest gap).
+  - The counts are pinned by a test that makes a texture, drops it, and checks the tally
+    follows: compiled without wgpu's `counters` feature they would read zero for ever,
+    which is the failure this row could not afford.
+- **VRAM is reported apart, never subtracted**: on unified memory it is inside the process
+  and on a discrete card it is not, so folding it in is wrong on half the machines Lumit
+  runs on. **Nothing is counted twice** — a frame in the write-behind queue shares its
+  allocation with the frame cache, so the queue reports a count. **What cannot be weighed
+  is counted** — an open decoder's buffers belong to FFmpeg and the driver, so the report
+  says how many are open rather than inventing bytes.
+- A platform that cannot answer returns 0 and the interface says "not known here". The
+  honest gap, per docs/15-DESIGN.md, beats a plausible number.
+
+This is a diagnostic, and it is deliberately not a fix: it does not reclaim a byte. It is
+the instrument the next report is read with, written down in docs/13 §7.0.1 as a standing
+rule — a tier that holds memory and does not report it is not finished.
+
+**K-295 · DECIDED · What the engine drops, the driver hands back on the next turn: the
+worker reclaims once a loop.** From the owner's readings on 2026-08-06, which caught the
+fault in the act: 6 GB held with **around 5 500 live graphics buffers**, then 2.9 GB and
+**8 buffers** moments later — because switching back to a settings page happened to make
+the device do a maintain. Memory that comes back only when the user does something
+unrelated is a leak in every sense that matters to the person whose machine it is.
+
+**The mechanism.** Dropping a texture or a buffer does not free it. wgpu marks it
+destroyed and hands the memory back on the device's next *maintain*, which a renderer
+drawing into a window gets for free from presenting. This engine renders into caches, on a
+worker thread, and spends most of its time idle: the frame cache evicts, read-backs
+finish, a composite's intermediates go out of scope — and none of that asked the device
+for anything, so the memory sat marked-and-not-returned until something else polled for
+its own reasons. The idle fill and the idle backup make that worse rather than better,
+because they are what produces the dropped objects while nothing presents.
+
+**The fix is one line and a rule.** `GpuContext::reclaim` — a non-blocking
+`Maintain::Poll` — on every turn of the worker's loop. It drains what has already
+finished, costs nothing when there is nothing to drain, and makes reclamation a property
+of time passing rather than of the user opening a panel.
+
+**The rule this writes down** (docs/13 §7.0.2): an engine that renders without presenting
+MUST maintain its device on a schedule of its own. Anything that only frees memory as a
+side effect of an unrelated call is not freeing memory.
+
+Two things fell out of the same readings and are fixed with it:
+
+- **Frames on the card are counted against the process where the card's memory *is* the
+  process's memory.** K-294 reported VRAM apart from every tier on the grounds that a
+  discrete card's frames are not in the process — true, but on the Apple Silicon Mac doing
+  the reporting they are, so a cache doing exactly its job showed up inside the
+  unaccounted figure and looked like the fault. The adapter now says which kind of memory
+  it has (`unified_memory`, integrated or software), and the report counts accordingly.
+  The rule generalises: a report that can mislead in the direction of "this is the bug" is
+  worse than one that says less.
+- **The memory section is a debug-build instrument** (owner, 2026-08-06). It is for
+  hunting a fault, not a setting anybody should be asked to interpret; `kDebugMode` gates
+  both the section and the call behind it, so a release build neither draws it nor asks.
+
+**Verified** by `what_the_engine_drops_the_driver_gets_back`, which renders far more
+frames than the cache can hold and then asks the driver what it still has: tens, not one
+per frame. It runs on every platform the suite runs on, and the one that matters is
+**macOS** — where the reclamation went wrong, and where no allocator report exists to see
+it, which is why the gate is a count of live objects rather than a number of bytes.
+
+**K-296 · DECIDED · Updates are checked from the Help row itself, fetched whole from the
+GitHub Release, and installed on a restart the user chooses.** Help ▸ Check for updates was
+the last row of the bar that was listed and dead. It is now the whole update sequence in one
+row, and nothing else is added to the interface for it.
+
+**The row is the state machine.** Press it and it greys and reads "Checking for updates…";
+a moment later it is either "Click to update - v0.2.0" — the version in the row, where
+somebody deciding whether to update is already looking — or back to "Check for updates",
+with "Lumit is up to date" in the status line. Press it in the offered state and the update
+is fetched; while it comes the row reads "Downloading update… 42%"; once it is on disk and
+verified it reads "Restart to finish updating" until the restart happens. A row that said
+"You are up to date" and stayed that way would be a stale claim by the next morning, which
+is why success goes back to the resting wording rather than boasting about it. This needed
+one small thing of the menu bar: `MenuEntry.live` is a row that rebuilds in place while its
+menu is open and does *not* close the menu when pressed, because the point of pressing it is
+to watch what it does. It is the only live row there is, and rows should have to earn it.
+
+**Full installers, never patches.** Releases already publish the finished installer per
+platform (`release.yml`, a `v*` tag): `setup.exe`, `.dmg`, `.tar.gz`, `.flatpak`. The updater
+downloads whichever suits the machine, entire. A delta scheme means publishing a patch per
+pair of versions, a tool to apply them and a fallback for the pairs that are missing — three
+new failure modes to save bandwidth GitHub serves for nothing (K-279: no bandwidth cap, no
+server of ours). The saving is real and the cost is a few hundred megabytes on a deliberate
+click, a few times a year.
+
+**Nothing is downloaded without being asked, and nothing is run without being checked.**
+Automatic updates are on by default and are offered twice — on the setup screen (K-246) and
+in Settings ▸ General ▸ Updates — but what "on" means is *looking*, once a day at launch, and
+saying so in the menu. The download always waits for a press: this is a video application and
+someone editing on a hotel connection should not find Lumit spending their data. Before the
+downloaded file is executed it must match the length the release published and, where GitHub
+publishes a `digest`, its SHA-256; a file that fails either is deleted rather than run. An
+installer is the most dangerous file Lumit ever touches, so verification is a gate and not a
+diagnostic.
+
+**Finishing means restarting, and the work comes first.** An installer cannot replace files
+that are running, so the last window says so: *Restart to finish updating*. With unsaved work
+open the buttons are **Save and restart** / **Restart without saving** / **Later**; with a
+clean project, **Restart now** / **Later**. Later keeps the verified installer and the row
+that offers it, so the update is not lost by declining it once. Windows starts Inno Setup
+silently (`/SILENT /CLOSEAPPLICATIONS /NORESTART` — the install questions were answered the
+first time and asking them again is ceremony) and quits; macOS opens the disk image and
+quits; **Linux only reveals the download** and does not quit, because a tarball is unpacked
+wherever its owner keeps it and a Flatpak is installed by Flatpak, neither of which Lumit
+should do on somebody's behalf.
+
+**It lives in Dart, not in the engine.** `state/updates.dart` and
+`shell/update_dialog_frb.dart`, with `dart:io`'s own HTTP client and `crypto` for the digest
+— no new Rust dependency, no TLS stack pulled into a crate that renders frames. An updater is
+shell business by every test docs/05 applies: it touches no document, no timeline and no GPU,
+and the engine crates stay free of the network. The version it compares against is the one
+the boot log already reports (K-008), so there is no second source of truth to keep in step.
+
+**K-297 · DECIDED · Lumit installs per user and replaces itself, the way Chrome and VS
+Code do — except inside a Flatpak, where that is Flatpak's job.** K-296 shipped updating by
+running the installer again. That works and it is a poor experience: a wizard, a UAC prompt,
+and questions the user answered the first time. The reason it had to be that way was the
+install location, not the updater.
+
+**The install moves to the user's own folder.** `packaging/windows/lumit.iss` gains
+`PrivilegesRequired=lowest` and installs to `{localappdata}\Programs\Lumit`
+(`UsePreviousAppDir=yes`, so an existing `Program Files` copy stays where it is and keeps
+being updated by installer). This is what Chrome, VS Code and Discord all do, and it is the
+whole trick: a folder the user owns can be rewritten by a program the user is running, with
+no elevation and nothing to approve. macOS bundles and the Linux tarball already live
+somewhere their owner can write.
+
+**Releases carry the application, not only its installer.** `release.yml` now publishes
+`lumit-<v>-windows-x64.zip` beside the setup, and `lumit-<v>-macos-<arch>.zip` beside the
+disk image; the Linux tarball already was one. macOS uses `ditto` rather than `zip` because
+an `.app` carries symlinks, executable bits and a signature that a naive archiver drops,
+producing a bundle the system will not open. Unpacking uses the platform's own tool for the
+same reason — `ditto` on macOS, `tar` elsewhere, including Windows, which has carried bsdtar
+since Windows 10 1803. No Dart zip library, no new dependency.
+
+**The swap is two renames, not a few hundred file copies.** The new version is unpacked to
+`<install>.new`, verified, and marked complete; then `<install>` becomes `<install>.old` and
+`<install>.new` becomes `<install>`. Renaming is one filesystem operation — it happened or
+it did not — where copying files over a running application is hundreds of chances to be
+interrupted into a Lumit that is neither version and may not start. If the second rename
+fails the first is undone immediately, from code already in memory. The old folder is left
+behind on purpose: Windows will not delete a loaded DLL, so `main()` sweeps it on the next
+launch, and puts it back if it ever finds the install folder missing.
+
+**Three deliveries, chosen by where Lumit actually lives** (`InstallSite.detect`):
+*in place* for a folder or bundle Lumit can write beside — proven by writing a probe file,
+not assumed from the path; *installer* for anywhere it cannot, which covers every existing
+`Program Files` install and the macOS disk image; *Flatpak bundle* inside a Flatpak. The
+release attachment follows the delivery, so a Flatpak is never offered a tarball it cannot
+use, and a per-user install is never offered a setup it does not need.
+
+**A Flatpak is not updated from inside, and pretending otherwise would be a lie.** The
+sandbox is read-only by design and reaching the host to run `flatpak install` would need
+permissions no editor should hold. So Lumit fetches the bundle, says the one command that
+installs it, and stays open. Making that a proper `flatpak update` needs Lumit published to
+an OSTree remote rather than as a single-file bundle — tracked in TODO, and the reason the
+Flatpak wording names a command rather than a button.
+
+**What this costs.** The window between the two renames is not recoverable by Lumit if the
+machine loses power inside it: the install folder would be `Lumit.old` and nothing would
+start. It is two rename calls wide, the start-up sweep puts it back for every failure short
+of that, and the fallback is the installer, which is still published. Judged worth it
+against a UAC prompt on every update for ever.
+
+**K-300 · PROPOSED · A release is exactly three files, and every one of them gates it.**
 Supersedes the artefact list in K-252 (2026-08-03) and K-253 (2026-08-03): the Linux
 release tarball is withdrawn. A tagged release now publishes a Windows setup `.exe`, a
 macOS `.dmg` and a Linux `.flatpak` — one artefact per platform, nothing else. The
@@ -6164,3 +6593,13 @@ is ad-hoc signed because macOS will not run a bundle with vendored dylibs otherw
 SmartScreen still warns on Windows. Developer ID signing and notarisation stay where
 K-033 left them, waiting on an Apple Developer Program membership; Windows signing waits
 on a code-signing certificate. Both are purchases, not code, and neither blocks a release.
+
+**Reconciled with K-297 on merge.** This entry was written before in-place updating landed,
+and "nothing else" was written against a release that had nothing else in it. K-297 attaches
+a plain application archive per platform — a Windows `.zip` and a macOS `.zip` — for the
+updater to fetch. Those stay: they are not installers and are not offered as a way to
+install, so the count that matters is unchanged, and *three artefacts are installed, one per
+platform*. The Linux side needs no archive of its own, because a Flatpak is updated from the
+`.flatpak` bundle this entry already makes compulsory. `updates.dart` prefers
+`linux-x64.tar.gz` and falls back to `.flatpak`, so an installation made from the withdrawn
+tarball still finds something to offer.
