@@ -13,6 +13,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
+import 'package:lumit_flutter/shell/menu_bar_frb.dart';
 import 'package:lumit_flutter/state/clipboard.dart';
 import 'package:lumit_flutter/theme/theme.dart';
 import 'package:uuid/uuid.dart';
@@ -3314,6 +3315,43 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('Copy effect'), findsNothing,
           reason: 'Transform is a grouping, not a thing that can be copied');
+    });
+
+    /// **Clicking an effect's heading picks it** (K-300). A heading only
+    /// twirled before, so an effect could not be selected in the Timeline at
+    /// all — and Copy, which acts on the selection, had nothing to take from
+    /// here. The pick is the shell's, so the Effect controls panel shows the
+    /// same one; the twirl beside the name still only twirls.
+    testWidgets("clicking an effect's heading picks it for Copy",
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.addEffect(name: 'blur');
+      p.uiState.setSelection([layer]);
+      await mount(tester, p);
+      final id = layer.internallayerId;
+
+      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
+      await tester.pump();
+      await settleFrb(tester, minRounds: 4);
+      final effects = find.byKey(ValueKey<String>('tl-group-$id/effects'));
+      await tester.tapAt(
+          Offset(tester.getRect(effects).left + 6, tester.getCenter(effects).dy));
+      await tester.pump();
+      await settleFrb(tester, minRounds: 4);
+
+      final effect = layer.getEffects().single;
+      expect(p.uiState.selectedEffects.value, isEmpty);
+      await tester.tap(find
+          .byKey(ValueKey<String>('tl-group-$id/effects/${effect.id()}')));
+      await tester.pump();
+      await settleFrb(tester, minRounds: 4);
+      expect(p.uiState.selectedEffects.value, [effect.id()],
+          reason: 'the row is picked, and the shell knows which effect it is');
+
+      expect(copySelectionFrb(p.uiState), isTrue);
+      expect(p.uiState.clipboard.kind, ClipboardKind.effects,
+          reason: 'Copy took the picked effect, not the layer under it');
     });
 
     /// **A locked layer's property rows are read-only too** (K-291). The lock

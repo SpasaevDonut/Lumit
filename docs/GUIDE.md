@@ -3457,6 +3457,26 @@ Panels can be popped out into their own desktop window (`desktop_multi_window`);
 each gets its own Flutter engine but opens a handle to the *same* engine state,
 so edits share one undo history.
 
+**What "the selection" means when Copy is pressed (K-300).** Three different things
+can be selected at once: some keyframes, an effect, and the layer they all sit on.
+Copy has to pick one, and it picks the *finest* — keyframes if any are selected,
+otherwise the effects picked out of the stack, otherwise the whole layer. Delete has
+worked this way since K-234, and it works through the same trick: Flutter runs every
+keyboard handler on every key, so a panel cannot claim a key simply by handling it
+first. Instead the Timeline leaves a small function with the shell — a *claim* — and
+the shell calls it before doing anything itself. If the claim says "I took that", the
+shell stands down.
+
+An **effect is selected by clicking its name**, in the Effect controls panel or on its
+row in the Timeline's fold-out; `Ctrl` adds one, `Shift` takes the run between. There
+is only one such selection, held by the shell rather than by either panel, which is why
+an effect picked in one place lights up in the other. A plain click also twirls the
+heading open, the way it always did; a modified click only selects, so `Shift`-clicking
+down a stack of effects does not flap all of them open on the way. Copying several
+effects produces a single `.lumfx` document — the same kind of document a preset is —
+holding them in stack order rather than click order, so pasting puts them back the way
+they were drawn.
+
 **Scrolling it, and why a trackpad needed its own answer (K-278).** Dragging in
 the lanes draws a selection box round keyframes, so the panel switches off
 drag-to-scroll — which on a Mac also switched off the trackpad, because a

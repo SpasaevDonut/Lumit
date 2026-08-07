@@ -433,14 +433,16 @@ void main() {
 
       await tester.tap(find.byKey(ValueKey<String>(opacityKey(p.layer, 1))));
       await tester.pump();
-      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
-      await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+      // The chord itself is the shell's since K-300 — it asks the claim this
+      // panel registers, which is what a shell test drives end to end
+      // (`Ctrl+C with keyframes selected copies those`). Here the claim is
+      // called directly, because this test mounts the panel and not the shell.
+      expect(p.uiState.copyClaim!(), isTrue);
       await tester.pump();
 
       p.uiState.playheadFrame.value = 75;
       await tester.pump();
-      await tester.sendKeyEvent(LogicalKeyboardKey.keyV);
-      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      expect(p.uiState.pasteClaim!(), isTrue);
       await tester.pumpAndSettle();
 
       final frames = opacityKeys(p.layer)
@@ -488,13 +490,11 @@ void main() {
       await gesture.up();
       await tester.pumpAndSettle();
 
-      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
-      await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+      expect(p.uiState.copyClaim!(), isTrue);
       await tester.pump();
       p.uiState.playheadFrame.value = 90;
       await tester.pump();
-      await tester.sendKeyEvent(LogicalKeyboardKey.keyV);
-      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      expect(p.uiState.pasteClaim!(), isTrue);
       await tester.pumpAndSettle();
 
       final frames = opacityKeys(p.layer)

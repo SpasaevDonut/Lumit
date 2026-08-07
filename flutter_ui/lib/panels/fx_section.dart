@@ -23,6 +23,7 @@
 import 'package:flutter/widgets.dart';
 
 import '../icons/icons.dart';
+import 'layer_fold_frb.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 
@@ -53,6 +54,17 @@ class FxSection extends StatelessWidget {
   /// reordering, K-276). Null leaves the secondary click unclaimed.
   final void Function(Offset at)? onContextMenu;
 
+  /// A click on the heading's name **picks this section** (K-300) — an effect
+  /// is a thing that can be selected, copied and cut, and the click that says
+  /// which one is the one on its name. Null (Source, Transform: sections that
+  /// are not one of several) leaves the name doing what the twirl does, which
+  /// is what the whole heading did before.
+  final VoidCallback? onSelect;
+
+  /// Drawn picked: the heading takes the selection fill, as a Timeline row
+  /// does, so one effect chosen in either place reads the same in both.
+  final bool selected;
+
   /// This section's place in its list, when the heading may be **dragged** to
   /// another place in it (docs/07 §6's drag-to-reorder). Null — Source,
   /// Transform, anything that does not sit in a reorderable stack — leaves the
@@ -76,6 +88,8 @@ class FxSection extends StatelessWidget {
     this.actions = const [],
     this.trailing,
     this.onContextMenu,
+    this.onSelect,
+    this.selected = false,
     this.dragIndex,
     this.onDropped,
   });
@@ -153,12 +167,19 @@ class FxSection extends StatelessWidget {
 
   Widget _heading(LumitTheme t) => GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: onToggle,
+        // The name picks the section as well as twirling it (K-300) — and on a
+        // modified click it only picks, so Ctrl- and Shift-clicking a run of
+        // effects does not flap every card open on the way past. A section that
+        // cannot be picked (Source, Transform) twirls as it always did.
+        onTap: () {
+          onSelect?.call();
+          if (onSelect == null || !isModifiedClick) onToggle();
+        },
         onSecondaryTapUp: onContextMenu == null
             ? null
             : (details) => onContextMenu!(details.globalPosition),
         child: Container(
-          color: t.surface2,
+          color: selected ? t.selectionFill : t.surface2,
           padding: const EdgeInsets.fromLTRB(4, 4, 6, 4),
           child: Row(
             children: [
@@ -166,10 +187,18 @@ class FxSection extends StatelessWidget {
                 width: fxNameColumnWidth,
                 child: Row(
                   children: [
-                    lumitIcon(
-                      open ? LumitIcon.twirlOpen : LumitIcon.twirlClosed,
-                      size: iconSize,
-                      color: open ? t.textPrimary : t.textMuted,
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: onToggle,
+                      child: Padding(
+                        // Room to aim at, now that it is the only way in.
+                        padding: const EdgeInsets.symmetric(horizontal: 2),
+                        child: lumitIcon(
+                          open ? LumitIcon.twirlOpen : LumitIcon.twirlClosed,
+                          size: iconSize,
+                          color: open ? t.textPrimary : t.textMuted,
+                        ),
+                      ),
                     ),
                     const SizedBox(width: 2),
                     if (leading case final widget?) ...[

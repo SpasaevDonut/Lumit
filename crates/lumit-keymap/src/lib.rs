@@ -84,6 +84,9 @@ impl ActionId {
             "workarea.set.end" => "Set work-area end to the playhead",
             "marker.add" => "Add a marker at the playhead",
             "edit.delete.selection" => "Delete the selection",
+            "edit.cut" => "Cut the selection",
+            "edit.copy" => "Copy the selection",
+            "edit.paste" => "Paste",
             "palette.open" => "Open the command palette",
             "export.queue.add" => "Add to the export queue",
             "comp.settings" => "Composition settings",
@@ -606,6 +609,13 @@ pub fn default_keymap() -> Keymap {
         // selected, else the selected layer. Backspace is its usual sibling.
         row(Global, "Delete", "edit.delete.selection"),
         row(Global, "Backspace", "edit.delete.selection"),
+        // Cut, copy and paste had menu rows and no chords at all (K-300): the
+        // three keys everyone's fingers reach for first did nothing to a
+        // selected layer. Global, because what they act on is whatever is
+        // selected — keyframes in the Timeline, else an effect, else the layer.
+        row(Global, "Mod+X", "edit.cut"),
+        row(Global, "Mod+C", "edit.copy"),
+        row(Global, "Mod+V", "edit.paste"),
         row(Global, "Mod+Shift+P", "palette.open"),
         row(Global, "Mod+M", "export.queue.add"),
         row(Global, "Mod+K", "comp.settings"),

@@ -9,10 +9,12 @@
 // Every document operation is genuine; see frb_test_support.dart.
 
 import 'package:flutter/gestures.dart' show kSecondaryButton;
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/widgets/controls.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
+import 'package:lumit_flutter/shell/menu_bar_frb.dart';
 import 'package:lumit_flutter/state/clipboard.dart';
 import 'package:lumit_flutter/panels/effect_controls_panel_frb.dart';
 import 'package:lumit_flutter/panels/effect_param_row_frb.dart' show effectLabelOf;
@@ -189,6 +191,39 @@ void main() {
       expect(bare.getEffects(), hasLength(1),
           reason: 'the picked effect alone, not the two on the layer');
       expect(bare.getEffects().single.name(), second.name());
+    });
+
+    /// **An effect's name picks it** (K-300). Clicking a heading only twirled
+    /// it before, so an effect could not be selected here at all — and Copy,
+    /// which acts on the selection, had nothing to take but the whole layer.
+    /// Shift takes the run between, the way it does in every other list here.
+    testWidgets('clicking an effect name picks it, and Shift takes the run',
+        (tester) async {
+      final p = withLayer();
+      for (final name in ['blur', 'invert', 'vignette']) {
+        p.layer.addEffect(name: name);
+      }
+      await mount(tester, p);
+      final stack = p.layer.getEffects();
+
+      await tester.tap(find.text(effectLabelOf(stack.first.name())));
+      await tester.pumpAndSettle();
+      expect(p.uiState.selectedEffects.value, [stack.first.id()]);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.tap(find.text(effectLabelOf(stack[2].name())));
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pumpAndSettle();
+      expect(p.uiState.selectedEffects.value,
+          [for (final e in stack) e.id()],
+          reason: 'Shift extended the pick down the stack, in stack order');
+
+      // And that is what Copy takes: three effects, one .lumfx document.
+      expect(copySelectionFrb(p.uiState), isTrue);
+      expect(p.uiState.clipboard.kind, ClipboardKind.effects);
+      final bare = p.uiState.selectedComp!.addSolidLayer();
+      bare.pasteEffects(text: p.uiState.clipboard.text!, atFrame: 0);
+      expect(bare.getEffects(), hasLength(3));
     });
 
     testWidgets('a selection made in the Viewer switches the panel to it',

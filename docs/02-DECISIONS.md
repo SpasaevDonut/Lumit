@@ -6592,3 +6592,47 @@ rather than opening one with a dead row in it (docs/15: no punishment UI).
 
 This entry was written as K-287 on its branch; that number went to the Viewer and Timeline
 bar layout on main first, so it is K-299 here.
+
+**K-300 · DECIDED · An effect is a thing you select, and Copy takes whatever is selected.**
+K-299 put **Copy effect** on an effect's heading in both places it has one, and the first
+person to use it found the hole around it: the heading could be right-clicked but not
+*clicked*, `Ctrl+C` on a selected layer did nothing at all, and an effect name in the Effect
+controls panel answered no click, with or without Shift. Copy worked from a menu row and
+nowhere else.
+
+**Three faults, one shape.** There was no selection an effect could be part of; there was no
+`edit.copy` chord in the keymap and no case for it in the shell's handler; and the two places
+an effect is drawn each had their own idea of what was picked, which was nothing.
+
+**One effect selection, held by the shell.** `LumitUiState.selectedEffects` holds instance
+ids in **stack order** with the layer they are on, and both places write to it and read from
+it: an effect picked in the Timeline is lit in the Effect controls panel and the other way
+round. It follows the same three click rules as every other list here — plain replaces, Ctrl
+toggles, Shift extends the run — and picking a different layer clears it, because an effect
+belongs to a layer and Copy must never act on something no longer on screen.
+
+**A heading twirls *and* picks.** A plain click on a heading still opens it, which is what it
+has always done and how the outline is navigated; a *modified* click only picks, so
+Shift-clicking a run of effects does not flap every one of them open on the way past. The
+twirl mark beside the name always twirls.
+
+**Copy takes the finest selection.** Keyframes when a panel has claimed them, else the picked
+effects, else the layer — the ladder Delete has followed since K-234, and through the same
+kind of claim (`copyClaim`, `pasteClaim`), because every hardware-key handler runs on every
+key and a panel cannot claim a chord by handling it. The Timeline's hand-written `Ctrl+C` and
+`Ctrl+V` comparisons are gone with it: they were fine while the shell had no copy of its own,
+and would have been a double paste the moment it had one.
+
+**`Mod+X` / `Mod+C` / `Mod+V` are in the keymap now**, where every other chord lives (K-199),
+so they are rebindable and show beside their menu rows.
+
+**`copy_effects` takes a list.** `Option<Uuid>` became `Vec<Uuid>` — empty is still the whole
+stack — and the effects come back in stack order, not click order, so a copied group pastes
+back in the order it was drawn in. Ids naming nothing on the layer are ignored; naming none
+of them is a refusal rather than a silent whole-stack copy, which would be the worst possible
+guess.
+
+**What is deliberately not here.** Transform, Effects, Masks and Audio headings select like
+any other row but are not copyable — Copy falls through to the layer, which is what a
+transform copy would have to mean anyway. Cutting an effect removes it from the stack; cutting
+with nothing but a layer selected still deletes the layer.
