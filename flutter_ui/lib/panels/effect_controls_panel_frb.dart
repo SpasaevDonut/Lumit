@@ -44,6 +44,8 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../icons/icons.dart';
+import '../l10n/engine_labels.dart';
+import '../l10n/strings.dart';
 import '../widgets/controls.dart';
 import 'effect_param_row_frb.dart';
 import 'fx_section.dart';
@@ -87,10 +89,10 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
     final ui = Provider.of<LumitUiState>(context);
     final comp = ui.selectedComp;
     if (comp == null) {
-      return const PlaceholderPanel(
+      return PlaceholderPanel(
         icon: LumitIcon.fx,
-        title: 'Effect controls',
-        hint: 'Select a composition, then a layer.',
+        title: l10n.effectControls,
+        hint: l10n.effectControlsNoComp,
       );
     }
 
@@ -100,10 +102,10 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
         if (layer != null) _lastLayer = layer;
         final shown = layer ?? _lastLayer;
         if (shown == null) {
-          return const PlaceholderPanel(
+          return PlaceholderPanel(
             icon: LumitIcon.fx,
-            title: 'Effect controls',
-            hint: 'Select a layer in the Timeline.',
+            title: l10n.effectControls,
+            hint: l10n.effectControlsNoLayer,
           );
         }
         return _body(context, comp, shown);
@@ -123,9 +125,17 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
     // redo, or the same property dragged in the Timeline's fold-out.
     return ValueListenableBuilder<int>(
       valueListenable: ui.playheadFrame,
-      builder: (context, playhead, _) => ListenableBuilder(
-        listenable: ui.model,
-        builder: (context, _) => _rows(context, comp, layer, playhead),
+      // Which effects are picked is the shell's (K-300) — the Timeline picks
+      // them too — so the headings redraw when that changes, wherever the click
+      // happened.
+      builder: (context, playhead, _) =>
+          ValueListenableBuilder<List<UuidValue>>(
+        valueListenable: ui.selectedEffects,
+        builder: (context, picked, _) => ListenableBuilder(
+          listenable: ui.model,
+          builder: (context, _) =>
+              _rows(context, comp, layer, playhead, picked),
+        ),
       ),
     );
   }
@@ -135,6 +145,7 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
     CompositionReference comp,
     LayerReference layer,
     int playhead,
+    List<UuidValue> picked,
   ) {
     final t = ThemeScope.of(context).theme;
     final ui = Provider.of<LumitUiState>(context, listen: false);
@@ -142,10 +153,10 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
     if (entry == null) {
       // The layer has gone (deleted, or another comp fronted) — nothing to
       // draw until the selection catches up.
-      return const PlaceholderPanel(
+      return PlaceholderPanel(
         icon: LumitIcon.fx,
-        title: 'Effect controls',
-        hint: 'Select a layer in the Timeline.',
+        title: l10n.effectControls,
+        hint: l10n.effectControlsNoLayer,
       );
     }
     final info = entry.info;
@@ -219,8 +230,8 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
                       info.effects.isNotEmpty)
                     Padding(
                       key: const ValueKey('fx-null-inert'),
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 8),
                       child: Text(
                         'A null layer draws nothing, so an effect here changes '
                         'no picture. Its parameters stay live — a null is '
@@ -233,7 +244,7 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 18),
                       child: Text(
-                        'No effects on this layer yet',
+                        l10n.noEffectsYet,
                         style: t.small,
                         textAlign: TextAlign.center,
                       ),
@@ -245,6 +256,12 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
                         info: info.effects[index],
                         open: _isOpen('fx-${info.effects[index].id}'),
                         onToggle: () => _toggle('fx-${info.effects[index].id}'),
+                        selected: picked.contains(info.effects[index].id),
+                        onSelect: () => ui.pickEffect(
+                          layer,
+                          info.effects[index].id,
+                          order: [for (final e in info.effects) e.id],
+                        ),
                         stagedValue: _effects.stagedValue,
                         index: index,
                         count: info.effects.length,
@@ -301,7 +318,7 @@ class _Header extends StatelessWidget {
               key: const ValueKey('fx-add'),
               small: true,
               onPressed: () => _showAddMenu(buttonContext, onAdd),
-              child: Text('Add effect', style: t.small),
+              child: Text(l10n.addEffect, style: t.small),
             ),
           ),
         ],
@@ -330,7 +347,7 @@ Future<void> _showAddMenu(
   final headings = <String, String>{};
   for (final e in listEffects()) {
     grouped.putIfAbsent(e.category, () => []).add(e);
-    headings[e.category] = e.categoryLabel;
+    headings[e.category] = engineLabel(e.categoryLabel);
   }
 
   await showLumitPopup<void>(
@@ -358,7 +375,7 @@ Future<void> _showAddMenu(
                           dismiss();
                           onAdd(effect.name);
                         },
-                        child: Text(effect.label),
+                        child: Text(engineLabel(effect.label)),
                       ),
                   ],
                 ),
@@ -381,6 +398,12 @@ class _EffectSection extends StatelessWidget {
   final BridgeEffectInstanceInfo info;
   final bool open;
   final VoidCallback onToggle;
+
+  /// Picked out of the stack, and the click that picks it (K-300). The same
+  /// selection the Timeline's fold-out shows, so an effect chosen in one place
+  /// is lit in the other — and Copy takes it from either.
+  final bool selected;
+  final VoidCallback onSelect;
 
   /// The drag in flight's staged value for (effect, param), or null — overlaid
   /// on the model's value so the number under the pointer is the staged one.
@@ -412,6 +435,8 @@ class _EffectSection extends StatelessWidget {
     required this.info,
     required this.open,
     required this.onToggle,
+    required this.selected,
+    required this.onSelect,
     required this.stagedValue,
     required this.index,
     required this.count,
@@ -467,8 +492,11 @@ class _EffectSection extends StatelessWidget {
       title: effectLabelOf(info.name),
       open: open,
       onToggle: onToggle,
+      selected: selected,
+      onSelect: onSelect,
+      twirlKey: ValueKey<String>('fx-twirl-$id'),
       leading: LumitTooltip(
-        message: info.enabled ? 'Disable this effect' : 'Enable it',
+        message: info.enabled ? l10n.tipDisable : l10n.tipEnable,
         child: HouseCheckbox(
           key: ValueKey<String>('fx-enabled-$id'),
           value: info.enabled,
@@ -481,9 +509,8 @@ class _EffectSection extends StatelessWidget {
       actions: [
         fxTextAction(
           context,
-          label: 'Reset',
-          tip:
-              'Put every parameter back to its default, removing its keyframes',
+          label: l10n.reset,
+          tip: l10n.tipResetParameters,
           keyName: 'fx-reset-$id',
           onPressed: _reset,
         ),
@@ -520,7 +547,7 @@ class _EffectSection extends StatelessWidget {
       trailing: _markButton(
         context,
         mark: '×',
-        tip: 'Remove this effect',
+        tip: l10n.tipRemove,
         enabled: true,
         key: 'fx-remove-$id',
         onPressed: () {
@@ -545,8 +572,7 @@ class _EffectSection extends StatelessWidget {
   ///   while the named sibling Choice holds a different value;
   /// - two adjacent Float params `foo_x`, `foo_y` fold into one point row
   ///   (with the position dropper for the declared %-of-frame pairs).
-  List<Widget> _paramRows(
-      UuidValue id, Map<String, BridgeEffectValue> values) {
+  List<Widget> _paramRows(UuidValue id, Map<String, BridgeEffectValue> values) {
     final params = cachedListParameters(info.name);
     final groups = cachedListParameterGroups(info.name);
     final byFirstMember = <String, BridgeParamGroup>{};
@@ -597,8 +623,7 @@ class _EffectSection extends StatelessWidget {
         final next = i + 1 < run.length ? run[i + 1] : null;
         final isPair = next != null &&
             param.id.endsWith('_x') &&
-            next.id ==
-                '${param.id.substring(0, param.id.length - 2)}_y' &&
+            next.id == '${param.id.substring(0, param.id.length - 2)}_y' &&
             param.kind is BridgeParamKind_Float &&
             next.kind is BridgeParamKind_Float;
         if (isPair) {
@@ -680,6 +705,23 @@ class _EffectSection extends StatelessWidget {
   /// removing it. Reordering is a handful of acts in a session, so it lives
   /// here rather than in two buttons on every heading — and unlike the arrows
   /// it can send an effect to the top or the bottom in one go.
+  /// Put this effect on the clipboard (K-275) — with the rest of the picked run
+  /// when it is part of one (K-300).
+  ///
+  /// A failure is swallowed the way the neighbouring effect commands' are: the
+  /// effect went away between the menu opening and the row being chosen, and an
+  /// error about a thing that is no longer there helps nobody.
+  void _copyEffect(BuildContext context) {
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    try {
+      ui.copyEffectsToClipboard(
+        layer.copyEffects(effects: ui.effectsToCopy(layer, info.id)),
+      );
+    } catch (_) {
+      // The effect is gone; the clipboard keeps whatever it had.
+    }
+  }
+
   void _stackMenu(BuildContext context, Offset at) {
     final id = info.id;
     void move(int to) {
@@ -706,7 +748,7 @@ class _EffectSection extends StatelessWidget {
                   close(null);
                   move(index - 1);
                 },
-                child: const Text('Move up'),
+                child: Text(l10n.moveUp),
               ),
               MenuRow(
                 key: ValueKey<String>('fx-menu-top-$id'),
@@ -714,7 +756,7 @@ class _EffectSection extends StatelessWidget {
                   close(null);
                   move(0);
                 },
-                child: const Text('Move to top'),
+                child: Text(l10n.moveToTop),
               ),
             ],
             if (index < count - 1) ...[
@@ -724,7 +766,7 @@ class _EffectSection extends StatelessWidget {
                   close(null);
                   move(index + 1);
                 },
-                child: const Text('Move down'),
+                child: Text(l10n.moveDown),
               ),
               MenuRow(
                 key: ValueKey<String>('fx-menu-bottom-$id'),
@@ -732,9 +774,23 @@ class _EffectSection extends StatelessWidget {
                   close(null);
                   move(count - 1);
                 },
-                child: const Text('Move to bottom'),
+                child: Text(l10n.moveToBottom),
               ),
             ],
+            // **Copy this one effect** (K-275). The engine has taken one or a
+            // whole stack since copy/paste landed — `copy_effects(Some(id))` —
+            // and the Edit menu's Copy takes the *layer*, so until now there
+            // was no way to pick a single effect and no way to reach the call.
+            // It goes on the same clipboard a stack does: both are `.lumfx`, so
+            // both paste the same way, and Paste needs no idea which it holds.
+            MenuRow(
+              key: ValueKey<String>('fx-menu-copy-$id'),
+              onPressed: () {
+                close(null);
+                _copyEffect(context);
+              },
+              child: Text(l10n.copyEffect),
+            ),
             MenuRow(
               key: ValueKey<String>('fx-menu-remove-$id'),
               onPressed: () {
@@ -742,7 +798,7 @@ class _EffectSection extends StatelessWidget {
                 _withHandle((e) => layer.removeEffect(effect: e));
                 onStackChanged();
               },
-              child: const Text('Remove effect'),
+              child: Text(l10n.removeEffect),
             ),
           ],
         ),
@@ -868,7 +924,7 @@ class _TransformSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => FxSection(
-        title: 'Transform',
+        title: engineLabel('Transform'),
         open: open,
         onToggle: onToggle,
         rows: TransformRowsFrb(

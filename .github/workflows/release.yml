@@ -1,8 +1,8 @@
-# Release pipeline (K-252, K-300): push a tag like v0.1.0 and this builds all
+# Release pipeline (K-252, K-304): push a tag like v0.1.0 and this builds all
 # three platform artefacts on GitHub's own runners and attaches them to a
 # GitHub Release — no local cross-building, which Flutter cannot do anyway.
 #
-# Three things are *installed* (K-300): a Windows setup .exe, a macOS .dmg and a
+# Three things are *installed* (K-304): a Windows setup .exe, a macOS .dmg and a
 # Linux .flatpak — one per platform, and the Linux tarball is withdrawn. Beside
 # them ride the plain application archives the in-place updater fetches (K-297):
 # a Windows .zip and a macOS .zip, which are not installers and are not offered
@@ -147,12 +147,13 @@ jobs:
           cp packaging/linux/io.github.luminalmvm.Lumit.desktop \
              packaging/linux/lumit-mime.xml "$stage/share/"
           cp assets/brand/lumit-mark.svg assets/brand/lumit-project.svg \
-             assets/brand/lumit-preset.svg "$stage/share/"
+             assets/brand/lumit-preset.svg assets/brand/lumit-theme.svg \
+             "$stage/share/"
       - name: Build the Flatpak
         # Repacks the staged bundle (FFmpeg libs included) via the manifest in
         # packaging/flatpak/ into a single-file .flatpak anyone can install
         # with `flatpak install lumit-*.flatpak`. This is the whole Linux
-        # release (K-300), so a failure here fails the release rather than
+        # release (K-304), so a failure here fails the release rather than
         # publishing a Linux-shaped hole.
         run: |
           version="${GITHUB_REF_NAME#v}"

@@ -188,14 +188,14 @@ of holding a `SmoothZoom` and reading its value, with no design left in them.
 - **The audio mix is rebuilt from scratch** whenever the comp's audio signature
     changes, rather than patched.
 
-**Copy and paste: the effect-header commands are still to wire (K-275).** Layers copy
-and paste from the **Edit** menu (Cut/Copy/Paste, with *Paste layers at their original
-time* in Settings → Interface), and the engine takes one effect or a whole stack
-(`copy_effects`/`paste_effects`). What is owed is the two places an effect is *picked*:
-**Copy effect** on an effect's heading in the Effect controls panel and on its row in the
-Timeline, both calling `copy_effects(Some(id))` and putting it on the same clipboard.
-Copying between two running Lumit windows wants the system clipboard rather than the
-in-app one; decide when it is asked for.
+**Copy and paste (K-275): the selection and the chords are wired (K-299, K-300).** Layers
+copy and paste from the **Edit** menu and from `Ctrl+X`/`Ctrl+C`/`Ctrl+V`, which are keymap
+actions like everything else; an effect is **selected** by clicking its name in either place
+it is drawn, with `Ctrl` and `Shift` picking several, and Copy takes the finest selection
+there is — keyframes, else the picked effects, else the layer. `copy_effects` takes a list
+and returns them in stack order. Every copy is mirrored to the **system clipboard** and a
+paste reads it back when the in-app tray is empty (K-302), which is what makes copying
+between two running Lumit windows work — the item this entry used to leave owed.
 
 **Retime follow-up after K-249.** **The eased ramp shapes are gone from
 clips** — `Clip::with_ramp` takes two speeds and runs straight between them,
@@ -215,10 +215,14 @@ used to claim otherwise.*
 and **Effects** keymap contexts have real bindings and no commands. Either build
 the commands or drop the bindings; do not leave the two disagreeing for long.
 
-**Appearance.** Custom themes are per-machine - they live in the workspace file
-with no import/export *of a theme* (the keymap has one). No preview swatch strip
-and no duplicate-a-theme button. The seven built-in schemes still restate every
-colour individually; only the two Timeline tokens default from the mode.
+**Appearance.** The seven built-in schemes still restate every colour
+individually; only the two Timeline tokens default from the mode. *Sharing
+landed with K-298: `.lumtheme` import/export (with its own document icon,
+registered on all three platforms), duplicate, save a copy, rename, and an
+eight-swatch strip beside the picker. What is still missing is a swatch
+strip per row **inside** the picker's menu — it previews the selection only —
+and a place to keep themes other than the workspace file, so an imported theme
+still travels with the machine's settings rather than with the user.*
 
 **Shell and onboarding:**
 - **The boot splash is not mounted.** `flutter_ui/lib/shell/splash.dart` exists
@@ -307,6 +311,23 @@ frame anyone is waiting for), and an **export**'s progress still has its own pat
 ([07-UI-SPEC.md](07-UI-SPEC.md) §14) rather than sharing this one.
 
 ## Next - engine/bridge follow-ups
+
+**Localisation follow-ups (K-303).** The seam is built and the strings are out of the
+code (`flutter_ui/lib/l10n/`, `crowdin.yml`); what is left is other people's turn and
+three small gaps:
+
+- **Create the Crowdin project and point it at this repo.** File-based, source
+  `app_en.arb`, targets German, Kazakh, Ukrainian and Simplified Chinese. Then set
+  `CROWDIN_PROJECT_ID` and `CROWDIN_PERSONAL_TOKEN` and run `crowdin push sources`. The
+  four `app_*.arb` files here are empty placeholders until the first `pull`.
+- **The two numbered shortcut labels stay English.** `lumit-keymap` builds "Add marker
+  {n} at the playhead" and "Go to marker {n}" with `format!`, so they are not literals
+  the lookup table can hold (`lib/l10n/engine_labels.dart`). Give the bridge the number
+  separately, or the label a stable id, and they join the rest.
+- **No CI check that the source file was pushed.** A string added here is invisible to
+  translators until somebody runs `crowdin push sources` by hand. Worth a release-time
+  step once the project exists.
+
 
 **Lens flare follow-ups (K-256..K-264, [impl/lens-flare.md](impl/lens-flare.md))** — the
 shipped core is docs/08 §3.27 (FlareSim model + 1299-lens library, K-261; artefact and
@@ -536,7 +557,7 @@ list, not a re-statement of the roadmap.
     dylibs but is ad-hoc signed, so Gatekeeper warns) — blocked on an Apple
     Developer Program membership, not on code; signing the Windows installer,
     likewise blocked on buying a certificate. A release ships three unsigned
-    artefacts until then (K-300).
+    artefacts until then (K-304).
 - **Website.** The release-notes page at `/releases` is built and empty: the notes
     themselves are written by hand, one Markdown file per version under
     `web/src/content/releases` (copy `_template.md`; see `web/README.md`). Until

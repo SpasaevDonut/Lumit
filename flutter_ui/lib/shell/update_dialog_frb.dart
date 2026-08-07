@@ -14,6 +14,7 @@
 
 import 'package:flutter/widgets.dart';
 
+import '../l10n/strings.dart';
 import '../state/updates.dart';
 import '../widgets/controls.dart';
 
@@ -61,11 +62,11 @@ Future<void> pressUpdateRow(
   await updates.check();
   switch (updates.stage) {
     case UpdateStage.upToDate:
-      notice('Lumit is up to date');
+      notice(l10n.updateNoneAvailable);
     case UpdateStage.failed:
-      notice(updates.failure ?? 'Could not check for updates', error: true);
+      notice(updates.failure ?? l10n.updateCheckFailed, error: true);
     case UpdateStage.available:
-      notice('Lumit ${updates.release?.version} is available');
+      notice(l10n.updateIsAvailable('${updates.release?.version}'));
     default:
       break;
   }
@@ -107,7 +108,7 @@ Future<void> _offerAndFetch(
   await downloading;
 
   if (updates.stage == UpdateStage.failed) {
-    notice(updates.failure ?? 'Could not download the update', error: true);
+    notice(updates.failure ?? l10n.updateDownloadFailed, error: true);
     return;
   }
   if (updates.stage != UpdateStage.ready || !context.mounted) return;
@@ -164,7 +165,7 @@ class _OfferUpdate extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.all(10),
-            child: Text('Update to Lumit ${release.version}?',
+            child: Text(l10n.updateOfferTitle(release.version),
                 style: t.bodyPrimary),
           ),
           Padding(
@@ -187,14 +188,14 @@ class _OfferUpdate extends StatelessWidget {
                   small: true,
                   frameless: true,
                   onPressed: () => onChoose(false),
-                  child: Text('Not now', style: t.small),
+                  child: Text(l10n.updateNotNow, style: t.small),
                 ),
                 const SizedBox(width: 8),
                 HouseButton(
                   key: const ValueKey('update-offer-yes'),
                   small: true,
                   onPressed: () => onChoose(true),
-                  child: Text('Download', style: t.small),
+                  child: Text(l10n.updateDownload, style: t.small),
                 ),
               ],
             ),
@@ -272,7 +273,7 @@ class _DownloadProgressState extends State<_DownloadProgress> {
         children: [
           Padding(
             padding: const EdgeInsets.all(10),
-            child: Text('Downloading Lumit ${widget.release.version}',
+            child: Text(l10n.updateDownloading(widget.release.version),
                 style: t.bodyPrimary),
           ),
           Padding(
@@ -318,7 +319,7 @@ class _DownloadProgressState extends State<_DownloadProgress> {
                   small: true,
                   frameless: true,
                   onPressed: widget.onCancel,
-                  child: Text('Cancel', style: t.small),
+                  child: Text(l10n.cancel, style: t.small),
                 ),
               ],
             ),
@@ -368,8 +369,8 @@ class _RestartToFinish extends StatelessWidget {
             padding: const EdgeInsets.all(10),
             child: Text(
               quits
-                  ? 'Restart to finish updating'
-                  : 'Lumit $version is downloaded',
+                  ? l10n.updateRestartToFinish
+                  : l10n.updateDownloaded(version),
               style: t.bodyPrimary,
             ),
           ),
@@ -379,22 +380,14 @@ class _RestartToFinish extends StatelessWidget {
               switch (delivery) {
                 // The Chrome-shaped one: no installer, no questions, a restart
                 // that lands in the new version a second later.
-                UpdateDelivery.inPlace =>
-                  'Lumit $version is ready. Restarting puts it in place and '
-                      'opens it — no installer, and nothing to answer.'
-                      '${dirty ? ' This project has unsaved changes.' : ''}',
-                UpdateDelivery.installer =>
-                  'Lumit $version is downloaded. It installs while Lumit is '
-                      'closed, so the update finishes the next time you open '
-                      'it.${dirty ? ' This project has unsaved changes.' : ''}',
+                UpdateDelivery.inPlace => l10n.updateReadyInPlace(version) +
+                    (dirty ? ' ${l10n.updateUnsavedChanges}' : ''),
+                UpdateDelivery.installer => l10n.updateReadyInstaller(version) +
+                    (dirty ? ' ${l10n.updateUnsavedChanges}' : ''),
                 // Inside the sandbox the files are not ours to replace, so the
                 // bundle is handed over and Flatpak does the rest.
                 UpdateDelivery.flatpakBundle =>
-                  'Lumit installs its own updates everywhere except here: a '
-                      'Flatpak is updated by Flatpak. The bundle is '
-                      'downloaded — install it with\n\n'
-                      '    flatpak install --user lumit-$version-linux-x64'
-                      '.flatpak',
+                  l10n.updateReadyFlatpak(version),
               },
               style: t.small.copyWith(color: t.textMuted),
             ),
@@ -417,7 +410,7 @@ class _RestartToFinish extends StatelessWidget {
                   small: true,
                   frameless: true,
                   onPressed: () => onChoose(_RestartAnswer.later),
-                  child: Text('Later', style: t.small),
+                  child: Text(l10n.updateLater, style: t.small),
                 ),
                 if (quits && dirty) ...[
                   HouseButton(
@@ -425,20 +418,22 @@ class _RestartToFinish extends StatelessWidget {
                     small: true,
                     frameless: true,
                     onPressed: () => onChoose(_RestartAnswer.restart),
-                    child: Text('Restart without saving', style: t.small),
+                    child:
+                        Text(l10n.updateRestartWithoutSaving, style: t.small),
                   ),
                   HouseButton(
                     key: const ValueKey('update-save-restart'),
                     small: true,
                     onPressed: () => onChoose(_RestartAnswer.saveAndRestart),
-                    child: Text('Save and restart', style: t.small),
+                    child: Text(l10n.updateSaveAndRestart, style: t.small),
                   ),
                 ] else
                   HouseButton(
                     key: const ValueKey('update-restart-now'),
                     small: true,
                     onPressed: () => onChoose(_RestartAnswer.restart),
-                    child: Text(quits ? 'Restart now' : 'Show the file',
+                    child: Text(
+                        quits ? l10n.updateRestartNow : l10n.updateShowTheFile,
                         style: t.small),
                   ),
               ],

@@ -19,6 +19,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/src/rust/api/state.dart';
 
+import '../l10n/strings.dart';
 import '../state/dropper.dart';
 import '../theme/theme.dart';
 import 'controls.dart';
@@ -170,24 +171,24 @@ class DropperViewfinder extends StatelessWidget {
     // A window the pointer has outrun — a frame just changed, a fast sweep —
     // would otherwise average whatever cells happened to be inside it and show
     // that as the value about to be picked, which is worse than saying nothing.
-    final covered =
-        held != null && windowCovers(held, centre.$1, centre.$2);
-    final sample = covered
-        ? sampleFromWindow(held, region, centre.$1, centre.$2)
-        : null;
+    final covered = held != null && windowCovers(held, centre.$1, centre.$2);
+    final sample =
+        covered ? sampleFromWindow(held, region, centre.$1, centre.$2) : null;
     final round = t.shape == ThemeShape.round;
     return Container(
       decoration: BoxDecoration(
         color: t.surface2,
-        borderRadius:
-            BorderRadius.circular(round ? _barHeight / 2 : t.tokens.controlRadius),
+        borderRadius: BorderRadius.circular(
+            round ? _barHeight / 2 : t.tokens.controlRadius),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 8),
       child: Row(
         children: [
           if (arm.reads == DropperReads.colour && sample != null) ...[
-            _swatch(t, documentColour(srgbEncode(sample.r), srgbEncode(sample.g),
-                srgbEncode(sample.b), 0xff)),
+            _swatch(
+                t,
+                documentColour(srgbEncode(sample.r), srgbEncode(sample.g),
+                    srgbEncode(sample.b), 0xff)),
             const SizedBox(width: 6),
             Expanded(
               child: Text(
@@ -208,7 +209,7 @@ class DropperViewfinder extends StatelessWidget {
           ] else
             Expanded(
               child: Text(
-                'Reading…',
+                l10n.dropperReading,
                 style: t.small.copyWith(color: t.textMuted),
               ),
             ),
@@ -228,8 +229,8 @@ class DropperViewfinder extends StatelessWidget {
   /// than no caption at all.
   String _readingLabel(DropperSample sample, BridgeSampledPixels window) {
     final from = window.layerAlone
-        ? (arm.sampleLayerName ?? 'That layer')
-        : 'Composite';
+        ? (arm.sampleLayerName ?? l10n.dropperThatLayer)
+        : l10n.dropperComposite;
     return switch (arm.reads) {
       DropperReads.depth => '$from · ${sample.depth.toStringAsFixed(3)}',
       DropperReads.position => '${sample.x}, ${sample.y}',
@@ -318,7 +319,8 @@ class _GridPainter extends CustomPainter {
   Color? _pixel(BridgeSampledPixels? window, int x, int y) {
     if (window == null) return null;
     final reach = dropperGrid ~/ 2;
-    final px = windowPixel(window, centre.$1 + x - reach, centre.$2 + y - reach);
+    final px =
+        windowPixel(window, centre.$1 + x - reach, centre.$2 + y - reach);
     if (px == null) return null;
     return documentColour(px.r, px.g, px.b, 0xff);
   }

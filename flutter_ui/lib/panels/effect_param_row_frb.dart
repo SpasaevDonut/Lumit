@@ -25,6 +25,8 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../icons/icons.dart';
+import '../l10n/engine_labels.dart';
+import '../l10n/strings.dart';
 import '../state/comp_time.dart';
 import '../state/dropper.dart';
 import '../state/file_dialogs.dart';
@@ -158,7 +160,7 @@ class EffectParamRowFrb extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       onTap: onLabelTap,
       child: Text(
-        param.label,
+        engineLabel(param.label),
         style:
             graphColour == null ? t.body : t.body.copyWith(color: graphColour),
         overflow: TextOverflow.ellipsis,
@@ -208,7 +210,8 @@ class EffectParamRowFrb extends StatelessWidget {
   BridgeScalar? _animatableScalarOf(BridgeEffectValue? value) {
     // Int is a Float value with integer display (docs/08 §1.2), so it
     // animates exactly like Float.
-    if (param.kind is! BridgeParamKind_Float && param.kind is! BridgeParamKind_Int) {
+    if (param.kind is! BridgeParamKind_Float &&
+        param.kind is! BridgeParamKind_Int) {
       return null;
     }
     return switch (value) {
@@ -323,14 +326,15 @@ class EffectParamRowFrb extends StatelessWidget {
                       final i = label.indexOf(' · ');
                       return i > 0 ? label.substring(0, i) : null;
                     },
-                    hint: 'Search ${param.label.toLowerCase()}',
+                    hint:
+                        l10n.searchFor(engineLabel(param.label).toLowerCase()),
                     onChanged: (i) => _set(BridgeEffectValue.choice(i)),
                   )
                 : BareDropdown<int>(
                     key: ValueKey<String>('fx-choice-$id-${param.id}'),
                     value: index,
                     options: [for (var i = 0; i < options.length; i++) i],
-                    label: (i) => options[i],
+                    label: (i) => engineLabel(options[i]),
                     onChanged: (i) => _set(BridgeEffectValue.choice(i)),
                   ),
           );
@@ -376,7 +380,7 @@ class EffectParamRowFrb extends StatelessWidget {
                 Flexible(
                   child: LumitTooltip(
                     message:
-                        paths.isEmpty ? 'Choose a $filterName' : paths.first,
+                        paths.isEmpty ? l10n.chooseA(filterName) : paths.first,
                     child: HouseButton(
                       key: ValueKey<String>('fx-file-$id-${param.id}'),
                       onPressed: () async {
@@ -389,7 +393,9 @@ class EffectParamRowFrb extends StatelessWidget {
                         )));
                       },
                       child: Text(
-                        paths.isEmpty ? 'Choose…' : _basename(paths.first),
+                        paths.isEmpty
+                            ? l10n.chooseEllipsis
+                            : _basename(paths.first),
                         style: t.small,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -398,13 +404,12 @@ class EffectParamRowFrb extends StatelessWidget {
                 ),
                 if (paths.isNotEmpty)
                   LumitTooltip(
-                    message: 'Clear',
+                    message: l10n.clear,
                     child: HouseButton(
                       key: ValueKey<String>('fx-file-clear-$id-${param.id}'),
                       onPressed: () => _set(BridgeEffectValue.file(
                           const BridgeFileParam(
-                              paths: [],
-                              index: BridgeScalar.static_(0)))),
+                              paths: [], index: BridgeScalar.static_(0)))),
                       child: Text('×', style: t.small),
                     ),
                   ),
@@ -454,7 +459,8 @@ class EffectParamRowFrb extends StatelessWidget {
           min: hardMin ?? -1000000,
           max: hardMax ?? 1000000,
           speed: speed,
-          onCommit: (v) => write(scalarWithValueAt(scalar, snap(v), comp, frame)),
+          onCommit: (v) =>
+              write(scalarWithValueAt(scalar, snap(v), comp, frame)),
         ),
       );
     }
@@ -502,11 +508,11 @@ class EffectParamRowFrb extends StatelessWidget {
       };
       return _DropperButton(
         id: 'fx-$id-${param.id}',
-        tip: 'Read the focal point off ${entry.info.name} in the Viewer',
+        tip: l10n.tipPickFocalPoint,
         arm: (ui) => ui.armDropper(DropperArm(
           id: 'fx-$id-${param.id}',
           reads: DropperReads.depth,
-          label: param.label,
+          label: engineLabel(param.label),
           sampleLayer: entry.layer,
           sampleLayerName: entry.info.name,
           onPick: (sample) {
@@ -606,11 +612,11 @@ class EffectParamRowFrb extends StatelessWidget {
           // it (docs/07 §6.1).
           _DropperButton(
             id: 'fx-$id-${param.id}',
-            tip: 'Sample ${param.label} from the Viewer',
+            tip: l10n.tipSampleFromViewer,
             arm: (ui) => ui.armDropper(DropperArm(
               id: 'fx-$id-${param.id}',
               reads: DropperReads.colour,
-              label: param.label,
+              label: engineLabel(param.label),
               onPick: (sample) => _set(BridgeEffectValue.colour(BridgeColour(
                 // Scene-linear, exactly as the parameter stores it, so the
                 // sample passes through without a conversion to disagree over.
@@ -639,7 +645,7 @@ class EffectParamRowFrb extends StatelessWidget {
     // The layer the effect is on says so, so "everything below" is readable
     // on an adjustment layer rather than an unexplained self-reference.
     String named(String name, UuidValue layerId) =>
-        layerId == ownerLayerId ? '$name (this layer)' : name;
+        layerId == ownerLayerId ? l10n.thisLayerSuffix(name) : name;
     return SizedBox(
       width: effectCellWidth + 40,
       child: BareLazyDropdown<UuidValue?>(
@@ -647,14 +653,14 @@ class EffectParamRowFrb extends StatelessWidget {
         // Named from the read model when it can be, so the closed button
         // costs nothing; a reference to a layer since deleted says so.
         label: chosen == null
-            ? 'None'
+            ? l10n.none
             : (ownerLayers
                     .where((l) => l.layer.internallayerId == current)
                     .map((l) => named(l.info.name, l.layer.internallayerId))
                     .firstOrNull ??
-                'Missing layer'),
+                l10n.missingLayer),
         options: () => [
-          (null, 'None'),
+          (null, l10n.none),
           for (final entry in ownerLayers)
             // A layer-valued parameter samples a *picture*, so a layer with
             // none (a camera, an audio-only clip) is not offered.
@@ -787,7 +793,8 @@ class EffectPointRowFrb extends StatelessWidget {
             onCommit: (v) => onWrite(
               id,
               param.id,
-              BridgeEffectValue.float(scalarWithValueAt(scalar, v, comp, frame)),
+              BridgeEffectValue.float(
+                  scalarWithValueAt(scalar, v, comp, frame)),
             ),
           ),
         );
@@ -801,12 +808,12 @@ class EffectPointRowFrb extends StatelessWidget {
           max: kind.hardMax ?? 1000000,
           speed: speed,
           decimals: 2,
-          onChanged: (v) => onWrite(
-              id, param.id, BridgeEffectValue.float(BridgeScalar.static_(v.toDouble()))),
-          onChangeLive: (v) => onLive(
-              id, param.id, BridgeEffectValue.float(BridgeScalar.static_(v.toDouble()))),
-          onChangeEnd: (v) => onWrite(
-              id, param.id, BridgeEffectValue.float(BridgeScalar.static_(v.toDouble()))),
+          onChanged: (v) => onWrite(id, param.id,
+              BridgeEffectValue.float(BridgeScalar.static_(v.toDouble()))),
+          onChangeLive: (v) => onLive(id, param.id,
+              BridgeEffectValue.float(BridgeScalar.static_(v.toDouble()))),
+          onChangeEnd: (v) => onWrite(id, param.id,
+              BridgeEffectValue.float(BridgeScalar.static_(v.toDouble()))),
         ),
       );
     }
@@ -821,7 +828,7 @@ class EffectPointRowFrb extends StatelessWidget {
           const SizedBox(width: 4),
           _DropperButton(
             id: 'fx-$id-${xParam.id}',
-            tip: 'Pick $stem on the Viewer',
+            tip: l10n.tipPickOnViewer,
             arm: (ui) => ui.armDropper(DropperArm(
               id: 'fx-$id-${xParam.id}',
               reads: DropperReads.position,
@@ -911,7 +918,7 @@ List<BridgeParamGroup> cachedListParameterGroups(String effect) =>
 /// for an effect this build does not know.
 String effectLabelOf(String name) {
   for (final info in cachedListEffects()) {
-    if (info.name == name) return info.label;
+    if (info.name == name) return engineLabel(info.label);
   }
   return name;
 }
@@ -1057,7 +1064,8 @@ class _DropperButton extends StatelessWidget {
   final String tip;
   final void Function(LumitUiState ui) arm;
 
-  const _DropperButton({required this.id, required this.tip, required this.arm});
+  const _DropperButton(
+      {required this.id, required this.tip, required this.arm});
 
   @override
   Widget build(BuildContext context) {

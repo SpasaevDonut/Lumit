@@ -18,6 +18,7 @@ import 'package:lumit_flutter/src/rust/api/project_item.dart';
 import 'package:lumit_flutter/src/rust/api/retime.dart';
 import 'package:lumit_flutter/src/rust/api/solid.dart';
 
+import '../l10n/strings.dart';
 import '../theme/theme.dart';
 import '../widgets/colour_picker.dart';
 import '../widgets/controls.dart';
@@ -70,7 +71,7 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
     if (rows.isEmpty) return const SizedBox.shrink();
 
     return FxSection(
-      title: 'Source',
+      title: l10n.sourceSection,
       open: widget.open,
       onToggle: widget.onToggle,
       rows: rows,
@@ -107,7 +108,7 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
     return [
       _row(
         t,
-        'Text',
+        l10n.sourceText,
         SizedBox(
           width: _cellWidth + 60,
           child: HouseTextField(
@@ -120,7 +121,7 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
       ),
       _row(
         t,
-        'Size',
+        l10n.size,
         SizedBox(
           width: _cellWidth,
           child: DragValueField(
@@ -135,7 +136,7 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
       ),
       _row(
         t,
-        'Fill',
+        l10n.toolFill,
         _swatch(
           t,
           keyName: 'src-text-fill',
@@ -150,13 +151,13 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
     if (zoom is! BridgeScalar_Static) {
       return _row(
         t,
-        'Zoom',
-        Text('animated', style: t.small.copyWith(color: t.textMuted)),
+        l10n.sourceZoom,
+        Text(l10n.animated, style: t.small.copyWith(color: t.textMuted)),
       );
     }
     return _row(
       t,
-      'Zoom',
+      l10n.sourceZoom,
       SizedBox(
         width: _cellWidth,
         child: DragValueField(
@@ -194,7 +195,7 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
     return [
       _row(
         t,
-        'Solid colour',
+        l10n.sourceSolidColour,
         _swatch(
           t,
           keyName: 'src-solid-colour',
@@ -204,7 +205,7 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
       ),
       _row(
         t,
-        'Solid size',
+        l10n.sourceSolidSize,
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -235,7 +236,7 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
       Padding(
         padding: const EdgeInsets.only(top: 2),
         child: Text(
-          'This is an asset — every layer using it changes.',
+          l10n.sourceAssetNote,
           style: t.small.copyWith(color: t.textMuted),
         ),
       ),
@@ -263,7 +264,7 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
     return [
       _row(
         t,
-        'In-between frames',
+        l10n.sourceInBetweenFrames,
         SizedBox(
           width: _cellWidth + 40,
           child: BareDropdown<BridgeRetimeInterp>(
@@ -271,9 +272,9 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
             value: widget.layer.getInterpolation(),
             options: BridgeRetimeInterp.values,
             label: (i) => switch (i) {
-              BridgeRetimeInterp.nearest => 'Nearest',
-              BridgeRetimeInterp.blend => 'Blend',
-              BridgeRetimeInterp.flow => 'Optical flow',
+              BridgeRetimeInterp.nearest => l10n.interpNearest,
+              BridgeRetimeInterp.blend => l10n.interpBlend,
+              BridgeRetimeInterp.flow => l10n.interpOpticalFlow,
             },
             onChanged: (i) {
               widget.layer.setInterpolation(interpolation: i);

@@ -45,6 +45,8 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../icons/icons.dart';
+import '../l10n/engine_labels.dart';
+import '../l10n/strings.dart';
 import '../shell/tool_bar_frb.dart';
 import '../state/dropper.dart';
 import '../state/layer_bounds.dart' show textLayerBounds;
@@ -255,10 +257,10 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
     }
     final comp = ui.selectedComp;
     if (comp == null) {
-      return const PlaceholderPanel(
+      return PlaceholderPanel(
         icon: LumitIcon.footage,
-        title: 'Viewer',
-        hint: 'Select a composition in the Project panel.',
+        title: l10n.panelViewer,
+        hint: l10n.selectACompositionFirst,
       );
     }
     // A newly fronted composition is a new picture to ask for. Nothing else
@@ -303,8 +305,8 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
             // The magnification menu is a jump to a named place, so it flies
             // there like every other zoom (K-218) — from whatever is on screen,
             // which is what the measured rectangle in the layout builder knows.
-            onZoom: (z) => _goToZoom(z, Offset.zero,
-                from: _currentScale(comp.getSize())),
+            onZoom: (z) =>
+                _goToZoom(z, Offset.zero, from: _currentScale(comp.getSize())),
             onChannel: (c) => setState(() => _channel = c),
             onGrid: () => setState(() => _grid = !_grid),
             onWireframes: () => setState(() => _wireframes = !_wireframes),
@@ -385,23 +387,19 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
                   setState(() {});
                 },
                 onZoomAt: (at, {required bool out}) => applyZoom(zoomAboutPoint(
-                      cursor: at,
-                      factor: out ? 1 / zoomToolStep : zoomToolStep,
-                      fitted: fitted,
-                      compSize:
-                          Size(size.width.toDouble(), size.height.toDouble()),
-                      panel:
-                          Size(constraints.maxWidth, constraints.maxHeight),
-                    )),
+                  cursor: at,
+                  factor: out ? 1 / zoomToolStep : zoomToolStep,
+                  fitted: fitted,
+                  compSize: Size(size.width.toDouble(), size.height.toDouble()),
+                  panel: Size(constraints.maxWidth, constraints.maxHeight),
+                )),
                 onZoomBox: (box, {required bool out}) => applyZoom(zoomToBox(
-                      box: box,
-                      out: out,
-                      fitted: fitted,
-                      compSize:
-                          Size(size.width.toDouble(), size.height.toDouble()),
-                      panel:
-                          Size(constraints.maxWidth, constraints.maxHeight),
-                    )),
+                  box: box,
+                  out: out,
+                  fitted: fitted,
+                  compSize: Size(size.width.toDouble(), size.height.toDouble()),
+                  panel: Size(constraints.maxWidth, constraints.maxHeight),
+                )),
               ),
             ),
           );
@@ -629,8 +627,7 @@ class _Stage extends StatelessWidget {
     // refreshes the model and repaints this from the new one, so checking here
     // only asked the engine a question the answer to which was always no.
     final revision = model.heldRevision;
-    final viewScale =
-        compSize.width == 0 ? 1.0 : fitted.width / compSize.width;
+    final viewScale = compSize.width == 0 ? 1.0 : fitted.width / compSize.width;
     double? still(BridgeScalar s) => s is BridgeScalar_Static ? s.field0 : null;
 
     final out = <LayerBox>[];
@@ -697,177 +694,176 @@ class _Stage extends StatelessWidget {
 
   Widget _stage(BuildContext context, LumitTheme t) {
     return GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        // Panning the picture, not the layer: the overlay's own handle takes
-        // the gesture first when it is hit, so this only fires on empty space.
-        onPanUpdate: (d) => onPan(d.delta),
-        child: Container(
-          color: viewerSurroundFor(
-            t,
-            themed: uiState.workspace.themedViewerSurround,
-          ),
-          child: Stack(
-            children: [
-              // The checkerboard covers the panel and is clipped to the
-              // picture, rather than being a widget the size of the picture
-              // (K-230): at 800 % on an HD composition that widget was 15360
-              // pixels across, and painting an 8-pixel grid over it meant half
-              // a million rectangles for the few thousand actually on screen.
-              // That, and not the rendering, is what made zooming in seize the
-              // whole window.
-              if (grid)
-                Positioned.fill(
-                  child: CustomPaint(painter: _CheckerPainter(t, fitted)),
-                ),
-              Positioned.fromRect(
-                rect: fitted,
-                child: _Picture(uiState: uiState, channel: channel),
-              ),
-              _missingSlate(context, t),
-              // The layer controls. With the Hand tool armed this only draws —
-              // it lets every gesture through to the pan above, which is the
-              // whole difference between the two tools over the picture.
-              ListenableBuilder(
-                // Four things move the boxes without the panel being rebuilt:
-                // the selection (a Timeline click), a probe landing with a
-                // clip's real size, an edit changing a transform, and a turn
-                // in flight from the Rotation tool (K-230).
-                listenable: Listenable.merge([
-                  uiState.selectedLayers,
-                  uiState.layerBounds,
-                  uiState.model,
-                  uiState.liveRotations,
-                  uiState.liveText,
-                ]),
-                builder: (context, _) => ViewerGizmoLayer(
-                  comp: comp,
-                  uiState: uiState,
-                  boxes: _boxes(),
-                  showControls: wireframes,
-                  tool: uiState.tools.tool,
-                  // The pivot, while the tool that turns about it is in hand.
-                  showAnchors: uiState.tools.tool.group == ToolGroup.rotate,
-                  onChanged: onChanged,
-                ),
-              ),
-              // The shape tools and the Pen: a drag draws a mask on the
-              // selected layer, and the Pen builds one point by point (K-222,
-              // K-223).
-              ViewerShapeLayer(
-                active: uiState.tools.tool.group == ToolGroup.shape ||
-                    uiState.tools.tool == ToolMode.pen,
-                tool: uiState.tools.tool,
-                state: Provider.of<LumitState>(context, listen: false),
-                uiState: uiState,
-                boxes: _boxes(),
-                comp: comp,
-                fitted: fitted,
-                compSize: Size(
-                  compSize.width.toDouble(),
-                  compSize.height.toDouble(),
-                ),
-                accent: t.accent,
-                onChanged: onChanged,
-              ),
-              // The Type tool: a click makes or edits a text layer, and what
-              // is typed is previewed until the edit ends (K-225).
-              ViewerTypeLayer(
-                active: uiState.tools.tool.group == ToolGroup.type,
-                tool: uiState.tools.tool,
-                comp: comp,
-                state: Provider.of<LumitState>(context, listen: false),
-                uiState: uiState,
-                boxes: _boxes(),
-                fitted: fitted,
-                compSize: Size(
-                  compSize.width.toDouble(),
-                  compSize.height.toDouble(),
-                ),
-                accent: t.accent,
-                onChanged: onChanged,
-              ),
-              // The painting tools: a drag paints a stroke on the selected
-              // layer (K-227), under the brush ring K-226 gave them.
-              ViewerPaintLayer(
-                active: uiState.tools.tool.group == ToolGroup.paint,
-                tool: uiState.tools.tool,
-                state: Provider.of<LumitState>(context, listen: false),
-                uiState: uiState,
-                boxes: _boxes(),
-                viewScale: compSize.width == 0
-                    ? 1.0
-                    : fitted.width / compSize.width,
-                onChanged: onChanged,
-              ),
-              // The Anchor point tool: its own pointer, and a drag that slides
-              // the pivot while the picture stays still (K-220).
-              ViewerAnchorLayer(
-                active: uiState.tools.tool.group == ToolGroup.anchor,
-                comp: comp,
-                uiState: uiState,
-                boxes: _boxes(),
-                mark: t.textPrimary,
-                outline: t.surface0,
-                accent: t.accent,
-                onChanged: onChanged,
-              ),
-              // The Rotation tool: its own pointer, and a drag that turns the
-              // selection about each layer's anchor (K-219).
-              ViewerRotateLayer(
-                active: uiState.tools.tool.group == ToolGroup.rotate,
-                comp: comp,
-                uiState: uiState,
-                boxes: _boxes(),
-                mark: t.textPrimary,
-                outline: t.surface0,
-                onChanged: onChanged,
-              ),
-              // The camera tools: a drag orbits, tracks or dollies the comp's
-              // active camera (K-229).
-              ViewerCameraLayer(
-                active: uiState.tools.tool.group == ToolGroup.camera,
-                tool: uiState.tools.tool,
-                comp: comp,
-                state: Provider.of<LumitState>(context, listen: false),
-                uiState: uiState,
-                fitted: fitted,
-                compSize: Size(
-                  compSize.width.toDouble(),
-                  compSize.height.toDouble(),
-                ),
-                mark: t.textPrimary,
-                outline: t.surface0,
-                accent: t.accent,
-                onChanged: onChanged,
-              ),
-              // Over the layer controls, and inert unless the Zoom tool is
-              // armed: while it is, the whole picture is its target and no
-              // handle underneath may take a click meant for a magnification.
-              ViewerZoomLayer(
-                active: uiState.tools.tool.group == ToolGroup.zoom,
-                onZoomAt: onZoomAt,
-                onZoomBox: onZoomBox,
-                accent: t.accent,
-                mark: t.textPrimary,
-                outline: t.surface0,
-              ),
-              // The Hand tool: the drawn hand, and the drag that pans (K-230).
-              // It takes the drag rather than leaving it to the stage beneath,
-              // so the hand keeps following the pointer while the button is
-              // down — which is when it matters most.
-              ViewerHandLayer(
-                active: uiState.tools.tool.group == ToolGroup.hand,
-                onPan: onPan,
-                mark: t.textPrimary,
-                outline: t.surface0,
-              ),
-              // Above both, because while the dropper is armed the whole
-              // picture is a target: a drag handle under the pointer must not
-              // take the click that was meant to pick a pixel.
-              DropperLayer(comp: comp, uiState: uiState, fitted: fitted),
-            ],
-          ),
+      behavior: HitTestBehavior.opaque,
+      // Panning the picture, not the layer: the overlay's own handle takes
+      // the gesture first when it is hit, so this only fires on empty space.
+      onPanUpdate: (d) => onPan(d.delta),
+      child: Container(
+        color: viewerSurroundFor(
+          t,
+          themed: uiState.workspace.themedViewerSurround,
         ),
+        child: Stack(
+          children: [
+            // The checkerboard covers the panel and is clipped to the
+            // picture, rather than being a widget the size of the picture
+            // (K-230): at 800 % on an HD composition that widget was 15360
+            // pixels across, and painting an 8-pixel grid over it meant half
+            // a million rectangles for the few thousand actually on screen.
+            // That, and not the rendering, is what made zooming in seize the
+            // whole window.
+            if (grid)
+              Positioned.fill(
+                child: CustomPaint(painter: _CheckerPainter(t, fitted)),
+              ),
+            Positioned.fromRect(
+              rect: fitted,
+              child: _Picture(uiState: uiState, channel: channel),
+            ),
+            _missingSlate(context, t),
+            // The layer controls. With the Hand tool armed this only draws —
+            // it lets every gesture through to the pan above, which is the
+            // whole difference between the two tools over the picture.
+            ListenableBuilder(
+              // Four things move the boxes without the panel being rebuilt:
+              // the selection (a Timeline click), a probe landing with a
+              // clip's real size, an edit changing a transform, and a turn
+              // in flight from the Rotation tool (K-230).
+              listenable: Listenable.merge([
+                uiState.selectedLayers,
+                uiState.layerBounds,
+                uiState.model,
+                uiState.liveRotations,
+                uiState.liveText,
+              ]),
+              builder: (context, _) => ViewerGizmoLayer(
+                comp: comp,
+                uiState: uiState,
+                boxes: _boxes(),
+                showControls: wireframes,
+                tool: uiState.tools.tool,
+                // The pivot, while the tool that turns about it is in hand.
+                showAnchors: uiState.tools.tool.group == ToolGroup.rotate,
+                onChanged: onChanged,
+              ),
+            ),
+            // The shape tools and the Pen: a drag draws a mask on the
+            // selected layer, and the Pen builds one point by point (K-222,
+            // K-223).
+            ViewerShapeLayer(
+              active: uiState.tools.tool.group == ToolGroup.shape ||
+                  uiState.tools.tool == ToolMode.pen,
+              tool: uiState.tools.tool,
+              state: Provider.of<LumitState>(context, listen: false),
+              uiState: uiState,
+              boxes: _boxes(),
+              comp: comp,
+              fitted: fitted,
+              compSize: Size(
+                compSize.width.toDouble(),
+                compSize.height.toDouble(),
+              ),
+              accent: t.accent,
+              onChanged: onChanged,
+            ),
+            // The Type tool: a click makes or edits a text layer, and what
+            // is typed is previewed until the edit ends (K-225).
+            ViewerTypeLayer(
+              active: uiState.tools.tool.group == ToolGroup.type,
+              tool: uiState.tools.tool,
+              comp: comp,
+              state: Provider.of<LumitState>(context, listen: false),
+              uiState: uiState,
+              boxes: _boxes(),
+              fitted: fitted,
+              compSize: Size(
+                compSize.width.toDouble(),
+                compSize.height.toDouble(),
+              ),
+              accent: t.accent,
+              onChanged: onChanged,
+            ),
+            // The painting tools: a drag paints a stroke on the selected
+            // layer (K-227), under the brush ring K-226 gave them.
+            ViewerPaintLayer(
+              active: uiState.tools.tool.group == ToolGroup.paint,
+              tool: uiState.tools.tool,
+              state: Provider.of<LumitState>(context, listen: false),
+              uiState: uiState,
+              boxes: _boxes(),
+              viewScale:
+                  compSize.width == 0 ? 1.0 : fitted.width / compSize.width,
+              onChanged: onChanged,
+            ),
+            // The Anchor point tool: its own pointer, and a drag that slides
+            // the pivot while the picture stays still (K-220).
+            ViewerAnchorLayer(
+              active: uiState.tools.tool.group == ToolGroup.anchor,
+              comp: comp,
+              uiState: uiState,
+              boxes: _boxes(),
+              mark: t.textPrimary,
+              outline: t.surface0,
+              accent: t.accent,
+              onChanged: onChanged,
+            ),
+            // The Rotation tool: its own pointer, and a drag that turns the
+            // selection about each layer's anchor (K-219).
+            ViewerRotateLayer(
+              active: uiState.tools.tool.group == ToolGroup.rotate,
+              comp: comp,
+              uiState: uiState,
+              boxes: _boxes(),
+              mark: t.textPrimary,
+              outline: t.surface0,
+              onChanged: onChanged,
+            ),
+            // The camera tools: a drag orbits, tracks or dollies the comp's
+            // active camera (K-229).
+            ViewerCameraLayer(
+              active: uiState.tools.tool.group == ToolGroup.camera,
+              tool: uiState.tools.tool,
+              comp: comp,
+              state: Provider.of<LumitState>(context, listen: false),
+              uiState: uiState,
+              fitted: fitted,
+              compSize: Size(
+                compSize.width.toDouble(),
+                compSize.height.toDouble(),
+              ),
+              mark: t.textPrimary,
+              outline: t.surface0,
+              accent: t.accent,
+              onChanged: onChanged,
+            ),
+            // Over the layer controls, and inert unless the Zoom tool is
+            // armed: while it is, the whole picture is its target and no
+            // handle underneath may take a click meant for a magnification.
+            ViewerZoomLayer(
+              active: uiState.tools.tool.group == ToolGroup.zoom,
+              onZoomAt: onZoomAt,
+              onZoomBox: onZoomBox,
+              accent: t.accent,
+              mark: t.textPrimary,
+              outline: t.surface0,
+            ),
+            // The Hand tool: the drawn hand, and the drag that pans (K-230).
+            // It takes the drag rather than leaving it to the stage beneath,
+            // so the hand keeps following the pointer while the button is
+            // down — which is when it matters most.
+            ViewerHandLayer(
+              active: uiState.tools.tool.group == ToolGroup.hand,
+              onPan: onPan,
+              mark: t.textPrimary,
+              outline: t.surface0,
+            ),
+            // Above both, because while the dropper is armed the whole
+            // picture is a target: a drag handle under the pointer must not
+            // take the click that was meant to pick a pixel.
+            DropperLayer(comp: comp, uiState: uiState, fitted: fitted),
+          ],
+        ),
+      ),
     );
   }
 
@@ -1095,7 +1091,9 @@ class _DropperLayerState extends State<DropperLayer> {
   /// pointer position is put through it rather than assumed to match.
   void _noteOverlayPosition(Offset global) {
     final overlayBox = Overlay.maybeOf(context)?.context.findRenderObject();
-    if (overlayBox is! RenderBox || !overlayBox.attached || !overlayBox.hasSize) {
+    if (overlayBox is! RenderBox ||
+        !overlayBox.attached ||
+        !overlayBox.hasSize) {
       _overlayCursor = null;
       return;
     }
@@ -1154,8 +1152,11 @@ class _DropperLayerState extends State<DropperLayer> {
   bool _covered(Offset local) {
     final window = widget.uiState.dropperPatch.value;
     if (window == null) return false;
-    if (window.frame.toInt() != widget.uiState.playheadFrame.value) return false;
-    if (window.layerAlone != (widget.uiState.dropper.value?.sampleLayer != null)) {
+    if (window.frame.toInt() != widget.uiState.playheadFrame.value) {
+      return false;
+    }
+    if (window.layerAlone !=
+        (widget.uiState.dropper.value?.sampleLayer != null)) {
       return false;
     }
     final (x, y) = windowPixelAt(window, _u(local), _v(local));
@@ -1339,7 +1340,6 @@ ColorFilter? channelFilterFor(ViewerChannel channel) => switch (channel) {
         ]),
     };
 
-
 /// The part of the transparency board worth painting: what is both picture and
 /// panel (K-230).
 ///
@@ -1462,9 +1462,8 @@ class _Toolbar extends StatelessWidget {
           // progress appearing and going never moves any of them.
           Expanded(child: _controls(context, t)),
           ViewerProgressBar(
-            tracker:
-                Provider.of<LumitUiState>(context, listen: false)
-                    .previewProgress,
+            tracker: Provider.of<LumitUiState>(context, listen: false)
+                .previewProgress,
           ),
         ],
       ),
@@ -1491,7 +1490,7 @@ class _Toolbar extends StatelessWidget {
               label: (i) => i == -1
                   ? '${((zoom ?? 1) * 100).round()}%'
                   : _zoomSteps[i] == null
-                      ? 'Fit'
+                      ? l10n.menuFit
                       : '${(_zoomSteps[i]! * 100).round()}%',
               onChanged: (i) => onZoom(_zoomSteps[i]),
             ),
@@ -1509,13 +1508,13 @@ class _Toolbar extends StatelessWidget {
           ),
           const SizedBox(width: 6),
           LumitTooltip(
-            message: 'Show the transparency grid behind the picture',
+            message: l10n.tipTransparencyGrid,
             child: HouseButton(
               key: const ValueKey('viewer-grid'),
               small: true,
               frameless: true,
               onPressed: onGrid,
-              child: Text('Grid',
+              child: Text(l10n.viewerGrid,
                   style: t.small.copyWith(color: grid ? t.accent : null)),
             ),
           ),
@@ -1525,8 +1524,8 @@ class _Toolbar extends StatelessWidget {
           // what it governs is a *mark* — and the mark is what it draws.
           LumitTooltip(
             message: wireframes
-                ? 'Hide the layer controls over the picture'
-                : 'Show the layer controls over the picture',
+                ? l10n.tipHideLayerControls
+                : l10n.tipShowLayerControls,
             child: HouseButton(
               key: const ValueKey('viewer-wireframes'),
               small: true,
@@ -1604,7 +1603,7 @@ class _Toolbar extends StatelessWidget {
             onCommit: onSeek,
             minFrame: 0,
             maxFrame: _lastFrameOf(settings),
-            tooltip: 'The frame on screen. Click to type a time.',
+            tooltip: l10n.tipFrameOnScreen,
           ),
           // The degradation badge (docs/13 §B5, docs/07 §2.2): when adaptive
           // playback has dropped below Full, say so on the bar — a softer
@@ -1643,10 +1642,10 @@ class _Toolbar extends StatelessWidget {
 
   static String _channelLabel(ViewerChannel c) => switch (c) {
         ViewerChannel.rgb => 'RGB',
-        ViewerChannel.red => 'Red',
-        ViewerChannel.green => 'Green',
-        ViewerChannel.blue => 'Blue',
-        ViewerChannel.alpha => 'Alpha',
+        ViewerChannel.red => engineLabel('Red'),
+        ViewerChannel.green => engineLabel('Green'),
+        ViewerChannel.blue => engineLabel('Blue'),
+        ViewerChannel.alpha => l10n.channelAlpha,
       };
 }
 
@@ -1708,14 +1707,21 @@ final String _transportName = switch (viewerTransport()) {
 class _PlaybackModeButton extends StatelessWidget {
   const _PlaybackModeButton();
 
-  static const _tierNames = ['Full', 'Full', 'Half', 'Third', 'Quarter'];
+  static List<String> get _tierNames => [
+        l10n.menuFull,
+        l10n.menuFull,
+        l10n.menuHalf,
+        l10n.resolutionThird,
+        l10n.menuQuarter,
+      ];
 
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
     final ui = Provider.of<LumitUiState>(context);
     final adaptive = ui.workspace.performance.playback == PlaybackMode.adaptive;
-    final label = adaptive ? 'Adaptive res' : 'Every frame';
+    final label =
+        adaptive ? l10n.playbackAdaptiveShort : l10n.playbackEveryFrame;
 
     // Which route frames take to get here. A build without a zero-copy path
     // copies every pixel down, serialises it a byte at a time and uploads it
@@ -1725,13 +1731,8 @@ class _PlaybackModeButton extends StatelessWidget {
 
     return LumitTooltip(
       message: adaptive
-          ? 'Playback keeps time and lowers the resolution when it has to. '
-              'Click for every frame instead. '
-              'Frames arrive by $transport.'
-          : 'Playback shows every frame at full resolution and caches it, '
-              'however long that takes, with the sound silenced. '
-              'Click for adaptive instead. '
-              'Frames arrive by $transport.',
+          ? l10n.tipPlaybackAdaptive(transport)
+          : l10n.tipPlaybackEveryFrame(transport),
       child: HouseButton(
         key: const ValueKey('viewer-playback-mode'),
         small: true,

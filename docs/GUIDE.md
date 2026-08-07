@@ -3463,6 +3463,54 @@ Panels can be popped out into their own desktop window (`desktop_multi_window`);
 each gets its own Flutter engine but opens a handle to the *same* engine state,
 so edits share one undo history.
 
+**What "the selection" means when Copy is pressed (K-300).** Three different things
+can be selected at once: some keyframes, an effect, and the layer they all sit on.
+Copy has to pick one, and it picks the *finest* — keyframes if any are selected,
+otherwise the effects picked out of the stack, otherwise the whole layer. Delete has
+worked this way since K-234, and it works through the same trick: Flutter runs every
+keyboard handler on every key, so a panel cannot claim a key simply by handling it
+first. Instead the Timeline leaves a small function with the shell — a *claim* — and
+the shell calls it before doing anything itself. If the claim says "I took that", the
+shell stands down.
+
+An **effect is selected by clicking its name**, in the Effect controls panel or on its
+row in the Timeline's fold-out; `Ctrl` adds one, `Shift` takes the run between. There
+is only one such selection, held by the shell rather than by either panel, which is why
+an effect picked in one place lights up in the other. In the Effect controls panel picking
+an effect leaves it open — the twirl mark is the only thing that folds a card there. In the
+Timeline a plain click also twirls, the way it always has, and a modified click only
+selects, so `Shift`-clicking down a stack does not flap all of them open. Copying several
+effects produces a single `.lumfx` document — the same kind of document a preset is —
+holding them in stack order rather than click order, so pasting puts them back the way
+they were drawn.
+
+**A row with no keyframes copies too (K-301).** Copy at the property level used to mean
+"the selected keyframes", so a row that was never animated had nothing to give and the
+chord quietly copied the whole layer instead. Now selecting rows and pressing Copy takes
+those rows whole: every key of an animated one, the plain number of one that has none. A
+copied number pastes as a number onto a row that is not animated, and as a key at the
+playhead onto one that is. The other levels always carried their values — a copied layer
+or a copied effect is the document itself, animated parts and plain numbers alike.
+
+**Where a copy actually goes (K-302).** Lumit keeps its own tray, because what is being
+copied is a piece of a Lumit document and the system clipboard is shared with every other
+program on the machine. But a copy that leaves *nothing* on the system clipboard is
+indistinguishable from a copy that failed — paste into a text editor and you get an empty
+line — so every copy is mirrored there as its own text, and a paste that finds the tray
+empty reads the system clipboard and takes a Lumit document back off it. That is also what
+lets two Lumit windows copy between each other. Ordinary text is left alone: only the two
+document shapes the engine's paste calls accept are recognised.
+
+**And a lesson worth more than the feature.** The reason `Ctrl+C` did nothing in the real
+app while every test passed: a saved keymap was restored by *replacing* the whole keymap,
+and a saved file only knows the actions that existed when it was written — so every
+shortcut added in a later version was silently missing for anyone who had ever changed a
+key. Restored state is now **laid over** the current defaults rather than swapped for them,
+which is the shape any "remember what the user had" code should have: the user's choices
+win, and everything they never had an opinion about comes from the running build. Telling
+"they turned this off" apart from "this did not exist yet" is the part that needs storing
+on purpose.
+
 **Scrolling it, and why a trackpad needed its own answer (K-278).** Dragging in
 the lanes draws a selection box round keyframes, so the panel switches off
 drag-to-scroll — which on a Mac also switched off the trackpad, because a
@@ -3674,6 +3722,44 @@ They are the same job, and the shared piece is written.
 Rearranging panels is deliberately *not* an edit: it goes through `set_ui_state`,
 a side door that skips undo, the journal and the dirty flag.
 
+### Themes you can pass around (K-298)
+
+A theme you make is a name, a light-or-dark base, and a bag of colours (K-202).
+Until now it lived only in the settings file, which is machine-local — so a theme
+was stuck on the computer it was made on, and the only way to try a variation was
+to save over the one you liked.
+
+Three things changed, all in the Flutter frontend and none of them touching the
+engine:
+
+- **A theme is a file.** `flutter_ui/lib/theme/theme_file.dart` writes one out as
+  `.lumtheme` — a short, indented JSON document you can read: what it is, a
+  version number, the theme's name, whether it is a light or a dark theme, and
+  every colour as a hex code like `#e05a72`. Settings → Appearance has **Export…**
+  and **Import…** beside the other theme buttons. Export works from a built-in
+  scheme too, because "the stock dark with my accent changed" is a perfectly good
+  thing to send somebody.
+- **Reading one is deliberately relaxed.** If the file was written by a newer
+  Lumit that has colours this build has never heard of, those are simply ignored
+  and everything else comes in — the theme still works, because any colour it does
+  not carry is taken from the base underneath it. That tolerance is the whole
+  reason a theme is stored as *changes over a base* rather than a copy of the
+  colour struct. A file that is not a theme at all is refused with a sentence
+  under the buttons, not an error box: picking the wrong file is a normal thing to
+  do.
+- **Nothing overwrites a theme you already have.** Import, Duplicate, Save a
+  copy and Rename all ask `Workspace.availableThemeName` for a free name first, so
+  importing a second "Ocean" gives you "Ocean 2" and says so. A theme's name is
+  its identity — the picker lists it and the settings file records the selection
+  by it — so two themes may never share one.
+
+Beside that sits the everyday half: **Duplicate** (copy the theme you are looking
+at, including a built-in, so you have something of your own to edit), **Rename…**
+and **Delete** (your own themes only — a built-in's name is Lumit's), and **Save a
+copy…** inside the colour editor, which branches a theme without first
+overwriting it. The picker also draws eight swatches of the selected theme beside
+its name, so you can recognise a theme without applying it.
+
 ### The rules that bite
 
 These are the ones a plausible-looking change breaks. Each has tests standing
@@ -3838,16 +3924,19 @@ folder of loose PNGs instead of a bag.
 
 Nobody draws seven pictures by hand. The artwork is drawn **once**, as an SVG —
 a text file of drawing instructions ("a rounded square here, this gradient
-there") that can be rendered at any size without going blurry. The four SVGs in
+there") that can be rendered at any size without going blurry. The five SVGs in
 `assets/brand/` are the only files a human edits:
 
 - `lumit-mark.svg` — the mark itself: two keyframe diamonds overlapping, white
   where they cross. This bare form is the Windows and Linux icon.
 - `lumit-icon.svg` — the same mark sitting on a dark rounded tile. Only macOS
   uses this, because macOS expects every icon to bring its own tile.
-- `lumit-project.svg` and `lumit-preset.svg` — document icons for `.lum`
-  project files and `.lumfx` presets: a dark page with a folded corner and the
-  mark inside, like the little badge on any Photoshop or After Effects file.
+- `lumit-project.svg`, `lumit-preset.svg` and `lumit-theme.svg` — document
+  icons for `.lum` project files, `.lumfx` presets and `.lumtheme` colour
+  themes: a dark page with a folded corner and the mark inside, like the little
+  badge on any Photoshop or After Effects file. The theme one carries three
+  overlapping colour swatches instead of the mark, since colours are what is in
+  the file.
 
 `scripts/gen-icons.py` turns those four drawings into every pixel file the
 operating systems want (run `pip install resvg-py pillow` once, then
@@ -3864,8 +3953,8 @@ installers live in `packaging/` (decision K-252):
 - **Windows** — `packaging/windows/build-installer.ps1` builds a normal
   setup.exe (it needs the free Inno Setup tool once:
   `winget install JRSoftware.InnoSetup`). Installing it copies the app into
-  Program Files, writes the .lum/.lumfx entries into the Windows registry with
-  their icons, and puts Lumit in the Start menu. Double-clicking a `.lum` then
+  Program Files, writes the .lum/.lumfx/.lumtheme entries into the Windows
+  registry with their icons, and puts Lumit in the Start menu. Double-clicking a `.lum` then
   genuinely opens it: the association hands Lumit the file's path as a command
   line argument, and the app checks its command line at boot
   (`projectPathFromArgs` in `main.dart`).
@@ -3928,7 +4017,7 @@ Delete it afterwards and tag the real version.
 Every release already ends up in the same place: a GitHub Release, tagged `v0.1.0`
 or whatever the version is, with the finished installers hanging off it — a
 `setup.exe` for Windows, a disk image for macOS, and a Flatpak for Linux
-(K-300). That is the whole raw material the updater needs, and it means Lumit has
+(K-304). That is the whole raw material the updater needs, and it means Lumit has
 no update server to run and nothing to pay for.
 
 **What "check for updates" actually does.** GitHub will answer a small,
@@ -4019,7 +4108,7 @@ the Windows files and a zip of the macOS `Lumit.app`. That archive is what Lumit
 downloads to update itself. Nothing in it is an installer — it is simply the new
 version of the same files. Linux needs no archive of its own: a Flatpak is
 updated from the `.flatpak` bundle the release already carries, and the Linux
-tarball this section used to name is withdrawn (K-300).
+tarball this section used to name is withdrawn (K-304).
 
 **How the swap works, and why it is done that way.** The obvious approach is to
 copy the new files over the old ones. Do not: that is several hundred separate
@@ -4064,3 +4153,114 @@ should be asking for. So on Flatpak, Lumit downloads the new bundle, shows you
 the one command that installs it, and stays open. Making this a real
 `flatpak update` needs Lumit published to a Flatpak *remote* rather than as a
 single downloadable bundle — that is written down in TODO as the next step.
+
+## 12. Speaking other languages, in plain terms
+
+Lumit used to have its words typed directly into the code. A button that said
+*Import footage* was a line somewhere that literally read `Text('Import
+footage')`. That is the natural way to write it, and it is fine right up until
+somebody wants the button to say *Footage importieren* — at which point there is
+no way to change it without editing ninety files, and no way for a translator to
+help at all unless they are willing to learn Dart and be given commit access.
+
+So the words moved out. There is now one file, `flutter_ui/lib/l10n/app_en.arb`,
+which is a long list of every phrase Lumit can show, each with a short name. It
+looks like this:
+
+```json
+"importFootage": "Import footage",
+"@importFootage": {
+  "description": "Button, menu item and tooltip: bring media files into the project."
+},
+```
+
+The code now says `l10n.importFootage` instead of the phrase itself. `l10n` is
+"localisation" abbreviated the way the industry abbreviates it — an *l*, ten
+letters, an *n*. When Lumit is running in English it hands back "Import footage";
+in German it hands back whatever the German file has under that name.
+
+The `@importFootage` part underneath is a note **for the translator**, not for
+the program. It is the only context they get: they see the phrase and that
+sentence and nothing else, no screenshot, no surrounding page. Writing a good one
+is the difference between *Fill* being translated as "to fill something up" and
+as "the colour inside a shape". Every string has one, and a test fails if any
+string does not.
+
+### Where the translations come from
+
+Your friends do the translating on **Crowdin**, which is a website built for
+exactly this. They see the English phrase, its note, and a box to type theirs
+into. Nobody clones the repository, nobody runs Flutter, nobody can break the
+build by mistyping a bracket.
+
+The traffic is one-way in each direction, and it matters which is which:
+
+- **English goes up.** You change `app_en.arb`, run `crowdin push sources`, and
+  Crowdin now offers the new phrase to translate.
+- **Everything else comes down.** `crowdin pull translations` writes
+  `app_de.arb`, `app_kk.arb`, `app_uk.arb` and `app_zh.arb` into the same folder.
+
+Those four files are **never edited by hand in this repository.** If a German
+phrase is wrong, it is fixed on Crowdin; fixing it here works until the next pull
+overwrites it, which is worse than not working at all because it works for a
+while first. `crowdin.yml` at the top of the repository is the whole
+configuration — which file goes up, and what each language is called on disk.
+
+The two passwords Crowdin needs are not written in that file, because this
+repository is public. They are read from the environment instead:
+`CROWDIN_PROJECT_ID` and `CROWDIN_PERSONAL_TOKEN`.
+
+### What happens when a translation is missing
+
+Nothing bad, which is the point. A phrase nobody has reached yet falls back to
+the English one. That means the four language files can start out completely
+empty — as they are today — and Lumit runs exactly as it did before, in English.
+As your friends fill them in, more of the interface turns over. There is never a
+moment where the application is half-broken waiting for a translation to arrive;
+it is only ever more or less translated.
+
+### The engine's words
+
+Some of what you read on screen is not written in Dart at all. The effects name
+themselves — *Gaussian blur*, *Radius*, *Blur & sharpen* — in the Rust engine's
+schema, and so does every keyboard shortcut in Settings ▸ Keymap: *Play or pause*,
+*Anywhere*. Those come up to the interface as plain English through the bridge.
+
+Rather than teach the engine about languages, which would be a large change deep
+in code that has no other reason to care, `lib/l10n/engine_labels.dart` holds a
+table that looks each one up **by its English text**. The engine says "Gaussian
+blur"; the table turns that into the German for it. Rust is untouched.
+
+The obvious danger is that somebody adds an effect and forgets the table, so the
+new effect ships in English inside an otherwise German application, and nobody
+notices for months. `test/l10n/engine_labels_test.dart` prevents that: it reads
+the Rust source files directly and fails if the engine can say a word the table
+has no entry for.
+
+### Why the tooltips got shorter
+
+While the words were being moved, they were also read — all of them, in one place,
+for the first time. A lot of the tooltips had quietly grown into paragraphs
+explaining things the button already said. A Reset button whose tooltip read *"Put
+every parameter back to its default, removing its keyframes"* is a sentence you
+have to stop and read to learn something you already knew.
+
+The specification always asked for the opposite: `docs/07-UI-SPEC.md` §13.2 says
+a tooltip is the control's **name and its shortcut**, and reserves the
+sentence-length kind for genuinely Lumit-specific ideas. So every tooltip is now
+under five words and most are two — *Reset all parameters*, *Add keyframe*,
+*Label colour*. Six are allowed to be longer, and they are listed by name in
+`test/l10n/arb_test.dart` with the reason: the three cache meters, whose tooltips
+carry live numbers and warn you that clicking throws work away, and the two
+playback modes. Anything else that grows past five words fails that test.
+
+### Choosing a language
+
+Settings ▸ Interface ▸ Language. It defaults to whatever the machine itself is
+set to, and stores nothing until you choose — so if you never open the picker,
+Lumit follows your operating system for ever, including after you change it.
+
+The list names each language in its own language: Deutsch, Қазақша, Українська,
+简体中文. That is deliberate. Somebody who has set Lumit to a language they turn
+out not to read needs to be able to find their way back, and they will not do it
+by looking for the word "German".

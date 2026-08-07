@@ -31,6 +31,7 @@ import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/state/tools.dart';
 import 'package:uuid/uuid.dart';
 
+import '../l10n/strings.dart';
 import '../widgets/controls.dart';
 import 'viewer_gizmo.dart';
 import 'viewer_tool_cursor.dart';
@@ -197,11 +198,13 @@ class _ViewerPaintLayerState extends State<ViewerPaintLayer> {
                     painter: _StrokePainter(
                       stroke: _stroke,
                       width: tools.brushSize * widget.viewScale,
-                      colour:
-                          colourOf(tools.fill, opacity: tools.brushOpacity / 100),
+                      colour: colourOf(tools.fill,
+                          opacity: tools.brushOpacity / 100),
                       erasing: widget.tool == ToolMode.eraser,
                       hairline: t.hairlineStrong,
-                      cloneSource: _isClone && box != null && _cloneSource != null
+                      cloneSource: _isClone &&
+                              box != null &&
+                              _cloneSource != null
                           ? box.map.toScreen(_cloneSource!.dx, _cloneSource!.dy)
                           : null,
                       mark: t.textPrimary,
@@ -238,7 +241,7 @@ class _ViewerPaintLayerState extends State<ViewerPaintLayer> {
     if (_isClone && HardwareKeyboard.instance.isAltPressed) {
       final at = box.map.layerOf(details.localPosition);
       setState(() => _cloneSource = at);
-      widget.state.postNotice('Clone source set');
+      widget.state.postNotice(l10n.cloneSourceSet);
       return;
     }
     _commit(box, [details.localPosition]);
@@ -274,7 +277,7 @@ class _ViewerPaintLayerState extends State<ViewerPaintLayer> {
   void _commit(LayerBox box, List<Offset> screenPoints) {
     if (_isClone && _cloneSource == null) {
       widget.state.postNotice(
-        'Alt-click to set the clone source first',
+        l10n.cloneSourceFirst,
       );
       return;
     }
@@ -325,7 +328,7 @@ class _ViewerPaintLayerState extends State<ViewerPaintLayer> {
   }
 
   void _sayNoLayer() => widget.state.postNotice(
-        'Select a layer to paint on',
+        l10n.selectALayerToPaint,
       );
 }
 

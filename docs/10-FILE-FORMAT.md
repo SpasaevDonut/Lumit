@@ -174,7 +174,21 @@ Rules, binding:
 - **Template**: an ordinary `.lum` file opened in "new from template" mode (copy, not
   edit-in-place). Community "CC packs" and project files are just these two forms.
 
-## 6. Interchange (summary)
+## 6. Colour themes (`.lumtheme`, K-298)
+
+A custom theme (K-202) written out on its own so it can be shared: a small indented JSON
+document carrying `format: "lumit-theme"`, a `version`, and then the theme itself — `name`,
+`mode` (`light`/`dark`, the base it is built over), and `colours`, a map of token key to
+`#rrggbb`. The colours are exactly what the workspace file stores, so the shared and the
+stored form cannot drift.
+
+Read forgivingly: a colour key this build does not know is ignored and one it does not find
+falls back to the base, so a theme written by a newer Lumit still opens. A file whose
+`format` says something else is refused. Not a document — Lumit does not *open* a
+`.lumtheme`; Settings → Appearance imports one, under a free name if that name is taken.
+`flutter_ui/lib/theme/theme_file.dart`.
+
+## 7. Interchange (summary)
 
 - AE Bridge JSON bundles import into this model — [11-AE-IMPORT.md](11-AE-IMPORT.md).
 - Lottie JSON: import as comps (subset), export is a possible future.

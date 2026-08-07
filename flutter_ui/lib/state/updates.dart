@@ -33,14 +33,15 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 
 import 'install_site.dart';
+import 'package:lumit_flutter/l10n/strings.dart';
 
 /// The repository releases are published from (K-279: the website reads the
 /// same one).
 const String updatesRepository = 'luminalmvm/lumit';
 
 /// Where the newest release is described.
-Uri get latestReleaseUrl =>
-    Uri.parse('https://api.github.com/repos/$updatesRepository/releases/latest');
+Uri get latestReleaseUrl => Uri.parse(
+    'https://api.github.com/repos/$updatesRepository/releases/latest');
 
 /// How long a check is good for. A day: long enough that launching Lumit six
 /// times in a morning asks GitHub once, short enough that a release is noticed
@@ -404,13 +405,13 @@ class UpdateService extends ChangeNotifier {
   /// back to — a row that stayed on "You are up to date" would be a stale
   /// claim by the next morning.
   String get menuLabel => switch (_stage) {
-        UpdateStage.checking => 'Checking for updates…',
+        UpdateStage.checking => l10n.updateChecking,
         UpdateStage.available =>
-          'Click to update - v${_release?.version ?? ''}',
+          l10n.updateClickToUpdate(_release?.version ?? ''),
         UpdateStage.downloading =>
-          'Downloading update… ${(_progress * 100).round()}%',
-        UpdateStage.ready => 'Restart to finish updating',
-        _ => 'Check for updates',
+          l10n.updateDownloadingPercent('${(_progress * 100).round()}'),
+        UpdateStage.ready => l10n.updateRestartToFinish,
+        _ => l10n.updateCheckFor,
       };
 
   /// Whether enough time has passed to look again.
@@ -432,7 +433,7 @@ class UpdateService extends ChangeNotifier {
       final current = currentVersion();
       if (current == null) {
         // No version to compare against — every release would look newer.
-        _fail('Could not tell which version of Lumit this is');
+        _fail(l10n.updateUnknownVersion);
         return;
       }
       final json = await _fetch(latestReleaseUrl);
@@ -450,7 +451,7 @@ class UpdateService extends ChangeNotifier {
         _release = found;
       }
     } catch (_) {
-      _fail('Could not check for updates');
+      _fail(l10n.updateCheckFailed);
       return;
     }
     notifyListeners();
@@ -474,7 +475,8 @@ class UpdateService extends ChangeNotifier {
     try {
       final folder = _downloadFolder();
       folder.createSync(recursive: true);
-      file = File('${folder.path}${Platform.pathSeparator}${release.assetName}');
+      file =
+          File('${folder.path}${Platform.pathSeparator}${release.assetName}');
       // A leftover from an abandoned attempt would otherwise be appended to or
       // mistaken for a finished download.
       if (file.existsSync()) file.deleteSync();
@@ -514,8 +516,8 @@ class UpdateService extends ChangeNotifier {
     } catch (_) {
       if (file != null) _discard(file);
       _fail(_cancelRequested
-          ? 'Update download cancelled'
-          : 'Could not download the update');
+          ? l10n.updateDownloadCancelled
+          : l10n.updateDownloadFailed);
       return;
     }
     notifyListeners();
@@ -544,7 +546,7 @@ class UpdateService extends ChangeNotifier {
   Future<String?> _verify(File file, UpdateRelease release) async {
     final length = file.lengthSync();
     if (release.assetBytes > 0 && length != release.assetBytes) {
-      return 'The downloaded update was incomplete';
+      return l10n.updateIncomplete;
     }
     final expected = release.sha256;
     if (expected == null) return null;
@@ -553,7 +555,7 @@ class UpdateService extends ChangeNotifier {
         : expected;
     final digest = await sha256.bind(file.openRead()).first;
     if (digest.toString().toLowerCase() != wanted.toLowerCase()) {
-      return 'The downloaded update did not match its checksum';
+      return l10n.updateChecksumMismatch;
     }
     return null;
   }
@@ -588,7 +590,7 @@ class UpdateService extends ChangeNotifier {
     try {
       await _launch(file, platform);
     } catch (_) {
-      _fail('Could not start the installer');
+      _fail(l10n.updateInstallerFailed);
       return;
     }
     if (delivery == UpdateDelivery.installer) _quit();
@@ -613,7 +615,7 @@ class UpdateService extends ChangeNotifier {
       // there is an application inside it.
       if (tree.listSync().isEmpty) {
         _sweep(site.unpacking);
-        _fail('The downloaded update was empty');
+        _fail(l10n.updateEmpty);
         return;
       }
       // Onto the final name, on the same filesystem, so the swap that follows
@@ -626,7 +628,7 @@ class UpdateService extends ChangeNotifier {
     } catch (_) {
       _sweep(site.unpacking);
       _sweep(site.staging);
-      _fail('Could not put the update in place');
+      _fail(l10n.updateSwapFailed);
       return;
     }
 
@@ -635,7 +637,7 @@ class UpdateService extends ChangeNotifier {
     } catch (_) {
       // The files are already the new version, so there is nothing to undo —
       // starting Lumit again by hand gets the update either way.
-      _fail('Lumit is updated, but could not start itself again');
+      _fail(l10n.updateRestartFailed);
       return;
     }
     _quit();
@@ -684,17 +686,19 @@ Future<Map<String, dynamic>> _fetchReleaseJson(Uri url) async {
   try {
     final request = await client.getUrl(url);
     request.headers.set(HttpHeaders.userAgentHeader, 'Lumit');
-    request.headers.set(HttpHeaders.acceptHeader, 'application/vnd.github+json');
+    request.headers
+        .set(HttpHeaders.acceptHeader, 'application/vnd.github+json');
     final response = await request.close();
     if (response.statusCode != 200) {
       // Drained rather than dropped: an undrained response holds the socket.
       await response.drain<void>();
-      throw HttpException('GitHub answered ${response.statusCode}', uri: url);
+      throw HttpException(l10n.updateServerAnswered('${response.statusCode}'),
+          uri: url);
     }
     final body = await response.transform(utf8.decoder).join();
     final json = jsonDecode(body);
     if (json is! Map<String, dynamic>) {
-      throw const FormatException('The releases API answered something else');
+      throw FormatException(l10n.updateBadReleaseData);
     }
     return json;
   } finally {
@@ -719,7 +723,7 @@ Future<void> _downloadAsset(
     final response = await request.close();
     if (response.statusCode != 200) {
       await response.drain<void>();
-      throw HttpException('The download answered ${response.statusCode}',
+      throw HttpException(l10n.updateDownloadAnswered('${response.statusCode}'),
           uri: url);
     }
     final total = response.contentLength;
@@ -758,8 +762,7 @@ Future<void> _launchInstaller(File file, String platform) async {
         mode: ProcessStartMode.detached,
       );
     case 'macos':
-      await Process.start('open', [file.path],
-          mode: ProcessStartMode.detached);
+      await Process.start('open', [file.path], mode: ProcessStartMode.detached);
     default:
       // A Flatpak bundle: revealed, never run. `flatpak install` is the user's
       // to run, and a sandboxed Lumit has no business reaching the host to do
@@ -778,10 +781,9 @@ Future<void> _launchInstaller(File file, String platform) async {
 /// zip files as happily as tarballs.
 Future<void> _extractArchive(File archive, Directory into) async {
   final result = switch (Platform.operatingSystem) {
-    'macos' => await Process.run(
-        'ditto', ['-x', '-k', archive.path, into.path]),
-    _ => await Process.run(
-        'tar', ['-xf', archive.path, '-C', into.path]),
+    'macos' =>
+      await Process.run('ditto', ['-x', '-k', archive.path, into.path]),
+    _ => await Process.run('tar', ['-xf', archive.path, '-C', into.path]),
   };
   if (result.exitCode != 0) {
     throw ProcessException(
@@ -805,6 +807,5 @@ Future<void> _relaunchLumit(File launcher) async {
     return;
   }
   await Process.start(launcher.path, const [],
-      mode: ProcessStartMode.detached,
-      workingDirectory: launcher.parent.path);
+      mode: ProcessStartMode.detached, workingDirectory: launcher.parent.path);
 }

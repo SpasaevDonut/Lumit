@@ -32,6 +32,7 @@ import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 
+import '../l10n/strings.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 import 'graph_maths.dart';
@@ -184,9 +185,7 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
     final key = '${clip.id}@${clip.startFrame}@${clip.retimed}';
     if (_thumbs.containsKey(key)) return;
     _thumbs[key] = null;
-    widget.entry.layer
-        .clipThumbnail(clip: clip.id, maxEdge: 96)
-        .then((frame) {
+    widget.entry.layer.clipThumbnail(clip: clip.id, maxEdge: 96).then((frame) {
       if (!mounted || frame == null || frame.width == 0) return;
       ui.decodeImageFromPixels(
         frame.rgba,
@@ -390,9 +389,8 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
     // rides along; dragging the *start* edge moves the box over content that
     // stays put, so the origin travels with it and the wave holds still until
     // the trim commits and the peaks are asked for again.
-    final originSeconds =
-        clip.placeStart.num / clip.placeStart.den.toDouble() +
-            (moving && drag.grab == _Grab.start ? shift / widget.fps : 0);
+    final originSeconds = clip.placeStart.num / clip.placeStart.den.toDouble() +
+        (moving && drag.grab == _Grab.start ? shift / widget.fps : 0);
 
     return Positioned(
       key: ValueKey<String>('seq-clip-${clip.id}'),
@@ -467,30 +465,30 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
                     ),
                   ),
                 Row(
-              children: [
-                // The frame this clip opens on, so a row of cuts can be told
-                // apart at a glance rather than by their timings (K-248).
-                if (_thumbs['${clip.id}@${clip.startFrame}@${clip.retimed}']
-                    case final image?)
-                  Padding(
-                    padding: const EdgeInsets.all(1),
-                    child: RawImage(image: image, fit: BoxFit.contain),
-                  ),
-                Expanded(
-                  child: Center(
-              child: ClipRect(
-              child: Text(
-                // A ramp has no single number to show, and printing one would
-                // be a lie about a curve — the envelope below reads it.
-                speed == null ? 'ramp' : '${speed.round()}%',
-                style: t.small.copyWith(color: t.textPrimary),
-                overflow: TextOverflow.clip,
-                softWrap: false,
-              ),
-            ),
-                  ),
-                ),
-              ],
+                  children: [
+                    // The frame this clip opens on, so a row of cuts can be told
+                    // apart at a glance rather than by their timings (K-248).
+                    if (_thumbs['${clip.id}@${clip.startFrame}@${clip.retimed}']
+                        case final image?)
+                      Padding(
+                        padding: const EdgeInsets.all(1),
+                        child: RawImage(image: image, fit: BoxFit.contain),
+                      ),
+                    Expanded(
+                      child: Center(
+                        child: ClipRect(
+                          child: Text(
+                            // A ramp has no single number to show, and printing one would
+                            // be a lie about a curve — the envelope below reads it.
+                            speed == null ? 'ramp' : '${speed.round()}%',
+                            style: t.small.copyWith(color: t.textPrimary),
+                            overflow: TextOverflow.clip,
+                            softWrap: false,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -515,19 +513,18 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
           children: [
             MenuRow(
                 onPressed: () => close('copy-clip'),
-                child: const Text('Copy this clip\'s shape')),
+                child: Text(l10n.clipCopyShape)),
             MenuRow(
                 onPressed: () => close('copy-row'),
-                child: const Text('Copy the whole row\'s shape')),
+                child: Text(l10n.clipCopyRowShape)),
             MenuRow(
                 onPressed: () => close('paste'),
-                child: const Text('Paste shape onto this layer')),
+                child: Text(l10n.clipPasteShape)),
             MenuRow(
                 onPressed: () => close('reset'),
-                child: const Text('Reset speed')),
+                child: Text(l10n.clipResetSpeed)),
             MenuRow(
-                onPressed: () => close('delete'),
-                child: const Text('Delete clip')),
+                onPressed: () => close('delete'), child: Text(l10n.clipDelete)),
           ],
         ),
       ),
@@ -538,8 +535,8 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
         // A gap, not a closed row: what follows keeps the beat it was cut to.
         widget.entry.layer.deleteClip(clip: clip.id);
       case 'reset':
-        widget.entry.layer.setClipSpeed(
-            clip: clip.id, percent: 100, endPercent: 100);
+        widget.entry.layer
+            .setClipSpeed(clip: clip.id, percent: 100, endPercent: 100);
       // The shape — where the cuts fall and how each piece is ramped — with
       // no media in it, so pasting it onto a depth pass cuts and ramps that
       // pass to match without touching what it plays (K-248).
@@ -772,8 +769,9 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
   }
 
   /// Where a clip's key sits on the comp's own clock, in x pixels.
-  double _xOfKey(BridgeClip clip, BridgeKeyframe key) => widget.axis
-      .xOf(clip.startFrame.toInt() + (rationalSeconds(key.time) * widget.fps).round());
+  double _xOfKey(BridgeClip clip, BridgeKeyframe key) =>
+      widget.axis.xOf(clip.startFrame.toInt() +
+          (rationalSeconds(key.time) * widget.fps).round());
 
   @override
   Widget build(BuildContext context) {
@@ -799,27 +797,27 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
                 // pointer is let go and the freeze lifts.
                 child: ClipRect(
                   child: CustomPaint(
-                  painter: _EnvelopePainter(
-                    lanes: [
-                      for (final c in _clips)
-                        (
-                          clip: c,
-                          keys: _shown(c),
-                        ),
-                    ],
-                    xOfKey: _xOfKey,
-                    y: (s) => _y(s, height),
-                    chosen: t.accent,
-                    selected: _selected,
-                    range: _range,
-                    line: t.hairline,
-                    curve: t.curve.first,
-                    label: t.small.copyWith(color: t.textMuted),
-                    viewportLeft: (widget.hScroll?.hasClients ?? false)
-                        ? widget.hScroll!.offset
-                        : 0,
+                    painter: _EnvelopePainter(
+                      lanes: [
+                        for (final c in _clips)
+                          (
+                            clip: c,
+                            keys: _shown(c),
+                          ),
+                      ],
+                      xOfKey: _xOfKey,
+                      y: (s) => _y(s, height),
+                      chosen: t.accent,
+                      selected: _selected,
+                      range: _range,
+                      line: t.hairline,
+                      curve: t.curve.first,
+                      label: t.small.copyWith(color: t.textMuted),
+                      viewportLeft: (widget.hScroll?.hasClients ?? false)
+                          ? widget.hScroll!.offset
+                          : 0,
+                    ),
                   ),
-                ),
                 ),
               ),
             ),
@@ -864,8 +862,8 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
                   if (_onALine(e.localPosition, height)) {
                     _startDrag(e.localPosition, height);
                   } else {
-                    setState(() => _box = Rect.fromPoints(
-                        e.localPosition, e.localPosition));
+                    setState(() => _box =
+                        Rect.fromPoints(e.localPosition, e.localPosition));
                   }
                 },
                 onPointerMove: (e) => setState(() {
@@ -885,7 +883,8 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
                     clip: held.clip,
                     index: held.index,
                     // Down is slower: the axis runs fast at the top.
-                    speed: _grabbedAt - _travelled / (height <= 0 ? 1 : height) * span,
+                    speed: _grabbedAt -
+                        _travelled / (height <= 0 ? 1 : height) * span,
                     dx: held.dx + e.delta.dx,
                   );
                   // The picture follows the point. A retime decides *which*
@@ -1248,8 +1247,8 @@ class _EnvelopePainter extends CustomPainter {
         ..color = line
         ..strokeWidth = 1;
       for (var x = 0.0; x < size.width; x += 6) {
-        canvas.drawLine(Offset(x, at), Offset((x + 3).clamp(0, size.width), at),
-            paint);
+        canvas.drawLine(
+            Offset(x, at), Offset((x + 3).clamp(0, size.width), at), paint);
       }
       final painter = TextPainter(
         text: TextSpan(text: text, style: label),

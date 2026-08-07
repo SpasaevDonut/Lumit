@@ -13,6 +13,7 @@
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
+import '../l10n/strings.dart';
 import '../widgets/controls.dart';
 
 /// One thing the palette can run.
@@ -182,7 +183,7 @@ class _PaletteState extends State<_Palette> {
             if (matches.isEmpty)
               Padding(
                 padding: const EdgeInsets.all(10),
-                child: Text('No commands match', style: t.small),
+                child: Text(l10n.noCommandsMatch, style: t.small),
               )
             else
               ConstrainedBox(

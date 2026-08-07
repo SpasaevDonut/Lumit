@@ -25,6 +25,7 @@ import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/shell.dart';
 
+import '../l10n/strings.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 import '../widgets/marquee.dart';
@@ -234,6 +235,29 @@ void commitChannelEdits(Map<GraphChannel, BridgeScalar> edits) {
   }
 }
 
+/// [keys] with a key of [value] at [frame] — replacing the one already there,
+/// because two keys at one time is not a curve the engine will take (K-301).
+List<BridgeKeyframe> _withKeyAt(
+  List<BridgeKeyframe> keys,
+  double frame,
+  double value,
+  double fps,
+  int fpsNum,
+  int fpsDen,
+) {
+  final merged = <double, BridgeKeyframe>{
+    for (final k in keys) _keyFrame(k, fps): k,
+  };
+  merged[frame] = BridgeKeyframe(
+    time: timeOfSubframe(frame, fpsNum, fpsDen),
+    value: value,
+    interpIn: const BridgeSideInterp.linear(),
+    interpOut: const BridgeSideInterp.linear(),
+  );
+  final frames = merged.keys.toList()..sort();
+  return [for (final f in frames) merged[f]!];
+}
+
 /// A key's position on the frame axis, fractional (a key may sit between
 /// frames with the magnet off).
 double _keyFrame(BridgeKeyframe key, double fps) =>
@@ -278,10 +302,15 @@ void applyInterpToSelection({
 
 /// One copied channel: where it came from (for the AE text's property line)
 /// and its keys with full easing fidelity.
+///
+/// A row with **no keyframes at all** copies too (K-301): it has a value, and
+/// a value is the thing being copied. Such a clip carries [staticValue] and no
+/// keys, and pastes as a value rather than as a curve.
 class GraphClipChannel {
   final GraphChannel source;
   final List<BridgeKeyframe> keys;
-  const GraphClipChannel(this.source, this.keys);
+  final double? staticValue;
+  const GraphClipChannel(this.source, this.keys, {this.staticValue});
 }
 
 /// The in-app keyframe clipboard: full fidelity, and the one a paste prefers.
@@ -345,11 +374,11 @@ void copySelectedKeys({
       done.add(clip);
       groups.add(LumitClipGroup(
         property: [
-          'Effects',
+          l10n.workspaceEffects,
           effectLabelOf(clip.source.effect?.name ?? ''),
           clip.source.param?.label ?? '',
         ],
-        columns: const ['Value'],
+        columns: [l10n.clipboardValueColumn],
         rows: [
           for (final k in clip.keys)
             LumitClipRow(
@@ -372,26 +401,90 @@ void copySelectedKeys({
   ));
 }
 
+/// Copy **whole rows** — every key of an animated channel, or the plain value
+/// of one that has none (K-301). What `Ctrl+C` does with property rows selected
+/// and no individual keyframes picked.
+///
+/// A row that is not animated still has a value, and that value is what a user
+/// selecting the row and pressing Copy is asking for; before this the chord
+/// found no keys, gave up, and quietly copied the whole layer instead.
+///
+/// Returns whether anything was copied.
+bool copyChannels({
+  required CompositionReference comp,
+  required List<GraphChannel> channels,
+  required double fps,
+}) {
+  if (channels.isEmpty) return false;
+  graphKeyClipboard = [
+    for (final channel in channels)
+      if (channel.scalar case BridgeScalar_Static(:final field0))
+        GraphClipChannel(channel, const [], staticValue: field0)
+      else
+        GraphClipChannel(channel, channel.keys),
+  ];
+
+  // The system clipboard gets the keyframe table for whatever is animated, and
+  // — when nothing is — the plain numbers, tab-joined, which is what a value
+  // copied out of Lumit is useful as anywhere else (it is also exactly what a
+  // value field's own right-click Copy writes).
+  final animated = [
+    for (final clip in graphKeyClipboard)
+      if (clip.keys.isNotEmpty) clip,
+  ];
+  if (animated.isEmpty) {
+    Clipboard.setData(ClipboardData(
+      text: graphKeyClipboard.map((c) => '${c.staticValue}').join('\t'),
+    ));
+    return true;
+  }
+  copySelectedKeys(
+    comp: comp,
+    channels: [for (final clip in animated) clip.source],
+    selectedKeys: {
+      for (final clip in animated)
+        for (var i = 0; i < clip.keys.length; i++) '${clip.source.id}#$i',
+    },
+    fps: fps,
+  );
+  // `copySelectedKeys` has just replaced the in-app clipboard with the animated
+  // rows alone; put the full set — static rows included — back.
+  graphKeyClipboard = [
+    for (final channel in channels)
+      if (channel.scalar case BridgeScalar_Static(:final field0))
+        GraphClipChannel(channel, const [], staticValue: field0)
+      else
+        GraphClipChannel(channel, channel.keys),
+  ];
+  return true;
+}
+
 /// The property line and columns for a transform property's copied axes.
 LumitClipGroup _transformClipGroup(
     GraphChannel lead, List<GraphClipChannel> axes, double fps) {
   final (name, unit) = switch (lead.prop!) {
     BridgeTransformProp.anchorX || BridgeTransformProp.anchorY => (
-        'Anchor Point',
-        'pixels'
+        l10n.transformAnchorPoint,
+        l10n.unitPixels
       ),
     BridgeTransformProp.positionX ||
     BridgeTransformProp.positionY ||
     BridgeTransformProp.positionZ =>
-      ('Position', 'pixels'),
+      (l10n.transformPosition, l10n.unitPixels),
     BridgeTransformProp.scaleX || BridgeTransformProp.scaleY => (
-        'Scale',
-        'percent'
+        l10n.transformScale,
+        l10n.unitPercent
       ),
-    BridgeTransformProp.rotation => ('Rotation', 'degrees'),
-    BridgeTransformProp.rotationX => ('X Rotation', 'degrees'),
-    BridgeTransformProp.rotationY => ('Y Rotation', 'degrees'),
-    BridgeTransformProp.opacity => ('Opacity', 'percent'),
+    BridgeTransformProp.rotation => (l10n.transformRotation, l10n.unitDegrees),
+    BridgeTransformProp.rotationX => (
+        l10n.transformRotationX,
+        l10n.unitDegrees
+      ),
+    BridgeTransformProp.rotationY => (
+        l10n.transformRotationY,
+        l10n.unitDegrees
+      ),
+    BridgeTransformProp.opacity => (l10n.transformOpacity, l10n.unitPercent),
   };
   // The union of the axes' key frames: an axis with no key on some frame
   // contributes the value its curve reads there, so every row is complete.
@@ -419,7 +512,7 @@ LumitClipGroup _transformClipGroup(
   }
 
   return LumitClipGroup(
-    property: ['Transform', name],
+    property: [l10n.transformSection, name],
     columns: columns,
     rows: [
       for (final f in sorted)
@@ -457,6 +550,14 @@ Future<bool> pasteKeysAtPlayhead({
   required int fpsDen,
 }) async {
   if (channels.isEmpty) return false;
+
+  // A value copied from a row with no keyframes pastes as a value (K-301): onto
+  // a target that is not animated it simply replaces the number, and onto one
+  // that is it sets a key at the playhead — which is what "put this value here"
+  // means on a row that already moves.
+  final statics = <double?>[
+    for (final clip in graphKeyClipboard) clip.staticValue,
+  ];
 
   // (channel keys to merge in) per target channel, times as comp frames.
   var sources = <List<(double, BridgeKeyframe)>>[];
@@ -503,12 +604,31 @@ Future<bool> pasteKeysAtPlayhead({
       if (frame < earliest) earliest = frame;
     }
   }
-  if (!earliest.isFinite) return false;
-  final shift = playheadFrame - earliest;
+  // Values only: nothing has a time, so there is no shift to work out and the
+  // paste is not about the playhead at all.
+  if (!earliest.isFinite && statics.every((v) => v == null)) return false;
+  final shift = earliest.isFinite ? playheadFrame - earliest : 0.0;
 
   final edits = <GraphChannel, BridgeScalar>{};
   for (var i = 0; i < channels.length && i < sources.length; i++) {
     final channel = channels[i];
+    final value = i < statics.length ? statics[i] : null;
+    if (value != null) {
+      edits[channel] = channel.isStatic
+          ? BridgeScalar.static_(value)
+          : BridgeScalar.keyframed([
+              for (final k in _withKeyAt(
+                channel.keys,
+                playheadFrame.toDouble(),
+                value,
+                fps,
+                fpsNum,
+                fpsDen,
+              ))
+                k,
+            ]);
+      continue;
+    }
     // Merge on frames: a pasted key replaces one already at its frame — two
     // keys at one time is not a curve the engine will take.
     final merged = <double, BridgeKeyframe>{
@@ -1025,7 +1145,8 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
       } else {
         drawn = channel.isStatic
             ? 0
-            : evaluateKeysSpeed(keys, seconds) * (isEnvelope(channel) ? 100 : 1);
+            : evaluateKeysSpeed(keys, seconds) *
+                (isEnvelope(channel) ? 100 : 1);
       }
       final d = (_yOf(drawn, range, height) - local.dy).abs();
       if (d < best) {
@@ -1570,13 +1691,11 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             MenuRow(
-                onPressed: () => close('linear'), child: const Text('Linear')),
+                onPressed: () => close('linear'), child: Text(l10n.easeLinear)),
+            MenuRow(onPressed: () => close('ease'), child: Text(l10n.easeEasy)),
+            MenuRow(onPressed: () => close('hold'), child: Text(l10n.easeHold)),
             MenuRow(
-                onPressed: () => close('ease'), child: const Text('Easy ease')),
-            MenuRow(onPressed: () => close('hold'), child: const Text('Hold')),
-            MenuRow(
-                onPressed: () => close('delete'),
-                child: const Text('Delete key')),
+                onPressed: () => close('delete'), child: Text(l10n.deleteKey)),
           ],
         ),
       ),
@@ -1684,21 +1803,21 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
                   // sits beside it; the framing catches up when the drag ends.
                   builder: (context, _) => ClipRect(
                     child: CustomPaint(
-                    painter: _GraphPainter(
-                      channels: widget.channels,
-                      shownKeys: [
-                        for (final c in widget.channels) _shownKeys(c)
-                      ],
-                      lens: widget.lens,
-                      axis: widget.axis,
-                      fps: widget.fps,
-                      range: range,
-                      palette: t.curve,
-                      grid: t.hairline,
-                      label: t.small.copyWith(color: t.textMuted),
-                      viewportLeft: _viewportLeft,
-                      vegas: widget.vegas,
-                    ),
+                      painter: _GraphPainter(
+                        channels: widget.channels,
+                        shownKeys: [
+                          for (final c in widget.channels) _shownKeys(c)
+                        ],
+                        lens: widget.lens,
+                        axis: widget.axis,
+                        fps: widget.fps,
+                        range: range,
+                        palette: t.curve,
+                        grid: t.hairline,
+                        label: t.small.copyWith(color: t.textMuted),
+                        viewportLeft: _viewportLeft,
+                        vegas: widget.vegas,
+                      ),
                     ),
                   ),
                 ),
@@ -1749,8 +1868,7 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
                   child: IgnorePointer(
                     child: Center(
                       child: Text(
-                        'Select a property to see its curve — click its name '
-                        'in the outline; Ctrl/Shift-click adds more',
+                        l10n.graphEditorEmpty,
                         style: t.small,
                         textAlign: TextAlign.center,
                       ),

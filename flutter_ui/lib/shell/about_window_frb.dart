@@ -9,6 +9,7 @@ import 'package:flutter/widgets.dart';
 
 import 'package:lumit_flutter/src/rust/api/shell.dart';
 
+import '../l10n/strings.dart';
 import '../widgets/controls.dart';
 
 Future<void> showAboutWindowFrb(BuildContext context) => showLumitModal<void>(
@@ -35,13 +36,12 @@ class _AboutWindow extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
-            child: Text('About Lumit', style: t.bodyPrimary),
+            child: Text(l10n.menuAboutLumit, style: t.bodyPrimary),
           ),
           Text(lumitVersion(), style: t.small),
           const SizedBox(height: 8),
           Text(
-            'A motion-graphics and compositing editor. '
-            'Free software under the GNU General Public Licence, version 3.',
+            l10n.aboutBlurb,
             style: t.small,
           ),
           const SizedBox(height: 10),
@@ -57,7 +57,7 @@ class _AboutWindow extends StatelessWidget {
               key: const ValueKey('about-close'),
               small: true,
               onPressed: onClose,
-              child: Text('Close', style: t.small),
+              child: Text(l10n.close, style: t.small),
             ),
           ),
         ],

@@ -10,6 +10,7 @@ import 'dart:ui' show AppExitResponse;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
+import 'package:lumit_flutter/l10n/strings.dart';
 import 'package:lumit_flutter/panels/panels_frb.dart';
 import 'package:lumit_flutter/panels/timeline_extras_frb.dart';
 import 'package:lumit_flutter/panels/viewer_texture_controller.dart';
@@ -254,7 +255,7 @@ class LumitState extends ChangeNotifier {
     final opened =
         LumitBridgeState.openProject(path: path, onChangeStream: _changeSink());
     if (opened == null) {
-      postNotice('Could not open $path', error: true);
+      postNotice(l10n.couldNotOpen(path), error: true);
       return;
     }
     _adopt(opened);
@@ -476,6 +477,13 @@ class LumitUiState extends ChangeNotifier {
   /// chord simply by handling it.
   bool Function()? deleteClaim;
 
+  /// The same claim, for Copy and Paste (K-300). The Timeline sets these while
+  /// it is mounted: with keyframes selected, `Mod+C` means those keyframes, and
+  /// `Mod+V` puts them back — the layer clipboard is what the chord falls
+  /// through to. Each returns whether it took the chord.
+  bool Function()? copyClaim;
+  bool Function()? pasteClaim;
+
   /// The appearance the shell is drawing in.
   ///
   /// Scheme and shape are held rather than the built theme, because the theme is
@@ -563,7 +571,7 @@ class LumitUiState extends ChangeNotifier {
     // An engine that refuses the switch says so in the status line rather than
     // leaving a lit stopwatch over a column that will never fill.
     onEngineError: (error) => _app.postNotice(
-      'Could not measure render times: $error',
+      l10n.couldNotMeasureRenderTimes('$error'),
       error: true,
     ),
   );
@@ -725,6 +733,24 @@ class LumitUiState extends ChangeNotifier {
         (playheadFrame.value + delta).clamp(0, last < 0 ? 0 : last);
   }
 
+  /// The locale the interface is currently drawn in — the saved choice, or the
+  /// machine's own language when nothing has been chosen.
+  Locale get locale {
+    final saved = workspace.interface.language;
+    return saved == null ? systemLocale() : localeFromTag(saved);
+  }
+
+  /// Point `t` at the current language. Cheap and idempotent, which is why it
+  /// can hang off every workspace change rather than needing to know which
+  /// setting moved.
+  void _applyLanguage() => useLocale(locale);
+
+  /// Settings → Interface → Language. Null means follow the machine.
+  void setLanguage(String? tag) {
+    workspace.interface.language = tag;
+    workspace.settingsChanged();
+  }
+
   /// Put the panels back where they started (Window → Reset workspace).
   void resetLayout() => workspace.resetWorkspaceLayout();
 
@@ -768,15 +794,44 @@ class LumitUiState extends ChangeNotifier {
   final LumitClipboard clipboard = LumitClipboard();
 
   /// Copy a layer, and tell the interface so Paste ungreys.
+  ///
+  /// **Mirrored to the system clipboard** (K-302): a copy that leaves no trace
+  /// anywhere the machine can see reads exactly like a copy that did nothing —
+  /// paste into a text editor and nothing arrives. The document is the text.
   void copyLayerToClipboard(String text) {
     clipboard.putLayer(text);
+    Clipboard.setData(ClipboardData(text: text));
     notifyListeners();
   }
 
-  /// Copy one effect or a whole stack, same repaint.
+  /// Copy one effect or a whole stack, same repaint, same mirror.
   void copyEffectsToClipboard(String text) {
     clipboard.putEffects(text);
+    Clipboard.setData(ClipboardData(text: text));
     notifyListeners();
+  }
+
+  /// Take a Lumit document off the **system** clipboard into the tray, if
+  /// there is one there and the tray has nothing of its own (K-302).
+  ///
+  /// This is how a copy made in another Lumit window arrives, and how a paste
+  /// still works after something else on the machine has been copied in
+  /// between. Ordinary text is left alone — [lumitDocumentKind] only answers
+  /// for the two shapes the engine's paste calls accept.
+  Future<bool> adoptSystemClipboard() async {
+    final text = (await Clipboard.getData(Clipboard.kTextPlain))?.text;
+    if (text == null) return false;
+    if (text == clipboard.text) return !clipboard.isEmpty;
+    switch (lumitDocumentKind(text)) {
+      case ClipboardKind.layer:
+        clipboard.putLayer(text);
+      case ClipboardKind.effects:
+        clipboard.putEffects(text);
+      case null:
+        return false;
+    }
+    notifyListeners();
+    return true;
   }
 
   /// The whole selection, primary first (K-217).
@@ -800,6 +855,86 @@ class LumitUiState extends ChangeNotifier {
   void setSelection(List<LayerReference> layers) {
     selectedLayers.value = List.unmodifiable(layers);
     selectedLayer.value = layers.isEmpty ? null : layers.first;
+    // An effect belongs to a layer, so picking a different layer cannot leave
+    // the old layer's effects picked (K-300) — Copy would then act on something
+    // no longer on screen.
+    clearEffectSelection();
+  }
+
+  /// The effects picked out of one layer's stack (K-300), as instance ids in
+  /// **stack order** — what Copy and Cut act on when it is not empty.
+  ///
+  /// Held here rather than in either panel because an effect is picked in two
+  /// places — the Effect controls panel's heading and the Timeline fold-out's
+  /// row — and one selection shown in both is what makes those two places one
+  /// interface rather than two. [selectedEffectsLayer] is the layer they are
+  /// on: the effect ids alone name nothing the engine can find.
+  final ValueNotifier<List<UuidValue>> selectedEffects =
+      ValueNotifier(const []);
+  LayerReference? selectedEffectsLayer;
+
+  /// Replace the effect selection outright — what the Timeline hands over,
+  /// having already applied the click rules to its own rows.
+  void setEffectSelection(LayerReference layer, List<UuidValue> effects) {
+    if (effects.isEmpty) {
+      clearEffectSelection();
+      return;
+    }
+    selectedEffectsLayer = layer;
+    selectedEffects.value = List.unmodifiable(effects);
+    notifyListeners();
+  }
+
+  /// Pick [id] by click: plain replaces, Ctrl toggles, Shift extends the run
+  /// along [order] (the layer's stack, top to bottom) — the same three rules a
+  /// layer row and a property row follow, because a selection that behaved one
+  /// way here and another there would be two selections to learn.
+  void pickEffect(
+    LayerReference layer,
+    UuidValue id, {
+    required List<UuidValue> order,
+  }) {
+    final keys = HardwareKeyboard.instance;
+    final held = selectedEffectsLayer?.internallayerId == layer.internallayerId
+        ? [...selectedEffects.value]
+        : <UuidValue>[];
+    if (keys.isControlPressed || keys.isMetaPressed) {
+      if (!held.remove(id)) held.add(id);
+    } else if (keys.isShiftPressed && held.isNotEmpty) {
+      final a = order.indexOf(held.last);
+      final b = order.indexOf(id);
+      if (a < 0 || b < 0) {
+        if (!held.contains(id)) held.add(id);
+      } else {
+        for (var i = a < b ? a : b; i <= (a < b ? b : a); i++) {
+          if (!held.contains(order[i])) held.add(order[i]);
+        }
+      }
+    } else {
+      held
+        ..clear()
+        ..add(id);
+    }
+    setEffectSelection(layer, held);
+  }
+
+  /// What **Copy effect** on [id]'s heading takes: the whole picked run when
+  /// this effect is part of it, else just this one (K-300). Right-clicking a
+  /// heading outside the selection copies what was right-clicked, which is what
+  /// every list in the application does.
+  List<UuidValue> effectsToCopy(LayerReference layer, UuidValue id) =>
+      selectedEffectsLayer?.internallayerId == layer.internallayerId &&
+              selectedEffects.value.contains(id)
+          ? selectedEffects.value
+          : [id];
+
+  /// Nothing picked out of any stack — a layer chosen, a parameter chosen,
+  /// empty space clicked.
+  void clearEffectSelection() {
+    selectedEffectsLayer = null;
+    if (selectedEffects.value.isEmpty) return;
+    selectedEffects.value = const [];
+    notifyListeners();
   }
 
   /// Add [layer] to the selection, or take it out again — Shift-click.
@@ -977,6 +1112,13 @@ class LumitUiState extends ChangeNotifier {
   LumitUiState(LumitState state, {Workspace? workspace})
       : _app = state,
         workspace = workspace ?? (Workspace()..load()) {
+    // The language, before anything is built: `t` is a plain global
+    // (l10n/strings.dart), so it has to hold the right strings by the time the
+    // first widget asks for one. Registered ahead of `notifyListeners` below so
+    // that a language change has already landed when the rebuild it triggers
+    // runs — listeners fire in the order they were added.
+    _applyLanguage();
+    this.workspace.addListener(_applyLanguage);
     // Appearance and layout live in the workspace, so a change there is a
     // change here as far as any listening widget is concerned.
     this.workspace.addListener(notifyListeners);
@@ -1398,6 +1540,14 @@ class LumitAppNew extends StatelessWidget {
     // in it rather than as Lumit. The backdrop is `surface0` from the theme.
     return MaterialApp(
       debugShowCheckedModeBanner: false,
+      // Lumit's own strings come from the `l10n` global rather than from
+      // context (l10n/strings.dart); these delegates are still needed for the
+      // parts of Flutter that do ask the tree — text selection menus, the
+      // Material and Cupertino widgets under a dialogue, and the text direction
+      // a right-to-left language would want.
+      locale: uiState.locale,
+      localizationsDelegates: Strings.localizationsDelegates,
+      supportedLocales: Strings.supportedLocales,
       home: ChangeNotifierProvider.value(
         value: state,
         child: ChangeNotifierProvider.value(
@@ -1451,6 +1601,13 @@ class _LumitAppViewState extends State<LumitAppView> {
     // funeral). A hardware-keyboard handler fires wherever focus is; the
     // focused-text-field guard inside _onKey keeps typing safe.
     HardwareKeyboard.instance.addHandler(_handleKey);
+    // A Lumit document copied while this window was away — in another Lumit
+    // window, most of all — is picked up when the window comes back (K-302), so
+    // Paste is live rather than greyed over something that is genuinely there.
+    _clipboardWatch = AppLifecycleListener(
+      onShow: () => context.read<LumitUiState>().adoptSystemClipboard(),
+      onRestart: () => context.read<LumitUiState>().adoptSystemClipboard(),
+    );
     // The first-run question (K-246), after the first frame so there is an
     // Overlay to put it in. It asks nothing on any later launch.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1463,9 +1620,12 @@ class _LumitAppViewState extends State<LumitAppView> {
     });
   }
 
+  AppLifecycleListener? _clipboardWatch;
+
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_handleKey);
+    _clipboardWatch?.dispose();
     super.dispose();
   }
 
@@ -1650,6 +1810,17 @@ class _LumitAppViewState extends State<LumitAppView> {
         } else {
           newCompositionFrb(context, state);
         }
+      // Cut, copy and paste (K-300). The same three functions the Edit menu's
+      // rows call — the chords had no handler at all before, which is why
+      // `Ctrl+C` on a selected layer did nothing while the menu row worked.
+      case 'edit.copy':
+        handled = copySelectionFrb(ui);
+      case 'edit.cut':
+        handled = cutSelectionFrb(state, ui);
+      case 'edit.paste':
+        // Reading the system clipboard is asynchronous, so the chord is taken
+        // and the paste lands a frame later rather than being declined here.
+        pasteSelectionFrb(state, ui, comp, ui.selectedLayer.value);
       case 'edit.select.all':
         if (comp == null) {
           handled = false;

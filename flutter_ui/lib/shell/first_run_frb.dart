@@ -14,6 +14,7 @@
 
 import 'package:flutter/widgets.dart';
 
+import '../l10n/strings.dart';
 import '../state/workspace.dart';
 import '../widgets/controls.dart';
 
@@ -75,13 +76,12 @@ class _FirstRunState extends State<_FirstRun> {
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 12, 14, 4),
-              child: Text('How do you edit?', style: t.bodyPrimary),
+              child: Text(l10n.firstRunTitle, style: t.bodyPrimary),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
               child: Text(
-                'Lumit can start out shaped like the editor you already know. '
-                'Either answer can be changed later in Settings.',
+                l10n.firstRunBlurb,
                 style: t.small.copyWith(color: t.textMuted),
               ),
             ),
@@ -94,10 +94,8 @@ class _FirstRunState extends State<_FirstRun> {
                     Expanded(
                       child: _Choice(
                         id: 'first-run-ae',
-                        title: 'After Effects',
-                        blurb: 'Footage arrives as a layer, and the Retime '
-                            'graph shows which moment of the source is on '
-                            'screen.',
+                        title: l10n.keymapAfterEffects,
+                        blurb: l10n.firstRunAfterEffects,
                         onTap: () => _answer(false),
                       ),
                     ),
@@ -105,11 +103,8 @@ class _FirstRunState extends State<_FirstRun> {
                     Expanded(
                       child: _Choice(
                         id: 'first-run-vegas',
-                        title: 'Vegas',
-                        blurb: 'Video arrives as a Sequence layer you can cut '
-                            'into clips, and the Retime graph shows playback '
-                            'speed you drag up to ramp and below zero to '
-                            'reverse.',
+                        title: l10n.firstRunVegasName,
+                        blurb: l10n.firstRunVegas,
                         onTap: () => _answer(true),
                       ),
                     ),
@@ -132,8 +127,7 @@ class _FirstRunState extends State<_FirstRun> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'Check for new versions of Lumit. Nothing is downloaded '
-                      'until you ask for it.',
+                      l10n.firstRunAutoUpdate,
                       style: t.small.copyWith(color: t.textMuted),
                     ),
                   ),
@@ -143,7 +137,7 @@ class _FirstRunState extends State<_FirstRun> {
                     small: true,
                     frameless: true,
                     onPressed: () => _answer(null),
-                    child: Text('Skip', style: t.small),
+                    child: Text(l10n.skip, style: t.small),
                   ),
                 ],
               ),

@@ -6570,7 +6570,261 @@ start. It is two rename calls wide, the start-up sweep puts it back for every fa
 of that, and the fallback is the installer, which is still published. Judged worth it
 against a UAC prompt on every update for ever.
 
-**K-300 · PROPOSED · A release is exactly three files, and every one of them gates it.**
+**K-298 · DECIDED · A theme is a file you can send somebody, and a theme you like is one
+you can copy.** From the owner (2026-08-07). K-202 made every colour editable and left the
+result trapped: a custom theme lived in the workspace file, which is machine-local, so a
+theme could not be posted, put in a repo, or carried to a second machine — and the only way
+to try a change without losing what you had was to save over it and undo by hand. The keymap
+has had a shareable file since K-199; a theme is the other thing in Lumit worth sharing.
+
+**The file.** `.lumtheme`, a small indented JSON document: a `format` marker, a `version`,
+and then exactly `CustomTheme.toJson` — name, light-or-dark base, and the colours as
+`#rrggbb`. The same shape the workspace file already stores, so the two forms cannot drift,
+and readable for the same reason the workspace one is: a theme is a thing people tinker
+with. **Export** writes the theme on screen, offered from a built-in scheme as well as from
+one of the user's own, because "the stock dark with my accent" is a perfectly good thing to
+send somebody. **Import** reads one and selects it.
+
+**Reading is forgiving one way and strict the other.** A file from a newer Lumit opens, with
+the colours this build knows and the rest taken from its base — that forward tolerance is
+the whole reason K-202 stored a theme *over* a base rather than as a copy of the struct, and
+this is where it earns its keep. A theme with no marker opens too, since a theme lifted
+straight out of a workspace file has the same fields and refusing it would be pedantry. What
+is refused is refused with a sentence under the buttons rather than an exception: picking
+the wrong file is a normal thing to do.
+
+**An import never overwrites one of the user's own.** A name is the identity of a theme —
+the picker shows it and the workspace stores the selection by it — so every route that adds
+one (import, duplicate, save a copy, rename) goes through `Workspace.availableThemeName`,
+which numbers a clash rather than silently replacing somebody's work. The settings page says
+so when it happens.
+
+**Duplicate, rename, delete, import, export** sit together under the theme rows as a wrapped
+row of buttons rather than one settings row each: they are five verbs about the same thing,
+and five rows saying *Rename* would be a list of buttons pretending to be settings.
+**Duplicate works from a built-in scheme too** — it is how a built-in becomes editable
+without the editor having to ask for a name first — while **Rename and Delete are offered
+only for the user's own**, because a built-in's name is Lumit's and two people describing
+different Darks helps nobody. The editor gains **Save a copy…** beside Save, which is the
+same branch made from inside the colours.
+
+**The picker shows what it is offering.** Eight swatches beside the dropdown — the three
+grounds, the text on them, the accent, and success/warning/error — so a theme can be
+recognised before it is applied. Not every token: thirty-odd swatches is a colour chart, not
+a preview.
+
+**A new file type gets a file type's furniture.** `.lumtheme` joins `.lum` and `.lumfx`
+everywhere K-251 and K-252 put those two: a fifth brand SVG (`assets/brand/lumit-theme.svg`)
+rendered to `.ico` and `.icns` by `scripts/gen-icons.py`, a Windows registry association with
+its document icon, a freedesktop MIME type with a scalable icon installed by
+`packaging/linux/install.sh`, and a document type plus exported UTI in the macOS Info.plist.
+The artwork keeps the family's page and folded corner and swaps the keyframe mark for three
+overlapping swatches in the two key gradients and the core white, because what this file
+carries is colours — legible at 16 pixels, where the kicker is a smudge. Like `.lumfx` it
+registers **no open verb**: a theme is taken in from Settings, not opened as a document, and
+an icon that promises double-click would be a lie. Documented as §6 of
+`docs/10-FILE-FORMAT.md`.
+
+**K-299 · DECIDED · An effect is copied from its heading, in both places it has one.**
+K-275 built copy and paste and named what it left: "the two places an effect is *picked*:
+**Copy effect** on an effect's heading in the Effect controls panel and on its row in the
+Timeline, both calling `copy_effects(Some(id))`". Both are wired now.
+
+Nothing new crosses the bridge. `copy_effects(Some(id))` has taken one effect since K-275, and
+the in-app clipboard has held `.lumfx` text since then too — what was missing was any way to
+*name* a single effect from the interface, so the call had no caller and the Edit menu's Copy
+took the whole layer.
+
+**One effect and a whole stack land on the same clipboard**, because both are the same
+`.lumfx` document. Paste therefore needs no idea which it holds, and pasting one effect onto a
+bare layer adds exactly one — which is the test.
+
+**Only an effect's heading offers it.** The Timeline's fold-out draws Transform, Effects,
+Masks, Contents, Paint and Audio as headings too, and none of them is a thing that can be
+copied. `effectIdOfPath` already told the render-time indicator which rows are effects
+(docs/13 §7.1); it now tells the menu the same thing, so a grouping opens no menu at all
+rather than opening one with a dead row in it (docs/15: no punishment UI).
+
+This entry was written as K-287 on its branch; that number went to the Viewer and Timeline
+bar layout on main first, so it is K-299 here.
+
+**K-300 · DECIDED · An effect is a thing you select, and Copy takes whatever is selected.**
+K-299 put **Copy effect** on an effect's heading in both places it has one, and the first
+person to use it found the hole around it: the heading could be right-clicked but not
+*clicked*, `Ctrl+C` on a selected layer did nothing at all, and an effect name in the Effect
+controls panel answered no click, with or without Shift. Copy worked from a menu row and
+nowhere else.
+
+**Three faults, one shape.** There was no selection an effect could be part of; there was no
+`edit.copy` chord in the keymap and no case for it in the shell's handler; and the two places
+an effect is drawn each had their own idea of what was picked, which was nothing.
+
+**One effect selection, held by the shell.** `LumitUiState.selectedEffects` holds instance
+ids in **stack order** with the layer they are on, and both places write to it and read from
+it: an effect picked in the Timeline is lit in the Effect controls panel and the other way
+round. It follows the same three click rules as every other list here — plain replaces, Ctrl
+toggles, Shift extends the run — and picking a different layer clears it, because an effect
+belongs to a layer and Copy must never act on something no longer on screen.
+
+**A heading picks; the twirl folds.** In the **Effect controls panel** the name only picks —
+a click that also collapsed the card took the parameters away at the moment you said which
+effect you meant, which is the opposite of what selecting one is for, and the twirl mark is
+right there. In the **Timeline** a plain click still opens the heading as well, because the
+fold is how that outline is navigated and it has always worked that way; a *modified* click
+there only picks, so Shift-clicking a run of effects does not flap every one of them open on
+the way past. The twirl mark always folds and never picks, in both places.
+
+**Copy takes the finest selection.** Keyframes when a panel has claimed them, else the picked
+effects, else the layer — the ladder Delete has followed since K-234, and through the same
+kind of claim (`copyClaim`, `pasteClaim`), because every hardware-key handler runs on every
+key and a panel cannot claim a chord by handling it. The Timeline's hand-written `Ctrl+C` and
+`Ctrl+V` comparisons are gone with it: they were fine while the shell had no copy of its own,
+and would have been a double paste the moment it had one.
+
+**`Mod+X` / `Mod+C` / `Mod+V` are in the keymap now**, where every other chord lives (K-199),
+so they are rebindable and show beside their menu rows.
+
+**`copy_effects` takes a list.** `Option<Uuid>` became `Vec<Uuid>` — empty is still the whole
+stack — and the effects come back in stack order, not click order, so a copied group pastes
+back in the order it was drawn in. Ids naming nothing on the layer are ignored; naming none
+of them is a refusal rather than a silent whole-stack copy, which would be the worst possible
+guess.
+
+**What is deliberately not here.** Transform, Effects, Masks and Audio headings select like
+any other row but are not copyable — Copy falls through to the layer, which is what a
+transform copy would have to mean anyway. Cutting an effect removes it from the stack; cutting
+with nothing but a layer selected still deletes the layer.
+
+**K-301 · DECIDED · A row that is not animated still copies — its value is the thing being
+copied.** K-300 made Copy take the finest selection there is, and left one hole in the
+ladder: at the property level it took *keyframes*, so a row with none copied nothing, gave
+up, and fell through to copying the whole layer. The one thing the user was pointing at was
+the one thing that did not travel.
+
+**Copy with rows selected and no individual key picked copies the rows whole**: every key of
+an animated one, the plain value of one with no keyframes at all. Picking individual
+keyframes still copies exactly those, which is K-196 unchanged.
+
+**A copied value pastes as a value.** Onto a target that is not animated it replaces the
+number; onto one that is, it sets a key at the playhead — which is what "put this value
+here" can only mean on a row that already moves. A value has no time, so this paste is the
+one that does not shift anything onto the playhead.
+
+**The system clipboard gets the plain numbers** when nothing copied was animated,
+tab-joined — the same text a value field's own right-click Copy writes, so a value copied
+out of a row and a value copied out of a field are the same thing to everything else on the
+machine. With anything animated in the set, the keyframe table is written as before.
+
+**The other levels already carried their values** and are unchanged: `copy_layer`
+serialises the whole layer and `copy_effects` the whole `.lumfx`, both including every
+parameter that is a plain number. This entry is only about the property row.
+
+**K-302 · DECIDED · A copy leaves a trace the machine can see, and a stored keymap can
+never take a key away.** Two faults found the same afternoon by the owner, one hiding the
+other.
+
+**The keymap fault, which is the serious one.** A stored keymap replaced the session's map
+whole (`keymap_from_json`: `*km = parsed`). A keymap file only knows the actions that
+existed when it was written, so **every action added to Lumit afterwards had no chord at
+all** for anybody who had ever saved one — and the workspace saves one on the first rebind.
+K-300 bound `Mod+C`, every test passed, and the owner's `Ctrl+C` did nothing, because the
+tests start from the shipped defaults and only a real session has a file.
+
+A stored keymap is now **laid over the defaults**: the file's chord wins for every action it
+names, and an action it never heard of keeps its default. That needed a way to tell "I took
+that key away" apart from "that action did not exist yet", so `Keymap` gained `unbound` — a
+list of deliberately silent actions — and unbinding records itself there. Absent from an
+older file, which is right: nothing in one was ever a deliberate unbind that survived a
+restart, because the whole map was being replaced anyway.
+
+The general rule this is a case of: **restored state is laid over the current defaults, never
+swapped for them.** Anything the user did not choose must come from the running build.
+
+**The clipboard fault.** Layer and effect copies went into Lumit's own tray and nowhere else
+(K-275's deliberate choice). Paste into a text editor and nothing arrives — which is
+indistinguishable from Copy having done nothing, and is the first thing anybody checks. So
+every copy is now **mirrored to the system clipboard as its document text**, and a paste that
+finds the tray empty reads the system clipboard and takes a Lumit document back off it
+(sniffed: a layer document says `kind`, an effect document is the `.lumfx` shape, and
+anything else is somebody's shopping list and is left alone). The window also picks up a
+document when it comes back to the front, so Paste is live rather than greyed over something
+that is genuinely there.
+
+The tray still comes first, because it holds the exact text this session copied — no round
+trip, and nothing else on the machine can have overwritten it. K-275's cost line, "copying
+between two running Lumit windows does not work yet", is paid off by this: the second window
+takes the document off the system clipboard.
+**K-303 · DECIDED · Lumit's words leave the code: one British-English `.arb` is the
+source, Crowdin is where translation happens, and the engine's own labels come along
+by lookup.** K-005 said UI strings go through an i18n table "from day one" and
+[14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md) §7 made it binding — *no string
+literal shown to a user lives in code*. Neither was ever true: the words lived inline
+across ninety Dart files, and the rule had no test behind it. This makes it true, and
+puts a gate under it.
+
+**One file, in en-GB, written by hand.** `flutter_ui/lib/l10n/app_en.arb` holds every
+phrase Lumit shows, each with an `@key` note saying where it appears and what
+constrains it — the only context a translator gets. The other `app_*.arb` files beside
+it come back from Crowdin and are never edited in this repo; a wrong translation is
+fixed on Crowdin or the next sync overwrites the fix. `crowdin.yml` at the repo root is
+the whole configuration: one source file, four target languages, credentials from the
+environment because this repo is public. British English is the source and stays the
+source (K-005); there is no en-US.
+
+**Reached through a plain global, not through `BuildContext`.** Code writes
+`l10n.importFootage`. A good third of Lumit's text is decided outside a widget — the
+keymap, the tool table, the settings model — where the usual `Strings.of(context)` has
+nothing to ask, and threading a context through all of it would be a large change for
+no gain: Lumit has one window's worth of language at a time, and no case where two
+halves of the screen want different ones. The cost is that changing the language does
+not by itself repaint anything; it does not need to, because the only caller is the
+settings model, whose `notifyListeners` already rebuilds the shell on the same frame.
+
+**The engine's labels are translated by lookup on the English text.** Effect and
+parameter names live in `lumit-core`'s schema, shortcut descriptions in `lumit-keymap`,
+and both reach the interface over the bridge as plain English —
+`lib/l10n/engine_labels.dart` maps each to a key. Rust is untouched: it learns nothing
+about languages, no second set of identifiers has to be kept in step with the schema,
+and a word with no entry comes back as it arrived rather than blanking a panel. The
+limit is that the lookup is by word rather than by place, so two controls both called
+"Scale" in English take one translation; the fix, when it bites, is to give the
+affected label distinct English text in the schema, which is better practice anyway.
+`test/l10n/engine_labels_test.dart` reads both Rust sources and fails if either can
+send a word the table has no entry for, so a new effect or shortcut cannot quietly
+ship untranslated.
+
+**Tooltips shrank, because the spec always said they should.**
+[07-UI-SPEC.md](07-UI-SPEC.md) §13.2 has always asked for the control's name and its
+shortcut, with the sentence-length "rich" tooltip reserved for Lumit-specific
+behaviour. What had grown instead was explanation — *"Put every parameter back to its
+default, removing its keyframes"* on a button already labelled Reset. Every tooltip is
+now under five words and most are two, and `test/l10n/arb_test.dart` keeps them there:
+six exceptions are named in that test with their reasons — the three cache meters,
+whose tooltips carry live numbers and warn that clicking throws work away, and the two
+playback modes, which are the adaptive degradation §13.2 names outright. The same test
+holds every string to the glossary, which is how *"Retime opens to Velocity"* and
+*"Keyframe velocity…"* were caught and corrected to **speed** (§9 is binding for copy,
+not only for identifiers).
+
+**Settings ▸ Interface ▸ Language**, defaulting to the machine's own language and
+storing nothing until the user chooses. Following the operating system for ever — and
+after they change it — is the better default than freezing whichever language they
+happened to launch in. The picker lists each language under its own name (Deutsch,
+Қазақша, Українська, 简体中文) rather than under an English one, so somebody who has
+set Lumit to a language they cannot read can still find their way back.
+
+**What this costs.** Roughly a thousand keys to keep in order, and a `const` widget
+constructor wherever a literal used to sit — a real but negligible allocation cost in
+a shell that rebuilds on a notifier anyway. Simplified Chinese lands as plain `zh`
+rather than `zh_Hans`, because Flutter requires a script-less base file to fall back
+to and there is only one Chinese script to translate into; adding Traditional later
+means adding `zh-TW: zh_Hant` to `crowdin.yml` and leaving `zh` as the base. The two
+shortcut labels the engine builds with a number in them ("Add marker 3 at the
+playhead") are not literals in Rust and so are not in the lookup table; they stay
+English until the engine hands their number over separately, and that is in
+[TODO.md](TODO.md).
+
+**K-304 · PROPOSED · A release is exactly three files, and every one of them gates it.**
 Supersedes the artefact list in K-252 (2026-08-03) and K-253 (2026-08-03): the Linux
 release tarball is withdrawn. A tagged release now publishes a Windows setup `.exe`, a
 macOS `.dmg` and a Linux `.flatpak` — one artefact per platform, nothing else. The

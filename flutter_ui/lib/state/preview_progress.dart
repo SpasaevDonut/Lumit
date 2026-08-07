@@ -24,18 +24,19 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../l10n/strings.dart';
 import '../src/rust/api/state.dart';
 
 /// What the engine is doing for the frame being waited on. The codes are the
 /// engine's own (`lumit_render::RenderStage::code`) and are fixed: a reordered
 /// enum must not silently relabel anything.
 String previewStageLabel(int stage) => switch (stage) {
-      0 => 'Preparing',
-      1 => 'Reading media',
-      2 => 'Reading the composition',
-      3 => 'Compositing',
-      4 => 'Showing',
-      _ => 'Rendering',
+      0 => l10n.previewPreparing,
+      1 => l10n.previewReadingMedia,
+      2 => l10n.previewReadingComposition,
+      3 => l10n.previewCompositing,
+      4 => l10n.previewShowing,
+      _ => l10n.previewRendering,
     };
 
 /// Follows the engine's progress reports for the frame the Viewer is waiting
@@ -63,7 +64,8 @@ class PreviewProgressTracker extends ChangeNotifier {
   /// Distinct from [`visible`], which is false both before a slow frame's bar
   /// appears and after any frame finishes. A test that has asked for a render
   /// waits on *this* rather than on a round count, so a frame that takes longer
-  /// on one machine than another does not decide whether the test passes.
+  /// on one machine — or under the load of a whole suite — than another does
+  /// not decide whether the test passes.
   bool get idle => !_outstanding;
 
   /// How far the frame has got, 0..1 — the engine's own estimate.

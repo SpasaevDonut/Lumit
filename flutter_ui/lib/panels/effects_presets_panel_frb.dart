@@ -18,6 +18,8 @@ import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:provider/provider.dart';
 
 import '../icons/icons.dart';
+import '../l10n/engine_labels.dart';
+import '../l10n/strings.dart';
 import '../theme/theme.dart';
 import '../state/drag_payloads.dart';
 import '../state/file_dialogs.dart';
@@ -75,11 +77,11 @@ class _EffectsPresetsPanelFrbState extends State<EffectsPresetsPanelFrb> {
     for (final effect in listEffects()) {
       if (needle.isNotEmpty &&
           !effect.label.toLowerCase().contains(needle) &&
-          !effect.categoryLabel.toLowerCase().contains(needle)) {
+          !engineLabel(effect.categoryLabel).toLowerCase().contains(needle)) {
         continue;
       }
       grouped.putIfAbsent(effect.category, () => []).add(effect);
-      headings[effect.category] = effect.categoryLabel;
+      headings[effect.category] = engineLabel(effect.categoryLabel);
     }
 
     return Column(
@@ -112,7 +114,7 @@ class _EffectsPresetsPanelFrbState extends State<EffectsPresetsPanelFrb> {
           child: Builder(builder: (context) {
             final presetRows = _presetRows(t, ui, needle);
             if (grouped.isEmpty && presetRows.isEmpty) {
-              return Center(child: Text('No effects match', style: t.small));
+              return Center(child: Text(l10n.noEffectsMatch, style: t.small));
             }
             return ListView(
               padding: const EdgeInsets.symmetric(vertical: 4),
@@ -162,8 +164,8 @@ class _EffectsPresetsPanelFrbState extends State<EffectsPresetsPanelFrb> {
     return [
       Padding(
         padding: const EdgeInsets.fromLTRB(10, 6, 10, 2),
-        child:
-            Text('Saved presets', style: t.small.copyWith(color: t.textMuted)),
+        child: Text(l10n.savedPresets,
+            style: t.small.copyWith(color: t.textMuted)),
       ),
       for (final preset in shown)
         GestureDetector(
@@ -220,7 +222,7 @@ class _EffectRow extends StatelessWidget {
     );
 
     return Draggable<EffectDragData>(
-      data: EffectDragData(effect.name, effect.label),
+      data: EffectDragData(effect.name, engineLabel(effect.label)),
       dragAnchorStrategy: pointerDragAnchorStrategy,
       feedback: FloatSurface(
         child: Padding(
@@ -267,7 +269,7 @@ class _PresetBar extends StatelessWidget {
               small: true,
               frameless: true,
               onPressed: target == null ? null : () => _save(target),
-              child: Text('Save preset…', style: t.small),
+              child: Text(l10n.savePresetEllipsis, style: t.small),
             ),
             const SizedBox(width: 6),
             HouseButton(
@@ -275,11 +277,11 @@ class _PresetBar extends StatelessWidget {
               small: true,
               frameless: true,
               onPressed: target == null ? null : () => _load(target),
-              child: Text('Load preset…', style: t.small),
+              child: Text(l10n.loadPresetEllipsis, style: t.small),
             ),
             if (target == null) ...[
               const SizedBox(width: 16),
-              Text('Select a layer',
+              Text(l10n.selectALayer,
                   style: t.small.copyWith(color: t.textMuted)),
             ],
           ],

@@ -26,6 +26,7 @@ import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/state/tools.dart';
 import 'package:uuid/uuid.dart';
 
+import '../l10n/strings.dart';
 import '../widgets/controls.dart';
 import 'viewer_gizmo.dart';
 import 'viewer_tool_cursor.dart';
@@ -177,8 +178,7 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
     return withinClosingDistance(
       _space.ofScreen(at),
       start,
-      screenScale:
-          box == null ? _screenScale : box.map.viewScale * box.map.sx,
+      screenScale: box == null ? _screenScale : box.map.viewScale * box.map.sx,
     );
   }
 
@@ -401,9 +401,8 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
         withinClosingDistance(
           at,
           start,
-          screenScale: box == null
-              ? _screenScale
-              : box.map.viewScale * box.map.sx,
+          screenScale:
+              box == null ? _screenScale : box.map.viewScale * box.map.sx,
         )) {
       final path = _draft.vertices;
       setState(() => _draft = const PathDraft());
@@ -484,7 +483,7 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
       widget.uiState.setSelection([layer]);
       widget.onChanged();
     } catch (_) {
-      widget.state.postNotice('Could not add a shape layer', error: true);
+      widget.state.postNotice(l10n.couldNotAddShapeLayer, error: true);
     }
   }
 
@@ -720,8 +719,10 @@ class ShapePreviewPainter extends CustomPainter {
   Path _screenPath(List<BridgeVertex> vertices, {required bool closed}) {
     final path = Path();
     Offset at(BridgeVertex v) => space.toScreen(v.x, v.y);
-    Offset out(BridgeVertex v) => space.toScreen(v.x + v.tanOutX, v.y + v.tanOutY);
-    Offset into(BridgeVertex v) => space.toScreen(v.x + v.tanInX, v.y + v.tanInY);
+    Offset out(BridgeVertex v) =>
+        space.toScreen(v.x + v.tanOutX, v.y + v.tanOutY);
+    Offset into(BridgeVertex v) =>
+        space.toScreen(v.x + v.tanInX, v.y + v.tanInY);
 
     path.moveTo(at(vertices.first).dx, at(vertices.first).dy);
     for (var i = 1; i < vertices.length; i++) {

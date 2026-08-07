@@ -62,7 +62,7 @@ If the API call fails or is rate-limited (60 requests/hour per IP, unauthenticat
 every button falls back to the releases page, which is a hard-coded `href` in the
 markup. The page is still fully usable with JavaScript disabled.
 
-> **Note.** Those three names are the whole release (K-300) - `release.yml` builds one
+> **Note.** Those three names are the whole release (K-304) - `release.yml` builds one
 > artefact per platform and no others, and every job gates the tag, so a release that
 > publishes at all publishes all three. The Linux asset was a `.tar.gz` up to and
 > including v0.1.0.
