@@ -4,7 +4,10 @@
 //! layers with spans — no properties/keyframes yet (slice arrives in Phase 1).
 //! All mutation goes through operations (ops.rs); this module is data + queries.
 
+use std::sync::Arc;
+
 use crate::anim::Property;
+use crate::expression::ExpressionContext;
 use crate::time::{CompTime, Duration, FrameRate, Rational};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -589,6 +592,18 @@ impl EffectInstance {
         }
     }
 
+    pub fn float_at_with_context(
+        &self,
+        id: &str,
+        lt: f64,
+        context: Arc<ExpressionContext>,
+    ) -> Option<f64> {
+        match self.param(id)? {
+            EffectValue::Float(p) => Some(p.value_at_with_context(lt, context)),
+            _ => None,
+        }
+    }
+
     /// A colour parameter's evaluated scene-linear RGBA at layer time `lt`
     /// (channels animate independently), or None when absent or not a
     /// Colour.
@@ -599,6 +614,23 @@ impl EffectInstance {
                 ch[1].value_at(lt),
                 ch[2].value_at(lt),
                 ch[3].value_at(lt),
+            ]),
+            _ => None,
+        }
+    }
+
+    pub fn colour_at_with_context(
+        &self,
+        id: &str,
+        lt: f64,
+        context: Arc<ExpressionContext>,
+    ) -> Option<[f64; 4]> {
+        match self.param(id)? {
+            EffectValue::Colour(ch) => Some([
+                ch[0].value_at_with_context(lt, context.clone()),
+                ch[1].value_at_with_context(lt, context.clone()),
+                ch[2].value_at_with_context(lt, context.clone()),
+                ch[3].value_at_with_context(lt, context.clone()),
             ]),
             _ => None,
         }
@@ -875,11 +907,33 @@ impl Composition {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextDocument {
     pub text: String,
+    /// When set, the words come from this expression at each frame instead of
+    /// from `text` — the same expression language the numeric properties use,
+    /// printed rather than measured (K-210, docs/03-DATA-MODEL.md §9.1).
+    ///
+    /// `text` is left alone while an expression drives the layer, so switching
+    /// the expression off restores the words that were typed there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expression: Option<String>,
     /// Pixel size at natural scale.
     pub size: f64,
     pub fill: LinearColour,
     #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+impl TextDocument {
+    /// The words this document shows at layer time `lt`.
+    ///
+    /// **Every reader of a text layer's content goes through here**, so the
+    /// rasteriser and the cache key can never disagree about what the layer
+    /// says — a disagreement that would serve a cached frame of the old words.
+    pub fn resolved_text(&self, context: Arc<ExpressionContext>) -> std::borrow::Cow<'_, str> {
+        match &self.expression {
+            None => std::borrow::Cow::Borrowed(&self.text),
+            Some(e) => std::borrow::Cow::Owned(crate::expression::evaluate_text(e, Some(context))),
+        }
+    }
 }
 
 /// Per-layer composite operator (docs/06-RENDER-PIPELINE.md §blend domains).
@@ -1953,6 +2007,7 @@ mod tests {
         inner.kind = LayerKind::Text {
             document: TextDocument {
                 text: "m".into(),
+                expression: None,
                 size: 12.0,
                 fill: LinearColour([1.0, 1.0, 1.0, 1.0]),
                 extra: serde_json::Map::new(),

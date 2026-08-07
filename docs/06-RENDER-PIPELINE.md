@@ -487,7 +487,7 @@ Normative details:
 - **Algorithm version** is bumped whenever an effect's output changes, invalidating stale
   entries by construction.
 - Seeded randomness (wiggle, noise) hashes its seed and time inputs; expressions are
-  deterministic (K-063), so their outputs are hashable values like any other.
+  deterministic (K-305), so their outputs are hashable values like any other.
 
 **Invalidation is pure hash mismatch.** There is no invalidation machinery, no dirty flags, no
 dependency walker: an edit changes evaluated values, values change hashes, old entries simply
@@ -748,7 +748,7 @@ Nothing baked ever appears in the project document or is observable in the file 
 
 Same project, same Lumit version, same machine, same preset → identical output pixels, every
 run. Therefore, normatively: adaptive degradation never applies to export; motion-blur sample
-counts come from the deterministic formula (§4); expressions are deterministic (K-063); every
+counts come from the deterministic formula (§4); expressions are deterministic (K-305); every
 frame renders at full chosen quality regardless of load — under resource pressure export gets
 slower, never different. Bit-exactness across different GPUs/driver versions is not promised
 (floating-point variance); cross-machine consistency is visually lossless, same-machine

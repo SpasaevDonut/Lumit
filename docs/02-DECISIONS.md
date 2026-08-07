@@ -6858,6 +6858,69 @@ platform*. The Linux side needs no archive of its own, because a Flatpak is upda
 `linux-x64.tar.gz` and falls back to `.flatpak`, so an installation made from the withdrawn
 tarball still finds something to offer.
 
+**K-305 · DECIDED · Expressions run on Rhai, and "deterministic" means reproducible in
+practice rather than bit-identical across platforms.** Supersedes **K-063**, which chose
+JavaScript on QuickJS-ng and gave one reason for it: QuickJS is pure-software IEEE754, so
+the same project gives bit-identical numbers on every machine, which a JIT engine cannot
+promise.
+
+The shipping implementation is [Rhai](https://rhai.rs) — a small Rust scripting language
+that embeds directly, with no C dependency, no separate runtime to sandbox, and native Rust
+types across the boundary. It went in first because it was the cheapest thing that worked,
+and it stayed because the argument against it turned out to be weaker than it looked.
+
+**Why the determinism objection does not block it.** Rhai's `sin`, `cos` and friends go to
+the platform's libm, which is not required to give identical last bits everywhere, so two
+operating systems can disagree in the final ulp. That is real. It is also, as Airyzz put it
+reviewing this, *not new*: plenty of the existing engine already has the property, and the
+GPU — where most of Lumit's arithmetic happens — offers no cross-vendor bit-identity at all
+and never will. Buying exactness in the expression evaluator alone would not buy exactness
+in the picture; it would buy one determinstic component inside a pipeline that is not.
+
+**So the standard is stated rather than implied.** Lumit aims to be *reproducible*: the
+same project on the same machine gives the same frames, every run, and the frame cache can
+rely on that — which is what the cache key actually needs, and it is what the tests assert.
+Across operating systems and GPU vendors, Lumit aims to be *as close as the hardware
+allows* and does not promise the last bit. A user moving a project between platforms should
+expect the same picture, not a byte-identical file. Getting as close as possible remains
+the goal; pretending the floor is exact would be the lie.
+
+This is a deliberate narrowing of a promise, not an abandonment of it. If a future feature
+genuinely needs bit-identity across platforms — a distributed render farm splitting one
+frame range across mixed machines, say — that feature brings the argument back with its own
+evidence, and this entry is the thing it supersedes.
+
+**K-306 · DECIDED · A text layer's words can come from an expression, and one resolver
+serves both the picture and the cache.** From Airizz (2026-08-02), debugging expressions:
+"im really just trying to print values to the screen at render time". Every property on a
+layer could already be driven by an expression; the one thing that could not was the one
+that would have shown the answer. `TextDocument` gains an optional `expression`
+([03-DATA-MODEL.md](03-DATA-MODEL.md) §9.1): when set, the layer's line at layer time *t*
+is that expression evaluated at *t* and printed — the same language the numeric properties
+use, except the answer is shown rather than measured, so **any** result type is accepted
+(refusing one would only mean wrapping it in a conversion).
+
+**The typed `text` is kept, not overwritten**, and is what the layer says again once the
+expression is cleared. An empty or whitespace-only expression *is* "cleared", never "an
+expression that says nothing" — the alternative leaves a blank layer with no way back to
+its words. **A broken expression prints nothing rather than failing the frame**: these are
+typed against a live preview, where half a written expression is invalid for most of the
+time it takes to write it, and an empty line is what the editor already shows for empty
+text.
+
+**The rasteriser and the frame cache key read the line through one function**
+(`TextDocument::resolved_text`), which is the load-bearing part. Hashing the *stored* text
+for an expression-driven layer keys every frame identically, so the number on screen would
+freeze on whatever it read first — the feature shipping with the bug it exists to solve.
+Routing both through one resolver makes that disagreement unrepresentable rather than
+merely fixed, and gives the right cache behaviour for free at both ends: a frame-varying
+line keys per frame, a constant one keys once, with nothing to configure. The cost is that
+`feed_source` now takes the comp the layer sits in, since that is what an expression
+context is built from.
+
+Per-character animation of a driven line is **not** in scope and was not asked for; it
+belongs with the styled-runs model ([03-DATA-MODEL.md](03-DATA-MODEL.md) §9.1). The engine itself is settled separately, in K-305.
+
 **K-307 · DECIDED · A shape layer's own art is correctable on the picture, by the gesture that
 already corrects a mask.** K-237 shipped shape layers and named the gap outright — "editing a
 shape layer's points on the picture (K-224 edits *mask* points; the same gesture over shape

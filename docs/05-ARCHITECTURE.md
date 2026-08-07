@@ -47,7 +47,7 @@ Reserved for later (no crate exists yet):
 | `lumit-gpu` (extras) | Texture pool, device-lost recovery, optional CUDA interop — future additions to the existing crate. |
 | `lumit-media` (extras) | Persistent decoder instances, hardware decode, proxy generation, image sequences — future; v1 does one-shot CPU decode. |
 | `lumit-cache` (extras) | The VRAM tier, `index.db`, and the resource governor — future. |
-| `lumit-expr` | QuickJS-ng expressions (K-063) — deterministic runtime, AE-surface library, per-property sandboxing. |
+| *(no crate)* | Expressions live in `lumit-core` (`src/expression/`), not a crate of their own: a driven property is resolved by the same code that resolves a keyframed one, so splitting them would put the seam through the middle of `Property`. Rhai, per K-305. |
 | `lumit-ofx` | OFX host: out-of-process plugin server, C ABI, shared-memory frame transport. |
 | `lumit-lfx` | LFX host (K-062). Shares the sandbox/IPC substrate with `lumit-ofx`. |
 
@@ -256,9 +256,12 @@ Architecture level (full protocol in [12-PLUGINS.md](12-PLUGINS.md)):
   temporal needs, and a thread-safety capability flag; non-reentrant plugins serialise on
   their own server without stalling the rest of the graph.
 
-Expressions (`lumit-expr`) are in-process but sandboxed per K-063: no IO, no `Date`, no JIT
-variance, seeded random only — an expression can be wrong, never non-deterministic and never
-fatal.
+Expressions (`lumit-core::expression`) are in-process and hermetic per K-305: no IO, no
+wall clock, seeded random only. An expression can be wrong, never non-deterministic on a
+given machine, and never fatal to a frame. Two caveats the earlier wording did not carry:
+results are reproducible per machine rather than bit-identical across platforms (K-305),
+and there is no evaluation time budget yet, so a runaway expression can still stall a
+render thread ([12-PLUGINS.md](12-PLUGINS.md) §4.4).
 
 ---
 

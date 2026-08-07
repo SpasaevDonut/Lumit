@@ -20,10 +20,13 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
+import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/shell.dart';
+import 'package:lumit_flutter/state/comp_model.dart';
+import 'package:provider/provider.dart';
 
 import '../l10n/strings.dart';
 import '../theme/theme.dart';
@@ -91,6 +94,7 @@ class GraphChannel {
   double get staticValue => switch (scalar) {
         BridgeScalar_Static(:final field0) => field0,
         BridgeScalar_Keyframed() => 0,
+        BridgeScalar_Expression() => 0,
       };
 }
 
@@ -1813,6 +1817,8 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
                         fps: widget.fps,
                         range: range,
                         palette: t.curve,
+                        comp: Provider.of<LumitUiState>(context, listen: false)
+                            .model,
                         grid: t.hairline,
                         label: t.small.copyWith(color: t.textMuted),
                         viewportLeft: _viewportLeft,
@@ -2118,6 +2124,7 @@ class _GraphPainter extends CustomPainter {
   final List<Color> palette;
   final Color grid;
   final TextStyle label;
+  final CompModel comp;
 
   /// Where the viewport's left edge sits in the canvas's own coordinates.
   ///
@@ -2144,6 +2151,7 @@ class _GraphPainter extends CustomPainter {
     required this.palette,
     required this.grid,
     required this.label,
+    required this.comp,
     required this.viewportLeft,
     this.vegas = false,
   });
@@ -2170,32 +2178,66 @@ class _GraphPainter extends CustomPainter {
         ..strokeWidth = 1.4
         ..style = PaintingStyle.stroke;
 
-      if (channel.isStatic || keys.isEmpty) {
-        // A static property is a flat line of its value (a flat 0 as speed).
-        final y = _yOf(lens == GraphLens.value ? channel.staticValue : 0, size);
-        canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
-        continue;
-      }
-      if (keys.length == 1) {
-        final y = _yOf(lens == GraphLens.value ? keys.first.value : 0, size);
-        canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
-        continue;
+      if (channel.scalar is! BridgeScalar_Expression) {
+        if (channel.isStatic || keys.isEmpty) {
+          // A static property is a flat line of its value (a flat 0 as speed).
+          final y =
+              _yOf(lens == GraphLens.value ? channel.staticValue : 0, size);
+          canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+          continue;
+        }
+        if (keys.length == 1) {
+          final y = _yOf(lens == GraphLens.value ? keys.first.value : 0, size);
+          canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+          continue;
+        }
       }
 
       final path = Path();
       const step = 2.5;
       var first = true;
-      for (var x = 0.0; x <= size.width; x += step) {
-        final seconds = axis.perFrame <= 0 ? 0.0 : x / axis.perFrame / f;
-        final v = lens == GraphLens.value
-            ? evaluateKeys(keys, seconds)
-            : evaluateKeysSpeed(keys, seconds) * speedScale;
-        final point = Offset(x, _yOf(v, size));
-        if (first) {
-          path.moveTo(point.dx, point.dy);
-          first = false;
-        } else {
-          path.lineTo(point.dx, point.dy);
+      if (channel.scalar case BridgeScalar_Expression _) {
+        // An expression has no keys to walk, so the curve is sampled from the
+        // engine across the visible span — the same evaluator the renderer
+        // uses, so the drawn line matches the motion that will be rendered.
+        final startSeconds = 0 / axis.perFrame / f;
+        final endSeconds = size.width / axis.perFrame / f;
+        final start = timeOfSubframe(
+            startSeconds * f, comp.fpsExact.$1, comp.fpsExact.$2);
+        final end =
+            timeOfSubframe(endSeconds * f, comp.fpsExact.$1, comp.fpsExact.$2);
+
+        const samples = 500;
+        final result = sampleScalarRangeWithContext(
+            scalar: channel.scalar,
+            layer: channel.entry.layer,
+            start: start,
+            end: end,
+            samples: samples);
+
+        for (var i = 0; i < result.length; i++) {
+          final x = size.width * (i.toDouble() / samples.toDouble());
+          final point = Offset(x, _yOf(result[i], size));
+          if (first) {
+            path.moveTo(point.dx, point.dy);
+            first = false;
+          } else {
+            path.lineTo(point.dx, point.dy);
+          }
+        }
+      } else {
+        for (var x = 0.0; x <= size.width; x += step) {
+          final seconds = axis.perFrame <= 0 ? 0.0 : x / axis.perFrame / f;
+          final v = lens == GraphLens.value
+              ? evaluateKeys(keys, seconds)
+              : evaluateKeysSpeed(keys, seconds) * speedScale;
+          final point = Offset(x, _yOf(v, size));
+          if (first) {
+            path.moveTo(point.dx, point.dy);
+            first = false;
+          } else {
+            path.lineTo(point.dx, point.dy);
+          }
         }
       }
       canvas.drawPath(path, paint);

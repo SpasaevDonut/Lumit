@@ -98,6 +98,7 @@ fn collapsed_precomp_splices_inner_draws_with_parent_placement() {
         kind: LayerKind::Text {
             document: TextDocument {
                 text: "hi".into(),
+                expression: None,
                 size: 24.0,
                 fill: LinearColour([1.0, 1.0, 1.0, 1.0]),
                 extra: serde_json::Map::new(),

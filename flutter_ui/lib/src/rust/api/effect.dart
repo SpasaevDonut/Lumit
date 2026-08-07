@@ -5,12 +5,13 @@
 
 import '../api.dart';
 import '../frb_generated.dart';
+import 'layer.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 import 'package:uuid/uuid.dart';
 part 'effect.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `animation_at`, `param`, `presets_in`, `read_at`, `read_at`, `read_at`, `read_instance_info`, `read`, `write_at`, `write_at`, `write`
+// These functions are ignored because they are not marked as `pub`: `animation_at`, `document_for`, `param`, `presets_in`, `read_at`, `read_at`, `read_at`, `read_instance_info`, `read`, `write_at`, `write_at`, `write`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `get_effects`, `new`
 
@@ -51,6 +52,22 @@ double sampleScalar(
         {required BridgeScalar scalar, required BridgeRational time}) =>
     BridgeLib.instance.api
         .crateApiEffectSampleScalar(scalar: scalar, time: time);
+
+double sampleScalarWithContext(
+        {required BridgeScalar scalar,
+        required BridgeRational time,
+        required LayerReference layer}) =>
+    BridgeLib.instance.api.crateApiEffectSampleScalarWithContext(
+        scalar: scalar, time: time, layer: layer);
+
+Float64List sampleScalarRangeWithContext(
+        {required BridgeScalar scalar,
+        required LayerReference layer,
+        required BridgeRational start,
+        required BridgeRational end,
+        required PlatformInt64 samples}) =>
+    BridgeLib.instance.api.crateApiEffectSampleScalarRangeWithContext(
+        scalar: scalar, layer: layer, start: start, end: end, samples: samples);
 
 /// Every parameter `effect` declares, in schema order — what the panel draws a
 /// row per.
@@ -560,6 +577,9 @@ sealed class BridgeScalar with _$BridgeScalar {
   const factory BridgeScalar.keyframed(
     List<BridgeKeyframe> field0,
   ) = BridgeScalar_Keyframed;
+  const factory BridgeScalar.expression(
+    String field0,
+  ) = BridgeScalar_Expression;
 }
 
 @freezed

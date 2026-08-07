@@ -37,6 +37,9 @@ import '../widgets/colour_picker.dart';
 import '../widgets/controls.dart';
 import 'fx_section.dart';
 import 'keyframe_controls_frb.dart';
+import 'package:lumit_flutter/src/rust/api/state.dart';
+import 'package:lumit_flutter/widgets/autofill.dart';
+import 'package:syntax_highlight/syntax_highlight.dart';
 
 /// How wide one value cell is.
 const double effectCellWidth = 78;
@@ -240,9 +243,34 @@ class EffectParamRowFrb extends StatelessWidget {
           :final hardMax
         ):
         if (value case BridgeEffectValue_Float(:final field0)) {
+          // A driven parameter is a line of code, not a number to drag, so it
+          // gets the editor row instead of the value field.
+          if (field0 case BridgeScalar_Expression expr) {
+            return EffectParamRowExpression(
+              key: ValueKey<String>(
+                  'fx-expression-$id-${param.id}-${param.hashCode}'),
+              value: expr,
+              comp: comp,
+              frame: frame,
+              layer: currentLayer,
+              set: _set,
+              setLive: _setLive,
+            );
+          }
+
           final field = _scalarField(
             context,
             scalar: field0,
+            setExpression: () {
+              // Seed the expression with the value showing now, so turning one
+              // on does not move the picture until it is edited.
+              final sampled = sampleScalarWithContext(
+                  scalar: field0,
+                  time: timeOfFrame(comp, frame),
+                  layer: currentLayer);
+              _set(BridgeEffectValue.float(
+                  BridgeScalar.expression(sampled.toString())));
+            },
             frame: frame,
             sliderMin: sliderMin,
             sliderMax: sliderMax,
@@ -421,6 +449,15 @@ class EffectParamRowFrb extends StatelessWidget {
     }
   }
 
+  /// The layer this row's effect sits on.
+  ///
+  /// An expression is evaluated about a particular layer — `time`, `cut_in`,
+  /// `layer()` all mean something only relative to one — so the row has to say
+  /// which, and the effect stack it was drawn from knows.
+  LayerReference get currentLayer => ownerLayers
+      .firstWhere((i) => i.layer.internallayerId == ownerLayerId)
+      .layer;
+
   /// A number field for a scalar. A static value drags with live preview; an
   /// animated one shows the value under the playhead and a change writes it
   /// into the key sitting there — or plants one — never flattening the curve
@@ -435,6 +472,7 @@ class EffectParamRowFrb extends StatelessWidget {
     required double? hardMax,
     required String keyName,
     required void Function(BridgeScalar) write,
+    void Function()? setExpression,
     bool integer = false,
   }) {
     // The drag paces itself by the declared slider span, so a 0–1 parameter and
@@ -480,6 +518,7 @@ class EffectParamRowFrb extends StatelessWidget {
         onChangeLive: (v) =>
             _setLive(BridgeEffectValue.float(BridgeScalar.static_(snap(v)))),
         onChangeEnd: (v) => write(BridgeScalar.static_(snap(v))),
+        setExpression: setExpression,
       ),
     );
   }
@@ -1098,6 +1137,242 @@ class _DropperButton extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+
+
+class EffectParamRowExpression extends StatefulWidget {
+  const EffectParamRowExpression(
+      {required this.value,
+      required this.set,
+      required this.comp,
+      required this.frame,
+      required this.setLive,
+      required this.layer,
+      super.key});
+  final BridgeScalar_Expression value;
+  final CompositionReference comp;
+  final int frame;
+  final void Function(BridgeEffectValue value) set;
+  final void Function(BridgeEffectValue value) setLive;
+  final LayerReference layer;
+
+  @override
+  State<EffectParamRowExpression> createState() =>
+      _EffectParamRowExpressionState();
+}
+
+const _defaultLightThemeFiles = [
+  'packages/syntax_highlight/themes/light_vs.json',
+  'packages/syntax_highlight/themes/light_plus.json',
+];
+
+const _defaultDarkThemeFiles = [
+  'packages/syntax_highlight/themes/dark_vs.json',
+  'packages/syntax_highlight/themes/dark_plus.json',
+];
+
+class ExpressionTextEditingController extends TextEditingController {
+  static HighlighterTheme? darkTheme;
+  static HighlighterTheme? lightTheme;
+
+  static Future<void> initSyntaxHighlighting() async {
+    await Highlighter.initialize(["dart"]);
+
+    darkTheme = await HighlighterTheme.loadFromAssets(
+        _defaultDarkThemeFiles, LumitTheme.dark().mono);
+
+    lightTheme = await HighlighterTheme.loadFromAssets(
+        _defaultLightThemeFiles, LumitTheme.light().mono);
+  }
+
+  ExpressionTextEditingController({super.text});
+
+  @override
+  TextSpan buildTextSpan(
+      {required BuildContext context,
+      TextStyle? style,
+      required bool withComposing}) {
+    final theme = ThemeScope.of(context).theme.mode == ThemeMode2.dark
+        ? darkTheme
+        : lightTheme;
+
+    // Highlighting is loaded asynchronously at startup by
+    // `initSyntaxHighlighting`, so there is a window in which it is not there
+    // yet — and a widget test never runs that startup at all. Draw the line
+    // plainly until it is ready rather than throwing, which is the same choice
+    // the completion list already makes when the engine has not answered.
+    if (theme == null) {
+      return super.buildTextSpan(
+          context: context, style: style, withComposing: withComposing);
+    }
+
+    var highlighter = Highlighter(
+      language: 'dart',
+      theme: theme,
+    );
+
+
+
+    var span = highlighter.highlight(text);
+    return span;
+  }
+}
+
+class _EffectParamRowExpressionState extends State<EffectParamRowExpression> {
+  late TextEditingController controller;
+
+  double value = 0.0;
+  late ValueNotifier<int> playhead;
+
+  String lastText = "";
+
+  @override
+  void initState() {
+    playhead = Provider.of<LumitUiState>(context, listen: false).playheadFrame;
+
+    Provider.of<LumitState>(context, listen: false)
+        .onChange
+        .listen(onProjectChanged);
+
+    playhead.addListener(onFrameChanged);
+
+    controller = ExpressionTextEditingController(text: widget.value.field0);
+    controller.addListener(onTextChanged);
+    lastText = controller.text;
+
+    value = sampleScalarWithContext(
+        scalar: widget.value,
+        time: timeOfFrame(widget.comp, playhead.value),
+        layer: widget.layer);
+    super.initState();
+  }
+
+  void onProjectChanged(ScopedChange event) {
+    // print(event.layer);
+    // print("Project changed!");
+
+    // setState(() {
+    //   controller.text = widget.value.field0;
+    // });
+  }
+
+  @override
+  void dispose() {
+    playhead.removeListener(onFrameChanged);
+    controller.removeListener(onTextChanged);
+
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant EffectParamRowExpression oldWidget) {
+    if (widget.value.field0 != controller.text) {
+      // we dont want to trigger the update when setting text manually, so remove it then add it back
+      controller.removeListener(onTextChanged);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        controller.text = widget.value.field0;
+        controller.addListener(onTextChanged);
+      });
+    }
+    super.didUpdateWidget(oldWidget);
+  }
+
+  void onFrameChanged() {
+    final expr = controller.text;
+
+    setState(() {
+      value = sampleScalarWithContext(
+          scalar: BridgeScalar_Expression(expr),
+          time: timeOfFrame(widget.comp, playhead.value),
+          layer: widget.layer);
+    });
+  }
+
+  void onTextChanged() {
+    final expr = controller.text;
+    if (expr != lastText) {
+      widget.setLive(BridgeEffectValue.float(BridgeScalar.expression(expr)));
+
+      setState(() {
+        value = sampleScalarWithContext(
+            scalar: BridgeScalar_Expression(expr),
+            time: timeOfFrame(widget.comp, playhead.value),
+            layer: widget.layer);
+      });
+    }
+
+    lastText = expr;
+  }
+
+  void removeExpression() {
+    final expr = controller.text;
+
+    var v = sampleScalarWithContext(
+        scalar: BridgeScalar_Expression(expr),
+        time: timeOfFrame(widget.comp, playhead.value),
+        layer: widget.layer);
+
+    widget.set(BridgeEffectValue.float(BridgeScalar_Static(v)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _build(context);
+  }
+
+  Widget _build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+
+    return Row(
+      spacing: 4,
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Flexible(
+            child: HouseContextMenu(
+          itemBuilder: (close) {
+            return [
+              MenuRow(
+                onPressed: () {
+                  removeExpression();
+                  close();
+                },
+                child: Text("Remove Expression"),
+              )
+            ];
+          },
+          child: HouseTextField(
+            controller: controller,
+            width: double.infinity,
+            style: t.mono,
+            submitOnLostFocus: true,
+            autofill: ExpressionAutofillGenerator(),
+            onSubmitted: (value) {
+              widget
+                  .set(BridgeEffectValue.float(BridgeScalar_Expression(value)));
+              onTextChanged();
+            },
+          ),
+        )),
+        SizedBox(
+          width: 78,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                " = ",
+                style: t.body.copyWith(color: t.textMuted),
+              ),
+              Text(
+                value.toStringAsPrecision(6),
+                style: t.mono.copyWith(color: t.textMuted),
+              ),
+            ],
+          ),
+        )
+      ],
     );
   }
 }
