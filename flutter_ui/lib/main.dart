@@ -42,6 +42,7 @@ import 'package:lumit_flutter/state/layer_bounds.dart';
 import 'package:lumit_flutter/state/preview_progress.dart';
 import 'package:lumit_flutter/state/render_timings.dart';
 import 'package:lumit_flutter/state/settings.dart';
+import 'package:lumit_flutter/state/install_site.dart';
 import 'package:lumit_flutter/state/tools.dart';
 import 'package:lumit_flutter/state/updates.dart';
 import 'package:lumit_flutter/state/workspace.dart';
@@ -193,6 +194,12 @@ String? projectPathFromArgs(List<String> args) {
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Sweep up after an update before anything else happens (K-297): delete the
+  // version we have just replaced, now that nothing is holding its files, and
+  // put it back if a swap was cut in half. Never throws and never blocks — a
+  // tidying problem is not a reason for an editor not to open.
+  tidyAfterUpdate(InstallSite.detect());
 
   await BridgeLib.init(handler: CustomHandler());
 

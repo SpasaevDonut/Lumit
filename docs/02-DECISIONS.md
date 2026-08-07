@@ -6518,3 +6518,54 @@ should do on somebody's behalf.
 shell business by every test docs/05 applies: it touches no document, no timeline and no GPU,
 and the engine crates stay free of the network. The version it compares against is the one
 the boot log already reports (K-008), so there is no second source of truth to keep in step.
+
+**K-297 · DECIDED · Lumit installs per user and replaces itself, the way Chrome and VS
+Code do — except inside a Flatpak, where that is Flatpak's job.** K-296 shipped updating by
+running the installer again. That works and it is a poor experience: a wizard, a UAC prompt,
+and questions the user answered the first time. The reason it had to be that way was the
+install location, not the updater.
+
+**The install moves to the user's own folder.** `packaging/windows/lumit.iss` gains
+`PrivilegesRequired=lowest` and installs to `{localappdata}\Programs\Lumit`
+(`UsePreviousAppDir=yes`, so an existing `Program Files` copy stays where it is and keeps
+being updated by installer). This is what Chrome, VS Code and Discord all do, and it is the
+whole trick: a folder the user owns can be rewritten by a program the user is running, with
+no elevation and nothing to approve. macOS bundles and the Linux tarball already live
+somewhere their owner can write.
+
+**Releases carry the application, not only its installer.** `release.yml` now publishes
+`lumit-<v>-windows-x64.zip` beside the setup, and `lumit-<v>-macos-<arch>.zip` beside the
+disk image; the Linux tarball already was one. macOS uses `ditto` rather than `zip` because
+an `.app` carries symlinks, executable bits and a signature that a naive archiver drops,
+producing a bundle the system will not open. Unpacking uses the platform's own tool for the
+same reason — `ditto` on macOS, `tar` elsewhere, including Windows, which has carried bsdtar
+since Windows 10 1803. No Dart zip library, no new dependency.
+
+**The swap is two renames, not a few hundred file copies.** The new version is unpacked to
+`<install>.new`, verified, and marked complete; then `<install>` becomes `<install>.old` and
+`<install>.new` becomes `<install>`. Renaming is one filesystem operation — it happened or
+it did not — where copying files over a running application is hundreds of chances to be
+interrupted into a Lumit that is neither version and may not start. If the second rename
+fails the first is undone immediately, from code already in memory. The old folder is left
+behind on purpose: Windows will not delete a loaded DLL, so `main()` sweeps it on the next
+launch, and puts it back if it ever finds the install folder missing.
+
+**Three deliveries, chosen by where Lumit actually lives** (`InstallSite.detect`):
+*in place* for a folder or bundle Lumit can write beside — proven by writing a probe file,
+not assumed from the path; *installer* for anywhere it cannot, which covers every existing
+`Program Files` install and the macOS disk image; *Flatpak bundle* inside a Flatpak. The
+release attachment follows the delivery, so a Flatpak is never offered a tarball it cannot
+use, and a per-user install is never offered a setup it does not need.
+
+**A Flatpak is not updated from inside, and pretending otherwise would be a lie.** The
+sandbox is read-only by design and reaching the host to run `flatpak install` would need
+permissions no editor should hold. So Lumit fetches the bundle, says the one command that
+installs it, and stays open. Making that a proper `flatpak update` needs Lumit published to
+an OSTree remote rather than as a single-file bundle — tracked in TODO, and the reason the
+Flatpak wording names a command rather than a button.
+
+**What this costs.** The window between the two renames is not recoverable by Lumit if the
+machine loses power inside it: the install folder would be `Lumit.old` and nothing would
+start. It is two rename calls wide, the start-up sweep puts it back for every failure short
+of that, and the fallback is the installer, which is still published. Judged worth it
+against a UAC prompt on every update for ever.

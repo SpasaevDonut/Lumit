@@ -498,6 +498,13 @@ entry above.
     (Check for updates is built — K-296). Delete each mark as the command
     lands. Suggested chords for the AE-shaped ones are in K-244.
 
+- **A Flatpak remote, so `flatpak update` has something to update from (K-297).**
+    Releases ship a single-file `.flatpak` bundle, which installs perfectly well
+    and then never updates: `flatpak update` needs a remote. Export an OSTree
+    repo in `release.yml`, publish it (Cloudflare Pages beside the site, K-279)
+    and ship a `.flatpakref`, or submit to Flathub and let it host. Until then
+    Lumit tells Flatpak users the install command rather than offering a button.
+
 ## Later - roadmap features not yet built
 
 Grouped by the phase they belong to in [16-ROADMAP.md](16-ROADMAP.md). A pointer

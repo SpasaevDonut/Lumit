@@ -132,7 +132,7 @@ Future<void> _askAboutRestart(
     builder: (close) => _RestartToFinish(
       version: updates.release?.version ?? '',
       dirty: projectIsDirty(),
-      quits: updates.installQuits,
+      delivery: updates.delivery,
       onChoose: close,
     ),
   );
@@ -338,18 +338,22 @@ class _RestartToFinish extends StatelessWidget {
   /// button on this window rather than leaving the choice to be regretted.
   final bool dirty;
 
-  /// Whether finishing means quitting at all — on Linux the download is only
-  /// revealed, so this window says that instead.
-  final bool quits;
+  /// How the update will be applied (K-297), which is what this window is
+  /// really about: a swap and a restart, an installer and a restart, or a file
+  /// handed to Flatpak while Lumit stays open.
+  final UpdateDelivery delivery;
 
   final ValueChanged<_RestartAnswer?> onChoose;
 
   const _RestartToFinish({
     required this.version,
     required this.dirty,
-    required this.quits,
+    required this.delivery,
     required this.onChoose,
   });
+
+  /// Whether finishing means leaving. False only for the Flatpak hand-off.
+  bool get quits => delivery != UpdateDelivery.flatpakBundle;
 
   @override
   Widget build(BuildContext context) {
@@ -372,13 +376,26 @@ class _RestartToFinish extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10),
             child: Text(
-              quits
-                  ? 'Lumit $version is downloaded. It installs while Lumit is '
+              switch (delivery) {
+                // The Chrome-shaped one: no installer, no questions, a restart
+                // that lands in the new version a second later.
+                UpdateDelivery.inPlace =>
+                  'Lumit $version is ready. Restarting puts it in place and '
+                      'opens it — no installer, and nothing to answer.'
+                      '${dirty ? ' This project has unsaved changes.' : ''}',
+                UpdateDelivery.installer =>
+                  'Lumit $version is downloaded. It installs while Lumit is '
                       'closed, so the update finishes the next time you open '
-                      'it.${dirty ? ' This project has unsaved changes.' : ''}'
-                  : 'Open the downloaded file to install it. Lumit does not '
-                      'unpack it for you, because where it goes is yours to '
-                      'choose.',
+                      'it.${dirty ? ' This project has unsaved changes.' : ''}',
+                // Inside the sandbox the files are not ours to replace, so the
+                // bundle is handed over and Flatpak does the rest.
+                UpdateDelivery.flatpakBundle =>
+                  'Lumit installs its own updates everywhere except here: a '
+                      'Flatpak is updated by Flatpak. The bundle is '
+                      'downloaded — install it with\n\n'
+                      '    flatpak install --user lumit-$version-linux-x64'
+                      '.flatpak',
+              },
               style: t.small.copyWith(color: t.textMuted),
             ),
           ),

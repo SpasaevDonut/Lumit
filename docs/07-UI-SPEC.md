@@ -234,6 +234,11 @@ panel layout is.
   the status line. Pressing it MUST NOT close the menu, and the row MUST redraw in place as
   the state changes. Downloading MUST show progress in the same row, and a downloaded update
   MUST read "Restart to finish updating" until it is applied.
+- **How an update is applied** follows where Lumit is installed (K-297), and the restart
+  window MUST say which it is: swapped in place and restarted (a per-user installation, the
+  normal case), handed to the installer (anywhere Lumit cannot write to its own files), or
+  handed to Flatpak with the install command, in which case Lumit MUST NOT offer to restart
+  because it is not replacing anything.
 
 ---
 

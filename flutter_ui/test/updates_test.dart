@@ -16,6 +16,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/shell/update_dialog_frb.dart';
+import 'package:lumit_flutter/state/install_site.dart';
 import 'package:lumit_flutter/state/updates.dart';
 import 'package:lumit_flutter/theme/theme.dart';
 import 'package:lumit_flutter/widgets/controls.dart';
@@ -337,13 +338,37 @@ void main() {
       expect(service.installQuits, isTrue);
     });
 
-    test('Linux reveals the download and stays open', () async {
+    test('a Flatpak is handed its bundle and Lumit stays open', () async {
       final launched = <File>[];
       final quits = <int>[];
-      final service = await ready('linux', launched: launched, quits: quits);
+      final body = utf8.encode('bundle');
+      final service = _service(
+        platform: 'linux',
+        site: InstallSite(
+          kind: InstallKind.flatpak,
+          root: Directory('/app'),
+          launcher: File('/app/bin/lumit_flutter'),
+        ),
+        folder: () => scratch,
+        fetch: (_) async => _releaseJson(assets: [
+          _asset('lumit-0.2.0-linux-x64.tar.gz', size: body.length),
+          _asset('lumit-0.2.0-linux-x64.flatpak', size: body.length),
+        ]),
+        download: (url, into, {required onProgress, required cancelled}) async =>
+            into.writeAsBytesSync(body),
+        launch: (file, _) async => launched.add(file),
+        quit: () => quits.add(1),
+      );
+      await service.check();
+      // The sandbox gets the bundle, never the tarball it cannot use.
+      expect(service.release?.assetName, endsWith('.flatpak'));
+      expect(service.delivery, UpdateDelivery.flatpakBundle);
+
+      await service.downloadUpdate();
       await service.install();
-      expect(launched, hasLength(1));
-      expect(quits, isEmpty, reason: 'nothing is being replaced underneath us');
+
+      expect(launched, hasLength(1), reason: 'revealed, not run');
+      expect(quits, isEmpty, reason: 'nothing of ours is being replaced');
       expect(service.installQuits, isFalse);
     });
 
@@ -356,6 +381,144 @@ void main() {
       await service.check();
       await service.install();
       expect(launched, isEmpty);
+    });
+  });
+
+  group('choosing how to update (K-297)', () {
+    test('a per-user installation is offered the package, not the installer',
+        () {
+      final release = UpdateRelease.parse(
+        _releaseJson(),
+        platform: 'windows',
+        kind: InstallKind.folder,
+        replaceable: true,
+      );
+      expect(release?.assetName, 'lumit-0.2.0-windows-x64.zip');
+      expect(release?.delivery, UpdateDelivery.inPlace);
+    });
+
+    test('an installation Lumit cannot write to falls back to the installer',
+        () {
+      final release = UpdateRelease.parse(
+        _releaseJson(),
+        platform: 'windows',
+        kind: InstallKind.folder,
+        replaceable: false,
+      );
+      // The archive is still the preferred *asset* — it is the delivery that
+      // changes, because an archive is no use where we cannot write.
+      expect(release?.delivery, UpdateDelivery.installer);
+    });
+
+    test('a macOS bundle takes the zip, and a loose binary takes the image',
+        () {
+      expect(
+        UpdateRelease.parse(_releaseJson(),
+                platform: 'macos',
+                kind: InstallKind.bundle,
+                replaceable: true)
+            ?.assetName,
+        'lumit-0.2.0-macos-arm64.zip',
+      );
+      expect(
+        UpdateRelease.parse(_releaseJson(),
+                platform: 'macos', kind: InstallKind.unknown)
+            ?.assetName,
+        endsWith('.dmg'),
+      );
+    });
+
+    test('a Flatpak is offered the bundle and nothing else', () {
+      expect(assetSuffixesFor('linux', kind: InstallKind.flatpak),
+          const ['.flatpak']);
+      final release = UpdateRelease.parse(_releaseJson(),
+          platform: 'linux', kind: InstallKind.flatpak);
+      expect(release?.assetName, endsWith('.flatpak'));
+      expect(release?.delivery, UpdateDelivery.flatpakBundle);
+    });
+
+    test('a release with no package still updates, by installer', () {
+      final release = UpdateRelease.parse(
+        _releaseJson(assets: [_asset('lumit-0.2.0-windows-x64-setup.exe')]),
+        platform: 'windows',
+        kind: InstallKind.folder,
+        replaceable: true,
+      );
+      expect(release?.delivery, UpdateDelivery.installer);
+    });
+  });
+
+  group('replacing Lumit in place (K-297)', () {
+    late Directory tmp;
+    setUp(() => tmp = Directory.systemTemp.createTempSync('lumit-inplace'));
+    tearDown(() {
+      if (tmp.existsSync()) tmp.deleteSync(recursive: true);
+    });
+
+    /// A real little installation, and a service pointed at it whose "unpack"
+    /// writes the new version out by hand.
+    ({UpdateService service, InstallSite site, List<File> relaunched})
+        installed({bool emptyArchive = false}) {
+      final root = Directory('${tmp.path}/Lumit')..createSync(recursive: true);
+      File('${root.path}/lumit_flutter').writeAsStringSync('0.1.0');
+      final site = InstallSite(
+        kind: InstallKind.folder,
+        root: root,
+        launcher: File('${root.path}/lumit_flutter'),
+      );
+      final relaunched = <File>[];
+      final body = utf8.encode('a package');
+      final service = _service(
+        platform: 'linux',
+        site: site,
+        folder: () => Directory('${tmp.path}/downloads')
+          ..createSync(recursive: true),
+        fetch: (_) async => _releaseJson(assets: [
+          _asset('lumit-0.2.0-linux-x64.tar.gz', size: body.length),
+        ]),
+        download: (url, into, {required onProgress, required cancelled}) async =>
+            into.writeAsBytesSync(body),
+        extract: (archive, into) async {
+          if (emptyArchive) return;
+          // What `tar` would leave: the tree inside its own wrapping folder.
+          final tree = Directory('${into.path}/lumit-0.2.0-linux-x64')
+            ..createSync(recursive: true);
+          File('${tree.path}/lumit_flutter').writeAsStringSync('0.2.0');
+        },
+        relaunch: (launcher) async => relaunched.add(launcher),
+      );
+      return (service: service, site: site, relaunched: relaunched);
+    }
+
+    test('the new version replaces the old at the same path, and restarts',
+        () async {
+      final h = installed();
+      await h.service.check();
+      expect(h.service.delivery, UpdateDelivery.inPlace);
+      await h.service.downloadUpdate();
+      await h.service.install();
+
+      expect(File('${h.site.root.path}/lumit_flutter').readAsStringSync(),
+          '0.2.0');
+      expect(h.relaunched, hasLength(1),
+          reason: 'no installer — Lumit starts itself again');
+      expect(h.site.previous.existsSync(), isTrue,
+          reason: 'the old files are still open; the next launch sweeps them');
+      expect(h.site.staging.existsSync(), isFalse);
+    });
+
+    test('an archive that unpacks to nothing leaves the old version standing',
+        () async {
+      final h = installed(emptyArchive: true);
+      await h.service.check();
+      await h.service.downloadUpdate();
+      await h.service.install();
+
+      expect(File('${h.site.root.path}/lumit_flutter').readAsStringSync(),
+          '0.1.0', reason: 'the working Lumit is untouched');
+      expect(h.service.stage, UpdateStage.failed);
+      expect(h.relaunched, isEmpty);
+      expect(h.site.unpacking.existsSync(), isFalse);
     });
   });
 
@@ -519,9 +682,12 @@ Future<UpdateService> _readyService(Directory scratch) async {
 UpdateService _service({
   String? version = '0.1.0',
   String platform = 'windows',
+  InstallSite? site,
   ReleaseFetcher? fetch,
   AssetDownloader? download,
   InstallerLauncher? launch,
+  ArchiveExtractor? extract,
+  Relauncher? relaunch,
   Quitter? quit,
   int Function()? now,
   Directory Function()? folder,
@@ -529,14 +695,29 @@ UpdateService _service({
     UpdateService(
       currentVersion: () => version,
       platform: platform,
+      // Unknown by default, which means "use the installer": a test has to
+      // ask for a replaceable installation before anything here will
+      // contemplate swapping folders about, so the suite can never reach the
+      // installation it is itself running from.
+      site: site ?? _unknownSite,
       fetch: fetch ?? (_) async => _releaseJson(),
       download: download ??
           (url, into, {required onProgress, required cancelled}) async {},
       launch: launch ?? (file, _) async {},
+      extract: extract ?? (archive, into) async {},
+      relaunch: relaunch ?? (launcher) async {},
       quit: quit ?? () {},
       now: now,
       downloadFolder: folder ?? Directory.systemTemp.createTempSync,
     );
+
+/// An installation Lumit cannot replace from inside — the safe default for
+/// every test that is not about replacing one.
+final InstallSite _unknownSite = InstallSite(
+  kind: InstallKind.unknown,
+  root: Directory('${Directory.systemTemp.path}/lumit-nowhere'),
+  launcher: File('${Directory.systemTemp.path}/lumit-nowhere/lumit'),
+);
 
 /// The shape of GitHub's answer, with only the fields the updater reads.
 Map<String, dynamic> _releaseJson({
@@ -550,10 +731,14 @@ Map<String, dynamic> _releaseJson({
       'draft': draft,
       'prerelease': prerelease,
       'html_url': 'https://github.com/luminalmvm/lumit/releases/tag/$tag',
+      // What a release actually carries (K-297): an installer and a package
+      // per platform, plus the Flatpak bundle.
       'assets': assets ??
           [
             _asset('lumit-0.2.0-windows-x64-setup.exe'),
+            _asset('lumit-0.2.0-windows-x64.zip'),
             _asset('lumit-0.2.0.dmg'),
+            _asset('lumit-0.2.0-macos-arm64.zip'),
             _asset('lumit-0.2.0-linux-x64.tar.gz'),
             _asset('lumit-0.2.0-linux-x64.flatpak'),
           ],

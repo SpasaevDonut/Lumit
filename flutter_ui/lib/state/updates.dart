@@ -32,6 +32,8 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 
+import 'install_site.dart';
+
 /// The repository releases are published from (K-279: the website reads the
 /// same one).
 const String updatesRepository = 'luminalmvm/lumit';
@@ -73,6 +75,22 @@ enum UpdateStage {
   failed,
 }
 
+/// How a downloaded release gets applied (K-297).
+enum UpdateDelivery {
+  /// Unpacked beside the installation and swapped in on restart — no installer,
+  /// no elevation, the way Chrome and VS Code do it. What a per-user
+  /// installation gets.
+  inPlace,
+
+  /// Handed to the installer that built it: an older installation in
+  /// `Program Files`, a macOS disk image, anywhere Lumit cannot write to its
+  /// own files.
+  installer,
+
+  /// Handed to Flatpak, which owns updating inside its own sandbox.
+  flatpakBundle,
+}
+
 /// A release that is newer than this build, and the file to fetch for it.
 @immutable
 class UpdateRelease {
@@ -93,6 +111,9 @@ class UpdateRelease {
   /// truncated file is caught before anything is run.
   final int assetBytes;
 
+  /// What will be done with the attachment once it is here.
+  final UpdateDelivery delivery;
+
   /// The attachment's SHA-256 as `sha256:…`, when the API gives one. Newer
   /// GitHub responses carry a `digest` field; older ones do not, and a release
   /// without it is verified by size alone.
@@ -105,6 +126,7 @@ class UpdateRelease {
     required this.assetName,
     required this.assetUrl,
     required this.assetBytes,
+    required this.delivery,
     this.sha256,
   });
 
@@ -120,6 +142,8 @@ class UpdateRelease {
   static UpdateRelease? parse(
     Map<String, dynamic> json, {
     required String platform,
+    InstallKind kind = InstallKind.unknown,
+    bool replaceable = false,
   }) {
     final tag = json['tag_name'];
     if (tag is! String || tag.isEmpty) return null;
@@ -131,7 +155,7 @@ class UpdateRelease {
     if (assets is! List) return null;
 
     Map<String, dynamic>? chosen;
-    for (final suffix in assetSuffixesFor(platform)) {
+    for (final suffix in assetSuffixesFor(platform, kind: kind)) {
       for (final raw in assets) {
         if (raw is! Map) continue;
         final asset = raw.cast<String, dynamic>();
@@ -149,29 +173,63 @@ class UpdateRelease {
     if (url is! String) return null;
     final size = chosen['size'];
 
+    final name = chosen['name'] as String;
     return UpdateRelease(
       version: versionFromTag(tag),
       tag: tag,
       pageUrl: json['html_url'] is String ? json['html_url'] as String : '',
-      assetName: chosen['name'] as String,
+      assetName: name,
       assetUrl: Uri.parse(url),
       assetBytes: size is int ? size : 0,
+      delivery: deliveryFor(name, kind: kind, replaceable: replaceable),
       sha256: chosen['digest'] is String ? chosen['digest'] as String : null,
     );
   }
 }
 
-/// Which attachments this platform can install, best first.
+/// Which attachments suit this machine, best first (K-297).
 ///
-/// Windows and macOS have one answer each. Linux has two, and the tarball wins:
-/// a `.flatpak` needs `flatpak install` and the Flatpak tooling present, where
-/// the bundle is a folder anybody can unpack — and on Linux the download is
-/// revealed rather than run in any case (see [UpdateService.install]).
-List<String> assetSuffixesFor(String platform) => switch (platform) {
-      'windows' => const ['.exe'],
-      'macos' => const ['.dmg'],
-      _ => const ['.tar.gz', '.flatpak'],
-    };
+/// A per-user installation prefers the *package* — the plain archive of the
+/// application's own files — because that can be swapped in without an
+/// installer or an administrator. The installer stays second on the list, for
+/// an older installation sitting somewhere only an installer can write to.
+///
+/// A Flatpak is offered the Flatpak bundle and nothing else: the sandbox cannot
+/// be updated from inside, so the other attachments would be useless there.
+List<String> assetSuffixesFor(String platform,
+    {InstallKind kind = InstallKind.unknown}) {
+  if (kind == InstallKind.flatpak) return const ['.flatpak'];
+  switch (platform) {
+    case 'windows':
+      return kind == InstallKind.folder
+          ? const ['windows-x64.zip', '.exe']
+          : const ['.exe'];
+    case 'macos':
+      return kind == InstallKind.bundle
+          ? const ['macos-arm64.zip', 'macos-x64.zip', 'macos.zip', '.dmg']
+          : const ['.dmg'];
+    default:
+      return const ['linux-x64.tar.gz', '.tar.gz', '.flatpak'];
+  }
+}
+
+/// What will happen to an attachment once it has been fetched.
+///
+/// The archive is only applied in place when this installation can genuinely
+/// be written to — otherwise the archive is no use and the file we have is an
+/// installer, whatever its extension.
+UpdateDelivery deliveryFor(
+  String assetName, {
+  required InstallKind kind,
+  required bool replaceable,
+}) {
+  if (kind == InstallKind.flatpak) return UpdateDelivery.flatpakBundle;
+  final name = assetName.toLowerCase();
+  final isArchive = name.endsWith('.zip') || name.endsWith('.tar.gz');
+  return isArchive && replaceable
+      ? UpdateDelivery.inPlace
+      : UpdateDelivery.installer;
+}
 
 /// `v0.2.0` → `0.2.0`. Anything else is handed back unchanged, so an oddly
 /// named tag is compared rather than silently treated as version zero.
@@ -242,6 +300,14 @@ typedef AssetDownloader = Future<void> Function(
 /// installer, which is the one thing in this file that cannot be undone.
 typedef InstallerLauncher = Future<void> Function(File file, String platform);
 
+/// Unpacking a downloaded archive into a folder. The platform's own tool does
+/// this in the shipped application (see `_extractArchive`); a test hands over a
+/// tree it made itself.
+typedef ArchiveExtractor = Future<void> Function(File archive, Directory into);
+
+/// Starting the freshly swapped-in Lumit, once the old one is about to go.
+typedef Relauncher = Future<void> Function(File launcher);
+
 /// Ending the process so the installer can replace the files underneath it.
 typedef Quitter = void Function();
 
@@ -260,9 +326,14 @@ class UpdateService extends ChangeNotifier {
   /// the shipped application; set outright in tests.
   final String platform;
 
+  /// Where this copy of Lumit lives and whether it may replace itself (K-297).
+  final InstallSite site;
+
   final ReleaseFetcher _fetch;
   final AssetDownloader _download;
   final InstallerLauncher _launch;
+  final ArchiveExtractor _extract;
+  final Relauncher _relaunch;
   final Quitter _quit;
 
   /// Now, in milliseconds since the epoch. Injected so the once-a-day rule can
@@ -277,16 +348,22 @@ class UpdateService extends ChangeNotifier {
   UpdateService({
     required this.currentVersion,
     String? platform,
+    InstallSite? site,
     ReleaseFetcher? fetch,
     AssetDownloader? download,
     InstallerLauncher? launch,
+    ArchiveExtractor? extract,
+    Relauncher? relaunch,
     Quitter? quit,
     int Function()? now,
     Directory Function()? downloadFolder,
   })  : platform = platform ?? Platform.operatingSystem,
+        site = site ?? InstallSite.detect(),
         _fetch = fetch ?? _fetchReleaseJson,
         _download = download ?? _downloadAsset,
         _launch = launch ?? _launchInstaller,
+        _extract = extract ?? _extractArchive,
+        _relaunch = relaunch ?? _relaunchLumit,
         _quit = quit ?? _exitProcess,
         _now = now ?? _epochMillis,
         _downloadFolder = downloadFolder ?? _defaultDownloadFolder;
@@ -359,7 +436,12 @@ class UpdateService extends ChangeNotifier {
         return;
       }
       final json = await _fetch(latestReleaseUrl);
-      final found = UpdateRelease.parse(json, platform: platform);
+      final found = UpdateRelease.parse(
+        json,
+        platform: platform,
+        kind: site.kind,
+        replaceable: site.replaceable,
+      );
       if (found == null || compareVersions(found.version, current) <= 0) {
         _stage = UpdateStage.upToDate;
         _release = null;
@@ -476,31 +558,96 @@ class UpdateService extends ChangeNotifier {
     return null;
   }
 
-  /// Hand the verified installer to the system, and — where that means
-  /// replacing files Lumit is running from — leave.
+  /// What will happen when the waiting update is applied. [UpdateDelivery
+  /// .installer] until a release has been found, since that is the cautious
+  /// answer.
+  UpdateDelivery get delivery => _release?.delivery ?? UpdateDelivery.installer;
+
+  /// Whether finishing the update means leaving the application.
   ///
-  /// On Windows the installer is started and Lumit quits, because Inno Setup
-  /// cannot overwrite an executable that is running. On macOS the disk image is
-  /// opened and Lumit quits, since the application is dragged over itself. On
-  /// Linux the download is only revealed: the bundle is unpacked wherever the
-  /// user keeps it and the Flatpak is installed by Flatpak, neither of which
-  /// Lumit should be doing on someone's behalf — so there is nothing to quit
-  /// for.
+  /// True for the two that replace what is running — the in-place swap and the
+  /// installer. False for a Flatpak, where Lumit only hands the file over and
+  /// carries on.
+  bool get installQuits => delivery != UpdateDelivery.flatpakBundle;
+
+  /// Apply the update that is waiting, whichever of the three ways this
+  /// installation calls for (K-297).
+  ///
+  /// In place: unpack beside the installation, swap the two folders, start the
+  /// new Lumit and leave. By installer: start it and leave, because it needs to
+  /// write where we cannot. Flatpak: reveal the bundle and stay open, because
+  /// the sandbox is not ours to rewrite.
   Future<void> install() async {
     final file = _downloaded;
     if (file == null || _stage != UpdateStage.ready) return;
+
+    if (delivery == UpdateDelivery.inPlace) {
+      await _applyInPlace(file);
+      return;
+    }
     try {
       await _launch(file, platform);
     } catch (_) {
       _fail('Could not start the installer');
       return;
     }
-    if (platform == 'windows' || platform == 'macos') _quit();
+    if (delivery == UpdateDelivery.installer) _quit();
   }
 
-  /// Whether finishing the update means leaving the application. Linux reveals
-  /// the file instead, so the restart question is not put there.
-  bool get installQuits => platform == 'windows' || platform == 'macos';
+  /// The installer-free path: unpack, stage, swap, restart (K-297).
+  ///
+  /// Every step before the swap is undoable by deleting a folder, and the swap
+  /// itself puts the old version back if it cannot finish — so a failure here
+  /// leaves the working Lumit exactly where it was, and says so.
+  Future<void> _applyInPlace(File archive) async {
+    try {
+      // Anything left from a previous attempt would be mistaken for this one.
+      _sweep(site.unpacking);
+      _sweep(site.staging);
+      site.unpacking.createSync(recursive: true);
+
+      await _extract(archive, site.unpacking);
+      final tree = unwrapSingleFolder(site.unpacking);
+      // An archive that unpacked to nothing is not something to swap a working
+      // application for. The checksum already proved the *file*; this proves
+      // there is an application inside it.
+      if (tree.listSync().isEmpty) {
+        _sweep(site.unpacking);
+        _fail('The downloaded update was empty');
+        return;
+      }
+      // Onto the final name, on the same filesystem, so the swap that follows
+      // is a rename and not a copy.
+      tree.renameSync(site.staging.path);
+      _sweep(site.unpacking);
+      markStagedUpdateReady(site);
+
+      swapInStagedUpdate(site);
+    } catch (_) {
+      _sweep(site.unpacking);
+      _sweep(site.staging);
+      _fail('Could not put the update in place');
+      return;
+    }
+
+    try {
+      await _relaunch(site.launcher);
+    } catch (_) {
+      // The files are already the new version, so there is nothing to undo —
+      // starting Lumit again by hand gets the update either way.
+      _fail('Lumit is updated, but could not start itself again');
+      return;
+    }
+    _quit();
+  }
+
+  void _sweep(Directory dir) {
+    try {
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+    } catch (_) {
+      // Litter beside the installation, not a reason to stop.
+    }
+  }
 
   void _discard(File file) {
     try {
@@ -593,6 +740,9 @@ Future<void> _downloadAsset(
 
 /// Start the installer, detached, so it outlives the process that started it —
 /// which it has to, since that process is about to end.
+///
+/// Only reached where the update could *not* be applied in place (K-297): an
+/// installation somewhere Lumit cannot write, or a macOS disk image.
 Future<void> _launchInstaller(File file, String platform) async {
   switch (platform) {
     case 'windows':
@@ -611,8 +761,50 @@ Future<void> _launchInstaller(File file, String platform) async {
       await Process.start('open', [file.path],
           mode: ProcessStartMode.detached);
     default:
-      // Reveal, do not run: see `UpdateService.install`.
+      // A Flatpak bundle: revealed, never run. `flatpak install` is the user's
+      // to run, and a sandboxed Lumit has no business reaching the host to do
+      // it for them (K-297).
       await Process.start('xdg-open', [file.parent.path],
           mode: ProcessStartMode.detached);
   }
+}
+
+/// Unpack a downloaded archive with the tool the platform already has.
+///
+/// Not a Dart zip library, deliberately: a macOS `.app` and a Linux bundle carry
+/// symbolic links and executable permissions, and an unpacker that quietly drops
+/// those produces a Lumit that will not start. `ditto` and `tar` keep them.
+/// Windows has carried bsdtar (`tar.exe`) since Windows 10 1803, and it reads
+/// zip files as happily as tarballs.
+Future<void> _extractArchive(File archive, Directory into) async {
+  final result = switch (Platform.operatingSystem) {
+    'macos' => await Process.run(
+        'ditto', ['-x', '-k', archive.path, into.path]),
+    _ => await Process.run(
+        'tar', ['-xf', archive.path, '-C', into.path]),
+  };
+  if (result.exitCode != 0) {
+    throw ProcessException(
+      'unpack',
+      [archive.path],
+      result.stderr.toString().trim(),
+      result.exitCode,
+    );
+  }
+}
+
+/// Start the swapped-in Lumit, detached, so it survives this process ending a
+/// moment later.
+Future<void> _relaunchLumit(File launcher) async {
+  if (Platform.isMacOS) {
+    // `open` starts the *bundle*, which is what makes it a proper application
+    // launch — Dock icon, activation, the lot — rather than a bare process.
+    final bundle = launcher.parent.parent.parent.path;
+    await Process.start('open', ['-n', bundle],
+        mode: ProcessStartMode.detached);
+    return;
+  }
+  await Process.start(launcher.path, const [],
+      mode: ProcessStartMode.detached,
+      workingDirectory: launcher.parent.path);
 }

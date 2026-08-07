@@ -3951,3 +3951,68 @@ Every point where the updater touches the outside world — asking GitHub,
 downloading, running an installer, quitting — is a swappable seam, which is how
 the tests exercise the entire sequence without ever going near a network or
 actually running anything.
+
+### Updating without an installer (K-297)
+
+The section above describes updating by downloading the installer and running
+it. That still happens in some cases, but it is no longer the normal one — and
+the reason is not clever code, it is *where Lumit lives*.
+
+**Why Chrome never shows you an installer.** Programs on Windows traditionally
+go in `Program Files`, a folder only an administrator may write to. That is why
+updating one always involves a prompt: the program cannot change its own files,
+so it has to ask an installer, and the installer has to ask Windows for
+permission. Chrome, VS Code and Discord sidestep the whole ceremony by
+installing somewhere *you* own — a folder inside your own user profile. A
+program running as you can rewrite a folder belonging to you without asking
+anybody. Lumit now installs there too (`%LOCALAPPDATA%\Programs\Lumit`).
+
+**What a release now carries.** As well as the installer for each platform,
+every release publishes the application *by itself* as a plain archive: a zip of
+the Windows files, a zip of the macOS `Lumit.app`, and the Linux tarball that
+already existed. That archive is what Lumit downloads to update itself. Nothing
+in it is an installer — it is simply the new version of the same files.
+
+**How the swap works, and why it is done that way.** The obvious approach is to
+copy the new files over the old ones. Do not: that is several hundred separate
+operations, and if anything interrupts it half way — a crash, a flat battery —
+you are left with a Lumit that is half one version and half another, which may
+not start at all. Instead Lumit unpacks the whole new version *beside* the old
+one, then does two renames:
+
+1. `Lumit` becomes `Lumit.old`
+2. `Lumit.new` becomes `Lumit`
+
+A rename is a single filesystem operation: it either happened or it did not,
+with nothing in between. So at every moment there is a complete, working Lumit
+on disk — the old one, or the new one. If the second rename fails, the first is
+undone on the spot, and the code doing the undoing is already loaded in memory,
+so it does not need the files it is moving.
+
+The old folder is deliberately left lying there. Windows will not let anyone
+delete a `.dll` that is currently loaded, and at that moment Lumit is still
+running from those very files. So it is swept up on the *next* launch, by the
+new version, when nothing is holding it — that is the first thing `main()` does.
+The same sweep also puts the old version back if it ever finds the install
+folder missing, which is what a machine dying between those two renames would
+leave behind.
+
+**Three ways an update can be applied**, and Lumit works out which by looking at
+where it is actually installed:
+
+- **In place** — the swap above. Requires a folder Lumit can write beside, which
+  it checks by genuinely writing a small file there rather than guessing from
+  the path.
+- **By installer** — for an older installation still in `Program Files`, or a
+  macOS disk image. Exactly the K-296 behaviour, kept as the fallback so nobody
+  is stranded.
+- **Handed to Flatpak** — see below.
+
+**Flatpak is the exception, and honestly so.** A Flatpak runs in a sandbox whose
+files are read-only on purpose: that is the security model, not an oversight. An
+application inside one genuinely cannot replace its own files, and the ways to
+reach out to the host and do it anyway require permissions no video editor
+should be asking for. So on Flatpak, Lumit downloads the new bundle, shows you
+the one command that installs it, and stays open. Making this a real
+`flatpak update` needs Lumit published to a Flatpak *remote* rather than as a
+single downloadable bundle — that is written down in TODO as the next step.
