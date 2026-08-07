@@ -84,6 +84,14 @@ features = [
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common",
     "Win32_System_SystemInformation",
+    # `GetProcessMemoryInfo`/`PROCESS_MEMORY_COUNTERS` and the pseudo-handle they
+    # are asked with, for the resident-memory readout (K-294). Named here rather
+    # than leant on: the `windows` crate gates every module behind its own
+    # feature, and these two happened to be reachable through another crate's
+    # unification on some builds and not on the Windows CI runner — which is how
+    # main went red with nothing in it having changed.
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
     # `GetCursorPos`/`SetCursorPos`, for the camera tools' pointer lock (K-230).
     "Win32_UI_WindowsAndMessaging",
     # `timeBeginPeriod`, so the worker's present-pacing sleeps are 1 ms-grained
