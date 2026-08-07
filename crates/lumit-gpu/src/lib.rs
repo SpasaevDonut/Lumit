@@ -432,6 +432,29 @@ impl GpuContext {
         self.device.poll(wgpu::Maintain::Poll);
     }
 
+    /// Wait for the card to finish what it has been given, *then* reclaim —
+    /// the blocking sibling of [`Self::reclaim`].
+    ///
+    /// **In plain terms.** Work is handed to the graphics card and runs later;
+    /// the memory a frame used cannot come back until the card has actually
+    /// finished with it. [`Self::reclaim`] asks "is anything finished?" and
+    /// returns immediately, which is right on a loop that must not stall — but
+    /// it means a program submitting faster than the card drains keeps a
+    /// backlog of finished-with-but-not-yet-freed frames, and asking that
+    /// program what it is holding gets the backlog in the answer.
+    ///
+    /// This one waits for the queue to empty first, so what is still held
+    /// afterwards is what is *genuinely* still held. Two callers want that: a
+    /// measurement of memory at rest, which is otherwise measuring how far
+    /// ahead of the card the CPU happened to be; and an engine going idle,
+    /// where there is by definition no frame to stall.
+    ///
+    /// **Never on a frame path.** It blocks until the card is done, which on a
+    /// busy one is exactly the stall the non-blocking version exists to avoid.
+    pub fn settle(&self) {
+        self.device.poll(wgpu::Maintain::Wait);
+    }
+
     /// Start batching: from here until the matching [`Self::end_frame`], every
     /// [`Self::encoder`] records into one command buffer and nothing is
     /// submitted.
