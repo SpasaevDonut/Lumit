@@ -27,28 +27,17 @@ fn noise1d(x: f64) -> f64 {
     n0 * (1.0 - t) + n1 * t
 }
 
-
+// Rhai's `#[export_module]` expands to argument-unwrapping code of its own,
+// which trips `clippy::unwrap_used` on the generated `&mut` receivers. The
+// lint is about *our* unwraps, and there is no way to spell these differently
+// short of dropping the macro, so it is switched off for the generated module
+// only — not for the module's callers, and not for the helpers above.
+#[allow(clippy::unwrap_used)]
 #[export_module]
 pub mod math {
 
     pub fn to_f64(value: Dynamic) -> f64 {
-        if value.is_int() {
-            return value.as_int().unwrap() as f64;
-        }
-
-        if value.is_float() {
-            return value.as_float().unwrap();
-        }
-
-        if value.is_bool() {
-            if value.as_bool().unwrap() {
-                return 1.0;
-            } else {
-                return 0.0;
-            }
-        }
-
-        return -1.0;
+        crate::expression::as_f64(value).unwrap_or(-1.0)
     }
 
     /// compute the sine of a value
@@ -66,7 +55,7 @@ pub mod math {
     }
 
     pub fn cosh(value: Dynamic) -> f64 {
-        to_f64(value).sinh()
+        to_f64(value).cosh()
     }
 
     pub fn floor(value: Dynamic) -> f64 {

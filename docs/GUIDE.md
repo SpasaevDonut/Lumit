@@ -4615,3 +4615,70 @@ this feature would otherwise ship with. So the rasteriser and the cache key ask
 the same one function for the line, and by construction cannot disagree: a
 counter keys a new frame each frame, and an expression that always says the same
 thing keys once and is reused, with nothing to configure either way.
+
+### Expressions, and why the engine is kept rather than built
+
+An expression is a line of code sitting where a number would normally sit. A
+property — position, rotation, opacity, an effect's knob — usually holds either
+a fixed value or a row of keyframes. With an expression it holds a small sum
+instead, and the answer is worked out afresh every time the property is read:
+`time * 90` spins a layer at ninety degrees a second without a single keyframe.
+
+The language is [Rhai](https://rhai.rs), a small scripting language that embeds
+into Rust. An expression can read a handful of things about where it is —
+`time`, `comp_width`, `comp_fps`, `cut_in` — and it can reach other layers:
+`layer("Sun").x` is the horizontal position of the layer called Sun, at this
+moment. That last one is what makes expressions worth having rather than a
+novelty, and it is also what makes them awkward to implement, for two reasons
+that are worth spelling out.
+
+**Expressions nest.** Asking for `layer("Sun").x` means evaluating Sun's own x
+property, and Sun's x may itself be an expression. So evaluating one expression
+can start another, part-way through, before the first has finished. In
+programming terms the evaluator is *re-entrant*: it has to cope with being
+called again while it is already running.
+
+**And they can chase their own tail.** If layer A's position reads layer B's,
+and B's reads A's, that nesting never bottoms out. Lumit counts how deep it has
+gone and gives up at a hundred, which is far more nesting than any real rig uses
+and far less than it takes to exhaust the stack and crash.
+
+Now the part that looks odd in the code. To run an expression you need an
+*engine* — the Rhai interpreter, with all of Lumit's functions (`sin`, `noise`,
+`layer`, `comp`) registered into it so expressions can call them. Building one
+is not cheap: registering those functions takes roughly 370 microseconds, which
+sounds like nothing until you notice how often expressions run.
+
+They run *constantly*. Every driven property is re-evaluated for every frame,
+and twice over: once by the renderer to draw the picture, and once by the frame
+cache to work out whether this frame is one it has already got. At sixty frames
+a second, a rig with a few dozen driven properties is tens of thousands of
+evaluations a second. At 370µs each, forty-odd of them would use up the entire
+budget for a frame before anything was drawn.
+
+The obvious fix is to build one engine and keep it. That does not quite work
+here, because the engine is where the *context* is parked — which comp, which
+layer, what time — and a nested evaluation needs a different context from the
+one that is running. One shared engine would have the inner expression trample
+the outer one's context.
+
+So Lumit keeps a small **pool**: a pile of ready-built engines. An evaluation
+takes one off the pile, uses it, and puts it back. A nested evaluation takes a
+second one, so the two never share. In practice the pile ends up as deep as the
+deepest nesting, which is nearly always one. The cost per evaluation drops from
+about 370 microseconds to about one — the engine is built once and then simply
+handed round.
+
+The same instinct applies a little further out. An expression needs to be able
+to look at the project — that is how `layer("Sun")` finds Sun — so it holds a
+reference to the document. Handing it a *copy* of the project would be tidy but
+ruinous: copying a two-hundred-layer project takes about 150µs, and doing that
+once per layer per frame is thirty milliseconds a frame, which is twice the
+whole budget, spent entirely on copying. So the project is shared rather than
+copied (an `Arc`, in Rust's terms — a single copy that many things can point at
+safely), and the sharing is set up once per frame rather than once per layer.
+
+The general lesson, which applies well beyond expressions: anything on the
+per-frame path is run tens of thousands of times a second, so the question is
+never "is this fast enough once", it is "what is this multiplied by sixty, by
+the number of layers".

@@ -157,7 +157,7 @@ double evaluateKeys(List<BridgeKeyframe> keys, double t) {
 double evaluateScalar(BridgeScalar scalar, double t) => switch (scalar) {
       BridgeScalar_Static(:final field0) => field0,
       BridgeScalar_Keyframed(:final field0) => evaluateKeys(field0, t),
-      BridgeScalar_Expression(:final field0) => () {
+      BridgeScalar_Expression() => () {
         debugPrint("TODO: implement evaluate scalar expression in flutter ui");
         return 0.0;
       }()

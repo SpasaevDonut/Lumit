@@ -3,6 +3,7 @@
 //! (docs/05-ARCHITECTURE.md dependency rules).
 
 pub mod anim;
+pub mod expression;
 pub mod fx;
 pub mod lut;
 pub mod markers;
@@ -15,7 +16,6 @@ pub mod retime;
 pub mod sequence;
 pub mod store;
 pub mod time;
-pub mod expression;
 
 pub use model::Document;
 pub use ops::{Op, OpError};

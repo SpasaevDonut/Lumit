@@ -150,6 +150,13 @@ pub fn parent_world_placement(
         };
         let alt = t_comp - a.start_offset.0.to_f64();
         let tr = &a.transform;
+        // An ancestor's own expressions are about the ancestor: `layer()`,
+        // `cut_in` and `cut_out` must resolve to the layer being evaluated, not
+        // to the child that started the walk up the chain.
+        let context = Arc::new(ExpressionContext {
+            layer: Some(a.id),
+            ..(*context).clone()
+        });
         let p = lumit_gpu::place_matrix(
             (
                 tr.position_x.value_at_with_context(alt, context.clone()) as f32,
@@ -209,6 +216,14 @@ pub fn motion_blur_samples(
         .iter()
         .map(|off| {
             let lt = t_comp + off * dt - start_offset;
+            // Each shutter sample is a different moment, so an expression that
+            // reads `time` has to be evaluated at that moment. Reusing the
+            // frame's context would return the same placement for every sample
+            // and an expression-driven layer would simply not smear.
+            let context = Arc::new(ExpressionContext {
+                comp_time: t_comp + off * dt,
+                ..(*context).clone()
+            });
             lumit_gpu::MbSample {
                 position: (
                     tr.position_x.value_at_with_context(lt, context.clone()) as f32,
@@ -356,8 +371,6 @@ pub fn build_comp_draws_at(
     // planner (app_state::collect_comp_jobs) decodes layer-input references
     // exactly like matte sources, and export applies the same in-span-only
     // gate (K-031).
-
-
 
     let dof_inputs_for =
         |effects: &[lumit_core::model::EffectInstance]| -> Vec<Option<DofInputDraw>> {

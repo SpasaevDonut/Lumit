@@ -601,6 +601,11 @@ class _HouseTextFieldState extends State<HouseTextField>
   @override
   void dispose() {
     widget.controller.removeListener(_changed);
+    // The completion list is an OverlayEntry, which lives in the Overlay rather
+    // than under this widget — so it outlives the field that opened it unless
+    // it is taken down here, and a field disposed with suggestions showing
+    // leaves them on screen over whatever comes next.
+    hideOverlay();
     _focus.dispose();
     super.dispose();
   }

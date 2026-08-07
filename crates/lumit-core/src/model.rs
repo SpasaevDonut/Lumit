@@ -591,14 +591,18 @@ impl EffectInstance {
             _ => None,
         }
     }
-    
-    pub fn float_at_with_context(&self, id: &str, lt: f64, context: Arc<ExpressionContext>) -> Option<f64> {
+
+    pub fn float_at_with_context(
+        &self,
+        id: &str,
+        lt: f64,
+        context: Arc<ExpressionContext>,
+    ) -> Option<f64> {
         match self.param(id)? {
             EffectValue::Float(p) => Some(p.value_at_with_context(lt, context)),
             _ => None,
         }
     }
-    
 
     /// A colour parameter's evaluated scene-linear RGBA at layer time `lt`
     /// (channels animate independently), or None when absent or not a
@@ -615,7 +619,12 @@ impl EffectInstance {
         }
     }
 
-    pub fn colour_at_with_context(&self, id: &str, lt: f64, context: Arc<ExpressionContext>) -> Option<[f64; 4]> {
+    pub fn colour_at_with_context(
+        &self,
+        id: &str,
+        lt: f64,
+        context: Arc<ExpressionContext>,
+    ) -> Option<[f64; 4]> {
         match self.param(id)? {
             EffectValue::Colour(ch) => Some([
                 ch[0].value_at_with_context(lt, context.clone()),
@@ -910,9 +919,7 @@ impl TextDocument {
     pub fn resolved_text(&self, context: Arc<ExpressionContext>) -> std::borrow::Cow<'_, str> {
         match &self.expression {
             None => std::borrow::Cow::Borrowed(&self.text),
-            Some(e) => {
-                std::borrow::Cow::Owned(crate::expression::evaluate_text(e, Some(context)))
-            }
+            Some(e) => std::borrow::Cow::Owned(crate::expression::evaluate_text(e, Some(context))),
         }
     }
 }

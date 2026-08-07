@@ -23,7 +23,10 @@
 
 use std::sync::Arc;
 
-use lumit_core::{expression::ExpressionContext, model::{Composition, Document, LayerKind, MatteChannel}};
+use lumit_core::{
+    expression::ExpressionContext,
+    model::{Composition, Document, LayerKind, MatteChannel},
+};
 use uuid::Uuid;
 
 pub mod epoch;
@@ -77,7 +80,12 @@ pub fn comp_frame_key(
 ) -> Option<FrameKey> {
     let mut visited = Vec::new();
     let mut h = blake3::Hasher::new();
-    feed_comp(&mut h, doc, comp, t, quality, stamper, &mut visited)?;
+    // Taken once per key, not once per layer. An expression context needs an
+    // owned handle on the document, and cloning the project per layer is
+    // quadratic in layer count — 30ms a frame at two hundred layers, which is
+    // twice the whole 60fps budget spent before anything is drawn.
+    let doc = Arc::new(doc.clone());
+    feed_comp(&mut h, &doc, comp, t, quality, stamper, &mut visited)?;
     let bytes = h.finalize();
     let mut k = [0u8; 16];
     k.copy_from_slice(&bytes.as_bytes()[..16]);
@@ -86,7 +94,7 @@ pub fn comp_frame_key(
 
 fn feed_comp(
     h: &mut blake3::Hasher,
-    doc: &Document,
+    doc: &Arc<Document>,
     comp: &Composition,
     t: f64,
     quality: Quality,
@@ -174,7 +182,7 @@ fn feed_effect_stack(
     effects: &[lumit_core::model::EffectInstance],
     marker_layer: &lumit_core::model::Layer,
     comp: &Composition,
-    doc: &Document,
+    doc: &Arc<Document>,
     t: f64,
     lt: f64,
     quality: Quality,
@@ -186,7 +194,7 @@ fn feed_effect_stack(
         return Some(());
     }
     h.update(b"effects/");
-    
+
     // The §1.4 marker context, built lazily (only marker-driven effects read
     // it) by the same shared constructor resolution uses (K-031), so the key
     // hashes exactly the beat times resolution sees.
@@ -380,7 +388,7 @@ fn feed_effect_stack(
 #[allow(clippy::too_many_arguments)]
 fn feed_layer(
     h: &mut blake3::Hasher,
-    doc: &Document,
+    doc: &Arc<Document>,
     comp: &Composition,
     layer: &lumit_core::model::Layer,
     t: f64,
@@ -393,7 +401,7 @@ fn feed_layer(
     feed_source(h, doc, comp, layer, lt, t, quality, stamper, visited)?;
 
     let context = Arc::new(ExpressionContext {
-        document: Arc::new(doc.clone()),
+        document: doc.clone(),
         comp: Some(comp.id),
         layer: Some(layer.id),
         comp_time: t,
@@ -625,9 +633,10 @@ fn blend_tag(b: lumit_core::model::BlendMode) -> u8 {
 
 /// The layer's source pixels as content (docs/06 §5.2 "node type id ‖
 /// algorithm version, evaluated parameters, key(inputs)").
+#[allow(clippy::too_many_arguments)]
 fn feed_source(
     h: &mut blake3::Hasher,
-    doc: &Document,
+    doc: &Arc<Document>,
     // The comp the layer sits in — the expression context a text layer's words
     // may be resolved through, so the key hashes the line the rasteriser will
     // actually draw.
@@ -702,7 +711,7 @@ fn feed_source(
             // stored text would key them all the same and freeze the first
             // frame it rendered on screen for the rest of the comp.
             let context = ExpressionContext {
-                document: Arc::new(doc.clone()),
+                document: doc.clone(),
                 comp: Some(owner.id),
                 layer: Some(layer.id),
                 comp_time,

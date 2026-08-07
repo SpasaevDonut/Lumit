@@ -1,7 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
-import 'package:lumit_flutter/panels/debug_panel.dart';
 import 'package:lumit_flutter/widgets/controls.dart';
 
 class PerformanceMonitor extends StatefulWidget {
@@ -17,7 +16,6 @@ extension FPS on Duration {
 }
 
 class _PerformanceMonitorState extends State<PerformanceMonitor> {
-  Duration? previous;
   List<Duration> timings = [];
 
   double fps = 0.0;
@@ -27,37 +25,49 @@ class _PerformanceMonitorState extends State<PerformanceMonitor> {
 
   @override
   void initState() {
-    SchedulerBinding.instance.addPostFrameCallback(update);
     super.initState();
+    SchedulerBinding.instance.addTimingsCallback(_onTimings);
   }
 
-  void update(Duration duration) {
-    if (previous != null) {
-      final frameDuration = duration - previous!;
-      timings.add(frameDuration);
+  @override
+  void dispose() {
+    SchedulerBinding.instance.removeTimingsCallback(_onTimings);
+    super.dispose();
+  }
 
-      final currentFps = frameDuration.fps;
+  /// Flutter hands over the timings of frames it has already drawn.
+  ///
+  /// This used to be a post-frame callback that re-registered itself, which
+  /// had two problems. It never stopped — nothing cancelled it, so after the
+  /// monitor closed it kept firing and calling setState on a dead State. And
+  /// asking for a callback every frame *is* asking for a frame every frame, so
+  /// the counter kept the app rendering flat out for as long as it was open
+  /// and then reported the frame rate it had itself caused. A test never
+  /// settled either, because the tree was never idle.
+  ///
+  /// `addTimingsCallback` is the measuring version of the same thing: it
+  /// reports frames that happened rather than causing them, so an idle app
+  /// reads as idle and the numbers describe the app instead of the monitor.
+  void _onTimings(List<FrameTiming> reported) {
+    if (!mounted || reported.isEmpty) return;
 
-      const maxFrames = 60;
-      if (timings.length > maxFrames) {
-        timings = timings.sublist(timings.length - maxFrames);
-      }
+    // `totalSpan` is vsync to raster finish — the whole cost of the frame.
+    timings.addAll(reported.map((t) => t.totalSpan));
 
-      final avg =
-          timings.fold(0.0, (v, t) => v + t.fps) / timings.length.toDouble();
-      final avgFrameTime =
-          timings.fold(0.0, (v, t) => v + t.ms) / timings.length.toDouble();
-      setState(() {
-        fps = currentFps;
-        frameTime = frameDuration.ms;
-        average = avg;
-        averageFrameTime = avgFrameTime;
-      });
+    const maxFrames = 60;
+    if (timings.length > maxFrames) {
+      timings = timings.sublist(timings.length - maxFrames);
     }
 
-    previous = duration;
-
-    SchedulerBinding.instance.addPostFrameCallback(update);
+    final latest = timings.last;
+    setState(() {
+      fps = latest.fps;
+      frameTime = latest.ms;
+      average =
+          timings.fold(0.0, (v, t) => v + t.fps) / timings.length.toDouble();
+      averageFrameTime =
+          timings.fold(0.0, (v, t) => v + t.ms) / timings.length.toDouble();
+    });
   }
 
   @override
