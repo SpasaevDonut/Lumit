@@ -963,6 +963,13 @@ impl HeadlessRenderer {
         self.gpu.reclaim();
     }
 
+    /// Wait for the card to catch up and then reclaim — see
+    /// [`lumit_gpu::GpuContext::settle`]. For measuring what is held at rest,
+    /// and for an engine with nothing left to draw; never on a frame path.
+    pub fn settle_gpu(&self) {
+        self.gpu.settle();
+    }
+
     /// Resize the decoded-source-frame cache (Settings → Performance).
     pub fn set_decode_budget(&mut self, bytes: usize) {
         self.pool.set_budget(bytes);
@@ -3330,16 +3337,20 @@ mod tests {
                 r.reclaim_gpu();
             }
         };
-        // The reading is of the engine *at rest*, so both batches are read at
-        // the same point in the cycle: a few maintains after the last frame,
-        // which is where a backend that defers its reclamation to the next one
-        // has caught up. Without this the two counts are measured in different
-        // states and the comparison below is between a settled set and an
-        // unsettled one.
+        // The reading is of the engine *at rest*, and at rest means the card
+        // has finished: work is submitted and runs later, so a CPU that has run
+        // ahead of it is holding every frame the card has not reached yet, and
+        // a non-blocking reclaim cannot free those however many times it is
+        // called. Reading after one is reading the backlog — which is why the
+        // first version of this measurement grew with the frame count on Metal
+        // and D3D12 and stayed flat on the software rasteriser, where the CPU
+        // never gets ahead.
+        //
+        // So the measurement waits. What is still held once the queue is empty
+        // is what is genuinely still held, and that is the only number a leak
+        // can be read off.
         let settle = |r: &mut HeadlessRenderer| {
-            for _ in 0..4 {
-                r.reclaim_gpu();
-            }
+            r.settle_gpu();
             r.gpu_live_objects()
         };
         render_batch(&mut r, 0);
