@@ -84,12 +84,12 @@ features = [
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common",
     "Win32_System_SystemInformation",
-    # `GetProcessMemoryInfo`/`PROCESS_MEMORY_COUNTERS` and the pseudo-handle they
-    # are asked with, for the resident-memory readout (K-294). Named here rather
-    # than leant on: the `windows` crate gates every module behind its own
-    # feature, and these two happened to be reachable through another crate's
-    # unification on some builds and not on the Windows CI runner — which is how
-    # main went red with nothing in it having changed.
+    # `GetProcessMemoryInfo` and its counters struct, for what this process is
+    # actually holding (`resident_memory_bytes`), plus `GetCurrentProcess` for
+    # the pseudo-handle it takes. Threading is named here rather than left to
+    # feature unification: wgpu-hal happens to enable it in this workspace's
+    # build, so the import compiled while the feature was unlisted — which is
+    # coverage by accident, and would vanish the day that dependency changed.
     "Win32_System_ProcessStatus",
     "Win32_System_Threading",
     # `GetCursorPos`/`SetCursorPos`, for the camera tools' pointer lock (K-230).
