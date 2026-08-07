@@ -10,6 +10,7 @@ import 'dart:ui' show AppExitResponse;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
+import 'package:lumit_flutter/l10n/strings.dart';
 import 'package:lumit_flutter/panels/panels_frb.dart';
 import 'package:lumit_flutter/panels/timeline_extras_frb.dart';
 import 'package:lumit_flutter/panels/viewer_texture_controller.dart';
@@ -254,7 +255,7 @@ class LumitState extends ChangeNotifier {
     final opened =
         LumitBridgeState.openProject(path: path, onChangeStream: _changeSink());
     if (opened == null) {
-      postNotice('Could not open $path', error: true);
+      postNotice(l10n.couldNotOpen(path), error: true);
       return;
     }
     _adopt(opened);
@@ -570,7 +571,7 @@ class LumitUiState extends ChangeNotifier {
     // An engine that refuses the switch says so in the status line rather than
     // leaving a lit stopwatch over a column that will never fill.
     onEngineError: (error) => _app.postNotice(
-      'Could not measure render times: $error',
+      l10n.couldNotMeasureRenderTimes('$error'),
       error: true,
     ),
   );
@@ -730,6 +731,24 @@ class LumitUiState extends ChangeNotifier {
     final last = comp.durationFrames() - 1;
     playheadFrame.value =
         (playheadFrame.value + delta).clamp(0, last < 0 ? 0 : last);
+  }
+
+  /// The locale the interface is currently drawn in — the saved choice, or the
+  /// machine's own language when nothing has been chosen.
+  Locale get locale {
+    final saved = workspace.interface.language;
+    return saved == null ? systemLocale() : localeFromTag(saved);
+  }
+
+  /// Point `t` at the current language. Cheap and idempotent, which is why it
+  /// can hang off every workspace change rather than needing to know which
+  /// setting moved.
+  void _applyLanguage() => useLocale(locale);
+
+  /// Settings → Interface → Language. Null means follow the machine.
+  void setLanguage(String? tag) {
+    workspace.interface.language = tag;
+    workspace.settingsChanged();
   }
 
   /// Put the panels back where they started (Window → Reset workspace).
@@ -1093,6 +1112,13 @@ class LumitUiState extends ChangeNotifier {
   LumitUiState(LumitState state, {Workspace? workspace})
       : _app = state,
         workspace = workspace ?? (Workspace()..load()) {
+    // The language, before anything is built: `t` is a plain global
+    // (l10n/strings.dart), so it has to hold the right strings by the time the
+    // first widget asks for one. Registered ahead of `notifyListeners` below so
+    // that a language change has already landed when the rebuild it triggers
+    // runs — listeners fire in the order they were added.
+    _applyLanguage();
+    this.workspace.addListener(_applyLanguage);
     // Appearance and layout live in the workspace, so a change there is a
     // change here as far as any listening widget is concerned.
     this.workspace.addListener(notifyListeners);
@@ -1514,6 +1540,14 @@ class LumitAppNew extends StatelessWidget {
     // in it rather than as Lumit. The backdrop is `surface0` from the theme.
     return MaterialApp(
       debugShowCheckedModeBanner: false,
+      // Lumit's own strings come from the `l10n` global rather than from
+      // context (l10n/strings.dart); these delegates are still needed for the
+      // parts of Flutter that do ask the tree — text selection menus, the
+      // Material and Cupertino widgets under a dialogue, and the text direction
+      // a right-to-left language would want.
+      locale: uiState.locale,
+      localizationsDelegates: Strings.localizationsDelegates,
+      supportedLocales: Strings.supportedLocales,
       home: ChangeNotifierProvider.value(
         value: state,
         child: ChangeNotifierProvider.value(

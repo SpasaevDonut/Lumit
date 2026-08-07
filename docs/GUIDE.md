@@ -4123,3 +4123,114 @@ should be asking for. So on Flatpak, Lumit downloads the new bundle, shows you
 the one command that installs it, and stays open. Making this a real
 `flatpak update` needs Lumit published to a Flatpak *remote* rather than as a
 single downloadable bundle — that is written down in TODO as the next step.
+
+## 12. Speaking other languages, in plain terms
+
+Lumit used to have its words typed directly into the code. A button that said
+*Import footage* was a line somewhere that literally read `Text('Import
+footage')`. That is the natural way to write it, and it is fine right up until
+somebody wants the button to say *Footage importieren* — at which point there is
+no way to change it without editing ninety files, and no way for a translator to
+help at all unless they are willing to learn Dart and be given commit access.
+
+So the words moved out. There is now one file, `flutter_ui/lib/l10n/app_en.arb`,
+which is a long list of every phrase Lumit can show, each with a short name. It
+looks like this:
+
+```json
+"importFootage": "Import footage",
+"@importFootage": {
+  "description": "Button, menu item and tooltip: bring media files into the project."
+},
+```
+
+The code now says `l10n.importFootage` instead of the phrase itself. `l10n` is
+"localisation" abbreviated the way the industry abbreviates it — an *l*, ten
+letters, an *n*. When Lumit is running in English it hands back "Import footage";
+in German it hands back whatever the German file has under that name.
+
+The `@importFootage` part underneath is a note **for the translator**, not for
+the program. It is the only context they get: they see the phrase and that
+sentence and nothing else, no screenshot, no surrounding page. Writing a good one
+is the difference between *Fill* being translated as "to fill something up" and
+as "the colour inside a shape". Every string has one, and a test fails if any
+string does not.
+
+### Where the translations come from
+
+Your friends do the translating on **Crowdin**, which is a website built for
+exactly this. They see the English phrase, its note, and a box to type theirs
+into. Nobody clones the repository, nobody runs Flutter, nobody can break the
+build by mistyping a bracket.
+
+The traffic is one-way in each direction, and it matters which is which:
+
+- **English goes up.** You change `app_en.arb`, run `crowdin push sources`, and
+  Crowdin now offers the new phrase to translate.
+- **Everything else comes down.** `crowdin pull translations` writes
+  `app_de.arb`, `app_kk.arb`, `app_uk.arb` and `app_zh.arb` into the same folder.
+
+Those four files are **never edited by hand in this repository.** If a German
+phrase is wrong, it is fixed on Crowdin; fixing it here works until the next pull
+overwrites it, which is worse than not working at all because it works for a
+while first. `crowdin.yml` at the top of the repository is the whole
+configuration — which file goes up, and what each language is called on disk.
+
+The two passwords Crowdin needs are not written in that file, because this
+repository is public. They are read from the environment instead:
+`CROWDIN_PROJECT_ID` and `CROWDIN_PERSONAL_TOKEN`.
+
+### What happens when a translation is missing
+
+Nothing bad, which is the point. A phrase nobody has reached yet falls back to
+the English one. That means the four language files can start out completely
+empty — as they are today — and Lumit runs exactly as it did before, in English.
+As your friends fill them in, more of the interface turns over. There is never a
+moment where the application is half-broken waiting for a translation to arrive;
+it is only ever more or less translated.
+
+### The engine's words
+
+Some of what you read on screen is not written in Dart at all. The effects name
+themselves — *Gaussian blur*, *Radius*, *Blur & sharpen* — in the Rust engine's
+schema, and so does every keyboard shortcut in Settings ▸ Keymap: *Play or pause*,
+*Anywhere*. Those come up to the interface as plain English through the bridge.
+
+Rather than teach the engine about languages, which would be a large change deep
+in code that has no other reason to care, `lib/l10n/engine_labels.dart` holds a
+table that looks each one up **by its English text**. The engine says "Gaussian
+blur"; the table turns that into the German for it. Rust is untouched.
+
+The obvious danger is that somebody adds an effect and forgets the table, so the
+new effect ships in English inside an otherwise German application, and nobody
+notices for months. `test/l10n/engine_labels_test.dart` prevents that: it reads
+the Rust source files directly and fails if the engine can say a word the table
+has no entry for.
+
+### Why the tooltips got shorter
+
+While the words were being moved, they were also read — all of them, in one place,
+for the first time. A lot of the tooltips had quietly grown into paragraphs
+explaining things the button already said. A Reset button whose tooltip read *"Put
+every parameter back to its default, removing its keyframes"* is a sentence you
+have to stop and read to learn something you already knew.
+
+The specification always asked for the opposite: `docs/07-UI-SPEC.md` §13.2 says
+a tooltip is the control's **name and its shortcut**, and reserves the
+sentence-length kind for genuinely Lumit-specific ideas. So every tooltip is now
+under five words and most are two — *Reset all parameters*, *Add keyframe*,
+*Label colour*. Six are allowed to be longer, and they are listed by name in
+`test/l10n/arb_test.dart` with the reason: the three cache meters, whose tooltips
+carry live numbers and warn you that clicking throws work away, and the two
+playback modes. Anything else that grows past five words fails that test.
+
+### Choosing a language
+
+Settings ▸ Interface ▸ Language. It defaults to whatever the machine itself is
+set to, and stores nothing until you choose — so if you never open the picker,
+Lumit follows your operating system for ever, including after you change it.
+
+The list names each language in its own language: Deutsch, Қазақша, Українська,
+简体中文. That is deliberate. Somebody who has set Lumit to a language they turn
+out not to read needs to be able to find their way back, and they will not do it
+by looking for the word "German".

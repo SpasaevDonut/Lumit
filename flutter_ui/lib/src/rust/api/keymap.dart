@@ -92,6 +92,14 @@ String keymapToJson() => BridgeLib.instance.api.crateApiKeymapKeymapToJson();
 ///
 /// Rejects anything that is not a keymap rather than half-applying it, so a
 /// corrupt stored blob or somebody else's JSON leaves the current map alone.
+///
+/// **Laid over the shipped defaults, not swapped for them** (K-302). A file
+/// only knows the actions that existed when it was written, and it used to
+/// replace the map whole — so every action added since was left with no chord
+/// at all for anyone who had ever saved a keymap. That is how `Ctrl+C` came to
+/// do nothing in a build whose every test passed. An action the file names
+/// keeps the file's chord and an action it deliberately unbound stays unbound;
+/// only the ones it never heard of take their default.
 Future<List<BridgeKeymapGroup>> keymapFromJson({required String json}) =>
     BridgeLib.instance.api.crateApiKeymapKeymapFromJson(json: json);
 

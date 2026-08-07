@@ -24,18 +24,19 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../l10n/strings.dart';
 import '../src/rust/api/state.dart';
 
 /// What the engine is doing for the frame being waited on. The codes are the
 /// engine's own (`lumit_render::RenderStage::code`) and are fixed: a reordered
 /// enum must not silently relabel anything.
 String previewStageLabel(int stage) => switch (stage) {
-      0 => 'Preparing',
-      1 => 'Reading media',
-      2 => 'Reading the composition',
-      3 => 'Compositing',
-      4 => 'Showing',
-      _ => 'Rendering',
+      0 => l10n.previewPreparing,
+      1 => l10n.previewReadingMedia,
+      2 => l10n.previewReadingComposition,
+      3 => l10n.previewCompositing,
+      4 => l10n.previewShowing,
+      _ => l10n.previewRendering,
     };
 
 /// Follows the engine's progress reports for the frame the Viewer is waiting

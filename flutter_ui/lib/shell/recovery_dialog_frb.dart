@@ -14,6 +14,7 @@ import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/shell.dart';
 
+import '../l10n/strings.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 
@@ -69,13 +70,12 @@ class _RecoveryDialog extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.all(10),
-            child: Text('Recover unsaved work', style: t.bodyPrimary),
+            child: Text(l10n.recoverTitle, style: t.bodyPrimary),
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10),
             child: Text(
-              'This project has work beside it that the saved file does not '
-              'contain.',
+              l10n.recoverBlurb,
               style: t.small,
             ),
           ),
@@ -93,23 +93,22 @@ class _RecoveryDialog extends StatelessWidget {
           _choice(
             t,
             key: 'recover-journal',
-            title: 'Replay the edit journal',
-            body: 'Everything up to the moment the session ended.',
+            title: l10n.recoverJournal,
+            body: l10n.recoverJournalHelp,
             onPressed: () => onChoose(RecoveryChoice.journal),
           ),
           _choice(
             t,
             key: 'recover-autosave',
-            title: 'Open the newest autosave',
-            body: 'A whole copy from the last timed save. Anything after it '
-                'is lost.',
+            title: l10n.recoverAutosave,
+            body: l10n.recoverAutosaveHelp,
             onPressed: () => onChoose(RecoveryChoice.autosave),
           ),
           _choice(
             t,
             key: 'recover-discard',
-            title: 'Open the saved file as it is',
-            body: 'Leave the extra work where it is; nothing is deleted.',
+            title: l10n.recoverDiscard,
+            body: l10n.recoverDiscardHelp,
             onPressed: () => onChoose(RecoveryChoice.discard),
           ),
           const SizedBox(height: 8),

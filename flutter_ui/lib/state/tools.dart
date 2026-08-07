@@ -20,6 +20,7 @@ import 'package:flutter/foundation.dart';
 import 'package:lumit_flutter/src/rust/api/assets.dart';
 
 import '../icons/icons.dart';
+import '../l10n/strings.dart';
 
 /// A cluster of tools that share one toolbar button, in the order the button's
 /// flyout lists them.
@@ -51,70 +52,100 @@ enum ToolGroup {
 /// wish list — and only its tooltip mentions that the behaviour is still to
 /// come.
 enum ToolMode {
-  select(ToolGroup.select, 'Selection', LumitIcon.pointer, ready: true),
-  hand(ToolGroup.hand, 'Hand', LumitIcon.move, ready: true),
-  zoom(ToolGroup.zoom, 'Zoom', LumitIcon.zoomIn, ready: true),
-  rotate(ToolGroup.rotate, 'Rotation', LumitIcon.rotate, ready: true),
-  anchor(ToolGroup.anchor, 'Anchor point', LumitIcon.anchorPoint, ready: true),
-  razor(ToolGroup.razor, 'Razor', LumitIcon.razor, ready: true),
+  select(ToolGroup.select, LumitIcon.pointer, ready: true),
+  hand(ToolGroup.hand, LumitIcon.move, ready: true),
+  zoom(ToolGroup.zoom, LumitIcon.zoomIn, ready: true),
+  rotate(ToolGroup.rotate, LumitIcon.rotate, ready: true),
+  anchor(ToolGroup.anchor, LumitIcon.anchorPoint, ready: true),
+  razor(ToolGroup.razor, LumitIcon.razor, ready: true),
 
   // The shape tools draw a mask on the selected layer, or a shape layer with
   // nothing selected — AE's rule, and the reason they are one group. Both
   // halves are built: the mask half since K-222, the shape layer since K-237.
-  shapeRectangle(ToolGroup.shape, 'Rectangle', LumitIcon.rectangle,
+  shapeRectangle(ToolGroup.shape, LumitIcon.rectangle, ready: true),
+  shapeRoundedRectangle(ToolGroup.shape, LumitIcon.roundedRectangle,
       ready: true),
-  shapeRoundedRectangle(
-      ToolGroup.shape, 'Rounded rectangle', LumitIcon.roundedRectangle,
-      ready: true),
-  shapeEllipse(ToolGroup.shape, 'Ellipse', LumitIcon.ellipse, ready: true),
-  shapePolygon(ToolGroup.shape, 'Polygon', LumitIcon.polygon, ready: true),
-  shapeStar(ToolGroup.shape, 'Star', LumitIcon.star, ready: true),
+  shapeEllipse(ToolGroup.shape, LumitIcon.ellipse, ready: true),
+  shapePolygon(ToolGroup.shape, LumitIcon.polygon, ready: true),
+  shapeStar(ToolGroup.shape, LumitIcon.star, ready: true),
 
   // The Pen builds a mask path point by point (K-223). Its four siblings edit a
   // *finished* path, which is not built.
-  pen(ToolGroup.pen, 'Pen', LumitIcon.pen, ready: true),
-  penAddVertex(ToolGroup.pen, 'Add vertex', LumitIcon.vertexAdd),
-  penDeleteVertex(ToolGroup.pen, 'Delete vertex', LumitIcon.vertexDelete),
-  penConvertVertex(ToolGroup.pen, 'Convert vertex', LumitIcon.vertexConvert),
-  penMaskFeather(ToolGroup.pen, 'Mask feather', LumitIcon.maskFeather),
+  pen(ToolGroup.pen, LumitIcon.pen, ready: true),
+  penAddVertex(ToolGroup.pen, LumitIcon.vertexAdd),
+  penDeleteVertex(ToolGroup.pen, LumitIcon.vertexDelete),
+  penConvertVertex(ToolGroup.pen, LumitIcon.vertexConvert),
+  penMaskFeather(ToolGroup.pen, LumitIcon.maskFeather),
 
   // Making and editing text layers on the picture (K-225). Vertical type would
   // need the engine to lay a line out downwards; it lays out one horizontal
   // line, so that member stays unbuilt.
-  typeHorizontal(ToolGroup.type, 'Horizontal type', LumitIcon.text,
-      ready: true),
-  typeVertical(ToolGroup.type, 'Vertical type', LumitIcon.textVertical),
+  typeHorizontal(ToolGroup.type, LumitIcon.text, ready: true),
+  typeVertical(ToolGroup.type, LumitIcon.textVertical),
 
   // Painting on a layer (K-227): the brush lays the fill colour down, the
   // eraser rubs through to transparent, and the clone stamp copies from an
   // Alt-clicked source elsewhere on the same layer.
-  brush(ToolGroup.paint, 'Brush', LumitIcon.brush, ready: true),
-  cloneStamp(ToolGroup.paint, 'Clone stamp', LumitIcon.cloneStamp, ready: true),
-  eraser(ToolGroup.paint, 'Eraser', LumitIcon.eraser, ready: true),
+  brush(ToolGroup.paint, LumitIcon.brush, ready: true),
+  cloneStamp(ToolGroup.paint, LumitIcon.cloneStamp, ready: true),
+  eraser(ToolGroup.paint, LumitIcon.eraser, ready: true),
 
-  rotoBrush(ToolGroup.roto, 'Roto brush', LumitIcon.rotoBrush),
-  refineEdge(ToolGroup.roto, 'Refine edge', LumitIcon.refineEdge),
+  rotoBrush(ToolGroup.roto, LumitIcon.rotoBrush),
+  refineEdge(ToolGroup.roto, LumitIcon.refineEdge),
 
-  puppetPosition(ToolGroup.puppet, 'Puppet position pin', LumitIcon.puppetPin),
-  puppetStarch(ToolGroup.puppet, 'Puppet starch pin', LumitIcon.puppetStarch),
-  puppetOverlap(ToolGroup.puppet, 'Puppet overlap pin', LumitIcon.puppetOverlap),
-  puppetBend(ToolGroup.puppet, 'Puppet bend pin', LumitIcon.puppetBend),
+  puppetPosition(ToolGroup.puppet, LumitIcon.puppetPin),
+  puppetStarch(ToolGroup.puppet, LumitIcon.puppetStarch),
+  puppetOverlap(ToolGroup.puppet, LumitIcon.puppetOverlap),
+  puppetBend(ToolGroup.puppet, LumitIcon.puppetBend),
 
   // Moving the composition's active camera by dragging on the picture
   // (K-229): orbit round what it is looking at, track across, dolly in.
-  cameraOrbit(ToolGroup.camera, 'Orbit camera', LumitIcon.cameraOrbit,
-      ready: true),
-  cameraPan(ToolGroup.camera, 'Track camera', LumitIcon.cameraPan, ready: true),
-  cameraDolly(ToolGroup.camera, 'Dolly camera', LumitIcon.cameraDolly,
-      ready: true);
+  cameraOrbit(ToolGroup.camera, LumitIcon.cameraOrbit, ready: true),
+  cameraPan(ToolGroup.camera, LumitIcon.cameraPan, ready: true),
+  cameraDolly(ToolGroup.camera, LumitIcon.cameraDolly, ready: true);
 
-  const ToolMode(this.group, this.label, this.icon, {this.ready = false});
+  const ToolMode(this.group, this.icon, {this.ready = false});
 
   /// The toolbar button this tool lives under.
   final ToolGroup group;
 
   /// What it is called — in tooltips, in the flyout, and in the status line.
-  final String label;
+  ///
+  /// A getter rather than a constructor argument: an enum constant is built
+  /// once, when the program starts, and the interface language can change
+  /// after that (K-303).
+  String get label => switch (this) {
+        ToolMode.select => l10n.toolSelect,
+        ToolMode.hand => l10n.toolHand,
+        ToolMode.zoom => l10n.toolZoom,
+        ToolMode.rotate => l10n.toolRotate,
+        ToolMode.anchor => l10n.toolAnchor,
+        ToolMode.razor => l10n.toolRazor,
+        ToolMode.shapeRectangle => l10n.toolShapeRectangle,
+        ToolMode.shapeRoundedRectangle => l10n.toolShapeRoundedRectangle,
+        ToolMode.shapeEllipse => l10n.toolShapeEllipse,
+        ToolMode.shapePolygon => l10n.toolShapePolygon,
+        ToolMode.shapeStar => l10n.toolShapeStar,
+        ToolMode.pen => l10n.toolPen,
+        ToolMode.penAddVertex => l10n.toolPenAddVertex,
+        ToolMode.penDeleteVertex => l10n.toolPenDeleteVertex,
+        ToolMode.penConvertVertex => l10n.toolPenConvertVertex,
+        ToolMode.penMaskFeather => l10n.toolPenMaskFeather,
+        ToolMode.typeHorizontal => l10n.toolTypeHorizontal,
+        ToolMode.typeVertical => l10n.toolTypeVertical,
+        ToolMode.brush => l10n.toolBrush,
+        ToolMode.cloneStamp => l10n.toolCloneStamp,
+        ToolMode.eraser => l10n.toolEraser,
+        ToolMode.rotoBrush => l10n.toolRotoBrush,
+        ToolMode.refineEdge => l10n.toolRefineEdge,
+        ToolMode.puppetPosition => l10n.toolPuppetPosition,
+        ToolMode.puppetStarch => l10n.toolPuppetStarch,
+        ToolMode.puppetOverlap => l10n.toolPuppetOverlap,
+        ToolMode.puppetBend => l10n.toolPuppetBend,
+        ToolMode.cameraOrbit => l10n.toolCameraOrbit,
+        ToolMode.cameraPan => l10n.toolCameraPan,
+        ToolMode.cameraDolly => l10n.toolCameraDolly,
+      };
 
   final LumitIcon icon;
 

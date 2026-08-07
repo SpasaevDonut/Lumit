@@ -22,6 +22,7 @@
 
 import 'dart:math' as math;
 
+import 'package:lumit_flutter/l10n/strings.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/state/tools.dart';
 import 'package:uuid/uuid.dart';
@@ -115,19 +116,9 @@ List<BridgeVertex> shapePath({
       final k = r * kappa;
       return [
         BridgeVertex(
-            x: left + r,
-            y: top,
-            tanInX: -k,
-            tanInY: 0,
-            tanOutX: 0,
-            tanOutY: 0),
+            x: left + r, y: top, tanInX: -k, tanInY: 0, tanOutX: 0, tanOutY: 0),
         BridgeVertex(
-            x: right - r,
-            y: top,
-            tanInX: 0,
-            tanInY: 0,
-            tanOutX: k,
-            tanOutY: 0),
+            x: right - r, y: top, tanInX: 0, tanInY: 0, tanOutX: k, tanOutY: 0),
         BridgeVertex(
             x: right,
             y: top + r,
@@ -164,12 +155,7 @@ List<BridgeVertex> shapePath({
             tanOutX: 0,
             tanOutY: 0),
         BridgeVertex(
-            x: left,
-            y: top + r,
-            tanInX: 0,
-            tanInY: 0,
-            tanOutX: 0,
-            tanOutY: -k),
+            x: left, y: top + r, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: -k),
       ];
 
     case ToolMode.shapeEllipse:
@@ -270,13 +256,13 @@ BridgeMask shapeMask({
 /// numbered, because a layer's mask list reads better as "Ellipse, Star" than
 /// as "Mask 1, Mask 2" — and the Timeline lets either be renamed.
 String shapeMaskName(ToolMode tool) => switch (tool) {
-      ToolMode.shapeRectangle => 'Rectangle',
-      ToolMode.shapeRoundedRectangle => 'Rounded rectangle',
-      ToolMode.shapeEllipse => 'Ellipse',
-      ToolMode.shapeStar => 'Star',
-      ToolMode.shapePolygon => 'Polygon',
-      ToolMode.pen => 'Path',
-      _ => 'Mask',
+      ToolMode.shapeRectangle => l10n.toolShapeRectangle,
+      ToolMode.shapeRoundedRectangle => l10n.toolShapeRoundedRectangle,
+      ToolMode.shapeEllipse => l10n.toolShapeEllipse,
+      ToolMode.shapeStar => l10n.toolShapeStar,
+      ToolMode.shapePolygon => l10n.toolShapePolygon,
+      ToolMode.pen => l10n.shapePath,
+      _ => l10n.shapeMask,
     };
 
 /// A path being drawn with the **Pen** (K-223): the vertices placed so far.

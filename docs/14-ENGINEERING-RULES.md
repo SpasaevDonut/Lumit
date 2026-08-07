@@ -187,7 +187,12 @@ machine". Exceptions require a decision entry in [02-DECISIONS.md](02-DECISIONS.
 - **Public API docs:** every public item in engine crates has a doc comment; modules state
   their thread-role contract (§1.1) at the top. Doc examples compile (`cargo test --doc`).
 - **User-facing strings** go through the i18n table from day one (K-005); en-GB, sentence
-  case, calm, no exclamation marks. No string literal shown to a user lives in code.
+  case, calm, no exclamation marks. No string literal shown to a user lives in code. The
+  table is `flutter_ui/lib/l10n/app_en.arb`, reached as `l10n.<key>`, and translation
+  happens on Crowdin (K-303) — every other `app_*.arb` comes back from there and is never
+  hand-edited. A new string lands with an `@key` description saying where it appears; a
+  label the *engine* sends gets an entry in `lib/l10n/engine_labels.dart` at the same time,
+  which `test/l10n/engine_labels_test.dart` enforces against the Rust sources.
 - **Glossary compliance** extends to identifiers: `retime_map`, not `time_remap`; `speed`,
   not `velocity`; `clip`, not `event`; `playhead`, not `cti`; `export`, not `render` when a
   file is written. CI greps for the banned list in [01-GLOSSARY.md](01-GLOSSARY.md) §9

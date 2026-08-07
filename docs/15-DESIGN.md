@@ -557,7 +557,11 @@ section's 4/8/12/16px scale) does not vary by shape; only radius, gap, inset and
 ## 10. Voice and copy
 
 - British English, sentence case, calm, no exclamation marks, no emoji. UI strings go through
-  the i18n table (K-005).
+  the i18n table (K-005) — `flutter_ui/lib/l10n/app_en.arb`, translated on Crowdin (K-303).
+  British English is the source and stays the source; there is no en-US.
+- **A tooltip is a name, not a lesson**: under five words, two where two will do
+  ([07-UI-SPEC.md](07-UI-SPEC.md) §13.2, K-303). Explanation belongs in the settings row's
+  own sentence, in an empty state, or nowhere.
 - The app is **"Lumit"** — never abbreviated in UI. Features use glossary names exactly:
   Retime (not time remap), speed (not velocity), clip (not event), layer (not track), export
   (not render), playhead (not CTI). [01-GLOSSARY.md](01-GLOSSARY.md) §9 is binding for copy.

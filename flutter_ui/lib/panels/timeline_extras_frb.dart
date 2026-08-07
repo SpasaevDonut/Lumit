@@ -18,6 +18,8 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../icons/icons.dart';
+import '../l10n/engine_labels.dart';
+import '../l10n/strings.dart';
 import '../shell/comp_settings_frb.dart';
 import '../state/comp_time.dart';
 import '../state/timeline_columns.dart';
@@ -42,7 +44,9 @@ class CompTabsFrb extends StatelessWidget {
     // In the tab strip's own order, not the project's: the strip is dragged
     // into whatever order suits the work, and `openComps` is where that order
     // lives (and what the session writes down).
-    final byId = {for (final entry in state.comps()) entry.$1.internalid: entry};
+    final byId = {
+      for (final entry in state.comps()) entry.$1.internalid: entry
+    };
     final comps = [
       for (final id in uiState.openComps)
         if (byId[id] != null) byId[id]!,
@@ -88,8 +92,8 @@ class CompTabsFrb extends StatelessWidget {
                     position: position,
                     onChanged: uiState.model.refresh,
                   ),
-                  closeKey:
-                      ValueKey<String>('tl-tab-close-${comps[i].$1.internalid}'),
+                  closeKey: ValueKey<String>(
+                      'tl-tab-close-${comps[i].$1.internalid}'),
                   onClose: () => uiState.closeComp(
                     comps[i].$1.internalid,
                     // The nearest remaining neighbour fronts: the one to the
@@ -123,7 +127,7 @@ Future<void> showCompTabMenuFrb({
       child: MenuRow(
         key: const ValueKey('tl-tab-menu-settings'),
         onPressed: () => close(true),
-        child: const Text('Composition settings…'),
+        child: Text(l10n.compositionSettingsEllipsis),
       ),
     ),
   );
@@ -232,7 +236,7 @@ class _LayerSearchFrbState extends State<LayerSearchFrb> {
         key: const ValueKey('tl-search'),
         controller: _controller,
         width: widget.width,
-        hint: 'Search layers',
+        hint: l10n.searchLayers,
       );
 }
 
@@ -272,9 +276,9 @@ class ParentPickerFrb extends StatelessWidget {
       width: width,
       child: BareLazyDropdown(
         key: ValueKey<String>('tl-parent-${layer.internallayerId}'),
-        label: info.parent == null ? 'None' : (info.parentName ?? 'None'),
+        label: info.parent == null ? l10n.none : (info.parentName ?? l10n.none),
         options: () => [
-          (null, 'None'),
+          (null, l10n.none),
           for (final e in all)
             if (e.layer.internallayerId != layer.internallayerId)
               (e.layer.internallayerId, e.info.name),
@@ -332,12 +336,12 @@ class MattePickerFrb extends StatelessWidget {
     final t = ThemeScope.of(context).theme;
     final matte = info.matte;
     final sourceName = matte == null
-        ? 'No matte'
+        ? l10n.noMatte
         : all
                 .where((e) => e.layer.internallayerId == matte.layer)
                 .map((e) => e.info.name)
                 .firstOrNull ??
-            'Matte';
+            engineLabel('Matte');
 
     // A fixed overall width whether or not the mode toggles are showing, so
     // the columns after the matte cell never shift as mattes come and go —
@@ -361,7 +365,7 @@ class MattePickerFrb extends StatelessWidget {
               // audio-only clip) is not offered, and neither is this one:
               // matting a layer with itself has no meaning.
               options: () => [
-                (null, 'No matte'),
+                (null, l10n.noMatte),
                 for (final e in all)
                   if (e.layer.internallayerId != layer.internallayerId &&
                       e.layer.hasPicture())
@@ -383,7 +387,7 @@ class MattePickerFrb extends StatelessWidget {
               key: 'tl-matte-luma-${layer.internallayerId}',
               glyph: matte.luma ? 'L' : 'α',
               on: true,
-              tip: matte.luma ? 'Luma matte' : 'Alpha matte',
+              tip: matte.luma ? l10n.tipLumaMatte : l10n.tipAlphaMatte,
               onTap: () => _set(BridgeMatte(
                   layer: matte.layer,
                   luma: !matte.luma,
@@ -394,7 +398,7 @@ class MattePickerFrb extends StatelessWidget {
               key: 'tl-matte-invert-${layer.internallayerId}',
               glyph: '−',
               on: matte.inverted,
-              tip: matte.inverted ? 'Inverted' : 'Not inverted',
+              tip: matte.inverted ? l10n.tipInverted : l10n.tipNotInverted,
               onTap: () => _set(BridgeMatte(
                   layer: matte.layer,
                   luma: matte.luma,
@@ -490,7 +494,7 @@ class _MarkerEditorState extends State<_MarkerEditor> {
         children: [
           Padding(
             padding: const EdgeInsets.all(8),
-            child: Text('Markers', style: t.bodyPrimary),
+            child: Text(l10n.menuMarkers, style: t.bodyPrimary),
           ),
           for (final marker in markers)
             Padding(
@@ -531,7 +535,7 @@ class _MarkerEditorState extends State<_MarkerEditor> {
           if (markers.isEmpty)
             Padding(
               padding: const EdgeInsets.all(8),
-              child: Text('No markers yet', style: t.small),
+              child: Text(l10n.noMarkersYet, style: t.small),
             ),
           const SizedBox(height: 6),
           Padding(
@@ -555,7 +559,7 @@ class _MarkerEditorState extends State<_MarkerEditor> {
                     _label.clear();
                     setState(() {});
                   },
-                  child: Text('Add at playhead', style: t.small),
+                  child: Text(l10n.addAtPlayhead, style: t.small),
                 ),
               ],
             ),
@@ -570,7 +574,7 @@ class _MarkerEditorState extends State<_MarkerEditor> {
                   key: const ValueKey('marker-close'),
                   small: true,
                   onPressed: widget.onClose,
-                  child: const Text('Close'),
+                  child: Text(l10n.close),
                 ),
               ],
             ),
@@ -927,7 +931,7 @@ class _TimelineRulerState extends State<TimelineRuler> {
                   close(null);
                   _editMarker(context, marker);
                 },
-                child: const Text('Edit marker…'),
+                child: Text(l10n.editMarkerEllipsis),
               ),
               MenuRow(
                 key: const ValueKey('marker-menu-delete'),
@@ -938,7 +942,7 @@ class _TimelineRulerState extends State<TimelineRuler> {
                       if (m.id != marker.id) m,
                   ]);
                 },
-                child: const Text('Delete marker'),
+                child: Text(l10n.deleteMarker),
               ),
             ],
           ),
@@ -1317,7 +1321,7 @@ class _MarkerLabelDialogState extends State<_MarkerLabelDialog> {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(10, 10, 10, 6),
-            child: Text('Marker', style: t.bodyPrimary),
+            child: Text(l10n.marker, style: t.bodyPrimary),
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -1325,7 +1329,7 @@ class _MarkerLabelDialogState extends State<_MarkerLabelDialog> {
               key: const ValueKey('marker-edit-label'),
               controller: _label,
               autofocus: true,
-              hint: 'What this marker says',
+              hint: l10n.markerHint,
               onSubmitted: widget.onDone,
             ),
           ),
@@ -1339,14 +1343,14 @@ class _MarkerLabelDialogState extends State<_MarkerLabelDialog> {
                   small: true,
                   frameless: true,
                   onPressed: () => widget.onDone(null),
-                  child: Text('Cancel', style: t.small),
+                  child: Text(l10n.cancel, style: t.small),
                 ),
                 const SizedBox(width: 6),
                 HouseButton(
                   key: const ValueKey('marker-edit-ok'),
                   small: true,
                   onPressed: () => widget.onDone(_label.text),
-                  child: Text('Done', style: t.small),
+                  child: Text(l10n.done, style: t.small),
                 ),
               ],
             ),
@@ -1773,20 +1777,26 @@ class SequenceGapsPainter extends CustomPainter {
     if (clips.isEmpty) return;
     final spans = [
       for (final c in clips)
-        (axis.xOf(c.startFrame.toInt()) - left, axis.xOf(c.endFrame.toInt()) - left),
+        (
+          axis.xOf(c.startFrame.toInt()) - left,
+          axis.xOf(c.endFrame.toInt()) - left
+        ),
     ]..sort((a, b) => a.$1.compareTo(b.$1));
 
     final paint = Paint()..color = ink.withValues(alpha: 0.55);
     var x = 0.0;
     for (final (start, end) in spans) {
       if (start > x) {
-        canvas.drawRect(Rect.fromLTRB(x, 0, start.clamp(0.0, size.width), size.height), paint);
+        canvas.drawRect(
+            Rect.fromLTRB(x, 0, start.clamp(0.0, size.width), size.height),
+            paint);
       }
       if (end > x) x = end;
     }
     if (x < size.width) {
       canvas.drawRect(
-          Rect.fromLTRB(x.clamp(0.0, size.width), 0, size.width, size.height), paint);
+          Rect.fromLTRB(x.clamp(0.0, size.width), 0, size.width, size.height),
+          paint);
     }
   }
 

@@ -153,10 +153,10 @@ void main() {
       await choose(tester, 'File', 'Project settings…');
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const ValueKey('project-anti-aliasing')),
-          findsOneWidget);
-      expect(find.byKey(const ValueKey('settings-page-appearance')),
-          findsNothing,
+      expect(
+          find.byKey(const ValueKey('project-anti-aliasing')), findsOneWidget);
+      expect(
+          find.byKey(const ValueKey('settings-page-appearance')), findsNothing,
           reason: 'it is its own window, not a page of Settings');
     });
 
@@ -617,10 +617,10 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey<String>('menu-Animation')));
       await tester.pump();
-      expect(find.text('Keyframe velocity… (Not implemented)'), findsOneWidget);
+      expect(find.text('Keyframe speed… (Not implemented)'), findsOneWidget);
       expect(
         tester
-            .widget<Text>(find.text('Keyframe velocity… (Not implemented)'))
+            .widget<Text>(find.text('Keyframe speed… (Not implemented)'))
             .style
             ?.color,
         t.textDisabled,
@@ -646,7 +646,8 @@ void main() {
 
     /// Shortcuts are the engine's (K-199): a row shows whatever the keymap
     /// currently binds to its action, so a rebind changes the menus too.
-    testWidgets('a row teaches the chord its action answers to', (tester) async {
+    testWidgets('a row teaches the chord its action answers to',
+        (tester) async {
       final p = await mount(tester);
 
       await tester.tap(find.byKey(const ValueKey<String>('menu-File')));
@@ -723,7 +724,8 @@ void main() {
       expect(bar.left, 0, reason: 'flush to the left edge, not centred');
       expect(bar.width, 1280,
           reason: 'the full width of the window, so one colour spans it');
-      expect(tester.getTopLeft(find.byKey(const ValueKey<String>('menu-File'))).dx,
+      expect(
+          tester.getTopLeft(find.byKey(const ValueKey<String>('menu-File'))).dx,
           lessThan(20),
           reason: 'File is the first heading, at the left');
     });
@@ -794,8 +796,7 @@ void main() {
     /// by hover as much as by clicks, and a test's synthetic taps carry no
     /// pointer at all unless one is added.
     Future<TestGesture> mouse(WidgetTester tester) async {
-      final gesture =
-          await tester.createGesture(kind: PointerDeviceKind.mouse);
+      final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
       await gesture.addPointer(location: Offset.zero);
       addTearDown(gesture.removePointer);
       return gesture;
@@ -804,7 +805,8 @@ void main() {
     /// **Once a menu is open the bar is in menus.** Crossing another heading
     /// hands over to it, rather than leaving the first menu up until it is
     /// clicked away and the second one clicked open.
-    testWidgets('a heading hands over to the next one on hover', (tester) async {
+    testWidgets('a heading hands over to the next one on hover',
+        (tester) async {
       await mount(tester);
       final pointer = await mouse(tester);
 

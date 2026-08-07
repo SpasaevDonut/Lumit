@@ -9,6 +9,7 @@ import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
 
+import '../l10n/strings.dart';
 import '../theme/custom_theme.dart';
 import '../theme/theme.dart';
 import 'dock.dart';
@@ -393,7 +394,7 @@ class Workspace extends ChangeNotifier {
   /// every route that adds one comes through here rather than overwriting
   /// somebody's work by accident (K-298).
   String availableThemeName(String wanted) {
-    final base = wanted.trim().isEmpty ? 'Theme' : wanted.trim();
+    final base = wanted.trim().isEmpty ? l10n.themeUnnamed : wanted.trim();
     var tried = base;
     for (var n = 2; customThemes.any((t) => t.name == tried); n++) {
       tried = '$base $n';
@@ -794,10 +795,10 @@ class ThemeChoice {
   /// The heading this choice sits under. Light and dark first because that is
   /// what anyone is choosing by; the user's own last, because they are theirs.
   String get group => scheme == null
-      ? 'Custom'
+      ? l10n.custom
       : scheme!.mode == ThemeMode2.light
-          ? 'Light'
-          : 'Dark';
+          ? l10n.schemeLight
+          : l10n.schemeDark;
 
   @override
   bool operator ==(Object other) =>

@@ -4,19 +4,20 @@
 // a plugin channel; this file is only ever exercised in the running app.
 
 import 'package:file_selector/file_selector.dart';
+import 'package:lumit_flutter/l10n/strings.dart';
 
 import '../theme/theme_file.dart' show themeFileExtension;
 
 /// The `.lum` project type group (docs/10 §1). The egui open filter also lists
 /// the pre-rename `kir` leftover; a fresh frontend only ever offers `.lum`.
 XTypeGroup _projectGroup() =>
-    const XTypeGroup(label: 'Lumit project', extensions: ['lum']);
+    XTypeGroup(label: l10n.fileTypeProject, extensions: const ['lum']);
 
 /// The footage type group, mirroring the egui import filter exactly
 /// (crates/lumit-ui/src/app_state/layers.rs `import_footage_dialog`).
-XTypeGroup _footageGroup() => const XTypeGroup(
-      label: 'Footage',
-      extensions: [
+XTypeGroup _footageGroup() => XTypeGroup(
+      label: l10n.fileTypeFootage,
+      extensions: const [
         'mp4',
         'mov',
         'mkv',
@@ -76,7 +77,7 @@ Future<String?> pickExportSaveLocation(
 /// The `.lumfx` effect-preset type group, mirroring the egui Effects panel's
 /// preset filter (`crates/lumit-ui`'s `preset.rs`).
 XTypeGroup _presetGroup() =>
-    const XTypeGroup(label: 'Lumit effect preset', extensions: ['lumfx']);
+    XTypeGroup(label: l10n.fileTypePreset, extensions: const ['lumfx']);
 
 /// Pick one `.lumfx` preset file to load, or null when cancelled.
 Future<String?> pickPresetToOpen() async {
@@ -100,7 +101,7 @@ Future<String?> pickPresetSaveLocation(String suggestedName,
 /// The keymap type group (docs/07 §15's shareable file, K-199). Plain JSON, so
 /// a `.json` a user has renamed still opens.
 XTypeGroup _keymapGroup() =>
-    const XTypeGroup(label: 'Lumit keymap', extensions: ['json']);
+    XTypeGroup(label: l10n.fileTypeKeymap, extensions: const ['json']);
 
 /// Pick a keymap file to import, or null when the dialogue was cancelled.
 Future<String?> pickKeymapToOpen() async {
@@ -111,8 +112,8 @@ Future<String?> pickKeymapToOpen() async {
 /// The shared-theme type group (K-298), the theme's counterpart of the
 /// keymap's. Lumit's own extension rather than a plain `.json`, so the picker
 /// can offer just themes.
-XTypeGroup _themeGroup() =>
-    const XTypeGroup(label: 'Lumit theme', extensions: [themeFileExtension]);
+XTypeGroup _themeGroup() => XTypeGroup(
+    label: l10n.fileTypeTheme, extensions: const [themeFileExtension]);
 
 /// Pick a theme file to import, or null when the dialogue was cancelled.
 Future<String?> pickThemeToOpen() async {
@@ -132,7 +133,8 @@ Future<String?> pickThemeSaveLocation(String suggestedName) async {
 
 /// Pick a folder — Settings → Performance's cache location, where the disk tier
 /// parks its frames (docs/07 §15). Null when the dialogue was cancelled.
-Future<String?> pickFolder() => getDirectoryPath(confirmButtonText: 'Choose');
+Future<String?> pickFolder() =>
+    getDirectoryPath(confirmButtonText: l10n.chooseConfirm);
 
 /// Choose where to write a keymap, or null when cancelled.
 Future<String?> pickKeymapSaveLocation() async {

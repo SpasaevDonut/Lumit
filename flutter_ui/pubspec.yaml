@@ -9,6 +9,9 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  intl: any
   crypto: ^3.0.7
   ffi: ^2.1.0
   iconoir_flutter: ^7.11.1
@@ -31,6 +34,8 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  # Turns lib/l10n/*.arb into Dart at `flutter pub get` time (see l10n.yaml).
+  generate: true
   fonts:
     - family: Inter
       fonts:

@@ -20,6 +20,7 @@ import 'package:lumit_flutter/src/rust/api/project_item.dart';
 import 'package:provider/provider.dart';
 
 import '../icons/icons.dart';
+import '../l10n/strings.dart';
 import '../widgets/controls.dart';
 import 'placeholder.dart';
 import 'timeline_extras_frb.dart';
@@ -47,10 +48,10 @@ class _HierarchyPanelFrbState extends State<HierarchyPanelFrb> {
     final ui = Provider.of<LumitUiState>(context);
     final comp = ui.selectedComp;
     if (comp == null) {
-      return const PlaceholderPanel(
+      return PlaceholderPanel(
         icon: LumitIcon.nodes,
-        title: 'Hierarchy',
-        hint: 'Select a composition in the Project panel.',
+        title: l10n.panelHierarchy,
+        hint: l10n.selectACompositionFirst,
       );
     }
 
@@ -64,7 +65,7 @@ class _HierarchyPanelFrbState extends State<HierarchyPanelFrb> {
 
         if (rows.isEmpty) {
           return Center(
-            child: Text('This composition has no layers yet', style: t.small),
+            child: Text(l10n.hierarchyEmpty, style: t.small),
           );
         }
         return ListView(

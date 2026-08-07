@@ -8,6 +8,7 @@
 
 import 'package:flutter/widgets.dart';
 
+import '../l10n/strings.dart';
 import '../widgets/controls.dart';
 
 /// Ask for a theme name, seeded with [suggested] and headed by [title].
@@ -19,7 +20,7 @@ Future<String?> askThemeName(
   BuildContext context, {
   required String title,
   required String suggested,
-  String confirm = 'Save',
+  String? confirm,
 }) async {
   final controller = TextEditingController(text: suggested);
   final name = await showLumitModal<String>(
@@ -49,14 +50,14 @@ Future<String?> askThemeName(
                   small: true,
                   frameless: true,
                   onPressed: () => close(null),
-                  child: const Text('Cancel'),
+                  child: Text(l10n.cancel),
                 ),
                 const SizedBox(width: 6),
                 HouseButton(
                   key: const ValueKey('theme-name-ok'),
                   small: true,
                   onPressed: () => close(controller.text),
-                  child: Text(confirm),
+                  child: Text(confirm ?? l10n.save),
                 ),
               ],
             ),

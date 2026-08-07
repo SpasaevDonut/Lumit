@@ -23,6 +23,7 @@
 import 'dart:convert';
 
 import 'custom_theme.dart';
+import 'package:lumit_flutter/l10n/strings.dart';
 
 /// The extension a shared theme is written under. Lumit's own, so the file
 /// picker can offer just these and the system can associate them later.
@@ -69,10 +70,10 @@ ThemeFileRead readThemeFile(String text) {
   try {
     parsed = jsonDecode(text);
   } catch (_) {
-    return const ThemeFileRead.refused('That file is not a Lumit theme.');
+    return ThemeFileRead.refused(l10n.themeFileNotATheme);
   }
   if (parsed is! Map) {
-    return const ThemeFileRead.refused('That file is not a Lumit theme.');
+    return ThemeFileRead.refused(l10n.themeFileNotATheme);
   }
   final json = parsed.cast<String, dynamic>();
   // The marker is required when present and wrong, and forgiven when absent:
@@ -80,15 +81,14 @@ ThemeFileRead readThemeFile(String text) {
   // and no marker, and refusing that would be pedantry rather than safety.
   final format = json['format'];
   if (format is String && format != themeFileFormat) {
-    return const ThemeFileRead.refused('That file is not a Lumit theme.');
+    return ThemeFileRead.refused(l10n.themeFileNotATheme);
   }
   final theme = CustomTheme.fromJson(json);
   if (theme == null) {
-    return const ThemeFileRead.refused(
-        'That theme file has no name, so there would be nothing to select.');
+    return ThemeFileRead.refused(l10n.themeFileNoName);
   }
   if (theme.colours.isEmpty) {
-    return const ThemeFileRead.refused('That theme file carries no colours.');
+    return ThemeFileRead.refused(l10n.themeFileNoColours);
   }
   return ThemeFileRead.loaded(theme);
 }

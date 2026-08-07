@@ -237,6 +237,27 @@ path, documented beside the types in
     graphics card at each node, so an unasked-for frame costs exactly what it
     did before this existed.
 
+## Display text crosses the bridge in English (K-303)
+
+Some of what the bridge sends is meant to be read by a person: `BridgeEffectInfo`'s
+`label` and `category_label`, the parameter and choice labels in an effect's schema, and
+the keymap's `description` and context headings. **These stay British English on the wire
+and are always sent alongside the stable id they belong to** (`match_name`, the parameter
+`id`, the action id). The engine has no notion of a language and is not being given one.
+
+The frontend translates them on arrival, by looking the English text up in
+`flutter_ui/lib/l10n/engine_labels.dart`. Two consequences bind anything added here:
+
+- **A new display string in the engine needs a matching entry in that table**, in the same
+  commit. `flutter_ui/test/l10n/engine_labels_test.dart` reads the Rust sources and fails
+  otherwise, so it cannot be forgotten quietly.
+- **Build a display string with `format!` and it cannot be translated**, because the
+  lookup is by whole text. Send the pieces and let the frontend assemble them, or give the
+  string a stable id of its own.
+
+Nothing else the bridge sends is display text: a layer name, a comp name, a file path and
+a preset name are the *user's* words, and are passed through untouched.
+
 ## Feature gates
 
 - **`media`** (default on) pulls `lumit-media` (FFmpeg) for probing and decoding.

@@ -18,6 +18,7 @@
 
 import 'package:flutter/services.dart';
 
+import 'package:lumit_flutter/l10n/strings.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
@@ -291,7 +292,6 @@ String effectsPath(String layerId) => '$layerId/effects';
 String effectPath(String layerId, String effectId) =>
     '$layerId/effects/$effectId';
 
-
 /// The effect instance a fold path names, or null when the path is not one
 /// effect's heading (it is the Effects group itself, one parameter under an
 /// effect, or something else entirely). Used by the render-time indicator to
@@ -361,7 +361,7 @@ List<LayerFoldRow> layerFoldRows({
 
   rows.add(FoldGroupRow(
     path: transformPath(id),
-    label: 'Transform',
+    label: l10n.transformSection,
     open: transformOpen,
     depth: 1,
   ));
@@ -378,7 +378,7 @@ List<LayerFoldRow> layerFoldRows({
     final contentsOpen = open.contains(contentsPath(id));
     rows.add(FoldGroupRow(
       path: contentsPath(id),
-      label: 'Contents',
+      label: l10n.foldContents,
       open: contentsOpen,
       depth: 1,
     ));
@@ -398,7 +398,7 @@ List<LayerFoldRow> layerFoldRows({
     final masksOpen = open.contains(masksPath(id));
     rows.add(FoldGroupRow(
       path: masksPath(id),
-      label: 'Masks',
+      label: l10n.foldMasks,
       open: masksOpen,
       depth: 1,
     ));
@@ -416,7 +416,7 @@ List<LayerFoldRow> layerFoldRows({
     final paintOpen = open.contains(paintPath(id));
     rows.add(FoldGroupRow(
       path: paintPath(id),
-      label: 'Paint',
+      label: l10n.foldPaint,
       open: paintOpen,
       depth: 1,
     ));
@@ -433,7 +433,7 @@ List<LayerFoldRow> layerFoldRows({
     final effectsOpen = open.contains(effectsPath(id));
     rows.add(FoldGroupRow(
       path: effectsPath(id),
-      label: 'Effects',
+      label: l10n.workspaceEffects,
       open: effectsOpen,
       depth: 1,
     ));
@@ -461,7 +461,7 @@ List<LayerFoldRow> layerFoldRows({
     final audioOpen = open.contains(audioPath(id));
     rows.add(FoldGroupRow(
       path: audioPath(id),
-      label: 'Audio',
+      label: l10n.workspaceAudio,
       open: audioOpen,
       depth: 1,
     ));
@@ -472,7 +472,7 @@ List<LayerFoldRow> layerFoldRows({
       final waveOpen = open.contains(waveformPath(id));
       rows.add(FoldGroupRow(
         path: waveformPath(id),
-        label: 'Waveform',
+        label: l10n.foldWaveform,
         open: waveOpen,
         depth: 2,
       ));
