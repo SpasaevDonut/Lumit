@@ -133,8 +133,11 @@ Widget hostPanel({
               // and a test cannot see an inline editor commit on a click
               // elsewhere (K-243).
               child: TapRegionSurface(
-                child: Overlay(
-                  initialEntries: [OverlayEntry(builder: (_) => child)],
+                child: _StopsPreviewProgress(
+                  uiState: uiState,
+                  child: Overlay(
+                    initialEntries: [OverlayEntry(builder: (_) => child)],
+                  ),
                 ),
               ),
             ),
@@ -142,6 +145,39 @@ Widget hostPanel({
         ),
       ),
     );
+
+/// Stops the preview-progress timer when the tree comes down.
+///
+/// `addTearDown(uiState.dispose)` below cancels that timer too, but it runs too
+/// late to help the test that started it: `flutter_test` unmounts the tree,
+/// pumps, and *then* asserts that no timer is pending — all before a single
+/// `addTearDown` callback is called. So a test whose last render report lands
+/// within the tracker's 150 ms delay ends with a timer it cannot cancel, and
+/// fails on a bar that was never going to be drawn.
+///
+/// A widget's `dispose` runs during that unmount, which is early enough. Every
+/// frb test mounts through [hostPanel], so this covers all of them rather than
+/// each test having to remember to wait for `previewProgress.idle`.
+class _StopsPreviewProgress extends StatefulWidget {
+  const _StopsPreviewProgress({required this.uiState, required this.child});
+
+  final LumitUiState uiState;
+  final Widget child;
+
+  @override
+  State<_StopsPreviewProgress> createState() => _StopsPreviewProgressState();
+}
+
+class _StopsPreviewProgressState extends State<_StopsPreviewProgress> {
+  @override
+  void dispose() {
+    widget.uiState.previewProgress.stop();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
 
 /// A fresh engine-backed project and its UI state.
 ///
