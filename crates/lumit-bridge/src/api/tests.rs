@@ -2090,6 +2090,82 @@ fn the_razor_cuts_and_deletes_without_moving_the_other_clips() {
     );
 }
 
+/// The memory report answers without a project, and its arithmetic holds
+/// (K-294).
+///
+/// The point of the report is the *unaccounted* figure — what the process holds
+/// that no tier here admits to — so what is pinned is that it is derived from
+/// the two numbers it claims to be derived from, and that a platform which will
+/// not say how big the process is says so with a zero rather than a guess.
+#[test]
+fn the_memory_report_answers_and_its_arithmetic_holds() {
+    use crate::api::cache::memory_report;
+
+    let report = memory_report();
+
+    // Every desktop this ships on can answer; a platform that cannot returns 0
+    // rather than inventing, and then there is nothing to check.
+    if report.process_bytes == 0 {
+        return;
+    }
+
+    let accounted = report.frame_cache_bytes
+        + report.decode_cache_bytes
+        + if report.unified_memory {
+            report.vram_cache_bytes
+        } else {
+            0
+        };
+    assert_eq!(
+        report.unaccounted_bytes,
+        report.process_bytes.saturating_sub(accounted),
+        "unaccounted is the process less the tiers that live in ordinary memory"
+    );
+    assert!(
+        report.unaccounted_bytes <= report.process_bytes,
+        "a part cannot exceed the whole"
+    );
+    // The card's frames count against the process only where they are in it.
+    // Getting this backwards makes a cache doing its job read as a leak, which
+    // is the one way this report can actively mislead.
+    if !report.unified_memory {
+        assert_eq!(
+            report.unaccounted_bytes,
+            report
+                .process_bytes
+                .saturating_sub(report.frame_cache_bytes + report.decode_cache_bytes),
+            "a discrete card's frames are not in this process, so they are not \
+             subtracted from it"
+        );
+    }
+    assert!(
+        report.park_queue_frames <= lumit_render::diskio::MAX_PENDING_PARKS as u64,
+        "the write-behind queue is bounded (K-277), and the report shows it"
+    );
+}
+
+/// A process that is holding memory answers a plausible size for itself — the
+/// syscall behind the report is wired, not a stub returning zero on the
+/// platform running the tests.
+#[test]
+fn the_process_reports_its_own_size() {
+    let bytes = crate::api::system::resident_memory_bytes();
+    // Bound rather than asserted inline: `cfg!` is a literal, and an assert on
+    // one is a constant expression clippy rightly refuses.
+    let desktop = cfg!(any(windows, target_os = "linux", target_os = "macos"));
+    if bytes == 0 {
+        // Only an unsupported platform may answer nothing.
+        assert!(!desktop, "every desktop target answers its own size");
+        return;
+    }
+    // A test process holding less than a megabyte, or more than a terabyte, is
+    // a misread struct rather than a real reading.
+    assert!(
+        bytes > (1 << 20) && bytes < (1 << 40),
+        "a plausible process size, not a misread field: {bytes} bytes"
+    );
+}
+
 /// The cache readout answers without a project and never panics — the Settings
 /// window can show it before anything is open.
 #[test]

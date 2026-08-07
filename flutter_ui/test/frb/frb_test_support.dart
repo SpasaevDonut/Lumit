@@ -153,7 +153,16 @@ Widget hostPanel({
   // A default workspace, deliberately NOT loaded from disk: `Workspace()..load()`
   // reads the developer's own settings file, so a test would assert against
   // whatever colour scheme the machine happened to be set to.
-  return (state: state, uiState: LumitUiState(state, workspace: Workspace()));
+  final uiState = LumitUiState(state, workspace: Workspace());
+  // Every one of these listens to the engine's response stream and holds the
+  // preview-progress timer. Dropped on the floor at the end of a test they do
+  // not stop listening, so by the end of a file a dozen dead UI states are
+  // still taking reports — and a timer one of them starts fires inside some
+  // later, unrelated test, which then fails on a pending timer it never
+  // created. That is precisely how `cache_bar_frb_test` went red on main while
+  // passing everywhere else: it was not its timer.
+  addTearDown(uiState.dispose);
+  return (state: state, uiState: uiState);
 }
 
 /// Let an async frb call actually finish inside a `testWidgets` body.

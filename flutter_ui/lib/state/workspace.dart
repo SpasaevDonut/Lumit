@@ -173,6 +173,13 @@ class Workspace extends ChangeNotifier {
   /// the middle of a themed shell is a thing people want to turn off.
   bool themedViewerSurround = false;
 
+  /// Whether the Viewer smooths the picture when it is zoomed past 1:1. Off,
+  /// so a magnified pixel is a square and what is on screen is what is in the
+  /// frame — the reason to zoom in is usually to look at the pixels. On,
+  /// Flutter's bilinear filtering blends them, which is gentler on the eye
+  /// when the zoom is being used to frame rather than to inspect.
+  bool smoothZoomedViewer = false;
+
   /// Working preferences for the Pre-compose dialogue (Ctrl+Shift+C).
   /// Default: Move attributes = true, Adjust duration = true, Open new comp = false.
   /// If changed by the user, saved straight to the workspace store.
@@ -182,6 +189,19 @@ class Workspace extends ChangeNotifier {
 
   PerformanceSettings performance = PerformanceSettings();
   InterfaceSettings interface = InterfaceSettings();
+
+  /// Whether Lumit looks for a newer version on launch (K-296).
+  ///
+  /// On by default, and offered on the setup screen as well as in Settings: an
+  /// editor that quietly falls years behind is how people end up reporting bugs
+  /// that were fixed long ago. It is a *look*, not a download — the installer
+  /// is only fetched when the user asks for it, so leaving this on never costs
+  /// anybody a surprise few hundred megabytes.
+  bool autoUpdate = true;
+
+  /// When the last update check finished, in milliseconds since the epoch.
+  /// Zero means never. Kept so six launches in a morning ask GitHub once.
+  int lastUpdateCheckMs = 0;
 
   /// Whether the first-run screen has had its answer (K-246, docs/07 §13.1).
   ///
@@ -376,6 +396,22 @@ class Workspace extends ChangeNotifier {
     save();
   }
 
+  /// Turn automatic update checks on or off (K-296). Written straight out: it
+  /// is one boolean, and a setting that did not survive the restart it is about
+  /// would be a poor joke.
+  void setAutoUpdate(bool on) {
+    autoUpdate = on;
+    notifyListeners();
+    save();
+  }
+
+  /// Record that a check has just happened, so the next launch does not repeat
+  /// it. Saved without notifying — nothing on screen reads this.
+  void rememberUpdateCheck(int atMillis) {
+    lastUpdateCheckMs = atMillis;
+    save();
+  }
+
   void setThemedScopes(bool on) {
     themedScopes = on;
     notifyListeners();
@@ -384,6 +420,12 @@ class Workspace extends ChangeNotifier {
 
   void setThemedViewerSurround(bool on) {
     themedViewerSurround = on;
+    notifyListeners();
+    save();
+  }
+
+  void setSmoothZoomedViewer(bool on) {
+    smoothZoomedViewer = on;
     notifyListeners();
     save();
   }
@@ -555,11 +597,14 @@ class Workspace extends ChangeNotifier {
         'performance': performance.toJson(),
         'interface': interface.toJson(),
         'first_run_done': firstRunDone,
+        'auto_update': autoUpdate,
+        'last_update_check_ms': lastUpdateCheckMs,
         'keymap': keymapJson,
         'custom_themes': [for (final t in customThemes) t.toJson()],
         'custom_theme': customThemeName,
         'themed_scopes': themedScopes,
         'themed_viewer_surround': themedViewerSurround,
+        'smooth_zoomed_viewer': smoothZoomedViewer,
         'precompose_move_attributes': precomposeMoveAttributes,
         'precompose_adjust_duration': precomposeAdjustDuration,
         'precompose_open_new_comp': precomposeOpenNewComp,
@@ -597,6 +642,11 @@ class Workspace extends ChangeNotifier {
     }
     // Absent means an existing user, not a new one — see the field.
     firstRunDone = j['first_run_done'] as bool? ?? true;
+    // Absent means a settings file written before there were updates to check
+    // for; the default is on, and an existing user gets the same offer a new
+    // one does.
+    autoUpdate = j['auto_update'] as bool? ?? true;
+    lastUpdateCheckMs = j['last_update_check_ms'] as int? ?? 0;
     keymapJson = j['keymap'] is String ? j['keymap'] as String : null;
     customThemes = [];
     final rawThemes = j['custom_themes'];
@@ -612,6 +662,7 @@ class Workspace extends ChangeNotifier {
         j['custom_theme'] is String ? j['custom_theme'] as String : null;
     themedScopes = j['themed_scopes'] == true;
     themedViewerSurround = j['themed_viewer_surround'] == true;
+    smoothZoomedViewer = j['smooth_zoomed_viewer'] == true;
     precomposeMoveAttributes = j['precompose_move_attributes'] as bool? ?? true;
     precomposeAdjustDuration = j['precompose_adjust_duration'] as bool? ?? true;
     precomposeOpenNewComp = j['precompose_open_new_comp'] as bool? ?? false;

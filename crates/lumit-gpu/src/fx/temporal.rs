@@ -216,11 +216,7 @@ impl FxEngine {
                 },
             ],
         });
-        let mut enc = ctx
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("fx-mb-enc"),
-            });
+        let mut enc = ctx.encoder("fx-mb-enc");
         {
             let mut cpass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("fx-mb-pass"),
@@ -230,7 +226,7 @@ impl FxEngine {
             cpass.set_bind_group(0, &bind, &[]);
             cpass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
         }
-        ctx.queue.submit([enc.finish()]);
+        drop(enc);
         out
     }
 
@@ -295,11 +291,7 @@ impl FxEngine {
                 },
             ],
         });
-        let mut enc = ctx
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("fx-dm-enc"),
-            });
+        let mut enc = ctx.encoder("fx-dm-enc");
         {
             let mut cpass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("fx-dm-pass"),
@@ -309,7 +301,7 @@ impl FxEngine {
             cpass.set_bind_group(0, &bind, &[]);
             cpass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
         }
-        ctx.queue.submit([enc.finish()]);
+        drop(enc);
         out
     }
 }

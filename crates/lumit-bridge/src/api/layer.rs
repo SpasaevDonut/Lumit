@@ -615,14 +615,69 @@ pub(crate) fn read_layer_info(
     }
 }
 
-/// A footage layer's waveform peaks: the whole source bucketed to a fixed
-/// count, plus its length so the lane can map comp time onto buckets.
+/// The most buckets one peak query may ask for (K-280). A lane asks for a
+/// bucket per pixel column, and no panel is four thousand columns wide on any
+/// display this ships to; the cap is what stops a frontend bug turning into an
+/// unbounded allocation across the seam (docs/14 §5).
+pub const MAX_PEAK_BUCKETS: u32 = 4096;
+
+/// One window of a source's waveform, summarised to exactly the buckets the
+/// lane asked for (K-280).
+///
+/// The **window** is the point: a lane asks for the stretch of audio it is
+/// currently showing at the number of buckets it has pixel columns, so the
+/// drawn detail follows the zoom instead of being fixed at import. Buckets that
+/// fall outside the audio come back silent rather than missing, so a caller's
+/// column index and a bucket index always agree.
+///
+/// One to four **bands** ride in the same answer. A single-wave lane asks for
+/// one (the whole signal); a multiwave lane asks for three (bass, middle,
+/// treble) and stacks them, which is what shows the difference between a kick
+/// and a hi-hat inside a loud passage that is otherwise one solid block.
 #[frb(non_opaque)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct BridgeAudioPeaks {
+    /// How long the whole source runs, so a lane can tell where its window sits.
     pub duration_seconds: f64,
-    /// Interleaved `[min0, max0, min1, max1, …]`, each in −1..1.
-    pub pairs: Vec<f32>,
+    /// The window these buckets span, in the caller's own clock — source
+    /// seconds for a layer, clip-local seconds for a clip.
+    pub start_seconds: f64,
+    pub end_seconds: f64,
+    /// How many bands are stacked here: 1 (the whole signal) or 3 (bass,
+    /// middle, treble, in that order).
+    pub bands: u32,
+    /// Buckets per band.
+    pub buckets: u32,
+    /// Band-major triples: band `b`'s bucket `i` is `min`, `max`, `rms` at
+    /// `3 * (b * buckets + i)`, each in −1..1.
+    pub values: Vec<f32>,
+}
+
+impl BridgeAudioPeaks {
+    /// The answer for a source with nothing to draw: no audio, no media
+    /// feature, a file that has gone missing. A lane draws it as an empty lane.
+    #[frb(ignore)]
+    fn empty() -> BridgeAudioPeaks {
+        BridgeAudioPeaks {
+            duration_seconds: 0.0,
+            start_seconds: 0.0,
+            end_seconds: 0.0,
+            bands: 0,
+            buckets: 0,
+            values: Vec::new(),
+        }
+    }
+
+    /// The bands a `multiwave` flag asks for, in the order they stack.
+    #[frb(ignore)]
+    #[cfg(feature = "media")]
+    fn bands_of(multiwave: bool) -> Vec<lumit_audio::peaks::Band> {
+        if multiwave {
+            lumit_audio::peaks::Band::stack().to_vec()
+        } else {
+            vec![lumit_audio::peaks::Band::Full]
+        }
+    }
 }
 
 /// A layer used as another layer's matte (docs/03 §5.1).
@@ -2286,65 +2341,187 @@ impl LayerReference {
         ))
     }
 
-    /// Whether this layer's source actually carries sound.
+    /// The layer's source audio summarised across `[start_seconds,
+    /// end_seconds)` of the **source's own clock**, in `buckets` buckets
+    /// (K-280, superseding the fixed 2 048 of K-172).
     ///
-    /// What decides whether the Audio group appears under a layer at all
-    /// (docs/07 §4.3): every layer *has* a Volume property in the model, but on
-    /// a solid or a title it can never be heard, and a control that cannot do
-    /// anything is worse than no control. Footage is the case that matters, and
-    /// the answer is the container's own: a file with an audio stream.
+    /// Source time, not comp time, is what makes a trim or a drag free: the
+    /// peaks belong to the file, so the Timeline's lane maps them through the
+    /// live in/out/offset each paint and the transients travel with the bar. The
+    /// *window* is what makes the resolution follow the zoom — a lane showing
+    /// two seconds asks for two seconds, and gets a bucket per pixel column of
+    /// them, however far in the Timeline is zoomed.
     ///
-    /// Probing opens the file with FFmpeg, so this is deliberately **not**
-    /// `#[frb(sync)]`. A layer whose media cannot be resolved answers false —
-    /// a missing file is not a reason to offer a volume control.
-    /// The layer's source audio as `buckets` (min, max) peak pairs across the
-    /// WHOLE source, interleaved `[min0, max0, min1, max1, …]` (K-172). The
-    /// peaks belong to the file, not the placement, so a trim or a drag never
-    /// invalidates them — the Timeline's waveform lane maps them through the
-    /// live in/out/offset each paint. Deliberately not `#[frb(sync)]`: it
-    /// decodes the whole track. Empty when the layer has no decodable audio.
-    // ponytail: decodes the file once per asking layer per session — no
-    // persistent peak files yet (docs/TODO), and two layers on one file
-    // decode twice. Cache per item when a real project feels it.
-    pub fn audio_peaks(&self, buckets: u32) -> Result<BridgeAudioPeaks, BridgeError> {
-        let empty = BridgeAudioPeaks {
-            duration_seconds: 0.0,
-            pairs: Vec::new(),
-        };
+    /// `multiwave` asks for the three-band stack (bass, middle, treble) instead
+    /// of the single full-range wave.
+    ///
+    /// Deliberately not `#[frb(sync)]`: the first ask for a file decodes it.
+    /// Every later ask, at every zoom, is served from the session's peak cache
+    /// ([`crate::peaks`]) and costs a walk over a few thousand summaries.
+    /// Empty when the layer has no decodable audio.
+    pub fn audio_peaks(
+        &self,
+        start_seconds: f64,
+        end_seconds: f64,
+        buckets: u32,
+        multiwave: bool,
+    ) -> Result<BridgeAudioPeaks, BridgeError> {
         let layer = self.item()?;
         let lumit_core::model::LayerKind::Footage { item, .. } = layer.kind else {
-            return Ok(empty);
-        };
-        let proj = self.project()?;
-        let proj = proj.read().map_err(|_| BridgeError::ReadFailed)?;
-        let snapshot = proj.store.snapshot();
-        let Some(lumit_core::model::ProjectItem::Footage(footage)) = snapshot.item(item) else {
-            return Ok(empty);
+            return Ok(BridgeAudioPeaks::empty());
         };
 
         #[cfg(feature = "media")]
         {
-            let Some(path) = crate::api::footage::FootageReference::resolve_path(&proj, footage)
-            else {
-                return Ok(empty);
+            // The read lock goes no further than resolving the path: building a
+            // summary means decoding the file, and holding the project across
+            // that stalls every other reader (docs/14 §3).
+            let path = {
+                let proj = self.project()?;
+                let proj = proj.read().map_err(|_| BridgeError::ReadFailed)?;
+                let snapshot = proj.store.snapshot();
+                let Some(lumit_core::model::ProjectItem::Footage(footage)) = snapshot.item(item)
+                else {
+                    return Ok(BridgeAudioPeaks::empty());
+                };
+                crate::api::footage::FootageReference::resolve_path(&proj, footage)
             };
-            let Ok(buffer) = lumit_media::audio::decode_all(&path, 48_000) else {
-                return Ok(empty);
+            let Some(path) = path else {
+                return Ok(BridgeAudioPeaks::empty());
             };
-            let pairs = lumit_audio::mix::waveform_peaks(&buffer.samples, buckets as usize);
+            let Some(pyramid) = crate::peaks::pyramid_for(&path) else {
+                return Ok(BridgeAudioPeaks::empty());
+            };
+
+            let buckets = buckets.min(MAX_PEAK_BUCKETS) as usize;
+            let bands = BridgeAudioPeaks::bands_of(multiwave);
+            let mut values = Vec::with_capacity(bands.len() * buckets * 3);
+            for band in &bands {
+                for block in pyramid.range(*band, start_seconds, end_seconds, buckets) {
+                    values.extend_from_slice(&[block.min, block.max, block.rms]);
+                }
+            }
             Ok(BridgeAudioPeaks {
-                duration_seconds: buffer.duration_seconds(),
-                pairs: pairs.into_iter().flat_map(|(lo, hi)| [lo, hi]).collect(),
+                duration_seconds: pyramid.duration_seconds(),
+                start_seconds,
+                end_seconds,
+                bands: bands.len() as u32,
+                buckets: buckets as u32,
+                values,
             })
         }
 
         #[cfg(not(feature = "media"))]
         {
             // Nothing decodes without FFmpeg, so the peaks are empty and the
-            // lane draws a flat line — the documented shape of a media-less
-            // build, not a failure (docs/17 §Feature gates).
-            let _ = (buckets, footage);
-            Ok(empty)
+            // lane draws nothing — the documented shape of a media-less build,
+            // not a failure (docs/17 §Feature gates).
+            let _ = (item, start_seconds, end_seconds, buckets, multiwave);
+            Ok(BridgeAudioPeaks::empty())
+        }
+    }
+
+    /// One Sequence clip's audio, summarised in `buckets` across the clip's own
+    /// placed span — the waveform a clip draws inside itself (K-280).
+    ///
+    /// Bucketed in **clip-local placed time**, not source time, because a clip
+    /// is the one thing on the timeline whose source clock is not a straight
+    /// line: a ramp plays its middle slowly and its end fast, and buckets taken
+    /// evenly in source time would put the transients in the wrong columns. So
+    /// each bucket is mapped through the clip's own map here, where that map
+    /// lives, and the lane draws bucket `i` at column `i` of the clip's box.
+    /// Sliding the clip along the row moves the picture with it for free; a
+    /// trim changes the mapping, so the lane asks again when the trim commits.
+    ///
+    /// `[start_seconds, end_seconds)` is the stretch of the clip's own placed
+    /// clock to summarise, clamped to the clip; pass the clip's whole span for
+    /// the whole clip, or the visible part of it to keep the detail level with
+    /// the zoom. An empty or backwards range is read as the whole clip.
+    ///
+    /// `multiwave` asks for the three-band stack, exactly as for a layer. Empty
+    /// for a clip cut from a comp or from media with no sound.
+    pub fn clip_audio_peaks(
+        &self,
+        clip: Uuid,
+        start_seconds: f64,
+        end_seconds: f64,
+        buckets: u32,
+        multiwave: bool,
+    ) -> Result<BridgeAudioPeaks, BridgeError> {
+        let (clips, index) = self.clips_and_index(clip)?;
+        let Some(clip) = clips.get(index) else {
+            return Ok(BridgeAudioPeaks::empty());
+        };
+        let lumit_core::sequence::ClipSource::Footage(item) = clip.source else {
+            return Ok(BridgeAudioPeaks::empty());
+        };
+
+        #[cfg(feature = "media")]
+        {
+            let path = {
+                let proj = self.project()?;
+                let proj = proj.read().map_err(|_| BridgeError::ReadFailed)?;
+                let snapshot = proj.store.snapshot();
+                let Some(lumit_core::model::ProjectItem::Footage(footage)) = snapshot.item(item)
+                else {
+                    return Ok(BridgeAudioPeaks::empty());
+                };
+                crate::api::footage::FootageReference::resolve_path(&proj, footage)
+            };
+            let Some(path) = path else {
+                return Ok(BridgeAudioPeaks::empty());
+            };
+            let Some(pyramid) = crate::peaks::pyramid_for(&path) else {
+                return Ok(BridgeAudioPeaks::empty());
+            };
+
+            let buckets = buckets.clamp(1, MAX_PEAK_BUCKETS) as usize;
+            let clip_start = clip.place_start.to_f64();
+            let clip_end = clip_start + clip.place_duration.to_f64();
+            let (start, end) = if end_seconds > start_seconds {
+                (
+                    start_seconds.max(clip_start).min(clip_end),
+                    end_seconds.max(clip_start).min(clip_end),
+                )
+            } else {
+                (clip_start, clip_end)
+            };
+            if end <= start {
+                return Ok(BridgeAudioPeaks::empty());
+            }
+            let step = (end - start) / buckets as f64;
+            // Where each bucket's edge lands in the source, through the clip's
+            // map. One more edge than buckets, so neighbouring buckets share
+            // theirs and no sliver of source falls between two columns.
+            let edges: Vec<f64> = (0..=buckets)
+                .map(|i| clip.source_time(start + step * i as f64))
+                .collect();
+            let bands = BridgeAudioPeaks::bands_of(multiwave);
+            let mut values = Vec::with_capacity(bands.len() * buckets * 3);
+            for band in &bands {
+                for i in 0..buckets {
+                    let (Some(&a), Some(&b)) = (edges.get(i), edges.get(i + 1)) else {
+                        values.extend_from_slice(&[0.0, 0.0, 0.0]);
+                        continue;
+                    };
+                    let block = pyramid.window(*band, a, b);
+                    values.extend_from_slice(&[block.min, block.max, block.rms]);
+                }
+            }
+            Ok(BridgeAudioPeaks {
+                duration_seconds: pyramid.duration_seconds(),
+                start_seconds: start,
+                end_seconds: end,
+                bands: bands.len() as u32,
+                buckets: buckets as u32,
+                values,
+            })
+        }
+
+        #[cfg(not(feature = "media"))]
+        {
+            let _ = (item, start_seconds, end_seconds, buckets, multiwave);
+            Ok(BridgeAudioPeaks::empty())
         }
     }
 
@@ -2396,6 +2573,17 @@ impl LayerReference {
         }
     }
 
+    /// Whether this layer's source actually carries sound.
+    ///
+    /// What decides whether the Audio group appears under a layer at all
+    /// (docs/07 §4.3): every layer *has* a Volume property in the model, but on
+    /// a solid or a title it can never be heard, and a control that cannot do
+    /// anything is worse than no control. Footage is the case that matters, and
+    /// the answer is the container's own: a file with an audio stream.
+    ///
+    /// Probing opens the file with FFmpeg, so this is deliberately **not**
+    /// `#[frb(sync)]`. A layer whose media cannot be resolved answers false —
+    /// a missing file is not a reason to offer a volume control.
     pub fn has_audio(&self) -> Result<bool, BridgeError> {
         let layer = self.item()?;
         let lumit_core::model::LayerKind::Footage { item, .. } = layer.kind else {
@@ -2750,12 +2938,17 @@ impl LayerReference {
     #[frb(sync)]
     pub fn add_effect(&self, name: String) -> Result<(), BridgeError> {
         let comp = self.composition()?;
-        let instance = lumit_core::fx::instantiate_for_raster(
+        let mut instance = lumit_core::fx::instantiate_for_raster(
             &name,
             f64::from(comp.width),
             f64::from(comp.height),
         )
         .ok_or(BridgeError::UnknownEffectName)?;
+        // A `self_default` layer reference starts pointed at the layer the
+        // effect is landing on (K-288, docs/impl/layer-input.md): the Lens
+        // flare's Matte source, whose natural reading is "the lights in this
+        // picture" — and on an adjustment layer, the composite below.
+        lumit_core::fx::point_self_layer_params_at(&mut instance, self.layer_id);
 
         self.with_effects(move |effects| {
             effects.push(instance);

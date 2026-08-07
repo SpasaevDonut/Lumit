@@ -60,7 +60,7 @@ class PreviewProgressTracker extends ChangeNotifier {
   /// True when nothing is being waited on: no render outstanding, and so no
   /// timer pending to decide whether a bar should appear.
   ///
-  /// Distinct from [visible], which is false both before a slow frame's bar
+  /// Distinct from [`visible`], which is false both before a slow frame's bar
   /// appears and after any frame finishes. A test that has asked for a render
   /// waits on *this* rather than on a round count, so a frame that takes longer
   /// on one machine — or under the load of a whole suite — than another does

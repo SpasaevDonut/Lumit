@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 pub mod beat;
 pub mod mix;
+pub mod peaks;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AudioError {

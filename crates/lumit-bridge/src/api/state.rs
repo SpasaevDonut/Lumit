@@ -346,6 +346,11 @@ pub(crate) fn op_scope(op: &lumit_core::Op) -> (Option<Uuid>, Option<Uuid>, bool
         // reads it directly — but it is a document change like any other, so it
         // belongs in the item scope rather than in a silent default.
         | Op::SetCacheLocation { .. }
+        // How hard the renderer works at the edges (K-274). No panel draws it
+        // either — Settings reads it directly — but it is a document change,
+        // and one that renames every frame of every comp, so it must be
+        // reported rather than fall through silently.
+        | Op::SetAntiAliasing { .. }
         // A solid def is a project item, and its name shows in the panel.
         | Op::SetSolidDef { .. } => (None, None, true),
 
@@ -551,6 +556,10 @@ impl LumitBridgeState {
                     e.media.clear();
                 }
             }
+            // The waveform summaries are keyed by file path and shared between
+            // projects, so they are not any one project's to clear — but the
+            // project being closed is the reason they were built (K-280).
+            crate::peaks::clear();
 
             // Clear any other project that is currently open
             // Will also prevent any existing references from working

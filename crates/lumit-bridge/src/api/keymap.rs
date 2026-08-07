@@ -113,6 +113,25 @@ pub struct BridgeKeyConflict {
     pub actions: Vec<String>,
 }
 
+/// One chord a panel takes over from an app-wide binding (K-281).
+///
+/// **Not a clash.** The focused panel gets first refusal and the app-wide
+/// binding is the fallback, so the chord runs exactly one action and which one
+/// is never in doubt. It is reported because the app-wide meaning does stop
+/// working in that one panel, and somebody reading their keymap should be able
+/// to see that rather than discover it by pressing the key.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BridgeKeyShadow {
+    pub chord: String,
+    /// Where the takeover applies, e.g. "Timeline".
+    pub context: String,
+    /// What the chord does there, described for display.
+    pub action: String,
+    /// What it does everywhere else.
+    pub shadowed: String,
+}
+
 /// Which shipped keymap to load wholesale.
 #[frb(non_opaque)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -218,6 +237,25 @@ pub fn keymap_conflicts() -> Vec<BridgeKeyConflict> {
     })
 }
 
+/// Every chord a panel takes over from an app-wide binding, described for
+/// display (K-281). Said out loud beside the table rather than flagged as
+/// something to fix — the shipped default carries one on purpose (`L`).
+#[frb(sync)]
+#[must_use]
+pub fn keymap_shadows() -> Vec<BridgeKeyShadow> {
+    with_keymap(|km| {
+        km.shadows()
+            .into_iter()
+            .map(|s| BridgeKeyShadow {
+                chord: s.chord.to_string(),
+                context: s.context.label().to_string(),
+                action: s.action.description(),
+                shadowed: s.shadowed.description(),
+            })
+            .collect()
+    })
+}
+
 /// What `chord` does while `context` is focused, or `None` for nothing bound.
 ///
 /// This is the dispatch path: every keypress the frontend sees becomes chord
@@ -238,8 +276,9 @@ pub fn keymap_lookup(context: BridgeKeyContext, chord: String) -> Option<String>
 /// Rejects only chord text that is not a chord; a chord another action already
 /// holds is accepted deliberately, because refusing it would make swapping two
 /// actions' keys impossible. Within one context the previous owner is left
-/// unbound and its row goes blank; across overlapping contexts both survive and
-/// [`keymap_conflicts`] reports the clash.
+/// unbound and its row goes blank; a panel-scoped binding taking an app-wide
+/// chord leaves both alive, the panel's winning where it is focused, and
+/// [`keymap_shadows`] says so (K-281).
 pub fn keymap_rebind(
     context: BridgeKeyContext,
     action: String,

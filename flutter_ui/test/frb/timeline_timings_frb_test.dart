@@ -137,7 +137,15 @@ void main() {
       await tester.pump();
       expect(find.byType(TimingsHeaderCell), findsOneWidget,
           reason: 'switching measuring back on brings the column back');
-      await settleFrb(tester, minRounds: 4);
+      // Wait for the render itself to come back, not for a fixed number of
+      // rounds: a frame's wall-clock cost varies with the machine, and a slow
+      // one leaves the progress tracker's timer pending past the end of the
+      // test.
+      await settleFrb(
+        tester,
+        until: () => p.uiState.previewProgress.idle,
+        maxRounds: 100,
+      );
     });
 
     /// An effect's own cost belongs in the same column as its layer's, or the

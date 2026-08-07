@@ -268,6 +268,19 @@ fn fs_layer(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(texel.rgb * a, a);
 }
 
+// The adjustment-layer seed, drawn rather than copied (docs/impl/anti-aliasing.md,
+// trap 1). `copy_texture_to_texture` cannot cross sample counts, so when the
+// composite target is multisampled the previous stage's pixels arrive as a
+// full-frame draw instead. `textureLoad` at the fragment's own pixel — never a
+// filtered sample — is what keeps it an exact copy of the seed: with no
+// resampling the seeded path stays bit-identical to the copy it replaces.
+// A full-frame quad covers every sample of every pixel, so all the samples of a
+// pixel take the one value and the resolve gives it back unchanged.
+@fragment
+fn fs_seed(in: VsOut) -> @location(0) vec4<f32> {
+    return textureLoad(src, vec2<i32>(in.pos.xy), 0);
+}
+
 // fp32 accumulation (docs/06 §4). The combine sums its weighted premultiplied
 // sub-frames in an Rgba32Float target, so a still scene averages back to itself
 // bit-for-bit (an fp16 target rounds the 0.75·v partial sum and drifts a LSB on

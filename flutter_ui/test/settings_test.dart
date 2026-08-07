@@ -30,6 +30,9 @@ void main() {
     // somebody who has not asked for it.
     expect(i.retimeOpensToSpeed, isFalse);
     expect(i.videoAsSequenceLayer, isFalse);
+    // The Retime row reads as a clock by default (K-287); seconds are the
+    // deviation, not the shipped state.
+    expect(i.retimeInSeconds, isFalse);
   });
 
   test('a settings file written before the Vegas pair loads as After Effects',
@@ -37,6 +40,12 @@ void main() {
     final i = InterfaceSettings.fromJson(const {'ui_scale': 1.25});
     expect(i.retimeOpensToSpeed, isFalse);
     expect(i.videoAsSequenceLayer, isFalse);
+    expect(i.retimeInSeconds, isFalse);
+  });
+
+  test('the Retime seconds preference round-trips', () {
+    final i = InterfaceSettings(retimeInSeconds: true);
+    expect(InterfaceSettings.fromJson(i.toJson()).retimeInSeconds, isTrue);
   });
 
   /// The returning playhead is the *new* default (K-254), so unlike the Vegas
@@ -118,6 +127,37 @@ void main() {
     final second = Workspace()..load();
     expect(second.firstRunDone, isTrue);
     expect(second.interface.retimeOpensToSpeed, isTrue);
+    Workspace.storeOverride = null;
+  });
+
+  // Automatic update checks (K-296): on by default, for a fresh install and
+  // for a settings file written before the setting existed alike.
+  test('update checks default to on and survive a restart', () {
+    expect(Workspace().autoUpdate, isTrue);
+    expect(
+        (Workspace()..applyJson(<String, dynamic>{'ui_scale': 1.0})).autoUpdate,
+        isTrue,
+        reason: 'a file that predates the setting still gets the default');
+
+    final path = _scratchStore('auto-update');
+    File(path).parent.createSync(recursive: true);
+    if (File(path).existsSync()) File(path).deleteSync();
+    Workspace.storeOverride = path;
+
+    (Workspace()..load()).setAutoUpdate(false);
+    expect((Workspace()..load()).autoUpdate, isFalse);
+    Workspace.storeOverride = null;
+  });
+
+  test('when the last update check happened is remembered', () {
+    final path = _scratchStore('update-check');
+    File(path).parent.createSync(recursive: true);
+    if (File(path).existsSync()) File(path).deleteSync();
+    Workspace.storeOverride = path;
+
+    expect((Workspace()..load()).lastUpdateCheckMs, 0);
+    (Workspace()..load()).rememberUpdateCheck(1234567);
+    expect((Workspace()..load()).lastUpdateCheckMs, 1234567);
     Workspace.storeOverride = null;
   });
 

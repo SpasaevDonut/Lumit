@@ -255,6 +255,85 @@ void main() {
       );
     });
 
+    /// **Dragging the zoom slider used to re-read the world per frame.**
+    /// The zoom was a plain field, so every step of a drag — and every tick of
+    /// a flight — rebuilt the whole panel: the work area came back across the
+    /// bridge two to four times, the cache bar asked for the composition's
+    /// whole cache map, and the outline rebuilt every row for a change that
+    /// happens entirely to the right of the seam. That is the "super super
+    /// laggy" the owner reported (K-293). Only the lane side listens to the
+    /// zoom now, and the cache bar holds its read until a frame arrives.
+    testWidgets('dragging the zoom slider asks the engine almost nothing',
+        (tester) async {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      final layer = comp.addSolidLayer();
+      comp.addTextLayer();
+      p.uiState.setSelectedComp(comp);
+
+      tester.view.physicalSize = const Size(1280, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(hostPanel(
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(1280, 600),
+        child: const TimelinePanelFrb(),
+      ));
+      await settleFrb(tester, minRounds: 8);
+
+      double barWidth() => tester
+          .getRect(
+              find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}')))
+          .width;
+      final before = barWidth();
+      final track = tester.getRect(find.byKey(const ValueKey('tl-zoom-slider')));
+      counter
+        ..reset()
+        ..counting = true;
+      // Eight steps along the track, the way a hand moves it — not one jump,
+      // because the cost being guarded is *per step*. The first is spent
+      // crossing the drag slop, which is what starts the drag.
+      final gesture =
+          await tester.startGesture(Offset(track.left + 2, track.center.dy));
+      await tester.pump();
+      for (var i = 0; i < 8; i++) {
+        await gesture.moveBy(Offset(track.width / 10, 0));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+      counter.counting = false;
+
+      // A drag that did nothing would cost nothing too, so say that it moved.
+      expect(barWidth(), greaterThan(before),
+          reason: 'the drag actually zoomed');
+      // ignore: avoid_print
+      print('ZOOM DRAG COST ${counter.total} calls\n${counter.ranking()}');
+
+      expect(
+        counter.calls['composition_reference_cached_frames'] ?? 0,
+        lessThan(3),
+        reason: 'the cache map was re-read while only the zoom moved:\n'
+            '${counter.ranking()}',
+      );
+      expect(
+        counter.calls['composition_reference_get_work_area'] ?? 0,
+        lessThan(3),
+        reason: 'the work area was re-read per step of the drag:\n'
+            '${counter.ranking()}',
+      );
+      // Loose, in the house style, and the per-name budgets above are the
+      // teeth: what must not happen is a count that scales with the number of
+      // steps. The revision check the read model makes once a frame is most of
+      // what is left here.
+      expect(
+        counter.total,
+        lessThan(40),
+        reason: 'a zoom drag re-read far too much:\n${counter.ranking()}',
+      );
+    });
+
     /// Hovering the Project panel used to re-fetch names (and once, the
     /// thumbnail) on every enter/exit, because each row asked the engine
     /// again on rebuild. The names ride in on the panel's walk and the

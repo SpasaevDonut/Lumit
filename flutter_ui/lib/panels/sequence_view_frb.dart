@@ -22,6 +22,7 @@
 // Zero bridge calls to draw: every clip and its map ride in on the comp read
 // model (K-184). The bridge is crossed only when a gesture commits.
 
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/gestures.dart';
@@ -36,6 +37,7 @@ import '../widgets/controls.dart';
 import 'graph_maths.dart';
 import 'layer_fold_frb.dart';
 import 'timeline_extras_frb.dart';
+import 'waveform_frb.dart';
 
 /// One timeline row's height — the unit the whole view is measured in, so it
 /// lands on the table's own grid.
@@ -86,10 +88,21 @@ class SequenceViewFrb extends StatefulWidget {
   /// with nothing naming them. The graph editor solved this the same way.
   final ScrollController? hScroll;
 
+  /// How waveforms draw (K-280, K-285). Passed in rather than read here: the
+  /// Timeline already reads the setting for its own lanes, and a clip and a
+  /// layer disagreeing about it would be two answers to one question.
+  final WaveformStyle style;
+
   /// Whether the razor is armed, and how to cut this layer at a frame — the
   /// open view stands in for the layer's bar, so it carries the bar's razor.
   final bool razor;
   final void Function(int frame)? onRazor;
+
+  /// Where a cut at screen x lands, in comp frames — the same function the
+  /// Timeline's blade line is drawn with, so a cut inside a sequence agrees
+  /// with the mark above it (docs/07 §4.5). Null falls back to the axis's own
+  /// rounding, which is what it always did.
+  final double Function(double x)? razorFrameAt;
 
   /// Select this layer, and close the view — the bar's other duties, which
   /// the view takes on while it is standing in for it.
@@ -117,8 +130,10 @@ class SequenceViewFrb extends StatefulWidget {
     required this.fpsNum,
     required this.fpsDen,
     this.hScroll,
+    this.style = const WaveformStyle(),
     this.razor = false,
     this.onRazor,
+    this.razorFrameAt,
     this.onSelect,
     this.onClose,
     this.graphHeight = sequenceEnvelopeStrip,
@@ -140,6 +155,19 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
   /// A null entry is one already asked for — claimed before the decode starts
   /// so a rebuild mid-flight does not ask twice.
   final Map<String, ui.Image?> _thumbs = {};
+
+  /// Each clip's waveform peaks, by clip id (K-280) — the sound *inside* the
+  /// cut, which is what a beat-checked edit is actually aimed at (docs/09 §4).
+  ///
+  /// Bucketed in the clip's own placed time by the engine, so a ramped clip's
+  /// transients land where they are heard, and so sliding the clip along the
+  /// row carries the picture with it with nothing refetched.
+  final Map<String, BridgeAudioPeaks> _peaks = {};
+
+  /// What each clip's peaks were fetched for — the window, the buckets and the
+  /// wave style. Equal keys mean the answer in hand still fits, so a rebuild
+  /// asks nothing.
+  final Map<String, String> _peakKeys = {};
 
   @override
   void dispose() {
@@ -173,6 +201,56 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
           setState(() => _thumbs[key] = image);
         },
       );
+    });
+  }
+
+  /// Ask for the waveform of the part of `clip` that is on screen, at one
+  /// bucket per pixel column of it — so a clip's wave gains detail as the
+  /// Timeline zooms in, rather than stretching the summary it was given first
+  /// (K-280).
+  ///
+  /// Off the build, and claimed before the fetch starts, exactly as the
+  /// thumbnails are: the first ask for a file decodes it.
+  void _wantPeaks(BridgeClip clip, double left, double width) {
+    final id = clip.id.toString();
+    final axis = widget.axis;
+    if (axis.width <= 0 || widget.fps <= 0 || width <= 0) return;
+    final secondsPerPixel = axis.frames / widget.fps / axis.width;
+    // The visible slice of this clip, in the clip's own placed clock.
+    final scroll = widget.hScroll;
+    final viewLeft = scroll != null && scroll.hasClients ? scroll.offset : 0.0;
+    final viewWidth = scroll != null && scroll.hasClients
+        ? scroll.position.viewportDimension
+        : axis.width;
+    final from = math.max(left, viewLeft);
+    final to = math.min(left + width, viewLeft + viewWidth);
+    if (!(to > from)) return;
+    // Clip-local placed seconds start at the clip's own place_start, which is
+    // the clock `clipAudioPeaks` buckets in.
+    final localStart = clip.placeStart.num / clip.placeStart.den.toDouble();
+    final request = WaveformRequest.forView(
+      startSeconds: localStart + (from - left) * secondsPerPixel,
+      endSeconds: localStart + (to - left) * secondsPerPixel,
+      pixels: to - from,
+    );
+    if (request == null) return;
+    // The trim and the map are part of the key: both change which source
+    // moments the buckets stand for, and neither moves the clip's box.
+    final key = '${request.key}|${clip.startFrame}|${clip.endFrame}'
+        '|${clip.retimed}|${widget.style.needsBands}';
+    if (_peakKeys[id] == key) return;
+    _peakKeys[id] = key;
+    widget.entry.layer
+        .clipAudioPeaks(
+      clip: clip.id,
+      startSeconds: request.startSeconds,
+      endSeconds: request.endSeconds,
+      buckets: request.buckets,
+      multiwave: widget.style.needsBands,
+    )
+        .then((peaks) {
+      if (!mounted || _peakKeys[id] != key) return;
+      setState(() => _peaks[id] = peaks);
     });
   }
 
@@ -223,7 +301,10 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
             // where it was clicked (docs/07 §4.4).
             onTapUp: (d) {
               if (widget.razor) {
-                widget.onRazor?.call(widget.axis.frameAt(d.localPosition.dx));
+                widget.onRazor?.call(
+                  widget.razorFrameAt?.call(d.localPosition.dx).round() ??
+                      widget.axis.frameAt(d.localPosition.dx),
+                );
                 return;
               }
               widget.onSelect?.call();
@@ -303,6 +384,15 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
     final left = _xOf(start);
     final width = (_xOf(end) - left).clamp(2.0, double.infinity);
     final speed = clip.speedPercent;
+    _wantPeaks(clip, left, width);
+    // The clip's own placed clock at its left edge. Sliding the whole clip
+    // moves box and content together, so this does not change and the wave
+    // rides along; dragging the *start* edge moves the box over content that
+    // stays put, so the origin travels with it and the wave holds still until
+    // the trim commits and the peaks are asked for again.
+    final originSeconds =
+        clip.placeStart.num / clip.placeStart.den.toDouble() +
+            (moving && drag.grab == _Grab.start ? shift / widget.fps : 0);
 
     return Positioned(
       key: ValueKey<String>('seq-clip-${clip.id}'),
@@ -348,7 +438,35 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
             ),
             alignment: Alignment.center,
             clipBehavior: Clip.hardEdge,
-            child: Row(
+            child: Stack(
+              children: [
+                // The clip's own sound, under its label and thumbnail: a cut
+                // is aimed at what you can see, and on a Sequence layer what
+                // you are cutting is the clip (docs/09 §4). Drawn behind
+                // everything so the speed readout stays legible over it.
+                if (_peaks[clip.id.toString()] case final peaks?)
+                  Positioned.fill(
+                    child: CustomPaint(
+                      key: ValueKey<String>('seq-wave-${clip.id}'),
+                      painter: WaveformPainter(
+                        peaks: peaks,
+                        // Canvas x 0 is the clip's own left edge, and its
+                        // placed clock starts at `place_start` — so a slid
+                        // clip carries its wave with it and nothing refetches.
+                        originSeconds: originSeconds,
+                        secondsPerPixel: widget.axis.width <= 0
+                            ? 0.0
+                            : widget.axis.frames /
+                                widget.fps /
+                                widget.axis.width,
+                        left: 0,
+                        right: width,
+                        colours: t.waveform,
+                        style: widget.style,
+                      ),
+                    ),
+                  ),
+                Row(
               children: [
                 // The frame this clip opens on, so a row of cuts can be told
                 // apart at a glance rather than by their timings (K-248).
@@ -371,6 +489,8 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
               ),
             ),
                   ),
+                ),
+              ],
                 ),
               ],
             ),

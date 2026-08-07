@@ -27,6 +27,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
@@ -40,11 +41,16 @@ import 'package:provider/provider.dart';
 import '../state/file_dialogs.dart';
 import '../state/keymap.dart';
 import '../state/settings.dart';
+import '../state/updates.dart';
 import '../state/workspace.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
+import 'about_window_frb.dart';
 import 'cache_confirm_frb.dart';
+import 'menu_bar_frb.dart';
+import 'settings_rows.dart';
 import 'theme_editor_frb.dart';
+import 'update_dialog_frb.dart';
 
 /// The smallest budget worth setting, in MiB. Below this the cache holds a
 /// frame or two and costs more in bookkeeping than it saves.
@@ -195,8 +201,8 @@ class _SettingsWindowState extends State<_SettingsWindow> {
   // ---- the pages -----------------------------------------------------------
 
   List<Widget> _general(LumitTheme t, LumitUiState ui) => [
-        _section(t, 'Workspace', [
-          _row(
+        settingsSection(t, 'Workspace', [
+          settingsRow(
             t,
             'Panel layout',
             'Return every panel to its default place and size.',
@@ -208,13 +214,75 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ),
           ),
         ]),
+        // The same updater the Help menu drives, seen from the other side
+        // (K-296): one service, two views, so they can never disagree about
+        // whether a check is running or an update is waiting.
+        settingsSection(t, 'Updates', [
+          settingsRow(
+            t,
+            'Automatic updates',
+            'Look for a new version of Lumit when it starts, at most once a '
+                'day. Nothing is downloaded until you ask for it.',
+            HouseCheckbox(
+              key: const ValueKey('settings-auto-update'),
+              value: ui.workspace.autoUpdate,
+              onChanged: (on) =>
+                  setState(() => ui.workspace.setAutoUpdate(on)),
+            ),
+          ),
+          // The whole row watches the service, not just its button: the line
+          // under the title is the part that says what was found, and a stale
+          // sentence beside a live button would be worse than either alone.
+          ListenableBuilder(
+            listenable: ui.updates,
+            builder: (context, _) => settingsRow(
+              t,
+              'This version',
+              _updateStatusLine(ui),
+              HouseButton(
+                key: const ValueKey('settings-check-updates'),
+                small: true,
+                onPressed: ui.updates.busy
+                    ? null
+                    : () => pressUpdateRow(
+                          context,
+                          updates: ui.updates,
+                          notice: context.read<LumitState>().postNotice,
+                          projectIsDirty: () =>
+                              context.read<LumitState>().project?.isDirty() ??
+                              false,
+                          saveProject: () =>
+                              saveProjectFrb(context.read<LumitState>(), ui),
+                        ),
+                child: Text(ui.updates.menuLabel, style: t.small),
+              ),
+            ),
+          ),
+        ]),
         // About used to sit here. It is Help ▸ About Lumit now (K-244):
         // Settings is for what you change, and a version number is not that.
       ];
 
+  /// The line under "This version": what is installed, and what the last check
+  /// made of it. Rebuilt with the row, so it follows the service too.
+  String _updateStatusLine(LumitUiState ui) {
+    final installed = 'Lumit ${versionFromBootLine(lumitVersion()) ?? '?'}';
+    return switch (ui.updates.stage) {
+      UpdateStage.upToDate => '$installed — the newest there is.',
+      UpdateStage.available =>
+        '$installed. Lumit ${ui.updates.release?.version} is available.',
+      UpdateStage.ready =>
+        '$installed. Lumit ${ui.updates.release?.version} is downloaded and '
+            'installs when Lumit restarts.',
+      UpdateStage.failed =>
+        '$installed. ${ui.updates.failure ?? 'The last check did not finish.'}',
+      _ => installed,
+    };
+  }
+
   List<Widget> _appearance(LumitTheme t, LumitUiState ui) => [
-        _section(t, 'Theme', [
-          _row(
+        settingsSection(t, 'Theme', [
+          settingsRow(
             t,
             'Colour scheme',
             'The palette every panel draws from.',
@@ -233,7 +301,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
               ),
             ),
           ),
-          _row(
+          settingsRow(
             t,
             'Custom colours',
             ui.workspace.customThemeName == null
@@ -265,7 +333,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
               ],
             ),
           ),
-          _row(
+          settingsRow(
             t,
             'Corners',
             'How rounded controls and panels are.',
@@ -280,7 +348,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
               ),
             ),
           ),
-          _row(
+          settingsRow(
             t,
             'Motion',
             'How much controls animate as they change.',
@@ -301,8 +369,8 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ),
           ),
         ]),
-        _section(t, 'Scopes', [
-          _row(
+        settingsSection(t, 'Scopes', [
+          settingsRow(
             t,
             'Use theme colours',
             'Off, a scope reads on the standard near-black graticule '
@@ -315,8 +383,8 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ),
           ),
         ]),
-        _section(t, 'Viewer', [
-          _row(
+        settingsSection(t, 'Viewer', [
+          settingsRow(
             t,
             'Surround takes theme colours',
             'Off, the area around the picture is a neutral grey — a grade '
@@ -329,14 +397,28 @@ class _SettingsWindowState extends State<_SettingsWindow> {
                   setState(() => ui.workspace.setThemedViewerSurround(v)),
             ),
           ),
+          settingsRow(
+            t,
+            'Smooth the picture when zoomed in',
+            'Off, a pixel magnified past 1:1 stays a square, which is what '
+                'you zoom in to see. On, the picture is blended between '
+                'pixels — softer, and easier on the eye when the zoom is for '
+                'framing rather than for inspecting.',
+            HouseCheckbox(
+              key: const ValueKey('settings-smooth-zoomed-viewer'),
+              value: ui.workspace.smoothZoomedViewer,
+              onChanged: (v) =>
+                  setState(() => ui.workspace.setSmoothZoomedViewer(v)),
+            ),
+          ),
         ]),
       ];
 
   List<Widget> _interface(LumitTheme t, LumitUiState ui) {
     final settings = ui.workspace.interface;
     return [
-      _section(t, 'Display', [
-        _row(
+      settingsSection(t, 'Display', [
+        settingsRow(
           t,
           'Interface scale',
           'How large every panel draws, for a dense or a distant screen.',
@@ -356,7 +438,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             }),
           ),
         ),
-        _row(
+        settingsRow(
           t,
           'Tooltips',
           'Show the hint that explains a control when you rest on it.',
@@ -370,8 +452,8 @@ class _SettingsWindowState extends State<_SettingsWindow> {
           ),
         ),
       ]),
-      _section(t, 'Panels', [
-        _row(
+      settingsSection(t, 'Panels', [
+        settingsRow(
           t,
           'Transform in Effect controls',
           'Repeat the layer\'s Transform rows above its effects. The '
@@ -393,8 +475,8 @@ class _SettingsWindowState extends State<_SettingsWindow> {
       // §13.1 expects to be common. The playhead row is not one the screen
       // touches — both answers want the returning playhead, so there is
       // nothing for the question to decide.
-      _section(t, 'Editing', [
-        _row(
+      settingsSection(t, 'Editing', [
+        settingsRow(
           t,
           'Retime opens to Velocity',
           'The Retime graph opens showing playback speed per cent — one point '
@@ -409,7 +491,23 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             }),
           ),
         ),
-        _row(
+        settingsRow(
+          t,
+          'Retime values in seconds',
+          'The Retime row shows which moment of the source is playing as a '
+              'number of seconds, instead of as a timecode in the same '
+              'HH:MM:SS:FF form as every other time in the editor. Seconds '
+              'can say a position between two frames; a timecode cannot.',
+          HouseCheckbox(
+            key: const ValueKey('settings-retime-in-seconds'),
+            value: settings.retimeInSeconds,
+            onChanged: (on) => setState(() {
+              settings.retimeInSeconds = on;
+              ui.workspace.settingsChanged();
+            }),
+          ),
+        ),
+        settingsRow(
           t,
           'Video arrives as a Sequence layer',
           'Video and image sequences added to a composition become a Sequence '
@@ -424,7 +522,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             }),
           ),
         ),
-        _row(
+        settingsRow(
           t,
           'Paste layers at their original time',
           'A pasted layer keeps the timecode it was copied at, instead of '
@@ -441,7 +539,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             }),
           ),
         ),
-        _row(
+        settingsRow(
           t,
           'Playhead stays where playback stopped',
           'Leave the playhead on the frame that was on screen when playback '
@@ -453,6 +551,41 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             value: settings.playheadStaysOnStop,
             onChanged: (on) => setState(() {
               settings.playheadStaysOnStop = on;
+              ui.workspace.settingsChanged();
+            }),
+          ),
+        ),
+        settingsRow(
+          t,
+          'Waveforms show the frequency stack',
+          'A layer\'s waveform draws as three stacked waves — bass, middle '
+              'and treble — instead of one. A loud passage is a solid block on '
+              'a single wave whichever instrument is playing; the stack shows '
+              'the kick apart from the hats, so a cut can be aimed at either. '
+              'Turn it off for one plain wave.',
+          HouseCheckbox(
+            key: const ValueKey('settings-multiwave'),
+            value: settings.multiwaveWaveforms,
+            onChanged: (on) => setState(() {
+              settings.multiwaveWaveforms = on;
+              ui.workspace.settingsChanged();
+            }),
+          ),
+        ),
+        settingsRow(
+          t,
+          'Waveforms rise from the bottom',
+          'A waveform stands on the floor of its row instead of being centred '
+              'about silence, each column reaching up by how far the sound '
+              'swung either way. Half of a centred wave is a mirror of the '
+              'other half, so this spends the whole row on the half that says '
+              'something — useful in a short row. Applies to the single wave '
+              'and the frequency stack alike.',
+          HouseCheckbox(
+            key: const ValueKey('settings-waveform-from-bottom'),
+            value: settings.waveformsFromBottom,
+            onChanged: (on) => setState(() {
+              settings.waveformsFromBottom = on;
               ui.workspace.settingsChanged();
             }),
           ),
@@ -566,6 +699,37 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ),
           ),
         ),
+      // Panels that have taken a chord over from an app-wide one (K-281). Not
+      // a warning — nothing is ambiguous, the focused panel simply wins — so
+      // it is a quiet note rather than a bordered banner. It is said at all
+      // because the app-wide meaning does stop working in that one panel, and
+      // finding that out by pressing the key is worse than reading it here.
+      if (km.shadows.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Column(
+            key: const ValueKey('keymap-shadows'),
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                km.shadows.length == 1
+                    ? 'One shortcut means something else in one panel'
+                    : '${km.shadows.length} shortcuts mean something else in '
+                        'one panel',
+                style: t.small.copyWith(color: t.textMuted),
+              ),
+              for (final shadow in km.shadows)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    '${chordLabel(shadow.chord)} — ${shadow.action} in the '
+                    '${shadow.context}, ${shadow.shadowed} elsewhere',
+                    style: t.small.copyWith(color: t.textMuted),
+                  ),
+                ),
+            ],
+          ),
+        ),
       if (groups.isEmpty)
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 12),
@@ -573,9 +737,9 @@ class _SettingsWindowState extends State<_SettingsWindow> {
               style: t.small.copyWith(color: t.textMuted)),
         ),
       for (final group in groups)
-        _section(t, group.label, [
+        settingsSection(t, group.label, [
           for (final binding in group.bindings)
-            _row(
+            settingsRow(
               t,
               binding.description,
               '',
@@ -655,10 +819,13 @@ class _SettingsWindowState extends State<_SettingsWindow> {
     final stats = cacheStats();
     final vram = vramCacheStats();
     final tier = playbackTier();
+    // Only read when it is going to be drawn: the report is a debug-build
+    // instrument, and a release build should not be making the call at all.
+    final memory = kDebugMode ? memoryReport() : null;
 
     return [
-      _section(t, 'Playback', [
-        _row(
+      settingsSection(t, 'Playback', [
+        settingsRow(
           t,
           'When the machine cannot keep up',
           'Adaptive keeps time and softens the picture; every frame keeps '
@@ -678,7 +845,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ),
           ),
         ),
-        _row(
+        settingsRow(
           t,
           'Quality tier',
           'What the realtime controller has settled on.',
@@ -702,7 +869,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
           ),
         ),
       ]),
-      _section(t, 'Rendered-frame cache', [
+      settingsSection(t, 'Rendered-frame cache', [
         _budgetRow(
           t,
           key: 'settings-cache-budget',
@@ -715,7 +882,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ui.workspace.setCacheBudgetBytes(bytes.toInt());
           }),
         ),
-        _row(
+        settingsRow(
           t,
           'In use',
           '${stats.hits} of ${stats.hits + stats.misses} frames were served '
@@ -739,7 +906,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
           ),
         ),
       ]),
-      _section(t, 'Preview cache on the graphics card', [
+      settingsSection(t, 'Preview cache on the graphics card', [
         _budgetRow(
           t,
           key: 'settings-vram-budget',
@@ -752,7 +919,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ui.workspace.setVramBudgetBytes(bytes.toInt());
           }),
         ),
-        _row(
+        settingsRow(
           t,
           'In use',
           'Frames held on the card, ready to show without compositing.',
@@ -776,6 +943,99 @@ class _SettingsWindowState extends State<_SettingsWindow> {
         ),
       ]),
       ..._diskCache(t, ui),
+      // Where the memory has gone (K-294). Last on the page, under the tiers
+      // it weighs: each section above reports one store, and this one reports
+      // the whole process and what none of them accounts for. Read downwards it
+      // is the summing-up, and it leaves every control above where the hand
+      // already knows to find it.
+      //
+      // **Debug builds only** (owner, 2026-08-06). It is an instrument for
+      // hunting a fault, not a setting: a shipped editor asking its user to
+      // interpret live texture counts has handed them the engineering rather
+      // than the tool. `kDebugMode` is false in both profile and release
+      // builds, so what ships is the page without it.
+      if (memory != null) settingsSection(t, 'Memory', [
+        settingsRow(
+          t,
+          'This process',
+          'What the system says Lumit is holding, all in — the number '
+              'Activity Monitor and Task Manager show.',
+          Text(
+            memory.processBytes == BigInt.zero
+                ? 'not known here'
+                : _bytes(memory.processBytes),
+            key: const ValueKey('settings-memory-process'),
+            style: t.small,
+          ),
+        ),
+        settingsRow(
+          t,
+          'Not held by any cache',
+          'The process, less every store above that is inside it — which on '
+              'this machine includes the frames on the card. A large number '
+              'here is not a cache to shrink: it is memory nothing in this '
+              'window is counting, and it is worth reporting.',
+          Text(
+            memory.processBytes == BigInt.zero
+                ? '—'
+                : _bytes(memory.unaccountedBytes),
+            key: const ValueKey('settings-memory-unaccounted'),
+            style: t.small,
+          ),
+        ),
+        settingsRow(
+          t,
+          'Held by the graphics driver',
+          'Pictures and buffers the driver still has for Lumit. A handful is '
+              'normal — the frames on the card, the ones being made. Thousands '
+              'means pictures the engine finished with were never destroyed, '
+              'and on a Mac that memory is inside the total above.',
+          Text(
+            '${memory.gpuTextures} pictures, ${memory.gpuBuffers} buffers',
+            key: const ValueKey('settings-memory-gpu'),
+            style: t.small,
+          ),
+        ),
+        // The byte figures are Vulkan and D3D12 only, so the row is not drawn
+        // at all on a Mac rather than printing two zeroes and inviting the
+        // reader to draw a conclusion from them.
+        if (memory.gpuReservedBytes != BigInt.zero)
+          settingsRow(
+            t,
+            'Graphics memory reserved',
+            'What the driver has taken from the system for those, and how much '
+                'of it is in use. The gap is memory Lumit has released and the '
+                'driver has not handed back.',
+            Text(
+              '${_bytes(memory.gpuReservedBytes)} reserved, '
+              '${_bytes(memory.gpuAllocatedBytes)} in use',
+              key: const ValueKey('settings-memory-gpu-bytes'),
+              style: t.small,
+            ),
+          ),
+        settingsRow(
+          t,
+          'Open media decoders',
+          'One per footage item in play. Each holds buffers of its own that '
+              'no budget here covers.',
+          Text(
+            '${memory.openDecoders}',
+            key: const ValueKey('settings-memory-decoders'),
+            style: t.small,
+          ),
+        ),
+        settingsRow(
+          t,
+          'Frames waiting to be written',
+          'The write-behind queue to the disk cache, which is bounded at '
+              'eight frames.',
+          Text(
+            '${memory.parkQueueFrames}',
+            key: const ValueKey('settings-memory-parks'),
+            style: t.small,
+          ),
+        ),
+      ]),
     ];
   }
 
@@ -792,7 +1052,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
         cacheLocationFromName(ui.workspace.performance.diskCacheLocation ??
             BridgeCacheLocation.appData.name);
     return [
-      _section(t, 'Frames parked on disk', [
+      settingsSection(t, 'Frames parked on disk', [
         _budgetRow(
           t,
           key: 'settings-disk-budget',
@@ -805,7 +1065,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ui.workspace.setDiskBudgetBytes(bytes.toInt());
           }),
         ),
-        _row(
+        settingsRow(
           t,
           'Where',
           disk.root.isEmpty
@@ -839,7 +1099,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ],
           ),
         ),
-        _row(
+        settingsRow(
           t,
           'Applies to',
           scope == CacheScope.thisProject
@@ -859,7 +1119,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ),
           ),
         ),
-        _row(
+        settingsRow(
           t,
           'In use',
           'Frames on disk, one promotion away from playing.',
@@ -972,71 +1232,6 @@ class _SettingsWindowState extends State<_SettingsWindow> {
 
   // ---- the shapes every page is built from ---------------------------------
 
-  /// A named group of rows: a quiet label, then one card holding them.
-  Widget _section(LumitTheme t, String title, List<Widget> rows) => Padding(
-        padding: const EdgeInsets.only(bottom: 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(2, 0, 0, 4),
-              child: Text(title, style: t.small.copyWith(color: t.textMuted)),
-            ),
-            Container(
-              decoration: BoxDecoration(
-                color: t.surface1,
-                borderRadius: BorderRadius.circular(t.tokens.floatRadius),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  for (var i = 0; i < rows.length; i++) ...[
-                    // A hairline between rows, never above the first or below
-                    // the last: the card's own edge is the boundary there.
-                    if (i > 0) Container(height: 1, color: t.hairline),
-                    rows[i],
-                  ],
-                ],
-              ),
-            ),
-          ],
-        ),
-      );
-
-  /// One row: what it is, a line saying what it does, and its control on the
-  /// right. An empty [description] leaves the second line out entirely rather
-  /// than reserving blank space for it.
-  Widget _row(
-    LumitTheme t,
-    String title,
-    String description,
-    Widget control,
-  ) =>
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(title, style: t.body),
-                  if (description.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 2),
-                      child: Text(description,
-                          style: t.small.copyWith(color: t.textMuted)),
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 12),
-            control,
-          ],
-        ),
-      );
 
   /// A cache budget: type a number of megabytes, or drag it, up to what the
   /// machine actually has (K-194).
@@ -1052,7 +1247,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
     required double ceilingMib,
     required ValueChanged<BigInt> onSet,
   }) =>
-      _row(
+      settingsRow(
         t,
         'Budget',
         description,
@@ -1087,6 +1282,14 @@ class _SettingsWindowState extends State<_SettingsWindow> {
   /// A round figure for a sentence: "32 GB", or megabytes when it is small.
   static String _gib(double mib) =>
       mib >= 1024 ? '${(mib / 1024).round()} GB' : '${mib.round()} MB';
+
+  /// Bytes as a person reads them — MB up to a gigabyte, GB above, one
+  /// decimal so 85.4 GB does not print as 85.
+  static String _bytes(BigInt bytes) {
+    final b = bytes.toDouble();
+    if (b >= 1 << 30) return '${(b / (1 << 30)).toStringAsFixed(1)} GB';
+    return '${(b / (1 << 20)).toStringAsFixed(0)} MB';
+  }
 
   static String _mib(int bytes) => (bytes / (1 << 20)).toStringAsFixed(0);
 

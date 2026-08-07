@@ -90,6 +90,18 @@ class RazorOverlay extends StatefulWidget {
   /// Whether the Razor tool is armed.
   final bool active;
 
+  /// Where a cut at screen x would actually land, in this overlay's own pixels.
+  ///
+  /// The cut has always been quantised — `TimelineAxis.frameAt` rounds — while
+  /// the line drawn under the blade followed the pointer continuously, so the
+  /// two disagreed by up to half a frame and the mark was not where the edge
+  /// bit. Given the same function the cut uses, the line says the truth (and,
+  /// with the magnet on, says it about markers and edit points too).
+  ///
+  /// Null leaves the line under the pointer, which is what a caller with no
+  /// axis to quantise against should get.
+  final double Function(double x)? snapX;
+
   /// The pointer's colours: the mark, and the outline that keeps it legible
   /// over a bar of any label colour.
   final Color mark;
@@ -100,6 +112,7 @@ class RazorOverlay extends StatefulWidget {
   const RazorOverlay({
     super.key,
     required this.active,
+    this.snapX,
     required this.mark,
     required this.outline,
     required this.child,
@@ -135,6 +148,12 @@ class _RazorOverlayState extends State<RazorOverlay> {
                       child: CustomPaint(
                         painter: _RazorCutLinePainter(
                           at: _pointer,
+                          // The line marks where the edge bites, not where the
+                          // pointer is; the blade above still follows the hand.
+                          lineX: _pointer == null
+                              ? null
+                              : (widget.snapX?.call(_pointer!.dx) ??
+                                  _pointer!.dx),
                           mark: widget.mark,
                         ),
                       ),
@@ -180,17 +199,25 @@ class _RazorOverlayState extends State<RazorOverlay> {
 /// icon already says better than a bespoke drawing of one.
 class _RazorCutLinePainter extends CustomPainter {
   final Offset? at;
+
+  /// Where the line goes: the pointer's x put through the caller's snap, so it
+  /// stands where the cut will actually land.
+  final double? lineX;
   final Color mark;
 
-  const _RazorCutLinePainter({required this.at, required this.mark});
+  const _RazorCutLinePainter({
+    required this.at,
+    required this.lineX,
+    required this.mark,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
-    final point = at;
-    if (point == null) return;
+    final x = lineX;
+    if (at == null || x == null) return;
     canvas.drawLine(
-      Offset(point.dx, 0),
-      Offset(point.dx, size.height),
+      Offset(x, 0),
+      Offset(x, size.height),
       Paint()
         ..color = mark.withValues(alpha: 0.7)
         ..strokeWidth = 1,
@@ -199,5 +226,5 @@ class _RazorCutLinePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_RazorCutLinePainter old) =>
-      old.at != at || old.mark != mark;
+      old.at != at || old.lineX != lineX || old.mark != mark;
 }

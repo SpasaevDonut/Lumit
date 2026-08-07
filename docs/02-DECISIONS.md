@@ -5855,7 +5855,722 @@ no scaling story to own. Revisit only if the site grows contributors who should 
 to clone a Rust + Flutter tree — at which point Cloudflare's per-path build filters
 already prevent the two from triggering each other's builds.
 
-**K-287 · DECIDED · An effect is copied from its heading, in both places it has one.**
+**K-280 · DECIDED · Waveforms are mip-mapped, window-fetched, and stacked by frequency.**
+Three things, one seam, because they are the same seam. **(1) The resolution follows the
+zoom.** K-172's lane asked once for 2 048 buckets across the whole source and kept them for
+the session, then stretched that one summary however far the Timeline was zoomed — so past
+about ten seconds on screen the wave became a staircase of blocks, which is the opposite of
+what zooming in is for. Now `lumit-audio::peaks::PeakPyramid` summarises a source at three
+levels of detail in one pass (256 / 4 096 / 65 536 samples per block, the tiers docs/09 §4
+always named), the bridge keeps one pyramid per **file path** for the session (bounded: four
+entries, 64 MB, least-recently-asked evicted — two layers cut from one song decode it once),
+and a lane asks for *the stretch it is showing* at one bucket per pixel column, again
+whenever a zoom or a scroll moves that window. The request rounds itself off and pads half a
+view either side, so scrolling a few pixels sends nothing.
+
+**(2) Clips draw their own waveform.** A Sequence layer's clips were coloured boxes; docs/09
+§4 has always said the clip waveform is "the primary visual for beat-checking an edit". Clip
+peaks are bucketed in the clip's own **placed** time rather than in source time, because a
+clip is the one thing on the timeline whose source clock is not a straight line — a ramp
+plays its middle slowly and its end fast, and buckets taken evenly in source time would put
+the transients in the wrong columns. The mapping is done in the engine, where the map lives.
+Sliding a clip moves box and picture together with nothing refetched; trimming an edge
+changes the mapping, so the peaks are asked for again when the trim commits (during the drag
+the picture holds still, which reads as the content staying put while the window moves over
+it — what a trim is).
+
+**(3) Multiwave.** One wave says how *loud* a moment is and nothing about what is in it: a
+mastered track is a solid block whether it is a kick, a snare or a vocal, and cutting to a
+block means cutting by ear alone. So the same pass also splits the signal into bass (below
+200 Hz), middle, and treble (above 2 kHz) with 24 dB/octave filters and summarises each; the
+lane stacks the three, bass at the bottom. The kick shows in the bottom band, the hats in the
+top, and a cut can be aimed at either. **On by default**, with Settings ▸ Interface ▸ Editing
+▸ *Waveforms show the frequency stack* returning the single wave unchanged — the plain
+picture stays a first-class choice, it is just no longer the only one. Prior art: BLICK's
+multiwave, which is where the idea came from.
+
+The waveform colours become their own theme grouping (`WaveformColours`: `rest` plus the
+three bands) rather than the roles the lane was borrowing — docs/15 §6.4 has a standing
+direction that each grouping splits out as its area is next touched, and §6.4 also says
+waveforms are *content, not state*, which the old lane broke by drawing in `accent`.
+
+Not done here, and still the design intent: writing the pyramid to the project sidecar keyed
+by content hash, so a reopened project does not decode again ([TODO.md](TODO.md)).
+
+**K-281 · DECIDED · `L` reveals a layer's Audio in the Timeline, and a panel shadowing an
+app-wide chord is not a conflict.** `L` on the selected layers opens their **Audio** group,
+`LL` opens the waveform lane inside it, `LLL` shuts them again — the same three-tap shape
+`U` already has, and the reason is the same: the thing you want is usually one of three
+depths, and a modifier for each is three chords to remember. A layer with no sound is left
+alone rather than opened onto a group it does not have. `Shift+L` (K-172's *Reveal Volume*)
+now reaches the same cycle, so the older habit still works.
+
+`L` is also J/K/L shuttle transport (docs/07 §15), which was bound app-wide, and the keymap's
+conflict detector treated *any* app-wide binding sharing a chord with a panel-scoped one as a
+clash — so the shipped default could never give a panel a plain letter transport already
+used. That rule is superseded: `Keymap::lookup` has always resolved the pair by a stated
+precedence (the focused panel gets first refusal, app-wide is the fallback), so the chord runs
+exactly one action and which one is never in doubt. `Keymap::shadows` reports those pairs
+instead, because the app-wide meaning genuinely stops working in that one panel and somebody
+reading their keymap should be able to see that. Two bindings in the **same** context remain a
+conflict — nothing can tell those apart.
+
+The cost is real and accepted: inside the Timeline, `L` no longer steps the playhead forward.
+The Timeline is the panel where you reach for a layer's sound and the least likely place to be
+shuttling; the arrows, `PageUp`/`PageDown` and `J`/`K` all still move time there, and `L`
+keeps its transport meaning in every other panel.
+
+**K-282 · DECIDED · Stepping a frame is `Mod`+arrow; the bare arrows belong to whatever has
+focus.** `ArrowRight`/`ArrowLeft` were bound app-wide to next/previous frame. That is one key
+each for the commonest transport move, which is why it was done — but the arrows are the two
+keys *every* focused thing wants for moving within itself: a list moving its highlight, a
+field moving its cursor, a canvas nudging a selection. An app-wide binding on them means none
+of those can ever be given the key without taking the transport away, and a panel-scoped
+binding that shadows it (K-281) would have to be added one panel at a time for ever. So the
+step moves to `Mod+ArrowRight` / `Mod+ArrowLeft` — Ctrl on Windows and Linux, Cmd on macOS,
+like every other `Mod` chord — and the bare arrows are unbound.
+
+Nothing is lost: `Page Down` / `Page Up` still step a frame with nothing held, `Shift` with
+them still steps ten, and `J`/`K`/`L` still shuttle (outside the Timeline, per K-281). This
+also supersedes K-281's aside that "the arrows … still move time" in the Timeline: they no
+longer move time anywhere without `Mod`.
+
+**K-283 · DECIDED · Settings → Keymap says a shadow out loud, quietly.** K-281 stopped
+reporting a panel-scoped binding that takes an app-wide chord as a conflict, which was right
+— nothing is ambiguous — but reporting *nothing* would have been wrong: the app-wide meaning
+really does stop working in that one panel, and finding that out by pressing the key is the
+worst way to learn it. So `Keymap::shadows` is surfaced (`keymap_shadows` on the bridge) as a
+plain muted line above the table — "`L` — Reveal Audio in the Timeline, shuttle forward
+elsewhere" — with no border and no warning colour, because it is a fact about the keymap and
+not something to go and fix. The bordered banner stays for real conflicts.
+
+One consequence worth writing down: a **rebind can no longer make a conflict at all**. Within
+one context the previous owner is evicted (K-200's one row, one chord), and across contexts
+the pair is a shadow — so the banner is now only ever tripped by an imported keymap file
+carrying a duplicate, which is where its regression test now goes.
+
+**K-284 · DECIDED · Past the finest tier the samples answer, and the multiwave is drawn
+through the wave rather than beside it.** Two corrections to K-280 from looking at it.
+
+**(1) Fully zoomed in, a waveform should be a line.** K-280 fixed the stretched-summary
+staircase but left a second one behind it: the finest tier is 256 samples a block, and the
+Timeline zooms to 64×, so on a short comp a pixel column ends up covering about seven
+samples — thirty-odd columns reading the same block, drawn as thirty-odd identical slabs. A
+mip-map cannot fix this, because there is nothing finer in it. So a short source now keeps
+its **mono mixdown** beside the pyramid (16-bit at the peak rate: 96 KB a second, half the
+memory of float and three ten-thousandths of a pixel of difference), and any query finer than
+one block per bucket is taken off it in one streaming pass — full band straight, the three
+split bands filtered on the way with a `SAMPLE_PREROLL` run-up so the filters are settled by
+the time the window starts. Below one sample per column, min and max meet and consecutive
+columns join into a continuous trace, which is the picture every editor shows at full zoom.
+**Short** is `SAMPLE_KEEP_SECONDS` (ten minutes): past that the 64× ceiling can never get a
+column under one block, so a sample copy would be tens of megabytes held to answer a question
+nobody can ask. The peak cache's budget rises to 96 MB to hold the copies, and it is a byte
+budget rather than a count precisely because the count no longer says anything about the cost.
+
+**(2) The stack goes through the wave, not beside it.** K-280 put the three bands in a third
+of the lane each. In a 22 px row that is six pixels a band, which is not a waveform, it is a
+smear — and it asks the reader to add three small pictures up in their head to get back the
+one they were already reading. Drawn instead **over one another around one centre line**, dim
+to bright as the frequency climbs, the bass fills a soft broad body and the treble lands as
+bright thin spikes on it: one silhouette with its inside showing, which is what the reference
+this came from actually looks like. The band colours become a brightness ramp rather than
+three hues for the same reason — hue-coded, they read as three unrelated waveforms — and band
+strokes are opaque, since three softened envelopes over one another blend into a wash and lose
+the ranking. The **single wave is untouched**: same softened envelope, same solid RMS core.
+
+**K-285 · DECIDED · Where a waveform sits is its own setting: centred, or standing on the
+floor.** A waveform is symmetrical about silence, so a centred one spends half its row
+drawing a mirror of the other half. In the Timeline's 22 px lane that is eleven pixels of
+information and eleven pixels of restating it. Settings ▸ Interface ▸ Editing ▸ *Waveforms
+rise from the bottom* folds it onto the baseline instead: each column reaches up by how far
+the signal swung either way, whichever was further, over the whole row's height.
+
+Kept as a **second, independent** switch rather than folded into the multiwave one, because
+the two answer different questions — *what is in the sound* and *how the row is spent* — and
+all four combinations are sensible. It is also purely a drawing decision: the peaks fetched
+are identical either way, so `WaveformStyle.needsBands` is what reaches the engine and
+flipping the baseline repaints without asking for anything.
+
+Centred stays the default. It is what Lumit has always drawn, it is what the eye expects of a
+*wave*, and defaults do not change under people for a preference.
+
+**K-286 · DECIDED · Anti-aliasing defaults to eight samples, what the card can do is reported
+rather than saved, and the project's own settings leave the Settings window.** K-274 settled
+that anti-aliasing is a project property, on by default, with one value shared by preview and
+export. Building it ([impl/anti-aliasing.md](impl/anti-aliasing.md)) left four smaller choices,
+taken here.
+
+**(1) The default is eight coverage samples.** K-274 said "on" without saying how much. Eight
+smooths the shallow diagonals four still steps on, which is where a slow rotation's crawl is
+most visible, and the cost is one multisample attachment beside the comp frame rather than more
+shading — a memory cost, paid once per comp frame, not a per-pixel one. A card that will not
+give eight falls back to four by the rule in (2), so the weaker machine lands on what would
+have been the conservative default anyway. Off / 2 / 4 / 8 are the choices, because those are
+the counts hardware actually implements — a free number would offer precision that does not
+exist.
+
+**(2) What the machine can draw is reported, never written back.** The count is asked of the
+adapter and never assumed; a card that will not multisample the working format at the count
+asked for gets the highest it will, down to off. The project keeps the value its author chose
+and the Settings row states what is being used instead, beside it, in the calm voice
+([15-DESIGN.md](15-DESIGN.md)) — a statement, never a warning. The alternative, quietly
+lowering the stored setting, would mean opening a file on a weaker machine silently changed
+the project for everyone who opened it afterwards. A machine's limit is not a project's error.
+
+**(3) The count is part of a frame's name, and `ALGO_VERSION` goes to 3.** The setting changes
+every pixel, so it joins the content hash a cached frame is filed under (docs/06 §5.2) — a
+frame banked at one count must never be served at another. And because the default is *on*,
+every frame banked before this was made without anti-aliasing, so the version bump retires all
+of them by construction. Both reasons stand alone; either would have been enough.
+
+**(4) A project's settings get their own window, and Settings stays machine-local.** The count
+first landed as a **Rendering** page inside Settings, marked as the project's with a section
+heading — which put a value that travels in the `.lum`, and undoes like an edit, in the window
+whose every other value belongs to this machine and to no document. A caption was doing a
+window's job. So **File ▸ Project settings…** (`Mod+Alt+Shift+K`, After Effects' own chord)
+holds the project's answers, and [07-UI-SPEC.md](07-UI-SPEC.md) §15's "every value here is
+machine-local" needs no narrowing for it after all. The disk cache's *Applies to* row (K-215)
+stays in Settings → Performance: its whole purpose is choosing between the two scopes, so it is
+the one control that has to stand with a foot in each. Colour management and export defaults
+land in the new window when they are built, rather than back in Settings.
+
+**K-287 · DECIDED · The bars that carry time hold still: fixed slots, the progress bar on
+the transport, typed timecode, and a Retime that reads as a clock.** From the owner
+(2026-08-06). Five changes, all of them the same complaint — the parts of the interface
+that report *time* were moving while time passed, which is distracting exactly when the
+picture is being watched.
+
+- **The Viewer's preview progress bar moves onto the right-hand end of the transport**
+  (docs/07 §2.5), instead of floating over the bottom of the picture. Over the picture it
+  covered the composition while a frame was being waited for, which is when the
+  composition is being looked at hardest. On the bar it has a place of its own: the
+  controls take the space that is left over, so the bar arriving and leaving moves none of
+  them.
+- **Every part of the Viewer's bar whose text varies gets a fixed slot** (docs/07 §2.2),
+  sized for the longest thing it can ever say, and a part that comes and goes — the
+  degradation badge — keeps its slot while it is away.
+- **The playback-mode button says the mode and nothing else**: "Adaptive res" or "Every
+  frame". It used to carry the settled tier beside the name ("Adaptive · Half"), so it
+  re-lettered itself as the engine felt its way up and down the ladder. Which tier a frame
+  was made at is the degradation badge's job (docs/13 §4 still stands: silent degradation
+  is a bug — the badge is what says it, and it says it only while there is something to
+  say).
+- **The Timeline's timecode and frame readouts get the same fixed slots, and both become
+  click-to-type** (docs/07 §4.1). They sit left of the layer search, and a readout that
+  resized itself as it counted shoved the search field sideways through every second of
+  playback. Typing a time in either moves the playhead — the timecode in the format it
+  already shows, the frame readout as a plain number with or without its `f` — and a time
+  outside the composition is **clamped to the nearest end** rather than refused. The
+  Viewer's own clock gains the same typing, which docs/07 §2.2 item 11 had always asked
+  for.
+- **The Retime row reads as `HH:MM:SS:FF`**, not as a number of seconds, realising K-075's
+  value lens for the outline row (docs/04 §9.3). It is dragged and typed in whole source
+  frames, at the composition's rate — the read model does not carry the footage's own rate
+  yet, and every other time in the panel is counted in comp frames; when it does, this
+  readout moves to the footage's timebase as K-075 asks, with no change to what is stored.
+  Settings ▸ Interface ▸ Editing ▸ *Retime values in seconds* puts the decimal seconds
+  field back, and is the only way to state a source position between two frames.
+
+The shared widget is `TimeReadout` (`flutter_ui/lib/widgets/time_readout.dart`): a slot
+measured in characters of the face it draws in, a click that turns it into a field holding
+exactly what was shown, and an optional drag for the places that were a drag field before
+they were a clock.
+
+**K-288 · DECIDED · A layer-input parameter may name the layer the effect is on, and
+that means "this effect's own input" — which on an adjustment layer is everything
+below.** A layer reference (K-123, K-142) used to name only *another* layer: the picker
+excluded the owner outright, on the reasonable-sounding ground that sampling yourself is
+not defined. For a depth pass that is true enough. For the Lens flare's Matte source it
+was simply wrong, in two ways at once. On an ordinary layer, "flare the lights in this
+picture" is what asking for a matte source nearly always means, and the effect made you
+go and find the layer you were already standing on. On an **adjustment layer** — which
+has no picture of its own, and whose whole job is to act on the composite beneath it —
+there was nothing correct to point at at all: whichever layer you picked, you were
+detecting lights in the wrong image, and the effect that most wants to sit on an
+adjustment layer was the one that could not.
+
+So a reference to the owning layer resolves, everywhere, to **the effect's own input at
+its point in the stack**. No second render happens — `run_ops` binds the texture it is
+already carrying — which makes it cheaper than any other answer as well as the right
+one, and makes it exactly aligned with the raster the effect writes (a separately
+rendered layer is resampled to get there). On an adjustment layer that texture is the
+composite of everything below, so the flare finds the lights in the footage beneath it
+with no setup. The K-142 source combobox (None / Masks / Effects and masks) does not
+apply to a this-layer reference: nothing is re-rendered, so there is nothing for it to
+choose between.
+
+A schema declares `ParamKind::Layer { self_default }`, and a `true` there means a fresh
+instance **added to a layer** starts pointed at that layer. The Lens flare's Matte layer
+takes it; DoF's Depth layer does not, because a depth pass is never the picture itself —
+though it may still be pointed at this layer by hand, and reads the same input if it is.
+Plain `instantiate` (presets, tests) leaves every reference unset, so the labelled no-op
+stays the value a preset carries. The frame key feeds a distinct marker and stops
+recursing: this layer's own content is already hashed by the walk the parameter is
+inside, and an adjustment layer's below-composite by the other layers' entries, since
+draw order is content.
+
+**K-289 · DECIDED · The Lens flare's Background pair becomes a Blend menu, defaulting
+to Add; Normal is the flare on black.** K-258 gave the flare a two-option Background
+choice — Transparent (the layer's own alpha carries the flare) or Black (the output
+forced opaque, so the flare could be exported as an element over black and Screened or
+Added back in a compositor). That is a blend mode question wearing a disguise: both
+options are answers to "how does this light combine with the picture", and only two of
+the answers were available.
+
+Everything the effect renders is a black-backed light **element** — a frame that is pure
+black where there is no flare — so the honest control is the same menu a layer's Mode
+dropdown offers, applied to that element over the layer beneath. It offers the curated
+light-combine set **Echo** offers (K-149, T21) and omits the same modes for the same
+reason: the HSL, burn and dodge modes are ill-defined on a premultiplied light overlay.
+In code order: Normal, a divider, then Add (the default), Screen, Multiply, Overlay,
+Soft light, Hard light, Lighten, Darken, Difference, Exclusion, Subtract, Divide. Every
+mode runs per channel on all four channels in premultiplied linear light — this is light
+being added to light, not a perceptual re-encode of a finished picture, which is also
+what keeps the CPU reference and the WGSL kernel bit-exact (§1.6) without an sRGB round
+trip.
+
+Two modes carry the old behaviour. **Add** is `out = in + flare` with alpha saturating at
+1 — bit-identical to every flare rendered before this menu existed, which is why it is
+the default and why a project that never touched Background renders the same pixels.
+**Normal** ignores the layer and returns the element on its opaque black background:
+that is precisely the flare-over-black that Background = Black existed to export, so a
+project saved with Black migrates to Normal. The migration runs in
+`backfill_builtin_params` and drops the dead `background` parameter, because the schema
+no longer declares it and the panel cannot draw a row `set_value` refuses. The neutral
+passthroughs (Intensity 0, Mix 0) return before any of this, so they stay bit-exact
+whatever the menu holds.
+
+**K-290 · DECIDED · A frame is one command buffer, and a measured frame is not.** Every pass
+in `lumit-gpu` used to build its own command buffer and submit it, so a frame cost the graphics
+driver one round trip per layer and per effect — measured 2026-07-31 at `layers + 2`
+submissions, 34 at thirty-two layers. All of a frame's passes are already in order on one
+queue, so they are now encoded once and handed over once: 3 submissions, and flat in the layer
+count. This takes [impl/playback-scheduler.md](impl/playback-scheduler.md) §2's
+one-GPU-submit-thread rule further rather than conflicting with it — that rule says *who* may
+submit, this says *how often*.
+
+**Batching is a property of the context, not of a threaded parameter.** `GpuContext` holds the
+frame's encoder between `begin_frame` and `end_frame`, and `encoder()` hands it out; outside a
+batch it hands out a fresh, self-submitting one, so every pass called on its own behaves
+exactly as before and no test changed. The alternative — threading `&mut CommandEncoder`
+through the realise walk — would have rewritten every signature in the crate and every call
+site in the walk, for a walk that recurses through nested comps, adjustment staging and one
+whole render per motion-blur sample. `begin_frame` nests instead, so the recursive entry point
+opens the batch and the outermost caller closes it.
+
+**Anything that observes the GPU flushes first.** A command that has not been submitted has not
+run, so the read-backs, the scope trace and the three shared-texture present paths hand the
+batch over before their own submission and wait. These keep their own command buffers
+deliberately: each is followed by a fence, and a fence is the one thing batching cannot defer.
+
+**A measured frame gives the batching up, and that is the right trade.** The render-time
+column fences on the device at each layer and each effect; under batching that fence would
+wait on a queue nothing had been handed to, and every number would silently become the time
+Lumit takes to *describe* a layer rather than the time the card takes to draw it. So measuring
+flushes as it goes. K-276 already established that measuring costs the overlap between
+processor and card, which is why it is opt-in and never runs during playback; this is that same
+cost, not a new one.
+
+**The gate is a count, not a stopwatch.** `GpuContext::submits_so_far` counts every submission
+through the one choke point, and the regression tests assert the shape: an unmeasured frame's
+count does not grow with its layers, and a measured frame's does. A submit is a round trip
+whose cost does not depend on the card, so the count is the honest measure — and unlike a
+timing it means something on CI's software rasteriser. A fixed budget was deliberately not
+pinned; "adding thirty-one layers adds no submissions" is the property that was lost, and it is
+the one worth holding. **The wall-clock win is still unmeasured on real hardware**: the number
+that motivated this was a submission count, and what it buys in milliseconds wants a run on a
+real card either side.
+
+**K-291 · DECIDED · The lock is enforced in the engine, and it protects the work rather than
+the housekeeping.** The Timeline guarded the *gestures* a locked layer offers — its bar, the
+razor, rename, reorder, delete — while the fold-out's transform, effect and volume rows went on
+editing it. So the switch did not mean what its own tooltip says ("Locked — no edits until
+unlocked"), and the backlog carried the open question: guard the rows, or enforce in the engine?
+
+**Enforce in the engine.** One guard at the top of `apply` covers every op, every caller, and
+every op yet to be written. A guard per row has to be remembered each time a row is added, and
+forgetting one is precisely how this hole opened — the rows that leaked are the three *newest*
+families of row. The refusal is `OpError::LayerLocked`, which crosses the bridge as an ordinary
+op error.
+
+**And guard the rows anyway, for the interface's sake.** A locked layer's property rows are now
+shown but not touchable: the numbers are still the document's and the curves still draw, but
+nothing on the row takes a pointer. That is not belt-and-braces for its own sake — without it
+the interface would go on offering a gesture the engine would only refuse, which is a worse
+answer than not offering it. *Group* rows stay live: twirling one open is navigation, not
+editing, and a locked layer you could not look inside would be worse than one you can.
+
+**Lock protects the work, not the housekeeping.** A locked layer refuses every edit to what it
+*is* — transform, effects, masks, paint, art, text, clips, markers, blend, matte, parent,
+retime, volume, its switches, its span, its place in the stack, its existence. It still accepts
+three: the **lock itself** (or it could never be undone), **shy** (a filter on the Timeline's
+list, changing no pixel and no timing) and the **label** colour. That line is drawn where it is
+because "locked means the composition does not change" is a sentence a user can hold, and
+neither of the other two changes the composition. If it turns out to be the wrong line, it is
+the reversible half of this decision — the guard's shape does not depend on it.
+
+**Undo still crosses a lock, which is what makes the guard safe to put in the applier.** An
+edit can only have been made while the layer was unlocked, so the journal always holds the
+unlock *after* the edit, and walking backwards meets the unlock first. A `Batch` is guarded by
+its members — each passes through `apply` on its way in, and a refusal rolls the whole batch
+back, so a batch stays all or nothing. Both are pinned by tests.
+
+**K-292 · DECIDED · Snapping reaches in pixels, reports what caught it, and lets `Ctrl`
+past.** [07-UI-SPEC.md](07-UI-SPEC.md) §4.5 has always asked for snapping across edit points,
+layer in/out points, keyframes, markers, beat markers, the playhead and the work area edges.
+K-190 shipped the magnet covering exactly one of them — a whole frame — and the rest waited.
+They are built now, for the lane key drag.
+
+**The reach is measured in screen pixels, not in time**, which is the spec's rule and the one
+that makes a single slop feel right everywhere. Zoomed out, a hundred frames may be ten pixels
+apart and snapping should be eager; zoomed in, one frame may be fifty pixels and it must not
+reach across three of them. Eight pixels is the distance: a little under half a row, close
+enough that landing on a marker takes no aim and far enough that the frame either side stays
+reachable at any useful zoom. Magnification is therefore the precision control, and there is no
+second setting for it.
+
+**What caught the drag is part of the answer, not a side effect.** `snapFrame` returns the
+target as well as the frame, because the spec requires the capture to be *indicated* — a key
+that jumps to a place the pointer was not reads as a fault unless something says why. The lane
+draws a line at what took it, for as long as it holds it.
+
+**A whole frame is the fallback, not a target.** With nothing in reach the drag rounds, exactly
+as K-190 made it. That keeps the magnet's original meaning intact for the common case — an
+empty comp has nothing to snap to and behaves precisely as before — and it is why the
+whole-frame landing reports *no* caught target and so draws no indicator: it is not news.
+
+**A lane's own keys are excluded.** A key that could snap to itself would be pinned where it
+started, which reads as a broken drag rather than as a snap. A neighbour already on the same
+frame goes with it, since being taken to where you already are is not a service either.
+
+**`Ctrl` held suspends it, rather than a second toggle.** It is wanted for a moment inside a
+gesture, not for a session; the magnet in the bottom bar remains the session-length switch.
+
+**Beat markers are markers.** Beat detection writes ordinary markers, so beat snapping — the
+beat-sync covenant's daily face — arrives by being marker snapping rather than by being a
+separate kind with a separate list.
+
+**The razor reads the same function, and that fixed a disagreement nobody had written down**
+(owner, 2026-08-06). A cut was always quantised — `TimelineAxis.frameAt` rounds — but the line
+drawn under the blade followed the pointer continuously, so the mark stood up to half a frame
+from where the edge actually bit. One function now answers for both, so they cannot part. A cut
+is a clip boundary and therefore a whole frame, so the razor rounds *after* snapping: a target
+that sits between frames still takes the cut, and the cut still lands on a frame.
+
+**The layer bar drag, the work-area handles and marker drags still land where the pointer puts
+them.** That is a deliberate stopping point rather
+than an oversight: the arithmetic is pure and shared (`panels/timeline_snap.dart`, tested on
+its own), so each remaining gesture is a wiring job with no design left in it, and doing them
+one at a time keeps each one's regression test honest. TODO carries the list.
+
+**K-293 · DECIDED · Zoom flies, and the Timeline's zoom is a slider whose ends mean
+something.** From the owner (2026-08-06), in three parts: the zoom should move rather than
+cut, faster input should zoom further and settle when the hand stops, and the bottom bar's
+− / + / Fit buttons should be a slider.
+
+**The wheel still never zooms without a modifier.** This was briefly built the other way, on a
+reading of the owner's first message that they corrected the same day: docs/07 §4.6's "no
+scroll hijack" MUST stands, plain wheel scrolls, `Ctrl+wheel` zooms. Recorded because the
+supersede was written and then withdrawn, and a reader finding half of it in the history should
+know it never applied.
+
+**The motion is the Viewer's, lifted out.** `widgets/smooth_zoom.dart` is K-218's shape shared:
+the Viewer has flown since then while the Timeline, the graph editor and the Project panel all
+cut. It interpolates **geometrically**, because magnification is a *ratio* — lerp 1 → 16
+linearly and half the flight is spent between 8 and 16, which reads as a lurch then a crawl.
+The Timeline reads it now; the graph editor and Project panel are named in TODO and are a
+matter of holding one and reading its value.
+
+**A fast roll goes further, with a ceiling.** A notch is worth more the sooner it follows the
+last — linear in the gap, which is the thing the hand controls directly — up to 4×. The ceiling
+is not a detail: without one a flick crosses the whole zoom range in a single gesture and there
+is no way back to where you were. A notch arriving mid-flight extends the *target* rather than
+restarting from wherever the flight had reached, which is what makes a rolled wheel one
+continuous motion instead of hops that never arrive. When the hand stops, the flight finishes
+and settles.
+
+**The anchor is held for the whole flight, not just its ends.** The frame under the pointer
+stays under it on every tick, because the lanes grow all the way through — hold the scroll
+offset still instead and the anchor slides out from under the cursor, which is the drift the
+Viewer's own note warns about. The correction runs in the same turn as the rebuild: deferring
+it to a post-frame callback paints one whole frame at the new width with the old offset, a
+visible sideways slide.
+
+**The slider's ends are a promise, and one of them is a count of frames.** Left is the whole
+composition. Right is **twenty frames across the lanes** — not a magnification like "6400%",
+because a magnification means nothing without knowing the comp's length, while "twenty frames"
+means the same thing on a five-second comp and a ten-minute one. The visible span is
+`frames / zoom` whatever the panel's width, so the ceiling is simply `frames / 20`, and it
+moves with the composition. The slider runs on the **logarithm** of the zoom for the same
+reason the flight does: linear, nine tenths of its length would sit inside the last handful of
+frames of a long comp and every useful zoom would be crushed into the first centimetre.
+
+**Two zooms, two anchors, and that is deliberate.** `Ctrl+wheel` holds the frame **under the
+pointer**, because there the pointer is the whole gesture. The slider has no pointer, so it
+holds the **playhead** — corrected by the owner the same day from the middle of the visible
+lanes, which was their own first suggestion and which they withdrew: the middle of the
+scrollbar is a place nobody is looking at, while the playhead is where the work is happening,
+and it is what After Effects zooms its own timeline about. In view, the playhead keeps exactly
+the screen position it has, so nothing under the eye moves at all; out of view, it is brought
+to the middle of the lanes, because magnifying about something you cannot see leaves you
+nowhere.
+
+**A dragged slider does not fly.** The flight is for input that arrives in *steps* — a wheel
+notch, a tap on the track — where the gap between two zooms has to be filled. A drag is
+already the motion, and animating towards a target the finger moves every few milliseconds
+meant the lanes trailed the handle by a whole flight, restarting before they ever arrived:
+reported by the owner as the slider being "super super laggy". So a drag sets the zoom at
+once, and the handle is drawn from where the zoom is *going* rather than from where a flight
+has reached, which is what keeps it under the finger. `HouseSlider` gained `onChangeLive` for
+this; a tap on its track still flies.
+
+**Zoom rebuilds the lanes, not the panel.** The other half of that lag: the zoom was a plain
+field and every tick called `setState`, so a flight rebuilt the outline's every row, its
+toolbar and its column header sixty times a second — along with the work-area read, the fold
+tables and the cache-bar read that come with a full rebuild. Nothing left of the seam depends
+on the zoom. The zoom is a `Listenable` and only the lane side listens to it, which is a
+standing shape for this panel rather than a patch: the playhead is already handled this way,
+and for the same reason. docs/13's S1 budgets a Timeline scroll/zoom frame at 8 ms, and the
+bridge-call budget suite is what holds this: a zoom drag now has its own entry there, and
+what it asserts is that the count does not scale with the number of steps dragged. Three things found in the same pass and fixed with it — the cache bar
+was asking the engine for the whole composition's cache map on every rebuild despite its own
+note saying it never polls (it now holds one read until a frame arrives), the merged
+"something changed" listenable was allocated fresh per build so every cache bar
+resubscribed, and the row-divider painter compared its blanks by identity against a list
+rebuilt each time, so it always repainted.
+
+**The scroll correction belongs inside layout.** Holding the anchor meant moving the scroll
+offset the moment the zoom changed — and that offset is only valid for the *new* lane width,
+which has not been laid out yet. For the rest of that frame the position sat past its own end,
+so Flutter began springing it back, and the bottom bar's thumb was drawn from a position and a
+length that disagreed: a thumb that twitched all the way through a drag (owner, 2026-08-06,
+"jumps around a bit"). A scroll position is told its new content size during layout, in
+`applyContentDimensions`, which is the one moment the width and the offset are known together —
+and that method is *documented* to return false when it has moved the offset, so layout runs
+again with the corrected one. `widgets/zoom_anchored_scroll.dart` is a `ScrollController` that
+does exactly that, and the anchor it holds is **one-shot**: an anchor that outlived its zoom
+would be applied by the next unrelated layout — a window resize — and drag the view back to a
+zoom the reader had since scrolled away from. A zoom still in flight simply asks again on its
+next tick, which it does anyway, because every tick is a new width.
+
+**The slider's ends are landscapes, drawn rather than looked up.** A small one and a large one,
+the pair After Effects flanks its own zoom slider with, replacing two sizes of magnifying
+glass. Two reasons, both mattering: at the sizes that make the pair read as "less / more" the
+small end is well under 16px, and K-209's floor exists because an Iconoir glyph's 1.5-unit
+stroke lands on less than a pixel there and crunches — which is exactly what the 13px
+magnifier did. A filled silhouette has no stroke to lose. docs/15 §5 already allows a
+deliberately painter-drawn glyph, and this is one.
+
+The − / + / Fit buttons are gone: the slider's two ends *are* Fit and full zoom, and a slider
+also says where you are between them, which three buttons never did. `HouseSlider` gained a
+width and a value-hiding option rather than a second slider being written for a toolbar.
+
+**K-294 · DECIDED · Memory is reported, not guessed at: every tier's bytes beside the
+process's own, and the difference named.** From the owner (2026-08-06), after a second
+report of Lumit holding tens of gigabytes on a Mac — 85 GB, following the 81 GB that
+K-277 bounded the write-behind queue for.
+
+The first question either time was the same, and neither time could it be answered from
+outside the process: **is a cache doing exactly what it was told, or is something holding
+memory nobody is counting?** Every tier already knew its own bytes and every one of them
+is byte-budgeted; what was missing was the total to weigh them against. So Settings ▸
+Performance opens with a **Memory** section: what the operating system says the process
+holds, what the frame cache and the decoded-frame cache hold, how many decoders are open,
+how deep the write-behind queue is, and **what is left over**.
+
+The left-over figure is the point. If the tiers sit at their budgets and the process is a
+hundred times larger, the search is not in this list at all — it is memory held below us
+(graphics allocations the driver has not reclaimed, a decoder's own buffers) and that is a
+different hunt with different tools. Turning a week of guessing into one screenshot is
+worth a syscall.
+
+- `resident_memory_bytes` asks each platform for its nearest equivalent of what the task
+  manager shows: `WorkingSetSize` on Windows, `VmRSS` on Linux, and **`phys_footprint`
+  from `TASK_VM_INFO`** on macOS. Resident size is the obvious macOS answer and the wrong
+  one — it leaves out the compressed pages and the IOSurface and Metal allocations a
+  graphics application lives on, which is most of what would be hunted. `phys_footprint`
+  is what Activity Monitor prints under *Memory*, and so the number a user reads back.
+- **The graphics driver's own accounting rides beside the tiers.** The first reading in
+  anger made the case: 12 GB held, 11 GB of it unaccounted, with ~405 frames decoded —
+  which cleared every byte-budgeted tier at a glance and left the layer underneath, where
+  the tiers' own numbers cannot reach.
+  - It was first written as bytes alone (`Device::generate_allocator_report`), and on the
+    Mac it was written for it read **"not reported by this driver"**: that report is
+    Vulkan and D3D12 only, and Metal does its own allocation. An instrument that works
+    only where there is no problem is not an instrument, so the report now leads with
+    **live object counts** — how many textures and buffers the driver is holding — which
+    every backend keeps. A handful at rest against thousands is exactly the difference
+    between a cache doing its job and frames the engine dropped never being destroyed.
+  - The byte figures stay for the platforms that have them, and that row is **not drawn**
+    where they are zero: a zero nobody can distinguish from a real answer is worse than a
+    missing row (docs/15-DESIGN.md — the honest gap).
+  - The counts are pinned by a test that makes a texture, drops it, and checks the tally
+    follows: compiled without wgpu's `counters` feature they would read zero for ever,
+    which is the failure this row could not afford.
+- **VRAM is reported apart, never subtracted**: on unified memory it is inside the process
+  and on a discrete card it is not, so folding it in is wrong on half the machines Lumit
+  runs on. **Nothing is counted twice** — a frame in the write-behind queue shares its
+  allocation with the frame cache, so the queue reports a count. **What cannot be weighed
+  is counted** — an open decoder's buffers belong to FFmpeg and the driver, so the report
+  says how many are open rather than inventing bytes.
+- A platform that cannot answer returns 0 and the interface says "not known here". The
+  honest gap, per docs/15-DESIGN.md, beats a plausible number.
+
+This is a diagnostic, and it is deliberately not a fix: it does not reclaim a byte. It is
+the instrument the next report is read with, written down in docs/13 §7.0.1 as a standing
+rule — a tier that holds memory and does not report it is not finished.
+
+**K-295 · DECIDED · What the engine drops, the driver hands back on the next turn: the
+worker reclaims once a loop.** From the owner's readings on 2026-08-06, which caught the
+fault in the act: 6 GB held with **around 5 500 live graphics buffers**, then 2.9 GB and
+**8 buffers** moments later — because switching back to a settings page happened to make
+the device do a maintain. Memory that comes back only when the user does something
+unrelated is a leak in every sense that matters to the person whose machine it is.
+
+**The mechanism.** Dropping a texture or a buffer does not free it. wgpu marks it
+destroyed and hands the memory back on the device's next *maintain*, which a renderer
+drawing into a window gets for free from presenting. This engine renders into caches, on a
+worker thread, and spends most of its time idle: the frame cache evicts, read-backs
+finish, a composite's intermediates go out of scope — and none of that asked the device
+for anything, so the memory sat marked-and-not-returned until something else polled for
+its own reasons. The idle fill and the idle backup make that worse rather than better,
+because they are what produces the dropped objects while nothing presents.
+
+**The fix is one line and a rule.** `GpuContext::reclaim` — a non-blocking
+`Maintain::Poll` — on every turn of the worker's loop. It drains what has already
+finished, costs nothing when there is nothing to drain, and makes reclamation a property
+of time passing rather than of the user opening a panel.
+
+**The rule this writes down** (docs/13 §7.0.2): an engine that renders without presenting
+MUST maintain its device on a schedule of its own. Anything that only frees memory as a
+side effect of an unrelated call is not freeing memory.
+
+Two things fell out of the same readings and are fixed with it:
+
+- **Frames on the card are counted against the process where the card's memory *is* the
+  process's memory.** K-294 reported VRAM apart from every tier on the grounds that a
+  discrete card's frames are not in the process — true, but on the Apple Silicon Mac doing
+  the reporting they are, so a cache doing exactly its job showed up inside the
+  unaccounted figure and looked like the fault. The adapter now says which kind of memory
+  it has (`unified_memory`, integrated or software), and the report counts accordingly.
+  The rule generalises: a report that can mislead in the direction of "this is the bug" is
+  worse than one that says less.
+- **The memory section is a debug-build instrument** (owner, 2026-08-06). It is for
+  hunting a fault, not a setting anybody should be asked to interpret; `kDebugMode` gates
+  both the section and the call behind it, so a release build neither draws it nor asks.
+
+**Verified** by `what_the_engine_drops_the_driver_gets_back`, which renders far more
+frames than the cache can hold and then asks the driver what it still has: tens, not one
+per frame. It runs on every platform the suite runs on, and the one that matters is
+**macOS** — where the reclamation went wrong, and where no allocator report exists to see
+it, which is why the gate is a count of live objects rather than a number of bytes.
+
+**K-296 · DECIDED · Updates are checked from the Help row itself, fetched whole from the
+GitHub Release, and installed on a restart the user chooses.** Help ▸ Check for updates was
+the last row of the bar that was listed and dead. It is now the whole update sequence in one
+row, and nothing else is added to the interface for it.
+
+**The row is the state machine.** Press it and it greys and reads "Checking for updates…";
+a moment later it is either "Click to update - v0.2.0" — the version in the row, where
+somebody deciding whether to update is already looking — or back to "Check for updates",
+with "Lumit is up to date" in the status line. Press it in the offered state and the update
+is fetched; while it comes the row reads "Downloading update… 42%"; once it is on disk and
+verified it reads "Restart to finish updating" until the restart happens. A row that said
+"You are up to date" and stayed that way would be a stale claim by the next morning, which
+is why success goes back to the resting wording rather than boasting about it. This needed
+one small thing of the menu bar: `MenuEntry.live` is a row that rebuilds in place while its
+menu is open and does *not* close the menu when pressed, because the point of pressing it is
+to watch what it does. It is the only live row there is, and rows should have to earn it.
+
+**Full installers, never patches.** Releases already publish the finished installer per
+platform (`release.yml`, a `v*` tag): `setup.exe`, `.dmg`, `.tar.gz`, `.flatpak`. The updater
+downloads whichever suits the machine, entire. A delta scheme means publishing a patch per
+pair of versions, a tool to apply them and a fallback for the pairs that are missing — three
+new failure modes to save bandwidth GitHub serves for nothing (K-279: no bandwidth cap, no
+server of ours). The saving is real and the cost is a few hundred megabytes on a deliberate
+click, a few times a year.
+
+**Nothing is downloaded without being asked, and nothing is run without being checked.**
+Automatic updates are on by default and are offered twice — on the setup screen (K-246) and
+in Settings ▸ General ▸ Updates — but what "on" means is *looking*, once a day at launch, and
+saying so in the menu. The download always waits for a press: this is a video application and
+someone editing on a hotel connection should not find Lumit spending their data. Before the
+downloaded file is executed it must match the length the release published and, where GitHub
+publishes a `digest`, its SHA-256; a file that fails either is deleted rather than run. An
+installer is the most dangerous file Lumit ever touches, so verification is a gate and not a
+diagnostic.
+
+**Finishing means restarting, and the work comes first.** An installer cannot replace files
+that are running, so the last window says so: *Restart to finish updating*. With unsaved work
+open the buttons are **Save and restart** / **Restart without saving** / **Later**; with a
+clean project, **Restart now** / **Later**. Later keeps the verified installer and the row
+that offers it, so the update is not lost by declining it once. Windows starts Inno Setup
+silently (`/SILENT /CLOSEAPPLICATIONS /NORESTART` — the install questions were answered the
+first time and asking them again is ceremony) and quits; macOS opens the disk image and
+quits; **Linux only reveals the download** and does not quit, because a tarball is unpacked
+wherever its owner keeps it and a Flatpak is installed by Flatpak, neither of which Lumit
+should do on somebody's behalf.
+
+**It lives in Dart, not in the engine.** `state/updates.dart` and
+`shell/update_dialog_frb.dart`, with `dart:io`'s own HTTP client and `crypto` for the digest
+— no new Rust dependency, no TLS stack pulled into a crate that renders frames. An updater is
+shell business by every test docs/05 applies: it touches no document, no timeline and no GPU,
+and the engine crates stay free of the network. The version it compares against is the one
+the boot log already reports (K-008), so there is no second source of truth to keep in step.
+
+**K-297 · DECIDED · Lumit installs per user and replaces itself, the way Chrome and VS
+Code do — except inside a Flatpak, where that is Flatpak's job.** K-296 shipped updating by
+running the installer again. That works and it is a poor experience: a wizard, a UAC prompt,
+and questions the user answered the first time. The reason it had to be that way was the
+install location, not the updater.
+
+**The install moves to the user's own folder.** `packaging/windows/lumit.iss` gains
+`PrivilegesRequired=lowest` and installs to `{localappdata}\Programs\Lumit`
+(`UsePreviousAppDir=yes`, so an existing `Program Files` copy stays where it is and keeps
+being updated by installer). This is what Chrome, VS Code and Discord all do, and it is the
+whole trick: a folder the user owns can be rewritten by a program the user is running, with
+no elevation and nothing to approve. macOS bundles and the Linux tarball already live
+somewhere their owner can write.
+
+**Releases carry the application, not only its installer.** `release.yml` now publishes
+`lumit-<v>-windows-x64.zip` beside the setup, and `lumit-<v>-macos-<arch>.zip` beside the
+disk image; the Linux tarball already was one. macOS uses `ditto` rather than `zip` because
+an `.app` carries symlinks, executable bits and a signature that a naive archiver drops,
+producing a bundle the system will not open. Unpacking uses the platform's own tool for the
+same reason — `ditto` on macOS, `tar` elsewhere, including Windows, which has carried bsdtar
+since Windows 10 1803. No Dart zip library, no new dependency.
+
+**The swap is two renames, not a few hundred file copies.** The new version is unpacked to
+`<install>.new`, verified, and marked complete; then `<install>` becomes `<install>.old` and
+`<install>.new` becomes `<install>`. Renaming is one filesystem operation — it happened or
+it did not — where copying files over a running application is hundreds of chances to be
+interrupted into a Lumit that is neither version and may not start. If the second rename
+fails the first is undone immediately, from code already in memory. The old folder is left
+behind on purpose: Windows will not delete a loaded DLL, so `main()` sweeps it on the next
+launch, and puts it back if it ever finds the install folder missing.
+
+**Three deliveries, chosen by where Lumit actually lives** (`InstallSite.detect`):
+*in place* for a folder or bundle Lumit can write beside — proven by writing a probe file,
+not assumed from the path; *installer* for anywhere it cannot, which covers every existing
+`Program Files` install and the macOS disk image; *Flatpak bundle* inside a Flatpak. The
+release attachment follows the delivery, so a Flatpak is never offered a tarball it cannot
+use, and a per-user install is never offered a setup it does not need.
+
+**A Flatpak is not updated from inside, and pretending otherwise would be a lie.** The
+sandbox is read-only by design and reaching the host to run `flatpak install` would need
+permissions no editor should hold. So Lumit fetches the bundle, says the one command that
+installs it, and stays open. Making that a proper `flatpak update` needs Lumit published to
+an OSTree remote rather than as a single-file bundle — tracked in TODO, and the reason the
+Flatpak wording names a command rather than a button.
+
+**What this costs.** The window between the two renames is not recoverable by Lumit if the
+machine loses power inside it: the install folder would be `Lumit.old` and nothing would
+start. It is two rename calls wide, the start-up sweep puts it back for every failure short
+of that, and the fallback is the installer, which is still published. Judged worth it
+against a UAC prompt on every update for ever.
+
+**K-299 · DECIDED · An effect is copied from its heading, in both places it has one.**
 K-275 built copy and paste and named what it left: "the two places an effect is *picked*:
 **Copy effect** on an effect's heading in the Effect controls panel and on its row in the
 Timeline, both calling `copy_effects(Some(id))`". Both are wired now.
@@ -5874,3 +6589,6 @@ Masks, Contents, Paint and Audio as headings too, and none of them is a thing th
 copied. `effectIdOfPath` already told the render-time indicator which rows are effects
 (docs/13 §7.1); it now tells the menu the same thing, so a grouping opens no menu at all
 rather than opening one with a dead row in it (docs/15: no punishment UI).
+
+This entry was written as K-287 on its branch; that number went to the Viewer and Timeline
+bar layout on main first, so it is K-299 here.

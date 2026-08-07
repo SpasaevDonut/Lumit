@@ -88,21 +88,35 @@ void main() {
           reason: 'shortcuts must not depend on where focus is sitting');
     });
 
-    testWidgets('the arrows step the playhead within the comp', (tester) async {
+    /// `Mod`+arrow steps the playhead (K-282). The **bare** arrows do not: they
+    /// belong to whatever has focus — a list moving its highlight, a field
+    /// moving its cursor — which is the whole reason the step took a modifier.
+    testWidgets('Ctrl and the arrows step the playhead within the comp',
+        (tester) async {
       final p = await mount(tester);
 
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
-      await tester.pump();
+      Future<void> step(LogicalKeyboardKey arrow) async {
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+        await tester.sendKeyEvent(arrow);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+        await tester.pump();
+      }
+
+      await step(LogicalKeyboardKey.arrowRight);
       expect(p.uiState.playheadFrame.value, 1);
 
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
-      await tester.pump();
+      await step(LogicalKeyboardKey.arrowLeft);
       expect(p.uiState.playheadFrame.value, 0);
 
       // A frame before the comp is not a frame.
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
-      await tester.pump();
+      await step(LogicalKeyboardKey.arrowLeft);
       expect(p.uiState.playheadFrame.value, 0);
+
+      // And a bare arrow leaves the playhead where it is.
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pump();
+      expect(p.uiState.playheadFrame.value, 0,
+          reason: 'the bare arrows are free for whatever has focus');
     });
 
     testWidgets('Home and End go to the ends of the comp', (tester) async {
