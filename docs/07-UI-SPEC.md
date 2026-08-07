@@ -1818,7 +1818,9 @@ travel in the `.lum` and are marked below:
 **The window (K-193, K-194).** It opens from **Window → Settings…** or **Ctrl/Cmd+comma** — a
 sidebar of pages, each a stack of named sections, each section a card of rows carrying what
 the setting is, a line saying what it does, and its control on the right. Its pages are
-**General** (reset workspace, version and build), **Appearance** (colour scheme, corners,
+**General** (reset workspace, version and build), **Appearance** (colour scheme with an
+eight-swatch preview beside it, the theme shelf — Duplicate, Rename…, Delete, Import… and
+Export… (K-298) — corners,
 interface motion, and the Scopes and Viewer toggles — themed scope colours, themed surround,
 and whether the Viewer smooths the picture when it is zoomed past 1:1, all three off by
 default: a magnified pixel is a square, because looking at the pixels is what zooming in is

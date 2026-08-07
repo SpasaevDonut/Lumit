@@ -235,7 +235,15 @@ Appearance → Customise…, and a saved custom theme is *a name, a light-or-dar
 colours over it* — so a theme keeps working when a token is added, taking the new one from
 its base. `flutter_ui/lib/theme/theme_tokens.dart` is the single declaration of what is
 editable (a test counts it against the struct); `viewer_surround` is deliberately absent for
-the §2.1 reason. Two tokens were added with it, both defaulting from the mode rather than
+the §2.1 reason.
+
+**Sharing a theme (K-298).** A theme is also a file: `.lumtheme`, an indented JSON document
+carrying a format marker, a version, and the same name/base/colours the workspace file
+stores (`flutter_ui/lib/theme/theme_file.dart`). Settings → Appearance offers **Duplicate,
+Rename…, Delete, Import… and Export…** beside **Customise…**, the editor offers **Save a
+copy…**, and the picker carries an eight-swatch preview of the selection. A theme read from
+a file is applied over its base like any other, so one written by a newer Lumit still opens
+with the colours this build knows; a name already taken is numbered rather than overwritten. Two tokens were added with it, both defaulting from the mode rather than
 being restated per scheme: `timeline_out_of_range` (the Timeline's ground outside the work
 area) and `selection_fill` (under a selected row, half-strength under a highlighted one —
 its own colour because a selection has to out-contrast whichever ground it lands on, which
