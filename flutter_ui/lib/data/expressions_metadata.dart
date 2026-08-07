@@ -32,7 +32,6 @@ class ExpressionsMetadata {
     a.functions.removeWhere((i) => i.name.startsWith(regExp));
 
     api = a;
-    print(api);
   }
 }
 

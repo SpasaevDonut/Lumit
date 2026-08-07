@@ -340,21 +340,40 @@ The **expression** stage is future (§6.4); v1 evaluates keyframes/static only. 
 evaluated value at a time is pure regardless: same project, same time, same value — no wall
 clock, no external state ([14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md)).
 
-### 6.4 Expressions (future — no engine in v1)
+### 6.4 Expressions
 
-The expression engine (JavaScript on QuickJS, K-063 / [12-PLUGINS.md](12-PLUGINS.md)) is not in
-v1: `Property` has no expression slot yet. The intended shape:
+A property can hold a line of code instead of a number or a row of keyframes. The engine is
+**Rhai** (K-305, superseding K-063's choice of JavaScript on QuickJS-ng);
+[impl/expressions.md](impl/expressions.md) is the authority on how it works and
+[12-PLUGINS.md](12-PLUGINS.md) §4 on what it exposes.
+
+It is a third arm of `Animation`, alongside a static value and a keyframe list, so a
+property is *either* keyframed *or* driven — never both:
 
 ```rust
-struct Expression {
-    source: String,          // JavaScript, ES2018 surface — see 12-PLUGINS.md
-    enabled: bool,
-    last_error: Option<ExprError>,   // runtime state, not serialised as authority
+enum Animation {
+    Static(f64),
+    Keyframed(Vec<Keyframe>),
+    Expression(String),   // Rhai source; see 12-PLUGINS.md §4.2
 }
 ```
 
-An expression failure disables that expression with a badge and falls back to the
-pre-expression value. It never fails the render.
+The source is stored verbatim. There is no compiled form on disk and no separate
+`enabled` flag: clearing the text is how an expression is removed, and the property returns
+to the value it held before.
+
+**Scalars only.** `Animation::Expression` reaches the scalar transform properties and Float
+effect parameters. Point and colour properties cannot be driven yet. A text layer is the
+one non-scalar case, and it carries its own optional `expression` on the `TextDocument`
+(§9.1, K-306) rather than going through `Animation`, because its result is printed rather
+than measured and so may be of any type.
+
+**An expression failure never fails the render.** Today the fallbacks are blunt: a numeric
+expression that errors resolves to `-1.0`, and a text one prints nothing. The specified
+behaviour — the property falls back to its keyframed value and the expression is disabled
+with a badge naming the error — is not built, and is carried as a known gap in
+[impl/expressions.md](impl/expressions.md) §8. `last_error` is runtime state either way, and
+is never serialised as authority.
 
 ---
 

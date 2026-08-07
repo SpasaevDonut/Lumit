@@ -367,5 +367,9 @@ GPLv3 project; diagnostics belong to the user.
   should also apply to flow-based effect nodes (RSMB-class blur) or only Retime interpolation.
 - **Thermal throttling on laptops**: sustained-playback budgets assume steady clocks; decide
   whether B5/B6 on the floor machine are measured after a 10-minute soak.
-- **A stress budget for expressions**: per-frame expression evaluation time has no budget yet;
-  likely needs one once the expression engine (K-063) lands.
+- **A stress budget for expressions**: the engine has landed (Rhai, K-305) and per-frame
+  expression evaluation time still has no budget. Two separate things are missing — a
+  *performance* budget gating merges, and a *runtime* interrupt so one expression cannot
+  stall a render thread ([12-PLUGINS.md](12-PLUGINS.md) §4.4). For scale: a pooled engine
+  evaluates a typical expression in about 1µs, so a 60fps frame holds roughly fifteen
+  thousand.

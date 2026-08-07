@@ -37,7 +37,6 @@ import '../widgets/colour_picker.dart';
 import '../widgets/controls.dart';
 import 'fx_section.dart';
 import 'keyframe_controls_frb.dart';
-import 'package:flutter/services.dart';
 import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:lumit_flutter/widgets/autofill.dart';
 import 'package:syntax_highlight/syntax_highlight.dart';
@@ -1351,7 +1350,6 @@ class _EffectParamRowExpressionState extends State<EffectParamRowExpression> {
             submitOnLostFocus: true,
             autofill: ExpressionAutofillGenerator(),
             onSubmitted: (value) {
-              print("Expression committed: $value");
               widget
                   .set(BridgeEffectValue.float(BridgeScalar_Expression(value)));
               onTextChanged();

@@ -6,7 +6,6 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/services.dart';
-import 'package:flutter/widgets.dart';
 
 import '../l10n/strings.dart';
 import '../state/workspace.dart';
@@ -966,7 +965,7 @@ class _HouseTextFieldState extends State<HouseTextField>
   }
 
   List<dynamic> suggestions = List.empty();
-  int? highlightedSuggestion = null;
+  int? highlightedSuggestion;
 
   void _changed() {
     if (widget.autofill == null) {
@@ -1004,7 +1003,6 @@ class _HouseTextFieldState extends State<HouseTextField>
                 (highlightedSuggestion! + 1) % suggestions.length;
           }
 
-          print("Highlighted suggestion: $highlightedSuggestion");
           showOverlay();
         });
         return KeyEventResult.handled;

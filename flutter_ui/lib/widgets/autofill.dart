@@ -45,7 +45,7 @@ class ExpressionAutofillGenerator
 
     String signature = data.signature.replaceFirst(data.name, "");
     if (data.isGetter) {
-      signature = " ->" + signature.split("->").last;
+      signature = " ->${signature.split("->").last}";
     }
     return Row(
       spacing: 8,
