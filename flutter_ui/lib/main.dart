@@ -432,7 +432,7 @@ class LumitUiState extends ChangeNotifier {
   /// The keyboard map every shortcut is looked up in (docs/07 §15, K-199).
   late final KeymapState keymap;
 
-  /// Whether there is a newer Lumit, and fetching it (K-294).
+  /// Whether there is a newer Lumit, and fetching it (K-296).
   ///
   /// One for the session, here, because the Help menu and Settings ▸ General
   /// are two views of the same check and neither owns it. The version is passed
@@ -491,7 +491,7 @@ class LumitUiState extends ChangeNotifier {
   void requestTogglePlay() => togglePlayRequest.value++;
 
   /// Look for a newer Lumit on launch, if that is switched on and it has been
-  /// a day since the last look (K-294).
+  /// a day since the last look (K-296).
   ///
   /// Only ever a *look*: what it finds ends up as the wording of the Help menu
   /// row, and downloading anything still waits for a click. Failure is silent —
@@ -1442,7 +1442,7 @@ class _LumitAppViewState extends State<LumitAppView> {
       if (!mounted) return;
       final ui = context.read<LumitUiState>();
       // The update check follows the question rather than racing it: the
-      // setup screen is where somebody may have just switched it off (K-294).
+      // setup screen is where somebody may have just switched it off (K-296).
       maybeShowFirstRunFrb(context, ui.workspace)
           .then((_) => ui.maybeCheckForUpdates());
     });

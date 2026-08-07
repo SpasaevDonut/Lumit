@@ -130,7 +130,7 @@ void main() {
     Workspace.storeOverride = null;
   });
 
-  // Automatic update checks (K-294): on by default, for a fresh install and
+  // Automatic update checks (K-296): on by default, for a fresh install and
   // for a settings file written before the setting existed alike.
   test('update checks default to on and survive a restart', () {
     expect(Workspace().autoUpdate, isTrue);

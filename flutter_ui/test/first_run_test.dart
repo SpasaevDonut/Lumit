@@ -91,7 +91,7 @@ void main() {
     await tester.pumpWidget(host());
     await tester.pumpAndSettle();
 
-    // Ticked before anything is touched (K-294): the default is that Lumit
+    // Ticked before anything is touched (K-296): the default is that Lumit
     // looks for new versions.
     await tester.tap(find.byKey(const ValueKey('first-run-ae')));
     await tester.pumpAndSettle();

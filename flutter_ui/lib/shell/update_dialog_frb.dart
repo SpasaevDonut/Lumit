@@ -1,4 +1,4 @@
-// The windows an update puts up, and the order they come in (K-294).
+// The windows an update puts up, and the order they come in (K-296).
 //
 // # In plain terms
 //

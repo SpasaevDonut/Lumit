@@ -1,4 +1,4 @@
-// Finding, fetching and applying a newer Lumit (K-294).
+// Finding, fetching and applying a newer Lumit (K-296).
 //
 // Every seam the updater has with the outside world is injected, so this suite
 // never reaches the network, never writes an installer anywhere but a scratch

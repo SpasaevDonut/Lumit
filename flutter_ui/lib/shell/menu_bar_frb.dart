@@ -116,7 +116,7 @@ class MenuEntry {
   ///
   /// Only for rows where the press has visible consequences in the row itself:
   /// Check for updates is the one, and it is the whole reason this exists
-  /// (K-294). Pressing it starts a check, the row greys and says so, and the
+  /// (K-296). Pressing it starts a check, the row greys and says so, and the
   /// answer arrives in the same row a second or two later. A row that closed
   /// the menu would leave the user pressing Help again to find out what
   /// happened, and one that did not redraw would still say "Check for updates"
@@ -170,7 +170,7 @@ class LumitMenuBarFrb extends StatelessWidget {
     // would keep whatever selection it was last built with, and every one of
     // those rows would be greyed out with a layer plainly selected.
     // The updater is the second thing outside the shell state that a menu row
-    // reads (K-294): the Help row says what it is doing, and on macOS the whole
+    // reads (K-296): the Help row says what it is doing, and on macOS the whole
     // tree is handed to the system, where there is no rebuilding a single row.
     return ValueListenableBuilder<List<LayerReference>>(
       valueListenable: context.read<LumitUiState>().selectedLayers,
@@ -934,7 +934,7 @@ Future<void> saveProjectFrb(
 }
 
 /// The Help ▸ Check for updates row, reading whatever the updater is doing
-/// (K-294).
+/// (K-296).
 ///
 /// Built fresh every time the service notifies, which is what makes one row
 /// carry the whole sequence: check, offer, download, restart. Disabled while
@@ -1239,7 +1239,7 @@ class _MenuList extends StatelessWidget {
                   )
                 else if (item.live case final listenable?)
                   // Stays open and redraws in place: the point of a live row is
-                  // to watch what pressing it did (K-294).
+                  // to watch what pressing it did (K-296).
                   ListenableBuilder(
                     listenable: listenable,
                     builder: (context, _) {

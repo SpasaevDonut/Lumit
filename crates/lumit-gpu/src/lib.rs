@@ -91,6 +91,14 @@ pub struct GpuContext {
     /// unshared and the honest scope for the question: what did *this* render
     /// hand over.
     ///
+    /// Whether the graphics memory and the system memory are the same memory —
+    /// an integrated or software adapter, which is every Apple Silicon Mac.
+    ///
+    /// It decides one thing, and that one thing matters: whether the frames
+    /// held on the card are *inside* this process's total or beside it. Report
+    /// them the wrong way round and a cache doing exactly its job reads as
+    /// gigabytes nobody can account for (K-294).
+    pub unified_memory: bool,
     /// Shared with every [`Self::clone_handle`] of this context, because they
     /// are handles on the *same* device and queue: the realiser keeps one of
     /// its own, and a count that missed what went through it would be counting
@@ -305,6 +313,10 @@ impl GpuContext {
             device,
             queue,
             software: false,
+            // Not knowable from a device alone, and the safe answer for a
+            // memory report is the one that does not claim the card's frames
+            // are inside this process when they may not be.
+            unified_memory: false,
             sample_flags: wgpu::TextureFormatFeatureFlags::empty(),
             frame: std::cell::RefCell::new(None),
             frame_depth: std::cell::Cell::new(0),
@@ -332,6 +344,7 @@ impl GpuContext {
             device: self.device.clone(),
             queue: self.queue.clone(),
             software: self.software,
+            unified_memory: self.unified_memory,
             sample_flags: self.sample_flags,
             frame: std::cell::RefCell::new(None),
             frame_depth: std::cell::Cell::new(0),
@@ -355,6 +368,68 @@ impl GpuContext {
     #[must_use]
     pub fn submits_so_far(&self) -> u64 {
         self.submits.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// What the graphics driver is holding for this device: bytes live in
+    /// allocations, and bytes reserved in the blocks they were carved from
+    /// (K-294's follow-up).
+    ///
+    /// **Why the second number matters more than the first.** An allocator
+    /// hands out blocks and sub-allocates within them; freeing every allocation
+    /// in a block does not necessarily hand the block back. `reserved` is what
+    /// the process is actually holding, `allocated` what it is actually using,
+    /// and a large gap between them is memory that is free and still ours —
+    /// which is exactly the shape of "discarded but not deleted".
+    ///
+    /// `None` where the backend keeps no such accounting — which is **every
+    /// Mac**: the allocator report is Vulkan and D3D12 only, and Metal does its
+    /// own allocation. Read [`Self::live_objects`] and [`Self::device_bytes`]
+    /// there, which is why both exist.
+    #[must_use]
+    pub fn allocator_bytes(&self) -> Option<(u64, u64)> {
+        self.device
+            .generate_allocator_report()
+            .map(|r| (r.total_allocated_bytes, r.total_reserved_bytes))
+    }
+
+    /// How many textures and buffers the driver is holding for this device
+    /// right now — `(textures, buffers)`.
+    ///
+    /// Every backend keeps these, Metal included, which is what makes them the
+    /// honest question on the platform where the memory was actually lost. A
+    /// cache holding eight frames beside a driver holding four thousand
+    /// textures is not a cache problem and not an allocator subtlety: it is
+    /// objects the engine dropped that were never destroyed.
+    #[must_use]
+    pub fn live_objects(&self) -> (u64, u64) {
+        let counters = self.device.get_internal_counters();
+        (
+            counters.hal.textures.read() as u64,
+            counters.hal.buffers.read() as u64,
+        )
+    }
+
+    /// Give the driver a turn to hand back what the engine has dropped.
+    ///
+    /// **Why this has to be called, and called regularly.** Dropping a texture
+    /// or a buffer does not free it: wgpu marks it destroyed and reclaims it on
+    /// the device's next *maintain*. A renderer that draws to a window gets
+    /// maintains for free from presenting; this engine renders into caches, on
+    /// a worker thread, and idles — so nothing was making that turn happen, and
+    /// dropped frames sat un-freed until something asked the device a question
+    /// for its own reasons.
+    ///
+    /// Reported twice from a Mac at tens of gigabytes (K-277, K-294): the
+    /// second reading caught it in the act — 5 000-odd live buffers and 6 GB
+    /// held, then 8 buffers and 2.9 GB moments later, because opening a panel
+    /// happened to poll. Memory that comes back only when the user does
+    /// something unrelated is a leak in every sense that matters.
+    ///
+    /// Non-blocking: this drains what has already finished and returns. It is
+    /// cheap enough to call on every turn of the worker's loop, which is
+    /// exactly what it is for.
+    pub fn reclaim(&self) {
+        self.device.poll(wgpu::Maintain::Poll);
     }
 
     /// Start batching: from here until the matching [`Self::end_frame`], every
@@ -470,6 +545,13 @@ impl GpuContext {
             adapter.get_info().device_type,
             wgpu::DeviceType::Cpu | wgpu::DeviceType::Other
         );
+        // Integrated and software adapters draw from system memory; a discrete
+        // card has its own. Metal reports Apple Silicon as integrated, which is
+        // the case this exists for.
+        let unified_memory = !matches!(
+            adapter.get_info().device_type,
+            wgpu::DeviceType::DiscreteGpu
+        );
         // The Linux DMA-BUF path needs the external-memory device extensions
         // enabled at device-creation time, which wgpu's default Vulkan device does
         // not do (K-177). Open the device ourselves with them appended; if the
@@ -538,6 +620,7 @@ impl GpuContext {
             device,
             queue,
             software,
+            unified_memory,
             sample_flags,
             frame: std::cell::RefCell::new(None),
             frame_depth: std::cell::Cell::new(0),
@@ -1139,6 +1222,54 @@ impl ColourEngine {
         drop(data);
         buffer.unmap();
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod counter_tests {
+    use super::*;
+
+    /// The live-object count moves with what is actually alive (K-294).
+    ///
+    /// This is the figure the memory report leans on for Metal, where the
+    /// allocator report answers nothing, so a build where the counters were
+    /// compiled out would leave that row reading zero for ever — true-looking
+    /// and useless. Making a texture and dropping it proves the tally is wired.
+    #[test]
+    fn the_live_texture_count_follows_what_is_alive() {
+        let Ok(ctx) = GpuContext::headless() else {
+            no_adapter();
+            return;
+        };
+        let (before, _) = ctx.live_objects();
+        let made = ctx.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("counter-probe"),
+            size: wgpu::Extent3d {
+                width: 64,
+                height: 64,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: WORKING_FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let (during, _) = ctx.live_objects();
+        assert!(
+            during > before,
+            "a new texture is counted: {before} then {during}"
+        );
+        drop(made);
+        // Destruction is deferred until the device is given a turn — which is
+        // the very behaviour this row exists to expose.
+        ctx.device.poll(wgpu::Maintain::Poll);
+        let (after, _) = ctx.live_objects();
+        assert!(
+            after <= during,
+            "and dropping it does not raise the count: {during} then {after}"
+        );
     }
 }
 

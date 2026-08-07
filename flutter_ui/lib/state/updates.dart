@@ -1,4 +1,4 @@
-// Looking for a newer Lumit, and fetching it (K-294).
+// Looking for a newer Lumit, and fetching it (K-296).
 //
 // # In plain terms
 //
@@ -14,7 +14,7 @@
 // shell does both (`shell/update_dialog_frb.dart`), because *when* to ask the
 // user something is a question about the interface, not about updating.
 //
-// **Full installers, never patches (K-294).** The download is the whole
+// **Full installers, never patches (K-296).** The download is the whole
 // installer every time. A patch system means publishing a patch per pair of
 // versions, a tool to apply them, and a fallback for when the pair is missing —
 // three new things that can go wrong to save bandwidth GitHub gives us for
@@ -318,7 +318,7 @@ class UpdateService extends ChangeNotifier {
   bool get busy =>
       _stage == UpdateStage.checking || _stage == UpdateStage.downloading;
 
-  /// What the Help menu's row reads (K-294).
+  /// What the Help menu's row reads (K-296).
   ///
   /// The wording is the state: an update that has been found says so with its
   /// version in the row itself, which is the one place somebody is already

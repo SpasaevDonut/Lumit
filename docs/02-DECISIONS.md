@@ -6366,7 +6366,107 @@ The − / + / Fit buttons are gone: the slider's two ends *are* Fit and full zoo
 also says where you are between them, which three buttons never did. `HouseSlider` gained a
 width and a value-hiding option rather than a second slider being written for a toolbar.
 
-**K-294 · DECIDED · Updates are checked from the Help row itself, fetched whole from the
+**K-294 · DECIDED · Memory is reported, not guessed at: every tier's bytes beside the
+process's own, and the difference named.** From the owner (2026-08-06), after a second
+report of Lumit holding tens of gigabytes on a Mac — 85 GB, following the 81 GB that
+K-277 bounded the write-behind queue for.
+
+The first question either time was the same, and neither time could it be answered from
+outside the process: **is a cache doing exactly what it was told, or is something holding
+memory nobody is counting?** Every tier already knew its own bytes and every one of them
+is byte-budgeted; what was missing was the total to weigh them against. So Settings ▸
+Performance opens with a **Memory** section: what the operating system says the process
+holds, what the frame cache and the decoded-frame cache hold, how many decoders are open,
+how deep the write-behind queue is, and **what is left over**.
+
+The left-over figure is the point. If the tiers sit at their budgets and the process is a
+hundred times larger, the search is not in this list at all — it is memory held below us
+(graphics allocations the driver has not reclaimed, a decoder's own buffers) and that is a
+different hunt with different tools. Turning a week of guessing into one screenshot is
+worth a syscall.
+
+- `resident_memory_bytes` asks each platform for its nearest equivalent of what the task
+  manager shows: `WorkingSetSize` on Windows, `VmRSS` on Linux, and **`phys_footprint`
+  from `TASK_VM_INFO`** on macOS. Resident size is the obvious macOS answer and the wrong
+  one — it leaves out the compressed pages and the IOSurface and Metal allocations a
+  graphics application lives on, which is most of what would be hunted. `phys_footprint`
+  is what Activity Monitor prints under *Memory*, and so the number a user reads back.
+- **The graphics driver's own accounting rides beside the tiers.** The first reading in
+  anger made the case: 12 GB held, 11 GB of it unaccounted, with ~405 frames decoded —
+  which cleared every byte-budgeted tier at a glance and left the layer underneath, where
+  the tiers' own numbers cannot reach.
+  - It was first written as bytes alone (`Device::generate_allocator_report`), and on the
+    Mac it was written for it read **"not reported by this driver"**: that report is
+    Vulkan and D3D12 only, and Metal does its own allocation. An instrument that works
+    only where there is no problem is not an instrument, so the report now leads with
+    **live object counts** — how many textures and buffers the driver is holding — which
+    every backend keeps. A handful at rest against thousands is exactly the difference
+    between a cache doing its job and frames the engine dropped never being destroyed.
+  - The byte figures stay for the platforms that have them, and that row is **not drawn**
+    where they are zero: a zero nobody can distinguish from a real answer is worse than a
+    missing row (docs/15-DESIGN.md — the honest gap).
+  - The counts are pinned by a test that makes a texture, drops it, and checks the tally
+    follows: compiled without wgpu's `counters` feature they would read zero for ever,
+    which is the failure this row could not afford.
+- **VRAM is reported apart, never subtracted**: on unified memory it is inside the process
+  and on a discrete card it is not, so folding it in is wrong on half the machines Lumit
+  runs on. **Nothing is counted twice** — a frame in the write-behind queue shares its
+  allocation with the frame cache, so the queue reports a count. **What cannot be weighed
+  is counted** — an open decoder's buffers belong to FFmpeg and the driver, so the report
+  says how many are open rather than inventing bytes.
+- A platform that cannot answer returns 0 and the interface says "not known here". The
+  honest gap, per docs/15-DESIGN.md, beats a plausible number.
+
+This is a diagnostic, and it is deliberately not a fix: it does not reclaim a byte. It is
+the instrument the next report is read with, written down in docs/13 §7.0.1 as a standing
+rule — a tier that holds memory and does not report it is not finished.
+
+**K-295 · DECIDED · What the engine drops, the driver hands back on the next turn: the
+worker reclaims once a loop.** From the owner's readings on 2026-08-06, which caught the
+fault in the act: 6 GB held with **around 5 500 live graphics buffers**, then 2.9 GB and
+**8 buffers** moments later — because switching back to a settings page happened to make
+the device do a maintain. Memory that comes back only when the user does something
+unrelated is a leak in every sense that matters to the person whose machine it is.
+
+**The mechanism.** Dropping a texture or a buffer does not free it. wgpu marks it
+destroyed and hands the memory back on the device's next *maintain*, which a renderer
+drawing into a window gets for free from presenting. This engine renders into caches, on a
+worker thread, and spends most of its time idle: the frame cache evicts, read-backs
+finish, a composite's intermediates go out of scope — and none of that asked the device
+for anything, so the memory sat marked-and-not-returned until something else polled for
+its own reasons. The idle fill and the idle backup make that worse rather than better,
+because they are what produces the dropped objects while nothing presents.
+
+**The fix is one line and a rule.** `GpuContext::reclaim` — a non-blocking
+`Maintain::Poll` — on every turn of the worker's loop. It drains what has already
+finished, costs nothing when there is nothing to drain, and makes reclamation a property
+of time passing rather than of the user opening a panel.
+
+**The rule this writes down** (docs/13 §7.0.2): an engine that renders without presenting
+MUST maintain its device on a schedule of its own. Anything that only frees memory as a
+side effect of an unrelated call is not freeing memory.
+
+Two things fell out of the same readings and are fixed with it:
+
+- **Frames on the card are counted against the process where the card's memory *is* the
+  process's memory.** K-294 reported VRAM apart from every tier on the grounds that a
+  discrete card's frames are not in the process — true, but on the Apple Silicon Mac doing
+  the reporting they are, so a cache doing exactly its job showed up inside the
+  unaccounted figure and looked like the fault. The adapter now says which kind of memory
+  it has (`unified_memory`, integrated or software), and the report counts accordingly.
+  The rule generalises: a report that can mislead in the direction of "this is the bug" is
+  worse than one that says less.
+- **The memory section is a debug-build instrument** (owner, 2026-08-06). It is for
+  hunting a fault, not a setting anybody should be asked to interpret; `kDebugMode` gates
+  both the section and the call behind it, so a release build neither draws it nor asks.
+
+**Verified** by `what_the_engine_drops_the_driver_gets_back`, which renders far more
+frames than the cache can hold and then asks the driver what it still has: tens, not one
+per frame. It runs on every platform the suite runs on, and the one that matters is
+**macOS** — where the reclamation went wrong, and where no allocator report exists to see
+it, which is why the gate is a count of live objects rather than a number of bytes.
+
+**K-296 · DECIDED · Updates are checked from the Help row itself, fetched whole from the
 GitHub Release, and installed on a restart the user chooses.** Help ▸ Check for updates was
 the last row of the bar that was listed and dead. It is now the whole update sequence in one
 row, and nothing else is added to the interface for it.

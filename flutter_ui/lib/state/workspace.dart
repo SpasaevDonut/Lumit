@@ -190,7 +190,7 @@ class Workspace extends ChangeNotifier {
   PerformanceSettings performance = PerformanceSettings();
   InterfaceSettings interface = InterfaceSettings();
 
-  /// Whether Lumit looks for a newer version on launch (K-294).
+  /// Whether Lumit looks for a newer version on launch (K-296).
   ///
   /// On by default, and offered on the setup screen as well as in Settings: an
   /// editor that quietly falls years behind is how people end up reporting bugs
@@ -396,7 +396,7 @@ class Workspace extends ChangeNotifier {
     save();
   }
 
-  /// Turn automatic update checks on or off (K-294). Written straight out: it
+  /// Turn automatic update checks on or off (K-296). Written straight out: it
   /// is one boolean, and a setting that did not survive the restart it is about
   /// would be a poor joke.
   void setAutoUpdate(bool on) {

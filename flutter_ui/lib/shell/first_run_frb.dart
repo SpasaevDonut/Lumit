@@ -2,7 +2,7 @@
 //
 // On the very first launch — a machine with no settings file — Lumit asks how
 // the user edits, and sets the two preferences of K-246 from the answer. That
-// is the whole screen, plus the update tick along the bottom (K-294): a
+// is the whole screen, plus the update tick along the bottom (K-296): a
 // preference primer, not a tour, and not a wizard. Every setting it writes is
 // an ordinary row in Settings afterwards — the editing pair under Interface ▸
 // Editing, the tick under General ▸ Updates — so nothing here is a decision
@@ -18,7 +18,7 @@ import '../state/workspace.dart';
 import '../widgets/controls.dart';
 
 /// What the screen comes back with: which editor, and whether Lumit should
-/// keep an eye out for new versions (K-294). The tick is on the screen rather
+/// keep an eye out for new versions (K-296). The tick is on the screen rather
 /// than only in Settings because it is a decision about how Lumit behaves from
 /// now on, which is exactly what this screen is for.
 typedef FirstRunAnswer = ({bool? vegas, bool autoUpdate});
@@ -56,7 +56,7 @@ class _FirstRun extends StatefulWidget {
 }
 
 class _FirstRunState extends State<_FirstRun> {
-  /// Ticked to begin with (K-294). Nothing is downloaded either way — this is
+  /// Ticked to begin with (K-296). Nothing is downloaded either way — this is
   /// permission to look, not permission to fetch.
   bool _autoUpdate = true;
 

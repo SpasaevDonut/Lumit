@@ -728,7 +728,7 @@ void main() {
           reason: 'File is the first heading, at the left');
     });
 
-    /// The update row is live rather than listed-and-dead (K-294). It is not
+    /// The update row is live rather than listed-and-dead (K-296). It is not
     /// *pressed* here: pressing it asks GitHub, and a test suite has no
     /// business on the network — what the press does is `updates_test.dart`,
     /// against a service whose seams are stopped up.
