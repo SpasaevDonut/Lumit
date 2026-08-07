@@ -7,7 +7,10 @@
 // one another with a tab bar; a *pane* is one panel. A pane that sits alone —
 // not inside a tabs node — renders bare, with no tab bar (K-086).
 
+import 'package:lumit_flutter/l10n/strings.dart';
+
 /// The dockable panels — glossary names (docs/01-GLOSSARY.md §7).
+
 enum Panel {
   project,
   viewer,
@@ -19,14 +22,14 @@ enum Panel {
   hierarchy;
 
   String get title => switch (this) {
-        Panel.project => 'Project',
-        Panel.viewer => 'Viewer',
-        Panel.timeline => 'Timeline',
-        Panel.effectControls => 'Effect controls',
-        Panel.effectsAndPresets => 'Effects & presets',
-        Panel.scopes => 'Scopes',
-        Panel.hierarchy => 'Hierarchy',
-        Panel.debug => 'Debug View'
+        Panel.project => l10n.panelProject,
+        Panel.viewer => l10n.panelViewer,
+        Panel.timeline => l10n.panelTimeline,
+        Panel.effectControls => l10n.effectControls,
+        Panel.effectsAndPresets => l10n.panelEffectsAndPresets,
+        Panel.scopes => l10n.panelScopes,
+        Panel.hierarchy => l10n.panelHierarchy,
+        Panel.debug => l10n.panelDebug
       };
 }
 
@@ -95,7 +98,11 @@ class DockSplit extends DockNode {
   Map<String, dynamic> toJson() => {
         'kind': 'split',
         'axis': axis.name,
-        'shares': shares,
+        // A copy: the live list is mutated in place as splitters are dragged,
+        // and a caller that keeps this map — the per-project session (K-245)
+        // does — would otherwise be holding the layout rather than a record of
+        // what it was.
+        'shares': [...shares],
         'children': [for (final c in children) c.toJson()],
       };
 }
@@ -141,10 +148,10 @@ enum WorkspacePreset {
   audio;
 
   String get title => switch (this) {
-        WorkspacePreset.edit => 'Edit',
-        WorkspacePreset.effects => 'Effects',
-        WorkspacePreset.colour => 'Colour',
-        WorkspacePreset.audio => 'Audio',
+        WorkspacePreset.edit => l10n.workspaceEdit,
+        WorkspacePreset.effects => l10n.workspaceEffects,
+        WorkspacePreset.colour => l10n.workspaceColour,
+        WorkspacePreset.audio => l10n.workspaceAudio,
       };
 }
 
@@ -242,6 +249,58 @@ List<Panel> panelsIn(DockNode node) => switch (node) {
           for (final c in children) ...panelsIn(c),
         ],
     };
+
+/// Whether `panel` is anywhere in the tree — which is what "visible" means for
+/// a dock: a panel that is not in the arrangement is not on screen, and one
+/// that is can always be brought to the front of its group.
+bool panelVisible(DockNode node, Panel panel) => panelsIn(node).contains(panel);
+
+/// Add or drop `panel`, for the Window menu's tick list. A no-op when the tree
+/// already agrees with `visible`.
+///
+/// Showing stacks it into the first tab group, fronted — a panel you just asked
+/// for is the one you want to look at. With no tab group at all it pairs up
+/// with the first tile instead, so it never has to invent a share of the
+/// window. Hiding drops the pane and simplifies, exactly as closing a tab does.
+/// The last panel standing cannot be hidden: an empty dock has no way back.
+void setPanelVisible(DockSplit root, Panel panel, bool visible) {
+  if (panelsIn(root).contains(panel) == visible) return;
+  if (!visible) {
+    if (panelsIn(root).length <= 1) return;
+    _removePanel(root, panel);
+    simplify(root);
+    return;
+  }
+  final tabs = _firstTabs(root);
+  if (tabs != null) {
+    tabs.children.add(DockPane(panel));
+    tabs.active = tabs.children.length - 1;
+    return;
+  }
+  final first = root.children.first;
+  if (first is DockPane) {
+    root.children[0] = DockTabs([first, DockPane(panel)], active: 1);
+    return;
+  }
+  root.children.insert(0, DockPane(panel));
+  root.shares.insert(0, 0.2);
+}
+
+/// The first tab group in visit order, or null when every panel sits alone.
+DockTabs? _firstTabs(DockNode node) {
+  switch (node) {
+    case DockPane():
+      return null;
+    case DockTabs():
+      return node;
+    case DockSplit(:final children):
+      for (final child in children) {
+        final found = _firstTabs(child);
+        if (found != null) return found;
+      }
+      return null;
+  }
+}
 
 /// Bring `panel`'s tab to the front of whichever tab group holds it (the
 /// start-up "always open on Project" rule).

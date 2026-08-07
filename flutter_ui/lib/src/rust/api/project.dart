@@ -5,6 +5,7 @@
 
 import '../api.dart';
 import '../frb_generated.dart';
+import 'cache.dart';
 import 'composition.dart';
 import 'effect.dart';
 import 'folder.dart';
@@ -49,6 +50,33 @@ class ProjectReference {
     required this.internalid,
   });
 
+  /// How hard the renderer works at the edges of transformed layers, as the
+  /// number of coverage samples per pixel: 1, 2, 4 or 8, where 1 is off
+  /// (K-274, docs/impl/anti-aliasing.md).
+  ///
+  /// The project's own setting, exactly as stored — **what the current
+  /// machine can actually draw is a separate question**, answered by
+  /// [`Self::anti_aliasing_in_use`]. Keeping the two apart is what stops a
+  /// card that cannot manage the asked-for count from quietly rewriting the
+  /// project when it is opened.
+  int antiAliasing() =>
+      BridgeLib.instance.api.crateApiProjectProjectReferenceAntiAliasing(
+        that: this,
+      );
+
+  /// The count this machine is actually drawing with — the project's setting
+  /// resolved against what the graphics card offers.
+  ///
+  /// Equal to [`Self::anti_aliasing`] on any adapter that can manage what was
+  /// asked for, which is the ordinary case. Where it differs, the difference
+  /// is a fact about the machine and never an error: the Settings row shows
+  /// what is being used beside what is set, in the calm voice
+  /// (docs/15-DESIGN.md), and the project keeps the value its author chose.
+  int antiAliasingInUse() =>
+      BridgeLib.instance.api.crateApiProjectProjectReferenceAntiAliasingInUse(
+        that: this,
+      );
+
   /// Write a rotating autosave beside `project_path`, keeping `keep` slots.
   ///
   /// Deliberately does **not** move the project's own path: an autosave is a
@@ -59,6 +87,18 @@ class ProjectReference {
   String autosave({required String projectPath, required int keep}) =>
       BridgeLib.instance.api.crateApiProjectProjectReferenceAutosave(
           that: this, projectPath: projectPath, keep: keep);
+
+  /// Where *this project* parks its rendered frames, overriding the
+  /// application-wide choice — or `None` when it follows that choice, which is
+  /// the ordinary case (docs/06-RENDER-PIPELINE.md §5.4).
+  ///
+  /// Returned as the enum plus a folder, the same pair
+  /// [`Self::set_cache_location`] takes; the folder is empty unless the
+  /// location is `Custom`.
+  BridgeProjectCacheLocation? cacheLocation() =>
+      BridgeLib.instance.api.crateApiProjectProjectReferenceCacheLocation(
+        that: this,
+      );
 
   List<ItemReference> getItems() =>
       BridgeLib.instance.api.crateApiProjectProjectReferenceGetItems(
@@ -155,8 +195,55 @@ class ProjectReference {
   Future<String> save({required String path}) => BridgeLib.instance.api
       .crateApiProjectProjectReferenceSave(that: this, path: path);
 
+  /// Set how hard the renderer works at the edges of transformed layers.
+  ///
+  /// Takes a sample count — 1, 2, 4 or 8. Anything else reads as 1 (off)
+  /// rather than failing: an unknown count is not a reason to refuse an edit.
+  /// An ordinary op, so it is undoable, journalled and saved in the `.lum`,
+  /// which is the point of it living in the document — it changes what the
+  /// comp looks like, so it must travel with the file and match on another
+  /// machine (K-274).
+  void setAntiAliasing({required int samples}) =>
+      BridgeLib.instance.api.crateApiProjectProjectReferenceSetAntiAliasing(
+          that: this, samples: samples);
+
+  /// Give this project its own cache location, or clear it so the project
+  /// follows the application-wide choice again (`location: None`).
+  ///
+  /// An ordinary op, so it is undoable, journalled, and saved inside the `.lum`
+  /// — which is the point of it being in the document at all: the choice travels
+  /// with a copy of the project and survives being opened on another machine.
+  /// Nothing already cached is moved or deleted; the frames in the old folder
+  /// simply stop being addressed, and that folder may be deleted by hand at any
+  /// time.
+  void setCacheLocation({BridgeProjectCacheLocation? location}) =>
+      BridgeLib.instance.api.crateApiProjectProjectReferenceSetCacheLocation(
+          that: this, location: location);
+
+  /// Record the arrangement to be written into the file on the next save.
+  /// `None`, or JSON that does not parse, clears it rather than failing: a
+  /// frontend that cannot describe itself must not be able to stop a save.
+  ///
+  /// Not an op — see `DocumentStore::set_ui_state`. It is not undoable, and it
+  /// does not mark the project as having unsaved changes, because moving a
+  /// panel is not an edit to the work.
+  void setUiState({String? uiState}) => BridgeLib.instance.api
+      .crateApiProjectProjectReferenceSetUiState(that: this, uiState: uiState);
+
   Stream<WorkerResponse> startWorker() =>
       BridgeLib.instance.api.crateApiProjectProjectReferenceStartWorker(
+        that: this,
+      );
+
+  /// How the interface was arranged when this project was last saved, as the
+  /// JSON the frontend itself wrote (K-245), or `None` for a project that has
+  /// never carried one.
+  ///
+  /// The engine never looks inside it. It is the frontend's own record,
+  /// travelling in the `.lum` so a project shared with someone else opens
+  /// arranged the way its author left it.
+  String? uiState() =>
+      BridgeLib.instance.api.crateApiProjectProjectReferenceUiState(
         that: this,
       );
 

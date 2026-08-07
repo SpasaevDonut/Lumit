@@ -127,7 +127,7 @@ impl GpuFlow {
     /// Build the pipelines on an existing device. Validation problems come
     /// back as `Err`, never a fault.
     pub fn new(ctx: &GpuContext) -> Result<Self, FlowError> {
-        let ctx = GpuContext::from_parts(ctx.device.clone(), ctx.queue.clone());
+        let ctx = ctx.clone_handle();
         ctx.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let shader = ctx
             .device

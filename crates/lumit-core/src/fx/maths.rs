@@ -250,7 +250,7 @@ pub fn shake_mb_offsets(amount: f64) -> [f64; SHAKE_MB_SAMPLES] {
 /// splitmix64 lattice. Both the CPU reference and the kernel run this exact
 /// sequence of wrapping u32 ops, so they agree on the integer hash
 /// bit-for-bit; Shake's splitmix64/[`value_noise_1d`] are untouched.
-fn splitmix32(mut x: u32) -> u32 {
+pub(super) fn splitmix32(mut x: u32) -> u32 {
     x = x.wrapping_add(0x9e37_79b9);
     x ^= x >> 16;
     x = x.wrapping_mul(0x21f0_aaad);

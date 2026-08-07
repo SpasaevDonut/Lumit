@@ -4,11 +4,12 @@
 // reading out the selected item (thumbnail, dimensions, rate, length), the
 // Import / New composition glyph buttons, then one row per document item with
 // folders nesting their children. A click selects the instant the button goes
-// down; a click on the lone selected row renames it in place immediately —
-// which makes a double-click "select, then rename" in one motion; a
-// right-click raises the project menu; footage and comp rows drag onto the
-// Timeline (a comp lands as a Precomp layer); double-clicking empty space
-// imports. Missing footage wears a badge with an inline Relink… button, and a
+// down; a click on the lone selected row *opens* it immediately — which makes a
+// double-click "select, then open" in one motion, and what opening means is the
+// item's own answer (K-243): a comp fronts, footage raises New composition on
+// it, a folder shows or hides its children. Renaming is on the row menu. A
+// right-click raises that menu; footage and comp rows drag onto the Timeline (a
+// comp lands as a Precomp layer); double-clicking empty space imports. Missing footage wears a badge with an inline Relink… button, and a
 // "show only missing" toggle appears while anything is missing. Rows carry
 // their type glyph; the decoded thumbnail lives in the info header.
 //
@@ -35,6 +36,7 @@ import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:provider/provider.dart';
 
 import '../icons/icons.dart';
+import '../l10n/strings.dart';
 import '../state/drag_payloads.dart';
 import '../shell/comp_settings_frb.dart';
 import '../state/file_dialogs.dart';
@@ -216,6 +218,12 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
   /// The row being renamed in place, by id.
   String? _renamingId;
 
+  /// The folders the user has shut, by id (K-243). Closed rather than open, so
+  /// a project opens showing everything it has — which is what the panel did
+  /// before folders could be shut at all. Session state, like the search text:
+  /// a twirl is where you are looking, not something about the document.
+  final Set<String> _closedFolders = {};
+
   /// Which footage items failed to resolve, by id.
   ///
   /// Cached because `getStatus` probes the file, which is far too slow to do in a
@@ -249,7 +257,7 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 240),
                   child: Text(
-                    'No items yet — import footage or create a composition',
+                    l10n.projectEmpty,
                     style: t.small,
                     textAlign: TextAlign.center,
                   ),
@@ -303,6 +311,11 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
           onStartRename: () => setState(() => _renamingId = id),
           onEndRename: () => setState(() => _renamingId = null),
           onFindMissing: () => setState(() => _missingOnly = true),
+          onNewComposition: _newComposition,
+          folderOpen: _search.isNotEmpty || !_closedFolders.contains(id),
+          onToggleFolder: () => setState(() {
+            if (!_closedFolders.remove(id)) _closedFolders.add(id);
+          }),
           onLocalEdit: _documentChanged,
           relinkPicker: widget.relinkPicker,
         ));
@@ -316,7 +329,10 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
         _refreshThumb(field0);
         _refreshMediaInfo(field0);
       }
-      if (item is ItemReference_Folder) {
+      // A closed folder keeps its children to itself — unless a search is
+      // running, which has to be able to find what is inside one.
+      if (item is ItemReference_Folder &&
+          (_search.isNotEmpty || !_closedFolders.contains(id))) {
         for (final child in item.field0.getChildren()) {
           walk(child, depth + 1, selfMatched);
         }
@@ -374,7 +390,7 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
           key: const ValueKey('project-search'),
           controller: _searchController,
           width: double.infinity,
-          hint: 'Search project',
+          hint: l10n.searchProject,
         ),
       );
 
@@ -402,14 +418,14 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
         child: Row(
           children: [
             LumitTooltip(
-              message: 'Import footage',
+              message: l10n.importFootage,
               child: HouseButton(
                 key: const ValueKey('project-import'),
                 small: true,
                 frameless: true,
                 onPressed: _import,
-                child:
-                    lumitIcon(LumitIcon.folder, size: iconSize, color: t.textMuted),
+                child: lumitIcon(LumitIcon.folder,
+                    size: iconSize, color: t.textMuted),
               ),
             ),
             const SizedBox(width: 4),
@@ -424,14 +440,14 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
                     ? null
                     : BoxDecoration(border: Border.all(color: t.accent)),
                 child: LumitTooltip(
-                  message: 'New composition',
+                  message: l10n.newComposition,
                   child: HouseButton(
                     key: const ValueKey('project-new-comp'),
                     small: true,
                     frameless: true,
                     onPressed: _newComposition,
-                    child:
-                        lumitIcon(LumitIcon.comp, size: iconSize, color: t.textMuted),
+                    child: lumitIcon(LumitIcon.comp,
+                        size: iconSize, color: t.textMuted),
                   ),
                 ),
               ),
@@ -712,9 +728,7 @@ class _MissingHeaderFrb extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
     return LumitTooltip(
-      message: active
-          ? 'Showing only missing footage — click to show everything'
-          : 'Show only missing footage',
+      message: active ? l10n.tipShowEverything : l10n.tipMissingOnly,
       child: GestureDetector(
         key: const ValueKey('missing-toggle'),
         behavior: HitTestBehavior.opaque,
@@ -764,6 +778,16 @@ class _ProjectRowFrb extends StatefulWidget {
   final VoidCallback onEndRename;
   final VoidCallback onFindMissing;
 
+  /// Make a comp from these items — the panel's own New composition, so a
+  /// double-clicked footage item goes through the one funnel every other route
+  /// does (K-243).
+  final void Function(List<FootageReference>) onNewComposition;
+
+  /// Whether this row's folder is showing its children, and the toggle that
+  /// opens or shuts it. Meaningless on every other kind.
+  final bool folderOpen;
+  final VoidCallback onToggleFolder;
+
   /// Called after an edit this row made, so the panel re-reads at once rather
   /// than waiting for the engine's change stream to come back around.
   final VoidCallback onLocalEdit;
@@ -783,6 +807,9 @@ class _ProjectRowFrb extends StatefulWidget {
     required this.onStartRename,
     required this.onEndRename,
     required this.onFindMissing,
+    required this.onNewComposition,
+    required this.folderOpen,
+    required this.onToggleFolder,
     required this.onLocalEdit,
     this.relinkPicker,
   });
@@ -858,22 +885,38 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
   /// The click, resolved on the raw pointer UP rather than through the
   /// gesture arena — the arena waits out the empty-area double-tap window,
   /// which is exactly the lag being avoided. A second click on the lone
-  /// selected row *opens* it: a composition fronts in the Timeline, anything
-  /// else renames in place. The second click of a double-click, or any later
-  /// click, both land here. A plain click on one row of a multi-selection
-  /// collapses the selection to it.
+  /// selected row *opens* it, and what opening means is the item's own answer
+  /// (K-243): a composition fronts in the Timeline, footage raises New
+  /// composition sized and timed to it, a folder renames in place. The second
+  /// click of a double-click, or any later click, both land here. A plain click
+  /// on one row of a multi-selection collapses the selection to it.
   void _handlePointerUp(PointerUpEvent event) {
     if (!_primaryDown) return;
     _primaryDown = false;
     if (_dragged || !_wasSelectedAtDown) return;
     if (_selectModeFromKeyboard() != SelectMode.replace) return;
     if (widget.selectionCount <= 1 && !widget.renaming) {
-      // Double-clicking a comp opens it, which is what it means in every
-      // editor — so a comp is renamed from its context menu or its settings
-      // dialogue instead, never by a stray second click on the row.
+      // Opening a comp is what a double-click means in every editor — so a comp
+      // is renamed from its context menu or its settings dialogue instead,
+      // never by a stray second click on the row.
       if (item case ItemReference_Composition(:final field0)) {
         Provider.of<LumitUiState>(context, listen: false)
             .setSelectedComp(field0);
+        return;
+      }
+      // Footage has no window of its own to open, and the thing people want
+      // from a clip they have just double-clicked is a comp to put it in —
+      // already the size, rate and length of the media, because that dialogue
+      // reads the selection (the longest item wins when there are several).
+      if (item case ItemReference_Footage(:final field0)) {
+        final selected = widget.selectedFootage();
+        widget.onNewComposition(selected.isEmpty ? [field0] : selected);
+        return;
+      }
+      // A folder opens and shuts, which is what opening one means. Renaming it
+      // is on the row menu with the other two kinds'.
+      if (item is ItemReference_Folder) {
+        widget.onToggleFolder();
         return;
       }
       widget.onStartRename();
@@ -951,13 +994,13 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
                   Text('missing', style: t.small.copyWith(color: t.warning)),
                   const SizedBox(width: 6),
                   LumitTooltip(
-                    message: 'Relink this file to its new location',
+                    message: l10n.relink,
                     child: HouseButton(
                       key: ValueKey<String>('relink-${_idOf(item)}'),
                       small: true,
                       onPressed: () =>
                           _doRelink((item as ItemReference_Footage).field0),
-                      child: Text('Relink…', style: t.small),
+                      child: Text(l10n.relinkEllipsis, style: t.small),
                     ),
                   ),
                 ],
@@ -1009,10 +1052,38 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
   /// tree stays a tight list of names.
   Widget _leading(LumitTheme t) {
     final (icon, tint) = _iconFor(item, t);
-    return lumitIcon(
+    final glyph = lumitIcon(
       widget.missing ? LumitIcon.unlink : icon,
       size: iconSize,
       color: widget.missing ? t.warning : tint,
+    );
+    // A shut folder has to say so, or it reads as an empty one. The caret is
+    // its own target as well, the way the Hierarchy's is — and every row keeps
+    // the slot whether or not it has one, so a child still lines up one indent
+    // step right of the folder holding it.
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          width: iconSize,
+          child: item is! ItemReference_Folder
+              ? null
+              : GestureDetector(
+                  key: ValueKey<String>('project-twirl-${_idOf(item)}'),
+                  behavior: HitTestBehavior.opaque,
+                  onTap: widget.onToggleFolder,
+                  child: lumitIcon(
+                    widget.folderOpen
+                        ? LumitIcon.twirlOpen
+                        : LumitIcon.twirlClosed,
+                    size: iconSize,
+                    color: t.textMuted,
+                  ),
+                ),
+        ),
+        const SizedBox(width: 4),
+        glyph,
+      ],
     );
   }
 
@@ -1116,33 +1187,33 @@ Future<void> showProjectMenuFrb({
           if (isComp)
             MenuRow(
               onPressed: () => close(_ProjectMenuAction.compSettings),
-              child: const Text('Composition settings…'),
+              child: Text(l10n.compositionSettingsEllipsis),
             ),
           // Every kind can be renamed from here. It matters most for a comp,
           // whose second click opens it rather than renaming it.
           MenuRow(
             key: const ValueKey('project-menu-rename'),
             onPressed: () => close(_ProjectMenuAction.rename),
-            child: const Text('Rename'),
+            child: Text(l10n.rename),
           ),
           // Relink is offered only on a row that is actually broken.
           if (isFootage && missing)
             MenuRow(
               onPressed: () => close(_ProjectMenuAction.relink),
-              child: const Text('Relink…'),
+              child: Text(l10n.relinkEllipsis),
             ),
           if (isFootage)
             MenuRow(
               onPressed: () => close(_ProjectMenuAction.findMissing),
-              child: const Text('Find missing footage'),
+              child: Text(l10n.findMissingFootage),
             ),
           MenuRow(
             onPressed: () => close(_ProjectMenuAction.moveToRoot),
-            child: const Text('Move to root'),
+            child: Text(l10n.moveToRoot),
           ),
           MenuRow(
             onPressed: () => close(_ProjectMenuAction.delete),
-            child: const Text('Delete'),
+            child: Text(l10n.delete),
           ),
         ],
       ),

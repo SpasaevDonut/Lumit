@@ -117,8 +117,12 @@ void main() {
       );
     });
 
+    /// A second click on footage opens New composition on it (K-243): footage
+    /// has no window of its own, and the thing wanted from a clip just
+    /// double-clicked is a comp to put it in, already its size, rate and
+    /// length. Renaming footage moved to the row menu with this.
     testWidgets(
-        'clicking a row selects it, and a second click renames in place',
+        'clicking footage selects it, and a second click makes a comp of it',
         (tester) async {
       final p = freshProject();
       p.state.project!.importFootage(path: 'C:/clips/shot.mov');
@@ -131,17 +135,102 @@ void main() {
       await tester.pump();
 
       // First click selects; the second (well outside the double-tap window)
-      // starts the rename.
+      // opens the dialogue, after the media has been probed.
       await tapAgain(tester, rowText('shot.mov'));
-      expect(find.byKey(const ValueKey('rename-field')), findsOneWidget);
+      await settleFrb(
+        tester,
+        until: () =>
+            find.byKey(const ValueKey('comp-apply')).evaluate().isNotEmpty,
+      );
+
+      expect(find.text('New composition'), findsWidgets);
+      expect(find.byKey(const ValueKey('rename-field')), findsNothing,
+          reason: 'a second click on footage is not a rename any more');
+
+      await tester.tap(find.byKey(const ValueKey('comp-apply')));
+      await tester.pumpAndSettle();
+
+      final comp = p.uiState.selectedComp;
+      expect(comp, isNotNull, reason: 'the new comp is fronted');
+      expect(comp!.getLayers(), hasLength(1),
+          reason: 'the clip it was made from is in it');
+    });
+
+    /// Opening a folder is showing what is in it, so a second click shuts it
+    /// and a third opens it again (K-243). The Compositions auto-folder is one.
+    testWidgets('a second click on a folder opens and shuts it', (tester) async {
+      final p = freshProject();
+      p.state.project!.newComposition(name: 'Scene');
+
+      await tester.pumpWidget(hostPanel(
+        child: const ProjectPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+
+      expect(rowText('Scene'), findsOneWidget,
+          reason: 'a folder starts open, showing what it holds');
+
+      await tapAgain(tester, rowText('Compositions'));
+      expect(rowText('Scene'), findsNothing, reason: 'the folder shut');
+      expect(find.byKey(const ValueKey('rename-field')), findsNothing,
+          reason: 'and it is not a rename any more');
+
+      await tester.tap(rowText('Compositions'));
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(rowText('Scene'), findsOneWidget, reason: 'and opened again');
+    });
+
+    /// A search has to be able to find what is inside a shut folder, or
+    /// searching would depend on where the twirls happen to be left.
+    testWidgets('a search looks inside a shut folder', (tester) async {
+      final p = freshProject();
+      p.state.project!.newComposition(name: 'Scene');
+
+      await tester.pumpWidget(hostPanel(
+        child: const ProjectPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+
+      await tapAgain(tester, rowText('Compositions'));
+      expect(rowText('Scene'), findsNothing);
 
       await tester.enterText(
-          find.byKey(const ValueKey('rename-field')), 'Intro');
+          find.byKey(const ValueKey('project-search')), 'Scene');
+      await tester.pumpAndSettle();
+      expect(rowText('Scene'), findsOneWidget);
+    });
+
+    /// Renaming a folder moved to the row menu with the other two kinds'.
+    testWidgets('a folder renames from its row menu', (tester) async {
+      final p = freshProject();
+      p.state.project!.newComposition(name: 'Scene');
+
+      await tester.pumpWidget(hostPanel(
+        child: const ProjectPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+
+      await tester.tapAt(
+        tester.getCenter(rowText('Compositions')),
+        buttons: kSecondaryButton,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('project-menu-rename')));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+          find.byKey(const ValueKey('rename-field')), 'Shots');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pump();
 
-      expect(rowText('Intro'), findsOneWidget);
-      expect(find.text('shot.mov'), findsNothing,
+      expect(rowText('Shots'), findsOneWidget);
+      expect(find.text('Compositions'), findsNothing,
           reason: 'the rename reached the document, not just the field');
     });
 
@@ -157,7 +246,14 @@ void main() {
       ));
       await tester.pump();
 
-      await tapAgain(tester, rowText('shot.mov'));
+      // From the row menu, which is where renaming footage lives (K-243).
+      await tester.tapAt(
+        tester.getCenter(rowText('shot.mov')),
+        buttons: kSecondaryButton,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('project-menu-rename')));
+      await tester.pumpAndSettle();
       await tester.enterText(find.byKey(const ValueKey('rename-field')), '   ');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pump();
@@ -166,11 +262,11 @@ void main() {
           reason: 'a row must never be able to lose its label');
     });
 
-    /// Double-clicking a row is "select, then rename" in one motion (owner
+    /// Double-clicking a row is "select, then open" in one motion (owner
     /// request): the first click selects on its down stroke, the second opens
-    /// the rename immediately — no double-tap window to wait out. It must
-    /// also never fall through to the empty-area import.
-    testWidgets('double-clicking a row selects then renames, immediately',
+    /// immediately — no double-tap window to wait out. It must also never fall
+    /// through to the empty-area import.
+    testWidgets('double-clicking footage opens New composition, immediately',
         (tester) async {
       final p = freshProject();
       p.state.project!.importFootage(path: 'C:/clips/shot.mov');
@@ -195,10 +291,17 @@ void main() {
         await tester.pump();
       }
 
-      expect(find.byKey(const ValueKey('rename-field')), findsOneWidget,
-          reason: 'the second click opens the rename with no arena delay');
+      await settleFrb(
+        tester,
+        until: () =>
+            find.byKey(const ValueKey('comp-apply')).evaluate().isNotEmpty,
+      );
+      expect(find.text('New composition'), findsWidgets,
+          reason: 'the second click opens the dialogue with no arena delay');
       expect(asked, 0,
           reason: 'a double-click on a row is never an empty-area import');
+      await tester.tap(find.byKey(const ValueKey('comp-cancel')));
+      await tester.pumpAndSettle();
 
       // Let the row's arena-absorbing double-tap recogniser time out before
       // the test tears down.
@@ -244,8 +347,8 @@ void main() {
     });
 
     /// The same, starting from an already-selected row: a double-click (or a
-    /// single click) on it opens the rename rather than doing nothing.
-    testWidgets('double-clicking an already-selected row opens the rename',
+    /// single click) on it opens the item rather than doing nothing.
+    testWidgets('double-clicking an already-selected row opens it',
         (tester) async {
       final p = freshProject();
       p.state.project!.importFootage(path: 'C:/clips/shot.mov');
@@ -259,7 +362,7 @@ void main() {
       // Select it first, as its own settled gesture.
       await tester.tap(rowText('shot.mov'));
       await tester.pump(const Duration(milliseconds: 400));
-      expect(find.byKey(const ValueKey('rename-field')), findsNothing,
+      expect(find.byKey(const ValueKey('comp-apply')), findsNothing,
           reason: 'the first click only selects');
 
       final centre = tester.getCenter(rowText('shot.mov'));
@@ -268,8 +371,15 @@ void main() {
       await g.up();
       await tester.pump();
 
-      expect(find.byKey(const ValueKey('rename-field')), findsOneWidget,
-          reason: 'a click on the selected row renames at once');
+      await settleFrb(
+        tester,
+        until: () =>
+            find.byKey(const ValueKey('comp-apply')).evaluate().isNotEmpty,
+      );
+      expect(find.text('New composition'), findsWidgets,
+          reason: 'a click on the selected row opens it at once');
+      await tester.tap(find.byKey(const ValueKey('comp-cancel')));
+      await tester.pumpAndSettle();
       await tester.pump(const Duration(milliseconds: 400));
     });
 
@@ -729,7 +839,7 @@ void main() {
       final p = freshProject();
       final footage = p.state.project!.importFootage(path: 'C:/clips/shot.mov');
       final comp = p.state.project!.newComposition(name: 'Scene');
-      comp.addFootageLayer(footage: footage);
+      comp.addFootageLayer(footage: footage, asSequence: false);
 
       await tester.pumpWidget(hostPanel(
         child: const ProjectPanelFrb(),

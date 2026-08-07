@@ -19,6 +19,7 @@
 //! and filing it is a favour to the next visit, never a hazard.
 
 use lumit_render::PrefetchWant;
+#[cfg(feature = "media")]
 use std::collections::HashMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use uuid::Uuid;
@@ -70,6 +71,7 @@ impl Prefetcher {
 /// for frames in playing order, so the decoders run sequentially — the cheap
 /// direction. A job that fails to decode is skipped: the render will try it
 /// inline and surface the error through the path that already knows how.
+#[cfg(feature = "media")]
 fn run(jobs: Receiver<PrefetchWant>, done: Sender<Done>) {
     let mut decoders: HashMap<Uuid, lumit_media::VideoDecoder> = HashMap::new();
     while let Ok(want) = jobs.recv() {
@@ -103,4 +105,15 @@ fn run(jobs: Receiver<PrefetchWant>, done: Sender<Done>) {
             return;
         }
     }
+}
+
+/// Without the decoder there is nothing to decode ahead (K-273). The thread
+/// still exists and still drains its queue, so the worker's request/drain
+/// calls need no feature gate of their own — it simply never produces a
+/// result, and every frame decodes inline exactly as it did before prefetch
+/// existed. `--no-default-features` is a build without FFmpeg, not a build
+/// with a different scheduler.
+#[cfg(not(feature = "media"))]
+fn run(jobs: Receiver<PrefetchWant>, _done: Sender<Done>) {
+    while jobs.recv().is_ok() {}
 }

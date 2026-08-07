@@ -52,6 +52,17 @@ pub enum ParamKind {
         /// at zero below and runs unbounded above).
         hard: (Option<f64>, Option<f64>),
     },
+    /// A whole-number parameter (a blade count, a ghost cap). The VALUE side
+    /// is still an `EffectValue::Float` — it animates and serialises exactly
+    /// like a Float — the kind only tells the UI to step and display it as an
+    /// integer and the resolve step to round it, replacing the old "rounded
+    /// float row" convention (docs/08 §1.2).
+    Int {
+        default: i64,
+        slider: (i64, i64),
+        /// Hard bounds; either side may be None, matching Float.
+        hard: (Option<i64>, Option<i64>),
+    },
     Choice {
         options: &'static [&'static str],
         default: u32,
@@ -89,12 +100,27 @@ pub enum ParamKind {
     },
     /// A reference to another layer in the composition (docs/impl/
     /// layer-input.md), sampled as an auxiliary picture — the depth pass a
-    /// depth-of-field effect reads. The value carries an
-    /// [`EffectValue::Layer`] (an optional layer id); the caller renders that
-    /// layer alone at comp size and threads its texture beside the resolved
-    /// op, exactly as a matte layer is rendered alone. Unset (or a dangling
-    /// reference) is a labelled no-op, never a fault.
-    Layer {},
+    /// depth-of-field effect reads, the bright-source matte a Lens flare
+    /// detects lights in. The value carries an [`EffectValue::Layer`] (an
+    /// optional layer id); the caller renders that layer alone at comp size
+    /// and threads its texture beside the resolved op, exactly as a matte
+    /// layer is rendered alone. Unset (or a dangling reference) is a
+    /// labelled no-op, never a fault.
+    ///
+    /// **This layer** (K-288): a reference to the layer the effect is *on*
+    /// is not a re-render of that layer — it is the effect's own input at
+    /// its point in the stack. On an ordinary layer that is the picture the
+    /// effect is about to process; on an **adjustment layer** it is the
+    /// composite of everything below, which is the only thing an adjustment
+    /// layer has to look at. `self_default` declares that a fresh instance
+    /// should start pointed at its own layer (the Lens flare's matte, whose
+    /// natural reading is "the lights in this picture"), rather than unset.
+    Layer {
+        /// A fresh instance added to a layer starts referencing that layer
+        /// (see the type docs). `false` leaves it unset, the historical
+        /// no-op default — a depth pass is never the picture itself.
+        self_default: bool,
+    },
 }
 
 /// How a transform- or displacement-domain effect treats the border pixels
@@ -152,12 +178,20 @@ impl EdgesMode {
 /// place, where the group's first member sits).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ParamGroup {
-    /// Sentence-case disclosure header.
+    /// Sentence-case disclosure header. An EMPTY label renders headerless:
+    /// the member rows appear in place with no twirl — the shape a
+    /// conditional run of parameters wants (the Lens flare's matte rows).
     pub label: &'static str,
     /// The member parameter ids, naming params in the same schema.
     pub params: &'static [&'static str],
     /// Whether the twirl starts closed (the advanced-by-default case).
     pub collapsed: bool,
+    /// When set, the whole group is shown only while the named sibling
+    /// Choice parameter holds one of the given indices — how an effect's
+    /// panel offers different controls per mode (the Lens flare's Source
+    /// type: its matte rows answer to Matte alone, its source-colour toggle
+    /// to Matte *and* Lights). None, or an empty set, is always visible.
+    pub visible_when: Option<(&'static str, &'static [u32])>,
 }
 
 /// The Add-effect menu's grouping (K-090): every schema declares one.

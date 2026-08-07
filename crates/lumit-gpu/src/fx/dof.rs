@@ -41,9 +41,11 @@ struct AdjustParams {
 
 /// One resolved 3D-LUT lookup (docs/08 §3.11; docs/impl/lut.md). The cube
 /// itself arrives as its own 3D texture (see [`upload_lut_3d`] and
-/// [`FxEngine::lut`]); this uniform carries only the edge length the shader
-/// needs to turn a colour into grid coordinates and the host Mix. Domain is
-/// assumed 0..1 (a domain remap is a documented follow-up, docs/impl/lut.md).
+/// [`FxEngine::lut`]); this uniform carries the edge length the shader needs to
+/// turn a colour into grid coordinates, the host Mix, and the cube's input
+/// domain (K-271 — the shader remaps through it exactly as the CPU reference
+/// does; before that it assumed 0..1 and a cube saying otherwise rendered
+/// silently wrong).
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct LutParams {
@@ -52,6 +54,11 @@ struct LutParams {
     /// 0..1, blended against the unprocessed input.
     mix: f32,
     _pad: [f32; 2],
+    /// `DOMAIN_MIN`, per channel; the fourth lane is padding (a uniform vec3
+    /// is 16-byte aligned regardless, so it costs nothing).
+    domain_min: [f32; 4],
+    /// `DOMAIN_MAX`, per channel, same padding.
+    domain_max: [f32; 4],
 }
 
 impl FxEngine {
@@ -142,11 +149,7 @@ impl FxEngine {
                 },
             ],
         });
-        let mut enc = ctx
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("fx-dof-enc"),
-            });
+        let mut enc = ctx.encoder("fx-dof-enc");
         {
             let mut cpass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("fx-dof-pass"),
@@ -156,15 +159,16 @@ impl FxEngine {
             cpass.set_bind_group(0, &bind, &[]);
             cpass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
         }
-        ctx.queue.submit([enc.finish()]);
+        drop(enc);
         out
     }
 
     /// Apply one 3D-LUT lookup (docs/08 §3.11; docs/impl/lut.md) to a linear
     /// working texture, returning a new texture of the same size. One pass on
     /// **unpremultiplied** colour (§2.2 — a LUT is an arbitrary colour map):
-    /// per output pixel, unpremultiply, map each channel to a grid coordinate
-    /// in `[0, size-1]` (domain assumed 0..1, clamped), `textureLoad` the eight
+    /// per output pixel, unpremultiply, map each channel through
+    /// `[domain_min, domain_max]` to a grid coordinate in `[0, size-1]`
+    /// (clamped, and a zero span reading as 0), `textureLoad` the eight
     /// integer corners of `lut_tex` and trilinearly interpolate in f32 — **not**
     /// the hardware sampler, whose precision is not guaranteed bit-for-bit
     /// across GPUs (docs/impl/lut.md §3) — re-premultiply, then blend against
@@ -182,6 +186,8 @@ impl FxEngine {
         lut_tex: &wgpu::Texture,
         size: u32,
         mix: f32,
+        domain_min: [f32; 3],
+        domain_max: [f32; 3],
     ) -> wgpu::Texture {
         use wgpu::util::DeviceExt;
         let out = work_texture(ctx, w, h, "fx-lut-out");
@@ -193,6 +199,8 @@ impl FxEngine {
                     size,
                     mix,
                     _pad: [0.0; 2],
+                    domain_min: [domain_min[0], domain_min[1], domain_min[2], 0.0],
+                    domain_max: [domain_max[0], domain_max[1], domain_max[2], 0.0],
                 }),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
@@ -231,11 +239,7 @@ impl FxEngine {
                 },
             ],
         });
-        let mut enc = ctx
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("fx-lut-enc"),
-            });
+        let mut enc = ctx.encoder("fx-lut-enc");
         {
             let mut cpass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("fx-lut-pass"),
@@ -245,7 +249,7 @@ impl FxEngine {
             cpass.set_bind_group(0, &bind, &[]);
             cpass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
         }
-        ctx.queue.submit([enc.finish()]);
+        drop(enc);
         out
     }
 
@@ -311,11 +315,7 @@ impl FxEngine {
                 },
             ],
         });
-        let mut enc = ctx
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("fx-adjust-enc"),
-            });
+        let mut enc = ctx.encoder("fx-adjust-enc");
         {
             let mut cpass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("fx-adjust-pass"),
@@ -325,7 +325,7 @@ impl FxEngine {
             cpass.set_bind_group(0, &bind, &[]);
             cpass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
         }
-        ctx.queue.submit([enc.finish()]);
+        drop(enc);
         out
     }
 }

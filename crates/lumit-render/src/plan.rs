@@ -64,14 +64,40 @@ impl Default for Quality {
 }
 
 impl Quality {
+    /// The display scale as the cache sees it: rounded down to the same 1% step
+    /// [`Self::tag`] keys by.
+    ///
+    /// **Both of them must use this, or footage stops being nameable.** The tag
+    /// declares that two scales inside the same 1% are the same quality, and a
+    /// solid obeys that, because the tag is all a solid's name folds in. Footage
+    /// also folds in the width it is decoded at — and that came from the raw
+    /// scale, so 0.4235 and 0.4240 decoded to 813 and 814 pixels and gave the
+    /// same frame two different names.
+    ///
+    /// The cache bar is where that showed. It asks by a scale it has rounded to
+    /// a thousandth, which is nearly never the exact float the render used, so
+    /// the bar named every frame differently from the way it was banked and drew
+    /// an empty stripe over a composition that was fully cached and playing. A
+    /// composition of solids was unaffected, which is what made it look like a
+    /// fault in footage.
+    ///
+    /// Rounding here rather than at each caller keeps the decode and the name in
+    /// step by construction: the width in the name is the width the pixels were
+    /// decoded at, whoever asked. It also stops a window resize from re-decoding
+    /// for a scale change too small to see.
+    #[must_use]
+    pub fn keyed_scale(self) -> f32 {
+        let step = (self.display_scale.clamp(0.05, 1.0) * 100.0) as u32;
+        step as f32 / 100.0
+    }
+
     /// One decode-width policy for requests AND cache keys — if these ever
     /// disagreed, a cached frame could present at the wrong resolution. `None`
     /// means "decode at native width".
     #[must_use]
     pub fn target_width(self, natural_w: u32) -> Option<u32> {
         let specified = if self.auto_res {
-            let scale = self.display_scale.clamp(0.05, 1.0);
-            let w = (natural_w as f32 * scale).round() as u32;
+            let w = (natural_w as f32 * self.keyed_scale()).round() as u32;
             (w < natural_w).then_some(w.max(16))
         } else {
             (self.divisor > 1).then(|| natural_w / self.divisor)
@@ -90,30 +116,20 @@ impl Quality {
     #[must_use]
     pub fn tag(self) -> u32 {
         if self.auto_res {
-            1000 + (self.display_scale.clamp(0.05, 1.0) * 100.0) as u32
+            1000 + (self.keyed_scale() * 100.0).round() as u32
         } else {
             self.divisor
         }
     }
 }
 
-/// A live Retime override for one layer, so a "Time" drag decodes the dragged
-/// source frame rather than the committed one. Unlike a transform or effect
-/// drag, retiming changes *which* frame is shown, so it cannot be handled by
-/// re-compositing already-decoded pixels — it has to reach the plan.
-pub struct RetimeOverride {
-    pub layer: Uuid,
-    pub retime: lumit_core::retime::Retime,
-}
-
 /// The inputs a plan walk carries down the Precomp recursion, unchanged at
-/// every depth: what the media is, how coarsely to decode, and any live Retime
-/// drag. Bundled so the recursive walk stays readable.
+/// every depth: what the media is and how coarsely to decode. Bundled so the
+/// recursive walk stays readable.
 pub struct PlanContext<'a> {
     pub doc: &'a Document,
     pub quality: Quality,
     pub probes: &'a dyn SourceProbes,
-    pub retime_override: Option<&'a RetimeOverride>,
 }
 
 /// Recursively collect the decode jobs comp `comp` needs at comp time `t`
@@ -133,7 +149,6 @@ pub fn collect_comp_jobs(
         doc,
         quality,
         probes,
-        retime_override,
     } = *ctx;
     let in_span =
         |l: &lumit_core::model::Layer| t >= l.in_point.0.to_f64() && t < l.out_point.0.to_f64();
@@ -178,6 +193,7 @@ pub fn collect_comp_jobs(
             // the composite below; solids/text/cameras rasterise elsewhere).
             LayerKind::Solid { .. }
             | LayerKind::Text { .. }
+            | LayerKind::Shape { .. }
             | LayerKind::Camera { .. }
             | LayerKind::Adjustment
             | LayerKind::Null => {}
@@ -236,18 +252,7 @@ pub fn collect_comp_jobs(
                     visited.pop();
                 }
             }
-            LayerKind::Footage { item, retime } => {
-                // A live "Time" drag overrides this layer's retime so the
-                // decode picks the dragged source frame (the frame itself
-                // changes, unlike a transform/effect live patch).
-                let live_retime;
-                let retime: &Option<lumit_core::retime::Retime> = match retime_override {
-                    Some(o) if o.layer == layer.id => {
-                        live_retime = Some(o.retime.clone());
-                        &live_retime
-                    }
-                    _ => retime,
-                };
+            LayerKind::Footage { item } => {
                 let Some(ProjectItem::Footage(f)) = doc.item(*item) else {
                     continue;
                 };
@@ -280,27 +285,18 @@ pub fn collect_comp_jobs(
                     continue;
                 };
                 // Retime maps local time → source time before frame pick; the
-                // layer decides which map answers (K-197: the keyframable
-                // property, else the segment store). Its interpolation policy
-                // decides nearest vs blend.
-                let source_at = |t: f64| match retime {
-                    // A live "Time" drag is the segment store by construction,
-                    // so an override speaks for itself.
-                    Some(r) if retime_override.is_some_and(|o| o.layer == layer.id) => {
-                        r.evaluate(t)
-                    }
-                    _ => layer.source_time_at(t),
-                };
-                let source_time = source_at(lt);
+                // Retime maps local time → source time before the frame pick
+                // (K-249: the layer's own property is the only map). Its
+                // interpolation policy, which sits beside that map rather than
+                // inside it, decides nearest vs blend.
+                let source_time = layer.source_time_at(lt);
                 use lumit_core::retime::Interpolation;
-                let interp = retime.as_ref().map(|r| &r.interpolation);
-                let blend_on =
-                    matches!(interp, Some(Interpolation::Blend | Interpolation::Flow(_)));
-                let flow = matches!(interp, Some(Interpolation::Flow(_)));
-                let flow_full =
-                    matches!(interp, Some(Interpolation::Flow(p)) if !p.half_resolution);
+                let interp = &layer.interpolation;
+                let blend_on = matches!(interp, Interpolation::Blend | Interpolation::Flow(_));
+                let flow = matches!(interp, Interpolation::Flow(_));
+                let flow_full = matches!(interp, Interpolation::Flow(p) if !p.half_resolution);
                 let sample_fps = match interp {
-                    Some(Interpolation::Flow(p)) => p.input_fps_at(lt),
+                    Interpolation::Flow(p) => p.input_fps_at(lt),
                     _ => None,
                 };
                 let (source_frame, blend) = lumit_core::pixels::frame_pick(
@@ -324,7 +320,7 @@ pub fn collect_comp_jobs(
                             .filter(|&o| o != 0)
                             .map(|o| {
                                 let nlt = lt + f64::from(o) * comp_dt;
-                                let nst = source_at(nlt);
+                                let nst = layer.source_time_at(nlt);
                                 let (nf, _) = lumit_core::pixels::frame_pick(
                                     nst, fps, src_frames, false, None,
                                 );
@@ -369,13 +365,11 @@ pub fn plan_comp_frame(
     t: f64,
     quality: Quality,
     probes: &dyn SourceProbes,
-    retime_override: Option<&RetimeOverride>,
 ) -> Vec<CompJob> {
     let ctx = PlanContext {
         doc,
         quality,
         probes,
-        retime_override,
     };
     let mut jobs = Vec::new();
     let mut visited = vec![comp.id];
@@ -412,6 +406,41 @@ pub fn same_decode(a: &[CompJob], b: &[CompJob]) -> bool {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+
+    /// **Two scales the tag calls equal must decode to the same width.**
+    ///
+    /// The regression: the tag keys Auto at 1% steps, so 0.4235 and 0.4240 are
+    /// one quality — but the decode width came from the raw float and gave 813
+    /// and 814 pixels. Footage folds that width into its name, thus one frame
+    /// got two names; a solid folds in only the tag, thus it got one. The cache
+    /// bar reads by a scale rounded to a thousandth, which is almost never the
+    /// float the render used, so it named every frame differently from the way
+    /// it was banked and drew nothing over a composition that was fully cached
+    /// and playing.
+    #[test]
+    fn one_quality_step_is_one_decode_width() {
+        let at = |scale: f32| Quality {
+            auto_res: true,
+            display_scale: scale,
+            ..Quality::default()
+        };
+        // Inside one 1% step, whatever the float.
+        for (a, b) in [(0.4235f32, 0.424f32), (0.4237, 0.424), (0.4271, 0.427)] {
+            assert_eq!(
+                at(a).tag(),
+                at(b).tag(),
+                "the tag already calls {a} and {b} one quality"
+            );
+            assert_eq!(
+                at(a).target_width(1920),
+                at(b).target_width(1920),
+                "thus they must decode to one width, or footage gets two names"
+            );
+        }
+        // And a step that IS a step still separates them.
+        assert_ne!(at(0.42).tag(), at(0.43).tag());
+        assert_ne!(at(0.42).target_width(1920), at(0.43).target_width(1920));
+    }
 
     /// Full quality decodes at native width; a divisor and Auto both shrink it,
     /// and draft caps on top without ever raising the specified width. This is
@@ -545,5 +574,157 @@ mod tests {
         let mut wide = job(l, i, 5);
         wide.target_width = Some(640);
         assert!(!same_decode(&[job(l, i, 5)], &[wide]));
+    }
+
+    /// **Footage inside a precomp that is referenced only as a matte still gets
+    /// decoded** (K-268).
+    ///
+    /// K-266 recorded this as an open boundary — "the decode planner never
+    /// visits a matte-only precomp" — and taught the draw builder to render the
+    /// nested comp anyway. The planner turned out to walk the reference
+    /// already: a matte source and a layer-input reference are both `wanted`
+    /// whether or not the layer is visible, and a Precomp among them recurses.
+    /// So the boundary was the *draw* side, which K-266 and K-268 have now
+    /// closed at both ends — and this test is what keeps the planner honest, so
+    /// nobody has to re-derive it from a black matte.
+    ///
+    /// Both shapes of reference are checked: the track matte (`Layer::matte`)
+    /// and the layer-input parameter a flare's Matte source or a DoF depth pass
+    /// uses.
+    #[test]
+    fn a_matte_only_precomp_still_decodes_its_footage() {
+        use lumit_core::model::{
+            Composition, Document, EffectInstance, EffectKey, EffectNamespace, EffectParam,
+            EffectValue, FootageItem, Layer, LayerKind, LinearColour, MatteChannel, MatteRef,
+            MediaRef, Switches, TransformGroup,
+        };
+        use lumit_core::time::{CompTime, Duration, FrameRate, Rational};
+        use std::collections::HashMap;
+
+        let layer = |kind: LayerKind| Layer {
+            markers: Vec::new(),
+            id: Uuid::now_v7(),
+            name: "l".into(),
+            kind,
+            in_point: CompTime(Rational::ZERO),
+            out_point: CompTime(Rational::new(10, 1).unwrap()),
+            start_offset: CompTime(Rational::ZERO),
+            transform: TransformGroup::default(),
+            matte: None,
+            parent: None,
+            label: 0,
+            volume_db: lumit_core::anim::Property::zero(),
+            retime: None,
+            interpolation: lumit_core::retime::Interpolation::default(),
+            blend: lumit_core::model::BlendMode::default(),
+            masks: Vec::new(),
+            paint: Vec::new(),
+            effects: Vec::new(),
+            switches: Switches::default(),
+            extra: serde_json::Map::new(),
+        };
+        let comp = |layers: Vec<Layer>| Composition {
+            id: Uuid::now_v7(),
+            name: "c".into(),
+            width: 64,
+            height: 64,
+            frame_rate: FrameRate::new(60, 1).unwrap(),
+            duration: Duration(Rational::new(10, 1).unwrap()),
+            background: LinearColour::BLACK,
+            work_area: None,
+            layers,
+            markers: Vec::new(),
+            motion_blur: lumit_core::model::MotionBlur::default(),
+            extra: serde_json::Map::new(),
+        };
+
+        // Two ways of pointing at the same hidden precomp, one per case.
+        for track_matte in [true, false] {
+            let mut doc = Document::new();
+            let item = Uuid::now_v7();
+            doc.items.push(ProjectItem::Footage(FootageItem {
+                id: item,
+                name: "f".into(),
+                media: MediaRef {
+                    relative_path: "f.mp4".into(),
+                    absolute_path: "/f.mp4".into(),
+                    fingerprint: None,
+                    extra: serde_json::Map::new(),
+                },
+                extra: serde_json::Map::new(),
+            }));
+            let inner = comp(vec![layer(LayerKind::Footage { item })]);
+            let inner_id = inner.id;
+            doc.items.push(ProjectItem::Composition(inner));
+
+            // The precomp is hidden — a matte source always is.
+            let mut matte_layer = layer(LayerKind::Precomp { comp: inner_id });
+            matte_layer.switches.visible = false;
+            let mut consumer = layer(LayerKind::Solid {
+                def: Uuid::now_v7(),
+            });
+            if track_matte {
+                consumer.matte = Some(MatteRef {
+                    layer: matte_layer.id,
+                    channel: MatteChannel::Alpha,
+                    inverted: false,
+                    source: lumit_core::model::LayerInputSource::default(),
+                });
+            } else {
+                consumer.effects.push(EffectInstance {
+                    id: Uuid::now_v7(),
+                    effect: EffectKey {
+                        namespace: EffectNamespace::Builtin,
+                        match_name: "lens_flare".into(),
+                        version: 1,
+                        extra: serde_json::Map::new(),
+                    },
+                    enabled: true,
+                    params: vec![
+                        EffectParam {
+                            id: "source_type".into(),
+                            value: EffectValue::Choice(1),
+                            extra: serde_json::Map::new(),
+                        },
+                        EffectParam {
+                            id: "matte".into(),
+                            value: EffectValue::Layer(Some(matte_layer.id)),
+                            extra: serde_json::Map::new(),
+                        },
+                    ],
+                    sample_temporally: true,
+                    extra: serde_json::Map::new(),
+                });
+            }
+            let outer = comp(vec![consumer, matte_layer]);
+            let outer_id = outer.id;
+            doc.items.push(ProjectItem::Composition(outer));
+
+            let probes: HashMap<Uuid, crate::SourceProbe> = [(
+                item,
+                crate::SourceProbe::Video {
+                    fps: 60.0,
+                    width: 64,
+                    height: 64,
+                    frames: 600,
+                    audio: false,
+                },
+            )]
+            .into_iter()
+            .collect();
+            let outer = doc.comp(outer_id).unwrap();
+            let jobs = plan_comp_frame(&doc, outer, 0.0, Quality::default(), &probes);
+            let how = if track_matte {
+                "a track matte"
+            } else {
+                "a layer-input matte"
+            };
+            assert_eq!(
+                jobs.len(),
+                1,
+                "{how} onto a precomp must plan the one decode its footage needs"
+            );
+            assert_eq!(jobs[0].item, item);
+        }
     }
 }

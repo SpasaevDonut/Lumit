@@ -5,6 +5,7 @@
 
 import '../api.dart';
 import '../frb_generated.dart';
+import 'assets.dart';
 import 'effect.dart';
 import 'export.dart';
 import 'footage.dart';
@@ -12,7 +13,7 @@ import 'layer.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:uuid/uuid.dart';
 
-// These functions are ignored because they are not marked as `pub`: `add_at_top`, `commit`, `composition`, `dispatch`, `document`, `footage_span_and_size`, `project`, `to_engine`
+// These functions are ignored because they are not marked as `pub`: `add_at_top`, `bridge_marker`, `commit`, `composition`, `core_marker`, `core_markers`, `dispatch`, `document`, `footage_span_and_size`, `project`, `runs_as_video`, `to_engine`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `id`, `new`, `project_id`
 
@@ -184,9 +185,12 @@ class BridgeLayerEntry {
 
 /// One timeline marker (docs/03 §11): a cue on the comp's timebase.
 ///
-/// The engine's marker also carries a duration and a kind; neither has a
-/// control yet, so they are not carried across — a marker written back keeps
-/// what the panel can actually edit and does not pretend to round-trip the rest.
+/// The engine's marker also carries a duration, a kind and any unknown fields
+/// a newer Lumit wrote (docs/10 §1.1); none of the three has a control, so none
+/// of them crosses. They are **not** lost on a write-back: [`core_markers`]
+/// merges each incoming marker onto the one the document already holds under
+/// that id, so the panel edits what it can see and the rest survives untouched
+/// (K-270).
 class BridgeMarker {
   final UuidValue id;
   final BridgeRational time;
@@ -269,10 +273,24 @@ class CompositionReference {
   /// The duration comes from the container's real `duration_seconds`, not from
   /// a frame count: audio-only media has no video frame count or rate, and
   /// reconstructing seconds from those silently clamped such a clip to one frame.
-  void addFootageLayer({required FootageReference footage}) =>
+  /// Place `footage` in this composition as a new layer.
+  ///
+  /// `as_sequence` is Settings ▸ Interface ▸ Editing ▸ *Video arrives as a
+  /// Sequence layer* (K-246), forwarded by the frontend. On, media that
+  /// **runs** — a video stream longer than a single frame — arrives as a
+  /// one-clip Sequence layer, ready to be cut on its own row; a still image
+  /// never does, because there is nothing in one frame to cut. Off, and for
+  /// stills either way, this is the plain Footage layer it always was.
+  ///
+  /// It is one call rather than "add, then convert" so the choice is one
+  /// undo step and one funnel: every route into a comp — a drop, a
+  /// double-click, a menu — comes through here and cannot disagree with the
+  /// others about what a video import becomes.
+  void addFootageLayer(
+          {required FootageReference footage, required bool asSequence}) =>
       BridgeLib.instance.api
           .crateApiCompositionCompositionReferenceAddFootageLayer(
-              that: this, footage: footage);
+              that: this, footage: footage, asSequence: asSequence);
 
   /// Add a Null layer: an invisible layer with no source of its own, carrying
   /// only a transform, for parenting rigs. It has no size, so only its
@@ -300,6 +318,19 @@ class CompositionReference {
         that: this,
       );
 
+  /// Add a Shape layer holding `contents`, at the top of the stack (K-237).
+  ///
+  /// The art is in the layer's own coordinates, and the layer is placed so
+  /// that art lands where it was drawn: the anchor sits on the art's own
+  /// top-left corner and Position carries it to the same place in the comp.
+  /// A shape tool that dragged a rectangle across the picture therefore makes
+  /// a layer whose rectangle is exactly where the drag was.
+  LayerReference addShapeLayer(
+          {required String name, required List<BridgeShapeItem> contents}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceAddShapeLayer(
+              that: this, name: name, contents: contents);
+
   /// Add a Solid layer backed by a fresh SolidDef filed in the Solids
   /// auto-folder — one batch, one undo step, matching the egui frontend. The
   /// solid is comp-sized and white, named "White solid N".
@@ -313,6 +344,28 @@ class CompositionReference {
           .crateApiCompositionCompositionReferenceAddTextLayer(
         that: this,
       );
+
+  /// Add a text layer **where the Type tool clicked**, already holding the
+  /// document it should hold, as one op (K-230).
+  ///
+  /// The tool used to make a layer and then correct it: `add_text_layer`
+  /// starts a layer saying "Text" in the middle of the composition, and the
+  /// tool then wrote an empty line into it and moved it to the click. Three
+  /// ops for one gesture, so `Ctrl+Z` walked back through two states nobody
+  /// had ever seen — an empty box, then the word "Text" — before the layer
+  /// finally went away. One op is one undo step, and undoing it removes the
+  /// layer, which is what making a layer means.
+  ///
+  /// The anchor sits on the **left end of the baseline**, so what is typed
+  /// runs to the right of the point clicked and sits on it rather than
+  /// straddling it. It is recentred on the finished line when the edit ends.
+  LayerReference addTextLayerAt(
+          {required BridgeTextDocument document,
+          required double x,
+          required double y}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceAddTextLayerAt(
+              that: this, document: document, x: x, y: y);
 
   /// Start playing this comp's audio from `start` seconds.
   void audioPlay({required double start}) =>
@@ -329,19 +382,29 @@ class CompositionReference {
         that: this,
       );
 
-  /// Which frames of this composition are held in the cache, one byte each:
-  /// `0` nothing, `1` held only at a coarser resolution than `scale`, `2` held
-  /// at `scale` or finer and ready to show now.
+  /// Which frames of this composition are held, one byte each:
+  ///
+  /// * `0` — nothing held.
+  /// * `1` — held in memory or on the graphics card, but only at a coarser
+  ///   preview resolution than `scale`.
+  /// * `2` — held at `scale` or finer: plays now.
+  /// * `3` — parked on disk only, at a coarser resolution.
+  /// * `4` — parked on disk only, at this resolution: promotable, not yet
+  ///   playable.
   ///
   /// This is what the Timeline's cache bar draws (docs/07-UI-SPEC.md §3.2,
-  /// docs/06-RENDER-PIPELINE.md §5.6). It is a snapshot, not a subscription:
-  /// the caller redraws when it has reason to, rather than the cache pushing.
+  /// docs/06-RENDER-PIPELINE.md §5.6): green for the first two, steel blue for
+  /// the disk pair, dimmed for the coarser one of each.
   ///
-  /// The answer merges the RAM tier and the VRAM tier (the worker's
-  /// final-frame textures, as last published) — a frame on the card plays
-  /// without rendering, so it is as green as one in RAM. There is no disk
-  /// tier yet, so the "on disk only" state the design language reserves
-  /// blue for cannot occur, and is not reported.
+  /// **A mirror read, not a query.** Frames are named by a hash of their
+  /// content (docs/06 §5.2), so answering "is frame 12 held?" means *naming*
+  /// frame 12 — hashing the whole composition at that time, which needs the
+  /// renderer's probe results. So the worker builds this strip and publishes
+  /// it, and this reads what was published: §5.6's lock-free snapshot, where
+  /// the interface never touches a cache itself. Asking also tells the worker
+  /// what to compute, so a bar that starts drawing a different composition is
+  /// answered within a turn or two — all zeros until then, which is the honest
+  /// answer rather than another composition's frames.
   Uint8List cachedFrames({required BigInt frames, required double scale}) =>
       BridgeLib.instance.api
           .crateApiCompositionCompositionReferenceCachedFrames(
@@ -449,6 +512,31 @@ class CompositionReference {
         that: this,
       );
 
+  /// Paste a layer copied by [`crate::api::layer::LayerReference::copy_layer`]
+  /// into this composition, at the top of the stack (K-275).
+  ///
+  /// `at_frame` is where the layer's **in point** lands: the playhead, in the
+  /// ordinary case. `None` keeps the time it was copied at, which is the
+  /// setting for putting the same layer at the same moment in a second comp —
+  /// the two paste behaviours the owner asked for, decided by the caller
+  /// rather than by a mode this end has to remember.
+  ///
+  /// Whichever is chosen, the layer moves as one: in point, out point and
+  /// `start_offset` all shift together (`lumit_core::edit_layer_span`'s
+  /// `MoveIn`, the same rule the `[` key follows), so its keyframes and the
+  /// source frames it shows travel with it rather than sliding against it.
+  ///
+  /// **What is not copied is a reference to something that is not here.** The
+  /// pasted layer gets a fresh id and fresh effect ids — two layers sharing an
+  /// id would make every op that names one ambiguous — and its parent and
+  /// track matte are kept only when they still name a layer in *this* comp.
+  /// A parent that came from another composition is dropped rather than left
+  /// dangling: a layer parented to nothing visible would be a puzzle, and
+  /// re-parenting is one drag.
+  LayerReference pasteLayer({required String text, PlatformInt64? atFrame}) =>
+      BridgeLib.instance.api.crateApiCompositionCompositionReferencePasteLayer(
+          that: this, text: text, atFrame: atFrame);
+
   /// Play from `from` at this comp's own rate, with sound.
   ///
   /// The frontend calls this and then paints whatever frames arrive: each one
@@ -482,6 +570,50 @@ class CompositionReference {
         that: this,
       );
 
+  /// Pack `layer_ids` into a new composition and put that comp back in their
+  /// place as a Precomp layer — the Pre-compose dialogue's one call
+  /// (`Ctrl+Shift+C`, docs/07 §13.4).
+  ///
+  /// The new comp inherits this one's size, rate, background and — unless
+  /// `adjust_duration` asks otherwise — its duration too, which is what K-068
+  /// asks of a comp created inside an active one.
+  ///
+  /// `leave_attributes` is the dialogue's first choice, and only ever offered
+  /// for a single layer: the layer moves into the new comp stripped back to
+  /// its source, and its transform, effects, masks, retime, blend and
+  /// switches stay behind on the Precomp layer, so the picture is unchanged
+  /// but the attributes now act on the nested comp. Asking for it with more
+  /// than one layer is refused rather than half-applied. Without it every
+  /// layer moves whole, and the Precomp layer is a plain centred one.
+  ///
+  /// `adjust_duration` trims the new comp to the selection's own span: its
+  /// duration becomes `max(out) - min(in)`, every packed layer shifts back by
+  /// `min(in)`, and the Precomp layer spans that same stretch with a start
+  /// offset that lines inner time zero up with it. Without it the new comp is
+  /// as long as this one and nothing moves in time at all: every packed layer
+  /// keeps the times it had, and the Precomp layer spans the whole comp.
+  ///
+  /// The layers go in at the depth of the topmost one, so a precompose in
+  /// the middle of a stack does not send it to the front. The comp auto-files
+  /// into the Compositions folder however it was made (K-068), and the whole
+  /// move is one [`Op::Batch`], so one undo step puts the layers back.
+  ///
+  /// A packed layer whose parent or matte stayed behind keeps the id it
+  /// pointed at, and the engine reads a link it cannot resolve as no link —
+  /// the parent chain stops there (`layer_parent_chain`). Nothing dangles
+  /// into a crash, and clearing them here would only spell the same result.
+  LayerReference precompose(
+          {required List<UuidValue> layerIds,
+          required String name,
+          required bool leaveAttributes,
+          required bool adjustDuration}) =>
+      BridgeLib.instance.api.crateApiCompositionCompositionReferencePrecompose(
+          that: this,
+          layerIds: layerIds,
+          name: name,
+          leaveAttributes: leaveAttributes,
+          adjustDuration: adjustDuration);
+
   /// Ask for `frame` at `scale` — 1.0 meaning "shown at comp resolution".
   /// Below 1.0 the engine decodes and composites smaller, which is how a
   /// Viewer that is not filling the screen stays cheap.
@@ -491,6 +623,68 @@ class CompositionReference {
           required BridgePlaybackMode mode}) =>
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceRenderFrame(
           that: this, frame: frame, scale: scale, mode: mode);
+
+  /// Ask for `frame` with one clip's retime replaced — the live envelope
+  /// drag, which never touches the document.
+  ///
+  /// A retime decides *which frame of the source* is decoded, so unlike a
+  /// transform it cannot be previewed by re-compositing pixels that are
+  /// already in hand: the provisional map has to reach the render plan, and
+  /// it does that by riding along with the request and being patched onto a
+  /// clone (K-247).
+  void renderFrameWithClipRetime(
+          {required BigInt frame,
+          required double scale,
+          required LayerReference layer,
+          required UuidValue clip,
+          required BridgeScalar retime}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceRenderFrameWithClipRetime(
+              that: this,
+              frame: frame,
+              scale: scale,
+              layer: layer,
+              clip: clip,
+              retime: retime);
+
+  /// Ask for `frame` with `layer`'s masks replaced by `masks` — the mask's
+  /// half of the two calls above (K-240).
+  void renderFrameWithMaskPreview(
+          {required BigInt frame,
+          required double scale,
+          required LayerReference layer,
+          required List<BridgeMask> masks}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceRenderFrameWithMaskPreview(
+              that: this,
+              frame: frame,
+              scale: scale,
+              layer: layer,
+              masks: masks);
+
+  /// Ask for `frame` with `layer`'s paint replaced by `strokes` — the same
+  /// live path as the three above, for a stroke being dragged in the Timeline
+  /// (K-239).
+  ///
+  /// A stroke's opacity is committed once, on release, so the drag is one undo
+  /// step (K-238). Without a preview that also meant the picture did not move
+  /// until the button came up, which is the wrong half of the trade: a value
+  /// you drag has to show what it is doing. The whole list rides along rather
+  /// than one stroke's opacity, because paint is stored and committed as a
+  /// whole list, and a preview that took a different shape from the op would
+  /// be a second way to describe the same thing.
+  void renderFrameWithPaintPreview(
+          {required BigInt frame,
+          required double scale,
+          required LayerReference layer,
+          required List<BridgeStroke> strokes}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceRenderFrameWithPaintPreview(
+              that: this,
+              frame: frame,
+              scale: scale,
+              layer: layer,
+              strokes: strokes);
 
   /// Ask for `frame` with `layer`'s effect stack replaced by `effects` — the
   /// live drag path, which never touches the document.
@@ -506,6 +700,41 @@ class CompositionReference {
               scale: scale,
               layer: layer,
               effects: effects);
+
+  /// Ask for `frame` with `layer`'s art replaced by `contents` — the shape
+  /// layer's half of the call above (K-239).
+  void renderFrameWithShapePreview(
+          {required BigInt frame,
+          required double scale,
+          required LayerReference layer,
+          required List<BridgeShapeItem> contents}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceRenderFrameWithShapePreview(
+              that: this,
+              frame: frame,
+              scale: scale,
+              layer: layer,
+              contents: contents);
+
+  /// Ask for `frame` with `layer`'s text document replaced by `document` —
+  /// the same live path as the two above, for the Type tool (K-225).
+  ///
+  /// Typing is the one edit where the provisional value changes many times a
+  /// second and the document must *not*: a `set_text` per keystroke would be
+  /// an undo step per keystroke. So the tool previews as it types and writes
+  /// once, when the edit ends.
+  void renderFrameWithTextPreview(
+          {required BigInt frame,
+          required double scale,
+          required LayerReference layer,
+          required BridgeTextDocument document}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceRenderFrameWithTextPreview(
+              that: this,
+              frame: frame,
+              scale: scale,
+              layer: layer,
+              document: document);
 
   /// Ask for `frame` with `layer`'s transform replaced by `transform` — the
   /// same live-drag path as [`Self::render_frame_with_preview`], for the
@@ -536,6 +765,49 @@ class CompositionReference {
           required List<Uint8List> colours}) =>
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceRenderScope(
           that: this, frame: frame, scale: scale, kind: kind, colours: colours);
+
+  /// Ask the worker for the pixels under the dropper: a `window × window`
+  /// square of `frame` centred on the point `(u, v)` of the picture, each a
+  /// fraction from 0 to 1 (docs/07 §6.1).
+  ///
+  /// **A fraction, not a pixel, and that is the point.** The picture actually
+  /// read may be a reduced-resolution preview, so its pixel grid is neither
+  /// the composition's nor anything the caller can know in advance. The reply
+  /// says which raster it cut from (`width`, `height`) and where in that
+  /// raster the window's centre landed, and every pixel the caller then names
+  /// is in that same raster. Asking in composition pixels and indexing the
+  /// reply with them is a real bug that has been made unwritable here: with a
+  /// fitted Viewer the two grids differ by the preview scale, and the
+  /// magnifier showed one repeated edge pixel — a flat colour where the
+  /// picture should be.
+  ///
+  /// A window rather than the nine pixels the magnifier shows, because the
+  /// pointer moves and the picture does not: the caller reads its grid out of
+  /// the window it already holds and asks again only when the pointer nears
+  /// the window's edge, the frame changes, or an edit lands.
+  ///
+  /// `layer` reads that layer **alone** rather than the composite — what a
+  /// depth pick does, since a depth pass is usually hidden and so never
+  /// appears in the composite at all. The answer arrives as
+  /// `WorkerResponse::Sampled`, on the stream the frames and traces already
+  /// ride; a frame with nothing to read publishes nothing, and the magnifier
+  /// keeps what it had.
+  void samplePixels(
+          {required BigInt frame,
+          required double u,
+          required double v,
+          required int window,
+          required double scale,
+          LayerReference? layer}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceSamplePixels(
+              that: this,
+              frame: frame,
+              u: u,
+              v: v,
+              window: window,
+              scale: scale,
+              layer: layer);
 
   /// Replace the whole marker list — one op, trivially invertible, which is
   /// also how beat detection commits a regenerated set.

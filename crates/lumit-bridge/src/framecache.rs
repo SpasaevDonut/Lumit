@@ -1,66 +1,68 @@
-//! The bridge-side rendered-frame cache (K-176) — the scrub fix.
+//! The bridge-side rendered-frame cache — the RAM tier of the three-tier cache
+//! (docs/06-RENDER-PIPELINE.md §5.1), and the cross-thread controls for the two
+//! tiers the worker owns.
 //!
 //! # In plain terms
 //!
-//! Rendering a whole composited comp and reading its pixels back off the GPU is
-//! the single most expensive thing the Viewer does. When you scrub back and
-//! forth over the same handful of frames, egui never re-renders them: it keeps a
-//! map of already-rendered frames in RAM (`AppState::comp_frame_cache`) and a
-//! re-visited frame is just a map lookup. The Flutter path had no such thing —
-//! every scrub frame re-rendered end to end. This module is that map for the
-//! bridge: it holds the finished RGBA bytes of frames we have already rendered,
-//! named by what is actually *in* them, so a re-scrubbed frame is served from
-//! memory without touching the GPU.
+//! Rendering a whole composited comp is the single most expensive thing the
+//! Viewer does, so a frame already made should never be made twice. Three stores
+//! hold finished frames, each cheaper to reach and smaller than the next:
+//! textures still on the graphics card (the worker's renderer owns those), the
+//! bytes in this module's map, and files on disk. This module is the middle rung
+//! plus the switchboard: the RAM store itself, and the atomics and mirrors
+//! through which the settings ops and the cache bar talk to the tiers living on
+//! the worker thread.
 //!
-//! ## Keying by position, and what that costs
+//! ## Named by content, which is the whole design (K-178, docs/06 §5.2)
 //!
-//! Each entry is filed under `(comp, frame, scale)` — see [`frame_key`]. The
-//! name says *where* a frame is, not what is in it.
+//! Every frame is filed under a **content hash** — a hash of everything that
+//! went into it: each layer's evaluated transform, its effects, masks, blend and
+//! switches, which source frame each footage layer reads, the parent chain it
+//! inherits, and the preview resolution ([`lumit_render::cache::frame_key`]).
+//! Nothing about *where* the frame sits enters the name.
 //!
-//! That has one consequence which has to be handled explicitly: an edit does not
-//! change any frame's name, so without help the cache would keep serving the
-//! picture from before the edit. It did exactly that until this was written —
-//! changing a layer's opacity and scrubbing back gave you the old frame, byte
-//! for byte. [`invalidate_all`] is the answer: a committed change drops every
-//! held frame.
+//! Three consequences, and they are the reason the cache feels the way it does:
 //!
-//! The design K-178 describes is better and is still the goal: file each frame
-//! under a **content hash** ([`lumit_render::cache::frame_key`]) covering every
-//! layer's transform, effects, masks, blend and switches, and which source frame
-//! each footage layer reads. Then an edit simply produces different names for
-//! the frames it changed, nothing is thrown away unnecessarily, and renaming a
-//! layer costs nothing. Reaching it needs the probe view here, which the bridge
-//! does not have yet (docs/TODO.md).
+//! * **An edit that cannot change a pixel costs nothing.** Renaming a layer,
+//!   nudging the work area, changing a hidden layer's opacity, adding sound to a
+//!   layer, moving a marker: all of them produce the same names, so every held
+//!   frame stays held and the cache bar stays green. This module used to empty
+//!   itself on *every* commit, because the names were positional and an edit did
+//!   not change them — so a rename retired the whole composition.
+//! * **An undo is instantly valid again.** The restored document asks for the
+//!   names it asked for before the edit, and if they have not been evicted they
+//!   are still here. Nothing has to be re-rendered to get back to where you
+//!   were, which is the After Effects Global Performance Cache lesson taken
+//!   whole (docs/06 §5.2).
+//! * **There is no invalidation machinery at all.** An edit changes values,
+//!   values change hashes, and old entries simply stop being addressed and age
+//!   out through eviction. No dirty flags, no dependency walk, nothing to get
+//!   wrong.
+//!
+//! A frame is only nameable once its footage is probed; until then it renders
+//! live and is banked nowhere, so a cache entry can never be a promise the
+//! renderer did not keep.
+//!
+//! ## What fills this tier
+//!
+//! Two things. The Scopes path renders CPU pixels of its own (the zero-copy
+//! Viewer keeps none, K-183) and files them. And the **demotion ladder**
+//! (docs §5.3): a frame squeezed out of the VRAM cache is read back off the card
+//! and lands here, then goes on to disk — and can be put straight back on the
+//! card when it is wanted again, without compositing anything. That read-back is
+//! started at eviction time and collected later, so an eviction never makes the
+//! preview wait.
 //!
 //! ## Budget and eviction
 //!
-//! The cache is bounded by a byte budget ([`DEFAULT_BUDGET_BYTES`], overridable
-//! from Settings → Performance). On insert it evicts the least-recently-used
-//! entries until it fits. Eviction scans for the oldest entry (`O(n)` in the
-//! number of cached frames — a few tens at 1080p under the default budget, so
-//! the scan is cheap; a linked-hash-map would make it `O(1)` if the count ever
-//! grows large, noted as future work).
-//!
-//! ## GPU path (shared texture, K-177)
-//!
-//! Only the CPU read-back path is cached here: it owns the finished RGBA bytes,
-//! so caching them is honest and cheap, and a hit skips the whole render. The
-//! zero-copy shared-texture path holds exactly **one** GPU texture (the frame
-//! last presented into it), so there is nothing to cache without either keeping
-//! N shared textures alive (VRAM the budget does not model) or reading the pixels
-//! back (defeating the zero-copy point). The honest design is: leave the shared
-//! path uncached, and when a comp is being scrubbed the CPU cache still warms —
-//! the Viewer can fall back to a cached CPU frame. The Dart worker prefers the
-//! shared path when live but the CPU cache is what makes re-scrubs free; the two
-//! do not conflict. Recorded here rather than half-built.
-
-// Without the `render` feature nothing populates the cache (there is no
-// compositor linked), so the get/put machinery is inert — only the empty-map
-// budget/clear/stats controls run. Say so rather than gating each item, so the
-// FFI controls stay callable in every build.
+//! Bounded by a byte budget ([`DEFAULT_BUDGET_BYTES`], overridable from
+//! Settings → Performance), least-recently-used first. Eviction scans for the
+//! oldest entry (`O(n)` in the number of held frames — tens at 1080p under the
+//! default budget, so the scan is cheap; a linked-hash-map would make it `O(1)`
+//! if the count ever grows large, noted as future work).
 
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// The default RAM cap for rendered frames: 512 MiB. Sized so a comfortable run
 /// of 1080p frames (~8 MiB each → ~64 frames) stays warm without the cache
@@ -68,150 +70,40 @@ use std::sync::{Mutex, OnceLock};
 /// [`set_budget`].
 pub(crate) const DEFAULT_BUDGET_BYTES: usize = 512 * 1024 * 1024;
 
-/// One frame's cache identity: `(comp, frame, scale)` packed into a `u128` by
-/// [`frame_key`].
+/// One frame's cache identity: the content hash from
+/// [`lumit_render::cache::frame_key`]. Every tier files a frame under the same
+/// number, which is what lets a frame move up and down the ladder without anyone
+/// having to know where it has been.
 pub(crate) type FrameKey = u128;
 
-/// A preview scale as it appears in a key: thousandths, so a panel resized by
-/// half a pixel does not produce a scale that misses every time.
-pub(crate) fn scale_quantised(scale: f32) -> u16 {
-    ((scale * 1000.0).round().clamp(0.0, f32::from(u16::MAX)) as u32 & 0xFFFF) as u16
-}
+/// Where a held frame sits in its composition, and at what preview scale — kept
+/// beside the bytes but never part of the name (see [`best_frame`]).
+pub(crate) type Provenance = lumit_render::FrameProvenance;
 
-/// The cache key for one rendered frame: the comp, the frame, and the scale it
-/// was made at.
-///
-/// The comp's low 64 bits occupy the top half; the frame takes the next 48 bits
-/// and the quantised scale the low 16. The frame is masked to its 48 bits so a
-/// preposterous frame number cannot run up into the comp's half and name a
-/// different composition's picture.
-pub(crate) fn frame_key(comp: uuid::Uuid, frame: u64, scale: f32) -> FrameKey {
-    frame_key_quantised(comp, frame, scale_quantised(scale))
-}
-
-/// [`frame_key`] with the scale already in thousandths — the form the VRAM
-/// mirror publishes, since the renderer keys its textures the same way.
-pub(crate) fn frame_key_quantised(comp: uuid::Uuid, frame: u64, scale_q: u16) -> FrameKey {
-    let low = comp.as_u128() as u64;
-    (u128::from(low) << 64) | (u128::from(frame & 0xFFFF_FFFF_FFFF) << 16) | u128::from(scale_q)
-}
-
-/// Which of `frames` frames of `comp` are held, and at what resolution relative
-/// to `scale` — the answer the Timeline's cache bar draws.
-///
-/// `0` = not cached, `1` = cached only at a coarser scale than asked for (still
-/// something to show, but it would be re-rendered to display at this size),
-/// `2` = cached at this scale, ready now.
-///
-/// One pass over the key set rather than one lookup per frame, so the cost is
-/// the number of *cached* frames rather than the length of the composition.
-pub(crate) fn cached_tiers(comp: uuid::Uuid, frames: u64, scale: f32) -> Vec<u8> {
-    let wanted = scale_quantised(scale);
-    let comp_low = comp.as_u128() as u64;
-    let mut out = vec![0u8; frames as usize];
-    let mut mark = |key: &FrameKey| {
-        if (key >> 64) as u64 != comp_low {
-            return;
-        }
-        let frame = ((key >> 16) & 0xFFFF_FFFF_FFFF) as u64;
-        if frame >= frames {
-            return;
-        }
-        // A coarser render is a smaller number; equal or finer will serve.
-        let held = (key & 0xFFFF) as u16;
-        let tier = if held >= wanted { 2u8 } else { 1u8 };
-        let slot = &mut out[frame as usize];
-        *slot = (*slot).max(tier);
-    };
-    with_cache(|c| {
-        for key in c.map.keys() {
-            mark(key);
-        }
-    });
-    // The VRAM tier's holdings, as the worker last published them — same key
-    // packing, so the same comparison. A frame held on the card is as green
-    // as one held in RAM: playback serves it without rendering.
-    for key in vram::keys() {
-        mark(&key);
-    }
-    out
-}
-
-/// The finest held picture of `comp` at `frame`, whatever scale it was made at,
-/// stamped most-recently-used.
-///
-/// For the Scopes, which need the *numbers* in a frame rather than a frame at
-/// any particular size. They were compositing the whole composition again to get
-/// them — a second full render of the frame the Viewer had just rendered, several
-/// times a second, all through playback. Any resolution answers the question a
-/// waveform or a vectorscope asks, so the one already in hand will do.
-///
-/// Does not count as a hit or a miss: those numbers describe how well the Viewer
-/// is being served, and mixing a second consumer into them would make the meter
-/// mean nothing.
-pub(crate) fn best_frame(comp: uuid::Uuid, frame: u64) -> Option<(u32, u32, Vec<u8>)> {
-    let comp_low = comp.as_u128() as u64;
-    with_cache(|c| {
-        let key = c
-            .map
-            .keys()
-            .filter(|k| {
-                (*k >> 64) as u64 == comp_low && ((*k >> 16) & 0xFFFF_FFFF_FFFF) as u64 == frame
-            })
-            // The finest one held: the scale lives in the low 16 bits, so the
-            // largest key among these is the largest scale.
-            .max()
-            .copied()?;
-        let entry = c.map.get_mut(&key)?;
-        c.clock += 1;
-        entry.last_used = c.clock;
-        Some((entry.width, entry.height, entry.rgba.clone()))
-    })
-}
-
-/// Drop every held frame, because the document changed.
-///
-/// **Why all of them, and not just the composition that was edited.** Deciding
-/// which frames an edit can reach is a harder question than it looks, and
-/// getting it wrong means silently showing a picture the document no longer
-/// describes:
-///
-/// * a batched edit (a two-axis position drag, adding a solid) names no single
-///   composition at all;
-/// * changing a solid's colour or relinking footage edits a *project item*,
-///   which any number of compositions may draw;
-/// * a precomp layer means editing composition A changes every composition that
-///   contains A, at any depth.
-///
-/// The scope attached to a change answers a different question — which panel
-/// should redraw — and using it here would leave every case above stale. So this
-/// is deliberately blunt. It is also why content keying is worth doing (see the
-/// module docs): under it none of this reasoning is needed, because an edit
-/// simply gives new names to the frames it changed.
-///
-/// The hit and miss counters survive: they describe the session, not the
-/// contents, and resetting them on every keystroke would make the meter useless.
-pub(crate) fn invalidate_all() {
-    with_cache(|c| {
-        c.map.clear();
-        c.used = 0;
-        // Anything a render is holding right now was planned against the
-        // document as it was before this edit, so it must not be banked.
-        c.generation = c.generation.wrapping_add(1);
-    });
-}
-
-/// One cached frame: its dimensions and the tightly-packed RGBA8 bytes, plus the
-/// LRU clock value of its last use.
+/// One cached frame: its dimensions, the tightly-packed display bytes, and the
+/// bookkeeping the store and its consumers need.
 struct Entry {
     width: u32,
     height: u32,
-    rgba: Vec<u8>,
+    /// The display bytes, in a shared handle. A frame is 8 MB at 1080p, and it
+    /// goes up to the graphics card again each time playback comes past it. The
+    /// handle makes that trip a counter increment in place of an 8 MB copy.
+    bytes: Arc<Vec<u8>>,
+    /// True when `bytes` are BGRA (the Windows and macOS zero-copy order) rather
+    /// than RGBA. Frames come down off the card in the order they were
+    /// composited in and go back up the same way, so no swizzle is paid on the
+    /// render path; the one consumer that needs true RGBA ([`best_frame`], for
+    /// the Scopes) converts its own copy.
+    bgra: bool,
+    /// What the frame cost to render, in milliseconds — carried so a frame put
+    /// back on the card keeps its cost-aware eviction ranking there.
+    cost_ms: u32,
+    provenance: Provenance,
     last_used: u64,
 }
 
-/// The rendered-frame cache: an LRU of RGBA frames under a byte budget, each
-/// named by its content hash (see the module docs).
+/// The rendered-frame cache: an LRU of display-encoded frames under a byte
+/// budget, each named by its content hash (see the module docs).
 pub(crate) struct Cache {
     budget: usize,
     used: usize,
@@ -220,11 +112,6 @@ pub(crate) struct Cache {
     clock: u64,
     hits: u64,
     misses: u64,
-    /// Bumped by [`invalidate_all`]. A render that began before the bump is of
-    /// the document as it was, so its pixels are dropped rather than stored —
-    /// otherwise an edit landing mid-render would be undone by that render
-    /// finishing, and the stale frame would stay for good.
-    generation: u64,
 }
 
 impl Cache {
@@ -236,7 +123,6 @@ impl Cache {
             clock: 0,
             hits: 0,
             misses: 0,
-            generation: 0,
         }
     }
 
@@ -250,7 +136,7 @@ impl Cache {
             Some(entry) => {
                 entry.last_used = clock;
                 self.hits += 1;
-                Some((entry.width, entry.height, entry.rgba.clone()))
+                Some((entry.width, entry.height, entry.bytes.as_ref().clone()))
             }
             None => {
                 self.misses += 1;
@@ -262,24 +148,23 @@ impl Cache {
     /// Store a rendered frame, evicting the least-recently-used entries first so
     /// the total stays within budget. A single frame larger than the whole
     /// budget is not cached (it would evict everything and still not fit).
-    fn put(&mut self, key: FrameKey, width: u32, height: u32, rgba: Vec<u8>) {
-        let bytes = rgba.len();
+    fn put(&mut self, key: FrameKey, entry: Entry) {
+        let bytes = entry.bytes.len();
         if bytes == 0 || bytes > self.budget {
             return;
         }
         // Replacing an existing key: reclaim its bytes first.
         if let Some(old) = self.map.remove(&key) {
-            self.used = self.used.saturating_sub(old.rgba.len());
+            self.used = self.used.saturating_sub(old.bytes.len());
         }
         self.evict_until_fits(bytes);
         self.clock += 1;
+        let clock = self.clock;
         self.map.insert(
             key,
             Entry {
-                width,
-                height,
-                rgba,
-                last_used: self.clock,
+                last_used: clock,
+                ..entry
             },
         );
         self.used += bytes;
@@ -298,7 +183,7 @@ impl Cache {
                 break;
             };
             if let Some(e) = self.map.remove(&oldest) {
-                self.used = self.used.saturating_sub(e.rgba.len());
+                self.used = self.used.saturating_sub(e.bytes.len());
             }
         }
     }
@@ -332,6 +217,234 @@ impl Cache {
 /// controls. One Flutter window, one cache.
 static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
 
+fn with_cache<R>(f: impl FnOnce(&mut Cache) -> R) -> R {
+    let mutex = CACHE.get_or_init(|| Mutex::new(Cache::new(DEFAULT_BUDGET_BYTES)));
+    let mut guard = mutex.lock().unwrap_or_else(|p| p.into_inner());
+    f(&mut guard)
+}
+
+/// Serve `key` from the cache, or render it with `render` and bank the result.
+/// The cache lock is **dropped** across `render` (it never wraps GPU/FFI work —
+/// docs/14 §"no locks across GPU"): a hit returns under the lock; a miss
+/// releases it, renders, then re-locks to insert. A superseded render for the
+/// same key simply overwrites, which is harmless — the key names the content, so
+/// the pixels are identical. `render` is called at most once per genuine miss,
+/// so a re-scrubbed frame never re-renders (proven by the module tests' render
+/// counter).
+///
+/// The rendered bytes are RGBA: this is the CPU path, which is the Scopes' and
+/// never the zero-copy Viewer's.
+pub(crate) fn get_or_render(
+    key: FrameKey,
+    provenance: Provenance,
+    render: impl FnOnce() -> Option<(u32, u32, Vec<u8>)>,
+) -> Option<(u32, u32, Vec<u8>)> {
+    if let Some(hit) = with_cache(|c| c.get(&key)) {
+        return Some(hit);
+    }
+    let (width, height, bytes) = render()?;
+    with_cache(|c| {
+        c.put(
+            key,
+            Entry {
+                width,
+                height,
+                bytes: Arc::new(bytes.clone()),
+                bgra: false,
+                cost_ms: 1,
+                provenance,
+                last_used: 0,
+            },
+        );
+    });
+    Some((width, height, bytes))
+}
+
+/// File a frame the demotion ladder brought down off the graphics card
+/// (docs/06 §5.3). Its bytes stay in the channel order they were composited in,
+/// so the trip back up needs no conversion.
+pub(crate) fn put_demoted(key: FrameKey, frame: &lumit_render::DemotedFrame, bytes: Arc<Vec<u8>>) {
+    with_cache(|c| {
+        c.put(
+            key,
+            Entry {
+                width: frame.width,
+                height: frame.height,
+                bytes,
+                bgra: frame.bgra,
+                cost_ms: frame.cost_ms,
+                provenance: frame.provenance,
+                last_used: 0,
+            },
+        );
+    });
+}
+
+/// File a frame that has just come back OFF disk (docs/06 §5.1's way up). The
+/// bytes are on their way to the graphics card in the same breath; keeping a
+/// share here means the next pass over this frame is an upload from memory
+/// rather than another file read — without it, a comp larger than the VRAM
+/// budget re-read every frame from disk on every single pass, and the IO
+/// thread's throughput became the playback rate.
+pub(crate) fn put_loaded(
+    key: FrameKey,
+    width: u32,
+    height: u32,
+    bgra: bool,
+    cost_ms: u32,
+    provenance: Provenance,
+    bytes: Arc<Vec<u8>>,
+) {
+    with_cache(|c| {
+        c.put(
+            key,
+            Entry {
+                width,
+                height,
+                bytes,
+                bgra,
+                cost_ms,
+                provenance,
+                last_used: 0,
+            },
+        );
+    });
+}
+
+/// One held frame, ready to be put back on the graphics card.
+pub(crate) struct HeldFrame {
+    pub width: u32,
+    pub height: u32,
+    /// A share of the cached bytes, not a copy of them. The cache keeps its own
+    /// share until the frame ages out.
+    pub bytes: Arc<Vec<u8>>,
+    pub bgra: bool,
+    pub cost_ms: u32,
+}
+
+/// Take a held frame for promotion back into VRAM — the way up the ladder.
+/// Counts as neither a hit nor a miss: those numbers describe how well the
+/// Viewer's own lookups are served, and a promotion is the machinery underneath
+/// them.
+pub(crate) fn held(key: FrameKey) -> Option<HeldFrame> {
+    with_cache(|c| {
+        let entry = c.map.get_mut(&key)?;
+        c.clock += 1;
+        entry.last_used = c.clock;
+        Some(HeldFrame {
+            width: entry.width,
+            height: entry.height,
+            bytes: entry.bytes.clone(),
+            bgra: entry.bgra,
+            cost_ms: entry.cost_ms,
+        })
+    })
+}
+
+/// Whether a frame is held, without touching recency — what the cache bar and
+/// the idle fill ask.
+pub(crate) fn contains(key: FrameKey) -> bool {
+    with_cache(|c| c.map.contains_key(&key))
+}
+
+/// The finest held picture of `comp` at `frame`, whatever scale it was made at,
+/// as true RGBA and stamped most-recently-used.
+///
+/// For the Scopes, which need the *numbers* in a frame rather than a frame at
+/// any particular size. They were compositing the whole composition again to get
+/// them — a second full render of the frame the Viewer had just rendered, several
+/// times a second, all through playback. Any resolution answers the question a
+/// waveform or a vectorscope asks, so the one already in hand will do.
+///
+/// This is the one lookup that asks a *positional* question, which a content
+/// hash cannot answer — hence the provenance kept beside each entry. It is
+/// deliberately a best effort: two positions with identical pixels share one
+/// entry filed under whichever asked first, so this can miss a frame it could
+/// have served, and then the Scopes render their own. It can never answer with
+/// the wrong picture.
+///
+/// Does not count as a hit or a miss: those numbers describe how well the Viewer
+/// is being served, and mixing a second consumer into them would make the meter
+/// mean nothing.
+pub(crate) fn best_frame(comp: uuid::Uuid, frame: u64) -> Option<(u32, u32, Vec<u8>)> {
+    with_cache(|c| {
+        let key = *c
+            .map
+            .iter()
+            .filter(|(_, e)| e.provenance.comp == comp && e.provenance.frame == frame)
+            // The finest one held.
+            .max_by_key(|(_, e)| e.provenance.scale_q)
+            .map(|(k, _)| k)?;
+        let entry = c.map.get_mut(&key)?;
+        c.clock += 1;
+        entry.last_used = c.clock;
+        let mut bytes = entry.bytes.as_ref().clone();
+        if entry.bgra {
+            // The Scopes bin R, G and B by name, so BGRA bytes would read as a
+            // channel-swapped picture. Paid on this consumer's own copy (it is
+            // throttled to a few traces a second) rather than on every frame
+            // coming down the ladder.
+            for px in bytes.chunks_exact_mut(4) {
+                px.swap(0, 2);
+            }
+        }
+        Some((entry.width, entry.height, bytes))
+    })
+}
+
+/// Read from the finest held picture of `comp` at `frame` **without copying
+/// it**: `read` is given the pixels, the width, the height and the channel
+/// order, and what it returns is the answer.
+///
+/// The dropper's reason for existing. [`best_frame`] clones the whole frame —
+/// eight megabytes at 1080p — which is the correct shape for the Scopes, who
+/// then bin every pixel of it, and exactly the wrong one for a reader that wants
+/// a few hundred pixels out of the middle. `read` runs under the cache lock,
+/// thus it must stay what the dropper's is: bounded, pure-CPU, and nowhere near
+/// the GPU or the FFI boundary (docs/14 §"no locks across GPU").
+///
+/// **The channel order is given, not corrected.** A frame that came down off the
+/// card on Windows or macOS is BGRA, and putting that right here would mean a
+/// copy of the whole frame — which is the cost this function exists to avoid.
+/// The reader takes its small window first and puts that right instead.
+///
+/// Stamps most-recently-used, like [`best_frame`], and counts as neither a hit
+/// nor a miss for the same reason: those numbers describe how well the Viewer
+/// is served.
+pub(crate) fn with_best_frame<R>(
+    comp: uuid::Uuid,
+    frame: u64,
+    read: impl FnOnce(&[u8], u32, u32, bool) -> R,
+) -> Option<R> {
+    with_cache(|c| {
+        let key = *c
+            .map
+            .iter()
+            .filter(|(_, e)| e.provenance.comp == comp && e.provenance.frame == frame)
+            .max_by_key(|(_, e)| e.provenance.scale_q)
+            .map(|(k, _)| k)?;
+        let entry = c.map.get_mut(&key)?;
+        c.clock += 1;
+        entry.last_used = c.clock;
+        Some(read(&entry.bytes, entry.width, entry.height, entry.bgra))
+    })
+}
+
+/// Resize the RAM budget (Settings → Performance).
+pub(crate) fn set_budget(bytes: usize) {
+    with_cache(|c| c.set_budget(bytes));
+}
+
+/// Empty the cache now (Settings → Clear cache).
+pub(crate) fn clear() {
+    with_cache(|c| c.clear());
+}
+
+/// `(used_bytes, budget_bytes, entries, hits, misses)`.
+pub(crate) fn stats() -> (usize, usize, usize, u64, u64) {
+    with_cache(|c| c.stats())
+}
+
 /// The worker renderer's comp-decode counter, mirrored each loop turn so
 /// `cache_stats` can report it — a decode that should not have happened (a
 /// drag that re-decoded, a cache that missed) is then visible in Settings
@@ -346,58 +459,27 @@ pub(crate) fn comp_decodes() -> u64 {
     COMP_DECODES.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// The invalidation generation, for consumers on other threads: the worker
-/// compares it each loop turn and drops its VRAM final-frame cache when it
-/// moved, since those textures are keyed by position exactly as this cache's
-/// bytes are.
-pub(crate) fn generation() -> u64 {
-    with_cache(|c| c.generation)
-}
-
-/// How many renders the worker has served while the invalidation generation had
-/// already moved past the one it last acted on — that is, from caches a
-/// committed edit had retired.
-///
-/// **It must stay at zero.** A serve like that shows the picture from before the
-/// edit and then leaves it there, because nothing asks for the frame again: the
-/// Viewer looked stale until the playhead moved. The worker syncs its caches
-/// immediately before serving anything precisely so this cannot happen; the
-/// counter is how a regression says so out loud instead of being a bug report
-/// about a "sometimes stale" preview.
-static STALE_SERVES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-pub(crate) fn note_stale_serve() {
-    STALE_SERVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-}
-
-pub(crate) fn stale_serves() -> u64 {
-    STALE_SERVES.load(std::sync::atomic::Ordering::Relaxed)
-}
-
 /// The VRAM final-frame cache's controls and mirror. The textures themselves
 /// live inside the worker's renderer (they are GPU objects only that thread
 /// touches); what crosses threads is three atomics the settings ops write and
-/// the worker applies, plus a snapshot of what is held that the worker
-/// publishes and the cache bar reads — the §5.6 "lock-free bitmap" idea at
-/// its plainest.
+/// the worker applies, plus the used/entries numbers the worker publishes for the
+/// meter.
+///
+/// What no longer crosses is a list of held keys. The cache bar used to merge one
+/// (the keys were positions, so a position could be read off them); under content
+/// keying a hash says nothing about where its frame sits, so the bar is built by
+/// the worker — which can name each frame — and published whole. See [`bar`].
 pub(crate) mod vram {
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-    use std::sync::Mutex;
 
     /// The budget the settings asked for; the worker applies it on its next
     /// turn.
     static BUDGET: AtomicUsize = AtomicUsize::new(lumit_render::DEFAULT_VRAM_CACHE_BYTES);
     /// Bumped by Clear cache; the worker clears when it sees it move.
     static CLEARS: AtomicU64 = AtomicU64::new(0);
-    /// What the worker last reported holding: the invalidation generation it
-    /// held them under, (used, entries), and the held keys
-    /// `(comp low 64 bits ‖ frame ‖ scale)` packed exactly like
-    /// [`super::frame_key`], so the bar merge is integer comparisons. The
-    /// generation is what keeps the bar honest across an edit: the worker's
-    /// clear-and-republish is a loop turn away, and until it lands these keys
-    /// describe frames that no longer exist. (The budget is deliberately not
-    /// mirrored — the atomic above is the one authority on it.)
-    static MIRROR: Mutex<(u64, u64, u64, Vec<u128>)> = Mutex::new((0, 0, 0, Vec::new()));
+    /// What the worker last reported holding.
+    static USED: AtomicU64 = AtomicU64::new(0);
+    static ENTRIES: AtomicU64 = AtomicU64::new(0);
     /// The budget the worker's cache is ACTUALLY holding to, as it last
     /// reported. [`budget`] above is the wish the settings wrote; this is what
     /// arrived, and they differ for one loop turn after a change — or for good,
@@ -430,79 +512,276 @@ pub(crate) mod vram {
         CLEARS.load(Ordering::Relaxed)
     }
 
-    /// The worker's report of what it holds, stamped with the invalidation
-    /// generation it holds them under.
-    pub(crate) fn publish(generation: u64, used: u64, entries: u64, keys: Vec<u128>) {
-        let mut guard = MIRROR.lock().unwrap_or_else(|p| p.into_inner());
-        *guard = (generation, used, entries, keys);
+    /// The worker's report of what it holds.
+    pub(crate) fn publish(used: u64, entries: u64) {
+        USED.store(used, Ordering::Relaxed);
+        ENTRIES.store(entries, Ordering::Relaxed);
     }
 
     /// `(used, entries)` as last published.
     pub(crate) fn stats() -> (u64, u64) {
-        let guard = MIRROR.lock().unwrap_or_else(|p| p.into_inner());
-        (guard.1, guard.2)
-    }
-
-    /// The held keys as last published — empty when an edit has moved the
-    /// generation past the report, since those frames are already gone (the
-    /// worker just has not said so yet).
-    pub(crate) fn keys() -> Vec<u128> {
-        let guard = MIRROR.lock().unwrap_or_else(|p| p.into_inner());
-        if guard.0 != super::generation() {
-            return Vec::new();
-        }
-        guard.3.clone()
+        (
+            USED.load(Ordering::Relaxed),
+            ENTRIES.load(Ordering::Relaxed),
+        )
     }
 }
 
-fn with_cache<R>(f: impl FnOnce(&mut Cache) -> R) -> R {
-    let mutex = CACHE.get_or_init(|| Mutex::new(Cache::new(DEFAULT_BUDGET_BYTES)));
-    let mut guard = mutex.lock().unwrap_or_else(|p| p.into_inner());
-    f(&mut guard)
+/// The disk tier's controls and mirror — the same shape as [`vram`], because the
+/// tier lives on the worker's IO thread and the settings ops run on whichever
+/// thread frb gave them.
+/// The decoded-source-frame pool's numbers, as the worker last published them.
+///
+/// Published rather than asked, for the same reason [`vram`] is: the pool lives
+/// on the worker's renderer, and a settings window must not reach across the
+/// loop to read it (K-184's rule, on the other side of the bridge).
+pub(crate) mod decode {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static USED: AtomicU64 = AtomicU64::new(0);
+    static DECODERS: AtomicU64 = AtomicU64::new(0);
+
+    pub(crate) fn publish(used: u64, decoders: u64) {
+        USED.store(used, Ordering::Relaxed);
+        DECODERS.store(decoders, Ordering::Relaxed);
+    }
+
+    /// `(used_bytes, open_decoders)`.
+    pub(crate) fn stats() -> (u64, u64) {
+        (
+            USED.load(Ordering::Relaxed),
+            DECODERS.load(Ordering::Relaxed),
+        )
+    }
 }
 
-/// Serve `key` from the cache, or render it with `render` and bank the result.
-/// The cache lock is **dropped** across `render` (it never wraps GPU/FFI work —
-/// docs/14 §"no locks across GPU"): a hit returns under the lock; a miss
-/// releases it, renders, then re-locks to insert. A superseded render for the
-/// same key simply overwrites, which is harmless — the key names the content, so
-/// the pixels are identical. `render` is called at most once per genuine miss,
-/// so a re-scrubbed frame never re-renders (proven by the module tests' render
-/// counter).
-pub(crate) fn get_or_render(
-    key: FrameKey,
-    render: impl FnOnce() -> Option<(u32, u32, Vec<u8>)>,
-) -> Option<(u32, u32, Vec<u8>)> {
-    let generation = match with_cache(|c| (c.get(&key), c.generation)) {
-        (Some(hit), _) => return Some(hit),
-        (None, generation) => generation,
-    };
-    let (w, h, rgba) = render()?;
-    with_cache(|c| {
-        // An edit landed while this was rendering, so these pixels are of the
-        // document as it *was*. Hand them back — the caller asked for them, and
-        // a newer frame is already on its way — but do not file them, or the
-        // invalidation would be quietly undone and the stale frame kept for good.
-        if c.generation == generation {
-            c.put(key, w, h, rgba.clone());
+/// What the graphics driver holds for the worker's device, as it last
+/// published — the layer under every tier in this file, and the one nothing
+/// could see until now.
+pub(crate) mod gpu {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static ALLOCATED: AtomicU64 = AtomicU64::new(0);
+    static RESERVED: AtomicU64 = AtomicU64::new(0);
+    static TEXTURES: AtomicU64 = AtomicU64::new(0);
+    static BUFFERS: AtomicU64 = AtomicU64::new(0);
+    /// Whether the card draws from this process's own memory.
+    static UNIFIED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    pub(crate) fn publish_unified(unified: bool) {
+        UNIFIED.store(unified, Ordering::Relaxed);
+    }
+
+    pub(crate) fn unified() -> bool {
+        UNIFIED.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn publish(allocated: u64, reserved: u64, textures: u64, buffers: u64) {
+        ALLOCATED.store(allocated, Ordering::Relaxed);
+        RESERVED.store(reserved, Ordering::Relaxed);
+        TEXTURES.store(textures, Ordering::Relaxed);
+        BUFFERS.store(buffers, Ordering::Relaxed);
+    }
+
+    /// `(allocated_bytes, reserved_bytes, textures, buffers)`. The two byte
+    /// figures are 0 on a backend that keeps no allocator accounting (Metal);
+    /// the two counts are kept by every backend.
+    pub(crate) fn stats() -> (u64, u64, u64, u64) {
+        (
+            ALLOCATED.load(Ordering::Relaxed),
+            RESERVED.load(Ordering::Relaxed),
+            TEXTURES.load(Ordering::Relaxed),
+            BUFFERS.load(Ordering::Relaxed),
+        )
+    }
+}
+
+pub(crate) mod disk {
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Mutex;
+
+    /// Where the parked frames go (docs/07-UI-SPEC.md §15, Settings →
+    /// Performance → Cache).
+    #[derive(Clone, PartialEq, Eq, Debug, Default)]
+    pub(crate) enum Location {
+        /// Under the application's own cache directory, keyed by document id —
+        /// the default, and the only one that works before a project has ever
+        /// been saved.
+        #[default]
+        AppData,
+        /// In a `<project>.lum-cache/` folder beside the project file. Per
+        /// project by construction: move the project, and its cache follows.
+        /// An unsaved project has nowhere to put one, so it falls back to
+        /// [`Self::AppData`] until the first save.
+        BesideProject,
+        /// Under a folder the user chose — to park the cache on a faster or
+        /// roomier drive. Application-wide.
+        Custom(PathBuf),
+    }
+
+    static BUDGET: AtomicU64 = AtomicU64::new(lumit_render::diskio::DEFAULT_CAP_BYTES);
+    static CLEARS: AtomicU64 = AtomicU64::new(0);
+    static USED: AtomicU64 = AtomicU64::new(0);
+    static ENTRIES: AtomicU64 = AtomicU64::new(0);
+    /// The wanted location, and a counter the worker watches so a change is
+    /// noticed exactly once.
+    /// How many frames are in the write-behind queue, as the worker last
+    /// published — the depth K-277 bounded, in the memory report (K-294).
+    static PENDING_PARKS: AtomicU64 = AtomicU64::new(0);
+
+    pub(crate) fn publish_pending_parks(n: u64) {
+        PENDING_PARKS.store(n, Ordering::Relaxed);
+    }
+
+    pub(crate) fn pending_parks() -> u64 {
+        PENDING_PARKS.load(Ordering::Relaxed)
+    }
+
+    static LOCATION: Mutex<Option<(u64, Location)>> = Mutex::new(None);
+    static LOCATION_EPOCH: AtomicU64 = AtomicU64::new(0);
+    /// The folder the tier actually resolved to, for Settings to show. `None`
+    /// means the tier is off (no project open yet, or no home directory).
+    static ROOT: Mutex<Option<String>> = Mutex::new(None);
+
+    pub(crate) fn set_budget(bytes: u64) {
+        BUDGET.store(bytes, Ordering::Relaxed);
+    }
+
+    pub(crate) fn budget() -> u64 {
+        BUDGET.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn request_clear() {
+        CLEARS.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn clears() -> u64 {
+        CLEARS.load(Ordering::Relaxed)
+    }
+
+    /// Ask for a location. The worker re-opens the cache on its next turn.
+    pub(crate) fn set_location(location: Location) {
+        let epoch = LOCATION_EPOCH.fetch_add(1, Ordering::Relaxed) + 1;
+        let mut guard = LOCATION.lock().unwrap_or_else(|p| p.into_inner());
+        *guard = Some((epoch, location));
+    }
+
+    /// The wanted location and the epoch it was asked at, or `None` if nobody
+    /// has ever chosen one (the worker then uses [`Location::default`]).
+    pub(crate) fn location() -> (u64, Location) {
+        let guard = LOCATION.lock().unwrap_or_else(|p| p.into_inner());
+        guard.clone().unwrap_or((0, Location::default()))
+    }
+
+    pub(crate) fn publish(used: u64, entries: u64) {
+        USED.store(used, Ordering::Relaxed);
+        ENTRIES.store(entries, Ordering::Relaxed);
+    }
+
+    pub(crate) fn stats() -> (u64, u64) {
+        (
+            USED.load(Ordering::Relaxed),
+            ENTRIES.load(Ordering::Relaxed),
+        )
+    }
+
+    pub(crate) fn publish_root(root: Option<String>) {
+        let mut guard = ROOT.lock().unwrap_or_else(|p| p.into_inner());
+        *guard = root;
+    }
+
+    pub(crate) fn root() -> Option<String> {
+        let guard = ROOT.lock().unwrap_or_else(|p| p.into_inner());
+        guard.clone()
+    }
+}
+
+/// The cache bar's per-frame strip (docs/06 §5.6: "redrawn from a lock-free
+/// bitmap snapshot; the UI thread never queries the cache itself").
+///
+/// **Why the worker builds it and the interface only reads it.** Under content
+/// keying, knowing whether frame 12 is held means *naming* frame 12 — hashing
+/// the whole composition at that time — and only the worker can do that: the
+/// hash needs the renderer's probe results, and hashing a few hundred frames is
+/// not work to do on the interface's thread, let alone per paint. So the bar
+/// leaves a note saying which composition and scale it is drawing ([`want`]) and
+/// reads whatever the worker last published for it ([`read`]).
+///
+/// The values, per frame:
+///
+/// * `0` — nothing held.
+/// * `1` — held in memory or on the card, but only at a coarser preview
+///   resolution than asked for (dimmed green).
+/// * `2` — held at this resolution: plays now (green).
+/// * `3` — on disk only, at a coarser resolution (dimmed blue).
+/// * `4` — on disk only, at this resolution: promotable, not yet playable
+///   (blue).
+///
+/// Playable beats promotable, so a frame both held and parked reads as held.
+pub(crate) mod bar {
+    use std::sync::Mutex;
+
+    /// What the bar last asked to draw: composition, frame count and preview
+    /// scale in thousandths.
+    static WANTED: Mutex<Option<(uuid::Uuid, u64, u16)>> = Mutex::new(None);
+    /// The strips the worker has published, newest first. A handful of slots
+    /// rather than one: the interface may draw a bar for more than one
+    /// composition or scale in a session (a comp switch, a Viewer resize), and a
+    /// single slot would make the two knock each other out — each paint would
+    /// find the other's strip and read blank.
+    static PUBLISHED: Mutex<Vec<(uuid::Uuid, u16, Vec<u8>)>> = Mutex::new(Vec::new());
+
+    /// How many strips are kept. Four is two compositions at two scales; a
+    /// 4000-frame strip is 4 kB, so the whole store is measured in kilobytes.
+    const SLOTS: usize = 4;
+
+    /// Record what the bar is drawing, so the worker knows what to compute.
+    pub(crate) fn want(comp: uuid::Uuid, frames: u64, scale_q: u16) {
+        let mut guard = WANTED.lock().unwrap_or_else(|p| p.into_inner());
+        *guard = Some((comp, frames, scale_q));
+    }
+
+    /// What the bar is asking for, if it has asked at all.
+    pub(crate) fn wanted() -> Option<(uuid::Uuid, u64, u16)> {
+        let guard = WANTED.lock().unwrap_or_else(|p| p.into_inner());
+        *guard
+    }
+
+    /// Publish a freshly computed strip, replacing any earlier one for the same
+    /// composition and scale and pushing the oldest out.
+    pub(crate) fn publish(comp: uuid::Uuid, scale_q: u16, tiers: Vec<u8>) {
+        let mut guard = PUBLISHED.lock().unwrap_or_else(|p| p.into_inner());
+        guard.retain(|(held, scale, _)| !(*held == comp && *scale == scale_q));
+        guard.insert(0, (comp, scale_q, tiers));
+        guard.truncate(SLOTS);
+    }
+
+    /// The strip for `comp` at `scale_q`, padded or trimmed to `frames`. All
+    /// zeros when the worker has not published this composition at this scale
+    /// yet — the honest answer, and one the next worker turn corrects.
+    pub(crate) fn read(comp: uuid::Uuid, frames: u64, scale_q: u16) -> Vec<u8> {
+        want(comp, frames, scale_q);
+        let frames = frames as usize;
+        let guard = PUBLISHED.lock().unwrap_or_else(|p| p.into_inner());
+        let mut out = vec![0u8; frames];
+        if let Some((_, _, tiers)) = guard
+            .iter()
+            .find(|(held, scale, _)| *held == comp && *scale == scale_q)
+        {
+            let n = tiers.len().min(frames);
+            out[..n].copy_from_slice(&tiers[..n]);
         }
-    });
-    Some((w, h, rgba))
-}
+        out
+    }
 
-/// Resize the RAM budget (Settings → Performance).
-pub(crate) fn set_budget(bytes: usize) {
-    with_cache(|c| c.set_budget(bytes));
-}
-
-/// Empty the cache now (Settings → Clear cache).
-pub(crate) fn clear() {
-    with_cache(|c| c.clear());
-}
-
-/// `(used_bytes, budget_bytes, entries, hits, misses)`.
-pub(crate) fn stats() -> (usize, usize, usize, u64, u64) {
-    with_cache(|c| c.stats())
+    /// Forget every published strip — after a Clear cache, so the bar does not
+    /// keep drawing frames that have just been thrown away until the worker's
+    /// next turn.
+    pub(crate) fn invalidate() {
+        let mut guard = PUBLISHED.lock().unwrap_or_else(|p| p.into_inner());
+        guard.clear();
+    }
 }
 
 #[cfg(test)]
@@ -513,29 +792,74 @@ mod tests {
     /// Frame names in these tests are arbitrary `u128`s: the cache only ever
     /// compares them. What the name MEANS — and the guarantee that an edit which
     /// cannot change a pixel produces the same name — is `lumit-render`'s to
-    /// prove, and it does (`cache::tests`).
+    /// prove, and it does (`cache::tests`, `headless::tests`).
+    /// One test at a time through the process-wide cache.
+    ///
+    /// These tests share the one `CACHE` this module owns — they `clear()` it,
+    /// put frames in it and read them back — and cargo runs them in parallel
+    /// threads of one process. Two of them interleaving is a test clearing
+    /// another's frames out from under it, which shows up as one unrelated case
+    /// failing every so often and passing on a re-run: the worst kind, because
+    /// it teaches everybody to re-run rather than to look. Caught on this
+    /// branch's own suite (K-294), pre-existing rather than new.
+    ///
+    /// The lock is taken for the body of every test that touches the global; a
+    /// poisoned lock is recovered rather than propagated, so one genuine
+    /// failure does not cascade into "all the others failed too".
+    static CACHE_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn cache_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        CACHE_TESTS.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     const A: FrameKey = 1;
     const B: FrameKey = 2;
     const C: FrameKey = 3;
+
+    fn at(comp: uuid::Uuid, frame: u64, scale_q: u16) -> Provenance {
+        Provenance {
+            comp,
+            frame,
+            scale_q,
+        }
+    }
+
+    /// One entry of `bytes` bytes. The dimensions are nominal — this store only
+    /// ever compares names and counts bytes — except where a test hands the same
+    /// frame back out, which is why they are given rather than assumed.
+    fn sized(width: u32, height: u32, bytes: usize, provenance: Provenance) -> Entry {
+        Entry {
+            width,
+            height,
+            bytes: Arc::new(vec![7u8; bytes]),
+            bgra: false,
+            cost_ms: 1,
+            provenance,
+            last_used: 0,
+        }
+    }
+
+    fn entry(bytes: usize, provenance: Provenance) -> Entry {
+        sized(2, 2, bytes, provenance)
+    }
 
     /// A cached frame is served on the second identical request without invoking
     /// the renderer — the scrub guarantee, proven with a render counter on a
     /// local cache (deterministic, no GPU, no shared global).
     #[test]
     fn a_cached_frame_is_served_without_re_rendering() {
+        let _guard = cache_test_guard();
         let mut cache = Cache::new(DEFAULT_BUDGET_BYTES);
+        let comp = uuid::Uuid::now_v7();
         let renders = std::cell::Cell::new(0u32);
 
-        // The get-or-render dance the production path runs (here inline so the
-        // counter is observable): hit, else render + put.
         let once = |cache: &mut Cache| -> (u32, u32, Vec<u8>) {
             if let Some(hit) = cache.get(&A) {
                 return hit;
             }
             renders.set(renders.get() + 1);
-            let frame = (4u32, 4u32, vec![7u8; 4 * 4 * 4]);
-            cache.put(A, frame.0, frame.1, frame.2.clone());
-            frame
+            cache.put(A, sized(4, 4, 4 * 4 * 4, at(comp, 0, 1000)));
+            (4, 4, vec![7u8; 4 * 4 * 4])
         };
 
         let first = once(&mut cache);
@@ -556,8 +880,10 @@ mod tests {
     /// empties itself on every commit.
     #[test]
     fn a_changed_frame_name_misses_and_an_unchanged_one_hits() {
+        let _guard = cache_test_guard();
         let mut cache = Cache::new(DEFAULT_BUDGET_BYTES);
-        cache.put(A, 2, 2, vec![1u8; 16]);
+        let comp = uuid::Uuid::now_v7();
+        cache.put(A, entry(16, at(comp, 0, 1000)));
 
         assert!(
             cache.get(&B).is_none(),
@@ -572,13 +898,15 @@ mod tests {
     /// The byte budget evicts the least-recently-used frame first.
     #[test]
     fn the_budget_evicts_least_recently_used() {
+        let _guard = cache_test_guard();
+        let comp = uuid::Uuid::now_v7();
         // Budget holds exactly two 16-byte frames.
         let mut cache = Cache::new(32);
-        cache.put(A, 2, 2, vec![0u8; 16]);
-        cache.put(B, 2, 2, vec![1u8; 16]);
+        cache.put(A, entry(16, at(comp, 0, 1000)));
+        cache.put(B, entry(16, at(comp, 1, 1000)));
         // Touch A so B is now the least-recently-used.
         assert!(cache.get(&A).is_some());
-        cache.put(C, 2, 2, vec![2u8; 16]);
+        cache.put(C, entry(16, at(comp, 2, 1000)));
 
         assert!(cache.get(&A).is_some(), "recently used survives");
         assert!(cache.get(&C).is_some(), "the new frame is present");
@@ -592,9 +920,11 @@ mod tests {
     /// Shrinking the budget evicts immediately; clearing empties the cache.
     #[test]
     fn resizing_and_clearing_free_frames() {
+        let _guard = cache_test_guard();
+        let comp = uuid::Uuid::now_v7();
         let mut cache = Cache::new(64);
-        cache.put(A, 2, 2, vec![0u8; 16]);
-        cache.put(B, 2, 2, vec![0u8; 16]);
+        cache.put(A, entry(16, at(comp, 0, 1000)));
+        cache.put(B, entry(16, at(comp, 1, 1000)));
         assert_eq!(cache.stats().2, 2);
 
         cache.set_budget(16); // room for one
@@ -608,14 +938,16 @@ mod tests {
     /// A frame larger than the whole budget is refused rather than thrashing.
     #[test]
     fn an_oversized_frame_is_not_cached() {
+        let _guard = cache_test_guard();
         let mut cache = Cache::new(16);
-        cache.put(A, 4, 4, vec![0u8; 64]);
+        cache.put(A, entry(64, at(uuid::Uuid::now_v7(), 0, 1000)));
         assert_eq!(cache.stats().2, 0, "oversized frame skipped");
     }
 
     /// The global FFI-facing controls round-trip: clear, set budget, stats.
     #[test]
     fn global_controls_round_trip() {
+        let _guard = cache_test_guard();
         clear();
         set_budget(123 * 1024 * 1024);
         let (used, budget, _entries, _hits, _misses) = stats();
@@ -625,191 +957,137 @@ mod tests {
         set_budget(DEFAULT_BUDGET_BYTES);
     }
 
-    /// The key's three fields survive a round trip and stay in their own bits.
-    /// The frame is masked to 48 bits so an absurd frame number cannot run up
-    /// into the composition's half and name another comp's picture.
-    #[test]
-    fn a_key_keeps_its_fields_apart() {
-        let comp = uuid::Uuid::from_u128(0x1234_5678_9abc_def0_1122_3344_5566_7788);
-        let key = frame_key(comp, 42, 0.5);
-        assert_eq!(
-            (key >> 64) as u64,
-            comp.as_u128() as u64,
-            "comp in the top half"
-        );
-        assert_eq!(
-            ((key >> 16) & 0xFFFF_FFFF_FFFF) as u64,
-            42,
-            "frame in the middle"
-        );
-        assert_eq!((key & 0xFFFF) as u16, 500, "scale in thousandths");
-
-        let absurd = frame_key(comp, u64::MAX, 1.0);
-        assert_eq!(
-            (absurd >> 64) as u64,
-            comp.as_u128() as u64,
-            "a huge frame number must not corrupt the composition"
-        );
-    }
-
-    /// Two comps that differ only above the low 64 bits of their id would share
-    /// a key. Vanishingly unlikely with v7 uuids, but worth stating: this is the
-    /// one collision the packing permits.
-    #[test]
-    fn scale_is_quantised_to_thousandths() {
-        assert_eq!(scale_quantised(1.0), 1000);
-        assert_eq!(scale_quantised(0.3333), 333);
-        // A panel resized by half a pixel must land on the same number.
-        assert_eq!(scale_quantised(0.500_01), scale_quantised(0.499_99));
-        // Nonsense cannot wrap into a plausible scale.
-        assert_eq!(scale_quantised(-1.0), 0);
-    }
-
-    /// The bar merges the VRAM tier: a frame the worker published as held on
-    /// the card is as green as one held in RAM, at the same scale comparison.
-    #[test]
-    fn cached_tiers_merges_the_vram_mirror() {
-        let comp = uuid::Uuid::now_v7();
-        clear();
-        vram::publish(
-            generation(),
-            1,
-            1,
-            vec![
-                frame_key_quantised(comp, 3, 500),
-                frame_key_quantised(comp, 4, 250),
-            ],
-        );
-
-        let tiers = cached_tiers(comp, 6, 0.5);
-        assert_eq!(
-            tiers,
-            vec![0, 0, 0, 2, 1, 0],
-            "frame 3 ready at this scale, frame 4 held only coarser"
-        );
-
-        // A generation older than the present names frames that are already
-        // gone: the merge must ignore the whole report.
-        invalidate_all();
-        assert_eq!(
-            cached_tiers(comp, 6, 0.5),
-            vec![0; 6],
-            "a stale mirror must not promise dropped frames"
-        );
-
-        // Leave the shared mirror empty for the other tests.
-        vram::publish(generation(), 0, 0, Vec::new());
-        clear();
-    }
-
-    /// The cache bar's answer: nothing, coarser than asked for, or ready.
-    #[test]
-    fn cached_tiers_reports_what_is_held_and_how_fine() {
-        let comp = uuid::Uuid::now_v7();
-        let other = uuid::Uuid::now_v7();
-        clear();
-
-        with_cache(|c| {
-            // Frame 1 at the wanted scale, frame 2 only coarser, frame 4 finer.
-            c.put(frame_key(comp, 1, 0.5), 2, 2, vec![0; 16]);
-            c.put(frame_key(comp, 2, 0.25), 2, 2, vec![0; 16]);
-            c.put(frame_key(comp, 4, 1.0), 2, 2, vec![0; 16]);
-            // Another composition's frame must not appear in this one's bar.
-            c.put(frame_key(other, 3, 0.5), 2, 2, vec![0; 16]);
-        });
-
-        let tiers = cached_tiers(comp, 6, 0.5);
-        assert_eq!(tiers, vec![0, 2, 1, 0, 2, 0]);
-        clear();
-    }
-
-    /// Positional keys do not change when the picture does, so a committed edit
-    /// has to drop held frames by hand. Until this existed the Viewer was served
-    /// the frame from before the edit, byte for byte.
-    ///
-    /// Every composition's frames go, not just the edited one: a batched edit
-    /// names no composition, a solid or a footage relink is a project item many
-    /// compositions may draw, and a precomp means editing one composition
-    /// changes every composition that contains it.
-    #[test]
-    fn invalidating_drops_every_composition() {
-        let comp = uuid::Uuid::now_v7();
-        let other = uuid::Uuid::now_v7();
-        clear();
-        with_cache(|c| {
-            c.put(frame_key(comp, 0, 1.0), 2, 2, vec![0; 16]);
-            c.put(frame_key(other, 0, 1.0), 2, 2, vec![0; 16]);
-        });
-
-        invalidate_all();
-
-        assert_eq!(cached_tiers(comp, 1, 1.0), vec![0]);
-        assert_eq!(
-            cached_tiers(other, 1, 1.0),
-            vec![0],
-            "a precomp or a shared solid could have reached it"
-        );
-        with_cache(|c| assert_eq!(c.used, 0));
-        clear();
-    }
-
     /// The Scopes read the values in a frame, so any resolution answers their
     /// question — and the frame the Viewer just rendered is right there. They
-    /// were compositing the whole composition a second time to get it, several
-    /// times a second, for as long as playback ran with the panel open.
+    /// were compositing the composition a second time to get it, several times a
+    /// second, for as long as playback ran with the panel open. A content hash
+    /// cannot answer "any picture of frame 5", which is what the provenance kept
+    /// beside each entry is for.
     #[test]
     fn the_finest_held_picture_of_a_frame_is_reusable() {
+        let _guard = cache_test_guard();
         let comp = uuid::Uuid::now_v7();
         let other = uuid::Uuid::now_v7();
         clear();
         with_cache(|c| {
-            c.put(frame_key(comp, 5, 0.25), 4, 4, vec![1; 64]);
-            c.put(frame_key(comp, 5, 0.5), 8, 8, vec![2; 256]);
-            c.put(frame_key(comp, 6, 1.0), 16, 16, vec![3; 1024]);
-            c.put(frame_key(other, 5, 1.0), 32, 32, vec![4; 4096]);
+            c.put(1, entry(64, at(comp, 5, 250)));
+            c.put(2, entry(256, at(comp, 5, 500)));
+            c.put(3, entry(1024, at(comp, 6, 1000)));
+            c.put(4, entry(4096, at(other, 5, 1000)));
         });
 
-        let (w, h, rgba) = best_frame(comp, 5).expect("frame 5 is held");
-        assert_eq!((w, h), (8, 8), "the finest one held, not just any");
-        assert_eq!(rgba[0], 2);
+        // The finest one held for frame 5 of this comp is the 500-thousandths
+        // entry, not the 250 one and not another comp's.
+        let (_, _, bytes) = best_frame(comp, 5).expect("frame 5 is held");
+        assert_eq!(bytes.len(), 256, "the finest one held, not just any");
 
         assert!(best_frame(comp, 7).is_none(), "nothing held for frame 7");
-
-        // Another composition's frame of the same number must never be handed
-        // over — the scope would be reading a different picture entirely.
-        let (w, _, _) = best_frame(other, 5).expect("the other comp has its own");
-        assert_eq!(w, 32);
-
-        // `best_frame` deliberately does not touch the hit and miss counters —
-        // they describe how well the *Viewer* is served, and folding a second
-        // consumer into them would make the meter meaningless. Not asserted
-        // here: those counters are global and these tests share them, so the
-        // check would depend on what else happened to be running.
+        let (_, _, others) = best_frame(other, 5).expect("the other comp has its own");
+        assert_eq!(others.len(), 4096, "never another composition's picture");
         clear();
     }
 
-    /// The race: an edit landing while a frame is being rendered must not be
-    /// undone by that render finishing and banking pre-edit pixels.
+    /// A frame that came down off the card in BGRA is handed to the Scopes as
+    /// RGBA — they bin channels by name, so the swap would show as a
+    /// blue-and-red-swapped picture. The bytes themselves stay in the order they
+    /// arrived, so the trip back up the ladder is still conversion-free.
     #[test]
-    fn a_render_in_flight_when_an_edit_lands_is_not_banked() {
+    fn a_demoted_bgra_frame_reaches_the_scopes_as_rgba() {
+        let _guard = cache_test_guard();
         let comp = uuid::Uuid::now_v7();
         clear();
-
-        let out = get_or_render(frame_key(comp, 0, 1.0), || {
-            invalidate_all();
-            Some((2, 2, vec![9; 16]))
+        with_cache(|c| {
+            c.put(
+                A,
+                Entry {
+                    width: 1,
+                    height: 1,
+                    bytes: Arc::new(vec![1, 2, 3, 4]),
+                    bgra: true,
+                    cost_ms: 9,
+                    provenance: at(comp, 0, 1000),
+                    last_used: 0,
+                },
+            );
         });
 
-        assert!(
-            out.is_some(),
-            "the caller still gets the pixels it asked for"
+        let (_, _, bytes) = best_frame(comp, 0).unwrap();
+        assert_eq!(bytes, vec![3, 2, 1, 4], "given to the Scopes as RGBA");
+        let up = held(A).expect("still held for promotion");
+        assert_eq!(*up.bytes, vec![1, 2, 3, 4], "and kept as it came down");
+        assert!(up.bgra);
+        assert_eq!(up.cost_ms, 9, "with the cost that earned it its place");
+        clear();
+    }
+
+    /// A frame read back off disk is held in memory as well as uploaded — so
+    /// the NEXT pass over it is an upload from here, not another file read.
+    /// Without this, a comp larger than the VRAM budget re-read every frame
+    /// from disk on every pass, and the IO thread's rate became the playback
+    /// rate.
+    #[test]
+    fn a_disk_load_is_banked_in_memory_for_the_next_pass() {
+        let _guard = cache_test_guard();
+        let comp = uuid::Uuid::now_v7();
+        clear();
+        let bytes = Arc::new(vec![9u8; 16]);
+        put_loaded(A, 2, 2, true, 16, at(comp, 3, 1000), bytes);
+        let up = held(A).expect("held for the next promotion");
+        assert_eq!(*up.bytes, vec![9u8; 16]);
+        assert!(up.bgra, "in the order it will go up in");
+        assert_eq!(up.cost_ms, 16, "dear enough to keep");
+        clear();
+    }
+
+    /// The bar is a mirror: it says what it is drawing, and reads what the
+    /// worker published for exactly that composition and scale. A strip for
+    /// another composition — or the same one at another scale — must never be
+    /// handed over, or the bar would promise frames that do not exist.
+    #[test]
+    fn the_bar_reads_only_the_strip_it_asked_for() {
+        let _guard = cache_test_guard();
+        let comp = uuid::Uuid::now_v7();
+        let other = uuid::Uuid::now_v7();
+        bar::publish(comp, 1000, vec![2, 2, 1, 4, 0]);
+
+        assert_eq!(bar::read(comp, 5, 1000), vec![2, 2, 1, 4, 0]);
+        assert_eq!(
+            bar::read(comp, 3, 1000),
+            vec![2, 2, 1],
+            "trimmed to the frames asked for"
         );
         assert_eq!(
-            cached_tiers(comp, 1, 1.0),
-            vec![0],
-            "but they are not kept, or the invalidation would be undone"
+            bar::read(comp, 7, 1000),
+            vec![2, 2, 1, 4, 0, 0, 0],
+            "and padded past what was published"
         );
-        clear();
+        assert_eq!(
+            bar::read(comp, 5, 500),
+            vec![0; 5],
+            "another scale is not this strip"
+        );
+        assert_eq!(
+            bar::read(other, 5, 1000),
+            vec![0; 5],
+            "and neither is another composition"
+        );
+
+        // Two compositions drawn in turn must not knock each other out: a
+        // single slot meant each paint found the other's strip and read blank.
+        bar::publish(other, 1000, vec![4, 4, 4]);
+        assert_eq!(bar::read(other, 3, 1000), vec![4, 4, 4]);
+        assert_eq!(
+            bar::read(comp, 5, 1000),
+            vec![2, 2, 1, 4, 0],
+            "the first composition's strip is still there"
+        );
+
+        // Reading records what to compute next, so the worker follows the bar.
+        assert_eq!(bar::read(other, 4, 250).len(), 4);
+        assert_eq!(bar::wanted(), Some((other, 4, 250)));
+
+        bar::invalidate();
+        assert_eq!(bar::read(comp, 5, 1000), vec![0; 5], "cleared means blank");
     }
 }
 

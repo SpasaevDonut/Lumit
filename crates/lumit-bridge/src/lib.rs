@@ -28,9 +28,16 @@
 //! - [`media`] — probing footage and decoding frames (`media` feature).
 //! - `render` — the composited-comp Viewer path (`render` feature): turns
 //!   `(comp, frame)` into an RGBA8 buffer through `lumit_render::headless`.
-//! - [`framecache`] — the rendered-frame cache (K-176): an LRU of RGBA frames
-//!   keyed by comp/frame/scale under a document epoch, so a re-scrubbed frame
-//!   skips the GPU. Its budget/clear/stats back the Settings cache controls.
+//! - [`framecache`] — the RAM tier of the three-tier frame cache (K-176, K-178):
+//!   an LRU of finished frames named by a hash of their *content*, so an edit
+//!   that cannot change a pixel throws nothing away and an undo is instantly
+//!   valid. It also holds the cross-thread controls and mirrors for the two tiers
+//!   the worker owns (the textures on the graphics card and the frames parked on
+//!   disk), which back the Settings cache controls and the Timeline's cache bar.
+//! - `profiling` — whether the worker is measuring per-layer and per-effect
+//!   render times for the indicators (docs/13 §7.1).
+//! - [`peaks`] — the session's waveform peak cache: one multi-zoom summary per
+//!   audio file, so a lane redraws at any zoom without decoding again (K-280).
 //! - [`realtime`] — the adaptive playback tier decision core (K-171).
 //! - [`audio`] — comp audio playback and the sample clock (`media` feature).
 //! - [`export`] — the export runner and its progress reporting.
@@ -58,8 +65,11 @@ mod edits;
 mod export;
 mod framecache;
 mod media;
+mod names;
+mod peaks;
 mod playback;
 mod prefetch;
+mod profiling;
 mod realtime;
 mod render;
 

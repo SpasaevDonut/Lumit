@@ -61,7 +61,7 @@ fn worst_f16_ulp(a: &[f32], b: &[f32]) -> i32 {
 #[test]
 fn wgsl_blur_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -130,7 +130,7 @@ fn wgsl_blur_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_sharpen_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -183,7 +183,7 @@ fn wgsl_sharpen_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_sharpen_simple_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -227,7 +227,7 @@ fn wgsl_sharpen_simple_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_rgb_split_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -283,7 +283,7 @@ fn wgsl_rgb_split_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_spectral_split_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -348,7 +348,7 @@ fn wgsl_spectral_split_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_chromatic_aberration_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -403,7 +403,7 @@ fn wgsl_chromatic_aberration_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_flash_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -447,7 +447,7 @@ fn wgsl_flash_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_colour_balance_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -502,7 +502,7 @@ fn wgsl_colour_balance_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_saturation_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -576,7 +576,7 @@ fn wgsl_saturation_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_vibrancy_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -646,7 +646,7 @@ fn wgsl_vibrancy_matches_the_cpu_oracle() {
 fn wgsl_matte_key_matches_the_cpu_oracle() {
     use lumit_core::fx::MatteKeyParams;
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -783,7 +783,7 @@ fn wgsl_matte_key_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_vignette_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -896,7 +896,7 @@ fn wgsl_vignette_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_exposure_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -971,7 +971,7 @@ fn wgsl_exposure_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_temperature_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1070,7 +1070,7 @@ fn corpus_with_partials(w: u32, h: u32) -> Vec<f32> {
 #[test]
 fn wgsl_invert_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1111,7 +1111,7 @@ fn wgsl_invert_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_tint_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1182,7 +1182,7 @@ fn wgsl_tint_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_contrast_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1242,7 +1242,7 @@ fn wgsl_contrast_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_gamma_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1329,7 +1329,7 @@ fn wgsl_gamma_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_hue_shift_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1383,7 +1383,7 @@ fn wgsl_hue_shift_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_transform_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1459,7 +1459,7 @@ fn wgsl_transform_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_shake_matches_the_cpu_oracle_through_the_transform_kernel() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1530,7 +1530,7 @@ fn wgsl_shake_motion_blur_matches_the_cpu_oracle() {
     assert_eq!(SHAKE_MB_SAMPLES, lumit_core::fx::SHAKE_MB_SAMPLES);
 
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1669,7 +1669,7 @@ fn wgsl_shake_motion_blur_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_glow_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1745,7 +1745,7 @@ fn wgsl_glow_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_block_glitch_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1857,7 +1857,7 @@ fn wgsl_block_glitch_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_scanlines_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1945,7 +1945,7 @@ fn wgsl_scanlines_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_dir_blur_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1996,7 +1996,7 @@ fn wgsl_dir_blur_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_radial_blur_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -2053,7 +2053,7 @@ fn wgsl_radial_blur_matches_the_cpu_oracle() {
 #[test]
 fn adjust_blend_lerps_by_coverage_times_opacity() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -2142,7 +2142,7 @@ fn adjust_blend_lerps_by_coverage_times_opacity() {
 #[test]
 fn wgsl_echo_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -2281,7 +2281,7 @@ fn wgsl_echo_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_motion_blur_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -2428,7 +2428,7 @@ fn wgsl_motion_blur_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_datamosh_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -2541,19 +2541,34 @@ fn wgsl_datamosh_matches_the_cpu_oracle() {
 /// pushed **red-fastest** (index `r + g*size + b*size*size`) — the layout
 /// `upload_lut_3d` and the shader assume.
 fn build_lut(size: usize, f: impl Fn([f32; 3]) -> [f32; 3]) -> lumit_core::lut::Lut3d {
+    build_lut_over(size, [0.0; 3], [1.0; 3], f)
+}
+
+/// The same, over an explicit `DOMAIN_MIN`/`DOMAIN_MAX` (K-271): the grid
+/// points are the domain's own even spacing, so a cube built here says the
+/// same thing as one exported by a grading tool that declares a domain.
+fn build_lut_over(
+    size: usize,
+    domain_min: [f32; 3],
+    domain_max: [f32; 3],
+    f: impl Fn([f32; 3]) -> [f32; 3],
+) -> lumit_core::lut::Lut3d {
     let maxf = (size - 1) as f32;
+    let at = |i: usize, ch: usize| {
+        domain_min[ch] + (domain_max[ch] - domain_min[ch]) * (i as f32 / maxf)
+    };
     let mut data = Vec::with_capacity(size * size * size);
     for b in 0..size {
         for g in 0..size {
             for r in 0..size {
-                data.push(f([r as f32 / maxf, g as f32 / maxf, b as f32 / maxf]));
+                data.push(f([at(r, 0), at(g, 1), at(b, 2)]));
             }
         }
     }
     lumit_core::lut::Lut3d {
         size,
-        domain_min: [0.0; 3],
-        domain_max: [1.0; 3],
+        domain_min,
+        domain_max,
         data,
     }
 }
@@ -2571,7 +2586,7 @@ fn build_lut(size: usize, f: impl Fn([f32; 3]) -> [f32; 3]) -> lumit_core::lut::
 #[test]
 fn wgsl_lut_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -2627,12 +2642,29 @@ fn wgsl_lut_matches_the_cpu_oracle() {
     // A non-separable swap of red and blue: out = [b, g, r].
     let swap = build_lut(2, |c| [c[2], c[1], c[0]]);
 
-    let cases: [(&str, &lumit_core::lut::Lut3d, f32); 5] = [
+    // A cube over a NON-DEFAULT domain (K-271): the shipped shader assumed
+    // 0..1 and skipped the `(c - lo) / (hi - lo)` remap the CPU applies, so a
+    // cube like this rendered silently wrong on the GPU while the oracle was
+    // right. Asymmetric per channel, and one axis deliberately narrower than
+    // 0..1 so mid-grey lands in a different cell on each path if the remap is
+    // missing.
+    let domained = build_lut_over(4, [-0.25, 0.0, 0.1], [1.5, 0.75, 1.0], |c| {
+        [c[2], c[0], c[1]]
+    });
+    // The degenerate domain a malformed file can declare: DOMAIN_MIN equal to
+    // DOMAIN_MAX. The CPU reads a zero span as 0 rather than dividing; the
+    // shader must do the same and not produce NaN.
+    let zero_span = build_lut_over(3, [0.5; 3], [0.5; 3], |c| [c[1], c[2], c[0]]);
+
+    let cases: [(&str, &lumit_core::lut::Lut3d, f32); 8] = [
         ("identity-full", &identity, 1.0),
         ("identity-mix0", &identity, 0.0),
         ("gamma-full", &gamma, 1.0),
         ("gamma-mixed", &gamma, 0.5),
         ("swap-rb", &swap, 1.0),
+        ("domained-full", &domained, 1.0),
+        ("domained-mixed", &domained, 0.5),
+        ("zero-span-domain", &zero_span, 1.0),
     ];
 
     for (name, lut, mix) in cases {
@@ -2652,7 +2684,17 @@ fn wgsl_lut_matches_the_cpu_oracle() {
 
         let tex = upload_linear_f32(&ctx, &img, w, h);
         let lut_tex = upload_lut_3d(&ctx, lut.size as u32, &lut.data);
-        let out = fx.lut(&ctx, &tex, w, h, &lut_tex, lut.size as u32, mix);
+        let out = fx.lut(
+            &ctx,
+            &tex,
+            w,
+            h,
+            &lut_tex,
+            lut.size as u32,
+            mix,
+            lut.domain_min,
+            lut.domain_max,
+        );
         let gpu = readback_linear_f32(&ctx, &out, w, h).unwrap();
 
         let worst = worst_f16_ulp(&cpu, &gpu);
@@ -2665,7 +2707,17 @@ fn wgsl_lut_matches_the_cpu_oracle() {
         }
 
         // Determinism: a second run is bit-identical to the first (§2.4).
-        let out2 = fx.lut(&ctx, &tex, w, h, &lut_tex, lut.size as u32, mix);
+        let out2 = fx.lut(
+            &ctx,
+            &tex,
+            w,
+            h,
+            &lut_tex,
+            lut.size as u32,
+            mix,
+            lut.domain_min,
+            lut.domain_max,
+        );
         let gpu2 = readback_linear_f32(&ctx, &out2, w, h).unwrap();
         assert_eq!(gpu, gpu2, "{name}: GPU LUT must be bit-stable");
     }
@@ -2678,7 +2730,17 @@ fn wgsl_lut_matches_the_cpu_oracle() {
     let tex = upload_linear_f32(&ctx, &img, w, h);
     let gpu = readback_linear_f32(
         &ctx,
-        &fx.lut(&ctx, &tex, w, h, &lut_tex, identity.size as u32, 1.0),
+        &fx.lut(
+            &ctx,
+            &tex,
+            w,
+            h,
+            &lut_tex,
+            identity.size as u32,
+            1.0,
+            identity.domain_min,
+            identity.domain_max,
+        ),
         w,
         h,
     )
@@ -2805,7 +2867,7 @@ fn dof_reference(
 #[test]
 fn wgsl_dof_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -2907,4 +2969,1159 @@ fn wgsl_dof_matches_the_cpu_oracle() {
         img,
         "an in-band depth must be a bit-exact passthrough"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Lens flare (docs/08 §3.27, docs/impl/lens-flare.md §8, K-256): the staged
+// oracle's GPU half.
+// ---------------------------------------------------------------------------
+
+/// The documented drop-on defaults (docs/08 §3.27) as a resolved bundle.
+fn flare_params() -> lumit_core::fx::lens_flare::LensFlareParams {
+    lumit_core::fx::lens_flare::LensFlareParams {
+        // Raster pixels of a 192×108 probe framing (K-260).
+        light: [63.4, 32.4],
+        intensity: 1.0,
+        lens: 16,
+        fstop: 2.8,
+        focus_m: 100.0,
+        blades: 8,
+        aperture_rotation_deg: 0.0,
+        roundness: 0.15,
+        aperture_softness: 0.05,
+        ghost_intensity: 1.0,
+        ghost_softness: 0.05,
+        max_ghosts: 10,
+        dispersion: 1.0,
+        coating: 0.75,
+        starburst_intensity: 1.0,
+        scale: 1.0,
+        source: 0,
+        threshold: 1.0,
+        threshold_softness: 0.25,
+        light_tint: [1.0, 1.0, 1.0],
+        use_source_colour: true,
+        anamorphic: 1.0,
+        quality: 0,
+        detail: 1.0,
+        blend: lumit_core::fx::lens_flare::BLEND_ADD,
+        mix: 1.0,
+    }
+}
+
+/// The fxops params→op conversion, mirrored for the tests (the production
+/// copy lives in lumit-render's dispatch arm; both derive every number from
+/// the same lumit-core functions, which is the point).
+fn flare_op(p: &lumit_core::fx::lens_flare::LensFlareParams, w: u32, h: u32) -> LensFlareOp {
+    use lumit_core::fx::lens_flare as lf;
+    let (tier_base, tier_lambda, flare_div) = lf::quality_ladder(p.quality);
+    let grid = lf::detail_base(tier_base, p.detail);
+    let lambda_count = lf::detail_lambda(tier_lambda, p.detail);
+    let energy = p.ghost_intensity;
+    let lambdas = lf::lambda_weights(lambda_count, p.dispersion)
+        .into_iter()
+        .map(|(nm, rgb)| (nm, [rgb[0] * energy, rgb[1] * energy, rgb[2] * energy]))
+        .collect();
+    LensFlareOp {
+        light_frac: [p.light[0] / w.max(1) as f32, p.light[1] / h as f32],
+        intensity: p.intensity,
+        lambdas,
+        max_ghosts: p.max_ghosts,
+        coating: p.coating,
+        focus_m: p.focus_m,
+        fstop: p.fstop,
+        blades: p.blades,
+        aperture_rotation_deg: p.aperture_rotation_deg,
+        roundness: p.roundness,
+        aperture_softness: p.aperture_softness,
+        ghost_softness: p.ghost_softness,
+        grid,
+        flare_div,
+        screen_transform: lf::screen_transform(w),
+        starburst_intensity: p.starburst_intensity,
+        scale: p.scale,
+        anamorphic: p.anamorphic,
+        source: p.source,
+        threshold: p.threshold,
+        threshold_softness: p.threshold_softness,
+        light_tint: p.light_tint,
+        use_source_colour: p.use_source_colour,
+        blend: p.blend,
+        mix: p.mix,
+        bake_key: lf::bake_key(p),
+    }
+}
+
+/// The fxops frame-probe closure (K-267), mirrored for the tests: the GPU
+/// hands back its cached bake's tables and this runs the one lumit-core
+/// probe both twins share, at the op's light direction.
+fn flare_probe(
+    p: &lumit_core::fx::lens_flare::LensFlareParams,
+    w: u32,
+    h: u32,
+) -> impl Fn(&crate::fx::lens_flare::FlareProbeBake) -> Vec<u32> {
+    use lumit_core::fx::lens_flare as lf;
+    let (tier_base, _, _) = lf::quality_ladder(p.quality);
+    let grid = lf::detail_base(tier_base, p.detail);
+    let light_frac = [p.light[0] / w.max(1) as f32, p.light[1] / h.max(1) as f32];
+    let aspect = h as f32 / w.max(1) as f32;
+    let (coating, fstop, focus_m) = (p.coating, p.fstop, p.focus_m);
+    move |pb: &crate::fx::lens_flare::FlareProbeBake| {
+        let needs = lf::frame_grid_needs_from_rows(
+            pb.surfaces,
+            pb.ghosts,
+            pb.sensor_z_mm,
+            pb.focal_mm,
+            pb.pupil_mm,
+            pb.start_z_mm,
+            pb.pair_count,
+            lf::light_direction(light_frac, aspect, pb.focal_mm),
+            coating,
+            lf::fstop_scale(pb.native_fstop, fstop),
+            lf::focus_shift_mm(focus_m, pb.focal_mm),
+        );
+        lf::plan_frame_grids(grid, pb.spreads, &needs)
+    }
+}
+
+fn flare_bake_data(p: &lumit_core::fx::lens_flare::LensFlareParams) -> FlareBakeData {
+    use lumit_core::fx::lens_flare as lf;
+    let b = lf::bake(p);
+    FlareBakeData {
+        surfaces: b
+            .surfaces
+            .iter()
+            .map(|s| {
+                [
+                    s.radius_mm,
+                    s.z_mm,
+                    s.semi_ap_mm,
+                    s.cauchy_a,
+                    s.cauchy_b,
+                    s.coating_layers,
+                    s.is_stop,
+                    0.0,
+                ]
+            })
+            .collect(),
+        ghosts: b.pairs.clone(),
+        spreads: b.spreads.clone(),
+        sensor_z_mm: b.sensor_z_mm,
+        focal_mm: b.focal_mm,
+        native_fstop: b.native_fstop,
+        pupil_mm: b.pupil_mm,
+        start_z_mm: b.start_z_mm,
+        energy_gain: b.energy_gain,
+        starburst: b.starburst,
+        sb_res: lf::STARBURST_RES,
+    }
+}
+
+// The adaptive grid formula is mirrored in this crate (lumit-gpu stays
+// lumit-core-free in production), so the two copies are pinned together —
+// a drift would make the GPU trace different rays from the oracle (K-262).
+#[test]
+fn lens_flare_pair_grid_mirrors_lumit_core() {
+    for base in [8u32, 24, 48, 64, 96, 144, 320] {
+        for spread in [
+            0.0f32, 0.05, 0.119, 0.12, 0.3, 0.49, 0.5, 1.0, 1.49, 1.5, 4.0, 99.0,
+        ] {
+            assert_eq!(
+                crate::fx::lens_flare::pair_grid_of(base, spread),
+                lumit_core::fx::lens_flare::pair_grid(base, spread),
+                "base {base} spread {spread}"
+            );
+        }
+    }
+    // The K-267 padded-buffer dims are mirrored the same way.
+    for (fw, fh) in [(960u32, 540u32), (480, 270), (1, 1), (1920, 1080)] {
+        for (sq, sc) in [
+            (1.0f32, 1.0f32),
+            (0.5, 1.0),
+            (0.25, 1.0),
+            (1.0, 0.5),
+            (0.7, 0.6),
+            (2.0, 3.0),
+            (0.0, 0.0),
+        ] {
+            assert_eq!(
+                crate::fx::lens_flare::flare_pad_dims_of(fw, fh, sq, sc),
+                lumit_core::fx::lens_flare::flare_pad_dims(fw, fh, sq, sc),
+                "fw {fw} fh {fh} squeeze {sq} scale {sc}"
+            );
+        }
+    }
+}
+
+/// The frame's dispatch plan covers every combo exactly once, for every
+/// light, and no batch's scratch passes the budget (K-263).
+///
+/// The budget is the whole point: a batch that overran it is the
+/// hundred-megabyte allocation a frame used to make at Ultra across eight
+/// matte sources, and "allocate what the settings ask for" is how a flare
+/// ends up taking the graphics device down with it.
+#[test]
+fn lens_flare_batches_cover_every_combo_within_the_scratch_budget() {
+    use crate::fx::lens_flare::{
+        plan_batches, AREA_BYTES, CELL_BYTES, RAY_BYTES, SCRATCH_BYTE_BUDGET,
+    };
+    // Grid-major tables as the frame builds them, including the worst case
+    // (every combo at the widest grid) and a mixed one.
+    let tables: Vec<Vec<u32>> = vec![
+        vec![32; 480],
+        vec![64; 8],
+        {
+            let mut t = vec![32u32; 300];
+            t.extend(std::iter::repeat_n(64u32, 120));
+            t.extend(std::iter::repeat_n(160u32, 60));
+            t
+        },
+        vec![256; 40],
+        vec![8; 1],
+    ];
+    for lights in [1u32, 8] {
+        for table in &tables {
+            let plan = plan_batches(table, lights);
+            // Every (combo, light) appears exactly once.
+            let mut seen = vec![0u32; table.len() * lights as usize];
+            for b in &plan {
+                assert_eq!(
+                    b.grid, table[b.combo_offset as usize],
+                    "a batch must dispatch at its combos' own grid"
+                );
+                let rays = u64::from(b.grid) * u64::from(b.grid);
+                let quads = u64::from(b.grid - 1) * u64::from(b.grid - 1);
+                let slots = u64::from(b.lights) * u64::from(b.combos);
+                assert_eq!(b.ray_bytes, slots * rays * RAY_BYTES);
+                assert_eq!(b.area_bytes, slots * quads * AREA_BYTES);
+                assert_eq!(b.vert_bytes, slots * quads * CELL_BYTES);
+                assert!(
+                    b.ray_bytes + b.area_bytes + b.vert_bytes <= SCRATCH_BYTE_BUDGET,
+                    "batch at grid {} × {} combos × {} lights wants {} bytes",
+                    b.grid,
+                    b.combos,
+                    b.lights,
+                    b.ray_bytes + b.area_bytes + b.vert_bytes
+                );
+                for c in b.combo_offset..b.combo_offset + b.combos {
+                    assert_eq!(
+                        table[c as usize], b.grid,
+                        "a batch may not straddle two grids"
+                    );
+                    for l in b.light_offset..b.light_offset + b.lights {
+                        seen[c as usize * lights as usize + l as usize] += 1;
+                    }
+                }
+            }
+            assert!(
+                seen.iter().all(|&n| n == 1),
+                "every combo × light renders exactly once (lights {lights}, grids {:?}…)",
+                &table[..table.len().min(3)]
+            );
+        }
+    }
+}
+
+/// Render one flare frame through the REAL GPU pipeline and write it as a
+/// tone-mapped PPM for eyeballing — the harness behind the K-264 artefact
+/// work, kept because "does it look right" is the one question no numeric
+/// bound in this file answers. `#[ignore]`d; run by hand:
+///
+/// ```text
+/// LUMIT_FLARE_DUMP=/tmp/flare.ppm cargo test -p lumit-gpu --release --lib \
+///     lens_flare_dump_frame -- --ignored --nocapture
+/// ```
+///
+/// Optional env overrides: LUMIT_FLARE_QUALITY (0-3), LUMIT_FLARE_LENS
+/// (library index), LUMIT_FLARE_LIGHT ("x,y" raster fractions).
+#[test]
+#[ignore = "a diagnostic image dump, not a gate"]
+fn lens_flare_dump_frame() {
+    let Some(path) = std::env::var_os("LUMIT_FLARE_DUMP") else {
+        eprintln!("LUMIT_FLARE_DUMP unset; skipping");
+        return;
+    };
+    let Ok(ctx) = GpuContext::headless() else {
+        crate::no_adapter();
+        return;
+    };
+    let fx = FxEngine::new(&ctx);
+    use lumit_core::fx::lens_flare as lf;
+    let (w, h) = (1152u32, 648u32);
+    let quality: u32 = std::env::var("LUMIT_FLARE_QUALITY")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3);
+    let lens: u32 = std::env::var("LUMIT_FLARE_LENS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(16);
+    let light = std::env::var("LUMIT_FLARE_LIGHT")
+        .ok()
+        .and_then(|v| {
+            let (x, y) = v.split_once(',')?;
+            Some([x.trim().parse::<f32>().ok()?, y.trim().parse::<f32>().ok()?])
+        })
+        .unwrap_or([0.42, 0.28]);
+    let fstop: f32 = std::env::var("LUMIT_FLARE_FSTOP")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2.8);
+    let detail: f32 = std::env::var("LUMIT_FLARE_DETAIL")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1.0);
+    let anamorphic: f32 = std::env::var("LUMIT_FLARE_ANAMORPHIC")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1.0);
+    let p = lf::LensFlareParams {
+        light: [light[0] * w as f32, light[1] * h as f32],
+        lens,
+        quality,
+        fstop,
+        detail,
+        anamorphic,
+        max_ghosts: 60,
+        ghost_softness: 0.0, // bare geometry — nothing hides behind blur
+        ..flare_params()
+    };
+    let img = vec![0.0f32; (w * h * 4) as usize]; // black scene: flare alone
+    let tex = upload_linear_f32(&ctx, &img, w, h);
+    let op = flare_op(&p, w, h);
+    let out = fx.lens_flare(
+        &ctx,
+        &tex,
+        w,
+        h,
+        &op,
+        None,
+        &|| flare_bake_data(&p),
+        &flare_probe(&p, w, h),
+    );
+    let gpu = readback_linear_f32(&ctx, &out, w, h).unwrap();
+    // Tone map for eyeballing: fixed gain (LUMIT_FLARE_GAIN, default 8),
+    // then sRGB-ish gamma. Fixed rather than auto so two dumps of different
+    // code are comparable.
+    let gain: f32 = std::env::var("LUMIT_FLARE_GAIN")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(8.0);
+    let mut ppm = format!("P6\n{w} {h}\n255\n").into_bytes();
+    for px in gpu.chunks_exact(4) {
+        for c in &px[..3] {
+            let v = (c * gain).clamp(0.0, 1.0).powf(1.0 / 2.2);
+            ppm.push((v * 255.0).round() as u8);
+        }
+    }
+    std::fs::write(&path, ppm).unwrap();
+    eprintln!("wrote {}", std::path::Path::new(&path).display());
+}
+
+/// What one default-settings flare frame costs, printed. Not a gate — the
+/// number is whatever the machine running it can do, and CI runs on
+/// everything from a software rasteriser to a workstation card — so it is
+/// `#[ignore]`d and run by hand:
+///
+/// ```text
+/// cargo test -p lumit-gpu --release lens_flare_frame_cost -- --ignored --nocapture
+/// ```
+///
+/// It exists because "the flare is faster now" is the sort of claim that
+/// rots quietly. Run it before and after a change to the pipeline.
+#[test]
+#[ignore = "a measurement, not a gate: prints a time, asserts nothing"]
+fn lens_flare_frame_cost() {
+    let Ok(ctx) = GpuContext::headless() else {
+        crate::no_adapter();
+        return;
+    };
+    let fx = FxEngine::new(&ctx);
+    use lumit_core::fx::lens_flare as lf;
+    let (w, h) = (960u32, 540u32);
+    let img = corpus(w, h);
+    let tex = upload_linear_f32(&ctx, &img, w, h);
+    // The shipped defaults (docs/08 §3.27): Normal quality, 60 ghosts.
+    let p = lf::LensFlareParams {
+        light: [317.0, 162.0],
+        max_ghosts: 60,
+        quality: 1,
+        ..flare_params()
+    };
+    let op = flare_op(&p, w, h);
+    let data = flare_bake_data(&p);
+    // Warm: shader compilation and the bake upload are one-off costs.
+    let warm = fx.lens_flare(
+        &ctx,
+        &tex,
+        w,
+        h,
+        &op,
+        None,
+        &|| data.clone(),
+        &flare_probe(&p, w, h),
+    );
+    drop(readback_linear_f32(&ctx, &warm, w, h));
+    let runs = 3;
+    let started = std::time::Instant::now();
+    for _ in 0..runs {
+        let out = fx.lens_flare(
+            &ctx,
+            &tex,
+            w,
+            h,
+            &op,
+            None,
+            &|| data.clone(),
+            &flare_probe(&p, w, h),
+        );
+        // Read back so the timing includes the card finishing the work.
+        drop(readback_linear_f32(&ctx, &out, w, h));
+    }
+    let each = started.elapsed() / runs;
+    eprintln!("lens flare {w}×{h} Normal/60 ghosts: {each:?} per frame");
+}
+
+/// The Ghost blur agrees with the CPU reference at a radius wide enough to
+/// span several of the line cache's tiles (K-263).
+///
+/// The frame oracle cannot cover this: its small test frame puts the default
+/// Ghost softness at a radius of zero, so the blur is skipped entirely. This
+/// one uses a frame large enough for a radius in the tens of pixels, which is
+/// where the cache's halo — the 2r texels a tile needs beyond its own 64 —
+/// either lines up with the direct loop's clamped reads or does not.
+#[test]
+fn wgsl_lens_flare_ghost_blur_matches_the_cpu_reference() {
+    let Ok(ctx) = GpuContext::headless() else {
+        crate::no_adapter();
+        return;
+    };
+    let fx = FxEngine::new(&ctx);
+    use lumit_core::fx::lens_flare as lf;
+    // Big enough that the flare buffer is many tiles wide and the blur radius
+    // is a real one; few enough ghosts that it stays a quick test.
+    let (w, h) = (768u32, 432u32);
+    let p = lf::LensFlareParams {
+        light: [380.0, 130.0],
+        ghost_softness: 2.0,
+        max_ghosts: 3,
+        ..flare_params()
+    };
+    let (_, _, div) = lf::quality_ladder(p.quality);
+    let (fw, fh) = ((w / div).max(1), (h / div).max(1));
+    let radius = lf::ghost_blur_radius(p.ghost_softness, fw, fh);
+    assert!(
+        radius >= 8,
+        "the test frame must produce a multi-tile blur radius, got {radius}"
+    );
+
+    let img = corpus(w, h);
+    let baked = lf::bake(&p);
+    let op = flare_op(&p, w, h);
+    let lights = lf::manual_light(&p, w, h);
+    let flare = lf::cpu_flare(&p, &baked, fw, fh, &lights);
+    let mut cpu = img.clone();
+    lf::cpu_combine(&mut cpu, w, h, &p, &baked, &flare, fw, fh, &lights);
+
+    let tex = upload_linear_f32(&ctx, &img, w, h);
+    let out = fx.lens_flare(
+        &ctx,
+        &tex,
+        w,
+        h,
+        &op,
+        None,
+        &|| flare_bake_data(&p),
+        &flare_probe(&p, w, h),
+    );
+    let gpu = readback_linear_f32(&ctx, &out, w, h).unwrap();
+
+    let added: f32 = gpu
+        .iter()
+        .zip(&img)
+        .map(|(a, b)| (a - b).abs())
+        .sum::<f32>()
+        / (w * h) as f32;
+    assert!(added > 1e-4, "the blurred flare adds no energy: {added}");
+    let mean: f32 = cpu
+        .iter()
+        .zip(&gpu)
+        .map(|(a, b)| (a - b).abs())
+        .sum::<f32>()
+        / cpu.len() as f32;
+    let worst = cpu
+        .iter()
+        .zip(&gpu)
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    // Tighter than the frame oracle's 2e-3 ON PURPOSE. A blur that reads the
+    // wrong texels — a tile that forgets its halo, an off-by-r cache index —
+    // shifts a soft, dim wash a little sideways, and the frame bound does not
+    // notice: measured, dropping the halo entirely left the mean at 8.5e-4,
+    // comfortably inside 2e-3. These bounds sit about three times above what
+    // the correct kernel produces and three times below what that break did,
+    // so they hold across cards and still fail the break.
+    assert!(
+        mean < 2.5e-4,
+        "mean |Δ| {mean} at blur radius {radius} (added {added})"
+    );
+    assert!(worst < 3e-3, "worst |Δ| {worst} at blur radius {radius}");
+}
+
+/// A heavy frame is handed to the card in several submissions, and a light
+/// one in exactly one (K-263).
+///
+/// This is the guard against the failure the owner hit: a submission long
+/// enough for the operating system's watchdog to kill does not cost a frame,
+/// it costs the device — after which the Viewer is frozen for the rest of the
+/// session and re-opening the project does not help.
+#[test]
+fn lens_flare_splits_a_heavy_frame_into_several_submissions() {
+    use crate::fx::lens_flare::{plan_batches, plan_flushes, STEPS_PER_SUBMIT};
+    let surfaces = 20u32;
+    // A working-tier frame: Normal's base grid across a default ghost count.
+    let heavy = plan_batches(&vec![64u32; 480], 1);
+    let flushes = plan_flushes(&heavy, surfaces);
+    assert!(
+        flushes.iter().filter(|f| **f).count() >= 2,
+        "a default Normal frame must not be one giant submission"
+    );
+    // No submission holds more work than the budget plus the one batch that
+    // crossed it — the bound the watchdog guard rests on.
+    let biggest_batch = heavy
+        .iter()
+        .map(|b| b.steps(surfaces))
+        .max()
+        .unwrap_or_default();
+    let mut run = 0u64;
+    for (b, flush) in heavy.iter().zip(&flushes) {
+        run += b.steps(surfaces);
+        assert!(
+            run <= STEPS_PER_SUBMIT + biggest_batch,
+            "a submission grew to {run} steps"
+        );
+        if *flush {
+            run = 0;
+        }
+    }
+    // A small frame stays a single submission: the split must not cost
+    // ordinary work extra queue round trips.
+    let light = plan_batches(&[32u32; 24], 1);
+    assert!(
+        plan_flushes(&light, surfaces).iter().all(|f| !f),
+        "a light frame should submit once"
+    );
+}
+
+/// The bake cache keeps its most recent entries and drops the oldest — it
+/// does not empty itself (K-263). Emptying is what made trying lenses
+/// quadratic: every overflow threw away a full cap's worth of bakes, and a
+/// bake is the effect's one slow, blocking step.
+#[test]
+fn lens_flare_bake_cache_evicts_the_oldest_not_everything() {
+    let mut cache = crate::fx::lens_flare::BakeCache::new(4);
+    for k in 0..4u64 {
+        cache.insert(k, k * 10);
+    }
+    assert_eq!(cache.len(), 4);
+    // One past the cap: only the oldest goes.
+    cache.insert(4, 40);
+    assert_eq!(cache.len(), 4);
+    assert_eq!(cache.get(0), None, "the oldest is the one evicted");
+    for k in 1..=4u64 {
+        assert_eq!(cache.get(k), Some(k * 10), "{k} was still recent");
+    }
+    // Re-inserting a held key keeps the held value and does not evict.
+    assert_eq!(cache.insert(4, 999), 40);
+    assert_eq!(cache.len(), 4);
+    assert_eq!(cache.get(1), Some(10));
+}
+
+/// Impl note §8.5: the WGSL trace agrees with the CPU trace corner-for-
+/// corner (K-261 splat model): landing positions at a mean/percentile pixel
+/// bound, weights at a relative bound, with ≥ 99% live/dead agreement,
+/// across two lenses and two light positions. Not ULP-exact — GPU
+/// transcendentals are not correctly rounded (the note's stated reason).
+#[test]
+fn wgsl_lens_flare_trace_matches_the_cpu_reference() {
+    let Ok(ctx) = GpuContext::headless() else {
+        crate::no_adapter();
+        return;
+    };
+    let fx = FxEngine::new(&ctx);
+    use lumit_core::fx::lens_flare as lf;
+    let (w, h) = (192u32, 108u32);
+    for lens in [16u32, 5] {
+        for light_frac in [[0.33f32, 0.30f32], [0.85, 0.75]] {
+            let p = lf::LensFlareParams {
+                lens,
+                light: [light_frac[0] * w as f32, light_frac[1] * h as f32],
+                ..flare_params()
+            };
+            let baked = lf::bake(&p);
+            let op = flare_op(&p, w, h);
+            let dir = lf::light_direction(light_frac, h as f32 / w as f32, baked.focal_mm);
+            let combo_limit = 12u32;
+            let gpu =
+                fx.lens_flare_trace_debug(&ctx, &op, &|| flare_bake_data(&p), combo_limit, w, h);
+            assert!(!gpu.is_empty(), "trace debug returned nothing");
+
+            // Rebuild the same combo order the GPU used: pair-major over
+            // the ranked list, wavelength-minor.
+            let (grid, lambda_count, _) = lf::quality_ladder(p.quality);
+            let lambdas = lf::lambda_weights(lambda_count, p.dispersion);
+            let mut combos = Vec::new();
+            'outer: for &pair in baked.pairs.iter().take(p.max_ghosts as usize) {
+                for &(nm, _) in &lambdas {
+                    if combos.len() >= combo_limit as usize {
+                        break 'outer;
+                    }
+                    combos.push((pair, nm));
+                }
+            }
+            let ray_count = (grid * grid) as usize;
+            assert_eq!(gpu.len(), combos.len() * ray_count);
+
+            // The frame-time optics the CPU side mirrors.
+            let stop_scale = lf::fstop_scale(baked.native_fstop, p.fstop);
+            let roundness = lf::effective_roundness(p.roundness, p.fstop, baked.native_fstop);
+            let rot = p.aperture_rotation_deg.to_radians();
+            let st = lf::screen_transform(w);
+            let shift = lf::focus_shift_mm(p.focus_m, baked.focal_mm);
+
+            let mut mismatched_liveness = 0u32;
+            let mut total = 0u32;
+            let mut live = 0u32;
+            let mut sum_pos = 0.0f32;
+            let mut pos_errs: Vec<f32> = Vec::new();
+            let mut weight_errs: Vec<f32> = Vec::new();
+            let mut worst_pos = 0.0f32;
+            let mut worst_weight = 0.0f32;
+            for (ci, &(pair, nm)) in combos.iter().enumerate() {
+                for ry in 0..grid {
+                    for rx in 0..grid {
+                        let g = gpu[ci * ray_count + (ry * grid + rx) as usize];
+                        let g1 = (grid.max(2) - 1) as f32;
+                        let u = (rx as f32 / g1) * 2.0 - 1.0;
+                        let v = (ry as f32 / g1) * 2.0 - 1.0;
+                        // A masked-out corner traces with weight 0 since
+                        // K-264 (geometry survives the iris; see cpu_flare)
+                        // — except far outside the iris, where no cell can
+                        // hold light and both twins skip the trace.
+                        let g1f = (grid.max(2) - 1) as f32;
+                        let lim = 1.0 + 1.5 * (2.0 / g1f);
+                        let mask =
+                            lf::pupil_mask(u, v, p.blades, rot, roundness, p.aperture_softness);
+                        let cpu = if u * u + v * v > lim * lim {
+                            None
+                        } else {
+                            let origin = [
+                                u * baked.pupil_mm * stop_scale,
+                                v * baked.pupil_mm * stop_scale,
+                                baked.start_z_mm,
+                            ];
+                            lf::trace_splat(
+                                &baked, pair, nm, origin, dir, p.coating, stop_scale, shift,
+                            )
+                            .map(|(pos, wt)| {
+                                (
+                                    [pos[0] * st + w as f32 / 2.0, h as f32 / 2.0 - pos[1] * st],
+                                    wt * mask,
+                                )
+                            })
+                        };
+                        total += 1;
+                        let gpu_live = g[2] >= 0.0;
+                        match cpu {
+                            None => {
+                                if gpu_live {
+                                    mismatched_liveness += 1;
+                                }
+                            }
+                            Some((pos, wt)) => {
+                                if !gpu_live {
+                                    mismatched_liveness += 1;
+                                    continue;
+                                }
+                                // Position agreement is claimed only for rays
+                                // CARRYING light. A K-264 virtual
+                                // continuation (a mount-absorbed miss) has
+                                // weight ~0 and its path may branch-flip on
+                                // a few-ULP difference at the miss boundary
+                                // — real geometry for the raster, no light,
+                                // and no meaningful "true" position to pin.
+                                let werr = (g[2] - wt).abs() / wt.max(2e-4);
+                                weight_errs.push(werr);
+                                worst_weight = worst_weight.max(werr);
+                                if wt <= 1e-3 {
+                                    continue;
+                                }
+                                live += 1;
+                                let pos_err = (g[0] - pos[0]).abs().max((g[1] - pos[1]).abs());
+                                sum_pos += pos_err;
+                                pos_errs.push(pos_err);
+                                worst_pos = worst_pos.max(pos_err);
+                            }
+                        }
+                    }
+                }
+            }
+            eprintln!(
+                "lens {lens} light {light_frac:?}: pos {worst_pos}px weight-rel {worst_weight}"
+            );
+            // Mean position error is what a porting bug blows up by orders
+            // of magnitude; the tail is pinned at the 99th percentile (a
+            // few-ULP input difference near a caustic fold legitimately
+            // lands a ray on the other branch, far away).
+            let mean_pos = sum_pos / live.max(1) as f32;
+            assert!(mean_pos < 0.2, "mean position error {mean_pos} px");
+            let p99 = |v: &mut Vec<f32>| {
+                v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                v[(v.len() * 99) / 100]
+            };
+            let pos_p99 = p99(&mut pos_errs);
+            assert!(
+                pos_p99 < 3.0,
+                "p99 position error {pos_p99} px (worst {worst_pos})"
+            );
+            let w_p99 = p99(&mut weight_errs);
+            assert!(
+                w_p99 < 0.05,
+                "p99 weight error {w_p99} (worst {worst_weight})"
+            );
+            let flip_rate = mismatched_liveness as f32 / total.max(1) as f32;
+            assert!(
+                flip_rate < 0.01,
+                "lens {lens}: {mismatched_liveness}/{total} rays flipped live/dead"
+            );
+            assert!(live > 100, "too few live rays ({live}) to mean anything");
+        }
+    }
+}
+
+/// Impl note §8.6 + §8.7: the full GPU frame (trace → raster → combine)
+/// stays within the perceptual bound of the CPU scanline reference, the
+/// flare is actually visible (the energy floor that keeps the bound honest),
+/// Intensity 0 and Mix 0 are bit-exact passthroughs, and the render is
+/// bit-stable across two runs (§2.4).
+#[test]
+fn wgsl_lens_flare_matches_the_cpu_frame_reference_and_neutrals() {
+    let Ok(ctx) = GpuContext::headless() else {
+        crate::no_adapter();
+        return;
+    };
+    let fx = FxEngine::new(&ctx);
+    use lumit_core::fx::lens_flare as lf;
+    let (w, h) = (128u32, 72u32);
+    let img = corpus(w, h);
+    let p = flare_params();
+    let baked = lf::bake(&p);
+    let op = flare_op(&p, w, h);
+
+    // CPU reference: flare at the Draft half-size buffer, then the combine.
+    let (_, _, div) = lf::quality_ladder(p.quality);
+    let (fw, fh) = ((w / div).max(1), (h / div).max(1));
+    let lights = lf::manual_light(&p, w, h);
+    let flare = lf::cpu_flare(&p, &baked, fw, fh, &lights);
+    let mut cpu = img.clone();
+    lf::cpu_combine(&mut cpu, w, h, &p, &baked, &flare, fw, fh, &lights);
+
+    // GPU.
+    let tex = upload_linear_f32(&ctx, &img, w, h);
+    let out = fx.lens_flare(
+        &ctx,
+        &tex,
+        w,
+        h,
+        &op,
+        None,
+        &|| flare_bake_data(&p),
+        &flare_probe(&p, w, h),
+    );
+    let gpu = readback_linear_f32(&ctx, &out, w, h).unwrap();
+
+    // The flare must be visible — otherwise the perceptual bound below
+    // passes vacuously (and the energy-scale constant has rotted).
+    let added: f32 = gpu
+        .iter()
+        .zip(&img)
+        .map(|(a, b)| (a - b).abs())
+        .sum::<f32>()
+        / (w * h) as f32;
+    assert!(
+        added > 1e-4,
+        "the default flare adds no visible energy: {added}"
+    );
+
+    // Perceptual bound (impl note §8.6): mean |Δ| and total-energy ratio.
+    // Per-pixel differences at triangle edges are legitimate; the mean is
+    // what pins agreement.
+    let mean: f32 = cpu
+        .iter()
+        .zip(&gpu)
+        .map(|(a, b)| (a - b).abs())
+        .sum::<f32>()
+        / cpu.len() as f32;
+    assert!(mean < 2e-3, "mean |Δ| {mean}");
+    let e_cpu: f32 = cpu.iter().sum();
+    let e_gpu: f32 = gpu.iter().sum();
+    let ratio = e_gpu / e_cpu.max(1e-9);
+    assert!(
+        (0.99..=1.01).contains(&ratio),
+        "energy ratio {ratio} ({e_gpu} vs {e_cpu})"
+    );
+
+    // Determinism (§2.4): a second run is bit-identical.
+    let out2 = fx.lens_flare(
+        &ctx,
+        &tex,
+        w,
+        h,
+        &op,
+        None,
+        &|| flare_bake_data(&p),
+        &flare_probe(&p, w, h),
+    );
+    let gpu2 = readback_linear_f32(&ctx, &out2, w, h).unwrap();
+    assert_eq!(gpu, gpu2, "GPU lens flare must be bit-stable");
+
+    // Neutral points: Intensity 0 and Mix 0 pass the input through
+    // bit-exactly (fp16 texel in, identical fp16 texel out).
+    for neutral in [
+        lf::LensFlareParams {
+            intensity: 0.0,
+            ..p
+        },
+        lf::LensFlareParams { mix: 0.0, ..p },
+    ] {
+        let nop = flare_op(&neutral, w, h);
+        let nout = fx.lens_flare(
+            &ctx,
+            &tex,
+            w,
+            h,
+            &nop,
+            None,
+            &|| flare_bake_data(&neutral),
+            &flare_probe(&neutral, w, h),
+        );
+        let ngpu = readback_linear_f32(&ctx, &nout, w, h).unwrap();
+        assert_eq!(ngpu, img, "neutral point must be bit-exact");
+    }
+}
+
+/// K-267: an anamorphic squeeze below 1 renders into a PADDED flare buffer,
+/// so the widened field carries real flare where K-266's zero-outside tap
+/// showed black — and the padded pipeline still matches the CPU reference.
+/// Fails without the padding: the region past the base buffer's edge is
+/// exactly zero on the GPU, and the edge-energy floor below trips.
+#[test]
+fn wgsl_lens_flare_padded_anamorphic_matches_and_fills_the_edge() {
+    let Ok(ctx) = GpuContext::headless() else {
+        crate::no_adapter();
+        return;
+    };
+    let fx = FxEngine::new(&ctx);
+    use lumit_core::fx::lens_flare as lf;
+    let (w, h) = (128u32, 72u32);
+    let img = vec![0.0f32; (w * h * 4) as usize];
+    let p = lf::LensFlareParams {
+        anamorphic: 0.5,
+        ghost_softness: 0.0,
+        starburst_intensity: 0.0,
+        ..flare_params()
+    };
+    let baked = lf::bake(&p);
+    let op = flare_op(&p, w, h);
+
+    let (_, _, div) = lf::quality_ladder(p.quality);
+    let (fw, fh) = ((w / div).max(1), (h / div).max(1));
+    let lights = lf::manual_light(&p, w, h);
+    let flare = lf::cpu_flare(&p, &baked, fw, fh, &lights);
+    // The buffer really is padded: 2x wide at squeeze 0.5.
+    let (rw, rh) = lf::flare_pad_dims(fw, fh, p.anamorphic, p.scale);
+    assert_eq!((rw, rh), (fw * 2, fh), "squeeze 0.5 must double the width");
+    assert_eq!(flare.len(), (rw * rh * 3) as usize);
+    let mut cpu = img.clone();
+    lf::cpu_combine(&mut cpu, w, h, &p, &baked, &flare, fw, fh, &lights);
+
+    let tex = upload_linear_f32(&ctx, &img, w, h);
+    let out = fx.lens_flare(
+        &ctx,
+        &tex,
+        w,
+        h,
+        &op,
+        None,
+        &|| flare_bake_data(&p),
+        &flare_probe(&p, w, h),
+    );
+    let gpu = readback_linear_f32(&ctx, &out, w, h).unwrap();
+
+    // The squeezed field must carry energy in the outer horizontal fifths
+    // of the frame — the zone the un-padded buffer rendered black.
+    let fifth = (w / 5) as usize;
+    let mut edge = 0.0f32;
+    let mut total = 0.0f32;
+    for y in 0..h as usize {
+        for x in 0..w as usize {
+            let v = gpu[(y * w as usize + x) * 4]
+                + gpu[(y * w as usize + x) * 4 + 1]
+                + gpu[(y * w as usize + x) * 4 + 2];
+            total += v;
+            if x < fifth || x >= w as usize - fifth {
+                edge += v;
+            }
+        }
+    }
+    assert!(total > 1e-2, "no flare rendered at all: {total}");
+    assert!(
+        edge / total.max(1e-9) > 0.02,
+        "squeezed flare leaves the frame edges black: edge share {}",
+        edge / total.max(1e-9)
+    );
+
+    // And the padded path still agrees with the CPU reference.
+    let mean: f32 = cpu
+        .iter()
+        .zip(&gpu)
+        .map(|(a, b)| (a - b).abs())
+        .sum::<f32>()
+        / cpu.len() as f32;
+    assert!(mean < 2e-3, "mean |Δ| {mean}");
+    let e_cpu: f32 = cpu.iter().sum();
+    let e_gpu: f32 = gpu.iter().sum();
+    let ratio = e_gpu / e_cpu.max(1e-9);
+    assert!(
+        (0.99..=1.01).contains(&ratio),
+        "energy ratio {ratio} ({e_gpu} vs {e_cpu})"
+    );
+}
+
+/// Matte mode (docs/08 §3.27, K-257): the GPU detection + per-light flare
+/// agrees with the CPU reference (detect_lights → cpu_flare → cpu_combine)
+/// at the frame bound, the detected flares actually render, and the shared
+/// constants the two crates must agree on are pinned.
+#[test]
+fn wgsl_lens_flare_matte_mode_matches_the_cpu_reference() {
+    assert_eq!(MAX_LIGHTS as usize, lumit_core::fx::lens_flare::MAX_LIGHTS);
+    // The combine kernel's `flare_blend` implements exactly the menu
+    // lumit-core declares (K-289) — a mode added to one and not the other
+    // would silently clamp to Divide.
+    assert_eq!(
+        crate::fx::lens_flare::BLEND_COUNT as usize,
+        lumit_core::fx::lens_flare::BLEND_OPTIONS.len()
+    );
+
+    let Ok(ctx) = GpuContext::headless() else {
+        crate::no_adapter();
+        return;
+    };
+    let fx = FxEngine::new(&ctx);
+    use lumit_core::fx::lens_flare as lf;
+    let (w, h) = (128u32, 72u32);
+    // A dark scene as the layer input, fp16-quantised AFTER the scale so the
+    // bit-exact passthrough assert below sees exactly what the GPU uploads.
+    let img: Vec<f32> = corpus(w, h)
+        .iter()
+        .map(|v| f16_to_f32(f16_bits(v * 0.05)))
+        .collect();
+    // The matte: two bright sources on black, fp16-quantised exactly as the
+    // GPU texture upload rounds it.
+    let mut matte = vec![0.0f32; (w * h * 4) as usize];
+    for (x, y, rgb) in [
+        (30u32, 20u32, [5.0f32, 4.0, 3.0]),
+        (100, 50, [2.0, 2.5, 3.0]),
+    ] {
+        let i = ((y * w + x) * 4) as usize;
+        matte[i] = rgb[0];
+        matte[i + 1] = rgb[1];
+        matte[i + 2] = rgb[2];
+        matte[i + 3] = 1.0;
+    }
+    let matte: Vec<f32> = matte.iter().map(|v| f16_to_f32(f16_bits(*v))).collect();
+
+    let p = lf::LensFlareParams {
+        source: 1,
+        threshold: 1.0,
+        threshold_softness: 0.25,
+        max_ghosts: 6,
+        ..flare_params()
+    };
+    let baked = lf::bake(&p);
+    let op = flare_op(&p, w, h);
+
+    // CPU: detect on the quantised matte, then render per light.
+    let lights = lf::detect_lights(
+        &matte,
+        w,
+        h,
+        p.threshold,
+        p.threshold_softness,
+        p.use_source_colour,
+        p.light_tint,
+    );
+    assert_eq!(lights.len(), 2, "both sources must be found: {lights:?}");
+    let (_, _, div) = lf::quality_ladder(p.quality);
+    let (fw, fh) = ((w / div).max(1), (h / div).max(1));
+    let flare = lf::cpu_flare(&p, &baked, fw, fh, &lights);
+    let mut cpu = img.clone();
+    lf::cpu_combine(&mut cpu, w, h, &p, &baked, &flare, fw, fh, &lights);
+
+    // GPU.
+    let tex = upload_linear_f32(&ctx, &img, w, h);
+    let matte_tex = upload_linear_f32(&ctx, &matte, w, h);
+    let out = fx.lens_flare(
+        &ctx,
+        &tex,
+        w,
+        h,
+        &op,
+        Some(&matte_tex),
+        &|| flare_bake_data(&p),
+        &flare_probe(&p, w, h),
+    );
+    let gpu = readback_linear_f32(&ctx, &out, w, h).unwrap();
+
+    // The detected flares must be visible…
+    let added: f32 = gpu
+        .iter()
+        .zip(&img)
+        .map(|(a, b)| (a - b).abs())
+        .sum::<f32>()
+        / (w * h) as f32;
+    assert!(added > 1e-4, "matte mode added no visible energy: {added}");
+    // …and match the CPU reference at the frame bound.
+    let mean: f32 = cpu
+        .iter()
+        .zip(&gpu)
+        .map(|(a, b)| (a - b).abs())
+        .sum::<f32>()
+        / cpu.len() as f32;
+    assert!(mean < 2e-3, "mean |Δ| {mean}");
+    let e_cpu: f32 = cpu.iter().sum();
+    let e_gpu: f32 = gpu.iter().sum();
+    let ratio = e_gpu / e_cpu.max(1e-9);
+    assert!((0.99..=1.01).contains(&ratio), "energy ratio {ratio}");
+
+    // An unset matte in Matte mode is the labelled no-op: bit-exact input.
+    let nout = fx.lens_flare(
+        &ctx,
+        &tex,
+        w,
+        h,
+        &op,
+        None,
+        &|| flare_bake_data(&p),
+        &flare_probe(&p, w, h),
+    );
+    let ngpu = readback_linear_f32(&ctx, &nout, w, h).unwrap();
+    assert_eq!(ngpu, img, "matte mode without a matte must pass through");
+
+    // Source colour OFF with a warm Light tint (K-259): the GPU detection
+    // must build the same lights the CPU does, and the frame must still
+    // agree — this is the path where the matte says only *where*.
+    let tinted = lf::LensFlareParams {
+        use_source_colour: false,
+        light_tint: [1.0, 0.6, 0.3],
+        ..p
+    };
+    let t_lights = lf::detect_lights(
+        &matte,
+        w,
+        h,
+        tinted.threshold,
+        tinted.threshold_softness,
+        tinted.use_source_colour,
+        tinted.light_tint,
+    );
+    assert_eq!(t_lights.len(), 2);
+    for l in &t_lights {
+        assert!(
+            l.rgb[0] > l.rgb[2],
+            "the warm tint must dominate the source colour: {l:?}"
+        );
+    }
+    let t_flare = lf::cpu_flare(&tinted, &baked, fw, fh, &t_lights);
+    let mut t_cpu = img.clone();
+    lf::cpu_combine(
+        &mut t_cpu, w, h, &tinted, &baked, &t_flare, fw, fh, &t_lights,
+    );
+    let t_out = fx.lens_flare(
+        &ctx,
+        &tex,
+        w,
+        h,
+        &flare_op(&tinted, w, h),
+        Some(&matte_tex),
+        &|| flare_bake_data(&tinted),
+        &flare_probe(&tinted, w, h),
+    );
+    let t_gpu = readback_linear_f32(&ctx, &t_out, w, h).unwrap();
+    let t_mean: f32 = t_cpu
+        .iter()
+        .zip(&t_gpu)
+        .map(|(a, b)| (a - b).abs())
+        .sum::<f32>()
+        / t_cpu.len() as f32;
+    assert!(t_mean < 2e-3, "tinted matte mean |Δ| {t_mean}");
+}
+/// Render every bundled lens through the real GPU pipeline into one tiled
+/// montage (K-264) — the harness the curation was chosen with, kept because
+/// "do the twenty look different" is a question only eyes answer.
+/// `LUMIT_FLARE_DUMP` names the output PPM.
+#[test]
+#[ignore = "a diagnostic image dump, not a gate"]
+fn lens_flare_montage() {
+    let Ok(ctx) = GpuContext::headless() else {
+        return;
+    };
+    let fx = FxEngine::new(&ctx);
+    use lumit_core::fx::lens_flare as lf;
+    let picks: [u32; 20] = [
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+    ];
+    let (tw, th) = (288u32, 162u32);
+    let (cols, rows) = (5u32, 4u32);
+    let (mw, mh) = (tw * cols, th * rows);
+    let mut canvas = vec![0u8; (mw * mh * 3) as usize];
+    let img = vec![0.0f32; (tw * th * 4) as usize];
+    let tex = upload_linear_f32(&ctx, &img, tw, th);
+    for (k, &lens) in picks.iter().enumerate() {
+        let p = lf::LensFlareParams {
+            light: [0.68 * tw as f32, 0.30 * th as f32],
+            lens,
+            quality: 1,
+            max_ghosts: 60,
+            ghost_softness: 0.0,
+            ..flare_params()
+        };
+        let op = flare_op(&p, tw, th);
+        let out = fx.lens_flare(
+            &ctx,
+            &tex,
+            tw,
+            th,
+            &op,
+            None,
+            &|| flare_bake_data(&p),
+            &flare_probe(&p, tw, th),
+        );
+        let gpu = readback_linear_f32(&ctx, &out, tw, th).unwrap();
+        let (ox, oy) = ((k as u32 % cols) * tw, (k as u32 / cols) * th);
+        for y in 0..th {
+            for x in 0..tw {
+                let i = ((y * tw + x) * 4) as usize;
+                let o = (((oy + y) * mw + ox + x) * 3) as usize;
+                for c in 0..3 {
+                    let v = (gpu[i + c] * 6.0).clamp(0.0, 1.0).powf(1.0 / 2.2);
+                    canvas[o + c] = (v * 255.0).round() as u8;
+                }
+            }
+        }
+        eprintln!("tile {k}: lens {lens} done");
+    }
+    let mut ppm = format!("P6\n{mw} {mh}\n255\n").into_bytes();
+    ppm.extend_from_slice(&canvas);
+    std::fs::write(std::env::var("LUMIT_FLARE_DUMP").unwrap(), ppm).unwrap();
 }

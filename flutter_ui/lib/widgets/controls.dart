@@ -4,14 +4,35 @@
 
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
+
+import '../l10n/strings.dart';
+import '../state/workspace.dart';
+import '../theme/theme.dart';
+import 'package:flutter/material.dart';
 import 'package:lumit_flutter/widgets/autofill.dart';
 
-import '../theme/theme.dart';
-
 /// The theme + workspace scope: an InheritedNotifier the whole tree reads.
+/// The devices whose drags mean "move this thing" — **the trackpad's
+/// two-finger scroll deliberately excluded**.
+///
+/// A two-finger scroll on a Mac trackpad arrives as a pan *gesture*, not as the
+/// wheel's pointer signal, so any pan recogniser laid over a scrollable area
+/// wins it in the arena and the area cannot be scrolled at all: reported as "I
+/// can't scroll the timeline with my trackpad", and invisible to anyone with a
+/// mouse. Excluding the trackpad here costs nothing that a user wants — a
+/// *click*-drag on a trackpad is an ordinary pointer drag and is unaffected —
+/// and hands two-finger scrolling back to the scrollable underneath.
+const Set<PointerDeviceKind> dragDevices = {
+  PointerDeviceKind.mouse,
+  PointerDeviceKind.touch,
+  PointerDeviceKind.stylus,
+  PointerDeviceKind.invertedStylus,
+  PointerDeviceKind.unknown,
+};
+
 class ThemeScope extends InheritedWidget {
   final LumitTheme theme;
   final AnimationLevel animationLevel;
@@ -45,6 +66,11 @@ class HouseButton extends StatefulWidget {
   final bool small;
   final EdgeInsets? padding;
 
+  /// The default action of the window it sits in — what `Enter` presses
+  /// (K-243). Drawn with the accent edge it would otherwise only get under the
+  /// pointer, which is what docs/15 §2 keeps the one accent for.
+  final bool primary;
+
   const HouseButton({
     super.key,
     required this.child,
@@ -52,6 +78,7 @@ class HouseButton extends StatefulWidget {
     this.frameless = false,
     this.small = false,
     this.padding,
+    this.primary = false,
   });
 
   @override
@@ -79,6 +106,7 @@ class _HouseButtonState extends State<HouseButton> {
       edge = t.hairlineStrong;
     } else {
       fill = widget.frameless ? null : t.surface3;
+      if (widget.primary) edge = t.accent;
     }
     final pad = widget.padding ??
         (widget.small
@@ -127,11 +155,19 @@ class MenuRow extends StatefulWidget {
   final Widget child;
   final VoidCallback onPressed;
   final bool selected;
+
+  /// What this row calls itself in its surface's hover state, for the rows that
+  /// have to know which of them the pointer is over. Defaults to the row's own
+  /// state; [SubmenuRow] passes its own, because the flyout belongs to the
+  /// submenu row rather than to the plain row it draws itself with.
+  final Object? hoverId;
+
   const MenuRow({
     super.key,
     required this.child,
     required this.onPressed,
     this.selected = false,
+    this.hoverId,
   });
 
   @override
@@ -151,7 +187,12 @@ class _MenuRowState extends State<MenuRow> {
             : null;
     return MouseRegion(
       cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hover = true),
+      onEnter: (_) {
+        setState(() => _hover = true);
+        // Tell the surface which row the pointer is on, so a submenu that is
+        // out can take itself back when the pointer moves to another row.
+        FloatSurface.hoveredRow(context)?.value = widget.hoverId ?? this;
+      },
       onExit: (_) => setState(() => _hover = false),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
@@ -171,26 +212,62 @@ class _MenuRowState extends State<MenuRow> {
 
 /// The floating popup surface every menu and dropdown shares: `surface3`
 /// fill, hairline edge, the float radius and the real drop shadow.
-class FloatSurface extends StatelessWidget {
+///
+/// It also carries the surface's hover state — which of its rows the pointer is
+/// over — because opening a flyout is one row's business and closing it again is
+/// every other row's (see [SubmenuRow]). Scoped to the surface, so the rows of a
+/// flyout never disturb the menu the flyout came from.
+class FloatSurface extends StatefulWidget {
   final Widget child;
   final double? width;
   const FloatSurface({super.key, required this.child, this.width});
 
+  /// The row of the nearest floating surface the pointer is on, or null outside
+  /// one, where no menu is being drawn.
+  static ValueNotifier<Object?>? hoveredRow(BuildContext context) =>
+      context.getInheritedWidgetOfExactType<_MenuHoverScope>()?.hovered;
+
+  @override
+  State<FloatSurface> createState() => _FloatSurfaceState();
+}
+
+class _FloatSurfaceState extends State<FloatSurface> {
+  final _hovered = ValueNotifier<Object?>(null);
+
+  @override
+  void dispose() {
+    _hovered.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    return Container(
-      width: width,
-      padding: const EdgeInsets.all(6),
-      decoration: BoxDecoration(
-        color: t.surface3,
-        borderRadius: BorderRadius.circular(t.tokens.floatRadius),
-        border: Border.all(color: t.hairline, width: 1),
-        boxShadow: t.floatShadow,
+    return _MenuHoverScope(
+      hovered: _hovered,
+      child: Container(
+        width: widget.width,
+        padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          color: t.surface3,
+          borderRadius: BorderRadius.circular(t.tokens.floatRadius),
+          border: Border.all(color: t.hairline, width: 1),
+          boxShadow: t.floatShadow,
+        ),
+        child: widget.child,
       ),
-      child: child,
     );
   }
+}
+
+class _MenuHoverScope extends InheritedWidget {
+  final ValueNotifier<Object?> hovered;
+
+  const _MenuHoverScope({required this.hovered, required super.child});
+
+  // The notifier itself never changes; the rows listen to it directly.
+  @override
+  bool updateShouldNotify(_MenuHoverScope old) => false;
 }
 
 /// A dropdown drawn as a bare label + caret; the open list floats on the
@@ -278,6 +355,214 @@ class BareDropdown<T> extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// Options at or above this count get [BareSearchDropdown] instead of the
+/// plain [BareDropdown] (K-262). A plain dropdown builds every row eagerly
+/// inside an `IntrinsicWidth`, which walks all of them twice — fine for the
+/// handful of options every parameter has today — and fatal for the
+/// K-262-era Lens flare library, whose 1299 rows took the app down in
+/// layout. The flare is a curated twenty since K-264; the guard stays.
+const int searchableOptionThreshold = 40;
+
+/// A dropdown for long option lists: a search field over a **lazily built**
+/// list, with the group headings drawn inline (K-262).
+///
+/// The list is a `ListView.builder` inside a bounded box, so only the rows
+/// on screen are ever built no matter how many options there are — the
+/// difference between a thousand-row list being a feature and a crash.
+class BareSearchDropdown extends StatelessWidget {
+  final int value;
+  final List<String> options;
+  final ValueChanged<int> onChanged;
+
+  /// The heading an option sits under, or null for none.
+  final String? Function(String)? group;
+
+  /// Placeholder for the search field — what the user is looking for. Null
+  /// takes the plain word "Search", which is what most callers want.
+  final String? hint;
+
+  const BareSearchDropdown({
+    super.key,
+    required this.value,
+    required this.options,
+    required this.onChanged,
+    this.group,
+    this.hint,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    final label = value >= 0 && value < options.length ? options[value] : '—';
+    return HouseButton(
+      onPressed: () async {
+        final box = context.findRenderObject()! as RenderBox;
+        final origin = box.localToGlobal(Offset.zero);
+        final picked = await showLumitPopup<int>(
+          context: context,
+          position: origin + Offset(0, box.size.height + 2),
+          builder: (close) => FloatSurface(
+            child: _SearchPickerBody(
+              value: value,
+              options: options,
+              group: group,
+              hint: hint ?? l10n.search,
+              onPick: close,
+            ),
+          ),
+        );
+        if (picked != null) onChanged(picked);
+      },
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Flexible(child: Text(label, overflow: TextOverflow.ellipsis)),
+          const SizedBox(width: 4),
+          CustomPaint(
+            size: const Size(9, 9),
+            painter: _CaretPainter(t.textSecondary),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One row of the picker's flattened list: a heading, or an option.
+class _PickerEntry {
+  final String? heading;
+  final int? optionIndex;
+  const _PickerEntry.heading(this.heading) : optionIndex = null;
+  const _PickerEntry.option(this.optionIndex) : heading = null;
+}
+
+class _SearchPickerBody extends StatefulWidget {
+  final int value;
+  final List<String> options;
+  final String? Function(String)? group;
+  final String hint;
+  final void Function(int?) onPick;
+
+  const _SearchPickerBody({
+    required this.value,
+    required this.options,
+    required this.group,
+    required this.hint,
+    required this.onPick,
+  });
+
+  @override
+  State<_SearchPickerBody> createState() => _SearchPickerBodyState();
+}
+
+class _SearchPickerBodyState extends State<_SearchPickerBody> {
+  final TextEditingController _query = TextEditingController();
+  late List<_PickerEntry> _entries = _build('');
+
+  @override
+  void dispose() {
+    _query.dispose();
+    super.dispose();
+  }
+
+  /// The visible rows for a query: every option whose label contains it
+  /// (case-insensitively, all terms), with a heading each time the group
+  /// changes. Flattened so the list builder stays lazy.
+  List<_PickerEntry> _build(String query) {
+    final terms =
+        query.toLowerCase().split(' ').where((w) => w.isNotEmpty).toList();
+    final out = <_PickerEntry>[];
+    String? lastGroup;
+    for (var i = 0; i < widget.options.length; i++) {
+      final label = widget.options[i];
+      final lower = label.toLowerCase();
+      if (terms.any((w) => !lower.contains(w))) continue;
+      final g = widget.group?.call(label);
+      if (g != null && g != lastGroup) {
+        out.add(_PickerEntry.heading(g));
+        lastGroup = g;
+      }
+      out.add(_PickerEntry.option(i));
+    }
+    return out;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    // A fixed box: the popup's own scroll view would otherwise give the
+    // list unbounded height, and an unbounded ListView cannot be lazy.
+    return SizedBox(
+      width: 300,
+      height: 380,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 2, 4, 6),
+            child: HouseTextField(
+              controller: _query,
+              width: 288,
+              autofocus: true,
+              hint: widget.hint,
+              onSubmitted: (_) {
+                // Enter takes the only match, which is what a search that
+                // has narrowed to one thing means.
+                final only = _entries.where((e) => e.optionIndex != null);
+                if (only.length == 1) widget.onPick(only.first.optionIndex);
+              },
+            ),
+          ),
+          Expanded(
+            child: _entries.isEmpty
+                ? Center(
+                    child: Text(
+                      l10n.noMatches,
+                      style: t.small.copyWith(color: t.textMuted),
+                    ),
+                  )
+                : ListView.builder(
+                    primary: false,
+                    itemCount: _entries.length,
+                    itemBuilder: (context, i) {
+                      final e = _entries[i];
+                      final heading = e.heading;
+                      if (heading != null) {
+                        return Padding(
+                          padding:
+                              EdgeInsets.fromLTRB(10, i == 0 ? 2 : 8, 10, 2),
+                          child: Text(
+                            heading,
+                            style: t.small.copyWith(color: t.textMuted),
+                          ),
+                        );
+                      }
+                      final idx = e.optionIndex!;
+                      return MenuRow(
+                        selected: idx == widget.value,
+                        onPressed: () => widget.onPick(idx),
+                        child: Text(
+                          widget.options[idx],
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _query.addListener(() {
+      setState(() => _entries = _build(_query.text));
+    });
   }
 }
 
@@ -376,9 +661,19 @@ class _CaretPainter extends CustomPainter {
 /// `_showModal` that returns nothing, which is fine for a dialog that commits
 /// through a callback but not for one whose caller needs to know whether anything
 /// was applied — hence this, in the house-controls file where both can reach it.
+///
+/// The window is **movable** — dragging anywhere on it that no control claims
+/// moves it — and, when [initialSize] is given, **resizable** from the grip in
+/// its bottom-right corner. Give an [id] and where it was left is remembered in
+/// the workspace store, so it opens where it was last put, this session and the
+/// next (K-242). Windows without an id always open centred at their natural
+/// size, which is what a one-question confirmation wants.
 Future<T?> showLumitModal<T>({
   required BuildContext context,
   required Widget Function(void Function(T?) close) builder,
+  String? id,
+  Size? initialSize,
+  Size minSize = const Size(320, 240),
 }) {
   final overlay = Overlay.of(context);
   final completer = Completer<T?>();
@@ -397,11 +692,16 @@ Future<T?> showLumitModal<T>({
             behavior: HitTestBehavior.opaque,
             onTap: () => close(null),
             child: ColoredBox(
-              color: const Color(0x99000000),
+              color: ThemeScope.of(context).theme.scrim,
             ),
           ),
         ),
-        Center(child: builder(close)),
+        _MovableWindow(
+          id: id,
+          initialSize: initialSize,
+          minSize: minSize,
+          child: builder(close),
+        ),
       ],
     ),
   );
@@ -409,11 +709,203 @@ Future<T?> showLumitModal<T>({
   return completer.future;
 }
 
-class AutofillSuggestion<T> {
-  T value;
-  String word;
+/// Where movable windows remember being left. The shell points this at the one
+/// [Workspace] it loaded at start-up; it is null in a widget test, which simply
+/// means a window there opens centred and forgets where it was dragged.
+Workspace? modalPlacementStore;
 
-  AutofillSuggestion(this.value, this.word);
+int _openModals = 0;
+
+/// Whether a modal window is up (K-243).
+///
+/// The panels register their keyboard commands on the hardware keyboard rather
+/// than holding focus, so nothing about a dialogue being open stopped them
+/// hearing a keypress meant for it: `Enter` in the Pre-compose dialogue was
+/// also `Enter` in the Timeline, and renamed a layer behind the window instead
+/// of pressing the button in front of it. A panel command is about the panel,
+/// and while a modal is up the panel is not what is being used.
+///
+/// Counted by the windows themselves as they mount and unmount, rather than by
+/// the open and close calls: a window can also leave by having the tree taken
+/// down under it, and a count only the close path decremented would stick above
+/// zero and leave the keyboard dead for the rest of the session.
+bool get lumitModalOpen => _openModals > 0;
+
+/// A window that can be dragged around the app window and, when it has a size,
+/// resized from its bottom-right corner.
+///
+/// It sits at the centre and carries an *offset* from there rather than an
+/// absolute position: that way it needs to know nothing about how big it is to
+/// open centred, and a placement saved on one monitor still opens on screen on
+/// another. The offset is clamped so the middle of the window can never leave
+/// the app window — drag it as far as you like, it is always grabbable again.
+class _MovableWindow extends StatefulWidget {
+  final String? id;
+  final Size? initialSize;
+  final Size minSize;
+  final Widget child;
+
+  const _MovableWindow({
+    required this.id,
+    required this.initialSize,
+    required this.minSize,
+    required this.child,
+  });
+
+  @override
+  State<_MovableWindow> createState() => _MovableWindowState();
+}
+
+class _MovableWindowState extends State<_MovableWindow> {
+  Offset _offset = Offset.zero;
+  Size? _size;
+
+  @override
+  void initState() {
+    super.initState();
+    _openModals++;
+    _size = widget.initialSize;
+    final id = widget.id;
+    final saved = id == null ? null : modalPlacementStore?.windowPlacements[id];
+    if (saved != null) {
+      _offset = saved.offset;
+      // A fixed-size window keeps its natural size however big it was when the
+      // placement was written — only a resizable one takes a size back.
+      if (widget.initialSize != null && saved.size != null) _size = saved.size;
+    }
+  }
+
+  @override
+  void dispose() {
+    _openModals--;
+    super.dispose();
+  }
+
+  void _remember() {
+    final id = widget.id;
+    if (id == null) return;
+    modalPlacementStore?.rememberWindow(id, WindowPlacement(_offset, _size));
+  }
+
+  /// Keep the middle of the window inside the app window, so however far it is
+  /// dragged there is always something left to grab.
+  Offset _clampOffset(Offset o, BoxConstraints box) => Offset(
+        o.dx.clamp(-box.maxWidth / 2, box.maxWidth / 2),
+        o.dy.clamp(-box.maxHeight / 2, box.maxHeight / 2),
+      );
+
+  Size? _clampSize(Size? s, BoxConstraints box) => s == null
+      ? null
+      : Size(
+          s.width.clamp(widget.minSize.width, box.maxWidth),
+          s.height.clamp(widget.minSize.height, box.maxHeight),
+        );
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    return LayoutBuilder(
+      builder: (context, box) {
+        // The gesture handlers accumulate onto the *state*, never onto these:
+        // several pointer moves can arrive between two frames, and every one of
+        // them would read the same stale value from this build and the window
+        // would move a fraction of the distance dragged.
+        final offset = _clampOffset(_offset, box);
+        final size = _clampSize(_size, box);
+
+        return Center(
+          child: Transform.translate(
+            offset: offset,
+            // The grip is a *sibling* of the window, not something inside it.
+            // Nested drag detectors both join the gesture arena for a pointer
+            // that lands on the inner one and neither ends up moving anything;
+            // as siblings the topmost — the grip — takes the corner and the
+            // window takes everywhere else.
+            child: Stack(
+              children: [
+                GestureDetector(
+                  // Anything with its own drag — a slider, a scrolling list, a
+                  // text selection — wins the gesture over this, so dragging a
+                  // control still does what the control does and dragging the
+                  // window's own chrome moves the window.
+                  onPanUpdate: (d) => setState(
+                    () => _offset = _clampOffset(_offset + d.delta, box),
+                  ),
+                  onPanEnd: (_) => _remember(),
+                  child: SizedBox(
+                    width: size?.width,
+                    height: size?.height,
+                    child: widget.child,
+                  ),
+                ),
+                if (size != null)
+                  Positioned(
+                    right: 0,
+                    bottom: 0,
+                    child: MouseRegion(
+                      cursor: SystemMouseCursors.resizeDownRight,
+                      child: GestureDetector(
+                        key: const ValueKey('window-resize-grip'),
+                        behavior: HitTestBehavior.opaque,
+                        onPanUpdate: (d) => setState(() {
+                          final was = _clampSize(_size, box)!;
+                          final now = _clampSize(
+                            Size(
+                              was.width + d.delta.dx,
+                              was.height + d.delta.dy,
+                            ),
+                            box,
+                          )!;
+                          // The window is anchored at its centre, so growing it
+                          // by one pixel to the right means moving it half a
+                          // pixel right for the left edge to stay put.
+                          _offset = _clampOffset(
+                            _offset +
+                                Offset((now.width - was.width) / 2,
+                                    (now.height - was.height) / 2),
+                            box,
+                          );
+                          _size = now;
+                        }),
+                        onPanEnd: (_) => _remember(),
+                        child: CustomPaint(
+                          size: const Size(14, 14),
+                          painter: _GripPainter(t.hairline),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// The three short diagonals that say "drag this corner".
+class _GripPainter extends CustomPainter {
+  final Color color;
+  const _GripPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final p = Paint()
+      ..color = color
+      ..strokeWidth = 1
+      ..strokeCap = StrokeCap.round;
+    for (final inset in [3.0, 6.5, 10.0]) {
+      canvas.drawLine(
+        Offset(size.width - 2, size.height - inset),
+        Offset(size.width - inset, size.height - 2),
+        p,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_GripPainter old) => old.color != color;
 }
 
 /// A single-line text box in the house style. The dialogs each grew their own
@@ -423,6 +915,12 @@ class HouseTextField extends StatefulWidget {
   final double width;
   final ValueChanged<String>? onSubmitted;
   final bool submitOnLostFocus;
+
+  /// A pointer went down somewhere that is not this field. What an inline
+  /// rename commits on: clicking away is a person finishing the edit, and a
+  /// field that kept what was typed only when `Enter` was pressed threw the
+  /// work away for everyone who clicks instead (K-243).
+  final VoidCallback? onTapOutside;
   final TextStyle? style;
   final AutofillGenerator? autofill;
 
@@ -441,6 +939,7 @@ class HouseTextField extends StatefulWidget {
     this.width = 200,
     this.onSubmitted,
     this.submitOnLostFocus = false,
+    this.onTapOutside,
     this.autofill,
     this.autofocus = false,
     this.style,
@@ -646,6 +1145,10 @@ class _HouseTextFieldState extends State<HouseTextField>
                   if (widget.submitOnLostFocus) {
                     widget.onSubmitted?.call(widget.controller.text);
                   }
+                  // K-243: clicking away is a person finishing the edit, so an
+                  // inline rename commits on it rather than throwing the work
+                  // away for everyone who does not press Enter.
+                  widget.onTapOutside?.call();
                   _focus.unfocus();
                   hideOverlay();
                 },
@@ -673,7 +1176,7 @@ class _HouseTextFieldState extends State<HouseTextField>
 /// first would take this row's `BuildContext` with it, and the overlay the
 /// submenu needs is reached *through* that context. Picking something in the
 /// submenu dismisses both.
-class SubmenuRow extends StatelessWidget {
+class SubmenuRow extends StatefulWidget {
   final Widget child;
 
   /// Closes the menu this row belongs to.
@@ -691,32 +1194,85 @@ class SubmenuRow extends StatelessWidget {
   });
 
   @override
+  State<SubmenuRow> createState() => _SubmenuRowState();
+}
+
+class _SubmenuRowState extends State<SubmenuRow> {
+  ValueNotifier<Object?>? _hovered;
+
+  /// True from the moment the flyout is asked for; [_close] arrives a frame
+  /// later, when the overlay builds it.
+  bool _out = false;
+  VoidCallback? _close;
+
+  @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    return Builder(
-      builder: (rowContext) => MenuRow(
-        onPressed: () {
-          final box = rowContext.findRenderObject();
-          if (box is! RenderBox) return;
-          // Beside the row, overlapping it slightly, the way a flyout sits.
-          final at = box.localToGlobal(Offset(box.size.width - 6, -4));
-          showLumitPopup<void>(
-            context: rowContext,
-            position: at,
-            builder: (close) => submenu(() {
-              close(null);
-              closeParent();
-            }),
-          );
-        },
-        child: Row(
-          children: [
-            Expanded(child: child),
-            Text('›', style: t.body.copyWith(color: t.textMuted)),
-          ],
-        ),
+    final hovered = FloatSurface.hoveredRow(context);
+    if (hovered != _hovered) {
+      _hovered?.removeListener(_hoverMoved);
+      _hovered = hovered?..addListener(_hoverMoved);
+    }
+    return MenuRow(
+      hoverId: this,
+      onPressed: _open,
+      child: Row(
+        children: [
+          Expanded(child: widget.child),
+          Text('›', style: t.body.copyWith(color: t.textMuted)),
+        ],
       ),
     );
+  }
+
+  void _hoverMoved() {
+    if (_hovered?.value == this) {
+      _open();
+    } else {
+      _out = false;
+      _close?.call();
+      _close = null;
+    }
+  }
+
+  void _open() {
+    if (_out) return;
+    final box = context.findRenderObject();
+    if (box is! RenderBox) return;
+    // Beside the row, overlapping it slightly, the way a flyout sits.
+    final at = box.localToGlobal(Offset(box.size.width - 6, -4));
+    _out = true;
+    showLumitPopup<void>(
+      context: context,
+      position: at,
+      // So the menu underneath still feels the pointer: moving to another row
+      // is what takes this flyout back.
+      hoverThrough: true,
+      builder: (close) {
+        _close = () => close(null);
+        return widget.submenu(() {
+          close(null);
+          widget.closeParent();
+        });
+      },
+    ).then((_) {
+      _out = false;
+      _close = null;
+    });
+  }
+
+  @override
+  void dispose() {
+    _hovered?.removeListener(_hoverMoved);
+    // The menu this row belongs to has gone (another heading took over, say);
+    // its flyout goes with it rather than being left behind. After the frame,
+    // because removing an overlay entry sets the overlay's state and this is
+    // the middle of a tear-down.
+    final close = _close;
+    if (close != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => close());
+    }
+    super.dispose();
   }
 }
 
@@ -724,6 +1280,11 @@ Future<T?> showLumitPopup<T>({
   required BuildContext context,
   required Offset position,
   required Widget Function(void Function(T?) close) builder,
+  // Whether what is underneath still feels the pointer while this popup is up.
+  // Menus want it — hovering another heading or another row is how a menu is
+  // navigated — and nothing else does: a dropdown that let the panel behind it
+  // light up under the pointer would be answering to a click it will not get.
+  bool hoverThrough = false,
 }) {
   final overlay = Overlay.of(context);
   final completer = Completer<T?>();
@@ -744,8 +1305,13 @@ Future<T?> showLumitPopup<T>({
       builder: (context, constraints) => Stack(
         children: [
           Positioned.fill(
+            // Translucent still takes the click — it is above whatever it
+            // covers, so it wins the gesture arena — but lets hover through to
+            // the menu bar and to the menu this one flew out of.
             child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
+              behavior: hoverThrough
+                  ? HitTestBehavior.translucent
+                  : HitTestBehavior.opaque,
               onTap: () => close(null),
               onSecondaryTap: () => close(null),
             ),
@@ -824,6 +1390,56 @@ class HouseCheckbox extends StatelessWidget {
   }
 }
 
+/// One of a set of choices, where the set is exclusive — the dot beside a
+/// sentence. [HouseCheckbox] is the independent one; this is the one that says
+/// "this, and therefore not that". Disabled it still shows which way the
+/// choice fell, dimmed, rather than going blank.
+class HouseRadio extends StatelessWidget {
+  final bool selected;
+  final bool enabled;
+  final VoidCallback? onChanged;
+
+  const HouseRadio({
+    super.key,
+    required this.selected,
+    this.enabled = true,
+    this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    final borderColor = !enabled
+        ? t.textMuted.withValues(alpha: 0.4)
+        : (selected ? t.accent : t.hairlineStrong);
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: enabled ? onChanged : null,
+      child: Container(
+        width: 14,
+        height: 14,
+        decoration: BoxDecoration(
+          color: t.surface3,
+          shape: BoxShape.circle,
+          border: Border.all(color: borderColor, width: 1.5),
+        ),
+        alignment: Alignment.center,
+        child: selected
+            ? Container(
+                width: 6,
+                height: 6,
+                decoration: BoxDecoration(
+                  color: enabled ? t.accent : t.textMuted,
+                  shape: BoxShape.circle,
+                ),
+              )
+            : null,
+      ),
+    );
+  }
+}
+
 class _TickPainter extends CustomPainter {
   final Color color;
   const _TickPainter(this.color);
@@ -884,8 +1500,6 @@ class DragValueField extends StatefulWidget {
   /// that never crossed one [speed] increment — so nothing was ever ticked).
   final VoidCallback? onDragCancel;
 
-  final VoidCallback? setExpression;
-
   const DragValueField({
     super.key,
     required this.value,
@@ -903,6 +1517,10 @@ class DragValueField extends StatefulWidget {
     this.onDragCancel,
     this.setExpression,
   });
+
+  /// Offered in the value's context menu when the property can take one.
+  /// Absent (and the menu entry with it) for a field that cannot.
+  final VoidCallback? setExpression;
 
   @override
   State<DragValueField> createState() => _DragValueFieldState();
@@ -979,14 +1597,14 @@ class _DragValueFieldState extends State<DragValueField> {
                     widget.onChanged(
                         widget.resetTo!.clamp(widget.min, widget.max));
                   },
-                  child: const Text('Reset'),
+                  child: Text(l10n.reset),
                 ),
               MenuRow(
                 onPressed: () {
                   close(null);
                   Clipboard.setData(ClipboardData(text: _plain(widget.value)));
                 },
-                child: const Text('Copy'),
+                child: Text(l10n.menuCopy),
               ),
               MenuRow(
                 onPressed: () async {
@@ -999,15 +1617,19 @@ class _DragValueFieldState extends State<DragValueField> {
                     widget.onChanged(parsed.clamp(widget.min, widget.max));
                   }
                 },
-                child: const Text('Paste'),
+                child: Text(l10n.menuPaste),
               ),
+              // Only where the property can actually hold one, so the menu on
+              // a field that cannot never offers it.
               if (widget.setExpression != null)
                 MenuRow(
                   onPressed: () {
                     close(null);
                     widget.setExpression?.call();
                   },
-                  child: const Text('Set Expression'),
+                  // Not in l10n yet: the strings file has no key for it, and
+                  // adding one means an arb edit plus regeneration.
+                  child: const Text('Set expression'),
                 ),
             ],
           ),
@@ -1104,40 +1726,6 @@ class _DragValueFieldState extends State<DragValueField> {
   }
 }
 
-class HouseContextMenu extends StatelessWidget {
-  const HouseContextMenu({this.child, this.itemBuilder, super.key});
-  final Widget? child;
-  final List<MenuRow> Function(void Function() close)? itemBuilder;
-
-  @override
-  Widget build(BuildContext context) {
-    return MouseRegion(
-        child: GestureDetector(
-      behavior: HitTestBehavior.translucent,
-      onSecondaryTapDown: (d) => _contextMenu(context, d.globalPosition),
-      child: child,
-    ));
-  }
-
-  void _contextMenu(BuildContext context, Offset globalPos) {
-    showLumitPopup<void>(
-      context: context,
-      position: globalPos,
-      builder: (close) => FloatSurface(
-        child: IntrinsicWidth(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              ...(itemBuilder?.call(() => close(())) ?? []),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 /// A thin themed slider. `commitOnRelease` reproduces the UI-scale rule
 /// (K-117): the dragged value shows live but `onChanged` fires on release.
 class HouseSlider extends StatefulWidget {
@@ -1148,7 +1736,24 @@ class HouseSlider extends StatefulWidget {
   final int decimals;
   final String? suffix;
   final bool commitOnRelease;
+
+  /// How wide the track is drawn. The default suits a settings row; a control
+  /// in a toolbar wants less.
+  final double width;
+
+  /// Whether the number is drawn beside the track.
+  ///
+  /// Off for a slider whose value is already said elsewhere — the Timeline's
+  /// zoom says it in a tooltip, and a readout repeating it would cost the
+  /// bottom bar room it does not have.
+  final bool showValue;
   final ValueChanged<double> onChanged;
+
+  /// Called instead of [onChanged] while the handle is being **dragged**, for
+  /// a control whose live value costs something the committed one does not —
+  /// the Timeline's zoom applies a drag at once and only flies for a tap
+  /// (K-293). Unset, a drag reports through [onChanged] as it always did.
+  final ValueChanged<double>? onChangeLive;
 
   const HouseSlider({
     super.key,
@@ -1160,6 +1765,9 @@ class HouseSlider extends StatefulWidget {
     this.decimals = 2,
     this.suffix,
     this.commitOnRelease = false,
+    this.width = 140,
+    this.showValue = true,
+    this.onChangeLive,
   });
 
   @override
@@ -1182,7 +1790,7 @@ class _HouseSliderState extends State<HouseSlider> {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    const width = 140.0;
+    final width = widget.width;
     final frac =
         ((_shown - widget.min) / (widget.max - widget.min)).clamp(0.0, 1.0);
     return Row(
@@ -1196,7 +1804,7 @@ class _HouseSliderState extends State<HouseSlider> {
             if (widget.commitOnRelease) {
               setState(() => _pending = v);
             } else {
-              widget.onChanged(v);
+              (widget.onChangeLive ?? widget.onChanged)(v);
             }
           },
           onHorizontalDragEnd: (_) {
@@ -1218,11 +1826,13 @@ class _HouseSliderState extends State<HouseSlider> {
             ),
           ),
         ),
-        const SizedBox(width: 8),
-        Text(
-          '${_shown.toStringAsFixed(widget.decimals)}${widget.suffix ?? ''}',
-          style: t.bodyPrimary,
-        ),
+        if (widget.showValue) ...[
+          const SizedBox(width: 8),
+          Text(
+            '${_shown.toStringAsFixed(widget.decimals)}${widget.suffix ?? ''}',
+            style: t.bodyPrimary,
+          ),
+        ],
       ],
     );
   }
@@ -1355,3 +1965,51 @@ class _HoverTipState extends State<_HoverTip> {
         child: widget.child,
       );
 }
+
+
+class AutofillSuggestion<T> {
+  T value;
+  String word;
+
+  AutofillSuggestion(this.value, this.word);
+}
+
+/// A single-line text box in the house style. The dialogs each grew their own
+/// copy of this; it belongs here.
+
+class HouseContextMenu extends StatelessWidget {
+  const HouseContextMenu({this.child, this.itemBuilder, super.key});
+  final Widget? child;
+  final List<MenuRow> Function(void Function() close)? itemBuilder;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+        child: GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onSecondaryTapDown: (d) => _contextMenu(context, d.globalPosition),
+      child: child,
+    ));
+  }
+
+  void _contextMenu(BuildContext context, Offset globalPos) {
+    showLumitPopup<void>(
+      context: context,
+      position: globalPos,
+      builder: (close) => FloatSurface(
+        child: IntrinsicWidth(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ...(itemBuilder?.call(() => close(())) ?? []),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A thin themed slider. `commitOnRelease` reproduces the UI-scale rule
+/// (K-117): the dragged value shows live but `onChanged` fires on release.

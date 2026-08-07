@@ -1,0 +1,244 @@
+# Release pipeline (K-252): push a tag like v0.1.0 and this builds the Windows
+# installer and the Linux bundle on GitHub's own runners and attaches both to a
+# GitHub Release — no local cross-building, which Flutter cannot do anyway.
+#
+# Toolchain steps mirror ci.yml's `windows` and `flutter-linux` jobs exactly
+# (same FFmpeg 7.1 shared build, same LLVM 18 pin, same Flutter 3.44.7); when
+# one changes, change the other.
+#
+# The macOS job is EXPERIMENTAL (continue-on-error): make-dmg.sh bundles the
+# Homebrew FFmpeg dylibs into the .app and re-signs ad hoc, so the DMG runs
+# without Homebrew — but it is unsigned (Gatekeeper warns) and the Metal
+# Viewer is unverified on real hardware. Signing and notarisation land with
+# the macOS pass (K-033, docs/TODO.md); a release still publishes if this job
+# fails, just without the DMG.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows-installer:
+    name: Windows installer
+    runs-on: windows-latest
+    env:
+      FFMPEG_ASSET: ffmpeg-n7.1-latest-win64-gpl-shared-7.1
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install FFmpeg 7.1 (BtbN shared build)
+        shell: pwsh
+        run: |
+          $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$env:FFMPEG_ASSET.zip"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\ffmpeg.zip"
+          Expand-Archive "$env:RUNNER_TEMP\ffmpeg.zip" -DestinationPath "$env:RUNNER_TEMP\ffmpeg"
+          $root = (Get-ChildItem "$env:RUNNER_TEMP\ffmpeg" -Directory | Select-Object -First 1).FullName
+          "FFMPEG_LIBS_DIR=$root\lib"        >> $env:GITHUB_ENV
+          "FFMPEG_INCLUDE_DIR=$root\include" >> $env:GITHUB_ENV
+          "$root\bin" >> $env:GITHUB_PATH
+      - name: Install LLVM 18 (libclang for bindgen)
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "18.1.8"
+          directory: ${{ runner.temp }}/llvm
+      - name: Point bindgen at libclang
+        shell: pwsh
+        run: |
+          "LIBCLANG_PATH=$env:RUNNER_TEMP\llvm\bin" >> $env:GITHUB_ENV
+      - uses: Swatinem/rust-cache@v2
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.7
+          channel: stable
+          cache: true
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          $version = "$env:GITHUB_REF_NAME".TrimStart('v')
+          if (-not $version) { $version = '0.0.0' }
+          & packaging/windows/build-installer.ps1 -Version $version
+      # The same files the installer lays down, as a plain archive (K-297).
+      # This is what a per-user installation fetches to update itself: no
+      # installer to run, no elevation, no questions already answered once.
+      - name: Package the app for in-place updates
+        shell: pwsh
+        run: |
+          $version = "$env:GITHUB_REF_NAME".TrimStart('v')
+          if (-not $version) { $version = '0.0.0' }
+          $stage = "$env:RUNNER_TEMP\lumit-package"
+          New-Item -ItemType Directory -Force -Path "$stage\icons" | Out-Null
+          Copy-Item -Recurse -Force flutter_ui\build\windows\x64\runner\Release\* $stage
+          Copy-Item assets\brand\lumit-project.ico, assets\brand\lumit-preset.ico "$stage\icons"
+          Compress-Archive -Path "$stage\*" -Force `
+            -DestinationPath "packaging/windows/dist/lumit-$version-windows-x64.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: |
+            packaging/windows/dist/*.exe
+            packaging/windows/dist/*.zip
+          if-no-files-found: error
+
+  linux-bundle:
+    name: Linux bundle
+    runs-on: ubuntu-latest
+    env:
+      FFMPEG_ASSET: ffmpeg-n7.1-latest-linux64-gpl-shared-7.1
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install desktop + Flutter build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libasound2-dev libgl-dev libegl-dev libgles-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev \
+            libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxcb1-dev \
+            libwayland-dev mesa-vulkan-drivers libclang-18-dev \
+            clang cmake ninja-build libgtk-3-dev
+      - name: Install FFmpeg 7.1 (BtbN shared build)
+        run: |
+          url="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/${FFMPEG_ASSET}.tar.xz"
+          curl -fsSL "$url" -o "$RUNNER_TEMP/ffmpeg.tar.xz"
+          mkdir -p "$RUNNER_TEMP/ffmpeg"
+          tar -xJf "$RUNNER_TEMP/ffmpeg.tar.xz" -C "$RUNNER_TEMP/ffmpeg" --strip-components=1
+          root="$RUNNER_TEMP/ffmpeg"
+          sed -i "s|^prefix=.*|prefix=$root|" "$root"/lib/pkgconfig/*.pc
+          echo "PKG_CONFIG_PATH=$root/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$root/lib" >> "$GITHUB_ENV"
+          echo "FFMPEG_ROOT=$root" >> "$GITHUB_ENV"
+          echo "$root/bin" >> "$GITHUB_PATH"
+      - name: Point bindgen at libclang
+        run: echo "LIBCLANG_PATH=/usr/lib/llvm-18/lib" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.7
+          channel: stable
+          cache: true
+      - name: flutter build linux
+        working-directory: flutter_ui
+        run: |
+          flutter pub get
+          flutter build linux --release
+      - name: Stage the bundle
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          stage="lumit-${version:-0.0.0}-linux-x64"
+          cp -r flutter_ui/build/linux/x64/release/bundle "$stage"
+          # The bridge links FFmpeg's shared build; the launcher's rpath already
+          # covers lib/, so the .so files ride along there.
+          cp -a "$FFMPEG_ROOT"/lib/*.so* "$stage/lib/"
+          # Desktop entry, MIME types and icons for a by-hand install.
+          mkdir -p "$stage/share"
+          cp packaging/linux/io.github.luminalmvm.Lumit.desktop \
+             packaging/linux/lumit-mime.xml "$stage/share/"
+          cp assets/brand/lumit-mark.svg assets/brand/lumit-project.svg \
+             assets/brand/lumit-preset.svg assets/brand/lumit-theme.svg \
+             "$stage/share/"
+          printf '%s\n' \
+            "Run ./lumit_flutter from this directory." \
+            "For a menu entry and .lum/.lumfx/.lumtheme associations, clone the" \
+            "repository and run packaging/linux/install.sh after copying this" \
+            "bundle over flutter_ui/build/linux/x64/release/bundle, or place" \
+            "the files in share/ yourself (icons go to hicolor scalable)." \
+            > "$stage/INSTALL.txt"
+          tar czf "$stage.tar.gz" "$stage"
+      - name: Build the Flatpak
+        # Repacks the staged bundle (FFmpeg libs included) via the manifest in
+        # packaging/flatpak/ into a single-file .flatpak anyone can install
+        # with `flatpak install lumit-*.flatpak`. continue-on-error: this job
+        # gates the whole release (publish needs it), and a Flatpak hiccup
+        # should cost the release the .flatpak, not the tar.gz and setup.exe.
+        continue-on-error: true
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          version="${version:-0.0.0}"
+          stage="lumit-$version-linux-x64"
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub \
+            org.gnome.Platform//49 org.gnome.Sdk//49
+          cp -r "$stage" packaging/flatpak/bundle
+          sed -i "s|version=\"[0-9.]*\" date=\"[0-9-]*\"|version=\"$version\" date=\"$(date -u +%F)\"|" \
+            packaging/flatpak/io.github.luminalmvm.Lumit.metainfo.xml
+          flatpak-builder --user --force-clean --repo=flatpak-repo \
+            flatpak-build packaging/flatpak/io.github.luminalmvm.Lumit.yml
+          flatpak build-bundle flatpak-repo \
+            "lumit-$version-linux-x64.flatpak" io.github.luminalmvm.Lumit
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-bundle
+          path: |
+            lumit-*-linux-x64.tar.gz
+            lumit-*-linux-x64.flatpak
+          if-no-files-found: error
+
+  macos-dmg:
+    name: macOS disk image (experimental)
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      # Mirrors ci.yml's `check` job: keg-only ffmpeg@7 found via the explicit
+      # pkg-config override (K-204).
+      - name: Install FFmpeg 7.1 and dylibbundler
+        run: |
+          brew install ffmpeg@7 dylibbundler create-dmg
+          echo "FFMPEG_PKG_CONFIG_PATH=$(brew --prefix ffmpeg@7)/lib/pkgconfig" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.7
+          channel: stable
+          cache: true
+      - name: Build the disk image
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          packaging/macos/make-dmg.sh "${version:-0.0.0}"
+      # The bundle on its own, for in-place updates (K-297). `ditto` rather than
+      # `zip`: an .app carries symbolic links, code signatures and executable
+      # bits, and an archiver that drops those produces a bundle macOS refuses
+      # to open.
+      - name: Package the bundle for in-place updates
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          version="${version:-0.0.0}"
+          app="flutter_ui/build/macos/Build/Products/Release/Lumit.app"
+          mkdir -p packaging/macos/dist
+          ditto -c -k --keepParent "$app" \
+            "packaging/macos/dist/lumit-$version-macos-$(uname -m).zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: |
+            packaging/macos/dist/*.dmg
+            packaging/macos/dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    name: GitHub release
+    needs: [windows-installer, linux-bundle, macos-dmg]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          merge-multiple: true
+          path: dist
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "Lumit $GITHUB_REF_NAME" \
+            --generate-notes

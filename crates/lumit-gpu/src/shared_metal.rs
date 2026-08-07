@@ -184,6 +184,9 @@ impl SharedIoSurface {
     /// dimensions (the caller recreates on a size change). Identical to the
     /// Windows and Linux siblings' `present`.
     pub fn present(&self, gpu: &GpuContext, display: &wgpu::Texture) {
+        // The frame that produced `display` may still be sitting in the
+        // batch; a copy of work that has not been submitted copies nothing.
+        gpu.flush();
         let mut encoder = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -198,7 +201,7 @@ impl SharedIoSurface {
                 depth_or_array_layers: 1,
             },
         );
-        gpu.queue.submit([encoder.finish()]);
+        gpu.submit([encoder.finish()]);
         // No fence yet: wait for the write to land so the reader never sees a
         // torn frame (see the module note). Zero *CPU* pixel work still — the
         // bytes never leave the card.
@@ -363,7 +366,7 @@ mod tests {
                 depth_or_array_layers: 1,
             },
         );
-        gpu.queue.submit([]);
+        gpu.submit([]);
         gpu.device.poll(wgpu::Maintain::Wait);
 
         // Read it back as the consumer does: straight off the surface.

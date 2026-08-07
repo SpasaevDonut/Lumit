@@ -20,6 +20,7 @@ superseding entry (never edit history).
 3. For any code: `docs/14-ENGINEERING-RULES.md is the binding rulebook (typed rational
 time, no panics in engine crates, no locks across await/GPU/FFI, budgeted allocations,
 cancellation everywhere, determinism). docs/13-PERFORMANCE-RULES.md budgets gate merges.
+4. If this `CLAUDE.md` file is ever changed, also update the corresponding `AGENTS.md` file.
 
 ## Repo shape
 
@@ -41,6 +42,8 @@ port notes). Read-only history; never update it.
 The engine is a Cargo workspace under `crates/` per `docs/05-ARCHITECTURE.md` (engine
 crates never depend on the UI or the bridge). The Flutter frontend is under `flutter_ui/`
 and talks to the engine through `crates/lumit-bridge` (`docs/17-BRIDGE-CONTRACT.md`).
+`web/` (lumitlab.com) and `web-docs/` (docs.lumitlab.com) are the public site — two small
+Astro projects, outside the Cargo workspace and depended on by nothing (K-279).
 
 ## Design
 

@@ -13,11 +13,20 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
+import 'package:lumit_flutter/shell/menu_bar_frb.dart';
+import 'package:lumit_flutter/state/clipboard.dart';
 import 'package:lumit_flutter/theme/theme.dart';
 import 'package:uuid/uuid.dart';
+import 'package:lumit_flutter/state/comp_time.dart';
 import 'package:lumit_flutter/panels/project_panel_frb.dart';
+import 'package:lumit_flutter/panels/layer_fold_frb.dart';
+import 'package:lumit_flutter/icons/icons.dart';
+import 'package:lumit_flutter/panels/timeline_extras_frb.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
+import 'package:lumit_flutter/panels/transform_rows_frb.dart';
 import 'package:lumit_flutter/state/timeline_columns.dart';
+import 'package:lumit_flutter/state/tools.dart';
+import 'package:lumit_flutter/src/rust/api/assets.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
@@ -57,6 +66,708 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('tl-more')));
       await tester.pumpAndSettle();
     }
+
+    /// The Razor tool (K-220). Clicking a bar cuts that layer **where the
+    /// pointer is**, not at the playhead — the difference between a razor and
+    /// the Cut-at-playhead command.
+    testWidgets('the razor splits a layer in two where it is clicked',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      p.uiState.tools.select(ToolMode.razor);
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      expect(p.comp.getLayers().length, 1);
+      final span = layer.getSpan();
+
+      final bar = find.byKey(ValueKey<String>(
+          'tl-bar-body-${layer.internallayerId}'));
+      expect(bar, findsOneWidget);
+      final box = tester.getRect(bar);
+      // A third of the way along the bar, well inside it.
+      await tester.tapAt(Offset(box.left + box.width / 3, box.center.dy));
+      await tester.pumpAndSettle();
+
+      final after = p.comp.getLayers();
+      expect(after.length, 2, reason: 'one layer became two');
+      // The halves meet: the first ends where the second begins, and together
+      // they cover exactly what the layer covered.
+      final spans = [for (final l in after) l.getSpan()];
+      final ins = [for (final s in spans) s.inPoint.num / s.inPoint.den];
+      final outs = [for (final s in spans) s.outPoint.num / s.outPoint.den];
+      ins.sort();
+      outs.sort();
+      expect(ins.first, closeTo(span.inPoint.num / span.inPoint.den, 1e-9));
+      expect(outs.last, closeTo(span.outPoint.num / span.outPoint.den, 1e-9));
+      expect(outs.first, closeTo(ins.last, 1e-9),
+          reason: 'no gap and no overlap at the cut');
+    });
+
+    /// **Cut at playhead is a command, not a tool (docs/07 §4.4).** The chord
+    /// went nowhere: `layer.split` was bound in the Timeline context but no
+    /// handler answered it, so the only way to cut was to arm the razor.
+    testWidgets('Ctrl+Shift+D cuts the selected layer at the playhead',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      final span = layer.getSpan();
+      p.uiState.setSelection([layer]);
+      p.uiState.playheadFrame.value = 12;
+      p.uiState.model.refresh();
+      await mount(tester, p);
+      expect(p.uiState.tools.tool.group, isNot(ToolGroup.razor),
+          reason: 'no razor armed: this is a command');
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyD);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+
+      final after = p.comp.getLayers();
+      expect(after.length, 2, reason: 'one layer became two');
+      final spans = [for (final l in after) l.getSpan()];
+      final ins = [for (final s in spans) s.inPoint.num / s.inPoint.den];
+      final outs = [for (final s in spans) s.outPoint.num / s.outPoint.den];
+      ins.sort();
+      outs.sort();
+      expect(ins.first, closeTo(span.inPoint.num / span.inPoint.den, 1e-9));
+      expect(outs.last, closeTo(span.outPoint.num / span.outPoint.den, 1e-9));
+      expect(outs.first, closeTo(ins.last, 1e-9),
+          reason: 'the halves meet at the cut');
+      // The playhead is where they meet: this cut is at the playhead, not
+      // wherever a pointer happened to be.
+      expect(outs.first,
+          closeTo(p.comp.timeOfFrame(frame: 12).num /
+              p.comp.timeOfFrame(frame: 12).den, 1e-9));
+    });
+
+    /// A cut with nothing selected, or one the engine refuses, is silence.
+    testWidgets('Ctrl+Shift+D with nothing selected cuts nothing',
+        (tester) async {
+      final p = withComp();
+      p.comp.addSolidLayer();
+      p.uiState.playheadFrame.value = 12;
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyD);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+
+      expect(p.comp.getLayers().length, 1);
+    });
+
+    /// The field a readout turns into when it is clicked.
+    Finder fieldIn(String key) => find.descendant(
+          of: find.byKey(ValueKey<String>(key)),
+          matching: find.byType(EditableText),
+        );
+
+    /// The toolbar's two readouts are typed into, not merely read (K-287),
+    /// and neither can send the playhead out of the composition.
+    testWidgets('typing a timecode moves the playhead, clamped to the comp',
+        (tester) async {
+      final p = withComp();
+      p.uiState.playheadFrame.value = 0;
+      p.uiState.model.refresh();
+      await mount(tester, p);
+      final last = p.comp.durationFrames() - 1;
+      final (fpsNum, fpsDen) = p.uiState.model.fpsExact;
+
+      await tester.tap(find.byKey(const ValueKey('tl-timecode')));
+      await tester.pump();
+      await tester.enterText(fieldIn('tl-timecode'), '00:00:01:00');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(p.uiState.playheadFrame.value, (fpsNum / fpsDen).ceil(),
+          reason: 'a second in, counted at this comp\'s rate');
+
+      await tester.tap(find.byKey(const ValueKey('tl-timecode')));
+      await tester.pump();
+      await tester.enterText(fieldIn('tl-timecode'), '99:00:00:00');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(p.uiState.playheadFrame.value, last,
+          reason: 'past the end of the comp is the end of the comp');
+    });
+
+    testWidgets('typing a frame number moves the playhead, clamped',
+        (tester) async {
+      final p = withComp();
+      p.uiState.playheadFrame.value = 0;
+      p.uiState.model.refresh();
+      await mount(tester, p);
+      final last = p.comp.durationFrames() - 1;
+
+      await tester.tap(find.byKey(const ValueKey('tl-frame')));
+      await tester.pump();
+      await tester.enterText(fieldIn('tl-frame'), 'f42');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(p.uiState.playheadFrame.value, 42,
+          reason: 'the f the readout wears is optional on the way back in');
+
+      await tester.tap(find.byKey(const ValueKey('tl-frame')));
+      await tester.pump();
+      await tester.enterText(fieldIn('tl-frame'), '-8');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(p.uiState.playheadFrame.value, 0,
+          reason: 'before the start is the start');
+
+      await tester.tap(find.byKey(const ValueKey('tl-frame')));
+      await tester.pump();
+      await tester.enterText(fieldIn('tl-frame'), '999999');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(p.uiState.playheadFrame.value, last);
+    });
+
+    testWidgets('the razor is the toolbar tool, and undoes as one step',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      p.uiState.tools.select(ToolMode.razor);
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      final bar = find.byKey(ValueKey<String>(
+          'tl-bar-body-${layer.internallayerId}'));
+      final box = tester.getRect(bar);
+      await tester.tapAt(Offset(box.left + box.width / 3, box.center.dy));
+      await tester.pumpAndSettle();
+      expect(p.comp.getLayers().length, 2);
+
+      p.state.project!.undo();
+      expect(p.comp.getLayers().length, 1,
+          reason: 'a razor cut is one undo step (docs/07 §4.7)');
+    });
+
+    testWidgets('with the Selection tool a click on a bar selects rather than'
+        ' cutting', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      final bar = find.byKey(ValueKey<String>(
+          'tl-bar-body-${layer.internallayerId}'));
+      await tester.tap(bar);
+      await tester.pumpAndSettle();
+
+      expect(p.comp.getLayers().length, 1, reason: 'nothing was cut');
+      expect(p.uiState.selectedLayer.value?.internallayerId,
+          layer.internallayerId);
+    });
+
+    /// **Cutting a retimed layer gives each half an end of its own (K-221).**
+    ///
+    /// Both halves keep the whole speed map, so without a key at the cut the
+    /// two ramps stay welded: bending one half's speed would bend the other's,
+    /// because they are the same curve. The key goes in preserving the curve's
+    /// shape, so the cut itself changes nothing that plays.
+    /// Cut a layer at the middle of its bar with the razor, and hand back the
+    /// halves.
+    Future<List<LayerReference>> cutInHalf(
+        WidgetTester tester, dynamic p, LayerReference layer) async {
+      p.uiState.tools.select(ToolMode.razor);
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      final bar =
+          find.byKey(ValueKey<String>('tl-bar-body-${layer.internallayerId}'));
+      final box = tester.getRect(bar);
+      await tester.tapAt(Offset(box.left + box.width / 2, box.center.dy));
+      await tester.pumpAndSettle();
+      return (p.comp as CompositionReference).getLayers();
+    }
+
+    int keysOf(LayerReference layer) {
+      final retime = layer.getRetimeProperty();
+      return retime is BridgeScalar_Keyframed ? retime.field0.length : 0;
+    }
+
+    /// **A cut only keys a layer that has actually been retimed** (K-236).
+    /// Switching Retime on installs the identity map, so the property being
+    /// there says nothing about whether the layer has been retimed — and a cut
+    /// that dropped keys into an untouched map left the user keys to notice and
+    /// remove for a cut they had asked nothing else of.
+    testWidgets('cutting a layer nobody retimed leaves its map alone',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      expect(layer.toggleRetimeProperty(), isTrue,
+          reason: 'the identity map goes on');
+      final keysBefore = keysOf(layer);
+
+      final after = await cutInHalf(tester, p, layer);
+
+      expect(after.length, 2, reason: 'it still cuts');
+      for (final half in after) {
+        expect(keysOf(half), keysBefore,
+            reason: 'and puts no keys into a map nobody has shaped');
+      }
+    });
+
+    testWidgets('cutting a retimed layer puts a keyframe at the cut, on both'
+        ' halves', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      expect(layer.toggleRetimeProperty(), isTrue);
+      // Half speed, which is a map somebody has shaped: the layer's first
+      // second shows the source's first half-second. Both halves of a cut
+      // would otherwise share one curve, and bending one would bend the other.
+      layer.setRetimeProperty(
+        value: BridgeScalar.keyframed([
+          for (final (frame, value) in [(0, 0.0), (60, 0.5)])
+            BridgeKeyframe(
+              time: p.comp.timeOfFrame(frame: frame),
+              value: value,
+              interpIn: const BridgeSideInterp.linear(),
+              interpOut: const BridgeSideInterp.linear(),
+            ),
+        ]),
+      );
+      final keysBefore = keysOf(layer);
+      expect(keysBefore, greaterThan(0));
+
+      final after = await cutInHalf(tester, p, layer);
+
+      expect(after.length, 2);
+      for (final half in after) {
+        expect(keysOf(half), keysBefore + 1,
+            reason: 'both carry the key the cut added, so each half has an end '
+                'of its own to hold');
+      }
+    });
+
+    /// Masks appear in the fold-out under their own heading, and only once the
+    /// layer has one — the same rule Effects follows (K-222).
+    testWidgets('a masked layer grows a Masks heading in its twirl-down',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      final twirl =
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}'));
+      await tester.tap(twirl);
+      await tester.pumpAndSettle();
+      expect(find.text('Transform'), findsOneWidget);
+      expect(find.text('Masks'), findsNothing,
+          reason: 'an empty heading is a promise the row cannot keep');
+
+      layer.addMask(
+        mask: BridgeMask(
+          id: UuidValue.fromString(const Uuid().v4()),
+          name: 'Ellipse',
+          vertices: const [
+            BridgeVertex(
+                x: 0, y: 0, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+            BridgeVertex(
+                x: 100, y: 0, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+            BridgeVertex(
+                x: 100, y: 80, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+          ],
+          closed: true,
+          inverted: false,
+          opacity: 100,
+        ),
+      );
+      p.uiState.model.refresh();
+      await tester.pumpAndSettle();
+
+      expect(find.text('Masks'), findsOneWidget);
+      // And it opens onto the mask itself.
+      await tester.tap(find.byKey(ValueKey<String>(
+          'tl-group-${layer.internallayerId}/masks')));
+      await tester.pumpAndSettle();
+      expect(find.text('Ellipse'), findsOneWidget);
+
+      // The invert switch writes through to the document.
+      final masks = layer.getMasks();
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-mask-invert-${masks.single.id}')));
+      await tester.pumpAndSettle();
+      expect(layer.getMasks().single.inverted, isTrue);
+    });
+
+    /// Give [layer] a mask, mount, and open the twirls that show its row.
+    Future<void> openMaskRow(
+        WidgetTester tester, dynamic p, LayerReference layer, String name) async {
+      layer.addMask(
+        mask: BridgeMask(
+          id: UuidValue.fromString(const Uuid().v4()),
+          name: name,
+          vertices: const [
+            BridgeVertex(
+                x: 0, y: 0, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+            BridgeVertex(
+                x: 100, y: 0, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+            BridgeVertex(
+                x: 100, y: 80, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+          ],
+          closed: true,
+          inverted: false,
+          opacity: 100,
+        ),
+      );
+      (p.uiState as LumitUiState).model.refresh();
+      await mount(tester, p);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pumpAndSettle();
+      await tester.tap(find
+          .byKey(ValueKey<String>('tl-group-${layer.internallayerId}/masks')));
+      await tester.pumpAndSettle();
+      expect(find.text(name), findsOneWidget);
+    }
+
+    /// **A mask's opacity was not undoable (K-234).** Its field wrote on every
+    /// drag tick, so a drag left a stack of near-identical steps and one Ctrl+Z
+    /// backed out a single percent — which looks like nothing happening. The
+    /// drag is staged now, exactly as every other value row here stages its.
+    testWidgets('dragging a mask opacity is ONE undo step', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await openMaskRow(tester, p, layer, 'Ellipse');
+
+      final id = layer.getMasks().single.id;
+      final field = find.byKey(ValueKey<String>('tl-mask-opacity-$id'));
+      final gesture = await tester.startGesture(tester.getCenter(field));
+      await tester.pump();
+      for (var i = 0; i < 20; i++) {
+        await gesture.moveBy(const Offset(-3, 0));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(layer.getMasks().single.opacity, lessThan(100),
+          reason: 'the drag reached the mask');
+
+      p.state.project!.undo();
+      expect(layer.getMasks().single.opacity, 100,
+          reason: 'ONE undo returns the opacity it had before the drag');
+    });
+
+    /// **A mask opacity drag shows while it is dragged** (K-240). The last of
+    /// the three whole-list rows to preview: K-234 staged it so the drag was one
+    /// undo step, which left the picture still until the button came up, and
+    /// K-239 fixed exactly that for paint and shape art.
+    testWidgets('a mask opacity drag shows before it commits', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await openMaskRow(tester, p, layer, 'Ellipse');
+
+      final id = layer.getMasks().single.id;
+      final field = find.byKey(ValueKey<String>('tl-mask-opacity-$id'));
+      final gesture = await tester.startGesture(tester.getCenter(field));
+      await tester.pump();
+      for (var i = 0; i < 20; i++) {
+        await gesture.moveBy(const Offset(-3, 0));
+        await tester.pump();
+      }
+
+      expect(layer.getMasks().single.opacity, 100,
+          reason: 'a drag in flight writes nothing');
+      expect(
+          find.descendant(of: field, matching: find.textContaining('100%')),
+          findsNothing,
+          reason: 'the row shows the value being dragged, not the stored one');
+      expect(tester.takeException(), isNull,
+          reason: 'the preview request is a courtesy and never a crash');
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(layer.getMasks().single.opacity, lessThan(100),
+          reason: 'the release is what commits');
+    });
+
+    /// **A mask row is a property row (K-234).** It joins the same selection
+    /// every other row is in, so it lights up, the heading holding it marks
+    /// itself, and Delete has something to act on.
+    testWidgets('clicking a mask selects its row', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await openMaskRow(tester, p, layer, 'Ellipse');
+
+      final t = LumitTheme.dark();
+      Color? fillOver(String text) {
+        final box = find.ancestor(
+            of: find.text(text), matching: find.byType(Container));
+        return (tester.widget<Container>(box.first).decoration as BoxDecoration)
+            .color;
+      }
+
+      expect(fillOver('Ellipse'), isNull, reason: 'nothing picked to start');
+
+      await tester.tap(find.text('Ellipse'));
+      await tester.pump();
+
+      expect(fillOver('Ellipse'), t.selectionFill,
+          reason: 'the mask row is the one selected');
+      expect(fillOver('Masks'), t.selectionFill.withValues(alpha: 0.45),
+          reason: 'the heading holding it marks itself, a shade dimmer');
+    });
+
+    /// **Delete removes the selected mask (K-234).** The shell's Delete deletes
+    /// the selected *layers*; with a mask row picked it stands down and this
+    /// claim runs instead, so the key acts on what is actually selected rather
+    /// than on the layer the mask sits on.
+    testWidgets('Delete removes a selected mask and leaves its layer',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await openMaskRow(tester, p, layer, 'Ellipse');
+      // The layer is selected too, which is the case that used to delete it.
+      p.uiState.setSelection([layer]);
+      await tester.pump();
+
+      final claim = p.uiState.deleteClaim;
+      expect(claim, isNotNull, reason: 'the Timeline claims Delete');
+      expect(claim!(), isFalse,
+          reason: 'with no mask picked the shell keeps the key');
+
+      await tester.tap(find.text('Ellipse'));
+      await tester.pump();
+      expect(p.uiState.deleteClaim!(), isTrue,
+          reason: 'with a mask picked the Timeline takes it');
+      await tester.pumpAndSettle();
+
+      expect(layer.getMasks(), isEmpty, reason: 'the mask is gone');
+      expect(p.comp.getLayers(), hasLength(1),
+          reason: 'and its layer is still there');
+      expect(find.text('Masks'), findsNothing,
+          reason: 'the heading goes with the last mask under it');
+    });
+
+    /// Paint strokes list under their own heading, between Masks and Effects —
+    /// the order the picture is built in (K-227).
+    testWidgets('a painted layer grows a Paint heading in its twirl-down',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      final twirl =
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}'));
+      await tester.tap(twirl);
+      await tester.pumpAndSettle();
+      expect(find.text('Paint'), findsNothing,
+          reason: 'an empty heading is a promise the row cannot keep');
+
+      layer.addStroke(
+        stroke: BridgeStroke(
+          id: UuidValue.fromString(const Uuid().v4()),
+          name: 'Brush 1',
+          points: const [
+            BridgeStrokePoint(x: 10, y: 10),
+            BridgeStrokePoint(x: 40, y: 25),
+          ],
+          colour: const BridgeColourRgba(r: 1, g: 0, b: 0, a: 1),
+          width: 20,
+          hardness: 0.8,
+          opacity: 100,
+          mode: BridgePaintMode.paint,
+          cloneOffsetX: 0,
+          cloneOffsetY: 0,
+        ),
+      );
+      p.uiState.model.refresh();
+      await tester.pumpAndSettle();
+
+      expect(find.text('Paint'), findsOneWidget);
+      await tester.tap(find.byKey(
+          ValueKey<String>('tl-group-${layer.internallayerId}/paint')));
+      await tester.pumpAndSettle();
+      expect(find.text('Brush 1'), findsOneWidget);
+
+      // And the row's opacity writes through to the document.
+      final stroke = layer.getPaint().single;
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-stroke-opacity-${stroke.id}')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.byKey(ValueKey<String>('tl-stroke-opacity-${stroke.id}')), '40');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(layer.getPaint().single.opacity, 40);
+    });
+
+    /// **A stroke's opacity was not undoable.** The same fault the mask row had
+    /// under K-234, and for the same reason: the row was written from the mask
+    /// row as it stood *before* that fix, so it committed on every tick of the
+    /// drag. A drag left a stack of near-identical ops and one `Ctrl+Z` backed
+    /// out a single percent, which reads as undo not working at all.
+    testWidgets('dragging a stroke opacity is ONE undo step', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.addStroke(
+        stroke: BridgeStroke(
+          id: UuidValue.fromString(const Uuid().v4()),
+          name: 'Brush 1',
+          points: const [
+            BridgeStrokePoint(x: 10, y: 10),
+            BridgeStrokePoint(x: 40, y: 25),
+          ],
+          colour: const BridgeColourRgba(r: 1, g: 0, b: 0, a: 1),
+          width: 20,
+          hardness: 0.8,
+          opacity: 100,
+          mode: BridgePaintMode.paint,
+          cloneOffsetX: 0,
+          cloneOffsetY: 0,
+        ),
+      );
+      p.uiState.model.refresh();
+      await mount(tester, p);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pumpAndSettle();
+      await tester.tap(find
+          .byKey(ValueKey<String>('tl-group-${layer.internallayerId}/paint')));
+      await tester.pumpAndSettle();
+
+      final id = layer.getPaint().single.id;
+      final field = find.byKey(ValueKey<String>('tl-stroke-opacity-$id'));
+      final gesture = await tester.startGesture(tester.getCenter(field));
+      await tester.pump();
+      for (var i = 0; i < 20; i++) {
+        await gesture.moveBy(const Offset(-3, 0));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(layer.getPaint().single.opacity, lessThan(100),
+          reason: 'the drag reached the stroke');
+
+      p.state.project!.undo();
+      expect(layer.getPaint().single.opacity, 100,
+          reason: 'ONE undo returns the opacity it had before the drag');
+    });
+
+    /// **A dragged stroke opacity shows while it is dragged** (K-239).
+    ///
+    /// Staging the drag made it one undo step (K-238) but stopped the picture
+    /// moving until the button came up — the wrong half of the bargain. The
+    /// tick previews and the release commits, so the row reads the value under
+    /// the pointer while the document still holds the old one.
+    testWidgets('a stroke opacity drag shows before it commits', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.addStroke(
+        stroke: BridgeStroke(
+          id: UuidValue.fromString(const Uuid().v4()),
+          name: 'Brush 1',
+          points: const [
+            BridgeStrokePoint(x: 10, y: 10),
+            BridgeStrokePoint(x: 40, y: 25),
+          ],
+          colour: const BridgeColourRgba(r: 1, g: 0, b: 0, a: 1),
+          width: 20,
+          hardness: 0.8,
+          opacity: 100,
+          mode: BridgePaintMode.paint,
+          cloneOffsetX: 0,
+          cloneOffsetY: 0,
+        ),
+      );
+      p.uiState.model.refresh();
+      await mount(tester, p);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pumpAndSettle();
+      await tester.tap(find
+          .byKey(ValueKey<String>('tl-group-${layer.internallayerId}/paint')));
+      await tester.pumpAndSettle();
+
+      final id = layer.getPaint().single.id;
+      final field = find.byKey(ValueKey<String>('tl-stroke-opacity-$id'));
+      final gesture = await tester.startGesture(tester.getCenter(field));
+      await tester.pump();
+      for (var i = 0; i < 20; i++) {
+        await gesture.moveBy(const Offset(-3, 0));
+        await tester.pump();
+      }
+
+      // Mid-drag: the row is showing the value under the pointer, and asking
+      // the engine to draw it — but nothing has been written.
+      expect(layer.getPaint().single.opacity, 100,
+          reason: 'a drag in flight writes nothing');
+      expect(
+          find.descendant(of: field, matching: find.textContaining('100%')),
+          findsNothing,
+          reason: 'the row shows the value being dragged, not the stored one');
+      expect(tester.takeException(), isNull,
+          reason: 'the preview request is a courtesy and never a crash');
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(layer.getPaint().single.opacity, lessThan(100),
+          reason: 'the release is what commits');
+    });
+
+    /// A shape layer lists its art under a Contents heading, above Masks and
+    /// Effects — the order the picture is built in (K-237).
+    testWidgets('a shape layer grows a Contents heading in its twirl-down',
+        (tester) async {
+      final p = withComp();
+      BridgeVertex corner(double x, double y) => BridgeVertex(
+          x: x, y: y, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0);
+      final layer = p.comp.addShapeLayer(
+        name: 'Rectangle',
+        contents: [
+          BridgeShapeItem(
+            id: UuidValue.fromString(const Uuid().v4()),
+            name: 'Rectangle',
+            vertices: [
+              corner(0, 0),
+              corner(60, 0),
+              corner(60, 40),
+              corner(0, 40),
+            ],
+            closed: true,
+            fill: const BridgeColourRgba(r: 1, g: 0, b: 0, a: 1),
+            stroke: null,
+            strokeWidth: 0,
+            opacity: 100,
+          ),
+        ],
+      );
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pumpAndSettle();
+      expect(find.text('Contents'), findsOneWidget);
+
+      await tester.tap(find.byKey(
+          ValueKey<String>('tl-group-${layer.internallayerId}/contents')));
+      await tester.pumpAndSettle();
+      expect(find.text('Rectangle'), findsWidgets);
+
+      // The row's opacity writes through to the document.
+      final item = layer.getShapeContents().single;
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-shape-opacity-${item.id}')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.byKey(ValueKey<String>('tl-shape-opacity-${item.id}')), '30');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(layer.getShapeContents().single.opacity, 30);
+    });
 
     testWidgets('without a composition it says so', (tester) async {
       final p = freshProject();
@@ -363,6 +1074,39 @@ void main() {
           reason: 'the edit landed in the key under the playhead');
     });
 
+    /// The Retime row reads as a clock, not as a decimal number of seconds
+    /// (K-287, realising K-075) — and the Settings switch puts the seconds
+    /// field back for anyone who wants sub-frame precision.
+    testWidgets('Retime reads as a timecode, or as seconds when asked',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.toggleRetimeProperty();
+      p.uiState.playheadFrame.value = 0;
+      p.uiState.model.refresh();
+      await mount(tester, p);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pump();
+
+      // Frame zero of the source at frame zero of the comp: an identity map
+      // starts where the media does.
+      Finder inRetimeRow(Finder matching) => find.descendant(
+            of: find.byKey(const ValueKey('tl-retime-seconds')),
+            matching: matching,
+          );
+      expect(inRetimeRow(find.text('00:00:00:00')), findsOneWidget,
+          reason: 'the source position is a clock face');
+      expect(inRetimeRow(find.textContaining(' s')), findsNothing,
+          reason: 'and not a number of seconds');
+
+      p.uiState.workspace.interface.retimeInSeconds = true;
+      p.uiState.model.refresh();
+      await tester.pump();
+      expect(inRetimeRow(find.text('0.000 s')), findsOneWidget,
+          reason: 'the setting puts the seconds field back');
+    });
+
     /// An animated value stays editable in the outline (docs/07 §4.3): on a
     /// keyframe the edit lands in that key; between keyframes it plants one.
     /// Fails if the cell falls back to a read-only "animated" label, or if it
@@ -628,6 +1372,178 @@ void main() {
           reason: 'with the magnet off it may land between frames');
     });
 
+    /// **A key lands on the marker it is dragged near** (docs/07 §4.5). The
+    /// magnet used to cover exactly one snap — a whole frame — and the spec's
+    /// other sources and targets were still to build. This is the one that
+    /// matters most in use: beat-marker snapping is the beat-sync covenant's
+    /// daily face, and a beat marker is an ordinary marker.
+    testWidgets('a lane keyframe snaps onto a marker, and Ctrl lets it past',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.setTransform(
+        prop: BridgeTransformProp.opacity,
+        value: BridgeScalar.keyframed([
+          for (final f in [600, 2400])
+            BridgeKeyframe(
+              time: p.comp.timeOfFrame(frame: f),
+              value: f.toDouble(),
+              interpIn: const BridgeSideInterp.linear(),
+              interpOut: const BridgeSideInterp.linear(),
+            ),
+        ]),
+      );
+      // A marker a little past where a ten-frame drag would land, so the snap
+      // has to reach *forwards* for it rather than the drag happening to hit.
+      const markerFrame = 611;
+      writeMarkers(p.comp, [
+        BridgeMarker(
+          id: UuidValue.fromString(const Uuid().v4()),
+          time: p.comp.timeOfFrame(frame: markerFrame),
+          label: 'Beat',
+        ),
+      ]);
+      await mount(tester, p);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pump();
+      await tester.tap(find.text('Transform'));
+      await tester.pump();
+
+      List<BridgeKeyframe> keys() =>
+          (layer.getTransform().opacity as BridgeScalar_Keyframed).field0;
+      final laneKey = ValueKey<String>(
+          'tl-keys-${layer.internallayerId}/transform/opacity');
+      final handle = find.byKey(ValueKey<String>(
+          'tl-key-${layer.internallayerId}/transform/opacity#0'));
+      final perFrame =
+          tester.getRect(find.byKey(laneKey)).width / p.comp.durationFrames();
+
+      // Ten frames lands at 610 — one frame short of the marker, which at this
+      // zoom is well inside the eight-pixel reach.
+      await tester.drag(handle, Offset(perFrame * 10, 0));
+      await tester.pumpAndSettle();
+      expect(p.comp.frameAtTime(time: keys().first.time), markerFrame,
+          reason: 'the key landed ON the marker, not one frame short of it');
+
+      p.state.project!.undo();
+      expect(p.comp.frameAtTime(time: keys().first.time), 600);
+      // The lane draws from the read model, so it has to be told the undo
+      // happened before the next drag starts from where the key really is.
+      p.uiState.model.refresh();
+      await tester.pumpAndSettle();
+
+      // Ctrl held suspends the snap, so the same drag lands where it was aimed
+      // (docs/07 §4.5) — the way out when the wanted place is exactly where a
+      // snap will not allow.
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      addTearDown(() async =>
+          tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft));
+      await tester.drag(handle, Offset(perFrame * 10, 0));
+      await tester.pumpAndSettle();
+      expect(p.comp.frameAtTime(time: keys().first.time), 610,
+          reason: 'Ctrl held let the key past the marker');
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    });
+
+    /// **The one-frame regression.** A real drag is many pointer moves with a
+    /// rebuild between each; the tests above are one move, which is the only
+    /// reason they passed. Part-way through a real drag the snap indicator
+    /// appears, and it used to be an unkeyed child inserted ahead of the
+    /// diamonds — so Flutter paired it with the first diamond, the first
+    /// diamond with the second, and rebuilt every gesture detector in the lane.
+    /// The detector holding the pointer went with them, which ended the drag
+    /// where it stood: the key committed the two or three pixels travelled so
+    /// far and sat there however much further it was dragged, and a second drag
+    /// died on the same target and put it back. Reported as "a keyframe can
+    /// only be dragged one frame, and dragging again moves it back".
+    testWidgets('a lane keyframe drags past a snap, over many pointer moves',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.setTransform(
+        prop: BridgeTransformProp.opacity,
+        value: BridgeScalar.keyframed([
+          for (final f in [600, 2400])
+            BridgeKeyframe(
+              time: p.comp.timeOfFrame(frame: f),
+              value: f.toDouble(),
+              interpIn: const BridgeSideInterp.linear(),
+              interpOut: const BridgeSideInterp.linear(),
+            ),
+        ]),
+      );
+      // A marker in the middle of the journey, so the drag is certain to be
+      // caught by a snap on its way past — the moment the indicator appears.
+      const markerFrame = 800;
+      writeMarkers(p.comp, [
+        BridgeMarker(
+          id: UuidValue.fromString(const Uuid().v4()),
+          time: p.comp.timeOfFrame(frame: markerFrame),
+          label: 'Beat',
+        ),
+      ]);
+      await mount(tester, p);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pump();
+      await tester.tap(find.text('Transform'));
+      await tester.pump();
+
+      List<BridgeKeyframe> keys() =>
+          (layer.getTransform().opacity as BridgeScalar_Keyframed).field0;
+      final laneKey = ValueKey<String>(
+          'tl-keys-${layer.internallayerId}/transform/opacity');
+      final handle = find.byKey(ValueKey<String>(
+          'tl-key-${layer.internallayerId}/transform/opacity#0'));
+      final perFrame =
+          tester.getRect(find.byKey(laneKey)).width / p.comp.durationFrames();
+
+      // The little push that gets the gesture past the pointer slop.
+      const nudge = 3.0;
+
+      // A drag as one really arrives: a nudge to start it, then a run of small
+      // moves with a frame rendered between each. Returns the frame the key
+      // ended on. A mouse, so the slop is a single pixel rather than a
+      // finger's worth.
+      Future<int> dragOn(double frames, {int steps = 18}) async {
+        final gesture = await tester.startGesture(tester.getCenter(handle),
+            kind: PointerDeviceKind.mouse);
+        await gesture.moveBy(const Offset(nudge, 0));
+        await tester.pump();
+        for (var i = 0; i < steps; i++) {
+          await gesture.moveBy(Offset(frames * perFrame / steps, 0));
+          await tester.pump();
+        }
+        await gesture.up();
+        await tester.pumpAndSettle();
+        return p.comp.frameAtTime(time: keys().first.time);
+      }
+
+      // Four hundred frames of travel, measured in pixels from the axis so the
+      // drag stays inside the comp whatever width the panel gives the lanes.
+      const travel = 400.0;
+      // The nudge that starts the drag is spent on the slop when something else
+      // is in the gesture arena and counted when the diamond is alone in it, so
+      // the landing is allowed its worth of frames either way. Either is a
+      // world away from the fault, which left the key on the marker 200 frames
+      // back.
+      final slack = nudge / perFrame + 2;
+
+      final landed = await dragOn(travel);
+      expect(landed, isNot(markerFrame),
+          reason: 'the drag went past the marker rather than dying on it');
+      expect(landed.toDouble(), closeTo(600 + travel, slack),
+          reason: 'the key travelled the whole drag, not its first moments');
+      expect(keys(), hasLength(2), reason: 'no key added or lost');
+
+      // And again from where it now is: the second drag carries on rather than
+      // being pulled back to what caught the first.
+      final again = await dragOn(travel);
+      expect(again.toDouble(), closeTo(landed + travel, slack),
+          reason: 'a second drag moves it on again, not back');
+    });
+
     /// **The undo regression.** A drag on a *keyframed* value used to commit
     /// on every tick — [DragValueField] falls back to `onChanged` per tick
     /// when no `onChangeLive` is given — so the undo stack filled with a step
@@ -726,6 +1642,60 @@ void main() {
               .color,
           t.selectionFill.withValues(alpha: 0.45),
           reason: "and so does the property's layer");
+    });
+
+    /// **Picking a layer on the picture reaches the Timeline** (K-275).
+    ///
+    /// The Viewer's click goes straight to the shell's selection
+    /// (`setSelection`), never through this panel's own click path — so the
+    /// property selection, the graph's keys and the row highlight, all of which
+    /// belong to the layer that *was* chosen, stayed behind. The previous
+    /// layer's rows kept their fill while a different layer was selected: two
+    /// layers appearing chosen at once, which is what K-203 set out to remove.
+    testWidgets('a selection made outside the panel clears the property one',
+        (tester) async {
+      final p = withComp();
+      final first = p.comp.addSolidLayer();
+      first.addEffect(name: 'blur');
+      final second = p.comp.addSolidLayer();
+      await mount(tester, p);
+      final id = first.internallayerId;
+
+      // Select a property on the first layer, the ordinary way.
+      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
+      await tester.pump();
+      await tester.tap(find.text('Effects'));
+      await tester.pump();
+      await tester.tap(find.text('Gaussian blur'));
+      await tester.pump();
+      await tester.tap(find.text('Radius'));
+      await tester.pump();
+
+      final t = LumitTheme.dark();
+      Color? fillOver(String text) {
+        final box = find.ancestor(
+            of: find.text(text), matching: find.byType(Container));
+        return (tester.widget<Container>(box.first).decoration as BoxDecoration)
+            .color;
+      }
+      expect(fillOver('Radius'), t.selectionFill, reason: 'picked to start');
+
+      // Now the Viewer's path: the shell's selection changes under the panel.
+      p.uiState.setSelection([second]);
+      await tester.pump();
+
+      expect(fillOver('Radius'), isNull,
+          reason: 'the property belonged to the layer that was let go of');
+      expect(fillOver('Gaussian blur'), isNull,
+          reason: 'and so did the mark on the effect holding it');
+      expect(
+          (tester
+                  .widget<Container>(
+                      find.byKey(ValueKey<String>('tl-rowbody-$id')))
+                  .decoration as BoxDecoration)
+              .color,
+          isNot(t.selectionFill.withValues(alpha: 0.45)),
+          reason: 'the old layer stops looking chosen');
     });
 
     /// **The highlight with nowhere to sit (K-203).** A selected property
@@ -863,6 +1833,222 @@ void main() {
           reason: 'a layer with nothing animated stays shut');
     });
 
+    /// **The reveal keys went nowhere.** `P`, `S`, `R`, `T` and `A` were bound
+    /// in the Timeline context with no handler to answer them (docs/07 §4.3),
+    /// so the only way to see one property was to twirl the whole Transform
+    /// group open and read past the other four.
+    testWidgets('P reveals Position alone, and a second press shuts the layer',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      p.uiState.setSelection([layer]);
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyP);
+      await tester.pump();
+      expect(find.text('Position'), findsAtLeastNWidgets(1));
+      expect(find.text('Scale'), findsNothing,
+          reason: 'a solo shows the one property it names');
+      expect(find.text('Opacity'), findsNothing);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyP);
+      await tester.pump();
+      expect(find.text('Position'), findsNothing,
+          reason: 'the key is a toggle, as AE\'s is');
+    });
+
+    /// A reveal names one row, so the Retime row above Transform stands down
+    /// with the rest — "show me Scale" that also showed Retime would be
+    /// answering a question nobody asked.
+    testWidgets('a reveal stands the Retime row down with the others',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.toggleRetimeProperty();
+      p.uiState.setSelection([layer]);
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      // Twirled open the ordinary way, the Retime row is there (docs/07 §4.3).
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pump();
+      expect(find.text('Retime'), findsAtLeastNWidgets(1));
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyS);
+      await tester.pump();
+      expect(find.text('Scale'), findsAtLeastNWidgets(1));
+      expect(find.text('Retime'), findsNothing);
+    });
+
+    /// **`Ctrl+Shift+C` belongs to the shell now.** Precompose asks two
+    /// questions before it packs anything (docs/07 §13.4), so the panel no
+    /// longer answers the key itself — it declines, and the shell's dialogue
+    /// takes it. What matters here is that the panel does not quietly pack the
+    /// selection on its own, which is what it used to do.
+    testWidgets('Ctrl+Shift+C is left for the shell to answer', (tester) async {
+      final p = withComp();
+      final lower = p.comp.addSolidLayer();
+      final upper = p.comp.addSolidLayer();
+      p.comp.addSolidLayer();
+      p.uiState.setSelection([upper, lower]);
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+
+      expect(p.comp.getLayers().length, 3,
+          reason: 'nothing was packed without the dialogue being answered');
+      expect(p.uiState.selectedLayers.value.length, 2,
+          reason: 'and the selection is untouched');
+    });
+
+    /// **`[` and `]` were bound and unanswered too.** They move the layer so
+    /// that end lands on the playhead; with `Alt` they trim it there instead,
+    /// under the same rules the bar's own drag follows.
+    testWidgets('[ moves the layer to the playhead and Alt+] trims it there',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      final before = layer.getSpan();
+      final length = before.outPoint.num / before.outPoint.den -
+          before.inPoint.num / before.inPoint.den;
+      p.uiState.setSelection([layer]);
+      p.uiState.playheadFrame.value = 20;
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.bracketLeft);
+      await tester.pumpAndSettle();
+      final moved = layer.getSpan();
+      final at20 = p.comp.timeOfFrame(frame: 20);
+      expect(moved.inPoint.num / moved.inPoint.den,
+          closeTo(at20.num / at20.den, 1e-9),
+          reason: 'the in point is on the playhead');
+      expect(
+          moved.outPoint.num / moved.outPoint.den -
+              moved.inPoint.num / moved.inPoint.den,
+          closeTo(length, 1e-9),
+          reason: 'a move keeps the length; only a trim changes it');
+
+      p.uiState.playheadFrame.value = 30;
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.bracketRight);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+      await tester.pumpAndSettle();
+      final trimmed = layer.getSpan();
+      final at30 = p.comp.timeOfFrame(frame: 30);
+      expect(trimmed.outPoint.num / trimmed.outPoint.den,
+          closeTo(at30.num / at30.den, 1e-9),
+          reason: 'the out point is on the playhead');
+      expect(trimmed.inPoint, moved.inPoint,
+          reason: 'a trim moves one end, not both');
+    });
+
+    /// **Ctrl+click toggled the layer in and straight back out.** Selection ran
+    /// twice for one click — once on the row's pointer-down and once on its tap
+    /// — which is invisible for a plain click and exactly wrong for a toggle.
+    testWidgets('Ctrl+click adds a layer to the selection and takes it out',
+        (tester) async {
+      final p = withComp();
+      final lower = p.comp.addSolidLayer();
+      final upper = p.comp.addSolidLayer();
+      await mount(tester, p);
+
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-name-${upper.internallayerId}')));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(p.uiState.selectedLayers.value.length, 1);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-name-${lower.internallayerId}')));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(
+          p.uiState.selectedLayerIds,
+          containsAll(<UuidValue>[
+            upper.internallayerId,
+            lower.internallayerId
+          ]));
+
+      // And out again: the same click on a chosen layer un-chooses it.
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-name-${lower.internallayerId}')));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      expect(p.uiState.selectedLayerIds, <UuidValue>{upper.internallayerId});
+    });
+
+    /// Shift extends the selection along the stack, the way it extends a
+    /// property selection along the visible rows (docs/07 §4.3).
+    testWidgets('Shift+click extends the selection down the stack',
+        (tester) async {
+      final p = withComp();
+      final bottom = p.comp.addSolidLayer();
+      final middle = p.comp.addSolidLayer();
+      final top = p.comp.addSolidLayer();
+      await mount(tester, p);
+
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-name-${top.internallayerId}')));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-name-${bottom.internallayerId}')));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+
+      expect(
+          p.uiState.selectedLayerIds,
+          <UuidValue>{
+            top.internallayerId,
+            middle.internallayerId,
+            bottom.internallayerId
+          },
+          reason: 'everything between the two ends, inclusive');
+      expect(p.uiState.selectedLayer.value?.internallayerId,
+          bottom.internallayerId,
+          reason: 'the layer just clicked is the one commands act on');
+    });
+
+    /// Twirling a layer open is not choosing it: the properties belong to that
+    /// layer whether or not it is the one being worked on.
+    testWidgets('the twirl opens a fold without taking the selection',
+        (tester) async {
+      final p = withComp();
+      final lower = p.comp.addSolidLayer();
+      final upper = p.comp.addSolidLayer();
+      await mount(tester, p);
+
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-name-${upper.internallayerId}')));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${lower.internallayerId}')));
+      await tester.pump();
+      expect(find.byKey(ValueKey<String>('tl-lanes-${lower.internallayerId}')),
+          findsOneWidget,
+          reason: 'the fold opened');
+      expect(p.uiState.selectedLayer.value?.internallayerId,
+          upper.internallayerId,
+          reason: 'and the selection stayed where it was');
+
+      // Nor does hiding a layer choose it: the switch groups are controls.
+      await tester.tap(find
+          .byKey(ValueKey<String>('tl-visible-${lower.internallayerId}')));
+      await tester.pump();
+      expect(p.uiState.selectedLayer.value?.internallayerId,
+          upper.internallayerId);
+    });
+
     /// Selecting keyframes on a lane selects the property they belong to, so
     /// the outline follows what was boxed (docs/07 §4.3).
     testWidgets('boxing keyframes on a lane selects their property',
@@ -943,33 +2129,102 @@ void main() {
           reason: 'every other group kept its width');
     });
 
-    /// The bottom bar's zoom: + widens the time axis (the bar stretches) and
-    /// the readout says so; Fit brings it back.
-    testWidgets('the zoom buttons widen the lanes and read out the factor',
+    /// **The bottom bar's zoom is a slider** (owner, 2026-08-06), between a
+    /// small landscape glyph and a large one. Its left end is the whole
+    /// composition; dragging right widens the time axis, and a slider zoom has
+    /// no pointer to zoom about, so it holds the **playhead** still — the
+    /// middle of the scrollbar, which it held first, is a place nobody is
+    /// looking at (K-293).
+    testWidgets('the zoom slider widens the lanes about the playhead',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await mount(tester, p);
+      // Off the middle on purpose: holding the *centre* still would pass a
+      // playhead test that only ever looked at the centre.
+      p.uiState.playheadFrame.value = 20;
+      await tester.pump();
+
+      Rect barRect() => tester.getRect(
+          find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}')));
+      double playheadX() => tester.getRect(find.byType(PlayheadMarker)).left;
+      final before = barRect().width;
+      final playheadBefore = playheadX();
+
+      final slider = find.byKey(const ValueKey('tl-zoom-slider'));
+      expect(slider, findsOneWidget, reason: 'the buttons became a slider');
+      // Drag the handle a third of the way along its track.
+      final track = tester.getRect(slider);
+      await tester.dragFrom(
+        Offset(track.left + 2, track.center.dy),
+        Offset(track.width / 3, 0),
+      );
+      await tester.pumpAndSettle();
+
+      expect(barRect().width, greaterThan(before),
+          reason: 'the comp takes more pixels when zoomed in');
+      expect(playheadX(), moreOrLessEquals(playheadBefore, epsilon: 2),
+          reason: 'the playhead kept the screen position it had');
+    });
+
+    /// **A dragged slider does not fly** (K-293). The flight fills the gap
+    /// between zooms that arrive in steps; a drag is already the motion, and
+    /// animating towards a target the finger keeps moving left the lanes
+    /// trailing the handle by a whole flight — reported as the slider being
+    /// laggy. So the lanes are already at the dragged width *before* anything
+    /// settles.
+    testWidgets('a dragged zoom lands at once, with no flight to wait for',
         (tester) async {
       final p = withComp();
       final layer = p.comp.addSolidLayer();
       await mount(tester, p);
 
-      expect(find.text('100%'), findsOneWidget);
-      final before = tester
-          .getRect(
-              find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}')))
+      double barWidth() => tester
+          .getRect(find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}')))
           .width;
+      final before = barWidth();
 
-      await tester.tap(find.byKey(const ValueKey('tl-zoom-in')));
-      await tester.pumpAndSettle();
-      expect(find.text('150%'), findsOneWidget);
-      final zoomed = tester
-          .getRect(
-              find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}')))
-          .width;
-      expect(zoomed, greaterThan(before),
-          reason: 'the comp takes more pixels when zoomed in');
+      final track = tester.getRect(find.byKey(const ValueKey('tl-zoom-slider')));
+      final gesture =
+          await tester.startGesture(Offset(track.left + 2, track.center.dy));
+      await tester.pump();
+      // Two moves: the first is spent crossing the drag slop, which is what
+      // *starts* the drag; the second is the one the slider reads.
+      await gesture.moveBy(const Offset(20, 0));
+      await tester.pump();
+      await gesture.moveBy(Offset(track.width / 3, 0));
+      // One frame, not `pumpAndSettle`: this is the frame the finger is still
+      // down for.
+      await tester.pump();
+      final duringDrag = barWidth();
+      expect(duringDrag, greaterThan(before),
+          reason: 'the drag was applied in the frame it arrived in');
 
-      await tester.tap(find.byKey(const ValueKey('tl-zoom-fit')));
+      await gesture.up();
       await tester.pumpAndSettle();
-      expect(find.text('100%'), findsOneWidget);
+      expect(barWidth(), moreOrLessEquals(duringDrag, epsilon: 1),
+          reason: 'and nothing was still flying towards it afterwards');
+    });
+
+    /// The slider's two ends are drawn, not looked up, and plainly different
+    /// sizes — which is the whole of what says "less of this / more of this"
+    /// (K-293, K-209).
+    testWidgets('the slider is flanked by a small landscape and a large one',
+        (tester) async {
+      final p = withComp();
+      await mount(tester, p);
+
+      final glyphs = tester
+          .widgetList<CustomPaint>(find.byType(CustomPaint))
+          .where((w) => w.painter is ZoomExtentPainter)
+          .toList();
+      expect(glyphs.length, 2, reason: 'one at each end of the track');
+      final sizes = glyphs.map((g) => g.size.width).toList()..sort();
+      expect(sizes.first, lessThan(sizes.last),
+          reason: 'the pair reads as small and large');
+      expect(sizes.last, lessThan(16),
+          reason: 'both fit the 20px bar, which is why they are painter-drawn '
+              'rather than icon-set glyphs (K-209)');
     });
 
     /// The bar wears the layer's label colour (K-188), so recolouring the
@@ -1015,12 +2270,12 @@ void main() {
       const g = TimelineGroup.values;
       expect(
         reorderedGroups(defaultGroupOrder, g[0], g[3]),
-        [g[1], g[2], g[3], g[0]],
+        [g[1], g[2], g[3], g[0], g[4]],
         reason: 'dragged right, it lands after the target',
       );
       expect(
         reorderedGroups(defaultGroupOrder, g[3], g[0]),
-        [g[3], g[0], g[1], g[2]],
+        [g[3], g[0], g[1], g[2], g[4]],
         reason: 'dragged left, it lands before the target',
       );
       expect(reorderedGroups(defaultGroupOrder, g[1], g[1]), defaultGroupOrder);
@@ -1029,10 +2284,14 @@ void main() {
     /// The value column sits under the render group: everything right of it
     /// in the order contributes its fixed width to the inset.
     test('valueColumnFor measures what sits right of the render group', () {
-      expect(valueColumnFor(defaultGroupOrder, defaultGroupWidths).rightInset,
-          groupDividerWidth + composeGroupWidth);
+      expect(
+          valueColumnFor(defaultGroupOrder, defaultGroupWidths).rightInset,
+          groupDividerWidth +
+              composeGroupWidth +
+              groupDividerWidth +
+              timingsGroupWidth);
       final renderLast = reorderedGroups(
-          defaultGroupOrder, TimelineGroup.render, TimelineGroup.compose);
+          defaultGroupOrder, TimelineGroup.render, TimelineGroup.timings);
       expect(valueColumnFor(renderLast, defaultGroupWidths).rightInset, 0);
 
       // The value cells span the render group as it stands, so dragging that
@@ -1043,6 +2302,28 @@ void main() {
       };
       expect(valueColumnFor(defaultGroupOrder, wider).width,
           renderGroupWidth + 60);
+    });
+
+    /// The render-time readout on a twirled-open effect's heading has to sit
+    /// under the same header the layer rows' numbers do, wherever that column
+    /// has been dragged (docs/13 §7.1) — so a fold row measures its own inset
+    /// rather than assuming the column is last.
+    test('timingsColumnFor follows the render-time column', () {
+      expect(timingsColumnFor(defaultGroupOrder, defaultGroupWidths).rightInset,
+          0,
+          reason: 'shipped last, nothing sits to its right');
+      expect(timingsColumnFor(defaultGroupOrder, defaultGroupWidths).width,
+          timingsGroupWidth);
+      final timingsFirst = reorderedGroups(
+          defaultGroupOrder, TimelineGroup.timings, TimelineGroup.switches);
+      expect(
+        timingsColumnFor(timingsFirst, defaultGroupWidths).rightInset,
+        rightInsetOf(
+            timingsFirst, defaultGroupWidths, TimelineGroup.timings),
+        reason: 'dragged to the front, the inset is everything after it',
+      );
+      expect(timingsColumnFor(timingsFirst, defaultGroupWidths).rightInset,
+          greaterThan(0));
     });
 
     /// The ruler's label spacing thins as the comp zooms out, and its labels
@@ -1067,6 +2348,300 @@ void main() {
       final trimOut = barDragPreview('a', BarGrab.trimOut, 7);
       expect(
           (trimOut.deltaIn, trimOut.deltaOut, trimOut.offsetShift), (0, 7, 0));
+    });
+
+    /// Which part of a bar a press takes hold of. The third-of-the-bar cap is
+    /// the point: without it a short bar is all edge and cannot be moved.
+    test('barGrabAt keeps a middle on even the shortest bar', () {
+      expect(barGrabAt(2, 100), BarGrab.trimIn);
+      expect(barGrabAt(50, 100), BarGrab.move);
+      expect(barGrabAt(97, 100), BarGrab.trimOut);
+      // Nine pixels wide: three each way, and a middle that still moves.
+      expect(barGrabAt(1, 9), BarGrab.trimIn);
+      expect(barGrabAt(4.5, 9), BarGrab.move);
+      expect(barGrabAt(8, 9), BarGrab.trimOut);
+    });
+
+    /// The rule the ends obey (K-211): a source-backed layer stops where its
+    /// media does, and Retime takes the limits off.
+    test('barBounds pins a source-backed layer and frees a retimed one', () {
+      expect(
+        barBounds(startOffsetFrame: 10, sourceFrames: 50, retimed: false),
+        const BarBounds(minIn: 10, maxOut: 60),
+      );
+      expect(
+        barBounds(startOffsetFrame: 10, sourceFrames: 50, retimed: true),
+        BarBounds.free,
+        reason: 'Retime decides its own source times, so the ends are free',
+      );
+      expect(
+        barBounds(startOffsetFrame: 10, sourceFrames: null, retimed: false),
+        BarBounds.free,
+        reason: 'a generated layer — or media that would not read — is free',
+      );
+    });
+
+    /// What the clamp actually does to a gesture in flight.
+    test('clampBarDelta holds a trim inside its source', () {
+      const bounds = BarBounds(minIn: 10, maxOut: 60);
+      int clamp(BarGrab grab, int delta,
+              {int inFrame = 20, int outFrame = 50, BarBounds b = bounds}) =>
+          clampBarDelta(
+              grab: grab,
+              delta: delta,
+              inFrame: inFrame,
+              outFrame: outFrame,
+              bounds: b);
+
+      expect(clamp(BarGrab.trimIn, -5), -5, reason: 'room to spare');
+      expect(clamp(BarGrab.trimIn, -50), -10,
+          reason: 'the head stops on the source\'s first frame');
+      expect(clamp(BarGrab.trimOut, 50), 10,
+          reason: 'the tail stops on the source\'s last frame');
+      expect(clamp(BarGrab.trimOut, 500, b: BarBounds.free), 500,
+          reason: 'a free end goes wherever it is dragged');
+      // A move carries the start offset, so it can never leave the source.
+      expect(clamp(BarGrab.move, 900), 900);
+      // Never inside out: a bar always keeps at least one frame.
+      expect(clamp(BarGrab.trimIn, 100), 29);
+      expect(clamp(BarGrab.trimOut, -100), -29);
+      // A layer already longer than its source keeps the length it has: the
+      // bound holds it still rather than dragging it back.
+      expect(clamp(BarGrab.trimOut, 5, inFrame: 20, outFrame: 80), 0);
+      expect(clamp(BarGrab.trimOut, -5, inFrame: 20, outFrame: 80), -5,
+          reason: 'pulling it back towards the source is always allowed');
+    });
+
+    /// Frames from exact times, in integers (K-184): the panel maps a start
+    /// offset without asking the engine, and must floor the way `frame_at`
+    /// does — including for a layer that starts before the comp.
+    test('frameOfTime floors the way the engine does', () {
+      BridgeRational r(int num, int den) => BridgeRational(num: num, den: den);
+      expect(frameOfTime(r(1, 1), 30, 1), 30);
+      expect(frameOfTime(r(1, 2), 30, 1), 15);
+      expect(frameOfTime(r(1, 30), 24, 1), 0, reason: 'floors, never rounds');
+      expect(frameOfTime(r(-1, 1), 30, 1), -30);
+      expect(frameOfTime(r(-1, 30), 24, 1), -1,
+          reason: 'negative times floor downwards, as div_euclid does');
+      expect(frameOfTime(r(1, 1), 30000, 1001), 29,
+          reason: '29.97: one second is 29 whole frames');
+    });
+
+    /// A Precomp layer cannot be trimmed past the comp it holds — and turning
+    /// Retime on takes the limit off (K-211). Fails without the clamp: the
+    /// tail simply followed the pointer.
+    testWidgets('a precomp bar stops at the end of its source', (tester) async {
+      final p = withComp();
+      final inner = p.state.project!.newComposition(name: 'Inner');
+      // A short source, so the tail can reach the end of it in one drag.
+      final settings = inner.getSettings();
+      inner.setSettings(
+        settings: BridgeCompSettings(
+          name: settings.name,
+          width: settings.width,
+          height: settings.height,
+          fpsNum: settings.fpsNum,
+          fpsDen: settings.fpsDen,
+          duration: const BridgeRational(num: 5, den: 1),
+        ),
+      );
+      final layer = p.comp.addPrecompLayer(comp: inner);
+      final sourceFrames = inner.durationFrames().toInt();
+      // Well inside the source, so there is room to drag outward.
+      layer.setSpan(
+        span: BridgeSpan(
+          inPoint: p.comp.timeOfFrame(frame: 0),
+          outPoint: p.comp.timeOfFrame(frame: 200),
+          startOffset: p.comp.timeOfFrame(frame: 0),
+        ),
+      );
+      await mount(tester, p);
+
+      final fill =
+          find.byKey(ValueKey<String>('tl-bar-fill-${layer.internallayerId}'));
+      // Far more than the source has left: the tail must stop, not follow.
+      await tester.dragFrom(
+        Offset(tester.getRect(fill).right - 2, tester.getRect(fill).center.dy),
+        const Offset(400, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(p.comp.frameAtTime(time: layer.getSpan().outPoint), sourceFrames,
+          reason: 'the tail landed on the source\'s last frame');
+
+      // The corner mark says why it stopped.
+      final marks = tester.widget<CustomPaint>(
+          find.byKey(ValueKey<String>('tl-bar-ends-${layer.internallayerId}')));
+      expect((marks.painter as BarEndMarksPainter).atOut, isTrue);
+
+      // Retime on: the layer now decides its own source times, so it stretches.
+      layer.toggleRetimeProperty();
+      p.uiState.model.refresh();
+      await tester.pumpAndSettle();
+      await tester.dragFrom(
+        Offset(tester.getRect(fill).right - 2, tester.getRect(fill).center.dy),
+        const Offset(100, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(p.comp.frameAtTime(time: layer.getSpan().outPoint),
+          greaterThan(sourceFrames),
+          reason: 'a retimed layer is any length the user drags it to');
+      final retimedMarks = tester.widget<CustomPaint>(
+          find.byKey(ValueKey<String>('tl-bar-ends-${layer.internallayerId}')));
+      expect((retimedMarks.painter as BarEndMarksPainter).atOut, isFalse,
+          reason: 'no limit, no mark');
+    });
+
+    /// Switching Retime on keys the layer where it *is* (K-213): the two
+    /// diamonds land on its own start and end, not at the start of the
+    /// composition. Fails without the comp-clock conversion at the seam — the
+    /// keys drew at frames 0 and (duration) however far along the layer sat.
+    testWidgets('the Retime keys land on the layer, not the comp start',
+        (tester) async {
+      final p = withComp();
+      final inner = p.state.project!.newComposition(name: 'Inner');
+      final layer = p.comp.addPrecompLayer(comp: inner);
+      // Moved along the timeline and trimmed a little off its head, so its own
+      // zero is neither the comp's zero nor its in point.
+      layer.setSpan(
+        span: BridgeSpan(
+          inPoint: p.comp.timeOfFrame(frame: 180),
+          outPoint: p.comp.timeOfFrame(frame: 480),
+          startOffset: p.comp.timeOfFrame(frame: 120),
+        ),
+      );
+      layer.toggleRetimeProperty();
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      final keys = layer.getRetimeProperty()! as BridgeScalar_Keyframed;
+      final frames = [
+        for (final key in keys.field0) p.comp.frameAtTime(time: key.time)
+      ];
+      expect(frames, [180, 480],
+          reason: 'the keys sit on the layer\'s own start and end');
+
+      // And that is where the lane draws them, in the panel's own arithmetic.
+      final fps = p.comp.fps();
+      expect([for (final key in keys.field0) laneKeyFrame(key, fps).round()],
+          [180, 480]);
+    });
+
+    /// A generated layer has no source to run out of: both ends go wherever
+    /// they are dragged, and neither wears a corner mark.
+    testWidgets('a solid bar trims freely and wears no marks', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.setSpan(
+        span: BridgeSpan(
+          inPoint: p.comp.timeOfFrame(frame: 0),
+          outPoint: p.comp.timeOfFrame(frame: 200),
+          startOffset: p.comp.timeOfFrame(frame: 0),
+        ),
+      );
+      await mount(tester, p);
+
+      final fill =
+          find.byKey(ValueKey<String>('tl-bar-fill-${layer.internallayerId}'));
+      await tester.dragFrom(
+        Offset(tester.getRect(fill).right - 2, tester.getRect(fill).center.dy),
+        const Offset(120, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(
+          p.comp.frameAtTime(time: layer.getSpan().outPoint), greaterThan(200));
+
+      final marks = tester.widget<CustomPaint>(
+          find.byKey(ValueKey<String>('tl-bar-ends-${layer.internallayerId}')));
+      expect((marks.painter as BarEndMarksPainter).atIn, isFalse);
+      expect((marks.painter as BarEndMarksPainter).atOut, isFalse);
+      expect(
+          find.byKey(ValueKey<String>('tl-bar-ghost-${layer.internallayerId}')),
+          findsNothing,
+          reason: 'no source, nothing to show past the ends');
+    });
+
+    /// A trimmed source-backed layer shows where its media would reach — the
+    /// faint outline behind the bar (K-212) — and stops showing it once the bar
+    /// fills the source, or once Retime makes "the source's reach" meaningless.
+    /// The one-frame bug: the ghost outline appearing part-way through a trim
+    /// took the bar's place in its Stack, so the bar's element — and the
+    /// recogniser holding the drag — was rebuilt mid-gesture. The bar moved by
+    /// the first pointer event's frames and then went dead, which read as "the
+    /// edge only moves one frame". Fails without the keys on the Stack's
+    /// children; a single-event drag hides it, so this one moves in steps, as
+    /// a hand does.
+    testWidgets('a source-backed edge follows the pointer the whole way',
+        (tester) async {
+      final p = withComp();
+      final inner = p.state.project!.newComposition(name: 'Inner');
+      final layer = p.comp.addPrecompLayer(comp: inner);
+      await mount(tester, p);
+
+      final fill =
+          find.byKey(ValueKey<String>('tl-bar-fill-${layer.internallayerId}'));
+      final rect = tester.getRect(fill);
+      final before = p.comp.frameAtTime(time: layer.getSpan().outPoint);
+      // A mouse: precise pointers have a one-pixel slop, so every step of this
+      // counts as movement. Ten steps, the way a hand drags.
+      final gesture = await tester.startGesture(
+          Offset(rect.right - 2, rect.center.dy),
+          kind: PointerDeviceKind.mouse);
+      for (var i = 0; i < 10; i++) {
+        await gesture.moveBy(const Offset(-4, 0));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      // Forty pixels of pointer, at this zoom, is far more than the couple of
+      // frames one event carries.
+      final after = p.comp.frameAtTime(time: layer.getSpan().outPoint);
+      final perPixel = (before - after) / 40;
+      expect(perPixel, greaterThan(3),
+          reason: 'the edge tracked all forty pixels, not just the first four');
+      expect(
+          find.byKey(ValueKey<String>('tl-bar-ghost-${layer.internallayerId}')),
+          findsOneWidget,
+          reason: 'and the ghost that used to break it is on screen');
+    });
+
+    testWidgets('a trimmed precomp shows how far its source reaches',
+        (tester) async {
+      final p = withComp();
+      final inner = p.state.project!.newComposition(name: 'Inner');
+      final layer = p.comp.addPrecompLayer(comp: inner);
+      final sourceFrames = inner.durationFrames().toInt();
+      final ghost =
+          find.byKey(ValueKey<String>('tl-bar-ghost-${layer.internallayerId}'));
+
+      await mount(tester, p);
+      expect(ghost, findsNothing,
+          reason: 'a layer filling its source has nothing left to show');
+
+      // Crop the tail: the outline now reaches past it, to the source's end.
+      layer.setSpan(
+        span: BridgeSpan(
+          inPoint: p.comp.timeOfFrame(frame: 0),
+          outPoint: p.comp.timeOfFrame(frame: sourceFrames - 300),
+          startOffset: p.comp.timeOfFrame(frame: 0),
+        ),
+      );
+      p.uiState.model.refresh();
+      await tester.pumpAndSettle();
+      expect(ghost, findsOneWidget);
+      final fill =
+          find.byKey(ValueKey<String>('tl-bar-fill-${layer.internallayerId}'));
+      expect(tester.getRect(ghost).right,
+          greaterThan(tester.getRect(fill).right),
+          reason: 'it reaches past the trimmed end');
+      expect(tester.getRect(ghost).left, closeTo(tester.getRect(fill).left, 0.5),
+          reason: 'and not past the end that is still at the source start');
+
+      // Retime on: the source has no reach worth drawing any more.
+      layer.toggleRetimeProperty();
+      p.uiState.model.refresh();
+      await tester.pumpAndSettle();
+      expect(ghost, findsNothing);
     });
 
     /// A layer can start BEFORE the comp (docs/TODO: "re-introduce"): drag a
@@ -1225,6 +2800,57 @@ void main() {
       expect(p.comp.getLayers().single.getName(), contains('shot'));
     });
 
+    /// **A drop used to ignore where it was aimed.** Footage always went on at
+    /// the top of the stack, so building an order meant dragging every clip in
+    /// and then re-sorting it by hand.
+    testWidgets('footage lands where it was dropped, not at the top',
+        (tester) async {
+      final p = withComp();
+      // Three solids to drop between, added bottom-up so the stack reads
+      // Top, Middle, Bottom down the screen. The drop aims at the middle one.
+      for (final name in ['Bottom', 'Middle', 'Top']) {
+        p.comp.addSolidLayer().rename(name: name);
+      }
+      final footage = p.state.project!.importFootage(path: 'C:/clips/shot.mov');
+
+      await tester.pumpWidget(hostPanel(
+        child: const Row(
+          children: [
+            SizedBox(width: 300, child: ProjectPanelFrb()),
+            Expanded(child: TimelinePanelFrb()),
+          ],
+        ),
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(1400, 700),
+      ));
+      await tester.pump();
+
+      final middle = p.comp.getLayers()[1];
+      final row =
+          find.byKey(ValueKey<String>('tl-row-${middle.internallayerId}'));
+      // The upper half of the row: a drop there goes above it, and the centre
+      // is the midpoint the rule flips on.
+      final target = tester.getTopLeft(row) +
+          Offset(tester.getSize(row).width / 2, 5);
+      final from = tester.getCenter(
+          find.byKey(ValueKey<String>('project-row-${footage.internalid}')));
+
+      final gesture = await tester.startGesture(from);
+      await tester.pump(const Duration(milliseconds: 200));
+      // Stepped, for the same arena reason as the drop test above.
+      for (var i = 1; i <= 10; i++) {
+        await gesture.moveTo(Offset.lerp(from, target, i / 10)!);
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect([for (final l in p.comp.getLayers()) l.getName()],
+          ['Top', 'shot.mov', 'Middle', 'Bottom'],
+          reason: 'it went in above the row it was dropped on');
+    });
+
     /// Comps nest by the same gesture: drag one from the Project panel onto
     /// another's Timeline and it lands as a Precomp layer.
     testWidgets('a comp dragged from the Project panel nests as a precomp',
@@ -1268,41 +2894,43 @@ void main() {
       expect(inner.getLayers(), isEmpty);
     });
 
-    /// The layer rows deliberately do *not* rebuild when the playhead moves —
-    /// they used to, sixty times a second during playback, re-asking the engine
-    /// for every layer's name and span each time, and the cost grew with the
-    /// layer count. Only the playhead line redraws now.
+    /// **The cut lands under the blade, not under the playhead (K-220).**
     ///
-    /// The razor is what makes that observable: it reads the playhead when it is
-    /// clicked rather than when its bar was built. If someone reverts to
-    /// capturing the value at build time, the bar has not rebuilt since the
-    /// playhead moved, so the cut lands on the old frame and this fails.
-    testWidgets('the razor cuts where the playhead is now, not where it was',
+    /// The razor used to cut at the playhead wherever the bar was clicked,
+    /// which made it a slower way of pressing Ctrl+Shift+D. docs/07 §4.4 has
+    /// always said "click a clip to cut it at that time"; this is that,
+    /// asserted by putting the playhead somewhere the cut must *not* land.
+    testWidgets('the razor cuts under the pointer, not under the playhead',
         (tester) async {
       final p = withComp();
-      final layer = p.comp.addSequenceLayer();
-      p.uiState.selectedLayer.value = layer;
+      final layer = p.comp.addSolidLayer();
+      p.uiState.tools.select(ToolMode.razor);
+      p.uiState.model.refresh();
       await mount(tester, p);
 
-      // Turn the razor on, then move the playhead — without touching anything
-      // that would rebuild the bar.
-      await openMore(tester);
-      await tester.tap(find.byKey(const ValueKey('tl-razor')));
-      await tester.pumpAndSettle();
-      p.uiState.playheadFrame.value = 30;
+      // The playhead sits at the very start; the click lands well past it.
+      p.uiState.playheadFrame.value = 0;
       await tester.pump();
 
       final bar =
-          find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}'));
-      expect(bar, findsOneWidget);
-      await tester.tap(bar, warnIfMissed: false);
-      await tester.pump();
+          find.byKey(ValueKey<String>('tl-bar-body-${layer.internallayerId}'));
+      final box = tester.getRect(bar);
+      await tester.tapAt(Offset(box.left + box.width / 2, box.center.dy));
+      await tester.pumpAndSettle();
 
-      // A Sequence layer with no clips has nothing to cut, so what is asserted
-      // is the frame the razor asked for rather than the resulting clips: the
-      // playhead must still be at 30, and nothing may have thrown.
       expect(tester.takeException(), isNull);
-      expect(p.uiState.playheadFrame.value, 30);
+      final after = p.comp.getLayers();
+      expect(after.length, 2);
+      // The seam is around the middle of the layer, nowhere near frame 0 —
+      // which a cut at the playhead could not have produced at all (it would
+      // have been refused as outside the span, leaving one layer).
+      final seam = [
+        for (final l in after)
+          l.getSpan().inPoint.num / l.getSpan().inPoint.den,
+      ].reduce((a, b) => a > b ? a : b);
+      expect(seam, greaterThan(0.0));
+      expect(p.uiState.playheadFrame.value, 0,
+          reason: 'and the razor did not move the playhead to do it');
     });
 
     /// The twirl-down the port dropped. A layer opens onto its *section
@@ -1633,27 +3261,172 @@ void main() {
       expect(p.comp.frameAtTime(time: layer.getSpan().inPoint), before,
           reason: 'a locked bar holds still');
 
-      final name = find.byKey(ValueKey<String>('tl-name-$id'));
-      await tester.tap(name);
-      await tester.pump(kDoubleTapMinTime);
-      await tester.tap(name);
+      await tester.tap(find.byKey(ValueKey<String>('tl-name-$id')));
+      // Past the double-tap window, so the recognizer's countdown is not still
+      // running when the test ends.
+      await tester.pump(kDoubleTapTimeout);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
       expect(find.byKey(ValueKey<String>('tl-rename-$id')), findsNothing,
           reason: 'a locked name does not open the editor');
     });
 
-    /// Double-clicking the name turns it into an editor; submitting renames
-    /// the layer through the document (one op, undoable like any other).
-    testWidgets('double-clicking the name renames the layer', (tester) async {
+    /// **The Timeline's half of Copy effect** (K-275). An effect's heading in
+    /// the fold-out offers it; the groupings around it — Transform, Effects,
+    /// Masks, Audio — are not things that can be copied and offer nothing.
+    testWidgets("an effect's heading in the fold-out copies that effect",
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.addEffect(name: 'blur');
+      await mount(tester, p);
+      final id = layer.internallayerId;
+
+      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
+      await tester.pump();
+      await settleFrb(tester, minRounds: 4);
+      // The effect's own heading sits inside the Effects group, so that has to
+      // be open before there is a row to right-click.
+      final effects = find.byKey(ValueKey<String>('tl-group-$id/effects'));
+      final effectsRect = tester.getRect(effects);
+      await tester.tapAt(
+          Offset(effectsRect.left + 6, effectsRect.center.dy));
+      await tester.pump();
+      await settleFrb(tester, minRounds: 4);
+
+      final effect = layer.getEffects().single;
+      final heading = find.byKey(
+          ValueKey<String>('tl-group-$id/effects/${effect.id()}'));
+      expect(heading, findsOneWidget, reason: 'the effect has a heading row');
+
+      expect(p.uiState.clipboard.kind, isNull);
+      await tester.tapAt(tester.getCenter(heading), buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-fx-menu-copy-${effect.id()}')));
+      await tester.pumpAndSettle();
+      expect(p.uiState.clipboard.kind, ClipboardKind.effects);
+
+      // A grouping offers no menu: right-clicking Transform must not open one.
+      await tester.tapAt(
+        tester.getCenter(find.byKey(ValueKey<String>('tl-group-$id/transform'))),
+        buttons: kSecondaryButton,
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Copy effect'), findsNothing,
+          reason: 'Transform is a grouping, not a thing that can be copied');
+    });
+
+    /// **Clicking an effect's heading picks it** (K-300). A heading only
+    /// twirled before, so an effect could not be selected in the Timeline at
+    /// all — and Copy, which acts on the selection, had nothing to take from
+    /// here. The pick is the shell's, so the Effect controls panel shows the
+    /// same one; the twirl beside the name still only twirls.
+    testWidgets("clicking an effect's heading picks it for Copy",
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.addEffect(name: 'blur');
+      p.uiState.setSelection([layer]);
+      await mount(tester, p);
+      final id = layer.internallayerId;
+
+      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
+      await tester.pump();
+      await settleFrb(tester, minRounds: 4);
+      final effects = find.byKey(ValueKey<String>('tl-group-$id/effects'));
+      await tester.tapAt(
+          Offset(tester.getRect(effects).left + 6, tester.getCenter(effects).dy));
+      await tester.pump();
+      await settleFrb(tester, minRounds: 4);
+
+      final effect = layer.getEffects().single;
+      expect(p.uiState.selectedEffects.value, isEmpty);
+      await tester.tap(find
+          .byKey(ValueKey<String>('tl-group-$id/effects/${effect.id()}')));
+      await tester.pump();
+      await settleFrb(tester, minRounds: 4);
+      expect(p.uiState.selectedEffects.value, [effect.id()],
+          reason: 'the row is picked, and the shell knows which effect it is');
+
+      expect(copySelectionFrb(p.uiState), isTrue);
+      expect(p.uiState.clipboard.kind, ClipboardKind.effects,
+          reason: 'Copy took the picked effect, not the layer under it');
+    });
+
+    /// **A locked layer's property rows are read-only too** (K-291). The lock
+    /// used to guard only the *gestures* — the bar, the razor, rename, reorder,
+    /// delete — while the fold-out's transform, effect and volume rows went on
+    /// editing the layer, so the switch did not mean what it says.
+    ///
+    /// Two halves, and this is the interface one: the rows are shown, and their
+    /// numbers are still the document's, but nothing on them can be touched. The
+    /// engine refuses the edit as well (`OpError::LayerLocked`, covered in
+    /// lumit-core), so this is what stops the interface offering a gesture that
+    /// would only be refused.
+    testWidgets("a locked layer's property rows cannot be touched",
+        (tester) async {
       final p = withComp();
       final layer = p.comp.addSolidLayer();
       await mount(tester, p);
       final id = layer.internallayerId;
 
-      final name = find.byKey(ValueKey<String>('tl-name-$id'));
-      await tester.tap(name);
-      await tester.pump(kDoubleTapMinTime);
-      await tester.tap(name);
+      // Twirl the layer open so its Transform rows are on screen.
+      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
+      await tester.pump();
+      await settleFrb(tester, minRounds: 4);
+      final transformGroup =
+          find.byKey(ValueKey<String>('tl-group-$id/transform'));
+      final groupRect = tester.getRect(transformGroup);
+      await tester.tapAt(Offset(groupRect.left + 6, groupRect.center.dy));
+      await tester.pump();
+      await settleFrb(tester, minRounds: 4);
+
+      final position = find.byType(TransformRowFrb);
+      expect(position, findsWidgets, reason: 'the transform rows are on screen');
+      expect(
+        find.ancestor(of: position.first, matching: find.byType(AbsorbPointer)),
+        findsNothing,
+        reason: 'an unlocked layer\'s rows are live',
+      );
+
+      await tester.tap(find.byKey(ValueKey<String>('tl-locked-$id')));
+      await tester.pump();
+      await settleFrb(tester, minRounds: 4);
+      expect(layer.getSwitches().locked, isTrue);
+
+      expect(position, findsWidgets,
+          reason: 'a locked row is shown, not hidden — the numbers still read');
+      expect(
+        find.ancestor(of: position.first, matching: find.byType(AbsorbPointer)),
+        findsWidgets,
+        reason: 'but nothing on it can be touched',
+      );
+      // The group heading stays live: twirling one open is navigation, not
+      // editing, and a locked layer you could not look inside would be worse.
+      final group = find.byKey(ValueKey<String>('tl-group-$id/transform'));
+      expect(
+        find.ancestor(of: group, matching: find.byType(AbsorbPointer)),
+        findsNothing,
+        reason: 'a group row is exempt',
+      );
+    });
+
+    /// Enter turns the selected layer's name into an editor (K-243); submitting
+    /// renames the layer through the document (one op, undoable like any
+    /// other). It used to be a double-click, which now opens the layer.
+    testWidgets('Enter renames the selected layer', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await mount(tester, p);
+      final id = layer.internallayerId;
+
+      await tester.tap(find.byKey(ValueKey<String>('tl-name-$id')));
+      await tester.pump(kDoubleTapTimeout);
+      expect(p.uiState.selectedLayer.value?.internallayerId, id,
+          reason: 'the click picked it');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
 
       final editor = find.byKey(ValueKey<String>('tl-rename-$id'));
@@ -1666,6 +3439,80 @@ void main() {
       expect(layer.getInfo().name, 'Hero solid');
       expect(find.byKey(ValueKey<String>('tl-rename-$id')), findsNothing,
           reason: 'submitting leaves the editor');
+    });
+
+    /// Clicking away from the rename editor finishes the edit and keeps what
+    /// was typed (K-243). Pressing Enter is not the only way people leave a
+    /// field, and the edit used to sit there open and then be lost.
+    testWidgets('clicking elsewhere commits the rename', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      final other = p.comp.addSolidLayer();
+      await mount(tester, p);
+      final id = layer.internallayerId;
+
+      await tester.tap(find.byKey(ValueKey<String>('tl-name-$id')));
+      await tester.pump(kDoubleTapTimeout);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+
+      final editor = find.byKey(ValueKey<String>('tl-rename-$id'));
+      expect(editor, findsOneWidget);
+      await tester.enterText(editor, 'Backplate');
+      await tester.pump();
+
+      // No Enter: click another row, the way a person would.
+      await tester.tap(find
+          .byKey(ValueKey<String>('tl-name-${other.internallayerId}')));
+      await tester.pump(kDoubleTapTimeout);
+
+      expect(layer.getInfo().name, 'Backplate',
+          reason: 'the edit was kept, not thrown away');
+      expect(find.byKey(ValueKey<String>('tl-rename-$id')), findsNothing,
+          reason: 'and the editor closed');
+    });
+
+    /// Double-clicking a Precomp layer opens the comp it draws (K-243) — the
+    /// same thing the Project panel and the Hierarchy do, and what a
+    /// double-click means everywhere else in the application.
+    testWidgets('double-clicking a precomp layer opens its comp',
+        (tester) async {
+      final p = withComp();
+      final inner = p.state.project!.newComposition(name: 'Inner');
+      final layer = p.comp.addPrecompLayer(comp: inner);
+      await mount(tester, p);
+      final id = layer.internallayerId;
+
+      final name = find.byKey(ValueKey<String>('tl-name-$id'));
+      await tester.tap(name);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tap(name);
+      await tester.pumpAndSettle();
+
+      expect(p.uiState.selectedComp?.getSettings().name, 'Inner',
+          reason: 'the nested comp is fronted');
+      expect(find.byKey(ValueKey<String>('tl-rename-$id')), findsNothing,
+          reason: 'and nothing is being renamed');
+    });
+
+    /// Every other kind has no window of its own yet, so a double-click on one
+    /// does nothing at all — and in particular does not rename it.
+    testWidgets('double-clicking any other layer does nothing', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await mount(tester, p);
+      final id = layer.internallayerId;
+      final before = p.uiState.selectedComp;
+
+      final name = find.byKey(ValueKey<String>('tl-name-$id'));
+      await tester.tap(name);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tap(name);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(ValueKey<String>('tl-rename-$id')), findsNothing,
+          reason: 'a double-click is not a rename any more');
+      expect(p.uiState.selectedComp, before, reason: 'and fronts nothing');
     });
 
     /// Clicking anywhere on a layer selects it — including its bar in the
@@ -1878,7 +3725,7 @@ void main() {
       final silent = p.comp.addSolidLayer();
       final audible =
           p.state.project!.importFootage(path: _wavFile('tone.wav'));
-      p.comp.addFootageLayer(footage: audible);
+      p.comp.addFootageLayer(footage: audible, asSequence: false);
       await mount(tester, p);
 
       final footageLayer = p.comp.getLayers().first;
@@ -1911,22 +3758,108 @@ void main() {
               ValueKey<String>('tl-wave-${footageLayer.internallayerId}')),
           findsOneWidget);
 
-      // And the peaks themselves are real: the whole source, bucketed, with
-      // its true length — the data the lane maps through in/out/offset.
-      // `runAsync`, because a real decode completes on real async, which the
-      // test's fake clock would otherwise wait on for ever.
-      final peaks =
-          await tester.runAsync(() => footageLayer.audioPeaks(buckets: 64));
+      // And the peaks themselves are real: the window asked for, bucketed to
+      // the count asked for, with the source's true length beside it — the
+      // data the lane maps through in/out/offset. `runAsync`, because a real
+      // decode completes on real async, which the test's fake clock would
+      // otherwise wait on for ever.
+      final peaks = await tester.runAsync(() => footageLayer.audioPeaks(
+            startSeconds: 0,
+            endSeconds: 0.1,
+            buckets: 64,
+            multiwave: false,
+          ));
       expect(peaks!.durationSeconds, greaterThan(0));
-      expect(peaks.pairs, hasLength(128), reason: 'a (min, max) per bucket');
-      expect(peaks.pairs.any((v) => v.abs() > 0.01), isTrue,
+      expect(peaks.bands, 1, reason: 'one plain wave');
+      expect(peaks.buckets, 64);
+      expect(peaks.values, hasLength(64 * 3),
+          reason: 'a (min, max, rms) per bucket');
+      expect(peaks.values.any((v) => v.abs() > 0.01), isTrue,
           reason: 'a tone is not silence');
+
+      // The multiwave stack: the same buckets three times over, bass, middle
+      // and treble (K-280).
+      final stack = await tester.runAsync(() => footageLayer.audioPeaks(
+            startSeconds: 0,
+            endSeconds: 0.1,
+            buckets: 64,
+            multiwave: true,
+          ));
+      expect(stack!.bands, 3);
+      expect(stack.values, hasLength(3 * 64 * 3));
+      // A 440 Hz square is a middle-band sound: its own band carries far more
+      // than the treble one, which is the whole point of the stack.
+      double loudest(int band) {
+        var most = 0.0;
+        for (var i = 0; i < 64; i++) {
+          final v = stack.values[3 * (band * 64 + i) + 1].abs();
+          if (v > most) most = v;
+        }
+        return most;
+      }
+
+      expect(loudest(1), greaterThan(loudest(2)),
+          reason: 'the middle band hears the tone, the treble barely does');
+
+      // Zooming in asks for a shorter window, and what comes back is a summary
+      // of *that* window — which is what makes the drawn detail follow the
+      // zoom instead of stretching one fixed summary (K-280).
+      final zoomed = await tester.runAsync(() => footageLayer.audioPeaks(
+            startSeconds: 0.02,
+            endSeconds: 0.03,
+            buckets: 64,
+            multiwave: false,
+          ));
+      expect(zoomed!.startSeconds, closeTo(0.02, 1e-9));
+      expect(zoomed.endSeconds, closeTo(0.03, 1e-9));
+      expect(zoomed.buckets, 64,
+          reason: 'a tenth of the audio, in the same number of buckets');
 
       await tester.tap(
           find.byKey(ValueKey<String>('tl-twirl-${silent.internallayerId}')));
       await tester.pump();
       expect(find.text('Audio'), findsOneWidget,
           reason: 'still only the one — a solid has nothing to be heard');
+    });
+
+    /// `L` opens a layer's sound, `LL` its waveform, `LLL` shuts it (K-281) —
+    /// the same three-tap shape `U` has. A layer selected but silent is left
+    /// alone rather than opened onto a group it has not got.
+    testWidgets('L, LL and LLL cycle a layer\'s Audio open and shut',
+        (tester) async {
+      final p = withComp();
+      final audible =
+          p.state.project!.importFootage(path: _wavFile('cycle.wav'));
+      p.comp.addFootageLayer(footage: audible, asSequence: false);
+      await mount(tester, p);
+      final layer = p.comp.getLayers().first;
+      await settleFrb(tester, minRounds: 8);
+
+      // Selected, and shut.
+      p.uiState.setSelection([layer]);
+      await tester.pump();
+      expect(find.text('Audio'), findsNothing);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyL);
+      await tester.pump();
+      expect(find.text('Volume'), findsOneWidget,
+          reason: 'L opens the Audio group');
+      expect(
+          find.byKey(ValueKey<String>('tl-wave-${layer.internallayerId}')),
+          findsNothing,
+          reason: 'the lane waits for the second tap');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyL);
+      await tester.pump();
+      expect(find.byKey(ValueKey<String>('tl-wave-${layer.internallayerId}')),
+          findsOneWidget,
+          reason: 'LL opens the waveform lane');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyL);
+      await tester.pump();
+      expect(find.text('Volume'), findsNothing,
+          reason: 'LLL shuts the audio stuff again');
+      expect(find.text('Audio'), findsNothing);
     });
 
     /// The outline and the lanes are one table. A fold-out that pushed the names

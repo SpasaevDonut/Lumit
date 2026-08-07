@@ -34,19 +34,47 @@ impl EpochToken {
 
 ## 2. Thread topology
 
-| Thread(s) | Owns | Never does |
-|---|---|---|
-| UI (main) | egui, input, document edits (single writer), snapshot publication | evaluation, decode, blocking waits |
-| Worker pool (N = cores − 3, min 2) | graph evaluation, CPU effects, cache (de)serialisation | GPU submits, UI state |
-| Decode threads (per active clip, pooled ≤ 16) | libav decode, frame index lookups | evaluation |
-| GPU-submit (1) | queue submissions, presents, pool trim, device-loss recovery | waiting on locks held elsewhere |
-| Audio (cpal callback, realtime) | mixing decoded PCM into the device buffer | allocation, locks, logging — **nothing blocking, ever** |
-| IO (1) | project save/autosave/journal, disk cache reads/writes | anything latency-sensitive |
+Thread roles are [05-ARCHITECTURE.md](../05-ARCHITECTURE.md) §2; what each may not do is
+[14-ENGINEERING-RULES.md](../14-ENGINEERING-RULES.md) §1.1. Neither is restated here.
+
+Pinned here, because they are this note's to choose: **pool size N = cores − 3, min 2**;
+decode threads pooled at **≤ 16**; one GPU-submit thread and one IO thread.
 
 Pool: use **rayon** scoped into a dedicated `ThreadPool` (not the global one) — its
 work-stealing is right for DAG fan-out, and cancellation is our epoch tokens, not rayon's.
 Channels: `crossbeam::channel::bounded` everywhere; every `send` on a full queue is
 back-pressure by design. Choose capacities once, in one constants module, documented.
+
+### 2.1 One command buffer per frame
+
+The one-GPU-submit-thread rule above says *who* may hand work to the driver. This says *how
+often*: **once per frame, not once per pass.**
+
+Every pass in `lumit-gpu` used to make its own command encoder and submit it, so a frame cost
+the driver one round trip per layer and per effect — measured 2026-07-31 at `layers + 2`
+submissions (3 at one layer, 34 at thirty-two). All of a frame's passes are already in order
+on one queue, so they are encoded into one buffer and handed over once.
+
+- `GpuContext::begin_frame` / `end_frame` open and close the batch; `encoder()` hands back
+  the frame's encoder inside one and a fresh, self-submitting one outside. So a pass called
+  on its own — a test, a scope trace — behaves exactly as it did.
+- `begin_frame` **nests**, which is what lets the realise walk open it at its recursive entry
+  point rather than threading an encoder by hand through nested comps, adjustment staging and
+  one whole render per motion-blur sample.
+- **Anything that then observes the GPU must flush first**, because a command that has not
+  been submitted has not run: the read-backs, the scope trace, and the shared-texture present
+  paths all call `flush()` before their own submission and wait.
+- **A measured frame gives the batching up.** The profiler fences on the device at each layer
+  and each effect, and a fence over a queue that has not been handed over times nothing — so
+  measuring flushes as it goes. That is the cost the stopwatch already declares (K-276:
+  measuring waits for the card at each layer, which is why it is opt-in and never runs during
+  playback).
+
+The gate is a **count**, not a stopwatch: `GpuContext::submits_so_far` counts every submission,
+and the regression test asserts that an unmeasured frame's count does not grow with its layer
+count while a measured frame's does. A submit is a round trip whose cost does not depend on
+the card, so the count is the honest measure and it runs on CI's software rasteriser, where a
+timing would prove nothing.
 
 ## 3. The document snapshot handoff
 

@@ -4,7 +4,11 @@ use lumit_core::OpError;
 
 pub mod assets;
 pub mod audio;
-#[cfg(feature = "media")]
+// Always compiled, feature or no feature: the generated Dart is one shape
+// whatever the build (docs/17 §Feature gates), so an API function that
+// disappears with a feature breaks `--no-default-features` at the generated
+// call site rather than at anything a person wrote (K-273). Detection itself
+// needs the audio pipeline and says so calmly when the build has none.
 pub mod beats;
 pub mod cache;
 pub mod composition;
@@ -90,8 +94,28 @@ pub enum BridgeError {
     NotSequence,
     /// Only a Footage layer converts to a Sequence layer.
     NotFootage,
+    /// A Sequence layer's retiming belongs to its clips, not to the layer
+    /// (K-075), so it has no Retime channel to switch on.
+    NotRetimeable,
+    /// Converting back to a plain Footage layer needs one clip, and this row
+    /// has several — which of them the layer would become is the user's
+    /// decision, not the command's.
+    ManyClips,
     /// No clip sits under the playhead.
     NoClipThere,
+    /// A mask path with fewer than two vertices — not a shape.
+    EmptyPath,
+    /// The edit named a mask this layer does not have.
+    NoSuchMask,
+    /// A paint stroke with no points in it (K-227).
+    EmptyStroke,
+    /// No stroke of that id on this layer.
+    NoSuchStroke,
+    /// The layer is not a shape layer (K-237).
+    NotShape,
+    /// The razor was pointed at a time outside the layer's span, or at one of
+    /// its ends — either way there is no second layer to make.
+    NothingToSplit,
     /// The clip under the playhead is an eased ramp that cannot be split
     /// cleanly at this time — cutting it would silently change its speed curve.
     UncuttableClip,
@@ -169,7 +193,23 @@ impl fmt::Display for BridgeError {
             BridgeError::NotFootage => {
                 write!(f, "Only footage layers convert to sequenced")
             }
+            BridgeError::NotRetimeable => write!(
+                f,
+                "A sequence layer retimes its clips, not the whole layer — open it and use its speed graph"
+            ),
+            BridgeError::ManyClips => write!(
+                f,
+                "This layer holds several clips — delete all but the one to keep first"
+            ),
             BridgeError::NoClipThere => write!(f, "No clip under the playhead"),
+            BridgeError::EmptyPath => write!(f, "A mask needs at least two points"),
+            BridgeError::NoSuchMask => write!(f, "No such mask on this layer"),
+            BridgeError::EmptyStroke => write!(f, "A paint stroke needs at least one point"),
+            BridgeError::NoSuchStroke => write!(f, "No such paint stroke on this layer"),
+            BridgeError::NotShape => write!(f, "That layer is not a shape layer"),
+            BridgeError::NothingToSplit => {
+                write!(f, "That time is not inside the layer")
+            }
             BridgeError::UncuttableClip => {
                 write!(f, "That eased ramp cannot be cut here yet")
             }

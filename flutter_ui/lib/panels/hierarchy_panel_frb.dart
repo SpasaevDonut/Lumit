@@ -11,6 +11,7 @@
 // or a file edited by hand, must open rather than hang the interface. Ten levels
 // is far past any real nesting and cheap to enforce.
 
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
@@ -19,6 +20,7 @@ import 'package:lumit_flutter/src/rust/api/project_item.dart';
 import 'package:provider/provider.dart';
 
 import '../icons/icons.dart';
+import '../l10n/strings.dart';
 import '../widgets/controls.dart';
 import 'placeholder.dart';
 import 'timeline_extras_frb.dart';
@@ -46,10 +48,10 @@ class _HierarchyPanelFrbState extends State<HierarchyPanelFrb> {
     final ui = Provider.of<LumitUiState>(context);
     final comp = ui.selectedComp;
     if (comp == null) {
-      return const PlaceholderPanel(
+      return PlaceholderPanel(
         icon: LumitIcon.nodes,
-        title: 'Hierarchy',
-        hint: 'Select a composition in the Project panel.',
+        title: l10n.panelHierarchy,
+        hint: l10n.selectACompositionFirst,
       );
     }
 
@@ -63,7 +65,7 @@ class _HierarchyPanelFrbState extends State<HierarchyPanelFrb> {
 
         if (rows.isEmpty) {
           return Center(
-            child: Text('This composition has no layers yet', style: t.small),
+            child: Text(l10n.hierarchyEmpty, style: t.small),
           );
         }
         return ListView(
@@ -96,11 +98,20 @@ class _HierarchyPanelFrbState extends State<HierarchyPanelFrb> {
         name: info.name,
         kind: kind,
         depth: depth,
-        selected:
-            ui.selectedLayer.value?.internallayerId == layer.internallayerId,
+        // The whole selection, not just the primary (K-217): a layer chosen in
+        // the Timeline with Ctrl held reads as chosen here too, or the two
+        // panels would be showing two different answers to one question.
+        selected: ui.selectedLayerIds.contains(layer.internallayerId),
         expandable: nested != null,
         open: open,
-        onTap: () => setState(() => ui.selectedLayer.value = layer),
+        onTap: () => setState(() {
+          final keys = HardwareKeyboard.instance;
+          if (keys.isControlPressed || keys.isMetaPressed) {
+            ui.toggleSelected(layer);
+          } else {
+            ui.setSelection([layer]);
+          }
+        }),
         onToggle: nested == null
             ? null
             : () => setState(() {

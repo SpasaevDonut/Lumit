@@ -30,10 +30,6 @@ pub struct BridgeCacheStats {
     /// move it, so a decode that should not have happened is visible here
     /// rather than merely slow.
     pub comp_decodes: u64,
-    /// Renders served from caches a committed edit had already retired. Always
-    /// zero; a non-zero value is the "the Viewer shows the picture from before
-    /// my edit" bug ([`crate::framecache::stale_serves`]).
-    pub stale_serves: u64,
 }
 
 #[frb(ignore)]
@@ -46,7 +42,6 @@ fn read() -> BridgeCacheStats {
         hits,
         misses,
         comp_decodes: crate::framecache::comp_decodes(),
-        stale_serves: crate::framecache::stale_serves(),
     }
 }
 
@@ -58,6 +53,115 @@ fn read() -> BridgeCacheStats {
 #[frb(sync)]
 pub fn cache_stats() -> BridgeCacheStats {
     read()
+}
+
+/// Where this process's memory has gone: what each tier admits to holding, and
+/// what the operating system says the process holds (K-294).
+///
+/// **The field that matters is [`Self::unaccounted_bytes`].** Every tier here
+/// is byte-budgeted and evicts to stay inside its budget, so a report where the
+/// tiers add up to their budgets and the process is a hundred times larger is
+/// not a cache problem at all — it is memory nobody in this list is counting,
+/// which is a different search entirely. Lumit has twice been reported holding
+/// tens of gigabytes (K-277 and after it), and both times that question took
+/// days to answer from the outside. It is one call from the inside.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BridgeMemoryReport {
+    /// What the operating system says this process holds — Activity Monitor's
+    /// **Memory** on macOS, the working set on Windows, `VmRSS` on Linux. 0
+    /// where the platform will not say ([`crate::api::system::resident_memory_bytes`]).
+    pub process_bytes: u64,
+    /// Finished frames held in ordinary memory.
+    pub frame_cache_bytes: u64,
+    /// Frames held on the graphics card.
+    pub vram_cache_bytes: u64,
+    /// Whether the card's memory *is* this process's memory — true on every
+    /// Apple Silicon Mac and on any integrated adapter.
+    ///
+    /// When it is, `vram_cache_bytes` is counted against `process_bytes` like
+    /// any other tier; when it is not, the card's frames are somewhere else
+    /// entirely and counting them would understate what is unaccounted for.
+    /// Getting this backwards is how a cache doing exactly its job read as
+    /// gigabytes nobody could explain.
+    pub unified_memory: bool,
+    /// Decoded source frames held for the compositor.
+    pub decode_cache_bytes: u64,
+    /// How many media decoders are open. Counted, not weighed: what a decoder
+    /// holds is FFmpeg's and the driver's business, and a made-up number of
+    /// bytes would be worse than an honest count.
+    pub open_decoders: u64,
+    /// How many frames are waiting to be written to disk — the write-behind
+    /// queue K-277 bounded at eight. A count rather than bytes on purpose: each
+    /// waiting frame shares its allocation with the frame cache above (one
+    /// `Arc`, both tiers), so charging it twice would make the report lie in
+    /// the one direction that matters.
+    pub park_queue_frames: u64,
+    /// What the graphics driver holds for the render device, in use. On
+    /// unified memory (every Apple Silicon Mac) this is inside
+    /// `process_bytes`; on a discrete card it is not.
+    pub gpu_allocated_bytes: u64,
+    /// What the graphics driver has **reserved** — the blocks those
+    /// allocations were carved from, including the free room inside them.
+    ///
+    /// The gap between this and `gpu_allocated_bytes` is memory that has been
+    /// released by the engine and not handed back by the driver: free, and
+    /// still ours.
+    ///
+    /// **Both byte figures are 0 on macOS**, where Metal keeps no such
+    /// accounting and wgpu therefore reports none — which is the platform the
+    /// question was asked on. Read the two counts below there.
+    pub gpu_reserved_bytes: u64,
+    /// How many textures the driver is holding for the render device right now.
+    ///
+    /// **This is the figure that works everywhere, Metal included.** The engine
+    /// holds a handful at rest — the frames in the card's cache, the pooled
+    /// upload textures, the shared present targets, and each frame's
+    /// intermediates while it is being made. Thousands of them means frames the
+    /// engine dropped were never destroyed, which is a different fault from any
+    /// cache being too large and is not visible in any other number here.
+    pub gpu_textures: u64,
+    /// How many buffers the driver is holding, for the same reason.
+    pub gpu_buffers: u64,
+    /// `process_bytes` less everything above that lives in ordinary memory.
+    /// Saturating at zero, since the platform's number and ours are read a
+    /// moment apart and a small negative is meaningless.
+    pub unaccounted_bytes: u64,
+}
+
+/// Read the memory report. Cheap: five atomics, one lock and one syscall.
+#[frb(sync)]
+#[must_use]
+pub fn memory_report() -> BridgeMemoryReport {
+    let (frame_cache, _, _, _, _) = crate::framecache::stats();
+    let (vram, _) = crate::framecache::vram::stats();
+    let (decode, decoders) = crate::framecache::decode::stats();
+    let park = crate::framecache::disk::pending_parks();
+    let (gpu_allocated, gpu_reserved, gpu_textures, gpu_buffers) = crate::framecache::gpu::stats();
+    let process = crate::api::system::resident_memory_bytes();
+    // On unified memory the card's frames are inside this process, so they are
+    // accounted like any other tier; on a discrete card they are not in it at
+    // all and must not be. The adapter says which, rather than the platform:
+    // a Mac with an external card would answer differently, and so should the
+    // report.
+    let unified = crate::framecache::gpu::unified();
+    let accounted = (frame_cache as u64)
+        .saturating_add(decode)
+        .saturating_add(if unified { vram } else { 0 });
+    BridgeMemoryReport {
+        process_bytes: process,
+        frame_cache_bytes: frame_cache as u64,
+        vram_cache_bytes: vram,
+        unified_memory: unified,
+        decode_cache_bytes: decode,
+        open_decoders: decoders,
+        park_queue_frames: park,
+        gpu_allocated_bytes: gpu_allocated,
+        gpu_reserved_bytes: gpu_reserved,
+        gpu_textures,
+        gpu_buffers,
+        unaccounted_bytes: process.saturating_sub(accounted),
+    }
 }
 
 /// Resize the cache, returning what it holds afterwards.
@@ -76,29 +180,38 @@ pub fn set_cache_budget(bytes: u64) -> BridgeCacheStats {
 #[frb(sync)]
 pub fn clear_cache() -> BridgeCacheStats {
     crate::framecache::clear();
+    crate::framecache::bar::invalidate();
     read()
 }
 
 impl crate::api::composition::CompositionReference {
-    /// Which frames of this composition are held in the cache, one byte each:
-    /// `0` nothing, `1` held only at a coarser resolution than `scale`, `2` held
-    /// at `scale` or finer and ready to show now.
+    /// Which frames of this composition are held, one byte each:
+    ///
+    /// * `0` — nothing held.
+    /// * `1` — held in memory or on the graphics card, but only at a coarser
+    ///   preview resolution than `scale`.
+    /// * `2` — held at `scale` or finer: plays now.
+    /// * `3` — parked on disk only, at a coarser resolution.
+    /// * `4` — parked on disk only, at this resolution: promotable, not yet
+    ///   playable.
     ///
     /// This is what the Timeline's cache bar draws (docs/07-UI-SPEC.md §3.2,
-    /// docs/06-RENDER-PIPELINE.md §5.6). It is a snapshot, not a subscription:
-    /// the caller redraws when it has reason to, rather than the cache pushing.
+    /// docs/06-RENDER-PIPELINE.md §5.6): green for the first two, steel blue for
+    /// the disk pair, dimmed for the coarser one of each.
     ///
-    /// The answer merges the RAM tier and the VRAM tier (the worker's
-    /// final-frame textures, as last published) — a frame on the card plays
-    /// without rendering, so it is as green as one in RAM. There is no disk
-    /// tier yet, so the "on disk only" state the design language reserves
-    /// blue for cannot occur, and is not reported.
+    /// **A mirror read, not a query.** Frames are named by a hash of their
+    /// content (docs/06 §5.2), so answering "is frame 12 held?" means *naming*
+    /// frame 12 — hashing the whole composition at that time, which needs the
+    /// renderer's probe results. So the worker builds this strip and publishes
+    /// it, and this reads what was published: §5.6's lock-free snapshot, where
+    /// the interface never touches a cache itself. Asking also tells the worker
+    /// what to compute, so a bar that starts drawing a different composition is
+    /// answered within a turn or two — all zeros until then, which is the honest
+    /// answer rather than another composition's frames.
     #[frb(sync)]
     pub fn cached_frames(&self, frames: u64, scale: f32) -> Vec<u8> {
-        // A composition long enough to make this walk expensive is not a
-        // composition anyone can see the whole of at once; the bar is drawn a
-        // few pixels per frame at most.
-        crate::framecache::cached_tiers(self.id, frames, scale)
+        let scale_q = lumit_render::preview_scale_q(crate::render::quality_for(scale));
+        crate::framecache::bar::read(self.id, frames, scale_q)
     }
 }
 
@@ -141,7 +254,112 @@ pub fn set_vram_cache_budget(bytes: u64) -> BridgeVramCacheStats {
 #[frb(sync)]
 pub fn clear_vram_cache() -> BridgeVramCacheStats {
     crate::framecache::vram::request_clear();
+    crate::framecache::bar::invalidate();
     vram_cache_stats()
+}
+
+/// What the disk tier holds — the bottom of the three-tier cache
+/// (docs/06-RENDER-PIPELINE.md §5.4), and the only one that outlives the session.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BridgeDiskCacheStats {
+    pub used_bytes: u64,
+    pub budget_bytes: u64,
+    pub entries: u64,
+    /// The folder the frames are actually going to, for Settings to show. Empty
+    /// when the tier is off — which, since an unsaved project falls back to the
+    /// application's own cache folder, means only a platform with no home
+    /// directory at all.
+    pub root: String,
+}
+
+/// The disk tier's live numbers. `used`/`entries` are as the IO thread last
+/// accounted them; the budget is the asked-for value, applied on the worker's
+/// next turn.
+#[frb(sync)]
+pub fn disk_cache_stats() -> BridgeDiskCacheStats {
+    let (used, entries) = crate::framecache::disk::stats();
+    BridgeDiskCacheStats {
+        used_bytes: used,
+        budget_bytes: crate::framecache::disk::budget(),
+        entries,
+        root: crate::framecache::disk::root().unwrap_or_default(),
+    }
+}
+
+/// Resize the disk tier. Shrinking evicts oldest-first on the IO thread.
+#[frb(sync)]
+pub fn set_disk_cache_budget(bytes: u64) -> BridgeDiskCacheStats {
+    crate::framecache::disk::set_budget(bytes);
+    disk_cache_stats()
+}
+
+/// Where the disk tier keeps its frames (docs/07-UI-SPEC.md §15).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BridgeCacheLocation {
+    /// Under the application's own cache folder, keyed by document id — the
+    /// default, and the only one that works before a project has been saved.
+    AppData,
+    /// In a `<project>.lum-cache/` folder beside the project file, so a project
+    /// carries its cache with it. An unsaved project has nowhere to put one and
+    /// falls back to [`Self::AppData`] until it is saved.
+    BesideProject,
+    /// Under a folder the user picked — to park the cache on a faster or roomier
+    /// drive. Application-wide.
+    Custom,
+}
+
+/// Choose where parked frames live. `folder` is used only for
+/// [`BridgeCacheLocation::Custom`] and ignored otherwise.
+///
+/// The worker re-opens the cache on its next turn: frames already parked
+/// elsewhere are not moved or deleted — they are simply not addressed from the
+/// new folder, and the old one can be deleted by hand at any time with no
+/// correctness effect.
+#[frb(sync)]
+pub fn set_disk_cache_location(
+    location: BridgeCacheLocation,
+    folder: String,
+) -> BridgeDiskCacheStats {
+    use crate::framecache::disk::Location;
+    let location = match location {
+        BridgeCacheLocation::AppData => Location::AppData,
+        BridgeCacheLocation::BesideProject => Location::BesideProject,
+        BridgeCacheLocation::Custom if !folder.is_empty() => {
+            Location::Custom(std::path::PathBuf::from(folder))
+        }
+        // A custom location with no folder chosen is not a location; keeping the
+        // default is better than pointing the tier at nothing.
+        BridgeCacheLocation::Custom => Location::AppData,
+    };
+    crate::framecache::disk::set_location(location);
+    disk_cache_stats()
+}
+
+/// A cache location as a pair: which of the three, and the folder that goes with
+/// `Custom` (empty for the other two).
+///
+/// The same shape whether it is being set for the application
+/// ([`set_disk_cache_location`]) or for one project
+/// (`ProjectReference::set_cache_location`), so the interface has one control and
+/// one type for both, and the only difference is where the answer is stored.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BridgeProjectCacheLocation {
+    pub location: BridgeCacheLocation,
+    pub folder: String,
+}
+
+/// Delete every parked frame, on the IO thread. Unlike the other two tiers this
+/// destroys files that may represent hours of rendering and cannot be undone, so
+/// the interface asks first (docs/07-UI-SPEC.md §15).
+#[frb(sync)]
+pub fn clear_disk_cache() -> BridgeDiskCacheStats {
+    crate::framecache::disk::request_clear();
+    // The bar's published strip promises frames that are about to go; drop it so
+    // the stripe does not draw them until the worker republishes.
+    crate::framecache::bar::invalidate();
+    disk_cache_stats()
 }
 
 /// Which route a rendered frame takes from the engine to the Viewer.
@@ -181,4 +399,21 @@ pub fn viewer_transport() -> BridgeViewerTransport {
     {
         BridgeViewerTransport::ReadBack
     }
+}
+
+/// Ask the render worker to measure what each frame costs, per layer and per
+/// effect (docs/13 §7.1), or to stop.
+///
+/// **Not free, which is why it is a switch.** A measured frame waits for the
+/// graphics card at every node, so a millisecond on a Timeline row means the
+/// work rather than the paperwork — and that wait is exactly the overlap a
+/// brisk preview lives on. So the numbers are collected while something is
+/// showing them and not otherwise, and playback is never measured whatever
+/// this says.
+///
+/// Takes effect from the next frame; frames already in flight finish as they
+/// started.
+#[frb(sync)]
+pub fn set_render_profiling(on: bool) {
+    crate::profiling::set_wanted(on);
 }

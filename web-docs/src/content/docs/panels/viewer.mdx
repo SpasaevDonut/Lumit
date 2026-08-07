@@ -1,0 +1,48 @@
+---
+title: Viewer
+description: The picture, and the controls around it.
+sidebar:
+  order: 2
+---
+
+import Shot from "../../../components/Shot.astro";
+
+The Viewer shows the composition at the playhead. Its bar carries the controls that
+change how you see it, never what you export.
+
+
+<Shot file="viewer.png" caption="The Viewer, with a layer selected and its transform gizmo showing." />
+
+## The Viewer bar
+
+<Shot file="viewer-bar.png" caption="The Viewer bar." />
+
+| Control | Does |
+| --- | --- |
+| **Magnification** | Zoom level. Zooming is anchored on the pointer. |
+| **Preview resolution** | Full, half, third, quarter, or auto. Real downsampling. |
+| **Channel view** | Show RGB, one channel, or alpha. |
+| **Transparency grid** | Draw a chequerboard instead of black behind alpha. |
+| **Current time** | The playhead's time. Read-only for now. |
+| **Degradation indicator** | Lights when the engine has lowered quality to keep up. |
+
+Preview resolution and degradation affect preview only. See
+[Preview and playback](/use/preview/).
+
+:::note[Not built yet]
+The guides menu, the wireframe and overlay menu, region of interest, the
+background-colour swatch, and the colour-management indicator are specified for this
+bar but not built.
+:::
+
+## On the picture
+
+Select a layer and the Viewer draws its wireframe and a transform gizmo. Drag the
+handles to move, scale, and rotate. See [Transforming layers](/use/transform/).
+
+Motion paths - a keyed position drawing its path on the picture - are not built yet.
+
+## Related
+
+- [The toolbar](/panels/toolbar/)
+- [Preview and playback](/use/preview/)

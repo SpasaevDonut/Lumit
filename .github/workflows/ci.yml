@@ -1,10 +1,21 @@
 # CI: every push re-proves every promise (docs/14-ENGINEERING-RULES.md §tests).
 name: ci
 
+# Every job below installs "stable" and then lets rust-toolchain.toml decide
+# which version that actually is (docs/14 §9): rustup reads the file and fetches
+# exactly the pinned toolchain, so a compiler released mid-week cannot turn a
+# new warning into a red build on a commit that changed nothing.
+
 on:
   push:
     branches: [main]
   pull_request:
+  # Run it by hand from the Actions tab. GitHub occasionally does not deliver
+  # the `pull_request` event for a push — a branch sits at "pending" with no run
+  # against its head and nothing to re-run, since re-running needs a run to
+  # exist. This is the way out of that, and the way to re-run a job that failed
+  # on something outside the tree (a runner hiccup, a registry timeout).
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -96,6 +107,16 @@ jobs:
       # three platforms link an identical FFmpeg. The distro's own is 6.x,
       # which the crate's `ffmpeg7_1` feature does not match.
       FFMPEG_ASSET: ffmpeg-n7.1-latest-linux64-gpl-shared-7.1
+      # This runner installs Mesa's lavapipe below, so every GPU test MUST run
+      # here: a missing adapter is a broken runner, not a machine without a
+      # graphics card, and `lumit_gpu::no_adapter` turns the polite skip into a
+      # failure when this is set. Without it a job that lost its Vulkan driver
+      # would skip ~90 kernel oracles and still report green — which is exactly
+      # what the suite looked like before this line existed. The macOS and
+      # Windows jobs deliberately do NOT set it yet: nobody has confirmed those
+      # runners enumerate an adapter, and a gate is only worth having where it
+      # has been verified. Flip it on there the day a run proves they do.
+      LUMIT_REQUIRE_GPU: 1
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -147,10 +168,25 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace --exclude lumit-gpu
       # The GPU oracles single-threaded (the project convention), so a software
-      # rasteriser neither races nor thrashes. They skip themselves when no
-      # adapter is present, so this can only fail on a real regression.
+      # rasteriser neither races nor thrashes. With LUMIT_REQUIRE_GPU set (see
+      # the job env) they can no longer skip themselves here: on this runner a
+      # missing lavapipe adapter fails the job instead of quietly proving
+      # nothing about the kernels.
       - name: GPU oracle tests (lavapipe software Vulkan)
         run: cargo test -p lumit-gpu -- --test-threads=1
+      # The `media` feature turned off (K-273): the bridge's own decode paths
+      # compile out and its tests still pass. Deliberately NOT advertised as a
+      # build without FFmpeg — `lumit-render` and `lumit-audio` depend on
+      # `lumit-media` unconditionally and the bridge depends on both, so FFmpeg
+      # is still linked. What this guards is the feature gates inside the
+      # bridge, which had rotted until nothing built at all; making the whole
+      # dependency tree media-optional is a separate piece of work
+      # (docs/TODO.md). It rides in this job rather than its own because this
+      # runner already has FFmpeg, libclang and a warm cache.
+      - name: The bridge with its media feature off
+        run: |
+          cargo clippy -p lumit_bridge --no-default-features --all-targets -- -D warnings
+          cargo test -p lumit_bridge --no-default-features
       - name: Release-mode compile check
         run: cargo check --workspace --release
 
@@ -482,6 +518,33 @@ jobs:
             echo "$hits"
             exit 1
           fi
+      # The Rust grep above guarded a frontend that no longer exists (K-182):
+      # every widget now lives in Dart, so that is where a stray hex actually
+      # gets written. flutter_ui/lib/theme/ is the one place colours may be
+      # spelled out (its own header says so); everywhere else must read a token
+      # off LumitTheme, or the seven colour schemes and any custom theme simply
+      # do not reach that pixel.
+      #
+      # Three shapes are caught: a hex Color(0x...) literal, Material's Colors.*
+      # palette (a named hex by another route), and a Color.fromARGB/fromRGBO
+      # built entirely from number literals. A fromARGB whose channels come from
+      # variables is how a *stored* colour is rebuilt — that is data, not a
+      # design decision, so it passes. Fully transparent (0x00000000) passes
+      # too: it is the absence of a colour, not a choice of one.
+      - name: Dart-side design-token lint (flutter_ui/lib outside theme/)
+        run: |
+          hits=$(
+            grep -rnP "Color\(0x(?!00000000)[0-9a-fA-F]{8}\)|\bColors\.[a-zA-Z]|Color\.from(ARGB|RGBO)\( *[0-9][^,]*, *[0-9][^,]*, *[0-9]" \
+              flutter_ui/lib --include='*.dart' \
+            | grep -v '^flutter_ui/lib/theme/' || true
+          )
+          if [ -n "$hits" ]; then
+            echo "Colour values outside flutter_ui/lib/theme/ (docs/15-DESIGN.md §4.1):"
+            echo "$hits"
+            echo
+            echo "Read the colour off LumitTheme instead; add a token if none fits."
+            exit 1
+          fi
 
   # clippy cannot enforce the no-panic rule (docs/14 §4) on the bridge's frb
   # API. `#[frb(...)]` is a proc-macro attribute, and clippy's restriction lints
@@ -495,6 +558,29 @@ jobs:
   # the FFI boundary. This grep covers the blind spot until the lints see
   # through the macro; every call there must return Result<_, BridgeError> or
   # degrade deliberately.
+  # Dependency hygiene (docs/14-ENGINEERING-RULES.md §9). Four questions, all
+  # of them about code nobody here wrote: is a dependency's licence one a GPLv3
+  # program may carry, does any of them have a published advisory, is anything
+  # pinned by a wildcard, and does any of it come from somewhere other than
+  # crates.io. The rules and the reasoning live in deny.toml — including the
+  # three unmaintained-crate advisories that are deliberately ignored, each with
+  # what it would take to leave it.
+  #
+  # No FFmpeg or desktop libraries are installed here on purpose: cargo-deny
+  # reads Cargo.lock and the crate manifests, never the C libraries a build
+  # would link, so this job stays a fast one.
+  cargo-deny:
+    name: dependency hygiene (licences, advisories, sources)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # The upstream action rather than `cargo install cargo-deny`: it ships the
+      # binary and caches the advisory database, so this job is seconds rather
+      # than a three-minute build of a tool that checks a lock file.
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+
   no-panics-in-frb-api:
     name: bridge lint (no panic paths in the frb API surface)
     runs-on: ubuntu-latest

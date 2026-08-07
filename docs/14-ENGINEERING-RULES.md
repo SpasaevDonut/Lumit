@@ -20,7 +20,7 @@ machine". Exceptions require a decision entry in [02-DECISIONS.md](02-DECISIONS.
 | Work | Allowed threads |
 |---|---|
 | Document edits, snapshot publication | UI thread only |
-| egui, winit, painting | UI thread only |
+| Frontend painting and input | UI thread only |
 | Evaluation-graph pixel jobs | Worker pool only |
 | Metadata pass | UI thread (edit-triggered) or workers (request-triggered) |
 | Media decode | Dedicated decode threads only |
@@ -63,17 +63,12 @@ machine". Exceptions require a decision entry in [02-DECISIONS.md](02-DECISIONS.
 
 ## 2. Time discipline
 
-- The four timebases in [01-GLOSSARY.md](01-GLOSSARY.md) §4 are **distinct newtypes** in
-  `lumit-time`:
-
-  ```rust
-  pub struct RationalTime { num: i64, den: i32 }   // seconds as num/den, den > 0
-  pub struct SourceTime(RationalTime);
-  pub struct ClipTime(RationalTime);
-  pub struct LayerTime(RationalTime);
-  pub struct CompTime(RationalTime);
-  pub struct FrameRate { num: u32, den: u32 }      // e.g. 30000/1001
-  ```
+- Authoritative time is an exact rational. The type, its normalisation invariant and its
+  overflow discipline are pinned in [impl/rational-time.md](impl/rational-time.md) — do not
+  re-declare them here or in any spec.
+- The four timebases in [01-GLOSSARY.md](01-GLOSSARY.md) §4 (`SourceTime`, `ClipTime`,
+  `LayerTime`, `CompTime`) MUST be **distinct newtypes** over that rational, so that mixing
+  them cannot type-check.
 
 - Authoritative time MUST NOT be `f32`/`f64`. Floats appear only at leaves: UI display,
   slider scratch values, and inside numeric kernels — always converted back through rational
@@ -116,7 +111,10 @@ machine". Exceptions require a decision entry in [02-DECISIONS.md](02-DECISIONS.
   `todo!`/`unimplemented!`, indexing that can panic in hot paths, and arithmetic that can
   overflow-panic, in all non-test code of engine crates (clippy: `unwrap_used`,
   `expect_used`, `panic`, `indexing_slicing`, `arithmetic_side_effects` — allow-listed per
-  crate only with a comment). Tests and build scripts may panic freely.
+  crate only with a comment). **v1 status:** the workspace denies `unwrap_used`,
+  `expect_used`, `panic`, `todo` and `unimplemented`; `indexing_slicing` and
+  `arithmetic_side_effects` are not on yet — they await a sweep of the existing hot paths
+  (noted in the root `Cargo.toml`). Tests and build scripts may panic freely.
 - Every fallible boundary returns a **typed error** (`thiserror` enums per crate); errors
   carry enough context (asset UUID, node id, file path) to be actionable in the UI. No
   `Box<dyn Error>` across crate boundaries; no stringly-typed errors.
@@ -149,12 +147,14 @@ machine". Exceptions require a decision entry in [02-DECISIONS.md](02-DECISIONS.
 
 - **CPU oracle per effect (K-019):** every WGSL effect ships a CPU reference implementation;
   CI renders both against a corpus of inputs and asserts agreement within the effect's
-  declared tolerance (default: max component error ≤ 2/1024 in working space; effects
-  needing looser bounds document why). The CPU path is also the runtime fallback, so the
+  declared tolerance. Every effect declares one and [08-EFFECTS.md](08-EFFECTS.md) §1.6 owns
+  the numbers; this document does not restate them. The CPU path is also the runtime fallback, so the
   oracle is always shipping code, never a test-only sketch.
 - **Golden-frame tests:** a corpus of small projects renders to reference EXRs; CI compares
   export output per platform. Golden updates are explicit, reviewed diffs (with visual
-  side-by-sides in the PR), never regenerated silently.
+  side-by-sides in the PR), never regenerated silently. **The EXR corpus is not built yet**
+  ([TODO.md](TODO.md)); today's goldens are in-crate oracles (CPU/GPU effect agreement, the
+  Dart graph-maths goldens).
 - **Property tests** (proptest) for retime maths per [04-RETIMING.md](04-RETIMING.md):
   integrate(speed) ↔ differentiate(map) round-trips, monotone-segment invariants, overrun
   boundary behaviour (K-022: retime never moves edit points); for rational time (associativity,
@@ -162,19 +162,18 @@ machine". Exceptions require a decision entry in [02-DECISIONS.md](02-DECISIONS.
 - **Fuzzing** (cargo-fuzz, in CI on a schedule): the `.lum` deserialiser and journal
   replayer (arbitrary bytes MUST produce a typed error, never a panic or hang) and the OFX
   host boundary (malformed plugin responses, wrong-size frames, dead processes).
-- **Performance regression gates in CI**, on the reference machine (defined in
-  [13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md)); regressions beyond 10% fail the build:
-  - timeline interaction (drag a layer in a 200-layer comp): < 8 ms/frame UI cost;
-  - scrub response (input → first draft frame presented, cached comp): < 50 ms;
-  - snapshot publication after a keyframe edit: < 1 ms;
-  - project open, 1000-asset synthetic project: < 2 s to interactive.
+  **Not yet set up** — no fuzz targets exist; an obligation, tracked in [TODO.md](TODO.md).
+- **Performance regression gates in CI**, on the reference machine: every budget in
+  [13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md) §2 is a gate, and that document owns
+  every number. Regressions beyond 10% fail the build.
 - Every bug fix lands with a test that fails before the fix. Deadlock-class bugs get a loom
   or stress test where feasible.
 
 ## 7. Code style and boundaries
 
-- **Workspace lints** (`[workspace.lints]`): `rust_2024_idioms`, `clippy::all`,
-  `clippy::pedantic` (curated allows), plus the §4 panic lints. Warnings are errors in CI.
+- **Workspace lints** (`[workspace.lints]`): the §4 panic lints plus `deny(unsafe_code)`;
+  warnings are errors in CI (`clippy --workspace -- -D warnings`). `clippy::pedantic` with
+  curated allows is the intended end state, not yet switched on.
 - **Unsafe policy:** `unsafe` is permitted only in `lumit-gpu`, `lumit-media`,
   `lumit-expr` FFI edges, and the plugin hosts — each block wrapped in a safe API within
   its crate, carrying a `// SAFETY:` comment stating the invariant and who upholds it, and
@@ -188,7 +187,12 @@ machine". Exceptions require a decision entry in [02-DECISIONS.md](02-DECISIONS.
 - **Public API docs:** every public item in engine crates has a doc comment; modules state
   their thread-role contract (§1.1) at the top. Doc examples compile (`cargo test --doc`).
 - **User-facing strings** go through the i18n table from day one (K-005); en-GB, sentence
-  case, calm, no exclamation marks. No string literal shown to a user lives in code.
+  case, calm, no exclamation marks. No string literal shown to a user lives in code. The
+  table is `flutter_ui/lib/l10n/app_en.arb`, reached as `l10n.<key>`, and translation
+  happens on Crowdin (K-303) — every other `app_*.arb` comes back from there and is never
+  hand-edited. A new string lands with an `@key` description saying where it appears; a
+  label the *engine* sends gets an entry in `lib/l10n/engine_labels.dart` at the same time,
+  which `test/l10n/engine_labels_test.dart` enforces against the Rust sources.
 - **Glossary compliance** extends to identifiers: `retime_map`, not `time_remap`; `speed`,
   not `velocity`; `clip`, not `event`; `playhead`, not `cti`; `export`, not `render` when a
   file is written. CI greps for the banned list in [01-GLOSSARY.md](01-GLOSSARY.md) §9
@@ -216,12 +220,19 @@ machine". Exceptions require a decision entry in [02-DECISIONS.md](02-DECISIONS.
 
 - New workspace dependencies require justification in the PR description: what it does, why
   not std/an existing dep, licence (GPLv3-compatible), maintenance signal. `cargo deny`
-  runs in CI for licences, advisories, and duplicate versions.
+  runs in CI over licences, advisories, wildcards and sources (K-272); `deny.toml` carries
+  the allowed-licence list and the reasoning, including every deliberately ignored
+  unmaintained-crate advisory and what it would take to leave it. Duplicate versions warn
+  rather than fail — wgpu and rsmpeg each bring their own stack — so the count stays
+  visible without failing builds nobody here can fix.
 - FFI-heavy and slow-to-compile crates (wgpu, rsmpeg, cudarc, QuickJS bindings) stay in
   their one owning leaf crate ([05-ARCHITECTURE.md](05-ARCHITECTURE.md) §1.1) so incremental
   builds of app-level crates stay in seconds.
-- Pinned toolchain via `rust-toolchain.toml`; edition 2024; MSRV bumps are deliberate,
-  logged in the changelog, never incidental.
+- The workspace is edition 2021 today; the edition-2024 move is still owed
+  ([TODO.md](TODO.md)). The toolchain **is** pinned: `rust-toolchain.toml` names the one
+  version every machine and every CI job builds with (K-272), so a compiler released
+  mid-week cannot turn a new warning into a red build on a commit that changed nothing.
+  Raising it is deliberate — bump the file, run the full suite, log it in the changelog.
 
 ## 10. Definition of done
 
@@ -253,9 +264,10 @@ A feature is done when all of the following hold; PRs state each explicitly:
 
 ## Open questions
 
-- **Tolerance per effect class:** the default golden tolerance (≤ 2/1024) is a guess; flow
-  interpolation and iterative effects will need per-effect bounds. Who owns the tolerance
-  table — [08-EFFECTS.md](08-EFFECTS.md) per effect, or a test-owned manifest?
+- **Tolerance per effect class:** flow interpolation and iterative effects will need looser
+  bounds than the pointwise grades. The tolerance table is owned per effect by
+  [08-EFFECTS.md](08-EFFECTS.md) §1.6; what the bounds should *be* for those two classes is
+  still open.
 - **Reference hardware definition:** the CI performance gates need a pinned machine spec
   (and a macOS mirror?) in [13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md) before the
   numbers above are enforceable.

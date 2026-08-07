@@ -219,7 +219,7 @@ fn footage_places_into_a_composition_even_when_the_media_is_missing() {
 
     // The fixture's media has an empty absolute path and an unsaved project, so
     // it cannot resolve — the comp's own duration and size are used.
-    comp.add_footage_layer(footage).expect("placed");
+    comp.add_footage_layer(footage, false).expect("placed");
 
     let layers = comp.get_layers().expect("layers");
     assert_eq!(layers.len(), 1);
@@ -282,6 +282,9 @@ fn a_footage_item_pointing_at_nothing_reports_missing() {
         .expect("imported");
 
     let status = footage.get_status().expect("status");
+    // The same answer in every build: whether a file is on disk is a question
+    // for the filesystem, not for the decoder (K-273). Before that, a
+    // media-less build called this path Ready.
     assert!(matches!(status, LumitMediaStatus::Missing));
 }
 
@@ -1288,7 +1291,7 @@ fn setting_one_property_leaves_the_others_alone_and_undoes_alone() {
         opacity: BridgeScalar::Static(7.0),
         ..after
     }
-    .write(&mut group)
+    .write_at(&mut group, lumit_core::time::Rational::ZERO)
     .expect("preview write");
     assert_eq!(
         group.opacity.animation,
@@ -1481,6 +1484,290 @@ fn the_pixel_less_kinds_report_no_picture() {
     assert!(solid.has_picture().expect("has_picture"));
     let adjustment = comp.add_adjustment_layer().expect("adjustment added");
     assert!(adjustment.has_picture().expect("has_picture"));
+}
+
+/// **An effect on a Null keeps its values, animation and all** (K-274).
+///
+/// A Null draws nothing, so an image effect on one changes no picture — which
+/// is why the drop is *labelled inert* rather than refused. The parameters are
+/// the point: a control put on a Null is how a value is meant to be published
+/// for other layers to read (a Slider driving an expression, once expressions
+/// land). So the stack must survive a commit, keep its keyframes, and sample
+/// like any other curve — nothing may quietly strip an effect from a layer that
+/// has no pixels.
+#[test]
+fn an_effect_on_a_null_layer_keeps_its_animated_value() {
+    use crate::api::effect::{sample_scalar, BridgeEffectValue, BridgeRational, BridgeScalar};
+
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let null = comp.add_null_layer().expect("null added");
+
+    null.add_effect("blur".into())
+        .expect("the drop is accepted");
+    assert_eq!(
+        null.get_effects().expect("effects").len(),
+        1,
+        "an effect on a Null is stored like any other"
+    );
+
+    // Animate it, and commit through the ordinary staged-copy path.
+    let mut staged = null.get_effects().expect("effects");
+    let key = |num: i64, value: f64| crate::api::effect::BridgeKeyframe {
+        time: BridgeRational { num, den: 1 },
+        value,
+        interp_in: crate::api::effect::BridgeSideInterp::Linear,
+        interp_out: crate::api::effect::BridgeSideInterp::Linear,
+    };
+    let keys = BridgeScalar::Keyframed(vec![key(0, 0.0), key(1, 10.0)]);
+    staged[0]
+        .set_value("radius".into(), BridgeEffectValue::Float(keys))
+        .expect("a Null's parameter takes a value like any other");
+    null.set_effects(staged).expect("committed");
+
+    // Read it back and sample it: halfway along the ramp is five, on a layer
+    // that will never draw a pixel.
+    let Ok(BridgeEffectValue::Float(scalar)) = null
+        .get_effects()
+        .expect("effects")
+        .first()
+        .expect("the effect survived the commit")
+        .get_value("radius".into())
+    else {
+        panic!("a Null's effect parameter must read back as the Float it is");
+    };
+    let half = sample_scalar(scalar, BridgeRational { num: 1, den: 2 });
+    assert!(
+        (half - 5.0).abs() < 1e-9,
+        "the curve on a Null evaluates like any other: got {half}"
+    );
+}
+
+/// **A copied layer arrives whole, and lands where the playhead is** (K-275).
+///
+/// Copy and paste is the one edit that has to carry *everything* — the transform
+/// with its keyframes, the effects with theirs, the switches, the name — because
+/// a paste that quietly dropped a property would be found much later, on a shot
+/// that looked almost right. So the payload is the document's own `Layer`, and
+/// this checks the pieces most likely to be lost by a hand-written conversion.
+#[test]
+fn a_copied_layer_pastes_whole_and_lands_at_the_playhead() {
+    use crate::api::effect::{BridgeEffectValue, BridgeRational, BridgeScalar};
+
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let source = comp.add_solid_layer().expect("a layer to copy");
+    source.rename("Hero".into()).expect("named");
+    source.add_effect("blur".into()).expect("an effect on it");
+
+    // An animated parameter, so the keyframes have something to lose.
+    let mut staged = source.get_effects().expect("effects");
+    let key = |num: i64, value: f64| crate::api::effect::BridgeKeyframe {
+        time: BridgeRational { num, den: 1 },
+        value,
+        interp_in: crate::api::effect::BridgeSideInterp::Linear,
+        interp_out: crate::api::effect::BridgeSideInterp::Linear,
+    };
+    staged[0]
+        .set_value(
+            "radius".into(),
+            BridgeEffectValue::Float(BridgeScalar::Keyframed(vec![key(0, 0.0), key(2, 40.0)])),
+        )
+        .expect("animated");
+    source.set_effects(staged).expect("committed");
+
+    let text = source.copy_layer().expect("copied");
+
+    // Pasted into the same comp at frame 30 (one second at 30 fps).
+    let pasted = comp.paste_layer(text.clone(), Some(30)).expect("pasted");
+    assert_ne!(
+        pasted.layer_id, source.layer_id,
+        "a paste is a new layer, not a second name for the old one"
+    );
+    assert_eq!(pasted.get_name().expect("name"), "Hero", "the name travels");
+
+    let span = pasted.get_span().expect("span");
+    assert_eq!(
+        (span.in_point.num, span.in_point.den),
+        (1, 1),
+        "the in point lands on the playhead — frame 30 of a 30 fps comp is 1 s"
+    );
+
+    // The effect came too, animated, with an id of its own.
+    let fx = pasted.get_effects().expect("effects");
+    assert_eq!(fx.len(), 1, "the stack travels");
+    assert_ne!(
+        fx[0].id(),
+        source.get_effects().expect("effects")[0].id(),
+        "with a fresh instance id, so no op is ambiguous"
+    );
+    let Ok(BridgeEffectValue::Float(BridgeScalar::Keyframed(keys))) =
+        fx[0].get_value("radius".into())
+    else {
+        panic!("the animation must survive the round trip");
+    };
+    assert_eq!(keys.len(), 2, "both keys, unshifted — a layer moves as one");
+
+    // And the original is untouched by any of it.
+    assert_eq!(
+        source.get_span().expect("span").in_point,
+        BridgeRational { num: 0, den: 1 }
+    );
+}
+
+/// A layer pasted into **another** composition keeps everything that is its own
+/// and drops what pointed at the comp it left (K-275).
+#[test]
+fn a_layer_pasted_into_another_comp_drops_the_references_it_left_behind() {
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let parent = comp.add_null_layer().expect("a parent");
+    let source = comp.add_solid_layer().expect("a layer to copy");
+    source.set_parent(Some(parent.layer_id)).expect("parented");
+
+    let text = source.copy_layer().expect("copied");
+
+    // Back into its own comp: the parent is still there, so it is kept.
+    let same = comp.paste_layer(text.clone(), None).expect("pasted");
+    assert_eq!(
+        same.get_parent().expect("parent"),
+        Some(parent.layer_id),
+        "pasting where the parent lives keeps the parenting"
+    );
+    assert_eq!(
+        same.get_span().expect("span").in_point,
+        source.get_span().expect("span").in_point,
+        "None keeps the time it was copied at"
+    );
+
+    // Into a different comp: the parent means nothing there, so it goes.
+    let elsewhere = project
+        .new_composition("Second".into(), None)
+        .expect("another comp");
+    let there = elsewhere.paste_layer(text, Some(0)).expect("pasted");
+    assert_eq!(
+        there.get_parent().expect("parent"),
+        None,
+        "a parent from another comp is dropped, not left dangling"
+    );
+    assert_eq!(
+        elsewhere.get_layers().expect("layers").len(),
+        1,
+        "and the layer itself did arrive"
+    );
+}
+
+/// **A pasted effect lands with its first keyframe under the playhead** (K-275,
+/// the owner's rule). An effect copied from a layer that flashes at 4 s and
+/// pasted while the playhead sits at 12 s must flash at 12 s.
+#[test]
+fn a_pasted_effect_starts_its_animation_at_the_playhead() {
+    use crate::api::effect::{BridgeEffectValue, BridgeRational, BridgeScalar};
+
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let source = comp.add_solid_layer().expect("a layer");
+    source.add_effect("blur".into()).expect("an effect");
+
+    let key = |num: i64, value: f64| crate::api::effect::BridgeKeyframe {
+        time: BridgeRational { num, den: 1 },
+        value,
+        interp_in: crate::api::effect::BridgeSideInterp::Linear,
+        interp_out: crate::api::effect::BridgeSideInterp::Linear,
+    };
+    let mut staged = source.get_effects().expect("effects");
+    staged[0]
+        .set_value(
+            "radius".into(),
+            // Two keys a second apart, starting at 4 s.
+            BridgeEffectValue::Float(BridgeScalar::Keyframed(vec![key(4, 0.0), key(5, 40.0)])),
+        )
+        .expect("animated");
+    source.set_effects(staged).expect("committed");
+
+    let text = source.copy_effects(Vec::new()).expect("copied");
+    let target = comp.add_solid_layer().expect("somewhere to paste");
+    // 12 seconds at 30 fps.
+    target.paste_effects(text, 360).expect("pasted");
+
+    let fx = target.get_effects().expect("effects");
+    assert_eq!(fx.len(), 1);
+    let Ok(BridgeEffectValue::Float(BridgeScalar::Keyframed(keys))) =
+        fx[0].get_value("radius".into())
+    else {
+        panic!("the pasted effect must still be animated");
+    };
+    assert_eq!(
+        keys[0].time,
+        BridgeRational { num: 12, den: 1 },
+        "the first key sits under the playhead"
+    );
+    assert_eq!(
+        keys[1].time,
+        BridgeRational { num: 13, den: 1 },
+        "and the rest keep their spacing"
+    );
+}
+
+/// **Several picked effects copy as one document, in stack order** (K-300).
+/// The Effect controls panel and the Timeline both let a Shift-click take a run
+/// of headings, so the call takes a list — and what comes back is the order the
+/// stack is drawn in, not the order the clicks happened in, or a copied group
+/// would paste back shuffled.
+#[test]
+fn copying_several_effects_takes_them_in_stack_order() {
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let source = comp.add_solid_layer().expect("a layer");
+    source.add_effect("blur".into()).expect("first");
+    source.add_effect("sharpen".into()).expect("second");
+    source.add_effect("vignette".into()).expect("third");
+    let stack = source.get_effects().expect("effects");
+    let ids: Vec<_> = stack.iter().map(|e| e.id()).collect();
+
+    // Picked bottom-up: the third, then the first.
+    let text = source
+        .copy_effects(vec![ids[2], ids[0]])
+        .expect("copied both");
+    let target = comp.add_solid_layer().expect("somewhere to paste");
+    target.paste_effects(text, 0).expect("pasted");
+
+    let pasted: Vec<_> = target
+        .get_effects()
+        .expect("effects")
+        .iter()
+        .map(|e| e.get_info().name)
+        .collect();
+    assert_eq!(
+        pasted,
+        vec!["blur".to_string(), "vignette".to_string()],
+        "the two picked effects arrive, in the order the stack held them"
+    );
+
+    // Naming nothing that is on this layer is a refusal, not a whole-stack copy.
+    assert!(source.copy_effects(vec![Uuid::nil()]).is_err());
+}
+
+/// An effect with no animation at all pastes unchanged — there is no timing to
+/// place, and inventing one would move a look that was never in motion (K-275).
+#[test]
+fn a_pasted_effect_with_no_keyframes_is_left_where_it_is() {
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let source = comp.add_solid_layer().expect("a layer");
+    source.add_effect("blur".into()).expect("an effect");
+    let before = source.get_effects().expect("effects")[0]
+        .get_value("radius".into())
+        .expect("radius");
+
+    let text = source.copy_effects(Vec::new()).expect("copied");
+    let target = comp.add_solid_layer().expect("somewhere to paste");
+    target.paste_effects(text, 120).expect("pasted");
+
+    let after = target.get_effects().expect("effects")[0]
+        .get_value("radius".into())
+        .expect("radius");
+    assert_eq!(format!("{before:?}"), format!("{after:?}"));
 }
 
 /// Each switch is its own op, so a click is one undo step and toggling one
@@ -1743,7 +2030,7 @@ fn a_footage_layer_converts_to_a_sequence_layer_in_one_step() {
     let footage = project
         .import_footage("C:/clips/shot.mov".into())
         .expect("imported");
-    comp.add_footage_layer(&footage).expect("placed");
+    comp.add_footage_layer(&footage, false).expect("placed");
     let layer = comp.get_layers().expect("layers").remove(0);
 
     assert_eq!(layer.get_kind().expect("kind"), BridgeLayerKind::Footage);
@@ -1811,7 +2098,7 @@ fn the_razor_cuts_and_deletes_without_moving_the_other_clips() {
     let footage = project
         .import_footage("C:/clips/shot.mov".into())
         .expect("imported");
-    comp.add_footage_layer(&footage).expect("placed");
+    comp.add_footage_layer(&footage, false).expect("placed");
     let layer = comp.get_layers().expect("layers").remove(0);
     layer.convert_to_sequenced().expect("converted");
     let layer = comp.get_layers().expect("layers").remove(0);
@@ -1839,6 +2126,82 @@ fn the_razor_cuts_and_deletes_without_moving_the_other_clips() {
     assert_eq!(
         remaining[0].place_start, after[0].place_start,
         "deleting leaves a gap; the survivor does not ripple back"
+    );
+}
+
+/// The memory report answers without a project, and its arithmetic holds
+/// (K-294).
+///
+/// The point of the report is the *unaccounted* figure — what the process holds
+/// that no tier here admits to — so what is pinned is that it is derived from
+/// the two numbers it claims to be derived from, and that a platform which will
+/// not say how big the process is says so with a zero rather than a guess.
+#[test]
+fn the_memory_report_answers_and_its_arithmetic_holds() {
+    use crate::api::cache::memory_report;
+
+    let report = memory_report();
+
+    // Every desktop this ships on can answer; a platform that cannot returns 0
+    // rather than inventing, and then there is nothing to check.
+    if report.process_bytes == 0 {
+        return;
+    }
+
+    let accounted = report.frame_cache_bytes
+        + report.decode_cache_bytes
+        + if report.unified_memory {
+            report.vram_cache_bytes
+        } else {
+            0
+        };
+    assert_eq!(
+        report.unaccounted_bytes,
+        report.process_bytes.saturating_sub(accounted),
+        "unaccounted is the process less the tiers that live in ordinary memory"
+    );
+    assert!(
+        report.unaccounted_bytes <= report.process_bytes,
+        "a part cannot exceed the whole"
+    );
+    // The card's frames count against the process only where they are in it.
+    // Getting this backwards makes a cache doing its job read as a leak, which
+    // is the one way this report can actively mislead.
+    if !report.unified_memory {
+        assert_eq!(
+            report.unaccounted_bytes,
+            report
+                .process_bytes
+                .saturating_sub(report.frame_cache_bytes + report.decode_cache_bytes),
+            "a discrete card's frames are not in this process, so they are not \
+             subtracted from it"
+        );
+    }
+    assert!(
+        report.park_queue_frames <= lumit_render::diskio::MAX_PENDING_PARKS as u64,
+        "the write-behind queue is bounded (K-277), and the report shows it"
+    );
+}
+
+/// A process that is holding memory answers a plausible size for itself — the
+/// syscall behind the report is wired, not a stub returning zero on the
+/// platform running the tests.
+#[test]
+fn the_process_reports_its_own_size() {
+    let bytes = crate::api::system::resident_memory_bytes();
+    // Bound rather than asserted inline: `cfg!` is a literal, and an assert on
+    // one is a constant expression clippy rightly refuses.
+    let desktop = cfg!(any(windows, target_os = "linux", target_os = "macos"));
+    if bytes == 0 {
+        // Only an unsupported platform may answer nothing.
+        assert!(!desktop, "every desktop target answers its own size");
+        return;
+    }
+    // A test process holding less than a megabyte, or more than a terabyte, is
+    // a misread struct rather than a real reading.
+    assert!(
+        bytes > (1 << 20) && bytes < (1 << 40),
+        "a plausible process size, not a misread field: {bytes} bytes"
     );
 }
 
@@ -1982,6 +2345,178 @@ fn a_composition_nests_into_another_but_not_into_itself() {
         Err(BridgeError::InvalidComp)
     ));
     assert_eq!(outer.get_layers().expect("layers").len(), 1);
+}
+
+/// Precompose moving every attribute: the chosen layers go into a new comp as
+/// they were, one Precomp layer stands where the topmost of them stood, timing
+/// is untouched, and the whole move is one undo step.
+#[test]
+fn precompose_packs_the_chosen_layers_and_leaves_one_precomp_behind() {
+    use crate::api::layer::BridgeLayerKind;
+
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
+    let bottom = comp.add_solid_layer().expect("solid");
+    let middle = comp.add_solid_layer().expect("solid");
+    let top = comp.add_solid_layer().expect("solid");
+    let spans: Vec<_> = [&bottom, &middle, &top]
+        .iter()
+        .map(|l| l.get_span().expect("span"))
+        .collect();
+
+    let packed = comp
+        .precompose(
+            vec![middle.layer_id, bottom.layer_id],
+            String::new(),
+            false,
+            false,
+        )
+        .expect("precomposed");
+
+    // The two go, the untouched one stays, and the new layer takes the deeper
+    // pair's place rather than jumping to the front of the stack.
+    let after = comp.get_layers().expect("layers");
+    assert_eq!(after.len(), 2);
+    assert_eq!(after[0].layer_id, top.layer_id);
+    assert_eq!(after[1].layer_id, packed.layer_id);
+    assert_eq!(packed.get_kind().expect("kind"), BridgeLayerKind::Precomp);
+    assert_eq!(packed.get_name().expect("name"), "Pre-comp 1");
+
+    // The new comp holds them in stack order, at the times they always had,
+    // and is as long as the comp it came out of — so nothing moved in time.
+    let Some(ItemReference::Composition(inner)) = packed.get_source_item().expect("source") else {
+        panic!("a Precomp layer's source is a composition");
+    };
+    let inside = inner.get_layers().expect("layers");
+    assert_eq!(inside.len(), 2);
+    assert_eq!(inside[0].layer_id, middle.layer_id);
+    assert_eq!(inside[1].layer_id, bottom.layer_id);
+    assert_eq!(inside[0].get_span().expect("span"), spans[1]);
+    assert_eq!(inside[1].get_span().expect("span"), spans[0]);
+    assert_eq!(
+        inner.duration_frames().expect("frames"),
+        comp.duration_frames().expect("frames")
+    );
+    assert_eq!(packed.get_span().expect("span"), spans[2]);
+
+    // One batch, so one undo puts all three layers back where they were.
+    project.undo().expect("undo");
+    let back = comp.get_layers().expect("layers");
+    assert_eq!(back.len(), 3);
+    assert_eq!(back[0].layer_id, top.layer_id);
+    assert_eq!(back[1].layer_id, middle.layer_id);
+    assert_eq!(back[2].layer_id, bottom.layer_id);
+}
+
+/// Precompose refuses an empty selection, and ignores a reference to a layer
+/// of some other comp rather than losing the whole batch to it.
+#[test]
+fn precompose_refuses_nothing_and_survives_a_stray_reference() {
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
+    let other = project.new_composition("Other".into(), None).expect("comp");
+    let mine = comp.add_solid_layer().expect("solid");
+    let theirs = other.add_solid_layer().expect("solid");
+
+    assert!(matches!(
+        comp.precompose(Vec::new(), String::new(), false, false),
+        Err(BridgeError::InvalidLayer)
+    ));
+    assert!(matches!(
+        comp.precompose(vec![theirs.layer_id], String::new(), false, false),
+        Err(BridgeError::InvalidLayer)
+    ));
+
+    // The stray one is dropped; the layer that *is* here still packs.
+    comp.precompose(
+        vec![mine.layer_id, theirs.layer_id],
+        "Packed".into(),
+        false,
+        false,
+    )
+    .expect("precomposed");
+    assert_eq!(comp.get_layers().expect("layers").len(), 1);
+    assert_eq!(other.get_layers().expect("layers").len(), 1);
+}
+
+/// Leaving the attributes behind: the layer moves into the new comp stripped
+/// back to its source, and the Precomp layer standing in its place carries the
+/// effect stack — once, never on both, which would apply it twice.
+#[test]
+fn precompose_leaving_attributes_keeps_them_on_the_precomp_layer_only() {
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
+    let solid = comp.add_solid_layer().expect("solid");
+    solid.add_effect("blur".into()).expect("effect");
+    let second = comp.add_solid_layer().expect("solid");
+    // Two layers have no single layer to leave the attributes on, so this is
+    // refused outright rather than applied to one of them.
+    assert!(matches!(
+        comp.precompose(
+            vec![solid.layer_id, second.layer_id],
+            "Both".into(),
+            true,
+            false
+        ),
+        Err(BridgeError::InvalidLayer)
+    ));
+    second.delete().expect("delete");
+
+    let packed = comp
+        .precompose(vec![solid.layer_id], "Blurred".into(), true, false)
+        .expect("precomposed");
+
+    assert_eq!(packed.get_effects().expect("effects").len(), 1);
+
+    let Some(ItemReference::Composition(inner)) = packed.get_source_item().expect("source") else {
+        panic!("a Precomp layer's source is a composition");
+    };
+    let inside = inner.get_layers().expect("layers");
+    assert_eq!(inside.len(), 1);
+    assert!(inside[0].get_effects().expect("effects").is_empty());
+}
+
+/// Adjusting the duration trims the new comp to the selection's own span: the
+/// packed layer starts at zero inside it, and the Precomp layer covers exactly
+/// the stretch the selection covered, so the picture does not move.
+#[test]
+fn precompose_adjusting_the_duration_trims_the_new_comp_to_the_selection() {
+    use crate::api::effect::BridgeRational;
+    use crate::api::layer::BridgeSpan;
+
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
+    let solid = comp.add_solid_layer().expect("solid");
+    // Two seconds of a thirty-second comp, starting at five.
+    let span = BridgeSpan {
+        in_point: BridgeRational { num: 5, den: 1 },
+        out_point: BridgeRational { num: 7, den: 1 },
+        start_offset: BridgeRational { num: 5, den: 1 },
+    };
+    solid.set_span(span).expect("span");
+
+    let packed = comp
+        .precompose(vec![solid.layer_id], "Trimmed".into(), false, true)
+        .expect("precomposed");
+
+    let Some(ItemReference::Composition(inner)) = packed.get_source_item().expect("source") else {
+        panic!("a Precomp layer's source is a composition");
+    };
+    // Two seconds at the comp's rate, not the parent's thirty.
+    assert_eq!(
+        inner.duration_frames().expect("frames"),
+        2 * comp.duration_frames().expect("frames") / 30
+    );
+    // The packed layer moved back to the start of its new home.
+    let inside = inner.get_layers().expect("layers")[0]
+        .get_span()
+        .expect("span");
+    assert_eq!(inside.in_point, BridgeRational { num: 0, den: 1 });
+    assert_eq!(inside.out_point, BridgeRational { num: 2, den: 1 });
+    assert_eq!(inside.start_offset, BridgeRational { num: 0, den: 1 });
+    // And the Precomp layer stands over the moment the selection stood over,
+    // with the offset that lines inner time zero up with it.
+    assert_eq!(packed.get_span().expect("span"), span);
 }
 
 // --- The shell: boot log, tier, autosave and recovery ---------------------
@@ -2260,6 +2795,326 @@ fn concurrent_project_creation_and_editing_does_not_deadlock() {
     }
 }
 
+// --- Shape layers (K-237) -------------------------------------------------
+
+use crate::api::layer::BridgeLayerKind;
+
+fn shape_item(name: &str, x: f64, y: f64, side: f64) -> crate::api::layer::BridgeShapeItem {
+    use crate::api::layer::{BridgeShapeItem, BridgeVertex};
+    let corner = |x: f64, y: f64| BridgeVertex {
+        x,
+        y,
+        tan_in_x: 0.0,
+        tan_in_y: 0.0,
+        tan_out_x: 0.0,
+        tan_out_y: 0.0,
+    };
+    BridgeShapeItem {
+        id: Uuid::now_v7(),
+        name: name.into(),
+        vertices: vec![
+            corner(x, y),
+            corner(x + side, y),
+            corner(x + side, y + side),
+            corner(x, y + side),
+        ],
+        closed: true,
+        fill: Some(crate::api::assets::BridgeColourRgba {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        }),
+        stroke: None,
+        stroke_width: 0.0,
+        opacity: 100.0,
+    }
+}
+
+/// A shape tool with nothing selected makes one of these, and it lands where
+/// the art was drawn.
+#[test]
+fn a_shape_layer_is_made_from_its_art_and_placed_where_it_was_drawn() {
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+
+    let shape = comp
+        .add_shape_layer(
+            "Rectangle".into(),
+            vec![shape_item("Rectangle", 200.0, 100.0, 50.0)],
+        )
+        .expect("a shape layer");
+
+    assert_eq!(shape.get_kind().expect("kind"), BridgeLayerKind::Shape);
+    let contents = shape.get_shape_contents().expect("contents");
+    assert_eq!(contents.len(), 1);
+    assert_eq!(contents[0].name, "Rectangle");
+    assert_eq!(contents[0].vertices.len(), 4);
+
+    // Anchored on the art's own corner and positioned at it, so the rectangle
+    // is where it was drawn.
+    let tf = shape.get_transform().expect("transform");
+    let still = |s: &BridgeScalar| match s {
+        BridgeScalar::Static(v) => *v,
+        _ => panic!("a fresh layer is not keyframed"),
+    };
+    assert_eq!(still(&tf.anchor_x), 0.0);
+    assert_eq!(still(&tf.position_x), 200.0);
+    assert_eq!(still(&tf.position_y), 100.0);
+
+    // It is at the top of the stack, where After Effects puts a new shape.
+    let layers = comp.get_layers().expect("layers");
+    assert_eq!(layers.first().map(|l| l.id()), Some(shape.id()));
+}
+
+#[test]
+fn shape_contents_are_replaced_as_a_whole_and_undone_in_one_step() {
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let shape = comp
+        .add_shape_layer("Art".into(), vec![shape_item("Rectangle", 0.0, 0.0, 10.0)])
+        .expect("a shape layer");
+
+    let mut contents = shape.get_shape_contents().expect("contents");
+    contents.push(shape_item("Second", 40.0, 40.0, 10.0));
+    shape.set_shape_contents(contents).expect("set");
+    assert_eq!(shape.get_shape_contents().expect("contents").len(), 2);
+
+    project.undo().expect("undone");
+    assert_eq!(
+        shape.get_shape_contents().expect("contents").len(),
+        1,
+        "one edit, one undo step"
+    );
+}
+
+#[test]
+fn shape_contents_ride_the_read_model() {
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let shape = comp
+        .add_shape_layer("Art".into(), vec![shape_item("Rectangle", 0.0, 0.0, 10.0)])
+        .expect("a shape layer");
+
+    let model = comp.get_model().expect("model");
+    let entry = model
+        .layers
+        .iter()
+        .find(|l| l.layer.id() == shape.id())
+        .expect("the layer");
+    assert_eq!(entry.info.shape_contents.len(), 1);
+    assert_eq!(entry.info.kind, BridgeLayerKind::Shape);
+
+    // Every other kind answers with an empty list rather than an error.
+    assert!(layer.get_shape_contents().expect("contents").is_empty());
+}
+
+#[test]
+fn a_shape_layer_refuses_art_that_is_not_a_shape() {
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+
+    assert!(matches!(
+        comp.add_shape_layer("Nothing".into(), Vec::new()),
+        Err(BridgeError::EmptyPath)
+    ));
+
+    let mut thin = shape_item("Line", 0.0, 0.0, 10.0);
+    thin.vertices.truncate(1);
+    assert!(matches!(
+        comp.add_shape_layer("Thin".into(), vec![thin]),
+        Err(BridgeError::EmptyPath)
+    ));
+
+    // And a layer that is not a shape refuses the edit rather than growing art.
+    assert!(matches!(
+        layer.set_shape_contents(vec![shape_item("Rectangle", 0.0, 0.0, 10.0)]),
+        Err(BridgeError::NotShape)
+    ));
+}
+
+// --- Paint: strokes on a layer (K-227) ------------------------------------
+
+fn stroke(name: &str, points: &[(f64, f64)]) -> crate::api::layer::BridgeStroke {
+    use crate::api::layer::{BridgePaintMode, BridgeStroke, BridgeStrokePoint};
+    BridgeStroke {
+        id: Uuid::now_v7(),
+        name: name.into(),
+        points: points
+            .iter()
+            .map(|&(x, y)| BridgeStrokePoint { x, y })
+            .collect(),
+        colour: crate::api::assets::BridgeColourRgba {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        },
+        width: 12.0,
+        hardness: 0.8,
+        opacity: 100.0,
+        mode: BridgePaintMode::Paint,
+        clone_offset_x: 0.0,
+        clone_offset_y: 0.0,
+    }
+}
+
+/// A brush drag is one stroke, one op and one undo step — which is what
+/// `Ctrl+Z` after painting has to mean.
+#[test]
+fn a_stroke_is_added_read_back_and_undone_in_one_step() {
+    let (project, layer) = project_with_layer();
+    assert!(layer.get_paint().expect("paint").is_empty());
+
+    layer
+        .add_stroke(stroke("Brush 1", &[(10.0, 10.0), (40.0, 25.0)]))
+        .expect("added");
+    let strokes = layer.get_paint().expect("paint");
+    assert_eq!(strokes.len(), 1);
+    assert_eq!(strokes[0].name, "Brush 1");
+    assert_eq!(strokes[0].points.len(), 2);
+    assert_eq!(strokes[0].points[1].x, 40.0);
+    assert_eq!(strokes[0].width, 12.0);
+
+    project.undo().expect("undone");
+    assert!(
+        layer.get_paint().expect("paint").is_empty(),
+        "one stroke, one undo step"
+    );
+    project.redo().expect("redone");
+    assert_eq!(layer.get_paint().expect("paint").len(), 1);
+}
+
+/// Strokes are carried in the read model beside the masks (K-184), so the
+/// Timeline can list them without asking per row per frame.
+#[test]
+fn strokes_ride_the_read_model() {
+    let (project, layer) = project_with_layer();
+    layer
+        .add_stroke(stroke("Brush 1", &[(1.0, 2.0)]))
+        .expect("added");
+
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let model = comp.get_model().expect("model");
+    let entry = model
+        .layers
+        .iter()
+        .find(|l| l.layer.id() == layer.id())
+        .expect("the layer");
+    assert_eq!(entry.info.paint.len(), 1);
+    assert_eq!(entry.info.paint[0].name, "Brush 1");
+}
+
+#[test]
+fn a_stroke_is_edited_and_deleted_by_id() {
+    let (_project, layer) = project_with_layer();
+    let first = stroke("Brush 1", &[(0.0, 0.0)]);
+    let second = stroke("Brush 2", &[(5.0, 5.0)]);
+    layer.add_stroke(first.clone()).expect("added");
+    layer.add_stroke(second.clone()).expect("added");
+
+    let mut edited = first.clone();
+    edited.name = "Renamed".into();
+    edited.width = 40.0;
+    layer.set_stroke(edited).expect("set");
+    let strokes = layer.get_paint().expect("paint");
+    assert_eq!(
+        strokes[0].name, "Renamed",
+        "the one named, not the last one"
+    );
+    assert_eq!(strokes[0].width, 40.0);
+    assert_eq!(strokes[1].name, "Brush 2");
+
+    layer.delete_stroke(first.id).expect("deleted");
+    let strokes = layer.get_paint().expect("paint");
+    assert_eq!(strokes.len(), 1);
+    assert_eq!(strokes[0].id, second.id);
+
+    // A stale reference is a calm error, not an edit landing on whatever sits
+    // at that index now.
+    assert!(matches!(
+        layer.delete_stroke(first.id),
+        Err(BridgeError::NoSuchStroke)
+    ));
+    assert!(matches!(
+        layer.set_stroke(first),
+        Err(BridgeError::NoSuchStroke)
+    ));
+}
+
+#[test]
+fn the_last_stroke_can_be_taken_back() {
+    let (_project, layer) = project_with_layer();
+    assert!(
+        matches!(layer.delete_last_stroke(), Err(BridgeError::NoSuchStroke)),
+        "nothing painted, nothing to take back"
+    );
+    layer
+        .add_stroke(stroke("Brush 1", &[(0.0, 0.0)]))
+        .expect("added");
+    layer
+        .add_stroke(stroke("Brush 2", &[(1.0, 1.0)]))
+        .expect("added");
+    layer.delete_last_stroke().expect("taken back");
+    let strokes = layer.get_paint().expect("paint");
+    assert_eq!(strokes.len(), 1);
+    assert_eq!(strokes[0].name, "Brush 1");
+}
+
+/// A gesture with nothing in it is refused rather than stored: it would be a
+/// Timeline row with nothing behind it, exactly as an empty mask would be.
+#[test]
+fn a_stroke_with_no_points_is_refused() {
+    let (_project, layer) = project_with_layer();
+    assert!(matches!(
+        layer.add_stroke(stroke("Nothing", &[])),
+        Err(BridgeError::EmptyStroke)
+    ));
+    assert!(layer.get_paint().expect("paint").is_empty());
+}
+
+/// Numbers that would render wrongly for ever after are clamped at the seam,
+/// as a mask's opacity is.
+#[test]
+fn absurd_stroke_numbers_are_clamped_at_the_bridge() {
+    let (_project, layer) = project_with_layer();
+    let mut wild = stroke("Wild", &[(0.0, 0.0)]);
+    wild.opacity = 4000.0;
+    wild.hardness = -3.0;
+    wild.width = 1e9;
+    layer.add_stroke(wild).expect("added");
+    let got = &layer.get_paint().expect("paint")[0];
+    assert_eq!(got.opacity, 100.0);
+    assert_eq!(got.hardness, 0.0);
+    assert_eq!(got.width, 10_000.0);
+}
+
+/// The three modes and a clone's offset survive the crossing unchanged.
+#[test]
+fn every_paint_mode_round_trips() {
+    use crate::api::layer::BridgePaintMode;
+
+    let (_project, layer) = project_with_layer();
+    for mode in [
+        BridgePaintMode::Paint,
+        BridgePaintMode::Erase,
+        BridgePaintMode::Clone,
+    ] {
+        let mut s = stroke("Mark", &[(2.0, 2.0)]);
+        s.mode = mode;
+        s.clone_offset_x = -20.0;
+        s.clone_offset_y = 7.5;
+        layer.add_stroke(s).expect("added");
+    }
+    let strokes = layer.get_paint().expect("paint");
+    assert_eq!(strokes.len(), 3);
+    assert_eq!(strokes[0].mode, BridgePaintMode::Paint);
+    assert_eq!(strokes[1].mode, BridgePaintMode::Erase);
+    assert_eq!(strokes[2].mode, BridgePaintMode::Clone);
+    assert_eq!(strokes[2].clone_offset_x, -20.0);
+    assert_eq!(strokes[2].clone_offset_y, 7.5);
+}
+
 // --- Assets: what a layer is made of --------------------------------------
 
 /// A text layer's words are editable and round-trip exactly. Before this the
@@ -2353,6 +3208,8 @@ fn a_text_expression_round_trips_and_clears() {
         None,
         "an empty box means no expression"
     );
+    let _ = project;
+    let _ = layer;
 }
 
 /// A camera's zoom is animatable, so it takes a whole scalar like every other
@@ -2455,42 +3312,642 @@ fn editing_a_solid_changes_every_layer_that_uses_it() {
     assert_eq!(solid.get_definition().expect("definition").name, "Backdrop");
 }
 
-// --- Retime ---------------------------------------------------------------
+// --- The sequence view's clip edits (K-247, K-248) ------------------------
 
-/// A footage layer with no retiming is `None`, not 100% — "not retimed" and
-/// "retimed to exactly 1×" are different states in the file, and only the first
-/// skips the resampler.
-#[test]
-fn retiming_is_absent_until_it_is_switched_on() {
+/// A Sequence layer built for the clip tests: one clip spanning [0, 4).
+#[cfg(test)]
+fn sequenced_layer() -> (ProjectReference, CompositionReference, LayerReference) {
     let project = LumitBridgeState::new_project(None).expect("a new project");
     let comp = project.new_composition("Scene".into(), None).expect("comp");
     let footage = project
         .import_footage("C:/clips/shot.mov".into())
         .expect("imported");
-    comp.add_footage_layer(&footage).expect("placed");
+    comp.add_footage_layer(&footage, false).expect("placed");
     let layer = comp.get_layers().expect("layers").remove(0);
+    layer.convert_to_sequenced().expect("sequenced");
+    let layer = comp.get_layers().expect("layers").remove(0);
+    (project, comp, layer)
+}
 
-    assert!(layer.get_retime().expect("retime").is_none());
+/// Re-speeding a clip keeps its place and pins its first frame — the two
+/// promises the whole editing surface rests on (K-022, K-070).
+#[test]
+fn a_clips_speed_holds_its_place_and_its_first_frame() {
+    let (project, _comp, layer) = sequenced_layer();
+    let before = layer.get_clips().expect("clips").remove(0);
 
-    layer.set_retime_enabled(true).expect("on");
-    let retime = layer.get_retime().expect("retime").expect("some");
+    layer
+        .set_clip_speed(before.id, 200.0, 200.0)
+        .expect("re-speeded");
+    let after = layer.get_clips().expect("clips").remove(0);
+
+    assert_eq!(after.start_frame, before.start_frame, "the edit point held");
+    assert_eq!(after.end_frame, before.end_frame, "and so did its length");
+    assert_eq!(after.speed_percent, Some(200.0));
+    assert!(after.retimed);
+
+    // One undo step puts it back.
+    project.undo().expect("undo");
+    let back = layer.get_clips().expect("clips").remove(0);
+    assert!(!back.retimed, "un-retimed again, not retimed to 100%");
+}
+
+/// A ramp reads as no single speed, which is what puts the envelope on screen
+/// instead of a number.
+#[test]
+fn a_ramped_clip_has_no_single_speed() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let clip = layer.get_clips().expect("clips").remove(0);
+    layer.set_clip_speed(clip.id, 100.0, 300.0).expect("ramped");
+    let after = layer.get_clips().expect("clips").remove(0);
+    assert_eq!(after.speed_percent, None);
+    assert!(after.retimed);
+}
+
+/// A Sequence layer's bar is its clips' extent (K-248): cutting leaves it
+/// alone, and deleting an outermost clip brings the end in.
+#[test]
+fn the_layers_bar_follows_its_clips() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let whole = layer.get_info().expect("info");
+    let (in_before, out_before) = (whole.in_frame, whole.out_frame);
+
+    // A cut adds an edit point and changes no extent at all.
+    let middle = (in_before + out_before) / 2;
+    layer.cut_clip_at(middle).expect("cut");
+    let cut = layer.get_info().expect("info");
+    assert_eq!((cut.in_frame, cut.out_frame), (in_before, out_before));
+    assert_eq!(cut.clips.len(), 2);
+
+    // Deleting the last clip brings the end of the bar back with it.
+    layer.delete_clip_at(out_before - 1).expect("deleted");
+    let trimmed = layer.get_info().expect("info");
+    assert_eq!(trimmed.clips.len(), 1);
+    assert_eq!(trimmed.in_frame, in_before, "the start is where it was");
     assert!(
-        (retime.speed_percent - 100.0).abs() < 0.001,
-        "switching it on changes nothing visible"
-    );
-    assert!(!retime.varies, "the identity map is one constant segment");
-
-    layer.set_retime_enabled(false).expect("off");
-    assert!(
-        layer.get_retime().expect("retime").is_none(),
-        "off removes the map rather than setting 100%"
+        trimmed.out_frame < out_before,
+        "and the end came in with the clip that went"
     );
 }
 
-/// The speed, the reverse gate and the interpolation policy are independent —
-/// a speed edit must not silently re-lock reverse or reset the policy.
+/// A clip slides along its row, keeping its length and what it plays.
 #[test]
-fn speed_reverse_and_interpolation_do_not_disturb_each_other() {
+fn sliding_a_clip_moves_it_without_changing_it() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let before = layer.get_clips().expect("clips").remove(0);
+    let length = before.end_frame - before.start_frame;
+
+    layer
+        .slide_clip(before.id, before.start_frame + 5)
+        .expect("slid");
+    let after = layer.get_clips().expect("clips").remove(0);
+    assert_eq!(after.start_frame, before.start_frame + 5);
+    assert_eq!(after.end_frame - after.start_frame, length, "same length");
+    assert_eq!(after.retimed, before.retimed, "and the same map");
+}
+
+/// Converting a **retimed** layer into a Sequence layer keeps its retiming,
+/// and converting back returns it — a round trip must leave the layer playing
+/// what it played.
+#[test]
+fn converting_a_retimed_layer_both_ways_keeps_its_map() {
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
+    let footage = project
+        .import_footage("C:/clips/shot.mov".into())
+        .expect("imported");
+    comp.add_footage_layer(&footage, false).expect("placed");
+    let layer = comp.get_layers().expect("layers").remove(0);
+
+    layer.toggle_retime_property().expect("retimed");
+    let before = layer.get_retime_property().expect("read").expect("a map");
+
+    layer.convert_to_sequenced().expect("sequenced");
+    let sequenced = comp.get_layers().expect("layers").remove(0);
+    let clip = sequenced.get_clips().expect("clips").remove(0);
+    assert!(
+        clip.retimed,
+        "the clip carries the layer's map: it spans the whole layer, so the          two are the same clock"
+    );
+
+    sequenced.convert_from_sequenced().expect("back");
+    let back = comp.get_layers().expect("layers").remove(0);
+    assert_eq!(
+        back.get_retime_property().expect("read"),
+        Some(before),
+        "and the round trip left it exactly as it was"
+    );
+}
+
+/// Cutting a **retimed** clip gives each half a key at the cut, so the two
+/// ramps are independent from the moment they are made — editing one half's
+/// speed never bends the other. An un-retimed clip gains no keys at all
+/// (K-236: a map nobody has shaped is not one to put keys into).
+#[test]
+fn a_razor_cut_keys_a_retimed_clip_and_only_that() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let whole = layer.get_info().expect("info");
+    let at = (whole.in_frame + whole.out_frame) / 2;
+
+    // Un-retimed: cut, and neither half has a map.
+    layer.cut_clip_at(at).expect("cut");
+    for clip in layer.get_clips().expect("clips") {
+        assert!(!clip.retimed, "a cut alone does not retime anything");
+    }
+
+    // Retimed: each half keeps a map, and each opens on the moment it starts.
+    let (_p2, _c2, ramped) = sequenced_layer();
+    let one = ramped.get_clips().expect("clips").remove(0);
+    ramped.set_clip_speed(one.id, 200.0, 200.0).expect("ramped");
+    let whole = ramped.get_info().expect("info");
+    ramped
+        .cut_clip_at((whole.in_frame + whole.out_frame) / 2)
+        .expect("cut");
+
+    let halves = ramped.get_clips().expect("clips");
+    assert_eq!(halves.len(), 2);
+    for half in &halves {
+        assert!(half.retimed, "each half kept the ramp it was cut out of");
+        let BridgeScalar::Keyframed(keys) = &half.retime else {
+            panic!("a keyframed map");
+        };
+        assert!(keys.len() >= 2, "with a key at each of its own ends");
+    }
+    // The later half opens where the cut fell, not at the top of the media.
+    let (early, late) = (&halves[0], &halves[1]);
+    let value = |c: &crate::api::layer::BridgeClip| {
+        let BridgeScalar::Keyframed(keys) = &c.retime else {
+            panic!("keyframed");
+        };
+        keys.first().expect("a first key").value
+    };
+    assert!(
+        value(late) > value(early),
+        "the second half starts further into the source than the first"
+    );
+}
+
+/// A Sequence layer converts back to plain footage — the way out of the
+/// clip-editing surface, which has to exist because the way in is offered to
+/// anyone (K-248).
+#[test]
+fn a_sequence_layer_converts_back_to_footage() {
+    let (_project, comp, layer) = sequenced_layer();
+    let clip = layer.get_clips().expect("clips").remove(0);
+    layer.set_clip_speed(clip.id, 250.0, 250.0).expect("ramped");
+
+    layer.convert_from_sequenced().expect("converted back");
+    let back = comp.get_layers().expect("layers").remove(0);
+    assert_eq!(back.get_kind().expect("kind"), BridgeLayerKind::Footage);
+    // The clip spanned the whole layer, so its map is the layer's map: clip
+    // time and layer time were the same clock, and K-249 made them the same
+    // kind of map, so nothing had to be converted.
+    assert!(
+        back.get_retime_property().expect("read").is_some(),
+        "the ramp came with it"
+    );
+
+    // A row of several clips refuses rather than silently losing all but one.
+    let (_p2, _c2, many) = sequenced_layer();
+    let whole = many.get_info().expect("info");
+    many.cut_clip_at((whole.in_frame + whole.out_frame) / 2)
+        .expect("cut");
+    assert!(matches!(
+        many.convert_from_sequenced(),
+        Err(BridgeError::ManyClips)
+    ));
+}
+
+/// **A layer's cuts and ramps copy onto another layer**, which is what makes a
+/// depth pass follow the footage it belongs to (K-248).
+#[test]
+fn a_sequence_shape_copies_onto_another_layer() {
+    let (project, comp, layer) = sequenced_layer();
+    let whole = layer.get_info().expect("info");
+    layer
+        .cut_clip_at((whole.in_frame + whole.out_frame) / 2)
+        .expect("cut");
+    let first = layer
+        .get_clips()
+        .expect("clips")
+        .into_iter()
+        .min_by_key(|c| c.start_frame)
+        .expect("the earlier half");
+    layer
+        .set_clip_speed(first.id, 250.0, 250.0)
+        .expect("ramped");
+    let shape = layer.copy_sequence_shape(None).expect("copied");
+
+    // A second sequence layer over *different* media, uncut.
+    let other_footage = project
+        .import_footage("C:/clips/depth.mov".into())
+        .expect("imported");
+    // Converted rather than auto-wrapped: this path's media does not exist,
+    // so the wrap rule correctly declines it (a file it cannot read is not
+    // known to run).
+    comp.add_footage_layer(&other_footage, false)
+        .expect("placed");
+    comp.get_layers()
+        .expect("layers")
+        .remove(0)
+        .convert_to_sequenced()
+        .expect("sequenced");
+    let other = comp.get_layers().expect("layers").remove(0);
+    assert_eq!(other.get_clips().expect("clips").len(), 1, "one whole clip");
+    let source_before = other.get_source_item().expect("item");
+
+    other.paste_sequence_shape(shape).expect("pasted");
+
+    let after = other.get_clips().expect("clips");
+    assert_eq!(after.len(), 2, "cut in the same place");
+    let earlier = after
+        .iter()
+        .min_by_key(|c| c.start_frame)
+        .expect("the earlier half");
+    assert_eq!(
+        earlier.speed_percent,
+        Some(250.0),
+        "and ramped the same way"
+    );
+    assert_eq!(
+        earlier.start_frame, first.start_frame,
+        "at the same moment on the comp's clock"
+    );
+    // The shape carries no media: this layer still plays its own.
+    assert!(
+        other.get_source_item().expect("item").is_some() == source_before.is_some(),
+        "the depth pass is not the footage"
+    );
+}
+
+/// One clip's shape copies on its own — the other half of the menu.
+#[test]
+fn one_clips_shape_copies_by_itself() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let whole = layer.get_info().expect("info");
+    layer
+        .cut_clip_at((whole.in_frame + whole.out_frame) / 2)
+        .expect("cut");
+    let one = layer.get_clips().expect("clips").remove(0);
+
+    let all = layer.copy_sequence_shape(None).expect("copied");
+    let just = layer.copy_sequence_shape(Some(one.id)).expect("copied");
+    assert_ne!(all, just, "one clip is not the whole row");
+    assert!(
+        just.len() < all.len(),
+        "and it carries less: one piece rather than two"
+    );
+}
+
+/// A Sequence layer has no Retime of its own (K-075): its clips carry the
+/// retiming, and a second map over the whole row would be a rival to those —
+/// exactly what K-249 spent itself ending.
+#[test]
+fn a_sequence_layer_refuses_a_retime_of_its_own() {
+    let (_project, _comp, layer) = sequenced_layer();
+    assert!(matches!(
+        layer.toggle_retime_property(),
+        Err(BridgeError::NotRetimeable)
+    ));
+    assert!(
+        layer.get_retime_property().expect("read").is_none(),
+        "and nothing was installed on the way to refusing"
+    );
+}
+
+/// Dragging a clip back past the start of the row carries the **layer**
+/// earlier, the way dragging any other layer's bar before the start of the
+/// composition does — and every other clip stays exactly where it was on the
+/// comp's clock while it happens.
+#[test]
+fn a_clip_dragged_before_the_start_takes_the_layer_with_it() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let whole = layer.get_info().expect("info");
+    layer
+        .cut_clip_at((whole.in_frame + whole.out_frame) / 2)
+        .expect("cut");
+    let before = layer.get_clips().expect("clips");
+    let first = before
+        .iter()
+        .min_by_key(|c| c.start_frame)
+        .expect("the earlier half")
+        .clone();
+    let second = before
+        .iter()
+        .max_by_key(|c| c.start_frame)
+        .expect("the later half")
+        .clone();
+
+    layer
+        .slide_clip(first.id, first.start_frame - 10)
+        .expect("slid before the start");
+
+    let after = layer.get_clips().expect("clips");
+    let moved = after
+        .iter()
+        .find(|c| c.id == first.id)
+        .expect("still there");
+    let stayed = after
+        .iter()
+        .find(|c| c.id == second.id)
+        .expect("still there");
+
+    assert_eq!(
+        moved.start_frame,
+        first.start_frame - 10,
+        "the clip went where it was dragged, past the start"
+    );
+    assert_eq!(
+        stayed.start_frame, second.start_frame,
+        "and the other clip did not move on the comp's clock"
+    );
+    assert_eq!(
+        layer.get_info().expect("info").in_frame,
+        first.start_frame - 10,
+        "the layer's bar starts where its earliest clip now does"
+    );
+}
+
+/// Trimming an edge brings it in and moves nothing else — no ripple, ever.
+#[test]
+fn trimming_a_clip_pulls_one_edge_in() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let before = layer.get_clips().expect("clips").remove(0);
+
+    layer
+        .trim_clip(before.id, before.start_frame, before.end_frame - 4)
+        .expect("trimmed");
+    let after = layer.get_clips().expect("clips").remove(0);
+    assert_eq!(after.start_frame, before.start_frame, "the start held");
+    assert_eq!(after.end_frame, before.end_frame - 4);
+
+    // And outward again: the map carries on at the speed it was going
+    // (docs/04 §7.3), which is what lets a cut clip be lengthened back.
+    let out = after.end_frame + 20;
+    layer
+        .trim_clip(after.id, after.start_frame, out)
+        .expect("extended");
+    assert_eq!(
+        layer.get_clips().expect("clips").remove(0).end_frame,
+        out,
+        "an edge dragged outward extends rather than snapping back"
+    );
+}
+
+/// **A clip after a cut keeps starting where it starts.**
+///
+/// The reported fault: ramping the whole clip was fine, and ramping either
+/// half after one cut sent the picture insane — frozen on a frame or two. The
+/// map a clip plays by was being *constructed* by the frontend for a clip that
+/// had none of its own, and it built it starting at source zero: true only of
+/// a clip nobody has cut. Every clip after a cut begins part way into its
+/// media, so ramping one threw it back to the top of the file.
+///
+/// The map now crosses the bridge whether or not the clip has one, built from
+/// the clip's real trim-in, so there is nothing to assume.
+#[test]
+fn a_cut_clips_map_starts_where_the_clip_does() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let whole = layer.get_info().expect("info");
+    layer
+        .cut_clip_at((whole.in_frame + whole.out_frame) / 2)
+        .expect("cut");
+
+    let clips = layer.get_clips().expect("clips");
+    assert_eq!(clips.len(), 2);
+    let right = clips
+        .iter()
+        .max_by_key(|c| c.start_frame)
+        .expect("the later half");
+    assert!(!right.retimed, "neither half is retimed by a cut");
+
+    // The map it plays by opens on the moment it was cut at, not on zero.
+    let BridgeScalar::Keyframed(keys) = &right.retime else {
+        panic!("a clip always reports the map it plays by");
+    };
+    let opens_at = keys.first().expect("a first key").value;
+    assert!(
+        opens_at > 0.0,
+        "the later half starts part way into its media, not at the top of it"
+    );
+
+    // And ramping it keeps that: the first frame it shows is the one it showed.
+    layer
+        .set_clip_speed(right.id, 300.0, 300.0)
+        .expect("ramped");
+    let ramped = layer
+        .get_clips()
+        .expect("clips")
+        .into_iter()
+        .max_by_key(|c| c.start_frame)
+        .expect("the later half");
+    let BridgeScalar::Keyframed(after) = &ramped.retime else {
+        panic!("still a map");
+    };
+    assert!(
+        (after.first().expect("a first key").value - opens_at).abs() < 1e-6,
+        "re-speeding pins a clip's first frame (K-070), it does not move it          back to the start of the media"
+    );
+}
+
+/// A clip that has been cut can be lengthened again.
+///
+/// The reported fault: after a razor cut the new edge looked draggable and
+/// snapped back every time, because only inward trims were honoured — so the
+/// half you had just made could be shortened and never restored.
+#[test]
+fn a_cut_clip_can_be_lengthened_again() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let whole = layer.get_info().expect("info");
+    layer
+        .cut_clip_at((whole.in_frame + whole.out_frame) / 2)
+        .expect("cut");
+    let left = layer.get_clips().expect("clips").remove(0);
+
+    // Shorter first, which always worked…
+    layer
+        .trim_clip(left.id, left.start_frame, left.end_frame - 3)
+        .expect("trimmed in");
+    let short = layer.get_clips().expect("clips").remove(0);
+    assert_eq!(short.end_frame, left.end_frame - 3);
+
+    // …and now longer again, which is what snapped back.
+    layer
+        .trim_clip(short.id, short.start_frame, left.end_frame + 4)
+        .expect("extended out");
+    let long = layer.get_clips().expect("clips").remove(0);
+    assert_eq!(long.end_frame, left.end_frame + 4);
+    assert_eq!(long.start_frame, left.start_frame, "the other edge held");
+}
+
+/// Extending carries the map on at the speed it was already going, so the
+/// frames the clip already showed keep showing at the same moments.
+#[test]
+fn extending_a_retimed_clip_keeps_what_it_already_played() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let clip = layer.get_clips().expect("clips").remove(0);
+    layer.set_clip_speed(clip.id, 200.0, 200.0).expect("sped");
+    let fast = layer.get_clips().expect("clips").remove(0);
+
+    layer
+        .trim_clip(fast.id, fast.start_frame, fast.end_frame + 5)
+        .expect("extended");
+    let longer = layer.get_clips().expect("clips").remove(0);
+    assert_eq!(
+        longer.speed_percent,
+        Some(200.0),
+        "still double speed all the way along, not a ramp into the new tail"
+    );
+}
+
+/// Deleting a clip leaves a gap: nothing after it moves, so every edit point
+/// still standing keeps the beat it was cut to (K-022).
+#[test]
+fn deleting_a_clip_leaves_a_gap() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let whole = layer.get_info().expect("info");
+    layer
+        .cut_clip_at((whole.in_frame + whole.out_frame) / 2)
+        .expect("cut");
+    let clips = layer.get_clips().expect("clips");
+    assert_eq!(clips.len(), 2);
+    let (first, second) = (clips[0].clone(), clips[1].clone());
+
+    layer.delete_clip(first.id).expect("deleted");
+    let left = layer.get_clips().expect("clips");
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].id, second.id);
+    assert_eq!(
+        left[0].start_frame, second.start_frame,
+        "what was left did not slide back to fill the hole"
+    );
+}
+
+/// The envelope writes a clip's whole map, and it reads back as what it wrote.
+#[test]
+fn a_clips_retime_round_trips_through_the_envelope() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let clip = layer.get_clips().expect("clips").remove(0);
+    assert!(!clip.retimed, "un-retimed to start");
+
+    // Double speed as two keys, the shape the envelope authors.
+    layer.set_clip_speed(clip.id, 200.0, 200.0).expect("sped");
+    let sped = layer.get_clips().expect("clips").remove(0);
+    let map = sped.retime.clone();
+
+    layer.set_clip_retime(sped.id, map).expect("written back");
+    let back = layer.get_clips().expect("clips").remove(0);
+    assert_eq!(back.speed_percent, Some(200.0));
+    assert_eq!(back.start_frame, clip.start_frame, "place untouched");
+    assert_eq!(back.end_frame, clip.end_frame);
+}
+
+// --- Video arriving as a Sequence layer (K-246) ---------------------------
+
+/// With the preference on, media that **runs** arrives as a one-clip Sequence
+/// layer — ready to be cut on its own row — while a still image does not,
+/// because there is nothing in one frame to cut.
+///
+/// Needs an ffmpeg on PATH to make the fixtures; skips itself without one, the
+/// same as every other test here that wants real media.
+#[test]
+fn video_is_wrapped_and_a_still_is_not() {
+    #[cfg(feature = "media")]
+    {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let Some(clip) = lumit_media::index::tests_support::fixture(dir.path()) else {
+            return; // no ffmpeg on this machine
+        };
+        // One frame of the same pattern: a still, by duration rather than by
+        // extension — which is exactly the distinction the engine draws.
+        let Some(bin) = lumit_media::index::tests_support::ffmpeg_bin() else {
+            return;
+        };
+        let still = dir.path().join("still.png");
+        let made = std::process::Command::new(bin)
+            .args(["-v", "error", "-y", "-i"])
+            .arg(&clip)
+            .args(["-frames:v", "1"])
+            .arg(&still)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        let project = LumitBridgeState::new_project(None).expect("a new project");
+        let comp = project.new_composition("Scene".into(), None).expect("comp");
+
+        let video = project
+            .import_footage(clip.to_string_lossy().into_owned())
+            .expect("imported");
+        comp.add_footage_layer(&video, true).expect("placed");
+        let layers = comp.get_layers().expect("layers");
+        assert_eq!(
+            layers[0].get_kind().expect("kind"),
+            BridgeLayerKind::Sequence,
+            "video asked to arrive as a Sequence layer does"
+        );
+        assert_eq!(
+            layers[0].get_info().expect("info").clip_frames.len(),
+            1,
+            "one clip, spanning the whole import"
+        );
+
+        if made {
+            let image = project
+                .import_footage(still.to_string_lossy().into_owned())
+                .expect("imported");
+            comp.add_footage_layer(&image, true).expect("placed");
+            assert_eq!(
+                comp.get_layers().expect("layers")[0]
+                    .get_kind()
+                    .expect("kind"),
+                BridgeLayerKind::Footage,
+                "a still has no run to cut, so it is never wrapped"
+            );
+        }
+
+        // …and with the preference off, video is a Footage layer as always.
+        comp.add_footage_layer(&video, false).expect("placed");
+        assert_eq!(
+            comp.get_layers().expect("layers")[0]
+                .get_kind()
+                .expect("kind"),
+            BridgeLayerKind::Footage
+        );
+    }
+}
+
+/// Media that will not probe stays a plain Footage layer even when the
+/// preference is on. Guessing towards the more elaborate shape on no
+/// information is the more annoying mistake to undo.
+#[test]
+fn unreadable_media_is_never_wrapped() {
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
+    let footage = project
+        .import_footage("C:/clips/not-really-here.mov".into())
+        .expect("imported");
+    comp.add_footage_layer(&footage, true).expect("placed");
+    assert_eq!(
+        comp.get_layers().expect("layers")[0]
+            .get_kind()
+            .expect("kind"),
+        BridgeLayerKind::Footage
+    );
+}
+
+// --- Retime ------------------------------------------------------------
+
+/// The frame-interpolation policy is a layer's own setting, present on every
+/// layer whether or not it is retimed (K-249).
+///
+/// It used to live inside the rival retime store this file once exercised at
+/// length — a constant speed, a reverse gate and an enable switch, all of them
+/// a second way to retime a layer that the Retime property already did better.
+/// Those went with the store; the policy stayed, because it was never part of
+/// the map to begin with (docs/04 §10).
+#[test]
+fn interpolation_is_a_layer_setting_of_its_own() {
     use crate::api::retime::BridgeRetimeInterp;
 
     let project = LumitBridgeState::new_project(None).expect("a new project");
@@ -2498,110 +3955,48 @@ fn speed_reverse_and_interpolation_do_not_disturb_each_other() {
     let footage = project
         .import_footage("C:/clips/shot.mov".into())
         .expect("imported");
-    comp.add_footage_layer(&footage).expect("placed");
+    comp.add_footage_layer(&footage, false).expect("placed");
     let layer = comp.get_layers().expect("layers").remove(0);
-    layer.set_retime_enabled(true).expect("on");
 
-    layer.set_retime_reverse(true).expect("gate open");
-    layer
-        .set_retime_interpolation(BridgeRetimeInterp::Blend)
-        .expect("policy");
-    layer.set_retime_speed(50.0).expect("half speed");
-
-    let retime = layer.get_retime().expect("retime").expect("some");
-    assert!((retime.speed_percent - 50.0).abs() < 0.5);
-    assert!(retime.allow_reverse, "the speed edit kept the gate open");
     assert_eq!(
-        retime.interpolation,
-        BridgeRetimeInterp::Blend,
-        "and kept the policy"
+        layer.get_interpolation().expect("read"),
+        BridgeRetimeInterp::Nearest,
+        "nearest is the gaming-footage default (docs/04 §10)"
     );
-
-    // A freeze is a legal speed, not an error.
-    layer.set_retime_speed(0.0).expect("freeze");
     assert!(
-        layer
-            .get_retime()
-            .expect("retime")
-            .expect("some")
-            .speed_percent
-            .abs()
-            < 0.5
+        layer.get_retime_property().expect("read").is_none(),
+        "and it is readable with no retime in sight"
+    );
+
+    layer
+        .set_interpolation(BridgeRetimeInterp::Blend)
+        .expect("set");
+    assert_eq!(
+        layer.get_interpolation().expect("read"),
+        BridgeRetimeInterp::Blend
+    );
+
+    // One undo step, and it does not reach for a retime that is not there.
+    project.undo().expect("undo");
+    assert_eq!(
+        layer.get_interpolation().expect("read"),
+        BridgeRetimeInterp::Nearest
     );
 }
 
-/// Editing a curve that varies would discard its shape, so it is refused rather
-/// than flattened — the same rule the keyframe rows follow.
+/// Every layer kind has a policy — it is not a footage-layer idea, because any
+/// layer can be asked for a moment between two of its source's frames.
 #[test]
-fn a_varying_curve_refuses_a_single_speed() {
-    use lumit_core::retime::{Boundary, RateSegment, Retime, RetimeSegment};
-    use lumit_core::time::Rational;
-
-    let project = LumitBridgeState::new_project(None).expect("a new project");
-    let comp = project.new_composition("Scene".into(), None).expect("comp");
-    let footage = project
-        .import_footage("C:/clips/shot.mov".into())
-        .expect("imported");
-    comp.add_footage_layer(&footage).expect("placed");
-    let layer = comp.get_layers().expect("layers").remove(0);
-    layer.set_retime_enabled(true).expect("on");
-
-    // A ramp, installed behind the row's back the way the Retime graph will.
-    let one = Rational::new(1, 1).expect("1");
-    let two = Rational::new(2, 1).expect("2");
-    let ramp = Retime {
-        boundaries: vec![
-            Boundary::new(Rational::ZERO, Rational::ZERO),
-            Boundary::new(one, two),
-        ],
-        segments: vec![RetimeSegment::Rate(RateSegment::new(
-            Rational::ZERO,
-            two,
-            lumit_core::retime::Ease::Linear,
-        ))],
-        allow_reverse: false,
-        interpolation: Default::default(),
-        extra: serde_json::Map::new(),
-    };
-    {
-        let state = project.state().expect("state");
-        let state = state.write().expect("write");
-        state
-            .store
-            .commit(lumit_core::Op::SetLayerRetime {
-                comp: comp.id,
-                layer: layer.id(),
-                retime: Some(ramp),
-            })
-            .expect("ramp installed");
-    }
-
-    let read = layer.get_retime().expect("retime").expect("some");
-    assert!(read.varies, "a ramp is not one constant speed");
-    assert!(matches!(
-        layer.set_retime_speed(50.0),
-        Err(BridgeError::RetimeVaries)
-    ));
-
-    // …but the gate and the policy are still editable, because neither
-    // discards the shape.
-    layer.set_retime_reverse(true).expect("gate still editable");
-    assert!(layer.get_retime().expect("retime").expect("some").varies);
-}
-
-/// Retiming is a footage-layer idea; every other kind refuses calmly.
-#[test]
-fn only_footage_layers_retime() {
+fn every_layer_kind_has_an_interpolation_policy() {
+    use crate::api::retime::BridgeRetimeInterp;
     let (_project, layer) = project_with_layer();
-    assert!(layer.get_retime().expect("retime").is_none());
-    assert!(matches!(
-        layer.set_retime_enabled(true),
-        Err(BridgeError::NotFootage)
-    ));
-    assert!(matches!(
-        layer.set_retime_speed(50.0),
-        Err(BridgeError::NotFootage)
-    ));
+    assert_eq!(
+        layer.get_interpolation().expect("read"),
+        BridgeRetimeInterp::Nearest
+    );
+    layer
+        .set_interpolation(BridgeRetimeInterp::Blend)
+        .expect("a solid takes one too");
 }
 
 /// The Retime *property* (K-197) is an ordinary keyframable scalar: absent
@@ -2746,6 +4141,192 @@ fn clearing_beats_keeps_the_markers_a_person_made() {
     // Clearing again is a calm no-op — something a user does without thinking.
     comp.clear_beat_markers().expect("no-op");
     assert_eq!(comp.get_markers().expect("markers").len(), 1);
+}
+
+/// **Dragging or renaming a beat marker must leave it a beat marker** (K-270).
+///
+/// The regression: the panel writes the whole list back through `set_markers`,
+/// and a bridge marker carries only id, time and label — so every marker was
+/// rebuilt with the *default* kind, no duration, and an empty `extra`. Moving a
+/// detected beat one frame turned it into an ordinary cue, and *Clear beat
+/// markers* then walked straight past it: nothing was left to say it had ever
+/// been detected. K-254's ruler markers made that a drag away.
+///
+/// The same merge protects a spanning marker's duration and the unknown fields
+/// a newer Lumit wrote (docs/10 §1.1), which the panel equally cannot see.
+#[test]
+fn dragging_a_beat_marker_leaves_it_a_beat_marker() {
+    use crate::api::composition::BridgeMarker;
+    use crate::api::effect::BridgeRational;
+
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+
+    // A beat marker with a duration and a field from a newer version, placed
+    // the way detection and a forward-compatible load place them.
+    let beat_id = Uuid::now_v7();
+    {
+        let mut beat = lumit_core::markers::Marker::beat(
+            beat_id,
+            lumit_core::Rational::new(1, 1).expect("1 s"),
+            0.9,
+        );
+        beat.duration = Some(lumit_core::Rational::new(1, 4).expect("a quarter second"));
+        beat.extra
+            .insert("from_a_newer_lumit".into(), serde_json::json!(true));
+        let state = project.state().expect("state");
+        let state = state.write().expect("write");
+        state
+            .store
+            .commit(lumit_core::Op::SetCompMarkers {
+                comp: comp.id,
+                markers: vec![beat],
+            })
+            .expect("seeded");
+    }
+
+    // The panel's write-back: same marker, moved and renamed.
+    comp.set_markers(vec![BridgeMarker {
+        id: beat_id,
+        time: BridgeRational { num: 3, den: 2 },
+        label: "Moved".into(),
+    }])
+    .expect("dragged");
+
+    let stored = comp.composition().expect("comp").markers;
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].label, "Moved", "the edit landed");
+    assert_eq!(
+        stored[0].time.0,
+        lumit_core::Rational::new(3, 2).expect("1.5 s"),
+        "and so did the move"
+    );
+    assert!(
+        matches!(
+            stored[0].kind,
+            lumit_core::markers::MarkerKind::Beat { confidence }
+                if (confidence - 0.9).abs() < 1e-6
+        ),
+        "it is still the beat it was, confidence and all: {:?}",
+        stored[0].kind
+    );
+    assert_eq!(
+        stored[0].duration,
+        Some(lumit_core::Rational::new(1, 4).expect("a quarter second")),
+        "a spanning marker keeps its span"
+    );
+    assert_eq!(
+        stored[0].extra.get("from_a_newer_lumit"),
+        Some(&serde_json::json!(true)),
+        "and the forward-compatibility promise holds across an edit"
+    );
+
+    // Which is the whole point: clearing beats still finds it.
+    comp.clear_beat_markers().expect("cleared");
+    assert!(comp.get_markers().expect("markers").is_empty());
+}
+
+/// A marker the panel has just made is a plain user marker — the merge above
+/// must not invent provenance for one the document has never seen.
+#[test]
+fn a_marker_the_panel_just_made_is_a_user_marker() {
+    use crate::api::composition::BridgeMarker;
+    use crate::api::effect::BridgeRational;
+
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    comp.set_markers(vec![BridgeMarker {
+        id: Uuid::now_v7(),
+        time: BridgeRational { num: 1, den: 2 },
+        label: "Mine".into(),
+    }])
+    .expect("marked");
+
+    let stored = comp.composition().expect("comp").markers;
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].kind, lumit_core::markers::MarkerKind::User);
+    assert_eq!(stored[0].duration, None);
+    assert!(stored[0].extra.is_empty());
+    comp.clear_beat_markers().expect("no beats to clear");
+    assert_eq!(comp.get_markers().expect("markers").len(), 1);
+}
+
+/// A composition dropped into another brings its markers with it as the
+/// layer's own — **copies**, so editing them never reaches back into the
+/// composition they came from, or into anywhere else it is used (K-254).
+#[test]
+fn dropping_a_comp_in_copies_its_markers_onto_the_layer() {
+    use crate::api::composition::BridgeMarker;
+    use crate::api::effect::BridgeRational;
+
+    let (project, layer) = project_with_layer();
+    let outer = CompositionReference::new(project.id, layer.comp_id());
+    let source = project
+        .new_composition("Beats".into(), None)
+        .expect("a comp to drop in");
+    let seeded = Uuid::now_v7();
+    source
+        .set_markers(vec![BridgeMarker {
+            id: seeded,
+            time: BridgeRational { num: 1, den: 2 },
+            label: "Drop".into(),
+        }])
+        .expect("marked");
+
+    let placed = outer.add_precomp_layer(&source).expect("placed");
+    let on_layer = placed.get_markers().expect("layer markers");
+    assert_eq!(on_layer.len(), 1, "the marker came along");
+    assert_eq!(on_layer[0].label, "Drop");
+    assert_ne!(on_layer[0].id, seeded, "a copy, with an id of its own");
+
+    // Independent from here: clearing the layer's leaves the comp's alone.
+    placed.set_markers(vec![]).expect("cleared");
+    assert!(placed.get_markers().expect("layer markers").is_empty());
+    assert_eq!(
+        source.get_markers().expect("comp markers").len(),
+        1,
+        "the composition it came from is untouched"
+    );
+}
+
+/// Pre-composing carries the comp's markers into the new comp and leaves the
+/// Precomp layer bare: the same cues are on the ruler above it, and drawing
+/// them again on the layer would say it twice (K-254).
+#[test]
+fn precompose_carries_markers_in_and_leaves_the_layer_bare() {
+    use crate::api::composition::BridgeMarker;
+    use crate::api::effect::BridgeRational;
+
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    comp.set_markers(vec![BridgeMarker {
+        id: Uuid::now_v7(),
+        time: BridgeRational { num: 1, den: 2 },
+        label: "Chorus".into(),
+    }])
+    .expect("marked");
+
+    let precomp = comp
+        .precompose(vec![layer.layer_id], "Packed".into(), false, false)
+        .expect("packed");
+    assert!(
+        precomp.get_markers().expect("layer markers").is_empty(),
+        "the Precomp layer draws none of its own"
+    );
+    assert_eq!(
+        comp.get_markers().expect("outer markers").len(),
+        1,
+        "the outer comp keeps its own"
+    );
+
+    let inner = match precomp.get_source_item().expect("source") {
+        Some(crate::api::project_item::ItemReference::Composition(c)) => c,
+        _ => panic!("a Precomp layer's source is a composition"),
+    };
+    let packed = inner.get_markers().expect("packed markers");
+    assert_eq!(packed.len(), 1, "and the packed comp got a copy");
+    assert_eq!(packed[0].label, "Chorus");
+    assert_eq!(packed[0].time.num * 2, packed[0].time.den, "still at 0.5 s");
 }
 
 /// A row's stopwatch keys every axis it covers, and that has to be ONE undo
@@ -2998,9 +4579,13 @@ fn a_keymap_survives_the_json_it_is_stored_as() {
     let saved = keymap_to_json();
 
     keymap_load_preset(BridgeKeymapPreset::AfterEffects);
+    // The rebind is gone: the chord means what the preset says it means, not
+    // what this test made it mean. It used to assert `None` here, which held
+    // only while `Mod+Shift+S` was a spare chord — Save as took it (K-244), and
+    // a preset's own binding proves the replacement better than a blank does.
     assert_eq!(
-        keymap_lookup(BridgeKeyContext::Global, "Mod+Shift+S".into()),
-        None,
+        keymap_lookup(BridgeKeyContext::Global, "Mod+Shift+S".into()).as_deref(),
+        Some("file.save.as"),
         "the preset really replaced it"
     );
 
@@ -3202,4 +4787,198 @@ fn system_memory_bytes_reports_non_zero_on_supported_platforms() {
             "system memory should be positive on Linux/macOS/Windows"
         );
     }
+}
+
+/// Switching Retime off re-hangs the layer on its source (K-212): it keeps its
+/// in point, shows the same frame there, and runs at source rate until the
+/// source runs out — never longer than it already was.
+#[test]
+fn switching_retime_off_re_hangs_the_layer_on_its_source() {
+    use crate::api::composition::BridgeCompSettings;
+    use crate::api::effect::BridgeRational;
+    use crate::api::layer::BridgeSpan;
+
+    let rational = |num: i64, den: i64| BridgeRational { num, den };
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    // A five-second source at 60 fps: 300 frames of material, and no file to
+    // probe — a nested comp's length is its own.
+    let inner = project
+        .new_composition(
+            "Inner".into(),
+            Some(BridgeCompSettings {
+                name: "Inner".into(),
+                width: 320,
+                height: 240,
+                fps_num: 60,
+                fps_den: 1,
+                duration: rational(5, 1),
+            }),
+        )
+        .expect("comp");
+    let outer = project.new_composition("Outer".into(), None).expect("comp");
+    let layer = outer.add_precomp_layer(&inner).expect("nested");
+
+    // Retimed, a layer is any length it likes: stretched to twenty seconds.
+    layer.toggle_retime_property().expect("on");
+    layer
+        .set_span(BridgeSpan {
+            in_point: rational(0, 1),
+            out_point: rational(20, 1),
+            start_offset: rational(0, 1),
+        })
+        .expect("stretched");
+
+    layer.toggle_retime_property().expect("off");
+    let span = layer.get_span().expect("span");
+    assert_eq!(
+        outer.frame_at_time(span.out_point).expect("frame"),
+        300,
+        "showing the source's first frame, it runs the source's whole length"
+    );
+    assert_eq!(
+        outer.frame_at_time(span.start_offset).expect("frame"),
+        0,
+        "and its own zero stays where that frame is"
+    );
+    assert_eq!(outer.frame_at_time(span.in_point).expect("frame"), 0);
+
+    // Anchored two seconds into the source instead: only the three seconds
+    // that are left of the source remain.
+    layer.toggle_retime_property().expect("on");
+    layer
+        .set_span(BridgeSpan {
+            in_point: rational(0, 1),
+            out_point: rational(20, 1),
+            start_offset: rational(-2, 1),
+        })
+        .expect("stretched");
+    layer.toggle_retime_property().expect("off");
+    let span = layer.get_span().expect("span");
+    assert_eq!(
+        outer.frame_at_time(span.out_point).expect("frame"),
+        180,
+        "three seconds of source were left to play"
+    );
+    assert_eq!(
+        outer.frame_at_time(span.start_offset).expect("frame"),
+        -120,
+        "the anchor frame still shows at the in point"
+    );
+
+    // And it never grows: a layer shorter than what is left keeps its length.
+    layer.toggle_retime_property().expect("on");
+    layer
+        .set_span(BridgeSpan {
+            in_point: rational(0, 1),
+            out_point: rational(1, 1),
+            start_offset: rational(0, 1),
+        })
+        .expect("trimmed");
+    layer.toggle_retime_property().expect("off");
+    assert_eq!(
+        outer
+            .frame_at_time(layer.get_span().expect("span").out_point)
+            .expect("frame"),
+        60,
+        "one second in, one second out"
+    );
+}
+
+/// Keyframes belong to the layer, and the seam says so in the interface's units
+/// (K-213).
+///
+/// The engine keys every property in the layer's **own** time, which is what
+/// makes a layer's animation travel with it when it is moved. The Timeline
+/// draws and edits in **comp** frames. The bridge is where the two meet: what
+/// crosses is comp time, converted by the layer's `start_offset` in both
+/// directions. Read raw, a moved layer's keys drew at the start of the comp.
+#[test]
+fn keyframes_cross_on_the_comp_clock_and_travel_with_the_layer() {
+    use crate::api::effect::{BridgeKeyframe, BridgeRational, BridgeScalar, BridgeSideInterp};
+    use crate::api::layer::{BridgeSpan, BridgeTransformProp};
+
+    let rational = |num: i64, den: i64| BridgeRational { num, den };
+    let key = |seconds: i64, value: f64| BridgeKeyframe {
+        time: rational(seconds, 1),
+        value,
+        interp_in: BridgeSideInterp::Linear,
+        interp_out: BridgeSideInterp::Linear,
+    };
+
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
+    let layer = comp.add_solid_layer().expect("solid");
+
+    // A key at comp second 2, written the way a panel writes one.
+    layer
+        .set_transform(
+            BridgeTransformProp::PositionX,
+            BridgeScalar::Keyframed(vec![key(2, 100.0)]),
+        )
+        .expect("keyed");
+    assert_eq!(
+        layer.get_transform().expect("transform").position_x,
+        BridgeScalar::Keyframed(vec![key(2, 100.0)]),
+        "it reads back at the comp time it was written at"
+    );
+
+    // Move the whole layer three seconds later — in, out and the offset all
+    // shift, which is what a bar drag commits.
+    layer
+        .set_span(BridgeSpan {
+            in_point: rational(3, 1),
+            out_point: rational(8, 1),
+            start_offset: rational(3, 1),
+        })
+        .expect("moved");
+    assert_eq!(
+        layer.get_transform().expect("transform").position_x,
+        BridgeScalar::Keyframed(vec![key(5, 100.0)]),
+        "the key travelled with the layer, and says so in comp time"
+    );
+}
+
+/// Switching Retime on keys the layer where it *is* (K-213): one key on its in
+/// point, one on its out point, both in comp time — not at the start of the
+/// composition, and not stopping short of a trimmed layer's tail.
+#[test]
+fn enabling_retime_keys_the_layer_where_it_sits() {
+    use crate::api::effect::{BridgeRational, BridgeScalar};
+    use crate::api::layer::BridgeSpan;
+
+    let rational = |num: i64, den: i64| BridgeRational { num, den };
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
+    let inner = project.new_composition("Inner".into(), None).expect("comp");
+    let layer = comp.add_precomp_layer(&inner).expect("nested");
+
+    // Moved to comp second 3 and trimmed a second off its head: its own zero
+    // sits at comp second 2, so local time at the in point is one second.
+    layer
+        .set_span(BridgeSpan {
+            in_point: rational(3, 1),
+            out_point: rational(8, 1),
+            start_offset: rational(2, 1),
+        })
+        .expect("placed");
+
+    assert!(layer.toggle_retime_property().expect("on"));
+    let Some(BridgeScalar::Keyframed(keys)) = layer.get_retime_property().expect("retime") else {
+        panic!("switching Retime on installs a keyed map");
+    };
+    assert_eq!(keys.len(), 2, "one key on each end, and no others");
+    assert_eq!(
+        comp.frame_at_time(keys[0].time).expect("frame"),
+        comp.frame_at_time(rational(3, 1)).expect("frame"),
+        "the first key is on the layer's in point"
+    );
+    assert_eq!(
+        comp.frame_at_time(keys[1].time).expect("frame"),
+        comp.frame_at_time(rational(8, 1)).expect("frame"),
+        "and the second on its out point"
+    );
+    // The values are the source times those moments show — the identity map,
+    // so each is the layer's own local time and nothing moves on screen.
+    assert!((keys[0].value - 1.0).abs() < 1e-9);
+    assert!((keys[1].value - 6.0).abs() < 1e-9);
 }

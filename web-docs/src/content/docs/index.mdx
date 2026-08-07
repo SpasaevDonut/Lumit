@@ -1,0 +1,61 @@
+---
+title: Lumit docs
+description: Documentation for Lumit, the native motion-graphics and compositing editor.
+template: splash
+# Without this the tab reads "Lumit docs | Lumit docs" - the page title and the
+# site title are the same string, and Starlight joins them.
+head:
+  - tag: title
+    content: Lumit docs - motion graphics and compositing
+hero:
+  tagline: A native motion-graphics and compositing editor. GPU-first, open source, GPLv3.
+  image:
+    file: ../../assets/lumit-mark.svg
+  actions:
+    - text: Your first composition
+      link: /start/first-composition/
+      icon: right-arrow
+    - text: Install Lumit
+      link: /start/install/
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+<CardGrid stagger>
+  <Card title="Start here" icon="rocket">
+    Install Lumit, then build a composition end to end - import, animate, export.
+
+    [Your first composition →](/start/first-composition/)
+  </Card>
+  <Card title="Using Lumit" icon="laptop">
+    Every part of the application: layers, keyframes, retiming, effects, masks,
+    text, and export.
+
+    [Compositions →](/use/compositions/) · [Layers →](/use/layers/) ·
+    [Keyframes →](/use/keyframes/) · [Retiming →](/use/retime/)
+  </Card>
+  <Card title="How Lumit works" icon="setting">
+    Background reading. Why the engine is separate, why time is stored as exact
+    fractions, and how the cache survives your edits.
+
+    [How Lumit is built →](/engine/overview/)
+  </Card>
+  <Card title="Contribute" icon="github">
+    Lumit is GPLv3 and developed in the open. Issues and pull requests are welcome.
+
+    [On GitHub →](https://github.com/luminalmvm/Lumit)
+  </Card>
+</CardGrid>
+
+## Not built yet
+
+Lumit is in public beta, and these pages say so where it matters rather than
+describing features that do not exist:
+
+- [Audio](/use/audio/) - waveforms and beat markers work; audio layers and mixing do not.
+- [Expressions](/use/expressions/) - specified, partly built, not usable.
+- [Cameras and 3D](/use/camera/) - cameras work; light layers do not.
+- [Retiming](/use/retime/) - flow interpolation is unfinished; nearest and blend work.
+- [Effects](/use/effects/) - 33 built-in effects; plugin hosting is not built.

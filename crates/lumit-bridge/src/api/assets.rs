@@ -79,37 +79,76 @@ impl LayerReference {
         self.commit(lumit_core::Op::SetTextDocument {
             comp: self.comp_id,
             layer: self.layer_id,
-            document: lumit_core::model::TextDocument {
-                text: document.text,
-                // An empty box means no expression, not an expression that
-                // says nothing — otherwise clearing the field would leave the
-                // layer permanently blank with no way back to its words.
-                expression: document.expression.filter(|e| !e.trim().is_empty()),
-                size: document.size,
-                fill: linear_of(document.fill),
-                extra: serde_json::Map::new(),
-            },
+            document: text_document_of(document),
         })
+    }
+
+    /// Replace a text layer's document **and its anchor and position
+    /// together**, as one op (K-230).
+    ///
+    /// For the end of a typing session, which is one action to the user and has
+    /// to be one undo step. It is two edits underneath — what the line says, and
+    /// the pivot moving to the middle of the line it turned out to be, with
+    /// Position compensating so the line does not shift — and committing them
+    /// separately made `Ctrl+Z` undo a pivot nobody had moved before it undid
+    /// the typing.
+    #[frb(sync)]
+    pub fn set_text_placed(
+        &self,
+        document: BridgeTextDocument,
+        anchor_x: f64,
+        anchor_y: f64,
+        position_x: f64,
+        position_y: f64,
+    ) -> Result<(), BridgeError> {
+        use lumit_core::model::TransformProp;
+        let layer = self.item()?;
+        let lumit_core::model::LayerKind::Text { .. } = layer.kind else {
+            return Err(BridgeError::NotText);
+        };
+        let offset = layer.start_offset.0;
+        let mut ops = vec![lumit_core::Op::SetTextDocument {
+            comp: self.comp_id,
+            layer: self.layer_id,
+            document: text_document_of(document),
+        }];
+        for (prop, value) in [
+            (TransformProp::AnchorX, anchor_x),
+            (TransformProp::AnchorY, anchor_y),
+            (TransformProp::PositionX, position_x),
+            (TransformProp::PositionY, position_y),
+        ] {
+            ops.push(lumit_core::Op::SetTransformProperty {
+                comp: self.comp_id,
+                layer: self.layer_id,
+                prop,
+                animation: BridgeScalar::Static(value).animation_at(offset)?,
+            });
+        }
+        self.commit(lumit_core::Op::Batch { ops })
     }
 
     /// A camera layer's zoom — focal distance in comp pixels, the After Effects
     /// model where the z=0 plane maps 1:1. `None` on any other kind.
     #[frb(sync)]
     pub fn get_camera_zoom(&self) -> Result<Option<BridgeScalar>, BridgeError> {
-        let lumit_core::model::LayerKind::Camera { zoom } = self.item()?.kind else {
+        let layer = self.item()?;
+        let lumit_core::model::LayerKind::Camera { zoom } = layer.kind else {
             return Ok(None);
         };
-        Ok(Some(BridgeScalar::read(&zoom)))
+        // Keys on the composition's clock, like every other channel (K-213).
+        Ok(Some(BridgeScalar::read_at(&zoom, layer.start_offset.0)))
     }
 
     /// Set a camera's zoom. Animatable, so it takes a whole `BridgeScalar` like
     /// every other curve-capable value.
     #[frb(sync)]
     pub fn set_camera_zoom(&self, zoom: BridgeScalar) -> Result<(), BridgeError> {
-        let lumit_core::model::LayerKind::Camera { .. } = self.item()?.kind else {
+        let layer = self.item()?;
+        let lumit_core::model::LayerKind::Camera { .. } = layer.kind else {
             return Err(BridgeError::NotCamera);
         };
-        let animation = zoom.animation()?;
+        let animation = zoom.animation_at(layer.start_offset.0)?;
         self.commit(lumit_core::Op::SetCameraZoom {
             comp: self.comp_id,
             layer: self.layer_id,
@@ -153,7 +192,7 @@ impl SolidReference {
 }
 
 #[frb(ignore)]
-fn colour_of(c: lumit_core::model::LinearColour) -> BridgeColourRgba {
+pub(crate) fn colour_of(c: lumit_core::model::LinearColour) -> BridgeColourRgba {
     BridgeColourRgba {
         r: f64::from(c.0[0]),
         g: f64::from(c.0[1]),
@@ -163,6 +202,22 @@ fn colour_of(c: lumit_core::model::LinearColour) -> BridgeColourRgba {
 }
 
 #[frb(ignore)]
-fn linear_of(c: BridgeColourRgba) -> lumit_core::model::LinearColour {
+/// The document as the model holds it. One conversion, used by every path that
+/// writes text — a new layer, a retype, a preview.
+pub(crate) fn text_document_of(document: BridgeTextDocument) -> lumit_core::model::TextDocument {
+    lumit_core::model::TextDocument {
+        text: document.text,
+        // An empty box means no expression, not an expression that says
+        // nothing — otherwise clearing the field would leave the layer
+        // permanently blank with no way back to its words. Applied here, in
+        // the one conversion, so every writer of a text document gets it.
+        expression: document.expression.filter(|e| !e.trim().is_empty()),
+        size: document.size,
+        fill: linear_of(document.fill),
+        extra: serde_json::Map::new(),
+    }
+}
+
+pub(crate) fn linear_of(c: BridgeColourRgba) -> lumit_core::model::LinearColour {
     lumit_core::model::LinearColour([c.r as f32, c.g as f32, c.b as f32, c.a as f32])
 }

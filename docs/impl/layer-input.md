@@ -15,13 +15,37 @@ its texture in. A layer-input parameter is the same idea, but the referenced
 layer's texture is handed to an **effect** instead of the matte stage.
 
 ## 1. The parameter (mirror `MatteRef`)
-- `ParamKind::Layer { }` (fx.rs) — declares the effect wants a reference to
-  another layer (a depth/aux input).
+- `ParamKind::Layer { self_default }` (fx.rs) — declares the effect wants a
+  reference to a layer (a depth/aux input). `self_default: true` means a fresh
+  instance **added to a layer** starts pointed at that layer (K-288); the Lens
+  flare's Matte layer takes it, DoF's Depth layer does not.
 - `EffectValue::Layer(Option<Uuid>)` (model.rs) — the referenced layer's id, or
   None when unset. Exactly the shape of `MatteRef.layer`, minus channel/invert.
 - Inspector: a **Layer picker** arm — a dropdown of the comp's layers by name
   (plus "None"), like the Parent picker in the Effect Controls panel (K-103).
   Selecting sets the id through an undoable op.
+
+### This layer (K-288)
+
+A reference may name **the layer the effect is on**, and then nothing is
+rendered a second time: the slot resolves to that effect's own input at its
+point in the stack. The draw builder answers `LayerInputDraw::ThisLayer` for
+it, `realise` passes that through as `fxops::LayerInput::ThisLayer`, and
+`run_ops` binds the texture it is already carrying.
+
+Two consequences, both wanted. The input is already at the raster the effect
+writes, so no resample stands between them. And on an **adjustment layer** —
+which has no picture of its own — that input is the composite of everything
+below, so a matte-sourced effect (the Lens flare) works there without being
+pointed at some other, wrong layer. The picker therefore offers the owning
+layer, labelled `<name> (this layer)`, whether or not it has a picture of its
+own; every other layer still has to have one.
+
+The K-142 source combobox does not apply to a this-layer reference (nothing is
+re-rendered, so there is nothing to choose between), and the frame key feeds a
+distinct marker and stops rather than recursing: this layer's own content is
+already in the key from the walk the parameter sits inside, and an adjustment
+layer's below-composite from the other layers' own entries.
 
 ## 2. Threading the referenced layer's texture (mirror mattes + the LUT §8)
 `run_ops` takes only `&[Resolved]` (Copy scalars), so — exactly as the LUT
@@ -170,11 +194,12 @@ shared helper `fxops::render_layer_input`, which preview and export both call
   (the matte block's shape — matching the source-only render), guarded by the
   precomp visited set.
 
-This unblocks **DoF v1** (a depth layer + focus/range/aperture/mix). Remaining:
-the inspector **Layer picker** and the set-param op (the owner's follow-up — an
-unpicked Layer renders as nothing for now); the preview decode planner gate
-above; a placement/effects-aware depth; and the fuller "DOF PRO" second effect
-with shaped bokeh highlights and the deferred bright-rim "Highlight bloom" param.
+This unblocks **DoF v1** (a depth layer + focus/range/aperture/mix). The
+inspector **Layer picker** has since landed (`effect_param_row_frb.dart`'s
+`BridgeParamKind_Layer` arm — a dropdown of the comp's other layers, filtered to
+ones with a picture). Remaining: a placement/effects-aware depth, and the fuller
+"DOF PRO" second effect with shaped bokeh highlights and the deferred bright-rim
+"Highlight bloom" param.
 Logged as K-123 (Layer-input parameter kind) and K-124 (DoF effect).
 
 ## DoF lens controls — landed (K-128)

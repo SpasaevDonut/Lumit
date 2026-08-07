@@ -443,6 +443,9 @@ mod tests {
             masks: Vec::new(),
             effects: Vec::new(),
             switches: Switches::default(),
+            interpolation: Default::default(),
+            markers: Vec::new(),
+            paint: Default::default(),
             extra: serde_json::Map::new(),
         }
     }

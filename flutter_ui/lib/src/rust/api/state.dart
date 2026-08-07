@@ -18,7 +18,7 @@ import 'solid.dart';
 part 'state.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `handle_change_callback`, `journal_for`, `op_scope`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitBridgeState>>
 abstract class LumitBridgeState implements RustOpaqueInterface {
@@ -35,6 +35,142 @@ abstract class LumitBridgeState implements RustOpaqueInterface {
           RustStreamSink<ScopedChange>? onChangeStream}) =>
       BridgeLib.instance.api.crateApiStateLumitBridgeStateOpenProject(
           path: path, onChangeStream: onChangeStream);
+}
+
+/// One effect's measured cost within its layer, in milliseconds.
+class BridgeEffectTiming {
+  /// The effect *instance* id, as a string — the row in the layer's stack.
+  final String effect;
+  final double ms;
+
+  const BridgeEffectTiming({
+    required this.effect,
+    required this.ms,
+  });
+
+  @override
+  int get hashCode => effect.hashCode ^ ms.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeEffectTiming &&
+          runtimeType == other.runtimeType &&
+          effect == other.effect &&
+          ms == other.ms;
+}
+
+/// What one measured frame cost, per layer and per effect — the Timeline's
+/// render-time column and the Effect controls panel's readouts (docs/13 §7.1).
+///
+/// Published only while the frontend has asked to be measuring
+/// (`set_render_profiling`), because measuring is not free: it fences the
+/// graphics card at each node so a millisecond means the work rather than the
+/// paperwork.
+class BridgeFrameProfile {
+  final BigInt frame;
+
+  /// The whole frame, wall-clock, including the stages no layer owns.
+  final double totalMs;
+
+  /// The composition's top-level layers, bottom-most first.
+  final List<BridgeLayerTiming> layers;
+
+  const BridgeFrameProfile({
+    required this.frame,
+    required this.totalMs,
+    required this.layers,
+  });
+
+  @override
+  int get hashCode => frame.hashCode ^ totalMs.hashCode ^ layers.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeFrameProfile &&
+          runtimeType == other.runtimeType &&
+          frame == other.frame &&
+          totalMs == other.totalMs &&
+          layers == other.layers;
+}
+
+/// One layer's measured cost for the frame just made.
+class BridgeLayerTiming {
+  final String layer;
+
+  /// The layer's own picture: its source (a Precomp's whole comp included)
+  /// and its effect stack. The final composite is one pass over the whole
+  /// stack rather than a per-layer act, so it lands in `total_ms` and on no
+  /// row — see `lumit_render::profile`.
+  final double ms;
+  final List<BridgeEffectTiming> effects;
+
+  const BridgeLayerTiming({
+    required this.layer,
+    required this.ms,
+    required this.effects,
+  });
+
+  @override
+  int get hashCode => layer.hashCode ^ ms.hashCode ^ effects.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeLayerTiming &&
+          runtimeType == other.runtimeType &&
+          layer == other.layer &&
+          ms == other.ms &&
+          effects == other.effects;
+}
+
+/// How far the frame the user is waiting for has got (docs/13 §7.1).
+///
+/// Sent only for a frame somebody is *waiting on* — a scrub, a value drag, a
+/// playhead move — and never during playback, where a frame due in 16 ms has
+/// neither the need for a bar nor the time to describe itself. A frame served
+/// from the cache reports nothing at all, because there was nothing to wait
+/// for: it simply arrives.
+class BridgeRenderProgress {
+  /// Which frame this is about, so a report that arrives after the playhead
+  /// has moved on can be recognised as stale rather than drawn.
+  final BigInt frame;
+
+  /// The stage's wire code — 0 planning, 1 decoding, 2 building, 3
+  /// compositing, 4 presenting ([`lumit_render::RenderStage::code`]).
+  final int stage;
+
+  /// How much of the whole frame is done, 0..=1. An estimate built from
+  /// fixed stage weights, which is what a progress bar needs and all it can
+  /// honestly claim.
+  final double fraction;
+
+  /// True on the last report of a frame — the render is finished (or was
+  /// abandoned) and the bar should go. Sent by the worker rather than the
+  /// engine, so a frame that failed still ends its own bar.
+  final bool done;
+
+  const BridgeRenderProgress({
+    required this.frame,
+    required this.stage,
+    required this.fraction,
+    required this.done,
+  });
+
+  @override
+  int get hashCode =>
+      frame.hashCode ^ stage.hashCode ^ fraction.hashCode ^ done.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeRenderProgress &&
+          runtimeType == other.runtimeType &&
+          frame == other.frame &&
+          stage == other.stage &&
+          fraction == other.fraction &&
+          done == other.done;
 }
 
 /// A small still picture as plain pixels — the thumbnail payload
@@ -71,6 +207,87 @@ class BridgeRenderedFrame {
           width == other.width &&
           height == other.height &&
           rgba == other.rgba;
+}
+
+/// The pixels under the dropper: a square window of the picture, centred on the
+/// point the pointer was over when it was asked for (docs/07 §6.1).
+///
+/// **A window rather than the nine pixels the magnifier shows**, so the pointer
+/// can move without asking again: the frontend cuts the magnifier's grid out of
+/// what it already has, and re-reads only when the pointer approaches the edge
+/// of it. That turns a sweep across the picture from a request per mouse move
+/// into a handful.
+///
+/// Small by construction — 129×129 is 66 KiB, against a 1080p frame's 8 MiB —
+/// so it crosses the boundary as plain pixels without breaking the K-183 rule
+/// that *frames* only ever cross as GPU handles. It is the answer to a question
+/// about a few pixels, not a picture to display.
+class BridgeSampledPixels {
+  /// The window's side length in pixels: `window × window`, always odd, so
+  /// there is a single centre pixel.
+  final int window;
+
+  /// Tightly packed display-ready sRGB RGBA8, `window * window * 4`,
+  /// row-major from the top-left of the window. Edge pixels repeat where the
+  /// window runs off the picture, so it is always exactly this size and can
+  /// be indexed without a border case.
+  final Uint8List rgba;
+
+  /// The raster the window was taken from, and where in it the centre pixel
+  /// sits — which is what says where in the picture the window lies.
+  ///
+  /// **This raster, not the composition's.** The picture read may be a
+  /// reduced-resolution preview, so these are the only coordinates in which
+  /// the window can be indexed; a caller holding composition pixels must map
+  /// through `width`/`height` rather than assume they line up.
+  final int width;
+  final int height;
+  final int x;
+  final int y;
+
+  /// Which frame this is of, so a window that arrives after the playhead has
+  /// moved on can be recognised as stale rather than drawn.
+  final BigInt frame;
+
+  /// True when the window is of one layer rendered alone rather than of the
+  /// composite — a depth pass being read for a focal point, say.
+  final bool layerAlone;
+
+  const BridgeSampledPixels({
+    required this.window,
+    required this.rgba,
+    required this.width,
+    required this.height,
+    required this.x,
+    required this.y,
+    required this.frame,
+    required this.layerAlone,
+  });
+
+  @override
+  int get hashCode =>
+      window.hashCode ^
+      rgba.hashCode ^
+      width.hashCode ^
+      height.hashCode ^
+      x.hashCode ^
+      y.hashCode ^
+      frame.hashCode ^
+      layerAlone.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeSampledPixels &&
+          runtimeType == other.runtimeType &&
+          window == other.window &&
+          rgba == other.rgba &&
+          width == other.width &&
+          height == other.height &&
+          x == other.x &&
+          y == other.y &&
+          frame == other.frame &&
+          layerAlone == other.layerAlone;
 }
 
 /// One scope trace: a fixed 256x256 RGBA picture the Scopes panel draws.
@@ -114,16 +331,31 @@ class BridgeSharedFrameInfo {
   final int width;
   final int height;
 
+  /// The preview tier this frame was made at: 1 Full, 2 Half, 3 Third,
+  /// 4 Quarter.
+  ///
+  /// Carried on the frame in place of being asked for. Two Viewer widgets
+  /// showed the tier, and each one asked the engine for it in its `build()` —
+  /// two calls across the boundary for each frame of playback, for a number
+  /// that only changes when a frame is made. The frame that changes it now
+  /// brings it.
+  final int tier;
+
   const BridgeSharedFrameInfo({
     required this.handle,
     required this.frame,
     required this.width,
     required this.height,
+    required this.tier,
   });
 
   @override
   int get hashCode =>
-      handle.hashCode ^ frame.hashCode ^ width.hashCode ^ height.hashCode;
+      handle.hashCode ^
+      frame.hashCode ^
+      width.hashCode ^
+      height.hashCode ^
+      tier.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -133,7 +365,8 @@ class BridgeSharedFrameInfo {
           handle == other.handle &&
           frame == other.frame &&
           width == other.width &&
-          height == other.height;
+          height == other.height &&
+          tier == other.tier;
 }
 
 class BridgeSharedFrameInfoLinux {
@@ -154,6 +387,16 @@ class BridgeSharedFrameInfoLinux {
   /// The DRM modifier (`DRM_FORMAT_MOD_LINEAR` = 0 on the linear-tiling path).
   final BigInt modifier;
 
+  /// The preview tier this frame was made at: 1 Full, 2 Half, 3 Third,
+  /// 4 Quarter.
+  ///
+  /// Carried on the frame in place of being asked for. Two Viewer widgets
+  /// showed the tier, and each one asked the engine for it in its `build()` —
+  /// two calls across the boundary for each frame of playback, for a number
+  /// that only changes when a frame is made. The frame that changes it now
+  /// brings it.
+  final int tier;
+
   const BridgeSharedFrameInfoLinux({
     required this.fd,
     required this.frame,
@@ -163,6 +406,7 @@ class BridgeSharedFrameInfoLinux {
     required this.offset,
     required this.drmFourcc,
     required this.modifier,
+    required this.tier,
   });
 
   @override
@@ -174,7 +418,8 @@ class BridgeSharedFrameInfoLinux {
       stride.hashCode ^
       offset.hashCode ^
       drmFourcc.hashCode ^
-      modifier.hashCode;
+      modifier.hashCode ^
+      tier.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -188,7 +433,8 @@ class BridgeSharedFrameInfoLinux {
           stride == other.stride &&
           offset == other.offset &&
           drmFourcc == other.drmFourcc &&
-          modifier == other.modifier;
+          modifier == other.modifier &&
+          tier == other.tier;
 }
 
 class ScopedChange {
@@ -244,6 +490,13 @@ sealed class WorkerResponse with _$WorkerResponse {
     BridgeScopeTrace field0,
   ) = WorkerResponse_Scope;
 
+  /// The pixels under the dropper — the answer to one
+  /// `CompositionReference::sample_pixels`, riding the same stream for the
+  /// same reason a trace does.
+  const factory WorkerResponse.sampled(
+    BridgeSampledPixels field0,
+  ) = WorkerResponse_Sampled;
+
   /// Playback finished on its own — it ran off the end of the composition.
   ///
   /// Sent so the transport can show itself stopped without the frontend having
@@ -256,4 +509,16 @@ sealed class WorkerResponse with _$WorkerResponse {
   /// `cached_frames` itself. Without this the fill worked invisibly — the
   /// bar only redrew when a frame arrived, and a fill shows no frame.
   const factory WorkerResponse.cacheFilled() = WorkerResponse_CacheFilled;
+
+  /// How far the frame being waited for has got — the Viewer's preview
+  /// progress bar (docs/07 §2.5).
+  const factory WorkerResponse.renderProgress(
+    BridgeRenderProgress field0,
+  ) = WorkerResponse_RenderProgress;
+
+  /// What the frame just made cost, layer by layer and effect by effect —
+  /// the render-time indicators (docs/13 §7.1).
+  const factory WorkerResponse.frameProfile(
+    BridgeFrameProfile field0,
+  ) = WorkerResponse_FrameProfile;
 }

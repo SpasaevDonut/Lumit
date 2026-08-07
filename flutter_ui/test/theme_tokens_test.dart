@@ -21,8 +21,10 @@ void main() {
         'textPrimary', 'textSecondary', 'textMuted', 'textDisabled',
         'hairline', 'hairlineStrong',
         'accent', 'accentHover', 'success', 'warning', 'error', 'cacheDisk',
+        'marker',
         'timelineOutOfRange', 'selectionFill',
         'curve0', 'curve1', 'curve2', 'curve3',
+        'waveformRest', 'waveformLow', 'waveformMid', 'waveformHigh',
         'layerFootage', 'layerSequence', 'layerPrecomp',
         'layerSolid', 'layerText', 'layerCamera',
         // Deliberately NOT a token: the Viewer surround is strictly neutral

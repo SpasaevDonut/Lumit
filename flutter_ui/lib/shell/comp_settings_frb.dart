@@ -31,6 +31,7 @@ import 'package:lumit_flutter/src/rust/api/footage.dart';
 import 'package:lumit_flutter/src/rust/api/project.dart';
 
 import '../icons/icons.dart';
+import '../l10n/strings.dart';
 import '../state/timecode.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
@@ -61,9 +62,10 @@ Future<bool> showCompSettingsFrb({
 }) async {
   final applied = await showLumitModal<bool>(
     context: context,
+    id: 'comp-settings',
     builder: (close) => _CompSettingsBody(
-      title: 'Composition settings',
-      confirm: 'Save',
+      title: l10n.compositionSettings,
+      confirm: l10n.save,
       initial: comp.getSettings(),
       onConfirm: (settings) {
         comp.setSettings(settings: settings);
@@ -84,6 +86,12 @@ Future<CompositionReference?> showNewCompositionFrb({
   required BuildContext context,
   required ProjectReference project,
   List<FootageReference> footage = const [],
+
+  /// Settings ▸ Interface ▸ Editing ▸ *Video arrives as a Sequence layer*
+  /// (K-246), forwarded to the engine for each item placed below. Taken as an
+  /// argument rather than read from the workspace here, because this file is
+  /// a dialogue and knows nothing about where settings live.
+  bool asSequence = false,
 }) async {
   // Probed before the dialog opens rather than inside it: `mediaInfo` reads the
   // container with FFmpeg, and a dialog that popped up and then rearranged itself
@@ -110,9 +118,10 @@ Future<CompositionReference?> showNewCompositionFrb({
   final name = project.nextCompName();
   return showLumitModal<CompositionReference>(
     context: context,
+    id: 'new-comp',
     builder: (close) => _CompSettingsBody(
-      title: 'New composition',
-      confirm: 'Create',
+      title: l10n.newComposition,
+      confirm: l10n.create,
       initial: BridgeCompSettings(
         name: name,
         width: initial.width,
@@ -125,7 +134,7 @@ Future<CompositionReference?> showNewCompositionFrb({
         final comp =
             project.newComposition(name: settings.name, settings: settings);
         for (final item in footage) {
-          comp.addFootageLayer(footage: item);
+          comp.addFootageLayer(footage: item, asSequence: asSequence);
         }
         close(comp);
       },
@@ -259,7 +268,7 @@ class _CompSettingsBodyState extends State<_CompSettingsBody> {
           ),
           _row(
             t,
-            'Name',
+            l10n.name,
             Expanded(
               child: HouseTextField(
                 key: const ValueKey('comp-name'),
@@ -269,11 +278,11 @@ class _CompSettingsBodyState extends State<_CompSettingsBody> {
               ),
             ),
           ),
-          _row(t, 'Size', _sizeRow(t)),
-          _row(t, 'Frame rate', _rateRow(t)),
+          _row(t, l10n.size, _sizeRow(t)),
+          _row(t, l10n.frameRate, _rateRow(t)),
           _row(
             t,
-            'Duration',
+            l10n.duration,
             Expanded(
               child: HouseTextField(
                 key: const ValueKey('comp-duration'),
@@ -288,8 +297,7 @@ class _CompSettingsBodyState extends State<_CompSettingsBody> {
             // the box above it, so it lines up with that box.
             padding:
                 const EdgeInsets.only(left: _labelWidth, top: 4, bottom: 10),
-            child: Text('Duration is HH:MM:SS:FF at the frame rate above.',
-                style: t.caption),
+            child: Text(l10n.durationFormatNote, style: t.caption),
           ),
           Row(
             children: [
@@ -302,7 +310,7 @@ class _CompSettingsBodyState extends State<_CompSettingsBody> {
               HouseButton(
                 key: const ValueKey('comp-cancel'),
                 onPressed: widget.onCancel,
-                child: const Text('Cancel'),
+                child: Text(l10n.cancel),
               ),
             ],
           ),
@@ -340,9 +348,7 @@ class _CompSettingsBodyState extends State<_CompSettingsBody> {
             ),
             const SizedBox(width: 6),
             LumitTooltip(
-              message: _locked
-                  ? 'Keep the aspect ratio — click to unlock'
-                  : 'Aspect ratio unlocked — click to keep it',
+              message: _locked ? l10n.tipAspectLocked : l10n.tipAspectUnlocked,
               child: HouseButton(
                 key: const ValueKey('comp-size-lock'),
                 small: true,
@@ -384,7 +390,7 @@ class _CompSettingsBodyState extends State<_CompSettingsBody> {
               // A rate of one's own reads as "Custom" rather than as an empty
               // invitation: the list is where you *change* the rate, and what it
               // shows is what the field beside it currently says.
-              value: _presetLabel ?? 'Custom',
+              value: _presetLabel ?? l10n.custom,
               options: [..._ratePresets.map((p) => p.$1)],
               label: (s) => s,
               onChanged: (picked) => setState(() => _fps.text = picked),

@@ -48,6 +48,36 @@ class FxSection extends StatelessWidget {
   /// Hard right — the close mark.
   final Widget? trailing;
 
+  /// A right-click on the heading, with the pointer's global position — where
+  /// the actions that are not worth a permanent button live (an effect's
+  /// reordering, K-276). Null leaves the secondary click unclaimed.
+  final void Function(Offset at)? onContextMenu;
+
+  /// A click on the heading's name **picks this section** (K-300) — an effect
+  /// is a thing that can be selected, copied and cut, and the click that says
+  /// which one is the one on its name. Null (Source, Transform: sections that
+  /// are not one of several) leaves the name doing what the twirl does, which
+  /// is what the whole heading did before.
+  final VoidCallback? onSelect;
+
+  /// Drawn picked: the heading takes the selection fill, as a Timeline row
+  /// does, so one effect chosen in either place reads the same in both.
+  final bool selected;
+
+  /// The twirl mark's own key — it is the only thing that folds a selectable
+  /// section, so it is worth being able to point at.
+  final Key? twirlKey;
+
+  /// This section's place in its list, when the heading may be **dragged** to
+  /// another place in it (docs/07 §6's drag-to-reorder). Null — Source,
+  /// Transform, anything that does not sit in a reorderable stack — leaves the
+  /// heading undraggable and accepting nothing.
+  final int? dragIndex;
+
+  /// A heading dropped on this one: the place it came from. Called only when
+  /// [dragIndex] is set and the two differ.
+  final void Function(int from)? onDropped;
+
   /// The rows under the heading, drawn only while [open].
   final List<Widget> rows;
 
@@ -60,6 +90,12 @@ class FxSection extends StatelessWidget {
     this.leading,
     this.actions = const [],
     this.trailing,
+    this.onContextMenu,
+    this.onSelect,
+    this.selected = false,
+    this.twirlKey,
+    this.dragIndex,
+    this.onDropped,
   });
 
   @override
@@ -68,7 +104,7 @@ class FxSection extends StatelessWidget {
     final column = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _heading(t),
+        _draggableHeading(t),
         if (open)
           for (final row in rows)
             Container(
@@ -95,11 +131,57 @@ class FxSection extends StatelessWidget {
     );
   }
 
+  /// The heading, wrapped in the drag-and-drop that reorders the stack when
+  /// this section has a place in one. Dragging the *name* is how a stack is
+  /// reordered everywhere else in the application (layers in the Timeline,
+  /// items in the Project panel), so an effect stack reorders the same way; the
+  /// heading also stays a drop target, and the one under the pointer lights up
+  /// so it is clear which place is being taken.
+  Widget _draggableHeading(LumitTheme t) {
+    final index = dragIndex;
+    if (index == null || onDropped == null) return _heading(t);
+    return DragTarget<int>(
+      onWillAcceptWithDetails: (d) => d.data != index,
+      onAcceptWithDetails: (d) => onDropped!(d.data),
+      builder: (context, candidate, _) => Draggable<int>(
+        data: index,
+        // The pointer carries the effect's name and nothing else: a full-width
+        // card under the cursor hides the stack it is being placed into.
+        feedback: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: t.surface2,
+            borderRadius: BorderRadius.circular(t.tokens.controlRadius),
+            border: Border.all(color: t.accent),
+          ),
+          child: Text(title, style: t.small),
+        ),
+        childWhenDragging: Opacity(opacity: 0.4, child: _heading(t)),
+        child: candidate.isEmpty
+            ? _heading(t)
+            : DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border(top: BorderSide(color: t.accent, width: 2)),
+                ),
+                child: _heading(t),
+              ),
+      ),
+    );
+  }
+
   Widget _heading(LumitTheme t) => GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: onToggle,
+        // **The name picks the effect; only the twirl folds it** (K-300). A
+        // click that both picked and collapsed took the parameters away at the
+        // moment you said which effect you meant, which is the opposite of what
+        // selecting one is for. A section that cannot be picked (Source,
+        // Transform) twirls on its name as it always did.
+        onTap: onSelect ?? onToggle,
+        onSecondaryTapUp: onContextMenu == null
+            ? null
+            : (details) => onContextMenu!(details.globalPosition),
         child: Container(
-          color: t.surface2,
+          color: selected ? t.selectionFill : t.surface2,
           padding: const EdgeInsets.fromLTRB(4, 4, 6, 4),
           child: Row(
             children: [
@@ -107,10 +189,19 @@ class FxSection extends StatelessWidget {
                 width: fxNameColumnWidth,
                 child: Row(
                   children: [
-                    lumitIcon(
-                      open ? LumitIcon.twirlOpen : LumitIcon.twirlClosed,
-                      size: iconSize,
-                      color: open ? t.textPrimary : t.textMuted,
+                    GestureDetector(
+                      key: twirlKey,
+                      behavior: HitTestBehavior.opaque,
+                      onTap: onToggle,
+                      child: Padding(
+                        // Room to aim at, now that it is the only way in.
+                        padding: const EdgeInsets.symmetric(horizontal: 2),
+                        child: lumitIcon(
+                          open ? LumitIcon.twirlOpen : LumitIcon.twirlClosed,
+                          size: iconSize,
+                          color: open ? t.textPrimary : t.textMuted,
+                        ),
+                      ),
                     ),
                     const SizedBox(width: 2),
                     if (leading case final widget?) ...[

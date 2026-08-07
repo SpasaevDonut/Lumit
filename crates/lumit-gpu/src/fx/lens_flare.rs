@@ -1,0 +1,1823 @@
+//! The Lens flare GPU pipeline (docs/08 §3.27, docs/impl/lens-flare.md,
+//! K-256/K-257): per-frame ray-trace compute, quad-energy and vertex-build
+//! compute, an additive hardware raster of the warped ghost grids, the
+//! Matte-mode source detection, and the combine kernel. The engine-pure
+//! maths and the bake live in `lumit_core::fx::lens_flare`; this module
+//! consumes pre-baked data through [`FlareBakeData`] (the caller converts,
+//! keeping this crate lumit-core-free in production, exactly as the effect
+//! op structs do).
+//!
+//! In plain terms: every frame, a few hundred thousand tiny ray programs
+//! push light through the chosen lens on the graphics card — once per flare
+//! source — and the landing grid of each ghost is drawn as warped triangles
+//! that add their light into a flare image; one last pass lays that (plus a
+//! baked starburst sprite per source) over the picture. In Matte mode the
+//! sources themselves are found on the card first: the matte layer's
+//! brightest points, detected by two small kernels. The slow maths — the
+//! Fourier transforms — never runs here; it arrives as textures baked on
+//! the CPU and cached by parameter hash.
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+use crate::{GpuContext, WORKING_FORMAT};
+
+use super::{work_texture, FxEngine};
+
+/// The resolved Lens flare op in lumit-gpu's own terms: plain numbers plus
+/// the per-frame wavelength table, all derived by the caller (lumit-render)
+/// from `lumit_core::fx::lens_flare` so the formulas live in one place.
+#[derive(Debug, Clone)]
+pub struct LensFlareOp {
+    /// Manual light position as a fraction of the raster (x right, y down)
+    /// — the caller divides its raster-pixel parameter by the raster (K-260).
+    pub light_frac: [f32; 2],
+    /// Master gain; 0 short-circuits to the identity.
+    pub intensity: f32,
+    /// Traced wavelengths with their RGB weights, already multiplied by the
+    /// ghost energy scale × Ghost intensity (lumit_core `lambda_weights`).
+    pub lambdas: Vec<(f32, [f32; 3])>,
+    /// How many ranked ghosts render.
+    pub max_ghosts: u32,
+    /// 0..1 coating blend.
+    pub coating: f32,
+    /// Focus distance, metres (K-260); the sensor shift derives from it and
+    /// the bake's focal length inside the apply.
+    pub focus_m: f32,
+    /// Working f-stop (K-261): the stop-down scale derives from it and the
+    /// bake's native f-number inside the apply.
+    pub fstop: f32,
+    /// Iris blade count for the in-shader pupil mask.
+    pub blades: u32,
+    /// Iris rotation, degrees.
+    pub aperture_rotation_deg: f32,
+    /// 0..1 iris roundness (the wide-open blend applies inside the apply).
+    pub roundness: f32,
+    /// 0..1 iris edge softness.
+    pub aperture_softness: f32,
+    /// Ghost blur radius as % of the frame diagonal (K-261).
+    pub ghost_softness: f32,
+    /// Pupil-grid side for this quality.
+    pub grid: u32,
+    /// Flare-buffer divisor (2 on Draft, else 1).
+    pub flare_div: u32,
+    /// Raster px per sensor mm at the FULL raster width (lumit_core
+    /// `screen_transform(w)`); the flare buffer's own transform scales by
+    /// its divisor.
+    pub screen_transform: f32,
+    /// Starburst gain.
+    pub starburst_intensity: f32,
+    /// Whole-flare scale about the optical centre (ghosts and starbursts).
+    pub scale: f32,
+    /// Horizontal squeeze about the frame centre.
+    pub anamorphic: f32,
+    /// Source mode: 0 Manual, 1 Matte, 2 Lights (resolves as Manual until
+    /// light layers land — K-257).
+    pub source: u32,
+    /// Matte mode's soft luma gate (lumit_core `threshold_gate`).
+    pub threshold: f32,
+    /// See `threshold`.
+    pub threshold_softness: f32,
+    /// Scene-linear RGB multiplying every light's colour (K-259).
+    pub light_tint: [f32; 3],
+    /// Matte/Lights: whether a detected source's own colour tints its flare.
+    pub use_source_colour: bool,
+    /// How the flare element combines with the layer under it — an index
+    /// into `lumit_core::fx::lens_flare::BLEND_OPTIONS` (K-289).
+    pub blend: u32,
+    /// 0..1.
+    pub mix: f32,
+    /// `lumit_core::fx::lens_flare::bake_key` of the op — the bake cache key.
+    pub bake_key: u64,
+}
+
+/// The bake handed across the crate seam: plain buffers, no lumit-core
+/// types. Produced by the caller from `lumit_core::fx::lens_flare::bake`
+/// only when the cache misses (the `bake` argument of
+/// [`FxEngine::lens_flare`] is lazy).
+#[derive(Debug, Clone)]
+pub struct FlareBakeData {
+    /// Surface rows: radius, z, semi_ap, cauchy_a, cauchy_b,
+    /// coating_layers, is_stop, pad — the WGSL `Surface` layout (K-261).
+    pub surfaces: Vec<[f32; 8]>,
+    /// Ranked ghost pairs, brightest first.
+    pub ghosts: Vec<[u32; 2]>,
+    /// Each pair's image spread (fraction of the sensor diagonal), parallel
+    /// to `ghosts` — the adaptive grid budget's input (K-262).
+    pub spreads: Vec<f32>,
+    /// Sensor plane z, mm.
+    pub sensor_z_mm: f32,
+    /// Focal length, mm — the in-shader light direction's z.
+    pub focal_mm: f32,
+    /// Native f-number (the stop-down and wide-open-roundness reference).
+    pub native_fstop: f32,
+    /// Pupil spray radius, mm.
+    pub pupil_mm: f32,
+    /// Ray start z, mm.
+    pub start_z_mm: f32,
+    /// The bake's auto-exposure gain, multiplied into every ghost's energy.
+    pub energy_gain: f32,
+    /// Starburst sprite, `sb_res`² RGB triplets.
+    pub starburst: Vec<f32>,
+    /// See `starburst`.
+    pub sb_res: u32,
+}
+
+/// What the frame-time spread probe (K-267) reads from a cached bake,
+/// handed back across the crate seam to the caller's `probe` closure (the
+/// same lazy-callback pattern as the bake itself — the formulas stay in
+/// lumit-core, which this crate deliberately does not depend on).
+pub struct FlareProbeBake<'a> {
+    /// Surface rows in the `FlareBakeData` layout.
+    pub surfaces: &'a [[f32; 8]],
+    /// Ranked ghost pairs, brightest first.
+    pub ghosts: &'a [[u32; 2]],
+    /// Sensor plane z, mm.
+    pub sensor_z_mm: f32,
+    /// Focal length, mm.
+    pub focal_mm: f32,
+    /// Native f-number.
+    pub native_fstop: f32,
+    /// Pupil spray radius, mm.
+    pub pupil_mm: f32,
+    /// Ray start z, mm.
+    pub start_z_mm: f32,
+    /// Each pair's bake-time image spread, parallel to `ghosts` — the rung
+    /// floor the probe's budget plan raises from.
+    pub spreads: &'a [f32],
+    /// How many ranked pairs this frame renders — the probe stops there.
+    pub pair_count: usize,
+}
+
+/// One cached GPU-side bake: uploaded textures and the surface buffer.
+struct GpuBaked {
+    surfaces: wgpu::Buffer,
+    surface_count: u32,
+    /// The raw surface rows, retained for [`FlareProbeBake`] (K-267) —
+    /// a few hundred bytes beside the uploaded buffer.
+    surface_rows: Vec<[f32; 8]>,
+    ghosts: Vec<[u32; 2]>,
+    spreads: Vec<f32>,
+    sensor_z_mm: f32,
+    focal_mm: f32,
+    native_fstop: f32,
+    pupil_mm: f32,
+    start_z_mm: f32,
+    energy_gain: f32,
+    starburst: wgpu::Texture,
+}
+
+/// The per-frame scratch one flare render works through: the ray landings and
+/// the quad corners the raster pulls from (K-263).
+///
+/// **Why this is pooled rather than allocated per frame.** These are the two
+/// big buffers in the effect — tens of megabytes at working qualities — and a
+/// frame used to create both, use them for a few milliseconds and drop them.
+/// A graphics driver does not hand that memory straight back: it recycles it
+/// when the submission it belonged to retires, so a Viewer re-rendering
+/// continuously (a drag, or the idle cache fill) kept a rolling backlog of
+/// abandoned tens-of-megabyte buffers, and on a unified-memory machine that
+/// is how a flare in the composition ends up filling the graphics memory it
+/// shares with everything else. Held and reused, the frame allocates nothing.
+struct Scratch {
+    rays: wgpu::Buffer,
+    areas: wgpu::Buffer,
+    verts: wgpu::Buffer,
+    ray_bytes: u64,
+    area_bytes: u64,
+    vert_bytes: u64,
+}
+
+/// The lens flare's pipelines, its bake cache and its scratch pool, one field
+/// on [`FxEngine`].
+pub struct LensFlareFx {
+    trace: wgpu::ComputePipeline,
+    quad_area: wgpu::ComputePipeline,
+    build_verts: wgpu::ComputePipeline,
+    detect_tiles: wgpu::ComputePipeline,
+    detect_pick: wgpu::ComputePipeline,
+    draw: wgpu::RenderPipeline,
+    blur: wgpu::ComputePipeline,
+    combine: wgpu::ComputePipeline,
+    trace_layout: wgpu::BindGroupLayout,
+    detect_layout: wgpu::BindGroupLayout,
+    draw_layout: wgpu::BindGroupLayout,
+    blur_layout: wgpu::BindGroupLayout,
+    combine_layout: wgpu::BindGroupLayout,
+    /// Baked resources keyed by `bake_key`. The mutex is held only for
+    /// get/insert — never across an upload or a submit.
+    cache: Mutex<BakeCache<Arc<GpuBaked>>>,
+    /// An idle [`Scratch`] waiting to be used again, at most one deep: two
+    /// flares rendering at once (two open projects) is possible but not the
+    /// case worth holding memory for, so a second render makes its own and
+    /// whichever finishes first keeps the slot.
+    scratch: Mutex<Option<Scratch>>,
+    /// The pooled multisample target with its size — see [`Self::take_msaa`].
+    msaa: Mutex<Option<(wgpu::Texture, u32, u32)>>,
+}
+
+/// A bounded, oldest-first cache of bakes by parameter hash (K-263).
+///
+/// **Why oldest-first and not clear-the-lot.** Through K-262 the map simply
+/// emptied when it overflowed. A bake is the effect's one slow, blocking,
+/// CPU-side step, and the way the lens picker is used is to try lenses — so
+/// every ninth pick threw away the eight bakes just paid for, and stepping
+/// back to a lens seen a moment ago paid for it all over again. Dropping the
+/// oldest entry instead keeps a working set of recent lenses hot. Correctness
+/// never depends on the cache (docs/14 §5): a miss is a rebake, nothing more.
+pub(super) struct BakeCache<T> {
+    by_key: HashMap<u64, T>,
+    /// Insertion order, oldest first.
+    order: Vec<u64>,
+    cap: usize,
+}
+
+impl<T: Clone> BakeCache<T> {
+    pub(super) fn new(cap: usize) -> Self {
+        Self {
+            by_key: HashMap::new(),
+            order: Vec::new(),
+            cap: cap.max(1),
+        }
+    }
+
+    pub(super) fn get(&self, key: u64) -> Option<T> {
+        self.by_key.get(&key).cloned()
+    }
+
+    /// Remember `value` under `key`, evicting oldest-first to stay at the
+    /// cap. Returns whatever the key holds afterwards — an existing entry
+    /// wins, so a racing double-build leaves the map single-valued.
+    pub(super) fn insert(&mut self, key: u64, value: T) -> T {
+        if let Some(held) = self.by_key.get(&key) {
+            return held.clone();
+        }
+        while self.by_key.len() >= self.cap {
+            match self.order.first().copied() {
+                Some(oldest) => {
+                    self.order.remove(0);
+                    self.by_key.remove(&oldest);
+                }
+                // Unreachable while the two stay in step, but a cache may
+                // never grow without bound on the strength of an invariant.
+                None => self.by_key.clear(),
+            }
+        }
+        self.order.push(key);
+        self.by_key.insert(key, value.clone());
+        value
+    }
+
+    #[cfg(test)]
+    pub(super) fn len(&self) -> usize {
+        self.by_key.len()
+    }
+}
+
+/// How many blend modes the combine kernel's `flare_blend` implements — the
+/// length of `lumit_core::fx::lens_flare::BLEND_OPTIONS` (K-289), pinned by
+/// test. An index past the last option clamps rather than faulting.
+pub const BLEND_COUNT: u32 = 13;
+
+/// Most flare sources a frame renders — must equal
+/// `lumit_core::fx::lens_flare::MAX_LIGHTS` (pinned by test).
+pub const MAX_LIGHTS: u32 = 16;
+
+/// Detection tile side — must equal `lens_flare::DETECT_TILE` (pinned by
+/// the same test).
+const DETECT_TILE: u32 = 32;
+
+/// Byte budget for the per-frame trace scratch — rays and quad corners
+/// together (K-263). A **hard** cap, not a hint: where K-262's batch size
+/// bottomed out at one combo and then let eight lights at an Ultra grid ask
+/// for a hundred megabytes anyway, the light dimension now splits too, so no
+/// setting can push the allocation past this.
+pub(super) const SCRATCH_BYTE_BUDGET: u64 = 48_000_000;
+
+/// Bytes one traced ray occupies (WGSL `Ray`: pos.xy, weight, pad).
+pub(super) const RAY_BYTES: u64 = 16;
+
+/// Bytes one drawn cell occupies: four corners at five floats each (K-263 —
+/// through K-262 it was six eight-float vertices, 192 bytes).
+pub(super) const CELL_BYTES: u64 = 4 * 20;
+
+/// Bytes one cell's landed-area entry occupies (K-264) — the input to the
+/// vertex-smoothed density.
+pub(super) const AREA_BYTES: u64 = 4;
+
+/// Ray–surface steps one command buffer may hold before the frame submits
+/// what it has and opens another (K-263).
+///
+/// **Why a frame is split at all.** Every operating system kills a graphics
+/// submission that runs too long — macOS and Windows both watch for it — and
+/// a killed submission does not merely drop a frame: it takes the device with
+/// it, so the Viewer stays frozen for the rest of the session and re-opening
+/// the project does not help, because the process's graphics device is the
+/// thing that died. The flare's cost is set by parameters the user is free to
+/// wind up (Quality, Max ghosts, an eight-source matte), so the frame is
+/// broken into submissions small enough that no combination can reach the
+/// watchdog. Splitting changes nothing about the picture: the batches are
+/// queued in the same order and blend in the same order, they are merely
+/// handed over in several pieces.
+pub(super) const STEPS_PER_SUBMIT: u64 = 48_000_000;
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct TraceParams {
+    surface_count: u32,
+    combo_count: u32,
+    grid: u32,
+    combo_offset: u32,
+    coating: f32,
+    aspect: f32,
+    focal_mm: f32,
+    screen_transform: f32,
+    raster_w: f32,
+    raster_h: f32,
+    light_count: u32,
+    sensor_shift_mm: f32,
+    pupil_mm: f32,
+    start_z_mm: f32,
+    sensor_z_mm: f32,
+    stop_scale: f32,
+    cell_area_px: f32,
+    ray_stride: u32,
+    quad_stride: u32,
+    blades: u32,
+    rot_rad: f32,
+    roundness: f32,
+    softness: f32,
+    light_offset: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct DetectParams {
+    w: u32,
+    h: u32,
+    tiles_x: u32,
+    tiles_y: u32,
+    threshold: f32,
+    softness: f32,
+    use_source_colour: u32,
+    _pad0: f32,
+    tint: [f32; 3],
+    _pad1: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct BlurParams {
+    w: u32,
+    h: u32,
+    radius: u32,
+    dir: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct CombineParams {
+    w: f32,
+    h: f32,
+    fw: f32,
+    fh: f32,
+    intensity: f32,
+    sb_intensity: f32,
+    sb_half: f32,
+    squeeze: f32,
+    fscale: f32,
+    mix_amt: f32,
+    light_count: u32,
+    blend: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct GpuCombo {
+    bounce1: u32,
+    bounce2: u32,
+    lambda_nm: f32,
+    _pad: f32,
+    rgb: [f32; 3],
+    _pad2: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct GpuSurface {
+    row: [f32; 8],
+}
+
+/// One flare source in the WGSL `Light` layout: pos.xy, rgb, three pads.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct GpuLight {
+    row: [f32; 8],
+}
+
+impl LensFlareFx {
+    /// See [`Self::cache`]. Raised from eight at K-263: a bake is a surface
+    /// buffer and one 256² sprite, about a megabyte, so holding a couple of
+    /// dozen costs less than one preview frame's working set and covers
+    /// trying lenses — the way the picker is actually used.
+    const CACHE_CAP: usize = 24;
+
+    pub(super) fn new(ctx: &GpuContext) -> Self {
+        let device = &ctx.device;
+        let storage_entry =
+            |binding: u32, read_only: bool, vis: wgpu::ShaderStages| wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility: vis,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            };
+        let uniform_entry = |binding: u32, vis: wgpu::ShaderStages| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: vis,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+        let texture_entry = |binding: u32, vis: wgpu::ShaderStages| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: vis,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        };
+
+        let c = wgpu::ShaderStages::COMPUTE;
+        let trace_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("fx-lens-flare-trace-layout"),
+            entries: &[
+                storage_entry(0, true, c),
+                storage_entry(1, true, c),
+                storage_entry(2, false, c),
+                storage_entry(3, false, c),
+                storage_entry(4, false, c),
+                uniform_entry(5, c),
+                storage_entry(6, true, c),
+            ],
+        });
+        let detect_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("fx-lens-flare-detect-layout"),
+            entries: &[
+                texture_entry(0, c),
+                storage_entry(1, false, c),
+                storage_entry(2, false, c),
+                uniform_entry(3, c),
+            ],
+        });
+        let draw_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("fx-lens-flare-draw-layout"),
+            entries: &[storage_entry(0, true, wgpu::ShaderStages::VERTEX)],
+        });
+        let blur_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("fx-lens-flare-blur-layout"),
+            entries: &[
+                texture_entry(0, c),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: c,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: WORKING_FORMAT,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+                uniform_entry(2, c),
+            ],
+        });
+        let combine_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("fx-lens-flare-combine-layout"),
+            entries: &[
+                texture_entry(0, c),
+                texture_entry(1, c),
+                texture_entry(2, c),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: c,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: WORKING_FORMAT,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+                uniform_entry(4, c),
+                storage_entry(5, true, c),
+            ],
+        });
+
+        let trace_mod = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("fx-lens-flare-trace"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../fx_lens_flare_trace.wgsl").into()),
+        });
+        let detect_mod = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("fx-lens-flare-detect"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../fx_lens_flare_detect.wgsl").into()),
+        });
+        let draw_mod = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("fx-lens-flare-draw"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../fx_lens_flare_draw.wgsl").into()),
+        });
+        let combine_mod = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("fx-lens-flare-combine"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../fx_lens_flare_combine.wgsl").into()),
+        });
+        let blur_mod = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("fx-lens-flare-blur"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../fx_lens_flare_blur.wgsl").into()),
+        });
+
+        let trace_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("fx-lens-flare-trace-pl"),
+            bind_group_layouts: &[&trace_layout],
+            push_constant_ranges: &[],
+        });
+        let compute = |entry: &str, label: &str, module: &wgpu::ShaderModule, pl| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(label),
+                layout: Some(pl),
+                module,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        let trace = compute("trace", "fx-lens-flare-trace", &trace_mod, &trace_pl);
+        let quad_area = compute("quad_area", "fx-lens-flare-area", &trace_mod, &trace_pl);
+        let build_verts = compute("build_verts", "fx-lens-flare-verts", &trace_mod, &trace_pl);
+
+        let detect_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("fx-lens-flare-detect-pl"),
+            bind_group_layouts: &[&detect_layout],
+            push_constant_ranges: &[],
+        });
+        let detect_tiles = compute(
+            "detect_tiles",
+            "fx-lens-flare-detect-tiles",
+            &detect_mod,
+            &detect_pl,
+        );
+        let detect_pick = compute(
+            "detect_pick",
+            "fx-lens-flare-detect-pick",
+            &detect_mod,
+            &detect_pl,
+        );
+
+        let draw_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("fx-lens-flare-draw-pl"),
+            bind_group_layouts: &[&draw_layout],
+            push_constant_ranges: &[],
+        });
+        let draw = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("fx-lens-flare-draw"),
+            layout: Some(&draw_pl),
+            vertex: wgpu::VertexState {
+                module: &draw_mod,
+                entry_point: Some("vs_flare"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            // 4x multisampled (K-264): the ghost geometry is triangles, and
+            // their silhouettes were one of the three Ultra artefacts —
+            // coverage sampling smooths them at a cost that is a rounding
+            // error next to the trace. The CPU reference models the same
+            // four standard sample positions, so the oracle stays tight.
+            multisample: wgpu::MultisampleState {
+                count: 4,
+                ..Default::default()
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &draw_mod,
+                entry_point: Some("fs_flare"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: WORKING_FORMAT,
+                    // Plain additive: the ghost grids accumulate light.
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::One,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::One,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview: None,
+            cache: None,
+        });
+
+        let combine_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("fx-lens-flare-combine-pl"),
+            bind_group_layouts: &[&combine_layout],
+            push_constant_ranges: &[],
+        });
+        let combine = compute(
+            "combine",
+            "fx-lens-flare-combine",
+            &combine_mod,
+            &combine_pl,
+        );
+        let blur_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("fx-lens-flare-blur-pl"),
+            bind_group_layouts: &[&blur_layout],
+            push_constant_ranges: &[],
+        });
+        let blur = compute("blur", "fx-lens-flare-blur", &blur_mod, &blur_pl);
+
+        Self {
+            trace,
+            quad_area,
+            build_verts,
+            detect_tiles,
+            detect_pick,
+            draw,
+            blur,
+            combine,
+            trace_layout,
+            detect_layout,
+            draw_layout,
+            blur_layout,
+            combine_layout,
+            cache: Mutex::new(BakeCache::new(Self::CACHE_CAP)),
+            scratch: Mutex::new(None),
+            msaa: Mutex::new(None),
+        }
+    }
+
+    /// The cached GPU bake for `op.bake_key`, building (outside the lock)
+    /// from the caller's lazy `bake` on a miss. A racing double-build is
+    /// harmless — the bake is a pure function — and the insert keeps
+    /// whichever landed first.
+    fn baked(
+        &self,
+        ctx: &GpuContext,
+        op: &LensFlareOp,
+        bake: &dyn Fn() -> FlareBakeData,
+    ) -> Arc<GpuBaked> {
+        if let Ok(cache) = self.cache.lock() {
+            if let Some(hit) = cache.get(op.bake_key) {
+                return hit;
+            }
+        }
+        let data = bake();
+        let built = Arc::new(upload_bake(ctx, &data));
+        match self.cache.lock() {
+            Ok(mut cache) => cache.insert(op.bake_key, built),
+            Err(_) => built,
+        }
+    }
+
+    /// Take the pooled scratch if it is free and big enough, else build one.
+    /// The lock covers the take and nothing else — never an allocation, never
+    /// an encode (docs/14 §4).
+    fn take_scratch(
+        &self,
+        ctx: &GpuContext,
+        ray_bytes: u64,
+        area_bytes: u64,
+        vert_bytes: u64,
+    ) -> Scratch {
+        let held = self.scratch.lock().ok().and_then(|mut s| s.take());
+        match held {
+            // Big enough and not wildly oversized: reuse as is. The upper
+            // bound gives a frame that once ran at Ultra its memory back
+            // when the quality goes down again, instead of holding the
+            // peak for the session.
+            Some(s)
+                if s.ray_bytes >= ray_bytes
+                    && s.area_bytes >= area_bytes
+                    && s.vert_bytes >= vert_bytes
+                    && s.ray_bytes <= ray_bytes.saturating_mul(4)
+                    && s.vert_bytes <= vert_bytes.saturating_mul(4) =>
+            {
+                s
+            }
+            _ => Scratch {
+                rays: scratch_buffer(ctx, "fx-lens-flare-rays", ray_bytes),
+                areas: scratch_buffer(ctx, "fx-lens-flare-areas", area_bytes),
+                verts: scratch_buffer(ctx, "fx-lens-flare-verts", vert_bytes),
+                ray_bytes,
+                area_bytes,
+                vert_bytes,
+            },
+        }
+    }
+
+    /// The pooled 4x multisample render target (K-265): the largest
+    /// allocation the effect makes (~66 MB at a 1080p flare buffer), and
+    /// creating it per frame was the K-263 lesson all over again — a
+    /// rolling backlog of dropped allocations the driver reclaims late,
+    /// which the owner felt as renders slowing over minutes and then the
+    /// application dying. Keyed by size; a size change (zoom tier, comp
+    /// resize) rebuilds it once.
+    fn take_msaa(&self, ctx: &GpuContext, fw: u32, fh: u32) -> wgpu::Texture {
+        if let Ok(mut slot) = self.msaa.lock() {
+            if let Some((tex, w, h)) = slot.take() {
+                if w == fw && h == fh {
+                    return tex;
+                }
+            }
+        }
+        ctx.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("fx-lens-flare-msaa"),
+            size: wgpu::Extent3d {
+                width: fw.max(1),
+                height: fh.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 4,
+            dimension: wgpu::TextureDimension::D2,
+            format: WORKING_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        })
+    }
+
+    /// Hand the multisample target back for the next frame.
+    fn put_msaa(&self, tex: wgpu::Texture, fw: u32, fh: u32) {
+        if let Ok(mut slot) = self.msaa.lock() {
+            if slot.is_none() {
+                *slot = Some((tex, fw, fh));
+            }
+        }
+    }
+
+    /// Hand the scratch back for the next frame.
+    fn put_scratch(&self, scratch: Scratch) {
+        if let Ok(mut slot) = self.scratch.lock() {
+            if slot.is_none() {
+                *slot = Some(scratch);
+            }
+        }
+    }
+}
+
+/// A storage buffer for the trace scratch. Never zero-sized (wgpu rejects
+/// that) and never past the budget.
+fn scratch_buffer(ctx: &GpuContext, label: &str, bytes: u64) -> wgpu::Buffer {
+    ctx.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: bytes.clamp(16, SCRATCH_BYTE_BUDGET),
+        usage: wgpu::BufferUsages::STORAGE,
+        mapped_at_creation: false,
+    })
+}
+
+/// The pupil grid one pair gets, from the quality base and the pair's image
+/// spread — the exact twin of `lumit_core::fx::lens_flare::pair_grid`
+/// (lumit-gpu stays lumit-core-free in production, so the formula is
+/// mirrored and a test pins the two together).
+pub fn pair_grid_of(base: u32, spread: f32) -> u32 {
+    let mult = if spread < 0.5 {
+        1.0
+    } else if spread < 1.5 {
+        1.75
+    } else {
+        2.5
+    };
+    ((base as f32 * mult).round() as u32).clamp(8, 512)
+}
+
+/// The flare buffer's padded dimensions for Squeeze/Scale under 1 — the
+/// exact twin of `lumit_core::fx::lens_flare::flare_pad_dims` (K-267),
+/// pinned by test.
+pub fn flare_pad_dims_of(fw: u32, fh: u32, squeeze: f32, scale: f32) -> (u32, u32) {
+    let squeeze = squeeze.clamp(0.25, 4.0);
+    let fscale = scale.clamp(0.05, 20.0);
+    let px = (1.0 / (squeeze * fscale)).clamp(1.0, 2.0);
+    let py = (1.0 / fscale).clamp(1.0, 2.0);
+    (
+        ((fw as f32) * px).ceil() as u32,
+        ((fh as f32) * py).ceil() as u32,
+    )
+}
+
+/// One dispatch of the trace → cells → raster chain: a run of combos that
+/// share a pupil grid, and a chunk of the frame's lights (K-263).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Batch {
+    /// The pupil grid every combo in the batch traces at.
+    pub(super) grid: u32,
+    /// First combo of the batch in the frame's combo table.
+    pub(super) combo_offset: u32,
+    /// How many combos it covers.
+    pub(super) combos: u32,
+    /// First light.
+    pub(super) light_offset: u32,
+    /// How many lights.
+    pub(super) lights: u32,
+    /// Scratch the batch needs: ray landings, cell areas, quad corners.
+    pub(super) ray_bytes: u64,
+    pub(super) area_bytes: u64,
+    pub(super) vert_bytes: u64,
+}
+
+impl Batch {
+    /// Ray–surface steps the batch asks the card for — the cost model the
+    /// submission split is paced by. One traced ray walks the prescription
+    /// about three times (forward to the far bounce, back to the near one,
+    /// forward to the sensor), which is where the 3 comes from; it only has
+    /// to be proportional.
+    pub(super) fn steps(&self, surface_count: u32) -> u64 {
+        u64::from(self.grid)
+            * u64::from(self.grid)
+            * u64::from(self.combos)
+            * u64::from(self.lights)
+            * u64::from(surface_count.max(1))
+            * 3
+    }
+}
+
+/// Which batches of a plan end a command buffer (K-263): `true` at index `i`
+/// means the frame hands over what it has encoded after batch `i` and opens a
+/// fresh encoder.
+///
+/// Separate from the encoding loop so it can be checked without a graphics
+/// card — the thing it prevents (a submission long enough for the operating
+/// system to kill, taking the device with it) is precisely the thing a test
+/// cannot afford to reproduce.
+pub(super) fn plan_flushes(plan: &[Batch], surface_count: u32) -> Vec<bool> {
+    let mut flushes = vec![false; plan.len()];
+    let mut pending = 0u64;
+    for (i, batch) in plan.iter().enumerate() {
+        pending = pending.saturating_add(batch.steps(surface_count));
+        if pending >= STEPS_PER_SUBMIT {
+            flushes[i] = true;
+            pending = 0;
+        }
+    }
+    flushes
+}
+
+/// Cut the frame's grid-major combo table into [`Batch`]es that each fit
+/// [`SCRATCH_BYTE_BUDGET`] (K-263).
+///
+/// The combo table is sorted by grid, so equal grids are contiguous: each run
+/// becomes one or more batches, split by however many (light × combo) slots
+/// the budget affords at that grid. When even ONE combo across every light
+/// will not fit — an Ultra grid with eight matte sources — the lights split
+/// too, which is what makes the budget a real bound rather than a wish.
+/// Lights are chunked inside the combo batch so the drawn order stays
+/// light-major within a batch, exactly as it was.
+pub(super) fn plan_batches(combo_grids: &[u32], light_count: u32) -> Vec<Batch> {
+    let mut plan = Vec::new();
+    let lights_total = light_count.max(1);
+    let mut offset = 0usize;
+    while offset < combo_grids.len() {
+        let grid = combo_grids[offset].clamp(2, 512);
+        let run_end = combo_grids[offset..]
+            .iter()
+            .position(|&g| g != combo_grids[offset])
+            .map(|n| offset + n)
+            .unwrap_or(combo_grids.len());
+        let rays = u64::from(grid) * u64::from(grid);
+        let quads = u64::from(grid - 1) * u64::from(grid - 1);
+        let per_slot = rays * RAY_BYTES + quads * (AREA_BYTES + CELL_BYTES);
+        // At least one slot always runs: a single (light × combo) pair at the
+        // widest grid is 27 MB, inside the budget, so this floor is a
+        // formality that keeps the loop total rather than a silent overrun.
+        let slots = (SCRATCH_BYTE_BUDGET / per_slot.max(1)).max(1);
+        let light_chunk = lights_total
+            .min(slots.min(u64::from(u32::MAX)) as u32)
+            .max(1);
+        let combo_cap = (slots / u64::from(light_chunk)).clamp(1, 64) as u32;
+        let mut at = offset;
+        while at < run_end {
+            let combos = combo_cap.min((run_end - at) as u32);
+            let mut light_at = 0u32;
+            while light_at < lights_total {
+                let lights = light_chunk.min(lights_total - light_at);
+                let slots_used = u64::from(lights) * u64::from(combos);
+                plan.push(Batch {
+                    grid,
+                    combo_offset: at as u32,
+                    combos,
+                    light_offset: light_at,
+                    lights,
+                    ray_bytes: slots_used * rays * RAY_BYTES,
+                    area_bytes: slots_used * quads * AREA_BYTES,
+                    vert_bytes: slots_used * quads * CELL_BYTES,
+                });
+                light_at += lights;
+            }
+            at += combos as usize;
+        }
+        offset = run_end;
+    }
+    plan
+}
+
+/// Upload one bake's buffers as GPU resources.
+fn upload_bake(ctx: &GpuContext, data: &FlareBakeData) -> GpuBaked {
+    use wgpu::util::DeviceExt;
+    let rows: Vec<GpuSurface> = data
+        .surfaces
+        .iter()
+        .map(|&row| GpuSurface { row })
+        .collect();
+    let surfaces = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("fx-lens-flare-surfaces"),
+            contents: bytemuck::cast_slice(&rows),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+    let float_texture = |label: &str, w: u32, h: u32, format: wgpu::TextureFormat, bytes: &[u8]| {
+        ctx.device.create_texture_with_data(
+            &ctx.queue,
+            &wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            bytes,
+        )
+    };
+    // The starburst's RGB triplets pad to rgba32float rows (alpha unused);
+    // f32 keeps the CPU/GPU oracle tight.
+    let mut rgba = Vec::with_capacity(data.starburst.len() / 3 * 4);
+    for rgb in data.starburst.chunks_exact(3) {
+        rgba.extend_from_slice(rgb);
+        rgba.push(0.0f32);
+    }
+    let starburst = float_texture(
+        "fx-lens-flare-starburst",
+        data.sb_res,
+        data.sb_res,
+        wgpu::TextureFormat::Rgba32Float,
+        bytemuck::cast_slice(&rgba),
+    );
+    GpuBaked {
+        surfaces,
+        surface_count: data.surfaces.len() as u32,
+        surface_rows: data.surfaces.clone(),
+        ghosts: data.ghosts.clone(),
+        spreads: data.spreads.clone(),
+        sensor_z_mm: data.sensor_z_mm,
+        focal_mm: data.focal_mm,
+        native_fstop: data.native_fstop,
+        pupil_mm: data.pupil_mm,
+        start_z_mm: data.start_z_mm,
+        energy_gain: data.energy_gain,
+        starburst,
+    }
+}
+
+impl FxEngine {
+    /// Apply one Lens flare (docs/08 §3.27) to a linear working texture,
+    /// returning a new texture of the same size. `bake` is called only when
+    /// the op's bake key misses the cache (the caller wraps
+    /// `lumit_core::fx::lens_flare::bake`). `matte` is the Matte source's
+    /// rendered layer (the DoF layer-input shape) — read only when
+    /// `op.source == 1`; an absent matte there means no sources, the
+    /// labelled-no-op convention. The whole frame — source detection, trace,
+    /// energy, vertex build, the additive ghost raster in batches, and the
+    /// combine — encodes into ONE encoder and submits once.
+    #[allow(clippy::too_many_arguments)]
+    pub fn lens_flare(
+        &self,
+        ctx: &GpuContext,
+        src: &wgpu::Texture,
+        w: u32,
+        h: u32,
+        op: &LensFlareOp,
+        matte: Option<&wgpu::Texture>,
+        bake: &dyn Fn() -> FlareBakeData,
+        probe: &dyn Fn(&FlareProbeBake) -> Vec<u32>,
+    ) -> wgpu::Texture {
+        use wgpu::util::DeviceExt;
+        let out = work_texture(ctx, w, h, "fx-lens-flare-out");
+        let lf = &self.lens_flare;
+
+        // Neutral short-circuit mirror (the combine kernel also guards, but
+        // skipping the whole pipeline is the honest fast path).
+        let ghost_count_max = op.max_ghosts.min(200);
+        let live = op.intensity > 0.0 && op.mix > 0.0;
+        let baked = if live {
+            Some(lf.baked(ctx, op, bake))
+        } else {
+            None
+        };
+
+        // Matte mode runs with MAX_LIGHTS candidate slots (dead ones carry
+        // zero weight and cost no fill); Manual and the prepared Lights mode
+        // run one.
+        let matte_mode = op.source == 1;
+        let light_count = if matte_mode { MAX_LIGHTS } else { 1 };
+
+        // The frame's light list. Manual fills slot 0 from the CPU; Matte
+        // mode overwrites the buffer with the detection kernels below.
+        let mut light_rows = vec![GpuLight { row: [0.0; 8] }; MAX_LIGHTS as usize];
+        if !matte_mode {
+            light_rows[0] = GpuLight {
+                row: [
+                    op.light_frac[0],
+                    op.light_frac[1],
+                    op.light_tint[0],
+                    op.light_tint[1],
+                    op.light_tint[2],
+                    0.0,
+                    0.0,
+                    0.0,
+                ],
+            };
+        }
+        let lights_buf = ctx
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("fx-lens-flare-lights"),
+                contents: bytemuck::cast_slice(&light_rows),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+
+        // Flare buffer (half size on Draft), and its 4x multisample target
+        // (K-264): the ghost raster draws into the multisampled texture and
+        // resolves into `flare_tex`, which everything downstream (blur,
+        // combine) reads exactly as before. The multisample texture exists
+        // only while a live frame draws.
+        let div = op.flare_div.max(1);
+        let (fw, fh) = ((w / div).max(1), (h / div).max(1));
+        // The buffer renders PADDED for Squeeze/Scale under 1 (K-267): the
+        // combine samples past the base extent there, and the padding puts
+        // real flare where K-266's zero-outside tap showed black. Geometry
+        // is centred; the screen transform stays derived from the base.
+        let (fpw, fph) = flare_pad_dims_of(fw, fh, op.anamorphic, op.scale);
+        let flare_tex = work_texture(ctx, fpw, fph, "fx-lens-flare-buffer");
+        let msaa_tex = live.then(|| lf.take_msaa(ctx, fpw, fph));
+
+        let mut encoder = ctx.encoder("fx-lens-flare-enc");
+
+        // Matte-mode source detection (impl note §6): tile maxima, then the
+        // serial top-K pick — both before any trace pass reads the lights.
+        if live && matte_mode {
+            if let Some(matte) = matte {
+                let (mw, mh) = (matte.width(), matte.height());
+                let tiles_x = mw.div_ceil(DETECT_TILE);
+                let tiles_y = mh.div_ceil(DETECT_TILE);
+                let tiles_buf = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("fx-lens-flare-tiles"),
+                    size: u64::from(tiles_x * tiles_y) * 8,
+                    usage: wgpu::BufferUsages::STORAGE,
+                    mapped_at_creation: false,
+                });
+                let dp = ctx
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("fx-lens-flare-detect-params"),
+                        contents: bytemuck::bytes_of(&DetectParams {
+                            w: mw,
+                            h: mh,
+                            tiles_x,
+                            tiles_y,
+                            threshold: op.threshold,
+                            softness: op.threshold_softness,
+                            use_source_colour: u32::from(op.use_source_colour),
+                            _pad0: 0.0,
+                            tint: op.light_tint,
+                            _pad1: 0.0,
+                        }),
+                        usage: wgpu::BufferUsages::UNIFORM,
+                    });
+                let bind = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("fx-lens-flare-detect-bind"),
+                    layout: &lf.detect_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(
+                                &matte.create_view(&Default::default()),
+                            ),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: tiles_buf.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: lights_buf.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: dp.as_entire_binding(),
+                        },
+                    ],
+                });
+                {
+                    let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("fx-lens-flare-detect-tiles-pass"),
+                        timestamp_writes: None,
+                    });
+                    cpass.set_pipeline(&lf.detect_tiles);
+                    cpass.set_bind_group(0, &bind, &[]);
+                    cpass.dispatch_workgroups(tiles_x, tiles_y, 1);
+                }
+                {
+                    let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("fx-lens-flare-detect-pick-pass"),
+                        timestamp_writes: None,
+                    });
+                    cpass.set_pipeline(&lf.detect_pick);
+                    cpass.set_bind_group(0, &bind, &[]);
+                    cpass.dispatch_workgroups(1, 1, 1);
+                }
+            }
+            // No matte bound: the zero-filled lights render nothing — the
+            // labelled-no-op convention for an unset layer reference.
+        }
+
+        // Always clear the flare buffer (a zero-ghost frame must not read
+        // stale memory). A live frame clears through the multisample target
+        // and resolves, so both textures start clean; an idle one clears the
+        // flare buffer directly.
+        {
+            let view = flare_tex.create_view(&Default::default());
+            let msaa_view = msaa_tex
+                .as_ref()
+                .map(|t| t.create_view(&Default::default()));
+            let (target, resolve) = match &msaa_view {
+                Some(m) => (m, Some(&view)),
+                None => (&view, None),
+            };
+            let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("fx-lens-flare-clear"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    resolve_target: resolve,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                ..Default::default()
+            });
+        }
+
+        if let Some(baked) = &baked {
+            // Build the (ghost × wavelength) combo table for this frame; the
+            // light dimension rides the dispatch z instead (its population is
+            // only known GPU-side in Matte mode).
+            let ghost_count = (ghost_count_max as usize).min(baked.ghosts.len());
+            let gain = baked.energy_gain;
+            // Manual mode's frame-time grid probe (K-267): ask the caller
+            // (who owns the lumit-core maths) for the frame's final per-pair
+            // grids — each pair's rung floor raised toward its need under
+            // the frame's bounded ray headroom. Matte lights exist GPU-side
+            // only, so Matte mode keeps the bake grids; the CPU reference
+            // gates the same way and parity holds.
+            let frame_grids: Vec<u32> = if !matte_mode {
+                probe(&FlareProbeBake {
+                    surfaces: &baked.surface_rows,
+                    ghosts: &baked.ghosts,
+                    sensor_z_mm: baked.sensor_z_mm,
+                    focal_mm: baked.focal_mm,
+                    native_fstop: baked.native_fstop,
+                    pupil_mm: baked.pupil_mm,
+                    start_z_mm: baked.start_z_mm,
+                    spreads: &baked.spreads,
+                    pair_count: ghost_count,
+                })
+            } else {
+                Vec::new()
+            };
+            // Each pair gets its own pupil grid by its measured image spread
+            // (K-262, mirroring `lumit_core::fx::lens_flare::pair_grid`), so
+            // combos are sorted grid-major: a run of equal-grid combos is one
+            // dispatch batch, and the scratch is sized for the widest grid.
+            let mut tagged: Vec<(u32, GpuCombo)> =
+                Vec::with_capacity(ghost_count * op.lambdas.len());
+            for (gi, ghost) in baked.ghosts.iter().take(ghost_count).enumerate() {
+                let spread = baked.spreads.get(gi).copied().unwrap_or(1.0);
+                let rung = pair_grid_of(op.grid, spread);
+                let pg = frame_grids.get(gi).copied().unwrap_or(rung);
+                for &(lambda_nm, rgb) in &op.lambdas {
+                    tagged.push((
+                        pg,
+                        GpuCombo {
+                            bounce1: ghost[0],
+                            bounce2: ghost[1],
+                            lambda_nm,
+                            _pad: 0.0,
+                            rgb: [rgb[0] * gain, rgb[1] * gain, rgb[2] * gain],
+                            _pad2: 0.0,
+                        },
+                    ));
+                }
+            }
+            // Stable sort: equal grids become contiguous runs and ties keep
+            // the ranked pair order (determinism, §2.4).
+            tagged.sort_by_key(|&(g, _)| g);
+            let combo_grids: Vec<u32> = tagged.iter().map(|&(g, _)| g).collect();
+            let combos: Vec<GpuCombo> = tagged.into_iter().map(|(_, c)| c).collect();
+            if !combos.is_empty() {
+                // The frame's dispatch plan (K-263). Combos are sorted
+                // grid-major, so the table falls into runs of one grid; each
+                // run is cut into batches of combos and chunks of lights that
+                // fit the scratch budget, and every batch strides the scratch
+                // by ITS OWN grid. Through K-262 one stride served the whole
+                // frame — the widest grid in it — so a single frame-filling
+                // ghost made every compact ghost dispatch and draw at that
+                // ghost's cell count, tens of times the cells they own.
+                let plan = plan_batches(&combo_grids, light_count);
+                let combos_buf = ctx
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("fx-lens-flare-combos"),
+                        contents: bytemuck::cast_slice(&combos),
+                        usage: wgpu::BufferUsages::STORAGE,
+                    });
+                // One scratch for the whole frame, big enough for its widest
+                // batch and pooled between frames (see [`Scratch`]).
+                let (need_rays, need_areas, need_verts) =
+                    plan.iter().fold((16u64, 16u64, 16u64), |(r, a, v), b| {
+                        (r.max(b.ray_bytes), a.max(b.area_bytes), v.max(b.vert_bytes))
+                    });
+                let scratch = lf.take_scratch(ctx, need_rays, need_areas, need_verts);
+                let draw_bind = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("fx-lens-flare-draw-bind"),
+                    layout: &lf.draw_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: scratch.verts.as_entire_binding(),
+                    }],
+                });
+
+                let flare_view = flare_tex.create_view(&Default::default());
+                // Draw into the multisample target, resolving into the flare
+                // buffer (K-264). Every batch pass loads the multisample
+                // contents and re-resolves, so the last pass leaves the
+                // complete frame in `flare_tex`. The `None` arm cannot run —
+                // a baked frame is a live frame — but the no-panic rule
+                // (docs/14) prefers a plain raster to an unwrap.
+                let msaa_view = msaa_tex
+                    .as_ref()
+                    .map(|t| t.create_view(&Default::default()));
+                let (draw_view, draw_resolve) = match &msaa_view {
+                    Some(m) => (m, Some(&flare_view)),
+                    None => (&flare_view, None),
+                };
+                // Where the frame breaks its work into separate submissions.
+                let flushes = plan_flushes(&plan, baked.surface_count);
+                for (bi, job) in plan.iter().enumerate() {
+                    let Batch {
+                        grid,
+                        combo_offset: offset,
+                        combos: batch,
+                        light_offset: light_from,
+                        lights: light_chunk,
+                        ..
+                    } = *job;
+                    let batch_rays = grid * grid;
+                    let batch_quads = (grid - 1) * (grid - 1);
+                    // Frame-time optics shared with the CPU reference
+                    // (K-261): the stop-down scale, the wide-open roundness
+                    // blend, and the launch cell area in flare-buffer px².
+                    let stop_scale = if baked.native_fstop > 0.0 && op.fstop > 0.0 {
+                        (baked.native_fstop / op.fstop).clamp(0.05, 1.0)
+                    } else {
+                        1.0
+                    };
+                    let native = baked.native_fstop.max(0.7);
+                    let wide_open =
+                        (1.0 - (op.fstop / native - 1.0).clamp(0.0, 2.0) / 2.0).clamp(0.0, 1.0);
+                    let st_flare = op.screen_transform / div as f32;
+                    let cell_mm = 2.0 * baked.pupil_mm * stop_scale / (grid.max(2) - 1) as f32;
+                    let params = ctx
+                        .device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("fx-lens-flare-trace-params"),
+                            contents: bytemuck::bytes_of(&TraceParams {
+                                surface_count: baked.surface_count,
+                                combo_count: batch,
+                                grid,
+                                combo_offset: offset,
+                                coating: op.coating,
+                                aspect: h as f32 / w.max(1) as f32,
+                                focal_mm: baked.focal_mm,
+                                // Project into the flare buffer's raster.
+                                screen_transform: st_flare,
+                                raster_w: fpw as f32,
+                                raster_h: fph as f32,
+                                light_count: light_chunk,
+                                // Focus (K-260): thin-lens shift, the same
+                                // f²/(1000·d − f) the CPU reference uses.
+                                sensor_shift_mm: {
+                                    let f = baked.focal_mm;
+                                    if op.focus_m <= 0.0 {
+                                        0.0
+                                    } else {
+                                        (f * f / (1000.0 * op.focus_m - f).max(f)).clamp(0.0, f)
+                                    }
+                                },
+                                pupil_mm: baked.pupil_mm * stop_scale,
+                                start_z_mm: baked.start_z_mm,
+                                sensor_z_mm: baked.sensor_z_mm,
+                                stop_scale,
+                                cell_area_px: cell_mm * cell_mm * st_flare * st_flare,
+                                // This batch's own strides (K-263).
+                                ray_stride: batch_rays,
+                                quad_stride: batch_quads,
+                                blades: op.blades.clamp(3, 16),
+                                rot_rad: op.aperture_rotation_deg.to_radians(),
+                                roundness: op.roundness.max(wide_open),
+                                softness: op.aperture_softness,
+                                light_offset: light_from,
+                            }),
+                            usage: wgpu::BufferUsages::UNIFORM,
+                        });
+                    let bind = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("fx-lens-flare-trace-bind"),
+                        layout: &lf.trace_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: baked.surfaces.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: combos_buf.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: scratch.rays.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 3,
+                                resource: scratch.areas.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 4,
+                                resource: scratch.verts.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 5,
+                                resource: params.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 6,
+                                resource: lights_buf.as_entire_binding(),
+                            },
+                        ],
+                    });
+                    // Each stage in its own pass: the pass boundary is the
+                    // write-then-read barrier between them. The area stage
+                    // is separate from the vertex stage (K-264) because the
+                    // vertex stage reads NEIGHBOURING cells' areas — the
+                    // vertex-smoothed density — and a neighbour computed in
+                    // another workgroup needs a pass boundary to be visible.
+                    let stages: [(&wgpu::ComputePipeline, u32, &str); 3] = [
+                        (&lf.trace, batch_rays, "fx-lens-flare-trace-pass"),
+                        (&lf.quad_area, batch_quads, "fx-lens-flare-area-pass"),
+                        (&lf.build_verts, batch_quads, "fx-lens-flare-verts-pass"),
+                    ];
+                    for (pipeline, x_items, label) in stages {
+                        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                            label: Some(label),
+                            timestamp_writes: None,
+                        });
+                        cpass.set_pipeline(pipeline);
+                        cpass.set_bind_group(0, &bind, &[]);
+                        cpass.dispatch_workgroups(x_items.div_ceil(64), batch, light_chunk);
+                    }
+                    {
+                        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("fx-lens-flare-draw-pass"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view: draw_view,
+                                resolve_target: draw_resolve,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Load,
+                                    store: wgpu::StoreOp::Store,
+                                },
+                            })],
+                            ..Default::default()
+                        });
+                        rpass.set_pipeline(&lf.draw);
+                        rpass.set_bind_group(0, &draw_bind, &[]);
+                        // Exactly this batch's cells, contiguous from zero.
+                        rpass.draw(0..light_chunk * batch * batch_quads * 6, 0..1);
+                    }
+                    // Hand over what is encoded before it grows into a
+                    // submission the operating system would kill (see
+                    // [`STEPS_PER_SUBMIT`]).
+                    if flushes[bi] {
+                        // The guard is dropped first because the flush needs
+                        // the batch it borrows. Inside a frame batch this
+                        // submits the frame so far and opens a fresh buffer;
+                        // outside one it submits this pass's own. Either way
+                        // the reason is unchanged — the scratch below is
+                        // recycled once this work has gone to the driver.
+                        drop(encoder);
+                        ctx.flush();
+                        encoder = ctx.encoder("fx-lens-flare-enc");
+                    }
+                }
+                lf.put_scratch(scratch);
+            }
+
+            // Ghost blur (K-261, FlareSim's Ghost Blur): 3 separable box
+            // passes over the flare buffer, ping-ponging through a scratch
+            // texture — an even pass count lands the result back in
+            // `flare_tex` for the combine.
+            // Mirrors `lumit_core::fx::lens_flare::ghost_blur_radius`,
+            // cap included (K-262: an uncapped radius on a 4K frame is a
+            // thousand taps per pixel across six passes — a GPU timeout).
+            // Radius from the BASE dims (the look must not change with the
+            // K-267 padding); the passes run over the padded buffer.
+            let radius = {
+                let diag = ((fw * fw + fh * fh) as f32).sqrt();
+                ((op.ghost_softness.clamp(0.0, 2.0) * 0.01 * diag).round() as u32).min(80)
+            };
+            if radius > 0 {
+                let scratch_tex = work_texture(ctx, fpw, fph, "fx-lens-flare-blur-scratch");
+                for pass in 0..3u32 {
+                    for dir in 0..2u32 {
+                        let _ = pass;
+                        let (src_t, dst_t) = if dir == 0 {
+                            (&flare_tex, &scratch_tex)
+                        } else {
+                            (&scratch_tex, &flare_tex)
+                        };
+                        let bp = ctx
+                            .device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("fx-lens-flare-blur-params"),
+                                contents: bytemuck::bytes_of(&BlurParams {
+                                    w: fpw,
+                                    h: fph,
+                                    radius,
+                                    dir,
+                                }),
+                                usage: wgpu::BufferUsages::UNIFORM,
+                            });
+                        let bind = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            label: Some("fx-lens-flare-blur-bind"),
+                            layout: &lf.blur_layout,
+                            entries: &[
+                                wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: wgpu::BindingResource::TextureView(
+                                        &src_t.create_view(&Default::default()),
+                                    ),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 1,
+                                    resource: wgpu::BindingResource::TextureView(
+                                        &dst_t.create_view(&Default::default()),
+                                    ),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 2,
+                                    resource: bp.as_entire_binding(),
+                                },
+                            ],
+                        });
+                        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                            label: Some("fx-lens-flare-blur-pass"),
+                            timestamp_writes: None,
+                        });
+                        cpass.set_pipeline(&lf.blur);
+                        cpass.set_bind_group(0, &bind, &[]);
+                        // x runs ALONG the blur axis in tiles of 64, y across
+                        // it — the shape the line cache needs (K-263).
+                        let (along, across) = if dir == 0 { (fpw, fph) } else { (fph, fpw) };
+                        cpass.dispatch_workgroups(along.div_ceil(64), across, 1);
+                    }
+                }
+            }
+        }
+
+        // Combine. The starburst texture must exist even when the bake was
+        // skipped (identity path): bind a 1×1 black stand-in then.
+        let black;
+        let sb_tex = match &baked {
+            Some(b) => &b.starburst,
+            None => {
+                black = work_texture(ctx, 1, 1, "fx-lens-flare-black");
+                &black
+            }
+        };
+        let fscale = op.scale.clamp(0.05, 20.0);
+        let cp = CombineParams {
+            w: w as f32,
+            h: h as f32,
+            fw: fw as f32,
+            fh: fh as f32,
+            intensity: op.intensity,
+            sb_intensity: op.starburst_intensity,
+            sb_half: 0.6 * fscale * w.min(h) as f32,
+            squeeze: op.anamorphic.clamp(0.25, 4.0),
+            fscale,
+            mix_amt: op.mix,
+            light_count,
+            blend: op.blend.min(BLEND_COUNT - 1),
+        };
+        let cp_buf = ctx
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("fx-lens-flare-combine-params"),
+                contents: bytemuck::bytes_of(&cp),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let combine_bind = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("fx-lens-flare-combine-bind"),
+            layout: &lf.combine_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(
+                        &src.create_view(&Default::default()),
+                    ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(
+                        &flare_tex.create_view(&Default::default()),
+                    ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(
+                        &sb_tex.create_view(&Default::default()),
+                    ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(
+                        &out.create_view(&Default::default()),
+                    ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: cp_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: lights_buf.as_entire_binding(),
+                },
+            ],
+        });
+        {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("fx-lens-flare-combine-pass"),
+                timestamp_writes: None,
+            });
+            cpass.set_pipeline(&lf.combine);
+            cpass.set_bind_group(0, &combine_bind, &[]);
+            cpass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
+        }
+        drop(encoder);
+        if let Some(tex) = msaa_tex {
+            lf.put_msaa(tex, fpw, fph);
+        }
+        out
+    }
+
+    /// The trace-oracle hook (docs/impl/lens-flare.md §8.5): run the trace
+    /// pass alone for the first `combo_limit` (pair × wavelength) combos of
+    /// the op's MANUAL light and read the ray buffer back — rows `[pos_x,
+    /// pos_y, weight, pad]` per corner, combo-major (weight −1 is the GPU's
+    /// dead sentinel where the CPU returns None). `w`/`h` feed the aspect
+    /// the in-shader light direction uses. Diagnostics and tests only; no
+    /// production path calls it.
+    pub fn lens_flare_trace_debug(
+        &self,
+        ctx: &GpuContext,
+        op: &LensFlareOp,
+        bake: &dyn Fn() -> FlareBakeData,
+        combo_limit: u32,
+        w: u32,
+        h: u32,
+    ) -> Vec<[f32; 4]> {
+        use wgpu::util::DeviceExt;
+        let lf = &self.lens_flare;
+        let baked = lf.baked(ctx, op, bake);
+        let ghost_count = (op.max_ghosts as usize).min(baked.ghosts.len());
+        let mut combos: Vec<GpuCombo> = Vec::new();
+        'outer: for ghost in baked.ghosts.iter().take(ghost_count) {
+            for &(lambda_nm, rgb) in &op.lambdas {
+                if combos.len() >= combo_limit as usize {
+                    break 'outer;
+                }
+                combos.push(GpuCombo {
+                    bounce1: ghost[0],
+                    bounce2: ghost[1],
+                    lambda_nm,
+                    _pad: 0.0,
+                    rgb,
+                    _pad2: 0.0,
+                });
+            }
+        }
+        if combos.is_empty() {
+            return Vec::new();
+        }
+        let grid = op.grid.clamp(2, 128);
+        let ray_count = grid * grid;
+        let combos_buf = ctx
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("fx-lens-flare-dbg-combos"),
+                contents: bytemuck::cast_slice(&combos),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let mut light_rows = vec![GpuLight { row: [0.0; 8] }; MAX_LIGHTS as usize];
+        light_rows[0] = GpuLight {
+            row: [
+                op.light_frac[0],
+                op.light_frac[1],
+                op.light_tint[0],
+                op.light_tint[1],
+                op.light_tint[2],
+                0.0,
+                0.0,
+                0.0,
+            ],
+        };
+        let lights_buf = ctx
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("fx-lens-flare-dbg-lights"),
+                contents: bytemuck::cast_slice(&light_rows),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let rays_size = combos.len() as u64 * u64::from(ray_count) * 16;
+        let rays_buf = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("fx-lens-flare-dbg-rays"),
+            size: rays_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        // The layout requires every binding; the trace entry never touches
+        // the area or vertex buffers, so minimal stand-ins satisfy it.
+        let dummy = |label: &str, size: u64| {
+            ctx.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size,
+                usage: wgpu::BufferUsages::STORAGE,
+                mapped_at_creation: false,
+            })
+        };
+        let areas_buf = dummy("fx-lens-flare-dbg-areas", 4);
+        let verts_buf = dummy("fx-lens-flare-dbg-verts", 32);
+        let params = ctx
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("fx-lens-flare-dbg-params"),
+                contents: bytemuck::bytes_of(&{
+                    let stop_scale = if baked.native_fstop > 0.0 && op.fstop > 0.0 {
+                        (baked.native_fstop / op.fstop).clamp(0.05, 1.0)
+                    } else {
+                        1.0
+                    };
+                    let native = baked.native_fstop.max(0.7);
+                    let wide_open =
+                        (1.0 - (op.fstop / native - 1.0).clamp(0.0, 2.0) / 2.0).clamp(0.0, 1.0);
+                    let cell_mm = 2.0 * baked.pupil_mm * stop_scale / (grid.max(2) - 1) as f32;
+                    TraceParams {
+                        surface_count: baked.surface_count,
+                        combo_count: combos.len() as u32,
+                        grid,
+                        combo_offset: 0,
+                        coating: op.coating,
+                        aspect: h as f32 / w.max(1) as f32,
+                        focal_mm: baked.focal_mm,
+                        screen_transform: op.screen_transform,
+                        raster_w: w as f32,
+                        raster_h: h as f32,
+                        light_count: 1,
+                        sensor_shift_mm: {
+                            let f = baked.focal_mm;
+                            if op.focus_m <= 0.0 {
+                                0.0
+                            } else {
+                                (f * f / (1000.0 * op.focus_m - f).max(f)).clamp(0.0, f)
+                            }
+                        },
+                        pupil_mm: baked.pupil_mm * stop_scale,
+                        start_z_mm: baked.start_z_mm,
+                        sensor_z_mm: baked.sensor_z_mm,
+                        stop_scale,
+                        cell_area_px: cell_mm * cell_mm * op.screen_transform * op.screen_transform,
+                        ray_stride: grid * grid,
+                        quad_stride: (grid - 1) * (grid - 1),
+                        blades: op.blades.clamp(3, 16),
+                        rot_rad: op.aperture_rotation_deg.to_radians(),
+                        roundness: op.roundness.max(wide_open),
+                        softness: op.aperture_softness,
+                        light_offset: 0,
+                    }
+                }),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let bind = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("fx-lens-flare-dbg-bind"),
+            layout: &lf.trace_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: baked.surfaces.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: combos_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: rays_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: areas_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: verts_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: params.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: lights_buf.as_entire_binding(),
+                },
+            ],
+        });
+        let read_buf = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("fx-lens-flare-dbg-read"),
+            size: rays_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut enc = ctx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("fx-lens-flare-dbg-enc"),
+            });
+        {
+            let mut cpass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("fx-lens-flare-dbg-pass"),
+                timestamp_writes: None,
+            });
+            cpass.set_pipeline(&lf.trace);
+            cpass.set_bind_group(0, &bind, &[]);
+            cpass.dispatch_workgroups(ray_count.div_ceil(64), combos.len() as u32, 1);
+        }
+        enc.copy_buffer_to_buffer(&rays_buf, 0, &read_buf, 0, rays_size);
+        ctx.submit([enc.finish()]);
+        let slice = read_buf.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| {
+            let _ = tx.send(r);
+        });
+        ctx.device.poll(wgpu::Maintain::Wait);
+        if rx.recv().map(|r| r.is_err()).unwrap_or(true) {
+            return Vec::new();
+        }
+        let data = slice.get_mapped_range();
+        data.chunks_exact(16)
+            .map(|row| {
+                let f = |i: usize| f32::from_le_bytes([row[i], row[i + 1], row[i + 2], row[i + 3]]);
+                [f(0), f(4), f(8), f(12)]
+            })
+            .collect()
+    }
+}

@@ -27,22 +27,35 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/cache.dart';
 import 'package:lumit_flutter/src/rust/api/keymap.dart';
+import 'package:lumit_flutter/src/rust/api/project.dart';
 import 'package:lumit_flutter/src/rust/api/shell.dart';
 import 'package:lumit_flutter/src/rust/api/system.dart';
 import 'package:provider/provider.dart';
 
+import '../l10n/strings.dart';
 import '../state/file_dialogs.dart';
 import '../state/keymap.dart';
 import '../state/settings.dart';
+import '../state/updates.dart';
 import '../state/workspace.dart';
+import '../theme/custom_theme.dart';
 import '../theme/theme.dart';
+import '../theme/theme_file.dart';
 import '../widgets/controls.dart';
+import '../widgets/theme_swatches.dart';
+import 'about_window_frb.dart';
+import 'cache_confirm_frb.dart';
+import 'menu_bar_frb.dart';
+import 'settings_rows.dart';
 import 'theme_editor_frb.dart';
+import 'theme_name_dialog.dart';
+import 'update_dialog_frb.dart';
 
 /// The smallest budget worth setting, in MiB. Below this the cache holds a
 /// frame or two and costs more in bookkeeping than it saves.
@@ -55,19 +68,39 @@ const double _unknownMemoryMib = 16384;
 
 /// One page in the sidebar.
 enum SettingsPage {
-  general('General'),
-  appearance('Appearance'),
-  interface('Interface'),
-  keymap('Keymap'),
-  performance('Performance');
+  general,
+  appearance,
+  interface,
+  keymap,
+  performance;
 
-  const SettingsPage(this.label);
-  final String label;
+  /// The name in the sidebar. A getter rather than a constructor argument
+  /// because an enum constant is built once, at start-up, and the language can
+  /// change after that.
+  String get label => switch (this) {
+        SettingsPage.general => l10n.settingsPageGeneral,
+        SettingsPage.appearance => l10n.settingsPageAppearance,
+        SettingsPage.interface => l10n.settingsPageInterface,
+        SettingsPage.keymap => l10n.settingsPageKeymap,
+        SettingsPage.performance => l10n.settingsPagePerformance,
+      };
 }
+
+/// The size the window opens at the first time (K-242). Bigger than the 700×460
+/// it was fixed at, because that was sized for the smallest laptop and left the
+/// Keymap table scrolling four rows at a time on anything larger; the corner
+/// grip takes it from here, and where it is left is remembered.
+const Size _settingsSize = Size(880, 640);
+
+/// Below this the sidebar and the widest setting row stop fitting side by side.
+const Size _settingsMinSize = Size(560, 380);
 
 Future<void> showSettingsWindowFrb(BuildContext context) =>
     showLumitModal<void>(
       context: context,
+      id: 'settings',
+      initialSize: _settingsSize,
+      minSize: _settingsMinSize,
       builder: (close) => _SettingsWindow(onClose: () => close(null)),
     );
 
@@ -79,6 +112,12 @@ class _SettingsWindow extends StatefulWidget {
   State<_SettingsWindow> createState() => _SettingsWindowState();
 }
 
+/// Whether a cache-location choice is this project's or the application's
+/// (docs/07 §15). Interface-only: the engine stores the two in different places —
+/// one in the document, one in the settings file — and this is the control that
+/// says which the user means.
+enum CacheScope { everywhere, thisProject }
+
 class _SettingsWindowState extends State<_SettingsWindow> {
   SettingsPage _page = SettingsPage.general;
 
@@ -87,10 +126,10 @@ class _SettingsWindowState extends State<_SettingsWindow> {
     final t = ThemeScope.of(context).theme;
     final ui = Provider.of<LumitUiState>(context);
 
+    // No width or height of its own: the window frame around it is what has the
+    // size, so the corner grip can change it (K-242).
     return FloatSurface(
-      width: 700,
-      child: SizedBox(
-        height: 460,
+      child: SizedBox.expand(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -98,12 +137,13 @@ class _SettingsWindowState extends State<_SettingsWindow> {
               padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
               child: Row(
                 children: [
-                  Expanded(child: Text('Settings', style: t.bodyPrimary)),
+                  Expanded(
+                      child: Text(l10n.settingsTitle, style: t.bodyPrimary)),
                   HouseButton(
                     key: const ValueKey('settings-close'),
                     small: true,
                     onPressed: widget.onClose,
-                    child: const Text('Done'),
+                    child: Text(l10n.done),
                   ),
                 ],
               ),
@@ -175,99 +215,154 @@ class _SettingsWindowState extends State<_SettingsWindow> {
   // ---- the pages -----------------------------------------------------------
 
   List<Widget> _general(LumitTheme t, LumitUiState ui) => [
-        _section(t, 'Workspace', [
-          _row(
+        settingsSection(t, l10n.settingsGroupWorkspace, [
+          settingsRow(
             t,
-            'Panel layout',
-            'Return every panel to its default place and size.',
+            l10n.settingsPanelLayout,
+            l10n.settingsHelpPanelLayout,
             HouseButton(
               key: const ValueKey('settings-reset-workspace'),
               small: true,
               onPressed: () => setState(ui.resetLayout),
-              child: Text('Reset workspace', style: t.small),
+              child: Text(l10n.menuResetWorkspace, style: t.small),
             ),
           ),
         ]),
-        _section(t, 'About', [
-          _row(t, 'Version', 'This build of Lumit.',
-              Text(_version(), style: t.small)),
-          for (final line in bootLog().skip(1))
-            _row(t, line, '', const SizedBox.shrink()),
-        ]),
-      ];
-
-  List<Widget> _appearance(LumitTheme t, LumitUiState ui) => [
-        _section(t, 'Theme', [
-          _row(
+        // The same updater the Help menu drives, seen from the other side
+        // (K-296): one service, two views, so they can never disagree about
+        // whether a check is running or an update is waiting.
+        settingsSection(t, l10n.settingsGroupUpdates, [
+          settingsRow(
             t,
-            'Colour scheme',
-            'The palette every panel draws from.',
-            SizedBox(
-              width: 150,
-              child: BareDropdown<ThemeChoice>(
-                key: const ValueKey('settings-scheme'),
-                value: ui.workspace.themeChoice,
-                options: ui.workspace.themeChoices,
-                label: (c) => c.label,
-                // Dark, Light, then the user's own (K-202): seven built-ins
-                // and a growing list of custom themes is a long flat menu,
-                // and light/dark is the first thing anyone is choosing by.
-                group: (c) => c.group,
-                onChanged: (c) => setState(() => ui.workspace.choose(c)),
+            l10n.settingsAutomaticUpdates,
+            l10n.settingsHelpAutomaticUpdates,
+            HouseCheckbox(
+              key: const ValueKey('settings-auto-update'),
+              value: ui.workspace.autoUpdate,
+              onChanged: (on) => setState(() => ui.workspace.setAutoUpdate(on)),
+            ),
+          ),
+          // The whole row watches the service, not just its button: the line
+          // under the title is the part that says what was found, and a stale
+          // sentence beside a live button would be worse than either alone.
+          ListenableBuilder(
+            listenable: ui.updates,
+            builder: (context, _) => settingsRow(
+              t,
+              l10n.settingsThisVersion,
+              _updateStatusLine(ui),
+              HouseButton(
+                key: const ValueKey('settings-check-updates'),
+                small: true,
+                onPressed: ui.updates.busy
+                    ? null
+                    : () => pressUpdateRow(
+                          context,
+                          updates: ui.updates,
+                          notice: context.read<LumitState>().postNotice,
+                          projectIsDirty: () =>
+                              context.read<LumitState>().project?.isDirty() ??
+                              false,
+                          saveProject: () =>
+                              saveProjectFrb(context.read<LumitState>(), ui),
+                        ),
+                child: Text(ui.updates.menuLabel, style: t.small),
               ),
             ),
           ),
-          _row(
+        ]),
+        // About used to sit here. It is Help ▸ About Lumit now (K-244):
+        // Settings is for what you change, and a version number is not that.
+      ];
+
+  /// The line under "This version": what is installed, and what the last check
+  /// made of it. Rebuilt with the row, so it follows the service too.
+  String _updateStatusLine(LumitUiState ui) {
+    final installed = 'Lumit ${versionFromBootLine(lumitVersion()) ?? '?'}';
+    return switch (ui.updates.stage) {
+      UpdateStage.upToDate => l10n.updateUpToDate(installed),
+      UpdateStage.available =>
+        l10n.updateAvailable(installed, '${ui.updates.release?.version}'),
+      UpdateStage.ready =>
+        l10n.updateReady(installed, '${ui.updates.release?.version}'),
+      UpdateStage.failed =>
+        '$installed. ${ui.updates.failure ?? l10n.updateCheckDidNotFinish}',
+      _ => installed,
+    };
+  }
+
+  List<Widget> _appearance(LumitTheme t, LumitUiState ui) => [
+        settingsSection(t, l10n.settingsGroupTheme, [
+          settingsRow(
             t,
-            'Custom colours',
-            ui.workspace.customThemeName == null
-                ? 'Start from this scheme and set any colour yourself.'
-                : 'Edit the colours of ${ui.workspace.customThemeName}.',
+            l10n.settingsColourScheme,
+            l10n.settingsHelpColourScheme,
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (ui.workspace.customThemeName != null) ...[
-                  HouseButton(
-                    key: const ValueKey('settings-theme-delete'),
-                    small: true,
-                    frameless: true,
-                    onPressed: () => setState(() => ui.workspace
-                        .deleteCustomTheme(ui.workspace.customThemeName!)),
-                    child: Text('Delete', style: t.small),
+                SizedBox(
+                  width: 150,
+                  child: BareDropdown<ThemeChoice>(
+                    key: const ValueKey('settings-scheme'),
+                    value: ui.workspace.themeChoice,
+                    options: ui.workspace.themeChoices,
+                    label: (c) => c.label,
+                    // Dark, Light, then the user's own (K-202): seven built-ins
+                    // and a growing list of custom themes is a long flat menu,
+                    // and light/dark is the first thing anyone is choosing by.
+                    group: (c) => c.group,
+                    onChanged: (c) => setState(() => ui.workspace.choose(c)),
                   ),
-                  const SizedBox(width: 6),
-                ],
-                HouseButton(
-                  key: const ValueKey('settings-customise'),
-                  small: true,
-                  onPressed: () async {
-                    await showThemeEditorFrb(context, ui);
-                    if (mounted) setState(() {});
-                  },
-                  child: Text('Customise…', style: t.small),
+                ),
+                const SizedBox(width: 8),
+                // What the selection actually looks like, beside its name
+                // (K-298).
+                ThemeSwatchStrip(
+                  key: const ValueKey('settings-theme-swatches'),
+                  theme: ui.workspace.theme,
                 ),
               ],
             ),
           ),
-          _row(
+          settingsRow(
             t,
-            'Corners',
-            'How rounded controls and panels are.',
+            l10n.settingsCustomColours,
+            ui.workspace.customThemeName == null
+                ? l10n.settingsHelpCustomColours
+                : l10n.settingsHelpEditingTheme(
+                    '${ui.workspace.customThemeName}'),
+            HouseButton(
+              key: const ValueKey('settings-customise'),
+              small: true,
+              onPressed: () async {
+                await showThemeEditorFrb(context, ui);
+                if (mounted) setState(() {});
+              },
+              child: Text(l10n.customiseEllipsis, style: t.small),
+            ),
+          ),
+          _themeShelf(t, ui),
+          settingsRow(
+            t,
+            l10n.settingsCorners,
+            l10n.settingsHelpCorners,
             SizedBox(
               width: 130,
               child: BareDropdown<ThemeShape>(
                 key: const ValueKey('settings-shape'),
                 value: ui.shape,
                 options: ThemeShape.values,
-                label: (s) => s == ThemeShape.sharp ? 'Sharp' : 'Round',
+                label: (s) => s == ThemeShape.sharp
+                    ? l10n.cornersSharp
+                    : l10n.cornersRound,
                 onChanged: (s) => setState(() => ui.setShape(s)),
               ),
             ),
           ),
-          _row(
+          settingsRow(
             t,
-            'Motion',
-            'How much controls animate as they change.',
+            l10n.settingsMotion,
+            l10n.settingsHelpMotion,
             SizedBox(
               width: 130,
               child: BareDropdown<AnimationLevel>(
@@ -275,9 +370,9 @@ class _SettingsWindowState extends State<_SettingsWindow> {
                 value: ui.workspace.animationLevel,
                 options: AnimationLevel.values,
                 label: (a) => switch (a) {
-                  AnimationLevel.all => 'Full',
-                  AnimationLevel.minimal => 'Minimal',
-                  AnimationLevel.none => 'None',
+                  AnimationLevel.all => l10n.motionFull,
+                  AnimationLevel.minimal => l10n.motionMinimal,
+                  AnimationLevel.none => l10n.none,
                 },
                 onChanged: (a) =>
                     setState(() => ui.workspace.setAnimationLevel(a)),
@@ -285,13 +380,11 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ),
           ),
         ]),
-        _section(t, 'Scopes', [
-          _row(
+        settingsSection(t, l10n.settingsGroupScopes, [
+          settingsRow(
             t,
-            'Use theme colours',
-            'Off, a scope reads on the standard near-black graticule '
-                'whatever the chrome — which is how a signal is measured. On, '
-                'it takes the theme\'s colours instead.',
+            l10n.settingsUseThemeColours,
+            l10n.settingsHelpUseThemeColours,
             HouseCheckbox(
               key: const ValueKey('settings-themed-scopes'),
               value: ui.workspace.themedScopes,
@@ -299,13 +392,11 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ),
           ),
         ]),
-        _section(t, 'Viewer', [
-          _row(
+        settingsSection(t, l10n.settingsGroupViewer, [
+          settingsRow(
             t,
-            'Surround takes theme colours',
-            'Off, the area around the picture is a neutral grey — a grade '
-                'cannot be judged against a tinted surround. On, it matches '
-                'the rest of the shell.',
+            l10n.settingsSurroundTakesThemeColours,
+            l10n.settingsHelpSurroundTakesThemeColours,
             HouseCheckbox(
               key: const ValueKey('settings-themed-surround'),
               value: ui.workspace.themedViewerSurround,
@@ -313,17 +404,203 @@ class _SettingsWindowState extends State<_SettingsWindow> {
                   setState(() => ui.workspace.setThemedViewerSurround(v)),
             ),
           ),
+          settingsRow(
+            t,
+            l10n.settingsSmoothThePictureWhenZoomed,
+            l10n.settingsHelpSmoothThePictureWhenZoomed,
+            HouseCheckbox(
+              key: const ValueKey('settings-smooth-zoomed-viewer'),
+              value: ui.workspace.smoothZoomedViewer,
+              onChanged: (v) =>
+                  setState(() => ui.workspace.setSmoothZoomedViewer(v)),
+            ),
+          ),
         ]),
       ];
+
+  // ---- Your themes (K-298) -------------------------------------------------
+
+  /// What the last theme import, export or rename said. Kept beside the
+  /// buttons like the keymap page's message, and for the same reason: a file
+  /// that would not read is a fact about the file, not an emergency.
+  String? _themeMessage;
+
+  /// The block under the theme rows: everything you can do to a theme that is
+  /// not changing one of its colours. Laid out as a wrapped row of buttons
+  /// rather than one control per settings row, because these are five verbs
+  /// about the same thing, and five rows saying "Duplicate", "Rename" and so
+  /// on would be a list of buttons pretending to be settings.
+  Widget _themeShelf(LumitTheme t, LumitUiState ui) {
+    final workspace = ui.workspace;
+    final custom = workspace.customThemeName;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(l10n.settingsYourThemes, style: t.body),
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(
+              l10n.settingsHelpYourThemes,
+              style: t.small.copyWith(color: t.textMuted),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              HouseButton(
+                key: const ValueKey('settings-theme-duplicate'),
+                small: true,
+                onPressed: () => setState(() {
+                  final name = workspace.duplicateActiveTheme();
+                  _themeMessage = l10n.themeCopiedTo(name);
+                }),
+                child: Text(l10n.menuDuplicate, style: t.small),
+              ),
+              HouseButton(
+                key: const ValueKey('settings-theme-rename'),
+                small: true,
+                // Only one of the user's own can be renamed: a built-in
+                // scheme's name is Lumit's, not the user's, and renaming it
+                // would leave two people describing different Darks.
+                onPressed: custom == null ? null : () => _renameTheme(ui),
+                child: Text(l10n.renameEllipsis, style: t.small),
+              ),
+              HouseButton(
+                key: const ValueKey('settings-theme-delete'),
+                small: true,
+                frameless: true,
+                onPressed: custom == null
+                    ? null
+                    : () => setState(() {
+                          workspace.deleteCustomTheme(custom);
+                          _themeMessage = l10n.themeDeleted(custom);
+                        }),
+                child: Text(l10n.delete, style: t.small),
+              ),
+              HouseButton(
+                key: const ValueKey('settings-theme-import'),
+                small: true,
+                onPressed: () => _importTheme(ui),
+                child: Text(l10n.menuImport, style: t.small),
+              ),
+              HouseButton(
+                key: const ValueKey('settings-theme-export'),
+                small: true,
+                onPressed: () => _exportTheme(ui),
+                child: Text(l10n.menuExport, style: t.small),
+              ),
+            ],
+          ),
+          if (_themeMessage != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                _themeMessage!,
+                key: const ValueKey('settings-theme-message'),
+                style: t.small.copyWith(color: t.textMuted),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Rename the selected theme. The workspace decides the name it lands under,
+  /// so a clash with another of the user's own is numbered rather than refused.
+  Future<void> _renameTheme(LumitUiState ui) async {
+    final workspace = ui.workspace;
+    final from = workspace.customThemeName;
+    if (from == null) return;
+    final asked = await askThemeName(context,
+        title: l10n.themeRenameTitle, suggested: from, confirm: l10n.rename);
+    if (asked == null || !mounted) return;
+    final now = workspace.renameCustomTheme(from, asked);
+    setState(() => _themeMessage = now == null || now == from
+        ? null
+        : now == asked.trim()
+            ? l10n.themeRenamedTo(now)
+            : l10n.themeNameTaken(asked.trim(), now));
+  }
+
+  /// Read a theme file and take it in under a name nothing else holds — an
+  /// import never overwrites one of the user's own.
+  Future<void> _importTheme(LumitUiState ui) async {
+    final path = await pickThemeToOpen();
+    if (path == null) return;
+    String text;
+    try {
+      text = await File(path).readAsString();
+    } catch (e) {
+      if (mounted) {
+        setState(() => _themeMessage = l10n.keymapFileUnreadable);
+      }
+      return;
+    }
+    final read = readThemeFile(text);
+    if (!mounted) return;
+    final theme = read.theme;
+    if (theme == null) {
+      setState(() => _themeMessage = read.refusal);
+      return;
+    }
+    final wanted = theme.name.trim();
+    final name = ui.workspace.importCustomTheme(theme);
+    setState(() => _themeMessage = name == wanted
+        ? l10n.themeImported(name)
+        : l10n.themeImportedRenamed(wanted, name));
+  }
+
+  /// Write the theme in use out as a file. Offered from a built-in scheme too:
+  /// what is exported is the colours on screen, and "the stock dark with my
+  /// accent" is a perfectly good thing to send somebody.
+  Future<void> _exportTheme(LumitUiState ui) async {
+    final workspace = ui.workspace;
+    final name = workspace.customThemeName ?? workspace.themeChoice.label;
+    final path = await pickThemeSaveLocation(themeFileName(name));
+    if (path == null) return;
+    try {
+      await File(path)
+          .writeAsString(encodeThemeFile(CustomTheme.from(name, ui.theme)));
+      if (mounted) setState(() => _themeMessage = l10n.themeExported(name));
+    } catch (e) {
+      if (mounted) {
+        setState(() => _themeMessage = l10n.keymapFileUnwritable);
+      }
+    }
+  }
 
   List<Widget> _interface(LumitTheme t, LumitUiState ui) {
     final settings = ui.workspace.interface;
     return [
-      _section(t, 'Display', [
-        _row(
+      settingsSection(t, l10n.settingsGroupDisplay, [
+        settingsRow(
           t,
-          'Interface scale',
-          'How large every panel draws, for a dense or a distant screen.',
+          l10n.settingsLanguage,
+          l10n.settingsHelpLanguage,
+          SizedBox(
+            width: 170,
+            child: BareDropdown<String?>(
+              key: const ValueKey('settings-language'),
+              // Null first: following the machine is the default, and the one
+              // choice that is not a language in the list.
+              value: settings.language,
+              options: [null, ...languageNames.keys],
+              // Each language names itself, so this list reads the same
+              // whichever language Lumit is currently in — somebody who picked
+              // one they cannot read can still find their way back.
+              label: (tag) =>
+                  tag == null ? l10n.languageFollowSystem : languageNames[tag]!,
+              onChanged: (tag) => setState(() => ui.setLanguage(tag)),
+            ),
+          ),
+        ),
+        settingsRow(
+          t,
+          l10n.settingsInterfaceScale, l10n.settingsHelpInterfaceScale,
           // Intrinsically sized: the slider carries its own track width and
           // its readout beside it, and boxing it narrower only overflows.
           HouseSlider(
@@ -340,10 +617,10 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             }),
           ),
         ),
-        _row(
+        settingsRow(
           t,
-          'Tooltips',
-          'Show the hint that explains a control when you rest on it.',
+          l10n.settingsTooltips,
+          l10n.settingsHelpTooltips,
           HouseCheckbox(
             key: const ValueKey('settings-tooltips'),
             value: settings.showTooltips,
@@ -354,17 +631,116 @@ class _SettingsWindowState extends State<_SettingsWindow> {
           ),
         ),
       ]),
-      _section(t, 'Panels', [
-        _row(
+      settingsSection(t, l10n.settingsGroupPanels, [
+        settingsRow(
           t,
-          'Transform in Effect controls',
-          'Repeat the layer\'s Transform rows above its effects. The '
-              'Timeline already shows them when a layer is twirled open.',
+          l10n.settingsTransformInEffectControls,
+          l10n.settingsHelpTransformInEffectControls,
           HouseCheckbox(
             key: const ValueKey('settings-transform-in-fx'),
             value: settings.transformInEffectControls,
             onChanged: (on) => setState(() {
               settings.transformInEffectControls = on;
+              ui.workspace.settingsChanged();
+            }),
+          ),
+        ),
+      ]),
+      // The two the first-run screen sets (K-246), plus the transport's one
+      // (K-254). They sit here as ordinary rows, and independently of each
+      // other: the screen offers its pair together, but somebody who wants
+      // Vegas ramps and After Effects imports is exactly the split docs/07
+      // §13.1 expects to be common. The playhead row is not one the screen
+      // touches — both answers want the returning playhead, so there is
+      // nothing for the question to decide.
+      settingsSection(t, l10n.settingsGroupEditing, [
+        settingsRow(
+          t,
+          l10n.settingsRetimeOpensToSpeed,
+          l10n.settingsHelpRetimeOpensToVelocity,
+          HouseCheckbox(
+            key: const ValueKey('settings-retime-speed-lens'),
+            value: settings.retimeOpensToSpeed,
+            onChanged: (on) => setState(() {
+              settings.retimeOpensToSpeed = on;
+              ui.workspace.settingsChanged();
+            }),
+          ),
+        ),
+        settingsRow(
+          t,
+          l10n.settingsRetimeValuesInSeconds,
+          l10n.settingsHelpRetimeValuesInSeconds,
+          HouseCheckbox(
+            key: const ValueKey('settings-retime-in-seconds'),
+            value: settings.retimeInSeconds,
+            onChanged: (on) => setState(() {
+              settings.retimeInSeconds = on;
+              ui.workspace.settingsChanged();
+            }),
+          ),
+        ),
+        settingsRow(
+          t,
+          l10n.settingsVideoArrivesAsASequence,
+          l10n.settingsHelpVideoArrivesAsASequence,
+          HouseCheckbox(
+            key: const ValueKey('settings-video-as-sequence'),
+            value: settings.videoAsSequenceLayer,
+            onChanged: (on) => setState(() {
+              settings.videoAsSequenceLayer = on;
+              ui.workspace.settingsChanged();
+            }),
+          ),
+        ),
+        settingsRow(
+          t,
+          l10n.settingsPasteLayersAtTheirOriginal,
+          l10n.settingsHelpPasteLayersAtTheirOriginal,
+          HouseCheckbox(
+            key: const ValueKey('settings-paste-at-original-time'),
+            value: settings.pasteLayersAtOriginalTime,
+            onChanged: (on) => setState(() {
+              settings.pasteLayersAtOriginalTime = on;
+              ui.workspace.settingsChanged();
+            }),
+          ),
+        ),
+        settingsRow(
+          t,
+          l10n.settingsPlayheadStaysWherePlaybackStopped,
+          l10n.settingsHelpPlayheadStaysWherePlaybackStopped,
+          HouseCheckbox(
+            key: const ValueKey('settings-playhead-stays'),
+            value: settings.playheadStaysOnStop,
+            onChanged: (on) => setState(() {
+              settings.playheadStaysOnStop = on;
+              ui.workspace.settingsChanged();
+            }),
+          ),
+        ),
+        settingsRow(
+          t,
+          l10n.settingsWaveformsShowTheFrequencyStack,
+          l10n.settingsHelpWaveformsShowTheFrequencyStack,
+          HouseCheckbox(
+            key: const ValueKey('settings-multiwave'),
+            value: settings.multiwaveWaveforms,
+            onChanged: (on) => setState(() {
+              settings.multiwaveWaveforms = on;
+              ui.workspace.settingsChanged();
+            }),
+          ),
+        ),
+        settingsRow(
+          t,
+          l10n.settingsWaveformsRiseFromTheBottom,
+          l10n.settingsHelpWaveformsRiseFromTheBottom,
+          HouseCheckbox(
+            key: const ValueKey('settings-waveform-from-bottom'),
+            value: settings.waveformsFromBottom,
+            onChanged: (on) => setState(() {
+              settings.waveformsFromBottom = on;
               ui.workspace.settingsChanged();
             }),
           ),
@@ -387,7 +763,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
           key: const ValueKey('keymap-search'),
           controller: _searchController(km),
           width: 240,
-          hint: 'Search shortcuts',
+          hint: l10n.searchShortcuts,
         ),
       ),
       // The presets and the file, wrapped rather than in one row: five controls
@@ -406,7 +782,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
                 await km.loadPreset(BridgeKeymapPreset.lumit);
                 if (mounted) setState(() {});
               },
-              child: Text('Lumit default', style: t.small),
+              child: Text(l10n.keymapLumitDefault, style: t.small),
             ),
             HouseButton(
               key: const ValueKey('keymap-preset-ae'),
@@ -415,19 +791,19 @@ class _SettingsWindowState extends State<_SettingsWindow> {
                 await km.loadPreset(BridgeKeymapPreset.afterEffects);
                 if (mounted) setState(() {});
               },
-              child: Text('After Effects', style: t.small),
+              child: Text(l10n.keymapAfterEffects, style: t.small),
             ),
             HouseButton(
               key: const ValueKey('keymap-import'),
               small: true,
               onPressed: () => _importKeymap(km),
-              child: Text('Import…', style: t.small),
+              child: Text(l10n.menuImport, style: t.small),
             ),
             HouseButton(
               key: const ValueKey('keymap-export'),
               small: true,
               onPressed: () => _exportKeymap(km),
-              child: Text('Export…', style: t.small),
+              child: Text(l10n.menuExport, style: t.small),
             ),
           ],
         ),
@@ -462,7 +838,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
               children: [
                 Text(
                   km.conflicts.length == 1
-                      ? 'One shortcut runs two things'
+                      ? l10n.keymapClashGlobal
                       : '${km.conflicts.length} shortcuts run two things',
                   style: t.body,
                 ),
@@ -478,16 +854,47 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ),
           ),
         ),
+      // Panels that have taken a chord over from an app-wide one (K-281). Not
+      // a warning — nothing is ambiguous, the focused panel simply wins — so
+      // it is a quiet note rather than a bordered banner. It is said at all
+      // because the app-wide meaning does stop working in that one panel, and
+      // finding that out by pressing the key is worse than reading it here.
+      if (km.shadows.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Column(
+            key: const ValueKey('keymap-shadows'),
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                km.shadows.length == 1
+                    ? l10n.keymapClashPanel
+                    : '${km.shadows.length} shortcuts mean something else in '
+                        'one panel',
+                style: t.small.copyWith(color: t.textMuted),
+              ),
+              for (final shadow in km.shadows)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    '${chordLabel(shadow.chord)} — ${shadow.action} in the '
+                    '${shadow.context}, ${shadow.shadowed} elsewhere',
+                    style: t.small.copyWith(color: t.textMuted),
+                  ),
+                ),
+            ],
+          ),
+        ),
       if (groups.isEmpty)
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 12),
-          child: Text('No shortcut matches that.',
+          child: Text(l10n.keymapNoMatches,
               style: t.small.copyWith(color: t.textMuted)),
         ),
       for (final group in groups)
-        _section(t, group.label, [
+        settingsSection(t, group.label, [
           for (final binding in group.bindings)
-            _row(
+            settingsRow(
               t,
               binding.description,
               '',
@@ -518,13 +925,13 @@ class _SettingsWindowState extends State<_SettingsWindow> {
       text = await File(path).readAsString();
     } catch (e) {
       if (mounted) {
-        setState(() => _keymapMessage = 'That file could not be read.');
+        setState(() => _keymapMessage = l10n.keymapFileUnreadable);
       }
       return;
     }
     final refusal = await km.fromJson(text);
     if (!mounted) return;
-    setState(() => _keymapMessage = refusal ?? 'Keymap imported.');
+    setState(() => _keymapMessage = refusal ?? l10n.keymapImported);
   }
 
   /// Write the keymap out as the shareable file docs/07 §15 promises.
@@ -533,10 +940,10 @@ class _SettingsWindowState extends State<_SettingsWindow> {
     if (path == null) return;
     try {
       await File(path).writeAsString(km.toJson());
-      if (mounted) setState(() => _keymapMessage = 'Keymap exported.');
+      if (mounted) setState(() => _keymapMessage = l10n.keymapExported);
     } catch (e) {
       if (mounted) {
-        setState(() => _keymapMessage = 'That file could not be written.');
+        setState(() => _keymapMessage = l10n.keymapFileUnwritable);
       }
     }
   }
@@ -567,22 +974,25 @@ class _SettingsWindowState extends State<_SettingsWindow> {
     final stats = cacheStats();
     final vram = vramCacheStats();
     final tier = playbackTier();
+    // Only read when it is going to be drawn: the report is a debug-build
+    // instrument, and a release build should not be making the call at all.
+    final memory = kDebugMode ? memoryReport() : null;
 
     return [
-      _section(t, 'Playback', [
-        _row(
+      settingsSection(t, l10n.settingsGroupPlayback, [
+        settingsRow(
           t,
-          'When the machine cannot keep up',
-          'Adaptive keeps time and softens the picture; every frame keeps '
-              'the picture and takes the time it needs.',
+          l10n.settingsWhenTheMachineCannotKeep,
+          l10n.settingsHelpWhenTheMachineCannotKeep,
           SizedBox(
             width: 130,
             child: BareDropdown<PlaybackMode>(
               key: const ValueKey('settings-playback-mode'),
               value: ui.workspace.performance.playback,
               options: PlaybackMode.values,
-              label: (m) =>
-                  m == PlaybackMode.adaptive ? 'Adaptive' : 'Every frame',
+              label: (m) => m == PlaybackMode.adaptive
+                  ? l10n.playbackAdaptive
+                  : l10n.playbackEveryFrame,
               onChanged: (m) => setState(() {
                 ui.workspace.performance.playback = m;
                 ui.workspace.settingsChanged();
@@ -590,10 +1000,10 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ),
           ),
         ),
-        _row(
+        settingsRow(
           t,
-          'Quality tier',
-          'What the realtime controller has settled on.',
+          l10n.settingsQualityTier,
+          l10n.settingsHelpQualityTier,
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -601,25 +1011,23 @@ class _SettingsWindowState extends State<_SettingsWindow> {
                   key: const ValueKey('settings-tier'), style: t.small),
               const SizedBox(width: 8),
               LumitTooltip(
-                message:
-                    'Start the quality controller again, optimistic at full',
+                message: l10n.tipResetQualityTier,
                 child: HouseButton(
                   key: const ValueKey('settings-tier-reset'),
                   small: true,
                   onPressed: () => setState(resetRealtime),
-                  child: Text('Reset', style: t.small),
+                  child: Text(l10n.reset, style: t.small),
                 ),
               ),
             ],
           ),
         ),
       ]),
-      _section(t, 'Rendered-frame cache', [
+      settingsSection(t, l10n.settingsGroupRenderedFrameCache, [
         _budgetRow(
           t,
           key: 'settings-cache-budget',
-          description: 'How much memory finished frames may hold, of the '
-              '${_gib(_systemMib)} this machine has.',
+          description: l10n.settingsHelpCacheBudget(_gib(_systemMib)),
           bytes: stats.budgetBytes.toInt(),
           ceilingMib: _systemMib,
           onSet: (bytes) => setState(() {
@@ -627,11 +1035,11 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ui.workspace.setCacheBudgetBytes(bytes.toInt());
           }),
         ),
-        _row(
+        settingsRow(
           t,
-          'In use',
-          '${stats.hits} of ${stats.hits + stats.misses} frames were served '
-              'from the cache; ${stats.compDecodes} were decoded.',
+          l10n.settingsInUse,
+          l10n.settingsHelpCacheInUse('${stats.hits}',
+              '${stats.hits + stats.misses}', '${stats.compDecodes}'),
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -645,18 +1053,17 @@ class _SettingsWindowState extends State<_SettingsWindow> {
                 key: const ValueKey('settings-cache-clear'),
                 small: true,
                 onPressed: () => setState(clearCache),
-                child: Text('Clear', style: t.small),
+                child: Text(l10n.clear, style: t.small),
               ),
             ],
           ),
         ),
       ]),
-      _section(t, 'Preview cache on the graphics card', [
+      settingsSection(t, l10n.settingsGroupPreviewCacheOnTheGraphics, [
         _budgetRow(
           t,
           key: 'settings-vram-budget',
-          description: 'How much video memory finished frames may hold, of '
-              'the ${_gib(_vramMib)} on the card.',
+          description: l10n.settingsHelpVramBudget(_gib(_vramMib)),
           bytes: vram.budgetBytes.toInt(),
           ceilingMib: _vramMib,
           onSet: (bytes) => setState(() {
@@ -664,10 +1071,10 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ui.workspace.setVramBudgetBytes(bytes.toInt());
           }),
         ),
-        _row(
+        settingsRow(
           t,
-          'In use',
-          'Frames held on the card, ready to show without compositing.',
+          l10n.settingsInUse,
+          l10n.settingsHelpInUse,
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -681,7 +1088,197 @@ class _SettingsWindowState extends State<_SettingsWindow> {
                 key: const ValueKey('settings-vram-clear'),
                 small: true,
                 onPressed: () => setState(clearVramCache),
-                child: Text('Clear', style: t.small),
+                child: Text(l10n.clear, style: t.small),
+              ),
+            ],
+          ),
+        ),
+      ]),
+      ..._diskCache(t, ui),
+      // Where the memory has gone (K-294). Last on the page, under the tiers
+      // it weighs: each section above reports one store, and this one reports
+      // the whole process and what none of them accounts for. Read downwards it
+      // is the summing-up, and it leaves every control above where the hand
+      // already knows to find it.
+      //
+      // **Debug builds only** (owner, 2026-08-06). It is an instrument for
+      // hunting a fault, not a setting: a shipped editor asking its user to
+      // interpret live texture counts has handed them the engineering rather
+      // than the tool. `kDebugMode` is false in both profile and release
+      // builds, so what ships is the page without it.
+      if (memory != null)
+        settingsSection(t, l10n.settingsGroupMemory, [
+          settingsRow(
+            t,
+            l10n.settingsThisProcess,
+            l10n.settingsHelpThisProcess,
+            Text(
+              memory.processBytes == BigInt.zero
+                  ? 'not known here'
+                  : _bytes(memory.processBytes),
+              key: const ValueKey('settings-memory-process'),
+              style: t.small,
+            ),
+          ),
+          settingsRow(
+            t,
+            l10n.settingsNotHeldByAnyCache,
+            l10n.settingsHelpNotHeldByAnyCache,
+            Text(
+              memory.processBytes == BigInt.zero
+                  ? '—'
+                  : _bytes(memory.unaccountedBytes),
+              key: const ValueKey('settings-memory-unaccounted'),
+              style: t.small,
+            ),
+          ),
+          settingsRow(
+            t,
+            l10n.settingsHeldByTheGraphicsDriver,
+            l10n.settingsHelpHeldByTheGraphicsDriver,
+            Text(
+              '${memory.gpuTextures} pictures, ${memory.gpuBuffers} buffers',
+              key: const ValueKey('settings-memory-gpu'),
+              style: t.small,
+            ),
+          ),
+          // The byte figures are Vulkan and D3D12 only, so the row is not drawn
+          // at all on a Mac rather than printing two zeroes and inviting the
+          // reader to draw a conclusion from them.
+          if (memory.gpuReservedBytes != BigInt.zero)
+            settingsRow(
+              t,
+              l10n.settingsGraphicsMemoryReserved,
+              l10n.settingsHelpGraphicsMemoryReserved,
+              Text(
+                '${_bytes(memory.gpuReservedBytes)} reserved, '
+                '${_bytes(memory.gpuAllocatedBytes)} in use',
+                key: const ValueKey('settings-memory-gpu-bytes'),
+                style: t.small,
+              ),
+            ),
+          settingsRow(
+            t,
+            l10n.settingsOpenMediaDecoders,
+            l10n.settingsHelpOpenMediaDecoders,
+            Text(
+              '${memory.openDecoders}',
+              key: const ValueKey('settings-memory-decoders'),
+              style: t.small,
+            ),
+          ),
+          settingsRow(
+            t,
+            l10n.settingsFramesWaitingToBeWritten,
+            l10n.settingsHelpFramesWaitingToBeWritten,
+            Text(
+              '${memory.parkQueueFrames}',
+              key: const ValueKey('settings-memory-parks'),
+              style: t.small,
+            ),
+          ),
+        ]),
+    ];
+  }
+
+  /// The disk tier (docs/06 §5.4, docs/07 §15): its budget, where it lives, and
+  /// what it holds. The bottom of the three-tier cache and the only one that
+  /// outlives the session, which is why it has a folder at all.
+  List<Widget> _diskCache(LumitTheme t, LumitUiState ui) {
+    final disk = diskCacheStats();
+    // What this project says, if it says anything: a project's own choice
+    // overrides the application's, so it is what the controls should show.
+    final own = _project(context)?.cacheLocation();
+    final scope = own == null ? CacheScope.everywhere : CacheScope.thisProject;
+    final where = own?.location ??
+        cacheLocationFromName(ui.workspace.performance.diskCacheLocation ??
+            BridgeCacheLocation.appData.name);
+    return [
+      settingsSection(t, l10n.settingsGroupFramesParkedOnDisk, [
+        _budgetRow(
+          t,
+          key: 'settings-disk-budget',
+          description: l10n.settingsHelpDiskBudget,
+          bytes: disk.budgetBytes.toInt(),
+          ceilingMib: _diskCeilingMib,
+          onSet: (bytes) => setState(() {
+            setDiskCacheBudget(bytes: bytes);
+            ui.workspace.setDiskBudgetBytes(bytes.toInt());
+          }),
+        ),
+        settingsRow(
+          t,
+          l10n.settingsWhere,
+          disk.root.isEmpty ? l10n.settingsHelpNowhereToPark : disk.root,
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 150,
+                child: BareDropdown<BridgeCacheLocation>(
+                  key: const ValueKey('settings-disk-location'),
+                  value: where,
+                  options: BridgeCacheLocation.values,
+                  label: _locationLabel,
+                  onChanged: (l) => _setLocation(ui, l, scope),
+                ),
+              ),
+              if (where == BridgeCacheLocation.custom) ...[
+                const SizedBox(width: 8),
+                LumitTooltip(
+                  message: l10n.tipChooseCacheFolder,
+                  child: HouseButton(
+                    key: const ValueKey('settings-disk-folder'),
+                    small: true,
+                    onPressed: () => _pickCacheFolder(ui, scope),
+                    child: Text(l10n.chooseEllipsis, style: t.small),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        settingsRow(
+          t,
+          l10n.settingsAppliesTo,
+          scope == CacheScope.thisProject
+              ? l10n.settingsHelpScopeThisProject
+              : l10n.settingsHelpScopeEverywhere,
+          SizedBox(
+            width: 150,
+            child: BareDropdown<CacheScope>(
+              key: const ValueKey('settings-disk-scope'),
+              value: scope,
+              options: CacheScope.values,
+              label: (s) => switch (s) {
+                CacheScope.everywhere => l10n.scopeEverything,
+                CacheScope.thisProject => l10n.scopeThisProject,
+              },
+              onChanged: (s) => _setScope(ui, s, where),
+            ),
+          ),
+        ),
+        settingsRow(
+          t,
+          l10n.settingsInUse,
+          l10n.settingsHelpInUse2,
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '${_mib(disk.usedBytes.toInt())} MB in ${disk.entries}',
+                key: const ValueKey('settings-disk-used'),
+                style: t.small,
+              ),
+              const SizedBox(width: 8),
+              HouseButton(
+                key: const ValueKey('settings-disk-clear'),
+                small: true,
+                onPressed: () async {
+                  final cleared = await confirmClearDiskCache(context);
+                  if (cleared && mounted) setState(() {});
+                },
+                child: Text(l10n.clear, style: t.small),
               ),
             ],
           ),
@@ -690,73 +1287,89 @@ class _SettingsWindowState extends State<_SettingsWindow> {
     ];
   }
 
+  /// The open project, or null before one exists — read through the provider
+  /// rather than held, since the settings window outlives no project.
+  ProjectReference? _project(BuildContext context) =>
+      Provider.of<LumitState>(context, listen: false).project;
+
+  static String _locationLabel(BridgeCacheLocation l) => switch (l) {
+        BridgeCacheLocation.appData => l10n.cacheLocationWithLumit,
+        BridgeCacheLocation.besideProject => l10n.cacheLocationBesideProject,
+        BridgeCacheLocation.custom => 'A folder I choose',
+      };
+
+  /// Point the cache somewhere, at whichever scope is in force. The project's own
+  /// choice is an op (undoable, saved in the `.lum`); the application's is a
+  /// setting. Same control, same three options — only the store differs.
+  void _setLocation(
+    LumitUiState ui,
+    BridgeCacheLocation location,
+    CacheScope scope,
+  ) {
+    final folder = scope == CacheScope.thisProject
+        ? (_project(context)?.cacheLocation()?.folder ?? '')
+        : (ui.workspace.performance.diskCacheFolder ?? '');
+    setState(() {
+      if (scope == CacheScope.thisProject) {
+        _project(context)?.setCacheLocation(
+          location:
+              BridgeProjectCacheLocation(location: location, folder: folder),
+        );
+      } else {
+        // Choosing the custom option without a folder yet leaves the tier where
+        // it is; the engine says so by keeping its default, and the Choose…
+        // button appears beside the dropdown.
+        setDiskCacheLocation(location: location, folder: folder);
+        ui.workspace.setDiskCacheLocation(
+            location.name, folder.isEmpty ? null : folder);
+      }
+    });
+  }
+
+  /// Switch between "this project decides" and "the application decides".
+  /// Turning it off clears the project's override rather than copying the
+  /// application's answer into it, so the project follows along afterwards.
+  void _setScope(LumitUiState ui, CacheScope scope, BridgeCacheLocation where) {
+    setState(() {
+      switch (scope) {
+        case CacheScope.thisProject:
+          _project(context)?.setCacheLocation(
+            location: BridgeProjectCacheLocation(
+              location: where,
+              folder: ui.workspace.performance.diskCacheFolder ?? '',
+            ),
+          );
+        case CacheScope.everywhere:
+          _project(context)?.setCacheLocation(location: null);
+      }
+    });
+  }
+
+  Future<void> _pickCacheFolder(LumitUiState ui, CacheScope scope) async {
+    final folder = await pickFolder();
+    if (folder == null || !mounted) return;
+    setState(() {
+      if (scope == CacheScope.thisProject) {
+        _project(context)?.setCacheLocation(
+          location: BridgeProjectCacheLocation(
+              location: BridgeCacheLocation.custom, folder: folder),
+        );
+      } else {
+        setDiskCacheLocation(
+            location: BridgeCacheLocation.custom, folder: folder);
+        ui.workspace
+            .setDiskCacheLocation(BridgeCacheLocation.custom.name, folder);
+      }
+    });
+  }
+
+  /// The ceiling for the disk budget. Free disk space is not something the
+  /// engine reports yet (K-194 covers memory only), so the field is generous
+  /// rather than guessed at: 500 GB, which no cache should reach and no user
+  /// should be stopped short of.
+  static const double _diskCeilingMib = 500 * 1024;
+
   // ---- the shapes every page is built from ---------------------------------
-
-  /// A named group of rows: a quiet label, then one card holding them.
-  Widget _section(LumitTheme t, String title, List<Widget> rows) => Padding(
-        padding: const EdgeInsets.only(bottom: 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(2, 0, 0, 4),
-              child: Text(title, style: t.small.copyWith(color: t.textMuted)),
-            ),
-            Container(
-              decoration: BoxDecoration(
-                color: t.surface1,
-                borderRadius: BorderRadius.circular(t.tokens.floatRadius),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  for (var i = 0; i < rows.length; i++) ...[
-                    // A hairline between rows, never above the first or below
-                    // the last: the card's own edge is the boundary there.
-                    if (i > 0) Container(height: 1, color: t.hairline),
-                    rows[i],
-                  ],
-                ],
-              ),
-            ),
-          ],
-        ),
-      );
-
-  /// One row: what it is, a line saying what it does, and its control on the
-  /// right. An empty [description] leaves the second line out entirely rather
-  /// than reserving blank space for it.
-  Widget _row(
-    LumitTheme t,
-    String title,
-    String description,
-    Widget control,
-  ) =>
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(title, style: t.body),
-                  if (description.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 2),
-                      child: Text(description,
-                          style: t.small.copyWith(color: t.textMuted)),
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 12),
-            control,
-          ],
-        ),
-      );
 
   /// A cache budget: type a number of megabytes, or drag it, up to what the
   /// machine actually has (K-194).
@@ -772,9 +1385,9 @@ class _SettingsWindowState extends State<_SettingsWindow> {
     required double ceilingMib,
     required ValueChanged<BigInt> onSet,
   }) =>
-      _row(
+      settingsRow(
         t,
-        'Budget',
+        l10n.settingsBudget,
         description,
         SizedBox(
           width: 110,
@@ -793,7 +1406,9 @@ class _SettingsWindowState extends State<_SettingsWindow> {
       );
 
   /// What the machine has, in MiB, falling back to a documented ceiling when
-  /// it will not say (every platform but Windows so far).
+  /// it will not say. Installed RAM is answered on all three desktops
+  /// (K-204); video memory is Windows-only so far, so that is the one that
+  /// still falls back off Windows.
   static double get _systemMib => _mibOf(systemMemoryBytes());
   static double get _vramMib => _mibOf(videoMemoryBytes());
 
@@ -806,16 +1421,21 @@ class _SettingsWindowState extends State<_SettingsWindow> {
   static String _gib(double mib) =>
       mib >= 1024 ? '${(mib / 1024).round()} GB' : '${mib.round()} MB';
 
-  /// The engine's own first boot-log line is the build banner.
-  static String _version() => bootLog().isEmpty ? 'unknown' : bootLog().first;
+  /// Bytes as a person reads them — MB up to a gigabyte, GB above, one
+  /// decimal so 85.4 GB does not print as 85.
+  static String _bytes(BigInt bytes) {
+    final b = bytes.toDouble();
+    if (b >= 1 << 30) return '${(b / (1 << 30)).toStringAsFixed(1)} GB';
+    return '${(b / (1 << 20)).toStringAsFixed(0)} MB';
+  }
 
   static String _mib(int bytes) => (bytes / (1 << 20)).toStringAsFixed(0);
 
   static String _tierLabel(int tier) => switch (tier) {
-        1 => 'Full',
-        2 => 'Half',
-        3 => 'Third',
-        _ => 'Quarter',
+        1 => l10n.menuFull,
+        2 => l10n.menuHalf,
+        3 => l10n.resolutionThird,
+        _ => l10n.menuQuarter,
       };
 }
 
@@ -917,9 +1537,9 @@ class _ChordCellState extends State<_ChordCell> {
     final t = ThemeScope.of(context).theme;
     final chord = widget.binding.chord;
     final label = _listening
-        ? 'Press a shortcut…'
+        ? l10n.keymapPressAShortcut
         : chord.isEmpty
-            ? 'Not set'
+            ? l10n.keymapNotSet
             : chordLabel(chord);
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -956,7 +1576,7 @@ class _ChordCellState extends State<_ChordCell> {
                 .resetBinding(widget.binding.context, widget.binding.action);
             widget.onChanged();
           },
-          child: Text('Reset', style: t.small),
+          child: Text(l10n.reset, style: t.small),
         ),
       ],
     );

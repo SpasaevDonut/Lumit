@@ -44,6 +44,8 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../icons/icons.dart';
+import '../l10n/engine_labels.dart';
+import '../l10n/strings.dart';
 import '../widgets/controls.dart';
 import 'effect_param_row_frb.dart';
 import 'fx_section.dart';
@@ -51,6 +53,7 @@ import 'transform_rows_frb.dart';
 import '../state/drag_payloads.dart';
 import 'placeholder.dart';
 import 'source_rows_frb.dart';
+import 'timeline_timings.dart';
 
 class EffectControlsPanelFrb extends StatefulWidget {
   const EffectControlsPanelFrb({super.key});
@@ -86,10 +89,10 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
     final ui = Provider.of<LumitUiState>(context);
     final comp = ui.selectedComp;
     if (comp == null) {
-      return const PlaceholderPanel(
+      return PlaceholderPanel(
         icon: LumitIcon.fx,
-        title: 'Effect controls',
-        hint: 'Select a composition, then a layer.',
+        title: l10n.effectControls,
+        hint: l10n.effectControlsNoComp,
       );
     }
 
@@ -99,10 +102,10 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
         if (layer != null) _lastLayer = layer;
         final shown = layer ?? _lastLayer;
         if (shown == null) {
-          return const PlaceholderPanel(
+          return PlaceholderPanel(
             icon: LumitIcon.fx,
-            title: 'Effect controls',
-            hint: 'Select a layer in the Timeline.',
+            title: l10n.effectControls,
+            hint: l10n.effectControlsNoLayer,
           );
         }
         return _body(context, comp, shown);
@@ -122,9 +125,17 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
     // redo, or the same property dragged in the Timeline's fold-out.
     return ValueListenableBuilder<int>(
       valueListenable: ui.playheadFrame,
-      builder: (context, playhead, _) => ListenableBuilder(
-        listenable: ui.model,
-        builder: (context, _) => _rows(context, comp, layer, playhead),
+      // Which effects are picked is the shell's (K-300) — the Timeline picks
+      // them too — so the headings redraw when that changes, wherever the click
+      // happened.
+      builder: (context, playhead, _) =>
+          ValueListenableBuilder<List<UuidValue>>(
+        valueListenable: ui.selectedEffects,
+        builder: (context, picked, _) => ListenableBuilder(
+          listenable: ui.model,
+          builder: (context, _) =>
+              _rows(context, comp, layer, playhead, picked),
+        ),
       ),
     );
   }
@@ -134,6 +145,7 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
     CompositionReference comp,
     LayerReference layer,
     int playhead,
+    List<UuidValue> picked,
   ) {
     final t = ThemeScope.of(context).theme;
     final ui = Provider.of<LumitUiState>(context, listen: false);
@@ -141,10 +153,10 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
     if (entry == null) {
       // The layer has gone (deleted, or another comp fronted) — nothing to
       // draw until the selection catches up.
-      return const PlaceholderPanel(
+      return PlaceholderPanel(
         icon: LumitIcon.fx,
-        title: 'Effect controls',
-        hint: 'Select a layer in the Timeline.',
+        title: l10n.effectControls,
+        hint: l10n.effectControlsNoLayer,
       );
     }
     final info = entry.info;
@@ -210,11 +222,29 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
                       onToggle: () => _toggle('transform'),
                     ),
                   ],
+                  // A null layer has no picture, so nothing here changes one
+                  // — but the parameters are real, animatable values, which is
+                  // exactly what a null is for once expressions can read them
+                  // (K-274). Said plainly, once, rather than refusing the drop.
+                  if (info.kind == BridgeLayerKind.nullLayer &&
+                      info.effects.isNotEmpty)
+                    Padding(
+                      key: const ValueKey('fx-null-inert'),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 8),
+                      child: Text(
+                        'A null layer draws nothing, so an effect here changes '
+                        'no picture. Its parameters stay live — a null is '
+                        'where a control lives when it is meant to drive other '
+                        'layers.',
+                        style: t.small.copyWith(color: t.textMuted),
+                      ),
+                    ),
                   if (info.effects.isEmpty)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 18),
                       child: Text(
-                        'No effects on this layer yet',
+                        l10n.noEffectsYet,
                         style: t.small,
                         textAlign: TextAlign.center,
                       ),
@@ -226,6 +256,12 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
                         info: info.effects[index],
                         open: _isOpen('fx-${info.effects[index].id}'),
                         onToggle: () => _toggle('fx-${info.effects[index].id}'),
+                        selected: picked.contains(info.effects[index].id),
+                        onSelect: () => ui.pickEffect(
+                          layer,
+                          info.effects[index].id,
+                          order: [for (final e in info.effects) e.id],
+                        ),
                         stagedValue: _effects.stagedValue,
                         index: index,
                         count: info.effects.length,
@@ -282,7 +318,7 @@ class _Header extends StatelessWidget {
               key: const ValueKey('fx-add'),
               small: true,
               onPressed: () => _showAddMenu(buttonContext, onAdd),
-              child: Text('Add effect', style: t.small),
+              child: Text(l10n.addEffect, style: t.small),
             ),
           ),
         ],
@@ -311,7 +347,7 @@ Future<void> _showAddMenu(
   final headings = <String, String>{};
   for (final e in listEffects()) {
     grouped.putIfAbsent(e.category, () => []).add(e);
-    headings[e.category] = e.categoryLabel;
+    headings[e.category] = engineLabel(e.categoryLabel);
   }
 
   await showLumitPopup<void>(
@@ -339,7 +375,7 @@ Future<void> _showAddMenu(
                           dismiss();
                           onAdd(effect.name);
                         },
-                        child: Text(effect.label),
+                        child: Text(engineLabel(effect.label)),
                       ),
                   ],
                 ),
@@ -362,6 +398,12 @@ class _EffectSection extends StatelessWidget {
   final BridgeEffectInstanceInfo info;
   final bool open;
   final VoidCallback onToggle;
+
+  /// Picked out of the stack, and the click that picks it (K-300). The same
+  /// selection the Timeline's fold-out shows, so an effect chosen in one place
+  /// is lit in the other — and Copy takes it from either.
+  final bool selected;
+  final VoidCallback onSelect;
 
   /// The drag in flight's staged value for (effect, param), or null — overlaid
   /// on the model's value so the number under the pointer is the staged one.
@@ -393,6 +435,8 @@ class _EffectSection extends StatelessWidget {
     required this.info,
     required this.open,
     required this.onToggle,
+    required this.selected,
+    required this.onSelect,
     required this.stagedValue,
     required this.index,
     required this.count,
@@ -448,8 +492,11 @@ class _EffectSection extends StatelessWidget {
       title: effectLabelOf(info.name),
       open: open,
       onToggle: onToggle,
+      selected: selected,
+      onSelect: onSelect,
+      twirlKey: ValueKey<String>('fx-twirl-$id'),
       leading: LumitTooltip(
-        message: info.enabled ? 'Disable this effect' : 'Enable it',
+        message: info.enabled ? l10n.tipDisable : l10n.tipEnable,
         child: HouseCheckbox(
           key: ValueKey<String>('fx-enabled-$id'),
           value: info.enabled,
@@ -462,78 +509,303 @@ class _EffectSection extends StatelessWidget {
       actions: [
         fxTextAction(
           context,
-          label: 'Reset',
-          tip:
-              'Put every parameter back to its default, removing its keyframes',
+          label: l10n.reset,
+          tip: l10n.tipResetParameters,
           keyName: 'fx-reset-$id',
           onPressed: _reset,
         ),
+        // What this effect cost in the last measured frame — the same number
+        // its row in the Timeline shows, from the same measurement (docs/13
+        // §7.1). Blank unless the Timeline's render-time column is measuring,
+        // so this panel neither turns the cost on nor shows a stale figure.
+        // Expanded rather than a fixed box after a Spacer: the value column is
+        // as wide as the panel leaves it, and a readout that insisted on its
+        // own width overflowed the heading in a narrow panel. It right-aligns
+        // itself and clips rather than pushing anything.
+        Expanded(child: TimingsCell(effectId: '$id')),
       ],
-      trailing: Row(
-        children: [
-          _markButton(
-            context,
-            mark: '▲',
-            tip: 'Move up the stack',
-            enabled: index > 0,
-            key: 'fx-up-$id',
-            onPressed: () {
-              _withHandle(
-                  (e) => layer.reorderEffect(effect: e, newIndex: index - 1));
-              onStackChanged();
-            },
-          ),
-          _markButton(
-            context,
-            mark: '▼',
-            tip: 'Move down the stack',
-            enabled: index < count - 1,
-            key: 'fx-down-$id',
-            onPressed: () {
-              _withHandle(
-                  (e) => layer.reorderEffect(effect: e, newIndex: index + 1));
-              onStackChanged();
-            },
-          ),
-          _markButton(
-            context,
-            mark: '×',
-            tip: 'Remove this effect',
-            enabled: true,
-            key: 'fx-remove-$id',
-            onPressed: () {
-              _withHandle((e) => layer.removeEffect(effect: e));
-              onStackChanged();
-            },
-          ),
-        ],
+      // Drag the heading to move the effect (docs/07 §6): the gesture the rest
+      // of the application already uses to reorder a list, and the one the
+      // owner asked for.
+      dragIndex: index,
+      onDropped: (from) {
+        final stack = layer.getEffects();
+        if (from < 0 || from >= stack.length) return;
+        try {
+          layer.reorderEffect(effect: stack[from], newIndex: index);
+        } catch (_) {
+          // The stack changed under the drag; re-reading is the recovery.
+        }
+        onStackChanged();
+      },
+      // Right-click is where the rest of the reordering lives (K-276): the two arrows that
+      // used to sit here spent permanent space on a rare act, and the render
+      // time — read constantly while a comp is being made faster — earns that
+      // space instead. Nothing is lost: the menu moves an effect a step, and
+      // to either end.
+      onContextMenu: (at) => _stackMenu(context, at),
+      trailing: _markButton(
+        context,
+        mark: '×',
+        tip: l10n.tipRemove,
+        enabled: true,
+        key: 'fx-remove-$id',
+        onPressed: () {
+          _withHandle((e) => layer.removeEffect(effect: e));
+          onStackChanged();
+        },
       ),
       // An effect with its own display draws that instead of a row per
       // parameter; nothing claims one yet.
-      rows: customEffectRows(info.name) ??
-          [
-            for (final param in cachedListParameters(info.name))
-              EffectParamRowFrb(
-                key: ValueKey<String>('fx-row-$id-${param.id}'),
-                effectId: id,
-                param: param,
-                value: stagedValue(id, param.id) ?? values[param.id],
-                comp: comp,
-                ownerLayerId: layer.internallayerId,
-                ownerLayers: allLayers,
-                playheadFrame: playheadFrame,
-                onSeek: onSeek,
-                onWrite: onWrite,
-                onLive: onLive,
-                twoColumn: true,
-              ),
-          ],
+      rows: customEffectRows(info.name) ?? _paramRows(id, values),
     );
+  }
+
+  /// The parameter rows, folded through the schema's groups (docs/08 §1.2,
+  /// K-145/K-257) and the `_x`/`_y` point-pair convention (docs/07 §6.1):
+  ///
+  /// - a labelled group renders as a sub-twirl at its first member's
+  ///   position, its members inside;
+  /// - an empty-label group renders its members in place, headerless — the
+  ///   conditional-run shape;
+  /// - a group with `visible_when` is skipped entirely (members included)
+  ///   while the named sibling Choice holds a different value;
+  /// - two adjacent Float params `foo_x`, `foo_y` fold into one point row
+  ///   (with the position dropper for the declared %-of-frame pairs).
+  List<Widget> _paramRows(UuidValue id, Map<String, BridgeEffectValue> values) {
+    final params = cachedListParameters(info.name);
+    final groups = cachedListParameterGroups(info.name);
+    final byFirstMember = <String, BridgeParamGroup>{};
+    final memberOf = <String, BridgeParamGroup>{};
+    for (final g in groups) {
+      if (g.params.isNotEmpty) byFirstMember[g.params.first] = g;
+      for (final m in g.params) {
+        memberOf[m] = g;
+      }
+    }
+    bool groupVisible(BridgeParamGroup g) {
+      final param = g.visibleWhenParam;
+      final want = g.visibleWhenValues;
+      if (param == null || want.isEmpty) return true;
+      return switch (values[param]) {
+        // A group may answer to SEVERAL modes (K-259: the flare's
+        // source-colour toggle belongs to Matte and Lights alike).
+        BridgeEffectValue_Choice(:final field0) => want.contains(field0),
+        _ => false,
+      };
+    }
+
+    Widget rowFor(BridgeParamInfo param) => EffectParamRowFrb(
+          key: ValueKey<String>('fx-row-$id-${param.id}'),
+          effectId: id,
+          param: param,
+          value: stagedValue(id, param.id) ?? values[param.id],
+          comp: comp,
+          ownerLayerId: layer.internallayerId,
+          ownerLayers: allLayers,
+          playheadFrame: playheadFrame,
+          onSeek: onSeek,
+          onWrite: onWrite,
+          onLive: onLive,
+          twoColumn: true,
+          // The effect's other values, for a control whose behaviour
+          // depends on a sibling (the depth-of-field dropper reads the
+          // effect's own `depth` layer).
+          siblings: values,
+        );
+
+    // Fold a run of params into rows, pairing x/y neighbours.
+    List<Widget> foldRows(List<BridgeParamInfo> run) {
+      final out = <Widget>[];
+      var i = 0;
+      while (i < run.length) {
+        final param = run[i];
+        final next = i + 1 < run.length ? run[i + 1] : null;
+        final isPair = next != null &&
+            param.id.endsWith('_x') &&
+            next.id == '${param.id.substring(0, param.id.length - 2)}_y' &&
+            param.kind is BridgeParamKind_Float &&
+            next.kind is BridgeParamKind_Float;
+        if (isPair) {
+          out.add(EffectPointRowFrb(
+            key: ValueKey<String>('fx-row-$id-${param.id}-pair'),
+            effectId: id,
+            xParam: param,
+            yParam: next,
+            xValue: stagedValue(id, param.id) ?? values[param.id],
+            yValue: stagedValue(id, next.id) ?? values[next.id],
+            comp: comp,
+            playheadFrame: playheadFrame,
+            onSeek: onSeek,
+            onWrite: onWrite,
+            onLive: onLive,
+            twoColumn: true,
+            pickPixels: pickablePointParams[param.id],
+          ));
+          i += 2;
+        } else {
+          out.add(rowFor(param));
+          i += 1;
+        }
+      }
+      return out;
+    }
+
+    final rows = <Widget>[];
+    var i = 0;
+    while (i < params.length) {
+      final param = params[i];
+      final group = byFirstMember[param.id];
+      if (group != null) {
+        // Consume the whole contiguous member run.
+        final run = <BridgeParamInfo>[];
+        while (i < params.length && group.params.contains(params[i].id)) {
+          run.add(params[i]);
+          i += 1;
+        }
+        if (!groupVisible(group)) continue;
+        if (group.label.isEmpty) {
+          rows.addAll(foldRows(run));
+        } else {
+          rows.add(_ParamGroupSection(
+            key: ValueKey<String>('fx-group-$id-${group.label}'),
+            label: group.label,
+            collapsed: group.collapsed,
+            rows: foldRows(run),
+          ));
+        }
+      } else if (memberOf.containsKey(param.id)) {
+        // A group member reached out of order (a schema whose group is not
+        // contiguous): render it plainly rather than losing it.
+        rows.add(rowFor(param));
+        i += 1;
+      } else {
+        // Flat params fold too, so an ungrouped x/y pair still joins.
+        final flat = <BridgeParamInfo>[param];
+        i += 1;
+        // Peek: only extend the flat run while the next is also ungrouped.
+        while (i < params.length &&
+            !byFirstMember.containsKey(params[i].id) &&
+            !memberOf.containsKey(params[i].id) &&
+            flat.length < 2 &&
+            param.id.endsWith('_x')) {
+          flat.add(params[i]);
+          i += 1;
+        }
+        rows.addAll(foldRows(flat));
+      }
+    }
+    return rows;
   }
 
   /// A small text mark rather than an icon, matching v0's × for Remove — the
   /// icon set has no caret or close glyph, and three marks do not earn three
   /// new ones.
+  /// The effect heading's right-click menu: where it sits in the stack, and
+  /// removing it. Reordering is a handful of acts in a session, so it lives
+  /// here rather than in two buttons on every heading — and unlike the arrows
+  /// it can send an effect to the top or the bottom in one go.
+  /// Put this effect on the clipboard (K-275) — with the rest of the picked run
+  /// when it is part of one (K-300).
+  ///
+  /// A failure is swallowed the way the neighbouring effect commands' are: the
+  /// effect went away between the menu opening and the row being chosen, and an
+  /// error about a thing that is no longer there helps nobody.
+  void _copyEffect(BuildContext context) {
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    try {
+      ui.copyEffectsToClipboard(
+        layer.copyEffects(effects: ui.effectsToCopy(layer, info.id)),
+      );
+    } catch (_) {
+      // The effect is gone; the clipboard keeps whatever it had.
+    }
+  }
+
+  void _stackMenu(BuildContext context, Offset at) {
+    final id = info.id;
+    void move(int to) {
+      _withHandle((e) => layer.reorderEffect(effect: e, newIndex: to));
+      onStackChanged();
+    }
+
+    showLumitPopup<void>(
+      context: context,
+      position: at,
+      builder: (close) => FloatSurface(
+        width: 190,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          // Only the moves this effect can actually make are listed: a menu of
+          // dead rows tells you what you cannot do, which is not what a menu
+          // is for (docs/15 §no punishment UI).
+          children: [
+            if (index > 0) ...[
+              MenuRow(
+                key: ValueKey<String>('fx-menu-up-$id'),
+                onPressed: () {
+                  close(null);
+                  move(index - 1);
+                },
+                child: Text(l10n.moveUp),
+              ),
+              MenuRow(
+                key: ValueKey<String>('fx-menu-top-$id'),
+                onPressed: () {
+                  close(null);
+                  move(0);
+                },
+                child: Text(l10n.moveToTop),
+              ),
+            ],
+            if (index < count - 1) ...[
+              MenuRow(
+                key: ValueKey<String>('fx-menu-down-$id'),
+                onPressed: () {
+                  close(null);
+                  move(index + 1);
+                },
+                child: Text(l10n.moveDown),
+              ),
+              MenuRow(
+                key: ValueKey<String>('fx-menu-bottom-$id'),
+                onPressed: () {
+                  close(null);
+                  move(count - 1);
+                },
+                child: Text(l10n.moveToBottom),
+              ),
+            ],
+            // **Copy this one effect** (K-275). The engine has taken one or a
+            // whole stack since copy/paste landed — `copy_effects(Some(id))` —
+            // and the Edit menu's Copy takes the *layer*, so until now there
+            // was no way to pick a single effect and no way to reach the call.
+            // It goes on the same clipboard a stack does: both are `.lumfx`, so
+            // both paste the same way, and Paste needs no idea which it holds.
+            MenuRow(
+              key: ValueKey<String>('fx-menu-copy-$id'),
+              onPressed: () {
+                close(null);
+                _copyEffect(context);
+              },
+              child: Text(l10n.copyEffect),
+            ),
+            MenuRow(
+              key: ValueKey<String>('fx-menu-remove-$id'),
+              onPressed: () {
+                close(null);
+                _withHandle((e) => layer.removeEffect(effect: e));
+                onStackChanged();
+              },
+              child: Text(l10n.removeEffect),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _markButton(
     BuildContext context, {
     required String mark,
@@ -557,6 +829,65 @@ class _EffectSection extends StatelessWidget {
               t.small.copyWith(color: enabled ? t.textMuted : t.textDisabled),
         ),
       ),
+    );
+  }
+}
+
+/// One collapsible parameter group inside an effect's card (docs/08 §1.2,
+/// K-145): a small twirl header, its member rows indented under it. Open
+/// state is session-local (a fresh panel starts groups at their declared
+/// `collapsed`).
+class _ParamGroupSection extends StatefulWidget {
+  final String label;
+  final bool collapsed;
+  final List<Widget> rows;
+  const _ParamGroupSection({
+    super.key,
+    required this.label,
+    required this.collapsed,
+    required this.rows,
+  });
+
+  @override
+  State<_ParamGroupSection> createState() => _ParamGroupSectionState();
+}
+
+class _ParamGroupSectionState extends State<_ParamGroupSection> {
+  late bool _open = !widget.collapsed;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => setState(() => _open = !_open),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              children: [
+                lumitIcon(
+                  _open ? LumitIcon.twirlOpen : LumitIcon.twirlClosed,
+                  size: iconSize,
+                  color: t.textMuted,
+                ),
+                const SizedBox(width: 4),
+                Text(widget.label, style: t.bodyPrimary),
+              ],
+            ),
+          ),
+        ),
+        if (_open)
+          Padding(
+            padding: const EdgeInsets.only(left: 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: widget.rows,
+            ),
+          ),
+      ],
     );
   }
 }
@@ -593,7 +924,7 @@ class _TransformSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => FxSection(
-        title: 'Transform',
+        title: engineLabel('Transform'),
         open: open,
         onToggle: onToggle,
         rows: TransformRowsFrb(

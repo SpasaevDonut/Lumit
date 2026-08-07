@@ -21,6 +21,7 @@ const N: u64 = 90;
 
 fn layer(kind: LayerKind, name: &str) -> lumit_core::model::Layer {
     lumit_core::model::Layer {
+        markers: Vec::new(),
         id: Uuid::now_v7(),
         name: name.into(),
         kind,
@@ -39,8 +40,10 @@ fn layer(kind: LayerKind, name: &str) -> lumit_core::model::Layer {
         label: 0,
         volume_db: Property::zero(),
         retime: None,
+        interpolation: Default::default(),
         blend: Default::default(),
         masks: Vec::new(),
+        paint: Vec::new(),
         effects: Vec::new(),
         switches: Switches::default(),
         extra: serde_json::Map::new(),
@@ -160,13 +163,7 @@ fn main() {
         },
         extra: serde_json::Map::new(),
     });
-    let (doc, comp) = doc_with(
-        LayerKind::Footage {
-            item: item_id,
-            retime: None,
-        },
-        Some(footage),
-    );
+    let (doc, comp) = doc_with(LayerKind::Footage { item: item_id }, Some(footage));
     run(
         "footage comp, cold decode, scale 1.0",
         &mut r,

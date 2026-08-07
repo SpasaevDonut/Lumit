@@ -2,10 +2,12 @@ use std::sync::Arc;
 
 use flutter_rust_bridge::frb;
 use lumit_core::model::{EffectInstance, Layer};
+use lumit_core::time::{CompTime, Duration, Rational, SourceTime};
 
 use uuid::Uuid;
 
 use crate::api::{
+    composition::{bridge_marker, core_markers, BridgeMarker},
     effect::{BridgeEffectInstance, BridgeRational, BridgeScalar},
     project_item::ItemReference,
     state::{LumitBridgeState, PROJECTS},
@@ -34,6 +36,273 @@ pub struct BridgeLayerSwitches {
     /// Shy (docs/07 §4.2): hidden from the Timeline's list while the comp's
     /// shy filter is on. Never changes what renders.
     pub shy: bool,
+}
+
+/// One vertex of a mask's path (K-222): where it sits in **layer space**, and
+/// the two tangent handles that shape the curve either side of it.
+///
+/// Tangents are offsets *from* the vertex, in the same layer pixels — the shape
+/// `lumit-core`'s `mask::Vertex` uses, carried across unchanged so a path never
+/// changes meaning by crossing the bridge. A corner vertex is one with both
+/// tangents at zero.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BridgeVertex {
+    pub x: f64,
+    pub y: f64,
+    pub tan_in_x: f64,
+    pub tan_in_y: f64,
+    pub tan_out_x: f64,
+    pub tan_out_y: f64,
+}
+
+/// One piece of vector art on a shape layer (K-237): a path, and how it is
+/// painted.
+///
+/// The path is `BridgeVertex`, the same vertices a mask crosses with: one path
+/// type in the document, drawn by two things.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeShapeItem {
+    pub id: Uuid,
+    pub name: String,
+    pub vertices: Vec<BridgeVertex>,
+    pub closed: bool,
+    /// The colour inside the path. `None` draws no fill.
+    pub fill: Option<crate::api::assets::BridgeColourRgba>,
+    /// The outline's colour, and its width in layer pixels. `None` draws no
+    /// outline; a width of zero draws none either.
+    pub stroke: Option<crate::api::assets::BridgeColourRgba>,
+    pub stroke_width: f64,
+    /// 0..100.
+    pub opacity: f64,
+}
+
+impl BridgeShapeItem {
+    #[frb(ignore)]
+    fn read(item: &lumit_core::shape::ShapeItem) -> Self {
+        Self {
+            id: item.id,
+            name: item.name.clone(),
+            vertices: item
+                .path
+                .vertices
+                .iter()
+                .map(|v| BridgeVertex {
+                    x: v.pos.0,
+                    y: v.pos.1,
+                    tan_in_x: v.tan_in.0,
+                    tan_in_y: v.tan_in.1,
+                    tan_out_x: v.tan_out.0,
+                    tan_out_y: v.tan_out.1,
+                })
+                .collect(),
+            closed: item.path.closed,
+            fill: item.fill.map(crate::api::assets::colour_of),
+            stroke: item.stroke.map(crate::api::assets::colour_of),
+            stroke_width: item.stroke_width,
+            opacity: item.opacity,
+        }
+    }
+
+    /// The engine's item this describes. Public to the crate because the
+    /// composition builds a whole layer out of a list of them.
+    #[frb(ignore)]
+    pub(crate) fn write_item(&self) -> lumit_core::shape::ShapeItem {
+        lumit_core::shape::ShapeItem {
+            id: self.id,
+            name: self.name.clone(),
+            path: lumit_core::mask::BezierPath {
+                vertices: self
+                    .vertices
+                    .iter()
+                    .map(|v| lumit_core::mask::Vertex {
+                        pos: (v.x, v.y),
+                        tan_in: (v.tan_in_x, v.tan_in_y),
+                        tan_out: (v.tan_out_x, v.tan_out_y),
+                    })
+                    .collect(),
+                closed: self.closed,
+            },
+            fill: self.fill.map(crate::api::assets::linear_of),
+            stroke: self.stroke.map(crate::api::assets::linear_of),
+            stroke_width: self.stroke_width.clamp(0.0, 10_000.0),
+            opacity: self.opacity.clamp(0.0, 100.0),
+            extra: serde_json::Map::new(),
+        }
+    }
+}
+
+/// What a paint stroke does to the pixels under it (K-227).
+#[frb(non_opaque)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BridgePaintMode {
+    /// Lay the stroke's colour down.
+    Paint,
+    /// Take alpha away.
+    Erase,
+    /// Copy from elsewhere on the same layer, by the stroke's clone offset.
+    Clone,
+}
+
+/// One point of a stroke's path, in layer pixels.
+///
+/// Named for the stroke rather than called `BridgePoint`, because that name is
+/// already an *animatable* point parameter on an effect — two quite different
+/// things, and the bridge's type names are flat across the whole seam.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BridgeStrokePoint {
+    pub x: f64,
+    pub y: f64,
+}
+
+/// One paint stroke on a layer (K-227): the path the pointer took, and how it
+/// was painted.
+///
+/// A **polyline**, not a bezier — a stroke is a record of a gesture rather than
+/// a shape to be edited vertex by vertex, which is the difference between this
+/// and [`BridgeMask`]. Layer space, like everything else that travels with a
+/// layer's transform.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeStroke {
+    pub id: Uuid,
+    pub name: String,
+    pub points: Vec<BridgeStrokePoint>,
+    pub colour: crate::api::assets::BridgeColourRgba,
+    /// The brush's diameter in layer pixels.
+    pub width: f64,
+    /// 0 fully soft, 1 a hard edge.
+    pub hardness: f64,
+    /// 0..100.
+    pub opacity: f64,
+    pub mode: BridgePaintMode,
+    /// Where a clone's pixels are copied from, as an offset in layer pixels.
+    pub clone_offset_x: f64,
+    pub clone_offset_y: f64,
+}
+
+impl BridgeStroke {
+    #[frb(ignore)]
+    fn read(stroke: &lumit_core::paint::PaintStroke) -> Self {
+        Self {
+            id: stroke.id,
+            name: stroke.name.clone(),
+            points: stroke
+                .points
+                .iter()
+                .map(|&(x, y)| BridgeStrokePoint { x, y })
+                .collect(),
+            colour: crate::api::assets::colour_of(stroke.colour),
+            width: stroke.width,
+            hardness: stroke.hardness,
+            opacity: stroke.opacity,
+            mode: match stroke.mode {
+                lumit_core::paint::PaintMode::Paint => BridgePaintMode::Paint,
+                lumit_core::paint::PaintMode::Erase => BridgePaintMode::Erase,
+                lumit_core::paint::PaintMode::Clone => BridgePaintMode::Clone,
+            },
+            clone_offset_x: stroke.clone_offset.0,
+            clone_offset_y: stroke.clone_offset.1,
+        }
+    }
+
+    /// The engine's stroke this describes. Every number that would render
+    /// wrongly for ever after is clamped here rather than trusted, exactly as
+    /// a mask's opacity is.
+    #[frb(ignore)]
+    pub(crate) fn write(&self) -> lumit_core::paint::PaintStroke {
+        lumit_core::paint::PaintStroke {
+            id: self.id,
+            name: self.name.clone(),
+            points: self.points.iter().map(|p| (p.x, p.y)).collect(),
+            colour: crate::api::assets::linear_of(self.colour),
+            width: self.width.clamp(0.0, 10_000.0),
+            hardness: self.hardness.clamp(0.0, 1.0),
+            opacity: self.opacity.clamp(0.0, 100.0),
+            mode: match self.mode {
+                BridgePaintMode::Paint => lumit_core::paint::PaintMode::Paint,
+                BridgePaintMode::Erase => lumit_core::paint::PaintMode::Erase,
+                BridgePaintMode::Clone => lumit_core::paint::PaintMode::Clone,
+            },
+            clone_offset: (self.clone_offset_x, self.clone_offset_y),
+            extra: serde_json::Map::new(),
+        }
+    }
+}
+
+/// One mask on a layer: a bezier path that gates the layer's alpha before its
+/// effects and transform (docs/06 render order).
+///
+/// The path is in **layer space** — the same coordinates the layer's own pixels
+/// use — so a mask travels with the layer's transform for free, exactly as it
+/// does in After Effects.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeMask {
+    pub id: Uuid,
+    pub name: String,
+    pub vertices: Vec<BridgeVertex>,
+    /// Whether the path joins its last vertex back to its first. An open path
+    /// gates nothing yet; it is a shape being drawn.
+    pub closed: bool,
+    pub inverted: bool,
+    /// 0..100.
+    pub opacity: f64,
+}
+
+impl BridgeMask {
+    #[frb(ignore)]
+    fn read(mask: &lumit_core::mask::Mask) -> Self {
+        Self {
+            id: mask.id,
+            name: mask.name.clone(),
+            vertices: mask
+                .path
+                .vertices
+                .iter()
+                .map(|v| BridgeVertex {
+                    x: v.pos.0,
+                    y: v.pos.1,
+                    tan_in_x: v.tan_in.0,
+                    tan_in_y: v.tan_in.1,
+                    tan_out_x: v.tan_out.0,
+                    tan_out_y: v.tan_out.1,
+                })
+                .collect(),
+            closed: mask.path.closed,
+            inverted: mask.inverted,
+            opacity: mask.opacity,
+        }
+    }
+
+    /// The engine's mask this describes. `id` is kept, so an edit names the
+    /// mask it came from; a caller making a *new* mask sends a fresh uuid.
+    #[frb(ignore)]
+    pub(crate) fn write(&self) -> lumit_core::mask::Mask {
+        lumit_core::mask::Mask {
+            id: self.id,
+            name: self.name.clone(),
+            path: lumit_core::mask::BezierPath {
+                vertices: self
+                    .vertices
+                    .iter()
+                    .map(|v| lumit_core::mask::Vertex {
+                        pos: (v.x, v.y),
+                        tan_in: (v.tan_in_x, v.tan_in_y),
+                        tan_out: (v.tan_out_x, v.tan_out_y),
+                    })
+                    .collect(),
+                closed: self.closed,
+            },
+            inverted: self.inverted,
+            // A mask with an absurd opacity is a mask that renders wrongly for
+            // ever after; clamped here rather than trusted.
+            opacity: self.opacity.clamp(0.0, 100.0),
+            extra: serde_json::Map::new(),
+        }
+    }
 }
 
 /// Which switch an edit names. One enum rather than eight methods so the
@@ -77,6 +346,8 @@ pub enum BridgeLayerKind {
     Solid,
     Precomp,
     Text,
+    /// Vector art as the layer's own picture (K-237).
+    Shape,
     Camera,
     Sequence,
     Adjustment,
@@ -93,11 +364,39 @@ pub enum BridgeLayerKind {
 /// and a value type that pretends to round-trip what no control can edit is how
 /// a write quietly loses information.
 #[frb(non_opaque)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BridgeClip {
     pub id: Uuid,
     pub place_start: BridgeRational,
     pub place_duration: BridgeRational,
+    /// Where the clip sits on the **comp's** own clock, in frames — so the
+    /// expanded row draws with no time-to-frame trip per clip (K-248, K-184).
+    ///
+    /// A clip's `place_*` are in *layer* time; these carry the layer's own
+    /// zero already added. The two are the same number only while that zero
+    /// is itself zero, which stopped being true the moment a clip could be
+    /// dragged back past the start of its row.
+    pub start_frame: i64,
+    pub end_frame: i64,
+    /// The clip's single playback speed in per cent, or `None` when its map
+    /// says something one number cannot — a ramp, or a richer curve. The row
+    /// shows the envelope for those rather than a number.
+    pub speed_percent: Option<f64>,
+    /// Whether the clip carries a map at all. `false` is "plays at source
+    /// rate", a different state from a map that happens to be 100%.
+    pub retimed: bool,
+    /// The map this clip actually plays by, keyed in **clip-local** time —
+    /// what the sequence view's envelope draws and edits (K-247, K-248).
+    ///
+    /// Always present, even for a clip with no map of its own: it then holds
+    /// the identity that clip is playing, running from its real trim-in.
+    /// [`Self::retimed`] is what says which of the two it is.
+    ///
+    /// Carried rather than left for the frontend to construct, because
+    /// constructing it means knowing where the clip's source starts — and a
+    /// frontend that assumed zero sent every clip after a cut back to the top
+    /// of its media the moment it was ramped.
+    pub retime: crate::api::effect::BridgeScalar,
 }
 
 /// Everything the Timeline outline, its bars, and the Hierarchy draw for one
@@ -119,6 +418,12 @@ pub struct BridgeLayerInfo {
     /// Sequence clip starts as comp frames (empty on other kinds) — what the
     /// bar draws its split lines from.
     pub clip_frames: Vec<i64>,
+    /// Every clip on a Sequence layer, in list order (empty on other kinds) —
+    /// what the expanded sequence view draws (K-248).
+    ///
+    /// In the read model rather than fetched per clip, so opening a Sequence
+    /// layer costs no bridge calls at all (K-184).
+    pub clips: Vec<BridgeClip>,
     pub parent: Option<Uuid>,
     /// The parent layer's current name, so the outline's parent picker renders
     /// with no second lookup. None when there is no parent, or it is dangling.
@@ -137,6 +442,34 @@ pub struct BridgeLayerInfo {
     /// The Retime property (K-197), or None when the layer is not retimed —
     /// which is exactly what decides whether the fold-out shows a Retime row.
     pub retime: Option<BridgeScalar>,
+    /// The layer's masks (K-222), bottom of the stack first. Carried in the
+    /// read model for the same reason the effects are: the Timeline's
+    /// twirl-down draws a row per mask, and asking per row per frame is the
+    /// cost K-184 exists to remove. Edits still go through `set_mask`.
+    pub masks: Vec<BridgeMask>,
+    /// The layer's paint strokes (K-227), oldest first — carried for the same
+    /// reason the masks are: the Timeline lists them, and the Viewer needs to
+    /// know a layer has some without asking per frame.
+    pub paint: Vec<BridgeStroke>,
+    /// A shape layer's art (K-237), bottom first; empty on every other kind.
+    /// Carried for the same reason again — and for one more: the art *is* the
+    /// layer's size, so the Viewer's wireframe reads it here.
+    pub shape_contents: Vec<BridgeShapeItem>,
+    /// The layer's own markers (K-254), and the comp frame each falls on — the
+    /// marker's layer-local time carried out by the layer's start offset — so
+    /// the bar needs no time↔frame trip to draw one. In the read model because
+    /// the Timeline draws them on every rebuild, which is the cost K-184 exists
+    /// to remove.
+    pub markers: Vec<BridgeLayerMarker>,
+}
+
+/// One marker on a layer's bar: the marker itself plus where it lands at the
+/// comp's rate, worked out here so drawing costs nothing across the seam.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BridgeLayerMarker {
+    pub marker: BridgeMarker,
+    pub frame: i64,
 }
 
 /// Build one layer's [`BridgeLayerInfo`] from an already-fetched composition —
@@ -158,6 +491,40 @@ pub(crate) fn read_layer_info(
             .collect(),
         _ => Vec::new(),
     };
+    let clips = match &layer.kind {
+        K::Sequence { clips } => clips
+            .iter()
+            .map(|c| BridgeClip {
+                id: c.id,
+                place_start: rational_of(c.place_start),
+                place_duration: rational_of(c.place_duration),
+                start_frame: comp.frame_rate.frame_at(lumit_core::time::CompTime(
+                    layer
+                        .start_offset
+                        .0
+                        .checked_add(c.place_start)
+                        .unwrap_or(c.place_start),
+                )),
+                end_frame: comp.frame_rate.frame_at(lumit_core::time::CompTime(
+                    layer
+                        .start_offset
+                        .0
+                        .checked_add(c.place_end())
+                        .unwrap_or(c.place_end()),
+                )),
+                speed_percent: c.constant_speed().map(|s| s * 100.0),
+                retimed: c.retime.is_some(),
+                // Keyed in clip time, so it crosses with no offset applied —
+                // unlike a layer's, which the bridge carries out by the
+                // layer's own zero (K-213). A clip's zero *is* its start.
+                retime: BridgeScalar::read_at(
+                    &c.effective_retime(),
+                    lumit_core::time::Rational::ZERO,
+                ),
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
     let s = layer.switches;
     BridgeLayerInfo {
         name: layer.name.clone(),
@@ -169,6 +536,7 @@ pub(crate) fn read_layer_info(
             K::Camera { .. } => BridgeLayerKind::Camera,
             K::Sequence { .. } => BridgeLayerKind::Sequence,
             K::Adjustment => BridgeLayerKind::Adjustment,
+            K::Shape { .. } => BridgeLayerKind::Shape,
             K::Null => BridgeLayerKind::NullLayer,
         },
         switches: BridgeLayerSwitches {
@@ -194,6 +562,7 @@ pub(crate) fn read_layer_info(
         in_frame: comp.frame_rate.frame_at(layer.in_point),
         out_frame: comp.frame_rate.frame_at(layer.out_point),
         clip_frames,
+        clips,
         parent: layer.parent,
         parent_name: layer.parent.and_then(|p| {
             comp.layers
@@ -201,11 +570,11 @@ pub(crate) fn read_layer_info(
                 .find(|l| l.id == p)
                 .map(|l| l.name.clone())
         }),
-        transform: BridgeTransform::read(&layer.transform),
+        transform: BridgeTransform::read_at(&layer.transform, layer.start_offset.0),
         effects: layer
             .effects
             .iter()
-            .map(crate::api::effect::read_instance_info)
+            .map(|e| crate::api::effect::read_instance_info(e, layer.start_offset.0))
             .collect(),
         label: layer.label,
         matte: layer.matte.as_ref().map(|m| BridgeMatte {
@@ -213,18 +582,102 @@ pub(crate) fn read_layer_info(
             luma: matches!(m.channel, lumit_core::model::MatteChannel::Luma),
             inverted: m.inverted,
         }),
-        retime: layer.retime.as_ref().map(BridgeScalar::read),
+        retime: layer
+            .retime
+            .as_ref()
+            .map(|r| BridgeScalar::read_at(r, layer.start_offset.0)),
+        masks: layer.masks.iter().map(BridgeMask::read).collect(),
+        paint: layer.paint.iter().map(BridgeStroke::read).collect(),
+        markers: layer
+            .markers
+            .iter()
+            .map(|m| BridgeLayerMarker {
+                marker: bridge_marker(m),
+                // A layer marker's time is the layer's own, so where it lands
+                // on the comp is that time carried out by the layer's start
+                // offset — exactly as a Sequence clip's is. That is what makes
+                // markers travel when the layer is dragged along the timeline.
+                frame: comp.frame_rate.frame_at(CompTime(
+                    layer
+                        .start_offset
+                        .0
+                        .checked_add(m.time.0)
+                        .unwrap_or(m.time.0),
+                )),
+            })
+            .collect(),
+        shape_contents: match &layer.kind {
+            lumit_core::model::LayerKind::Shape { contents } => {
+                contents.iter().map(BridgeShapeItem::read).collect()
+            }
+            _ => Vec::new(),
+        },
     }
 }
 
-/// A footage layer's waveform peaks: the whole source bucketed to a fixed
-/// count, plus its length so the lane can map comp time onto buckets.
+/// The most buckets one peak query may ask for (K-280). A lane asks for a
+/// bucket per pixel column, and no panel is four thousand columns wide on any
+/// display this ships to; the cap is what stops a frontend bug turning into an
+/// unbounded allocation across the seam (docs/14 §5).
+pub const MAX_PEAK_BUCKETS: u32 = 4096;
+
+/// One window of a source's waveform, summarised to exactly the buckets the
+/// lane asked for (K-280).
+///
+/// The **window** is the point: a lane asks for the stretch of audio it is
+/// currently showing at the number of buckets it has pixel columns, so the
+/// drawn detail follows the zoom instead of being fixed at import. Buckets that
+/// fall outside the audio come back silent rather than missing, so a caller's
+/// column index and a bucket index always agree.
+///
+/// One to four **bands** ride in the same answer. A single-wave lane asks for
+/// one (the whole signal); a multiwave lane asks for three (bass, middle,
+/// treble) and stacks them, which is what shows the difference between a kick
+/// and a hi-hat inside a loud passage that is otherwise one solid block.
 #[frb(non_opaque)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct BridgeAudioPeaks {
+    /// How long the whole source runs, so a lane can tell where its window sits.
     pub duration_seconds: f64,
-    /// Interleaved `[min0, max0, min1, max1, …]`, each in −1..1.
-    pub pairs: Vec<f32>,
+    /// The window these buckets span, in the caller's own clock — source
+    /// seconds for a layer, clip-local seconds for a clip.
+    pub start_seconds: f64,
+    pub end_seconds: f64,
+    /// How many bands are stacked here: 1 (the whole signal) or 3 (bass,
+    /// middle, treble, in that order).
+    pub bands: u32,
+    /// Buckets per band.
+    pub buckets: u32,
+    /// Band-major triples: band `b`'s bucket `i` is `min`, `max`, `rms` at
+    /// `3 * (b * buckets + i)`, each in −1..1.
+    pub values: Vec<f32>,
+}
+
+impl BridgeAudioPeaks {
+    /// The answer for a source with nothing to draw: no audio, no media
+    /// feature, a file that has gone missing. A lane draws it as an empty lane.
+    #[frb(ignore)]
+    fn empty() -> BridgeAudioPeaks {
+        BridgeAudioPeaks {
+            duration_seconds: 0.0,
+            start_seconds: 0.0,
+            end_seconds: 0.0,
+            bands: 0,
+            buckets: 0,
+            values: Vec::new(),
+        }
+    }
+
+    /// The bands a `multiwave` flag asks for, in the order they stack.
+    #[frb(ignore)]
+    #[cfg(feature = "media")]
+    fn bands_of(multiwave: bool) -> Vec<lumit_audio::peaks::Band> {
+        if multiwave {
+            lumit_audio::peaks::Band::stack().to_vec()
+        } else {
+            vec![lumit_audio::peaks::Band::Full]
+        }
+    }
 }
 
 /// A layer used as another layer's matte (docs/03 §5.1).
@@ -322,45 +775,54 @@ impl BridgeTransformProp {
 
 impl BridgeTransform {
     #[frb(ignore)]
-    pub(crate) fn read(group: &lumit_core::model::TransformGroup) -> BridgeTransform {
+    /// `offset` is the layer's `start_offset`: keys cross on the composition's
+    /// clock, not the layer's own (K-213).
+    #[allow(clippy::similar_names)]
+    pub(crate) fn read_at(
+        group: &lumit_core::model::TransformGroup,
+        offset: Rational,
+    ) -> BridgeTransform {
         BridgeTransform {
-            anchor_x: BridgeScalar::read(&group.anchor_x),
-            anchor_y: BridgeScalar::read(&group.anchor_y),
-            position_x: BridgeScalar::read(&group.position_x),
-            position_y: BridgeScalar::read(&group.position_y),
-            position_z: BridgeScalar::read(&group.position_z),
-            scale_x: BridgeScalar::read(&group.scale_x),
-            scale_y: BridgeScalar::read(&group.scale_y),
-            rotation: BridgeScalar::read(&group.rotation),
-            rotation_x: BridgeScalar::read(&group.rotation_x),
-            rotation_y: BridgeScalar::read(&group.rotation_y),
-            opacity: BridgeScalar::read(&group.opacity),
+            anchor_x: BridgeScalar::read_at(&group.anchor_x, offset),
+            anchor_y: BridgeScalar::read_at(&group.anchor_y, offset),
+            position_x: BridgeScalar::read_at(&group.position_x, offset),
+            position_y: BridgeScalar::read_at(&group.position_y, offset),
+            position_z: BridgeScalar::read_at(&group.position_z, offset),
+            scale_x: BridgeScalar::read_at(&group.scale_x, offset),
+            scale_y: BridgeScalar::read_at(&group.scale_y, offset),
+            rotation: BridgeScalar::read_at(&group.rotation, offset),
+            rotation_x: BridgeScalar::read_at(&group.rotation_x, offset),
+            rotation_y: BridgeScalar::read_at(&group.rotation_y, offset),
+            opacity: BridgeScalar::read_at(&group.opacity, offset),
         }
     }
 
     /// Write this whole group onto `target`, for the drag preview — which needs
     /// a document to render, not an op to commit.
     #[frb(ignore)]
-    pub(crate) fn write(
+    pub(crate) fn write_at(
         &self,
         target: &mut lumit_core::model::TransformGroup,
+        offset: Rational,
     ) -> Result<(), BridgeError> {
-        target.anchor_x.animation = self.anchor_x.animation()?;
-        target.anchor_y.animation = self.anchor_y.animation()?;
-        target.position_x.animation = self.position_x.animation()?;
-        target.position_y.animation = self.position_y.animation()?;
-        target.position_z.animation = self.position_z.animation()?;
-        target.scale_x.animation = self.scale_x.animation()?;
-        target.scale_y.animation = self.scale_y.animation()?;
-        target.rotation.animation = self.rotation.animation()?;
-        target.rotation_x.animation = self.rotation_x.animation()?;
-        target.rotation_y.animation = self.rotation_y.animation()?;
-        target.opacity.animation = self.opacity.animation()?;
+        target.anchor_x.animation = self.anchor_x.animation_at(offset)?;
+        target.anchor_y.animation = self.anchor_y.animation_at(offset)?;
+        target.position_x.animation = self.position_x.animation_at(offset)?;
+        target.position_y.animation = self.position_y.animation_at(offset)?;
+        target.position_z.animation = self.position_z.animation_at(offset)?;
+        target.scale_x.animation = self.scale_x.animation_at(offset)?;
+        target.scale_y.animation = self.scale_y.animation_at(offset)?;
+        target.rotation.animation = self.rotation.animation_at(offset)?;
+        target.rotation_x.animation = self.rotation_x.animation_at(offset)?;
+        target.rotation_y.animation = self.rotation_y.animation_at(offset)?;
+        target.opacity.animation = self.opacity.animation_at(offset)?;
         Ok(())
     }
 }
 
-#[derive(Debug)]
+// Three ids and nothing else, so a copy is as good as the original — which is
+// what lets a caller pass the same reference to a list and keep using it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[frb]
 pub struct LayerReference {
     #[frb(name = "internalprojectId")]
@@ -478,6 +940,110 @@ impl LayerReference {
         Ok(())
     }
 
+    /// This layer as text, for [`crate::api::composition::CompositionReference::
+    /// paste_layer`] — the clipboard's payload (K-275).
+    ///
+    /// The whole layer: its kind and source, its transform with every keyframe,
+    /// its masks, paint, effects, switches, markers and retime. It is the
+    /// document's own `Layer`, serialised, so anything the file format carries
+    /// travels — including fields a newer Lumit added, which ride in the
+    /// `extra` maps exactly as they do through a save (docs/10 §1.1).
+    ///
+    /// A *reference* it holds to another layer — its parent, its track matte —
+    /// is copied as it stands and resolved at the paste, which is the only end
+    /// that knows whether the layer being pointed at is there.
+    #[frb(sync)]
+    pub fn copy_layer(&self) -> Result<String, BridgeError> {
+        let layer = self.item()?;
+        serde_json::to_string(&serde_json::json!({
+            "format": 1,
+            "kind": "layer",
+            // Informational: which comp it left, so a paste into that same comp
+            // can keep a parent or matte reference that would otherwise dangle.
+            "comp": self.comp_id,
+            "layer": layer,
+        }))
+        .map_err(|_| BridgeError::InvalidItem)
+    }
+
+    /// This layer's effects as a `.lumfx` document, for [`Self::paste_effects`]
+    /// (K-275). `effects` copies those; an empty list copies the whole stack.
+    ///
+    /// A list rather than one id (K-300), because an effect selection can hold
+    /// several — and they come out in **stack order**, not in the order they
+    /// were picked, so a copied group pastes back in the order it was drawn in.
+    /// Ids that name nothing on this layer are ignored; naming none of them at
+    /// all is [`BridgeError::InvalidEffect`] rather than a silent whole-stack
+    /// copy.
+    ///
+    /// Deliberately the **same document a preset is**, so an effect copied from
+    /// one layer can be saved as a preset and a preset can be pasted as an
+    /// effect — one shape, not two that drift.
+    #[frb(sync)]
+    pub fn copy_effects(&self, effects: Vec<Uuid>) -> Result<String, BridgeError> {
+        let stack = self.item()?.effects;
+        let taken: Vec<_> = if effects.is_empty() {
+            stack
+        } else {
+            stack
+                .into_iter()
+                .filter(|e| effects.contains(&e.id))
+                .collect()
+        };
+        if taken.is_empty() {
+            return Err(BridgeError::InvalidEffect);
+        }
+        let name = taken
+            .first()
+            .map(|e| e.effect.match_name.clone())
+            .unwrap_or_default();
+        lumit_core::preset::to_json(&name, &taken).map_err(|_| BridgeError::InvalidPreset)
+    }
+
+    /// Append copied effects to this layer's stack, **timed to the playhead**
+    /// (K-275): whatever the earliest keyframe among them was, it lands at
+    /// `at_frame` and the rest keep their spacing.
+    ///
+    /// The owner's rule, and the one that makes a copied animation useful: an
+    /// effect copied from a layer that flashes at 4 s and pasted while the
+    /// playhead sits at 12 s flashes at 12 s, not off the end of the comp.
+    /// Effects with no keyframes at all paste unchanged — there is no timing to
+    /// place. Each arrives with a fresh instance id, exactly as a preset does.
+    ///
+    /// `at_frame` is a **comp** frame; the shift is worked out in the target
+    /// layer's own local time, so pasting onto a layer that starts later does
+    /// not double-count its offset.
+    #[frb(sync)]
+    pub fn paste_effects(&self, text: String, at_frame: i64) -> Result<(), BridgeError> {
+        let preset =
+            lumit_core::preset::from_json(&text).map_err(|_| BridgeError::InvalidPreset)?;
+        let mut fresh = lumit_core::preset::instantiated(&preset);
+
+        // Comp frame -> the layer's own clock, the space keyframes live in.
+        let comp = self.composition()?;
+        let layer = self.item()?;
+        let at_comp = comp
+            .frame_rate
+            .time_of_frame(at_frame.max(0))
+            .map_err(|_| BridgeError::InvalidTime)?;
+        let at_local = at_comp
+            .delta(layer.start_offset)
+            .map_err(|_| BridgeError::InvalidTime)?;
+
+        if let Some(first) = lumit_core::preset::first_key_time(&fresh) {
+            let delta = at_local
+                .0
+                .checked_sub(first)
+                .map_err(|_| BridgeError::InvalidTime)?;
+            lumit_core::preset::shift_keys(&mut fresh, delta);
+        }
+
+        self.with_effects(move |effects| {
+            effects.extend(fresh);
+            Ok(())
+        })
+    }
+
     /// Serialise this layer's whole effect stack to `.lumfx` JSON.
     ///
     /// Returns the text rather than writing a file: choosing where something
@@ -527,6 +1093,194 @@ impl LayerReference {
         })
     }
 
+    /// This layer's masks, bottom of the stack first (K-222).
+    ///
+    /// Empty on a layer with none, which is most layers — the Timeline asks
+    /// every row whether it has masks to list, exactly as it asks about clips.
+    #[frb(sync)]
+    pub fn get_masks(&self) -> Result<Vec<BridgeMask>, BridgeError> {
+        Ok(self.item()?.masks.iter().map(BridgeMask::read).collect())
+    }
+
+    /// Add `mask` to the top of this layer's stack.
+    ///
+    /// The whole list is committed, because that is the op the engine has and
+    /// it is exactly invertible (`SetLayerMasks`) — an add, a delete and a
+    /// reorder are all one shape of edit, and each is one undo step.
+    ///
+    /// A path of fewer than two vertices is refused: it is not a shape, and a
+    /// mask that gates nothing would be a row in the Timeline with nothing
+    /// behind it.
+    #[frb(sync)]
+    pub fn add_mask(&self, mask: BridgeMask) -> Result<(), BridgeError> {
+        if mask.vertices.len() < 2 {
+            return Err(BridgeError::EmptyPath);
+        }
+        let mut masks = self.item()?.masks;
+        masks.push(mask.write());
+        self.commit_masks(masks)
+    }
+
+    /// Replace one mask — its path, its name, its invert switch, its opacity.
+    /// Named by id, so a stale reference is a calm error rather than an edit
+    /// landing on whichever mask happens to sit at that index now.
+    #[frb(sync)]
+    pub fn set_mask(&self, mask: BridgeMask) -> Result<(), BridgeError> {
+        if mask.vertices.len() < 2 {
+            return Err(BridgeError::EmptyPath);
+        }
+        let mut masks = self.item()?.masks;
+        let at = masks
+            .iter()
+            .position(|m| m.id == mask.id)
+            .ok_or(BridgeError::NoSuchMask)?;
+        masks[at] = mask.write();
+        self.commit_masks(masks)
+    }
+
+    /// Remove a mask by id.
+    #[frb(sync)]
+    pub fn delete_mask(&self, id: Uuid) -> Result<(), BridgeError> {
+        let mut masks = self.item()?.masks;
+        let before = masks.len();
+        masks.retain(|m| m.id != id);
+        if masks.len() == before {
+            return Err(BridgeError::NoSuchMask);
+        }
+        self.commit_masks(masks)
+    }
+
+    #[frb(ignore)]
+    fn commit_masks(&self, masks: Vec<lumit_core::mask::Mask>) -> Result<(), BridgeError> {
+        self.commit(lumit_core::Op::SetLayerMasks {
+            comp: self.comp_id,
+            layer: self.layer_id,
+            masks,
+        })
+    }
+
+    /// This layer's paint strokes, oldest first (K-227).
+    #[frb(sync)]
+    pub fn get_paint(&self) -> Result<Vec<BridgeStroke>, BridgeError> {
+        Ok(self.item()?.paint.iter().map(BridgeStroke::read).collect())
+    }
+
+    /// Add `stroke` on top of this layer's paint.
+    ///
+    /// The whole list is committed, because that is the op the engine has and
+    /// it is exactly invertible (`SetLayerPaint`): one stroke is one undo step,
+    /// which is what `Ctrl+Z` after a brush drag has to mean.
+    ///
+    /// A stroke with no points is refused — there is no gesture in it, and it
+    /// would be a Timeline row with nothing behind it.
+    #[frb(sync)]
+    pub fn add_stroke(&self, stroke: BridgeStroke) -> Result<(), BridgeError> {
+        if stroke.points.is_empty() {
+            return Err(BridgeError::EmptyStroke);
+        }
+        let mut strokes = self.item()?.paint;
+        strokes.push(stroke.write());
+        self.commit_paint(strokes)
+    }
+
+    /// Replace one stroke — its path, its colour, its width, its name. Named by
+    /// id, so a stale reference is a calm error rather than an edit landing on
+    /// whichever stroke happens to sit at that index now.
+    #[frb(sync)]
+    pub fn set_stroke(&self, stroke: BridgeStroke) -> Result<(), BridgeError> {
+        if stroke.points.is_empty() {
+            return Err(BridgeError::EmptyStroke);
+        }
+        let mut strokes = self.item()?.paint;
+        let at = strokes
+            .iter()
+            .position(|s| s.id == stroke.id)
+            .ok_or(BridgeError::NoSuchStroke)?;
+        strokes[at] = stroke.write();
+        self.commit_paint(strokes)
+    }
+
+    /// Remove a stroke by id.
+    #[frb(sync)]
+    pub fn delete_stroke(&self, id: Uuid) -> Result<(), BridgeError> {
+        let mut strokes = self.item()?.paint;
+        let before = strokes.len();
+        strokes.retain(|s| s.id != id);
+        if strokes.len() == before {
+            return Err(BridgeError::NoSuchStroke);
+        }
+        self.commit_paint(strokes)
+    }
+
+    /// Take the last stroke off — the undo inside the tool, for a brush drag
+    /// that went wrong. Errors when there is nothing painted.
+    #[frb(sync)]
+    pub fn delete_last_stroke(&self) -> Result<(), BridgeError> {
+        let mut strokes = self.item()?.paint;
+        if strokes.pop().is_none() {
+            return Err(BridgeError::NoSuchStroke);
+        }
+        self.commit_paint(strokes)
+    }
+
+    #[frb(ignore)]
+    fn commit_paint(
+        &self,
+        strokes: Vec<lumit_core::paint::PaintStroke>,
+    ) -> Result<(), BridgeError> {
+        self.commit(lumit_core::Op::SetLayerPaint {
+            comp: self.comp_id,
+            layer: self.layer_id,
+            strokes,
+        })
+    }
+
+    /// This shape layer's contents, bottom of the stack first (K-237).
+    ///
+    /// Empty on a layer that is not a shape, rather than an error: the Timeline
+    /// asks every row what it has to list, exactly as it asks about masks.
+    #[frb(sync)]
+    pub fn get_shape_contents(&self) -> Result<Vec<BridgeShapeItem>, BridgeError> {
+        let lumit_core::model::LayerKind::Shape { contents } = self.item()?.kind else {
+            return Ok(Vec::new());
+        };
+        Ok(contents.iter().map(BridgeShapeItem::read).collect())
+    }
+
+    /// Replace this shape layer's whole contents.
+    ///
+    /// The whole list, exactly invertible (`SetShapeContents`), the same shape
+    /// of edit as a mask list or a paint list: an add, a delete, a recolour and
+    /// a path edit are one kind of thing and each is one undo step.
+    ///
+    /// A path of fewer than two vertices is refused, as a mask's is: it is not
+    /// a shape, and it would be a Timeline row with nothing behind it.
+    #[frb(sync)]
+    pub fn set_shape_contents(&self, contents: Vec<BridgeShapeItem>) -> Result<(), BridgeError> {
+        let lumit_core::model::LayerKind::Shape { .. } = self.item()?.kind else {
+            return Err(BridgeError::NotShape);
+        };
+        if contents.iter().any(|i| i.vertices.len() < 2) {
+            return Err(BridgeError::EmptyPath);
+        }
+        self.commit(lumit_core::Op::SetShapeContents {
+            comp: self.comp_id,
+            layer: self.layer_id,
+            contents: contents.iter().map(BridgeShapeItem::write_item).collect(),
+        })
+    }
+
+    /// Add one piece of art on top of this shape layer's stack.
+    #[frb(sync)]
+    pub fn add_shape_item(&self, item: BridgeShapeItem) -> Result<(), BridgeError> {
+        let mut contents = self.get_shape_contents()?;
+        let lumit_core::model::LayerKind::Shape { .. } = self.item()?.kind else {
+            return Err(BridgeError::NotShape);
+        };
+        contents.push(item);
+        self.set_shape_contents(contents)
+    }
+
     /// The clips on this Sequence layer, in the order it holds them.
     ///
     /// An empty list on a layer that is not a Sequence, rather than an error:
@@ -538,14 +1292,431 @@ impl LayerReference {
         let lumit_core::model::LayerKind::Sequence { clips } = &layer.kind else {
             return Ok(Vec::new());
         };
+        let comp = self.composition()?;
         Ok(clips
             .iter()
             .map(|c| BridgeClip {
                 id: c.id,
                 place_start: rational_of(c.place_start),
                 place_duration: rational_of(c.place_duration),
+                start_frame: comp.frame_rate.frame_at(lumit_core::time::CompTime(
+                    layer
+                        .start_offset
+                        .0
+                        .checked_add(c.place_start)
+                        .unwrap_or(c.place_start),
+                )),
+                end_frame: comp.frame_rate.frame_at(lumit_core::time::CompTime(
+                    layer
+                        .start_offset
+                        .0
+                        .checked_add(c.place_end())
+                        .unwrap_or(c.place_end()),
+                )),
+                speed_percent: c.constant_speed().map(|s| s * 100.0),
+                retimed: c.retime.is_some(),
+                retime: BridgeScalar::read_at(
+                    &c.effective_retime(),
+                    lumit_core::time::Rational::ZERO,
+                ),
             })
             .collect())
+    }
+
+    /// Set one clip's playback speed, as a percentage (K-247, K-248).
+    ///
+    /// The clip keeps its place on the row — its start and its length are
+    /// untouched, so an edit point already on a beat stays on it (K-022) —
+    /// and the stretch of source it plays follows from the speed. Its first
+    /// frame is pinned, so re-speeding never moves where a clip begins
+    /// (K-070).
+    ///
+    /// `end_percent` makes it a ramp, running straight from one speed to the
+    /// other; leave it equal to `percent` for a constant speed. Negative runs
+    /// the clip backwards.
+    #[frb(sync)]
+    pub fn set_clip_speed(
+        &self,
+        clip: Uuid,
+        percent: f64,
+        end_percent: f64,
+    ) -> Result<(), BridgeError> {
+        let layer = self.item()?;
+        let lumit_core::model::LayerKind::Sequence { clips } = &layer.kind else {
+            return Err(BridgeError::NotSequence);
+        };
+        let index = clips
+            .iter()
+            .position(|c| c.id == clip)
+            .ok_or(BridgeError::InvalidLayer)?;
+        let rate = |v: f64| {
+            lumit_core::time::Rational::from_f64_on_grid(
+                v / 100.0,
+                lumit_core::time::Rational::FLICK_DEN,
+            )
+            .map_err(|_| BridgeError::InvalidTime)
+        };
+        let mut clips = clips.clone();
+        clips[index] = clips[index].with_ramp(rate(percent)?, rate(end_percent)?);
+        self.commit_clips(clips)
+    }
+
+    /// Replace one clip's whole retime map, keyed in clip-local time.
+    ///
+    /// The envelope in the sequence view writes through here: it speaks the
+    /// same keyframes the graph editor's Vegas lens does (K-249 made them one
+    /// representation), so one editor serves both. The clip keeps its place;
+    /// what it plays follows from the map.
+    #[frb(sync)]
+    pub fn set_clip_retime(&self, clip: Uuid, value: BridgeScalar) -> Result<(), BridgeError> {
+        let layer = self.item()?;
+        let lumit_core::model::LayerKind::Sequence { clips } = &layer.kind else {
+            return Err(BridgeError::NotSequence);
+        };
+        let index = clips
+            .iter()
+            .position(|c| c.id == clip)
+            .ok_or(BridgeError::InvalidLayer)?;
+        let mut clips = clips.clone();
+        // Clip time, so no layer offset is applied on the way in.
+        let map = lumit_core::anim::Property {
+            animation: value.animation_at(lumit_core::time::Rational::ZERO)?,
+            extra: serde_json::Map::new(),
+        };
+        // What the clip *asks* of its source follows from the map's last key.
+        if let Some(end) = map_end_value(&map) {
+            clips[index].source_out = end;
+        }
+        clips[index].retime = Some(map);
+        self.commit_clips(clips)
+    }
+
+    /// Slide a clip along the row so it starts at `to_frame` (docs/04 §8.2).
+    ///
+    /// Its length, its trim and its map are untouched — the same frames play,
+    /// just earlier or later. Refused where it would start before the layer's
+    /// own zero.
+    #[frb(sync)]
+    pub fn slide_clip(&self, clip: Uuid, to_frame: i64) -> Result<(), BridgeError> {
+        let (mut clips, index) = self.clips_and_index(clip)?;
+        let comp = self.composition()?;
+        let layer = self.item()?;
+
+        // The travel, as a signed time: `to_frame` may be before the start of
+        // the composition, and a frame count is the only place the sign
+        // survives cleanly.
+        let start_frame = comp
+            .frame_rate
+            .frame_at(lumit_core::time::CompTime(clips[index].place_start));
+        let moved = to_frame - start_frame;
+        let step = comp
+            .frame_rate
+            .time_of_frame(moved.unsigned_abs() as i64)
+            .map_err(|_| BridgeError::InvalidTime)?
+            .0;
+        let zero = Rational::ZERO;
+        let delta = if moved < 0 {
+            zero.checked_sub(step)
+                .map_err(|_| BridgeError::InvalidTime)?
+        } else {
+            step
+        };
+
+        let wanted = clips[index]
+            .place_start
+            .checked_add(delta)
+            .map_err(|_| BridgeError::InvalidTime)?;
+
+        // **Before the layer's own zero, the layer moves.** A clip's place is
+        // layer time and cannot go negative, so dragging one back past the
+        // start carries the whole layer earlier — exactly what dragging any
+        // other layer's bar before the start of the composition does. Every
+        // *other* clip is pushed the same amount later in layer time, so it
+        // stays where it was on the comp's clock and only the dragged one
+        // actually moves.
+        if wanted.is_negative() {
+            let shift = Rational::ZERO
+                .checked_sub(wanted)
+                .map_err(|_| BridgeError::InvalidTime)?;
+            for c in clips.iter_mut() {
+                c.place_start = c
+                    .place_start
+                    .checked_add(shift)
+                    .map_err(|_| BridgeError::InvalidTime)?;
+            }
+            clips[index].place_start = Rational::ZERO;
+            let dropped = clips[index].id;
+            let clips = lumit_core::sequence::overwrite_with(&clips, dropped);
+            let offset = layer
+                .start_offset
+                .0
+                .checked_sub(shift)
+                .map_err(|_| BridgeError::InvalidTime)?;
+            return self.commit_clips_with_offset(clips, lumit_core::time::CompTime(offset));
+        }
+
+        clips[index] = clips[index].slide(delta).ok_or(BridgeError::InvalidTime)?;
+        let dropped = clips[index].id;
+        self.commit_clips(lumit_core::sequence::overwrite_with(&clips, dropped))
+    }
+
+    /// Trim one edge of a clip inward (docs/04 §8.2, non-ripple).
+    ///
+    /// `start_frame` and `end_frame` are where the clip's edges should land.
+    /// An edge moving **inward** crops the map there; one moving **outward**
+    /// carries it on at the speed it was already going (§7.3), which is what
+    /// lets a clip be lengthened again after a cut. Running past the media it
+    /// has is legal — that is overrun, and it renders as a held frame — so it
+    /// is not refused. Nothing else on the row moves: no ripple, ever (K-022).
+    #[frb(sync)]
+    pub fn trim_clip(
+        &self,
+        clip: Uuid,
+        start_frame: i64,
+        end_frame: i64,
+    ) -> Result<(), BridgeError> {
+        let (mut clips, index) = self.clips_and_index(clip)?;
+        let comp = self.composition()?;
+        let at = |f: i64| {
+            comp.frame_rate
+                .time_of_frame(f.max(0))
+                .map(|t| t.0)
+                .map_err(|_| BridgeError::InvalidTime)
+        };
+        let (start, end) = (at(start_frame)?, at(end_frame)?);
+        let mut next = clips[index].clone();
+        if end < next.place_end() {
+            next = next.trim_end(end).ok_or(BridgeError::InvalidTime)?;
+        } else if end > next.place_end() {
+            next = next.extend_end(end).ok_or(BridgeError::InvalidTime)?;
+        }
+        if start > next.place_start {
+            next = next.trim_start(start).ok_or(BridgeError::InvalidTime)?;
+        } else if start < next.place_start {
+            next = next.extend_start(start).ok_or(BridgeError::InvalidTime)?;
+        }
+        clips[index] = next;
+        self.commit_clips(clips)
+    }
+
+    /// This layer's clips and the index of `clip` among them.
+    #[frb(ignore)]
+    fn clips_and_index(
+        &self,
+        clip: Uuid,
+    ) -> Result<(Vec<lumit_core::sequence::Clip>, usize), BridgeError> {
+        let layer = self.item()?;
+        let lumit_core::model::LayerKind::Sequence { clips } = &layer.kind else {
+            return Err(BridgeError::NotSequence);
+        };
+        let index = clips
+            .iter()
+            .position(|c| c.id == clip)
+            .ok_or(BridgeError::InvalidLayer)?;
+        Ok((clips.clone(), index))
+    }
+
+    /// A thumbnail of the **first frame this clip shows** (K-248).
+    ///
+    /// Not the file's first frame: a clip after a cut starts part way in, and
+    /// a row of thumbnails that all showed frame zero would say nothing about
+    /// which clip is which. The moment is read through the clip's own map, so
+    /// a re-speeded clip still shows the frame it actually opens on.
+    ///
+    /// `None` when the media will not open, when the source is a comp rather
+    /// than footage (there is nothing on disk to decode), or in a build with
+    /// no media feature. Decoded once per (item, size, frame) and cached.
+    pub fn clip_thumbnail(
+        &self,
+        clip: Uuid,
+        max_edge: u32,
+    ) -> Result<Option<crate::api::state::BridgeRenderedFrame>, BridgeError> {
+        let (clips, index) = self.clips_and_index(clip)?;
+        let clip = &clips[index];
+        let lumit_core::sequence::ClipSource::Footage(item) = clip.source else {
+            return Ok(None);
+        };
+        // The clip's own opening source moment, through whatever map it plays
+        // by — which is the identity when it has none of its own.
+        let opens_at = clip.source_time(clip.place_start.to_f64());
+
+        #[cfg(feature = "media")]
+        {
+            let project = self.project()?;
+            // **Everything under the read lock, then let it go.** Decoding a
+            // video frame is slow enough that holding the project across it
+            // stalls every other reader, and the render worker is one of them
+            // (docs/14 §3). The lock comes back only to store the result.
+            let (path, at, cached) = {
+                let proj = project.read().map_err(|_| BridgeError::ReadFailed)?;
+                let doc = proj.store.snapshot();
+                let Some(lumit_core::model::ProjectItem::Footage(f)) = doc.item(item) else {
+                    return Ok(None);
+                };
+                let Some(path) = crate::api::footage::FootageReference::resolve_path(&proj, f)
+                else {
+                    return Ok(None);
+                };
+                // The media's own rate turns its seconds into its frames.
+                let fps = lumit_media::probe::probe(&path)
+                    .ok()
+                    .and_then(|i| i.video.map(|v| v.fps()))
+                    .filter(|fps| *fps > 0.0)
+                    .unwrap_or(1.0);
+                let at = (opens_at * fps).round() as i64;
+                let cached = crate::media::thumb_cached(&proj.media, item, max_edge, at);
+                (path, at, cached)
+            };
+
+            let thumb = match cached {
+                Some(hit) => hit,
+                None => {
+                    let Some(decoded) = crate::media::thumb_decode(&path, max_edge, at) else {
+                        return Ok(None);
+                    };
+                    if let Ok(mut proj) = project.write() {
+                        crate::media::thumb_store(&mut proj.media, item, max_edge, at, &decoded);
+                    }
+                    decoded
+                }
+            };
+            let (width, height, rgba) = thumb;
+            Ok(Some(crate::api::state::BridgeRenderedFrame {
+                frame: at.unsigned_abs(),
+                width,
+                height,
+                rgba,
+            }))
+        }
+
+        #[cfg(not(feature = "media"))]
+        {
+            let _ = (item, opens_at, max_edge);
+            Ok(None)
+        }
+    }
+
+    /// Turn a Sequence layer back into a plain Footage layer (K-248).
+    ///
+    /// The way out of the clip-editing surface, and it must exist: converting
+    /// in is offered to anyone, so a user who tries it has to be able to
+    /// change their mind.
+    ///
+    /// **It keeps the first clip's source and its trim, and nothing else.**
+    /// The cuts, the gaps and the per-clip ramps have no home on a layer that
+    /// holds one uncut piece of footage, and inventing somewhere to put them
+    /// would be worse than saying plainly that they go. A row of several clips
+    /// is refused outright rather than silently losing all but one: the user
+    /// can delete the clips they do not want first, which is a decision only
+    /// they can make.
+    #[frb(sync)]
+    pub fn convert_from_sequenced(&self) -> Result<(), BridgeError> {
+        use lumit_core::model::LayerKind;
+
+        let layer = self.item()?;
+        let LayerKind::Sequence { clips } = &layer.kind else {
+            return Err(BridgeError::NotSequence);
+        };
+        let [clip] = clips.as_slice() else {
+            return Err(BridgeError::ManyClips);
+        };
+        let lumit_core::sequence::ClipSource::Footage(item) = clip.source else {
+            return Err(BridgeError::NotFootage);
+        };
+        let comp = self.composition()?;
+        let index = comp
+            .layers
+            .iter()
+            .position(|l| l.id == self.layer_id)
+            .ok_or(BridgeError::InvalidLayer)?;
+
+        let mut converted = layer.clone();
+        converted.kind = LayerKind::Footage { item };
+        converted.interpolation = clip.interpolation.clone();
+        // The clip's own map becomes the layer's, which is exact: the clip
+        // spans the whole layer, so clip time and layer time are the same
+        // clock (K-249 made them the same kind of map, so nothing converts).
+        converted.retime = clip.retime.clone();
+
+        self.commit(lumit_core::Op::Batch {
+            ops: vec![
+                lumit_core::Op::RemoveLayer {
+                    comp: self.comp_id,
+                    layer: self.layer_id,
+                },
+                lumit_core::Op::AddLayer {
+                    comp: self.comp_id,
+                    index,
+                    layer: Box::new(converted),
+                },
+            ],
+        })
+    }
+
+    /// The shape of this Sequence layer — where its cuts fall and how each
+    /// piece is ramped — as text, for [`Self::paste_sequence_shape`] (K-248).
+    ///
+    /// `clip` reads that clip alone; `None` reads the whole row. What comes
+    /// back carries no *source*: applying it keeps the target's own media,
+    /// which is the point — cutting a depth pass to the same beats as the
+    /// footage it belongs to is work nobody should do twice by hand, and by
+    /// eye the two always drift.
+    #[frb(sync)]
+    pub fn copy_sequence_shape(&self, clip: Option<Uuid>) -> Result<String, BridgeError> {
+        let layer = self.item()?;
+        let lumit_core::model::LayerKind::Sequence { clips } = &layer.kind else {
+            return Err(BridgeError::NotSequence);
+        };
+        let taken: Vec<_> = match clip {
+            Some(id) => clips.iter().filter(|c| c.id == id).cloned().collect(),
+            None => clips.clone(),
+        };
+        serde_json::to_string(&lumit_core::sequence::SequenceShape::of(&taken))
+            .map_err(|_| BridgeError::InvalidItem)
+    }
+
+    /// Cut and ramp this Sequence layer to the shape in `text`, keeping its
+    /// own media (K-248).
+    ///
+    /// The row keeps the source its first clip already plays, and is rebuilt
+    /// with the pieces the shape describes. A shape longer than this row
+    /// reaches is applied as far as it goes: the piece straddling the end is
+    /// trimmed to it and anything wholly beyond is dropped, so a shape taken
+    /// from long footage lands sensibly on short footage rather than inventing
+    /// a row that runs past its media.
+    #[frb(sync)]
+    pub fn paste_sequence_shape(&self, text: String) -> Result<(), BridgeError> {
+        let layer = self.item()?;
+        let lumit_core::model::LayerKind::Sequence { clips } = &layer.kind else {
+            return Err(BridgeError::NotSequence);
+        };
+        let shape: lumit_core::sequence::SequenceShape =
+            serde_json::from_str(&text).map_err(|_| BridgeError::InvalidItem)?;
+        // The media this row plays, and how far it reaches — both taken from
+        // the row as it stands, because neither is the shape's business.
+        let source = clips.first().ok_or(BridgeError::NoClipThere)?.source;
+        let limit = lumit_core::sequence::clips_span(clips)
+            .map(|(_, end)| end)
+            .ok_or(BridgeError::NoClipThere)?;
+        let next = shape.apply(source, limit);
+        if next.is_empty() {
+            return Err(BridgeError::NoClipThere);
+        }
+        self.commit_clips(next)
+    }
+
+    /// Take one clip off the row, by id.
+    ///
+    /// What it leaves is a **gap**, not a closed row: nothing after it moves,
+    /// so every edit point still standing keeps the beat it was cut to
+    /// (K-022). `delete_clip_at` is the same thing aimed with the playhead;
+    /// this is the one the sequence view's own menu uses, because there the
+    /// clip has already been pointed at.
+    #[frb(sync)]
+    pub fn delete_clip(&self, clip: Uuid) -> Result<(), BridgeError> {
+        let (mut clips, index) = self.clips_and_index(clip)?;
+        clips.remove(index);
+        self.commit_clips(clips)
     }
 
     /// Razor: cut the clip under `frame` in two, at the playhead.
@@ -560,6 +1731,101 @@ impl LayerReference {
         let (left, right) = clips[index].cut(tau).ok_or(BridgeError::UncuttableClip)?;
         clips.splice(index..=index, [left, right]);
         self.commit_clips(clips)
+    }
+
+    /// Razor: split this layer in two at `frame` (docs/07 §4.4).
+    ///
+    /// After Effects' split, not a clip cut: the layer keeps everything it has —
+    /// its source, effects, masks, parent, label and keyframes — and the copy
+    /// takes the tail. Both halves keep the **same `start_offset`**, which is
+    /// what makes the cut invisible: layer time is measured from that offset
+    /// (K-213), so each half shows exactly the frames it showed before and every
+    /// keyframe stays where it was on the comp's clock.
+    ///
+    /// One `Batch`, so it is one undo step — docs/07 §4.7 requires that of every
+    /// destructive-feeling action, and a razor that took two would be two.
+    ///
+    /// The copy goes directly above the original, where a duplicate goes.
+    /// `frame` must land strictly inside the layer's span: cutting at either end
+    /// would make a layer of no length, so it is a calm error rather than a
+    /// zero-length layer nobody asked for.
+    #[frb(sync)]
+    pub fn split_at(&self, frame: i64) -> Result<(), BridgeError> {
+        let comp = self.composition()?;
+        let layer = self.item()?;
+        let t = comp
+            .frame_rate
+            .time_of_frame(frame)
+            .map_err(|_| BridgeError::InvalidTime)?;
+        if t.0 <= layer.in_point.0 || t.0 >= layer.out_point.0 {
+            return Err(BridgeError::NothingToSplit);
+        }
+        let index = comp
+            .layers
+            .iter()
+            .position(|l| l.id == self.layer_id)
+            .ok_or(BridgeError::InvalidLayer)?;
+
+        // A retimed layer gets a keyframe *at the cut*, on both halves (K-221).
+        //
+        // Both halves keep the whole map, so without this the two speed ramps
+        // stay welded together: editing one half's speed would bend the other
+        // half's curve, because they are the same curve. A key at the cut gives
+        // each half an end of its own to hold. It is inserted preserving the
+        // shape, so the cut itself changes nothing that plays — and it goes in
+        // *before* the clone, which is what puts it on both halves.
+        // **Only a layer that has actually been retimed** (K-236). Switching
+        // Retime on installs the identity map, and a map nobody has shaped
+        // needs no key at the cut: both halves play their source at their own
+        // clock whatever happens to the other. Keys appearing on a layer the
+        // user never retimed are keys they then have to notice and remove.
+        let retimed = layer
+            .retime
+            .as_ref()
+            .is_some_and(|r| !lumit_core::model::Layer::is_identity_retime(r));
+        let mut head = layer.clone();
+        if let Some(retime) = head.retime.as_mut().filter(|_| retimed) {
+            // Layer time, not comp time: keyframes live in the layer's own
+            // clock, measured from its start offset (K-213).
+            // A subtraction that cannot overflow is still a subtraction that
+            // can: an unrepresentable time leaves the map alone rather than
+            // taking the cut down with it.
+            if let Ok(local) = t.0.checked_sub(head.start_offset.0) {
+                retime.insert_key_preserving_shape(local);
+            }
+        }
+
+        let mut tail = head.clone();
+        tail.id = Uuid::now_v7();
+        for effect in &mut tail.effects {
+            effect.id = Uuid::now_v7();
+        }
+        tail.in_point = t;
+
+        let mut ops = vec![lumit_core::Op::SetLayerSpan {
+            comp: self.comp_id,
+            layer: self.layer_id,
+            in_point: layer.in_point,
+            out_point: t,
+            // Untouched: the offset is what makes both halves show the frames
+            // they showed before the cut.
+            start_offset: layer.start_offset,
+        }];
+        // The head keeps its id, so its new map is written to it by name; the
+        // tail carries its copy of the map in the layer being added.
+        if head.retime != layer.retime {
+            ops.push(lumit_core::Op::SetRetimeProperty {
+                comp: self.comp_id,
+                layer: self.layer_id,
+                retime: head.retime.clone(),
+            });
+        }
+        ops.push(lumit_core::Op::AddLayer {
+            comp: self.comp_id,
+            index,
+            layer: Box::new(tail),
+        });
+        self.commit(lumit_core::Op::Batch { ops })
     }
 
     /// Delete the clip under `frame`, leaving a gap.
@@ -587,7 +1853,7 @@ impl LayerReference {
         use lumit_core::time::Rational;
 
         let layer = self.item()?;
-        let LayerKind::Footage { item, retime } = &layer.kind else {
+        let LayerKind::Footage { item } = &layer.kind else {
             return Err(BridgeError::NotFootage);
         };
         let comp = self.composition()?;
@@ -612,10 +1878,20 @@ impl LayerReference {
                 source_out: duration,
                 place_start: Rational::ZERO,
                 place_duration: duration,
-                retime: retime.clone().unwrap_or_else(|| {
-                    lumit_core::retime::Retime::identity(duration, Rational::ZERO)
-                }),
-                interpolation: Default::default(),
+                // **The layer's own map comes with it.** A layer's Retime is
+                // keyed in layer time and a clip's in clip time, and here they
+                // are the same clock: the clip spans the whole layer, starting
+                // at its zero. K-249 made the two the same kind of map, so
+                // nothing is converted — it is the same keyframes, read
+                // against the same instant. (They stop coinciding the moment
+                // the clip is cut or slid, but by then the map is the clip's
+                // and travels with it.)
+                //
+                // The mirror of `convert_from_sequenced`, which brings it
+                // back the same way: converting one direction and back must
+                // leave the layer playing what it played.
+                retime: layer.retime.clone(),
+                interpolation: layer.interpolation.clone(),
                 extra: serde_json::Map::new(),
             }],
         };
@@ -670,11 +1946,62 @@ impl LayerReference {
     }
 
     #[frb(ignore)]
+    /// Write a Sequence layer's clips, and bring its bar with them.
+    ///
+    /// **A Sequence layer's length is its clips' length** (K-248): first
+    /// clip's start to last clip's end, so deleting an outermost clip or
+    /// dragging one further out moves the end of the bar with it. Interior
+    /// gaps stay gaps — they render transparent and are never closed (K-022).
+    ///
+    /// Batched with the clips rather than folded into `SetSequenceClips`,
+    /// because the op's inverse is "the clips as they were" and a span quietly
+    /// changed inside it would not come back on undo. A batch inverts
+    /// member-wise, so both halves undo together for free.
     fn commit_clips(&self, clips: Vec<lumit_core::sequence::Clip>) -> Result<(), BridgeError> {
-        self.commit(lumit_core::Op::SetSequenceClips {
+        let offset = self.item()?.start_offset;
+        self.commit_clips_with_offset(clips, offset)
+    }
+
+    /// [`Self::commit_clips`], with the layer's own zero moving too — what a
+    /// clip dragged back past the start of the row needs, since a clip's place
+    /// is layer time and cannot go negative.
+    #[frb(ignore)]
+    fn commit_clips_with_offset(
+        &self,
+        clips: Vec<lumit_core::sequence::Clip>,
+        start_offset: lumit_core::time::CompTime,
+    ) -> Result<(), BridgeError> {
+        let mut layer = self.item()?;
+        layer.start_offset = start_offset;
+        let set_clips = lumit_core::Op::SetSequenceClips {
             comp: self.comp_id,
             layer: self.layer_id,
-            clips,
+            clips: clips.clone(),
+        };
+        // Clip places are in layer time; a span is in comp time, and the two
+        // differ by the layer's own zero.
+        let Some((start, end)) = lumit_core::sequence::clips_span(&clips) else {
+            return self.commit(set_clips);
+        };
+        let offset = layer.start_offset.0;
+        let (Ok(in_point), Ok(out_point)) = (offset.checked_add(start), offset.checked_add(end))
+        else {
+            return self.commit(set_clips);
+        };
+        if in_point == layer.in_point.0 && out_point == layer.out_point.0 {
+            return self.commit(set_clips);
+        }
+        self.commit(lumit_core::Op::Batch {
+            ops: vec![
+                set_clips,
+                lumit_core::Op::SetLayerSpan {
+                    comp: self.comp_id,
+                    layer: self.layer_id,
+                    in_point: lumit_core::time::CompTime(in_point),
+                    out_point: lumit_core::time::CompTime(out_point),
+                    start_offset,
+                },
+            ],
         })
     }
 
@@ -693,6 +2020,7 @@ impl LayerReference {
             LayerKind::Precomp { comp } => comp,
             LayerKind::Solid { def } => def,
             LayerKind::Text { .. }
+            | LayerKind::Shape { .. }
             | LayerKind::Camera { .. }
             | LayerKind::Sequence { .. }
             | LayerKind::Adjustment
@@ -719,6 +2047,7 @@ impl LayerReference {
             K::Camera { .. } => BridgeLayerKind::Camera,
             K::Sequence { .. } => BridgeLayerKind::Sequence,
             K::Adjustment => BridgeLayerKind::Adjustment,
+            K::Shape { .. } => BridgeLayerKind::Shape,
             K::Null => BridgeLayerKind::NullLayer,
         })
     }
@@ -804,6 +2133,32 @@ impl LayerReference {
     pub fn set_label(&self, label: u8) -> Result<(), BridgeError> {
         let (comp, layer) = (self.comp_id, self.layer_id);
         self.commit(lumit_core::Op::SetLayerLabel { comp, layer, label })
+    }
+
+    /// This layer's own markers (docs/03 §11), drawn on its bar rather than on
+    /// the comp's ruler.
+    ///
+    /// The layer's, not the source composition's: a comp dropped into another
+    /// brings a **copy** along, and from then on the two lists are unrelated
+    /// (K-254). Deleting one here never reaches into another composition.
+    #[frb(sync)]
+    pub fn get_markers(&self) -> Result<Vec<BridgeMarker>, BridgeError> {
+        Ok(self.item()?.markers.iter().map(bridge_marker).collect())
+    }
+
+    /// Replace this layer's whole marker list — one op, trivially invertible,
+    /// the same shape as the composition's.
+    #[frb(sync)]
+    pub fn set_markers(&self, markers: Vec<BridgeMarker>) -> Result<(), BridgeError> {
+        // Merged onto the layer's current list, so a marker's kind, duration
+        // and unknown fields survive a drag or a rename (K-270).
+        let markers = core_markers(markers, &self.item()?.markers)?;
+        let (comp, layer) = (self.comp_id, self.layer_id);
+        self.commit(lumit_core::Op::SetLayerMarkers {
+            comp,
+            layer,
+            markers,
+        })
     }
 
     /// Where this layer sits on the comp timeline.
@@ -990,65 +2345,194 @@ impl LayerReference {
     /// This layer's whole transform.
     #[frb(sync)]
     pub fn get_transform(&self) -> Result<BridgeTransform, BridgeError> {
-        Ok(BridgeTransform::read(&self.item()?.transform))
+        let layer = self.item()?;
+        Ok(BridgeTransform::read_at(
+            &layer.transform,
+            layer.start_offset.0,
+        ))
     }
 
-    /// Whether this layer's source actually carries sound.
+    /// The layer's source audio summarised across `[start_seconds,
+    /// end_seconds)` of the **source's own clock**, in `buckets` buckets
+    /// (K-280, superseding the fixed 2 048 of K-172).
     ///
-    /// What decides whether the Audio group appears under a layer at all
-    /// (docs/07 §4.3): every layer *has* a Volume property in the model, but on
-    /// a solid or a title it can never be heard, and a control that cannot do
-    /// anything is worse than no control. Footage is the case that matters, and
-    /// the answer is the container's own: a file with an audio stream.
+    /// Source time, not comp time, is what makes a trim or a drag free: the
+    /// peaks belong to the file, so the Timeline's lane maps them through the
+    /// live in/out/offset each paint and the transients travel with the bar. The
+    /// *window* is what makes the resolution follow the zoom — a lane showing
+    /// two seconds asks for two seconds, and gets a bucket per pixel column of
+    /// them, however far in the Timeline is zoomed.
     ///
-    /// Probing opens the file with FFmpeg, so this is deliberately **not**
-    /// `#[frb(sync)]`. A layer whose media cannot be resolved answers false —
-    /// a missing file is not a reason to offer a volume control.
-    /// The layer's source audio as `buckets` (min, max) peak pairs across the
-    /// WHOLE source, interleaved `[min0, max0, min1, max1, …]` (K-172). The
-    /// peaks belong to the file, not the placement, so a trim or a drag never
-    /// invalidates them — the Timeline's waveform lane maps them through the
-    /// live in/out/offset each paint. Deliberately not `#[frb(sync)]`: it
-    /// decodes the whole track. Empty when the layer has no decodable audio.
-    // ponytail: decodes the file once per asking layer per session — no
-    // persistent peak files yet (docs/TODO), and two layers on one file
-    // decode twice. Cache per item when a real project feels it.
-    pub fn audio_peaks(&self, buckets: u32) -> Result<BridgeAudioPeaks, BridgeError> {
-        let empty = BridgeAudioPeaks {
-            duration_seconds: 0.0,
-            pairs: Vec::new(),
-        };
+    /// `multiwave` asks for the three-band stack (bass, middle, treble) instead
+    /// of the single full-range wave.
+    ///
+    /// Deliberately not `#[frb(sync)]`: the first ask for a file decodes it.
+    /// Every later ask, at every zoom, is served from the session's peak cache
+    /// ([`crate::peaks`]) and costs a walk over a few thousand summaries.
+    /// Empty when the layer has no decodable audio.
+    pub fn audio_peaks(
+        &self,
+        start_seconds: f64,
+        end_seconds: f64,
+        buckets: u32,
+        multiwave: bool,
+    ) -> Result<BridgeAudioPeaks, BridgeError> {
         let layer = self.item()?;
         let lumit_core::model::LayerKind::Footage { item, .. } = layer.kind else {
-            return Ok(empty);
-        };
-        let proj = self.project()?;
-        let proj = proj.read().map_err(|_| BridgeError::ReadFailed)?;
-        let snapshot = proj.store.snapshot();
-        let Some(lumit_core::model::ProjectItem::Footage(footage)) = snapshot.item(item) else {
-            return Ok(empty);
+            return Ok(BridgeAudioPeaks::empty());
         };
 
         #[cfg(feature = "media")]
         {
-            let Some(path) = crate::api::footage::FootageReference::resolve_path(&proj, footage)
-            else {
-                return Ok(empty);
+            // The read lock goes no further than resolving the path: building a
+            // summary means decoding the file, and holding the project across
+            // that stalls every other reader (docs/14 §3).
+            let path = {
+                let proj = self.project()?;
+                let proj = proj.read().map_err(|_| BridgeError::ReadFailed)?;
+                let snapshot = proj.store.snapshot();
+                let Some(lumit_core::model::ProjectItem::Footage(footage)) = snapshot.item(item)
+                else {
+                    return Ok(BridgeAudioPeaks::empty());
+                };
+                crate::api::footage::FootageReference::resolve_path(&proj, footage)
             };
-            let Ok(buffer) = lumit_media::audio::decode_all(&path, 48_000) else {
-                return Ok(empty);
+            let Some(path) = path else {
+                return Ok(BridgeAudioPeaks::empty());
             };
-            let pairs = lumit_audio::mix::waveform_peaks(&buffer.samples, buckets as usize);
+            let Some(pyramid) = crate::peaks::pyramid_for(&path) else {
+                return Ok(BridgeAudioPeaks::empty());
+            };
+
+            let buckets = buckets.min(MAX_PEAK_BUCKETS) as usize;
+            let bands = BridgeAudioPeaks::bands_of(multiwave);
+            let mut values = Vec::with_capacity(bands.len() * buckets * 3);
+            for band in &bands {
+                for block in pyramid.range(*band, start_seconds, end_seconds, buckets) {
+                    values.extend_from_slice(&[block.min, block.max, block.rms]);
+                }
+            }
             Ok(BridgeAudioPeaks {
-                duration_seconds: buffer.duration_seconds(),
-                pairs: pairs.into_iter().flat_map(|(lo, hi)| [lo, hi]).collect(),
+                duration_seconds: pyramid.duration_seconds(),
+                start_seconds,
+                end_seconds,
+                bands: bands.len() as u32,
+                buckets: buckets as u32,
+                values,
             })
         }
 
         #[cfg(not(feature = "media"))]
         {
-            let _ = buckets;
-            Ok(empty)
+            // Nothing decodes without FFmpeg, so the peaks are empty and the
+            // lane draws nothing — the documented shape of a media-less build,
+            // not a failure (docs/17 §Feature gates).
+            let _ = (item, start_seconds, end_seconds, buckets, multiwave);
+            Ok(BridgeAudioPeaks::empty())
+        }
+    }
+
+    /// One Sequence clip's audio, summarised in `buckets` across the clip's own
+    /// placed span — the waveform a clip draws inside itself (K-280).
+    ///
+    /// Bucketed in **clip-local placed time**, not source time, because a clip
+    /// is the one thing on the timeline whose source clock is not a straight
+    /// line: a ramp plays its middle slowly and its end fast, and buckets taken
+    /// evenly in source time would put the transients in the wrong columns. So
+    /// each bucket is mapped through the clip's own map here, where that map
+    /// lives, and the lane draws bucket `i` at column `i` of the clip's box.
+    /// Sliding the clip along the row moves the picture with it for free; a
+    /// trim changes the mapping, so the lane asks again when the trim commits.
+    ///
+    /// `[start_seconds, end_seconds)` is the stretch of the clip's own placed
+    /// clock to summarise, clamped to the clip; pass the clip's whole span for
+    /// the whole clip, or the visible part of it to keep the detail level with
+    /// the zoom. An empty or backwards range is read as the whole clip.
+    ///
+    /// `multiwave` asks for the three-band stack, exactly as for a layer. Empty
+    /// for a clip cut from a comp or from media with no sound.
+    pub fn clip_audio_peaks(
+        &self,
+        clip: Uuid,
+        start_seconds: f64,
+        end_seconds: f64,
+        buckets: u32,
+        multiwave: bool,
+    ) -> Result<BridgeAudioPeaks, BridgeError> {
+        let (clips, index) = self.clips_and_index(clip)?;
+        let Some(clip) = clips.get(index) else {
+            return Ok(BridgeAudioPeaks::empty());
+        };
+        let lumit_core::sequence::ClipSource::Footage(item) = clip.source else {
+            return Ok(BridgeAudioPeaks::empty());
+        };
+
+        #[cfg(feature = "media")]
+        {
+            let path = {
+                let proj = self.project()?;
+                let proj = proj.read().map_err(|_| BridgeError::ReadFailed)?;
+                let snapshot = proj.store.snapshot();
+                let Some(lumit_core::model::ProjectItem::Footage(footage)) = snapshot.item(item)
+                else {
+                    return Ok(BridgeAudioPeaks::empty());
+                };
+                crate::api::footage::FootageReference::resolve_path(&proj, footage)
+            };
+            let Some(path) = path else {
+                return Ok(BridgeAudioPeaks::empty());
+            };
+            let Some(pyramid) = crate::peaks::pyramid_for(&path) else {
+                return Ok(BridgeAudioPeaks::empty());
+            };
+
+            let buckets = buckets.clamp(1, MAX_PEAK_BUCKETS) as usize;
+            let clip_start = clip.place_start.to_f64();
+            let clip_end = clip_start + clip.place_duration.to_f64();
+            let (start, end) = if end_seconds > start_seconds {
+                (
+                    start_seconds.max(clip_start).min(clip_end),
+                    end_seconds.max(clip_start).min(clip_end),
+                )
+            } else {
+                (clip_start, clip_end)
+            };
+            if end <= start {
+                return Ok(BridgeAudioPeaks::empty());
+            }
+            let step = (end - start) / buckets as f64;
+            // Where each bucket's edge lands in the source, through the clip's
+            // map. One more edge than buckets, so neighbouring buckets share
+            // theirs and no sliver of source falls between two columns.
+            let edges: Vec<f64> = (0..=buckets)
+                .map(|i| clip.source_time(start + step * i as f64))
+                .collect();
+            let bands = BridgeAudioPeaks::bands_of(multiwave);
+            let mut values = Vec::with_capacity(bands.len() * buckets * 3);
+            for band in &bands {
+                for i in 0..buckets {
+                    let (Some(&a), Some(&b)) = (edges.get(i), edges.get(i + 1)) else {
+                        values.extend_from_slice(&[0.0, 0.0, 0.0]);
+                        continue;
+                    };
+                    let block = pyramid.window(*band, a, b);
+                    values.extend_from_slice(&[block.min, block.max, block.rms]);
+                }
+            }
+            Ok(BridgeAudioPeaks {
+                duration_seconds: pyramid.duration_seconds(),
+                start_seconds: start,
+                end_seconds: end,
+                bands: bands.len() as u32,
+                buckets: buckets as u32,
+                values,
+            })
+        }
+
+        #[cfg(not(feature = "media"))]
+        {
+            let _ = (item, start_seconds, end_seconds, buckets, multiwave);
+            Ok(BridgeAudioPeaks::empty())
         }
     }
 
@@ -1100,6 +2584,17 @@ impl LayerReference {
         }
     }
 
+    /// Whether this layer's source actually carries sound.
+    ///
+    /// What decides whether the Audio group appears under a layer at all
+    /// (docs/07 §4.3): every layer *has* a Volume property in the model, but on
+    /// a solid or a title it can never be heard, and a control that cannot do
+    /// anything is worse than no control. Footage is the case that matters, and
+    /// the answer is the container's own: a file with an audio stream.
+    ///
+    /// Probing opens the file with FFmpeg, so this is deliberately **not**
+    /// `#[frb(sync)]`. A layer whose media cannot be resolved answers false —
+    /// a missing file is not a reason to offer a volume control.
     pub fn has_audio(&self) -> Result<bool, BridgeError> {
         let layer = self.item()?;
         let lumit_core::model::LayerKind::Footage { item, .. } = layer.kind else {
@@ -1138,7 +2633,11 @@ impl LayerReference {
     /// hides the row.
     #[frb(sync)]
     pub fn get_retime_property(&self) -> Result<Option<BridgeScalar>, BridgeError> {
-        Ok(self.item()?.retime.as_ref().map(BridgeScalar::read))
+        let layer = self.item()?;
+        Ok(layer
+            .retime
+            .as_ref()
+            .map(|r| BridgeScalar::read_at(r, layer.start_offset.0)))
     }
 
     /// Turn Retime on or off (Ctrl+Alt+T), returning whether it is now on.
@@ -1148,24 +2647,132 @@ impl LayerReference {
     /// to key, exactly as AE's Time Remap does. Off removes the property
     /// rather than flattening it: "not retimed" and "retimed to exactly 1×" are
     /// different states in the file, and only the first skips the map.
+    ///
+    /// Off also re-hangs the layer on its source (K-212). A retimed layer can be
+    /// any length, so when the map goes away the layer has to be given one
+    /// again: it keeps its in point and the frame showing there, then plays at
+    /// source rate until the source runs out or its own out point arrives,
+    /// whichever comes first. It never grows. One undo step covers both.
     #[frb(sync)]
     pub fn toggle_retime_property(&self) -> Result<bool, BridgeError> {
         let layer = self.item()?;
+        // **A Sequence layer has no Retime of its own** (K-075): its clips
+        // each carry one, edited in the sequence view, and a second map over
+        // the whole row would be a rival to those — the very thing K-249
+        // spent itself ending. Refused rather than quietly ignored, so the
+        // menu and the chord can say why.
+        if matches!(layer.kind, lumit_core::model::LayerKind::Sequence { .. }) {
+            return Err(BridgeError::NotRetimeable);
+        }
         let on = layer.retime.is_none();
+        // The layer's own span in ITS time, which is where the two keys belong
+        // (K-213): its comp in and out less where its zero sits. A layer that
+        // has been moved or trimmed does not start at its own zero, and keys at
+        // zero would sit at the start of the composition on screen and leave
+        // the tail past `duration` frozen on one frame.
         let retime = on.then(|| {
-            let duration = layer
-                .out_point
-                .0
-                .checked_sub(layer.in_point.0)
-                .unwrap_or(layer.out_point.0);
-            Layer::identity_retime(duration)
+            let local = |t: lumit_core::time::CompTime| {
+                t.0.checked_sub(layer.start_offset.0).unwrap_or(t.0)
+            };
+            Layer::identity_retime(local(layer.in_point), local(layer.out_point))
         });
-        self.commit(lumit_core::Op::SetRetimeProperty {
+        let removal = lumit_core::Op::SetRetimeProperty {
             comp: self.comp_id,
             layer: self.layer_id,
             retime,
+        };
+        // Switching it off re-hangs the layer on its source (K-212); switching
+        // it on changes nothing but the map.
+        self.commit(if on {
+            removal
+        } else {
+            self.unretime_op(&layer, removal)
         })?;
         Ok(on)
+    }
+
+    /// One op that switches a Retime off: `removal` — whichever of the two
+    /// retime routes is being cleared — with the layer's span re-anchored on
+    /// the frame that was showing, as a single undo step (K-212).
+    ///
+    /// Plain `removal` when the new span cannot be worked out (unreadable
+    /// source time, or arithmetic that would overflow): switching Retime off
+    /// must always work, even when nothing can be said about the source.
+    #[frb(ignore)]
+    pub(crate) fn unretime_op(&self, layer: &Layer, removal: lumit_core::Op) -> lumit_core::Op {
+        let Some((in_point, out_point, start_offset)) = self.reanchored_span(layer) else {
+            return removal;
+        };
+        lumit_core::Op::Batch {
+            ops: vec![
+                removal,
+                lumit_core::Op::SetLayerSpan {
+                    comp: self.comp_id,
+                    layer: self.layer_id,
+                    in_point,
+                    out_point,
+                    start_offset,
+                },
+            ],
+        }
+    }
+
+    /// Where this layer's span lands once its Retime goes away: anchored on the
+    /// source moment showing at its in point, running at source rate until the
+    /// source or its own out point ends it (`lumit_core::ops::unretimed_span`).
+    ///
+    /// The anchor is snapped to the **comp's** frame grid rather than kept at
+    /// full precision, because the start offset it produces is what every later
+    /// trim measures from: an offset sitting between two frames puts the
+    /// layer's own zero between two frames for good, and the timeline edits in
+    /// whole frames.
+    #[frb(ignore)]
+    fn reanchored_span(&self, layer: &Layer) -> Option<(CompTime, CompTime, CompTime)> {
+        let rate = self.composition().ok()?.frame_rate;
+        // The source moment showing at the in point, read through the map that
+        // is about to be removed.
+        let local = layer.in_point.0.checked_sub(layer.start_offset.0).ok()?;
+        let seconds = layer.source_time_at(local.to_f64());
+        let approximate = CompTime(Rational::from_f64_on_grid(seconds, Rational::FLICK_DEN).ok()?);
+        let anchor = SourceTime(rate.time_of_frame(rate.frame_at(approximate)).ok()?.0);
+        lumit_core::ops::unretimed_span(
+            layer.in_point,
+            layer.out_point,
+            anchor,
+            self.source_length(layer),
+        )
+    }
+
+    /// How long this layer's source runs, when it has one that can be measured:
+    /// a nested comp's duration, or a footage file's probed length. `None` for
+    /// every generated kind, for media that will not read, and in builds
+    /// without the `media` feature — "no length" is never a guessed length.
+    #[frb(ignore)]
+    fn source_length(&self, layer: &Layer) -> Option<Duration> {
+        let proj = self.project().ok()?;
+        let proj = proj.read().ok()?;
+        let doc = proj.store.snapshot();
+        match layer.kind {
+            lumit_core::model::LayerKind::Precomp { comp } => match doc.item(comp) {
+                Some(lumit_core::model::ProjectItem::Composition(inner)) => Some(inner.duration),
+                _ => None,
+            },
+            #[cfg(feature = "media")]
+            lumit_core::model::LayerKind::Footage { item, .. } => {
+                let Some(lumit_core::model::ProjectItem::Footage(footage)) = doc.item(item) else {
+                    return None;
+                };
+                let path = crate::api::footage::FootageReference::resolve_path(&proj, footage)?;
+                let info = lumit_media::probe::probe(&path).ok()?;
+                // The one sanctioned route back from the container's floating
+                // point duration is an explicit grid (docs/impl/rational-time.md
+                // §4) — the same millisecond grid `media_info` reports on.
+                Some(Duration(
+                    Rational::from_f64_on_grid(info.duration_seconds, 1000).ok()?,
+                ))
+            }
+            _ => None,
+        }
     }
 
     /// Replace the Retime property's whole animation, as one undoable step —
@@ -1174,8 +2781,9 @@ impl LayerReference {
     /// only exists once it is.
     #[frb(sync)]
     pub fn set_retime_property(&self, value: BridgeScalar) -> Result<(), BridgeError> {
-        let animation = value.animation()?;
-        let mut retime = self.item()?.retime.clone().ok_or(BridgeError::NotRetimed)?;
+        let layer = self.item()?;
+        let animation = value.animation_at(layer.start_offset.0)?;
+        let mut retime = layer.retime.clone().ok_or(BridgeError::NotRetimed)?;
         retime.animation = animation;
         self.commit(lumit_core::Op::SetRetimeProperty {
             comp: self.comp_id,
@@ -1187,15 +2795,18 @@ impl LayerReference {
     /// This layer's Volume, in dB (docs/09 §6): 0 is unity.
     #[frb(sync)]
     pub fn get_volume_db(&self) -> Result<BridgeScalar, BridgeError> {
-        Ok(BridgeScalar::read(&self.item()?.volume_db))
+        let layer = self.item()?;
+        Ok(BridgeScalar::read_at(
+            &layer.volume_db,
+            layer.start_offset.0,
+        ))
     }
 
     /// Set the Volume, as one undoable step — the same coarse-grained shape as
     /// a transform property, and for the same invertibility reason.
     #[frb(sync)]
     pub fn set_volume_db(&self, value: BridgeScalar) -> Result<(), BridgeError> {
-        let animation = value.animation()?;
-        self.item()?;
+        let animation = value.animation_at(self.item()?.start_offset.0)?;
 
         let proj = self.project()?;
         let proj = proj.write().map_err(|_| BridgeError::WriteFailed)?;
@@ -1233,7 +2844,7 @@ impl LayerReference {
         if props.is_empty() {
             return Ok(());
         }
-        self.item()?;
+        let offset = self.item()?.start_offset.0;
 
         let mut ops = Vec::with_capacity(props.len());
         for (prop, value) in props.into_iter().zip(values) {
@@ -1241,7 +2852,7 @@ impl LayerReference {
                 comp: self.comp_id,
                 layer: self.layer_id,
                 prop: prop.core(),
-                animation: value.animation()?,
+                animation: value.animation_at(offset)?,
             });
         }
         // One op stays one op; a batch of one would undo the same but reads
@@ -1267,10 +2878,10 @@ impl LayerReference {
         prop: BridgeTransformProp,
         value: BridgeScalar,
     ) -> Result<(), BridgeError> {
-        let animation = value.animation()?;
         // Confirm the layer is there before committing, so a stale reference is
-        // a calm error rather than a failed op.
-        self.item()?;
+        // a calm error rather than a failed op — and its offset is what carries
+        // the keys back onto its own clock (K-213).
+        let animation = value.animation_at(self.item()?.start_offset.0)?;
 
         let proj = self.project()?;
         let proj = proj.write().map_err(|_| BridgeError::WriteFailed)?;
@@ -1292,7 +2903,7 @@ impl LayerReference {
         Ok(layer
             .effects
             .iter()
-            .map(|f| BridgeEffectInstance::new(f.clone()))
+            .map(|f| BridgeEffectInstance::new(f.clone(), layer.start_offset.0))
             .collect())
     }
 
@@ -1338,12 +2949,17 @@ impl LayerReference {
     #[frb(sync)]
     pub fn add_effect(&self, name: String) -> Result<(), BridgeError> {
         let comp = self.composition()?;
-        let instance = lumit_core::fx::instantiate_for_raster(
+        let mut instance = lumit_core::fx::instantiate_for_raster(
             &name,
             f64::from(comp.width),
             f64::from(comp.height),
         )
         .ok_or(BridgeError::UnknownEffectName)?;
+        // A `self_default` layer reference starts pointed at the layer the
+        // effect is landing on (K-288, docs/impl/layer-input.md): the Lens
+        // flare's Matte source, whose natural reading is "the lights in this
+        // picture" — and on an adjustment layer, the composite below.
+        lumit_core::fx::point_self_layer_params_at(&mut instance, self.layer_id);
 
         self.with_effects(move |effects| {
             effects.push(instance);
@@ -1561,4 +3177,15 @@ pub struct BridgeRevealGroups {
     /// Whether anything qualified at all. The panel leaves the layer's own
     /// twirl shut when nothing did, rather than opening onto an empty list.
     pub any: bool,
+}
+
+/// The last source position a map reaches — what the clip asks of its source.
+#[frb(ignore)]
+fn map_end_value(map: &lumit_core::anim::Property) -> Option<lumit_core::time::Rational> {
+    let lumit_core::anim::Animation::Keyframed(keys) = &map.animation else {
+        return None;
+    };
+    let last = keys.last()?;
+    lumit_core::time::Rational::from_f64_on_grid(last.value, lumit_core::time::Rational::FLICK_DEN)
+        .ok()
 }

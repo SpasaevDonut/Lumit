@@ -16,6 +16,9 @@
 // only the one you want — which is what the spec asks for and what keeps a busy
 // comp from becoming a wall of numbers.
 
+import 'package:flutter/services.dart';
+
+import 'package:lumit_flutter/l10n/strings.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
@@ -82,6 +85,27 @@ final class FoldVolumeRow extends LayerFoldRow {
 final class FoldRetimeRow extends LayerFoldRow {
   final BridgeScalar scalar;
   const FoldRetimeRow(this.scalar, {required int depth}) : super(depth);
+}
+
+/// One mask on the layer (K-222): its name, and the switches that decide how it
+/// gates the picture.
+final class FoldMaskRow extends LayerFoldRow {
+  final BridgeMask mask;
+  const FoldMaskRow(this.mask, {required int depth}) : super(depth);
+}
+
+/// One piece of a shape layer's art (K-237): its name, its fill and its
+/// outline — the row that makes a drawn shape editable after the fact.
+final class FoldShapeRow extends LayerFoldRow {
+  final BridgeShapeItem item;
+  const FoldShapeRow(this.item, {required int depth}) : super(depth);
+}
+
+/// One paint stroke on the layer (K-227): its name, so a stroke can be found,
+/// renamed and deleted after it was painted.
+final class FoldStrokeRow extends LayerFoldRow {
+  final BridgeStroke stroke;
+  const FoldStrokeRow(this.stroke, {required int depth}) : super(depth);
 }
 
 /// The waveform lane (K-172): the outline names it, the lane side draws the
@@ -233,13 +257,15 @@ bool moveLaneKey({
 /// `startsWith` is the whole of the "is this my ancestor" test.
 String foldRowPath(String layerId, LayerFoldRow row) => switch (row) {
       FoldGroupRow(:final path) => path,
-      FoldTransformRow(:final group) =>
-        '${transformPath(layerId)}/${group.axes.first.prop.name}',
+      FoldTransformRow(:final group) => transformGroupPath(layerId, group),
       FoldEffectParamRow(:final info, :final param) =>
         '${effectPath(layerId, info.id.toString())}/${param.id}',
       FoldVolumeRow() => '${audioPath(layerId)}/volume',
       FoldRetimeRow() => retimePath(layerId),
       FoldWaveformRow() => waveformPath(layerId),
+      FoldMaskRow(:final mask) => '${masksPath(layerId)}/${mask.id}',
+      FoldStrokeRow(:final stroke) => '${paintPath(layerId)}/${stroke.id}',
+      FoldShapeRow(:final item) => '${contentsPath(layerId)}/${item.id}',
     };
 
 /// Whether [path] sits under [ancestor] — a property under its group, a
@@ -253,12 +279,49 @@ String retimePath(String layerId) => '$layerId/retime';
 /// The path of a layer's Transform group in the open set.
 String transformPath(String layerId) => '$layerId/transform';
 
+/// The path of one Transform row — Position, Scale, Rotation and the rest.
+///
+/// Named after the group's first axis rather than its label, because the label
+/// is what the row *says* and the axis is what it *is*: renaming "Anchor point"
+/// would otherwise quietly unbind the `A` key from the row it reveals.
+String transformGroupPath(String layerId, TransformGroup group) =>
+    '${transformPath(layerId)}/${group.axes.first.prop.name}';
+
 /// The path of a layer's Effects group.
 String effectsPath(String layerId) => '$layerId/effects';
 
 /// The path of one effect within the Effects group.
 String effectPath(String layerId, String effectId) =>
     '$layerId/effects/$effectId';
+
+/// The effect instance a fold path names, or null when the path is not one
+/// effect's heading (it is the Effects group itself, one parameter under an
+/// effect, or something else entirely). Used by the render-time indicator to
+/// put an effect's measured cost on its own row (docs/13 §7.1), and by the
+/// Timeline's heading menu to know which rows can be copied from (K-275).
+/// Whether a click is carrying one of the selection modifiers — Ctrl (Cmd) or
+/// Shift. A heading twirls on a plain click and only *picks* on a modified one
+/// (K-300): a Shift-click running over a stack of effects must not open every
+/// heading it passes.
+bool get isModifiedClick =>
+    HardwareKeyboard.instance.isControlPressed ||
+    HardwareKeyboard.instance.isMetaPressed ||
+    HardwareKeyboard.instance.isShiftPressed;
+
+String? effectIdOfPath(String path) {
+  final parts = path.split('/');
+  if (parts.length != 3 || parts[1] != 'effects') return null;
+  return parts[2];
+}
+
+/// The path of a layer's Masks group.
+String masksPath(String layerId) => '$layerId/masks';
+
+/// The path of a shape layer's Contents group.
+String contentsPath(String layerId) => '$layerId/contents';
+
+/// The path of a layer's Paint group.
+String paintPath(String layerId) => '$layerId/paint';
 
 /// The path of a layer's Audio group.
 String audioPath(String layerId) => '$layerId/audio';
@@ -280,23 +343,89 @@ List<LayerFoldRow> layerFoldRows({
   final info = entry.info;
   final rows = <LayerFoldRow>[];
 
+  // A reveal key (`P`, `S`, `R`, `T`, `A`) leaves exactly one Transform row
+  // open and the group itself shut — "show me Position" means Position, not
+  // Position among five others. That is a *solo*, and it is read here rather
+  // than passed in because the lanes build their rows from this same list and
+  // must leave room for the same ones (docs/07 §4.3).
+  final transformOpen = open.contains(transformPath(id));
+  final groups = transformGroups(threeD: info.switches.threeD);
+  final soloed = !transformOpen &&
+      groups.any((g) => open.contains(transformGroupPath(id, g)));
+
   // Retime first, above everything (docs/07 §4.3): it decides *which* frame of
   // the source the rest of the fold-out then transforms. A layer that has not
-  // been given one shows no row rather than a dead control.
-  if (info.retime case final retime?) {
+  // been given one shows no row rather than a dead control — and it stands
+  // down while a solo is in force, for the same reason the other four rows do.
+  if (info.retime case final retime? when !soloed) {
     rows.add(FoldRetimeRow(retime, depth: 1));
   }
 
-  final transformOpen = open.contains(transformPath(id));
   rows.add(FoldGroupRow(
     path: transformPath(id),
-    label: 'Transform',
+    label: l10n.transformSection,
     open: transformOpen,
     depth: 1,
   ));
-  if (transformOpen) {
-    for (final group in transformGroups(threeD: info.switches.threeD)) {
+  for (final group in groups) {
+    if (transformOpen || open.contains(transformGroupPath(id, group))) {
       rows.add(FoldTransformRow(group, info.transform, depth: 2));
+    }
+  }
+
+  // Contents first of the three: a shape layer's art *is* its picture, so it
+  // comes before the masks that gate that picture and the effects that process
+  // it (K-237, docs/06 render order).
+  if (info.shapeContents.isNotEmpty) {
+    final contentsOpen = open.contains(contentsPath(id));
+    rows.add(FoldGroupRow(
+      path: contentsPath(id),
+      label: l10n.foldContents,
+      open: contentsOpen,
+      depth: 1,
+    ));
+    if (contentsOpen) {
+      for (final item in info.shapeContents) {
+        rows.add(FoldShapeRow(item, depth: 2));
+      }
+    }
+  }
+
+  // Masks, above Effects because that is the order they are applied in: a mask
+  // gates the layer's alpha *before* its effects run (docs/06 render order), so
+  // the fold-out reads top to bottom the way the picture is built. Like
+  // Effects, the heading appears only once there is something under it — an
+  // empty heading is a promise the row cannot keep.
+  if (info.masks.isNotEmpty) {
+    final masksOpen = open.contains(masksPath(id));
+    rows.add(FoldGroupRow(
+      path: masksPath(id),
+      label: l10n.foldMasks,
+      open: masksOpen,
+      depth: 1,
+    ));
+    if (masksOpen) {
+      for (final mask in info.masks) {
+        rows.add(FoldMaskRow(mask, depth: 2));
+      }
+    }
+  }
+
+  // Paint, between Masks and Effects, because that is where it happens: strokes
+  // are stamped into the layer's own pixels, which the masks then gate and the
+  // effects then process (K-227, docs/06 render order).
+  if (info.paint.isNotEmpty) {
+    final paintOpen = open.contains(paintPath(id));
+    rows.add(FoldGroupRow(
+      path: paintPath(id),
+      label: l10n.foldPaint,
+      open: paintOpen,
+      depth: 1,
+    ));
+    if (paintOpen) {
+      for (final stroke in info.paint) {
+        rows.add(FoldStrokeRow(stroke, depth: 2));
+      }
     }
   }
 
@@ -306,7 +435,7 @@ List<LayerFoldRow> layerFoldRows({
     final effectsOpen = open.contains(effectsPath(id));
     rows.add(FoldGroupRow(
       path: effectsPath(id),
-      label: 'Effects',
+      label: l10n.workspaceEffects,
       open: effectsOpen,
       depth: 1,
     ));
@@ -334,7 +463,7 @@ List<LayerFoldRow> layerFoldRows({
     final audioOpen = open.contains(audioPath(id));
     rows.add(FoldGroupRow(
       path: audioPath(id),
-      label: 'Audio',
+      label: l10n.workspaceAudio,
       open: audioOpen,
       depth: 1,
     ));
@@ -345,7 +474,7 @@ List<LayerFoldRow> layerFoldRows({
       final waveOpen = open.contains(waveformPath(id));
       rows.add(FoldGroupRow(
         path: waveformPath(id),
-        label: 'Waveform',
+        label: l10n.foldWaveform,
         open: waveOpen,
         depth: 2,
       ));

@@ -18,7 +18,6 @@ class _DebugPanelState extends State<DebugPanel> {
   late List<MapEntry<String, FunctionCallStats>> stats;
   late Timer t;
 
-  
   @override
   void initState() {
     sub = debugInfo.onChange.stream.listen((_) => onChange());
@@ -57,11 +56,11 @@ class _DebugPanelState extends State<DebugPanel> {
     final theme = ThemeScope.of(context).theme;
 
     if (ms > 8) {
-      return Colors.red;
+      return theme.error;
     }
 
     if (ms > 3) {
-      return Colors.amber;
+      return theme.warning;
     }
 
     return theme.textMuted;
@@ -119,8 +118,9 @@ class _DebugPanelState extends State<DebugPanel> {
                       ),
                       Text(
                         "last: ${item.value.lastTime.inMilliseconds}ms",
-                        style: theme.body
-                            .copyWith(color: msToColor(item.value.lastTime.inMilliseconds.toDouble())),
+                        style: theme.body.copyWith(
+                            color: msToColor(
+                                item.value.lastTime.inMilliseconds.toDouble())),
                       ),
                       Text(
                         "total: ${item.value.totalTime.inMilliseconds}ms",
@@ -145,7 +145,7 @@ class _DebugPanelState extends State<DebugPanel> {
             HouseButton(
               child: Text(
                 "$len in last second",
-                style: theme.body.copyWith(color: len > 20 ? Colors.red : null),
+                style: theme.body.copyWith(color: len > 20 ? theme.error : null),
               ),
             ),
             HouseButton(

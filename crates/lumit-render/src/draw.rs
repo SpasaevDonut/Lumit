@@ -47,6 +47,16 @@ pub struct MatteDraw {
     /// Lut` ops in `fx` (as for a layer's own `lut_files`). Empty unless the
     /// source mode is `EffectsAndMasks` and the matte source has a LUT.
     pub lut_files: Vec<Option<String>>,
+    /// Set when the matte source is a **Precomp** (K-268): the nested comp's
+    /// own draw list, realised recursively exactly as a Precomp layer's
+    /// picture is — `rgba` is then empty and `tex_w`/`tex_h` are the nested
+    /// comp's size. A comp has no pixels until it is rendered, so `pixels_for`
+    /// answers None for one, and a track matte set to a precomp silently
+    /// gated nothing at all until this field existed (the layer-input twin of
+    /// the same hole was K-266's `DofInputDraw::nested`). The source-mode
+    /// masks/effects toggles do not apply to a comp reference — the comp
+    /// renders as itself, its layers' own masks and effects included.
+    pub nested: Option<Box<NestedInputDraw>>,
 }
 
 /// A depth-of-field depth input packaged for the compositor (docs/impl/
@@ -70,6 +80,45 @@ pub struct DofInputDraw {
     /// `fx`. Empty unless the depth source is `EffectsAndMasks` and the depth
     /// layer has a LUT.
     pub lut_files: Vec<Option<String>>,
+    /// Set when the referenced layer is a **Precomp** (K-266): the nested
+    /// comp's own draw list, realised recursively exactly as a Precomp
+    /// layer's picture is — `rgba` is then empty and `tex_w`/`tex_h` are the
+    /// nested comp's size. `pixels_for` has no pixels for a comp (they only
+    /// exist on the GPU), which is why "a white circle in a precomp" as a
+    /// flare matte silently detected nothing until this field existed. The
+    /// source-mode masks/effects toggles do not apply to a comp reference —
+    /// the comp renders as itself, its layers' own effects included.
+    pub nested: Option<Box<NestedInputDraw>>,
+}
+
+/// What a layer-input parameter resolves to for one effect op (docs/impl/
+/// layer-input.md, K-288): nothing, this effect's own input, or another
+/// layer's picture. One of these per op that declares a Layer parameter,
+/// 1:1 and in order with those ops.
+pub enum LayerInputDraw {
+    /// Unset, dangling, out of its time span, or not in a mode that reads
+    /// one — the effect degrades to its labelled no-op, never a fault.
+    Absent,
+    /// The reference points at the layer the effect is **on** (K-288), so
+    /// the input is that effect's own input at its point in the stack. No
+    /// second render happens: `run_ops` binds the texture it is already
+    /// carrying. On an adjustment layer that texture is the composite of
+    /// everything below, which is the only picture an adjustment layer has —
+    /// so a Lens flare added to one finds the lights in the footage beneath
+    /// it without being pointed anywhere.
+    ThisLayer,
+    /// Another layer, rendered alone at this raster.
+    Layer(DofInputDraw),
+}
+
+/// A layer-input's nested comp render (K-266) — the [`DrawSource::Nested`]
+/// shape, boxed onto [`DofInputDraw`].
+pub struct NestedInputDraw {
+    pub width: u32,
+    pub height: u32,
+    pub background: [f64; 4],
+    pub draws: Vec<CompLayerDraw>,
+    pub camera: Option<lumit_core::model::CameraPose>,
 }
 
 /// Where a draw's pixels come from: decoded/synthesised bytes, or a nested
@@ -125,6 +174,13 @@ pub struct AccumulationBelow {
 }
 
 pub struct CompLayerDraw {
+    /// Which layer of the composition this draw is, so a measured cost can be
+    /// put on the right Timeline row (docs/13 §7.1). Nothing about the picture
+    /// depends on it — the compositor never reads it — and it is carried
+    /// rather than inferred because the draw list is flattened: a collapsed
+    /// Precomp splices its children in beside their neighbours, so a draw's
+    /// position in the list is not its layer's position in the comp.
+    pub layer: uuid::Uuid,
     pub source: DrawSource,
     /// The layer's natural pixel size — transforms act in comp pixels even
     /// when the texture was decoded at a reduced preview resolution.
@@ -151,6 +207,11 @@ pub struct CompLayerDraw {
     /// frame (docs/08; radius already in texture pixels). Applied to the
     /// linear source texture after masks, before the transform.
     pub fx: Vec<lumit_core::fx::Resolved>,
+    /// The effect *instance* id behind each op in `fx`, 1:1 and in order
+    /// (`lumit_core::fx::resolve_stack_temporal_named`). Only the profiler
+    /// reads it: a measured millisecond has to land on the row of the stack
+    /// that spent it, and a `Resolved` op has forgotten where it came from.
+    pub fx_ids: Vec<uuid::Uuid>,
     /// Decoded neighbour source frames for a temporal effect (echo etc.),
     /// keyed by frame offset — same sRGB8 form and decoded size as a Pixels
     /// source. Empty unless the stack is temporal.
@@ -170,14 +231,36 @@ pub struct CompLayerDraw {
     /// `run_ops`. No GPU work happens here; these are just the strings.
     pub lut_files: Vec<Option<String>>,
     /// The depth inputs of the layer's enabled built-in `dof` effects (docs/08
-    /// §3.22, docs/impl/layer-input.md; None = unset/dangling). Because
-    /// `resolve_stack` keeps the same filter and order and a `dof` effect
-    /// always resolves to exactly one `Resolved::Dof`, this list is 1:1 and in
-    /// order with the stack's `Dof` ops — the caller renders each one alone at
-    /// comp size and passes the parallel `layer_inputs` to `run_ops`. Each
+    /// §3.22, docs/impl/layer-input.md). Because `resolve_stack` keeps the
+    /// same filter and order and a `dof` effect always resolves to exactly one
+    /// `Resolved::Dof`, this list is 1:1 and in order with the stack's `Dof`
+    /// ops — the caller renders each one alone at comp size and passes the
+    /// parallel `layer_inputs` to `run_ops`. A [`LayerInputDraw::Layer`]
     /// carries the referenced layer's source pixels; the GPU render happens in
     /// `realise_segment`.
-    pub dof_inputs: Vec<Option<DofInputDraw>>,
+    pub dof_inputs: Vec<LayerInputDraw>,
+    /// The Lens flare Matte sources (docs/08 §3.27, K-257), 1:1 with the
+    /// stack's `Resolved::LensFlare` ops, in the same shape the DoF depth
+    /// inputs take. [`LayerInputDraw::Absent`] when the reference is unset,
+    /// dangling or the Source type is not Matte — the effect then detects
+    /// nothing, never faults.
+    pub flare_mattes: Vec<LayerInputDraw>,
+    /// The `lens_file` paths of the layer's enabled built-in `lens_flare`
+    /// effects (K-264), 1:1 with the stack's `Resolved::LensFlare` ops —
+    /// None = unset. The caller reads and hashes each file and passes the
+    /// parallel `flare_lens` texts to `run_ops`; a missing or unreadable
+    /// file degrades to the picked library lens (labelled fallback).
+    pub flare_lens_files: Vec<Option<String>>,
+    /// The raster width this layer's `fx` were RESOLVED against, when it
+    /// can differ from the raster they will RUN on (K-266) — set for
+    /// Adjust layers (the comp width; their stack runs on the render
+    /// target, which reduced-resolution preview shrinks), `None` when the
+    /// resolve factor already matches (footage layers scale by their
+    /// decode). The realise walk divides its target width by this and
+    /// rescales every px-dimensioned resolved field
+    /// (`lumit_core::fx::rescale_px`) so px@comp parameters land where
+    /// the user put them at every preview resolution.
+    pub fx_ref_width: Option<f32>,
     /// Per-layer motion-blur sub-frame placements (docs/06 §4, K-120): the
     /// layer's own transform re-evaluated across the open shutter. Empty unless
     /// the comp master and the layer switch are both on (and samples ≥ 2), in

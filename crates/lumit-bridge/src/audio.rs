@@ -501,6 +501,25 @@ pub(crate) fn pause() {
     send(&st, Cmd::Pause);
 }
 
+/// Start the sound again where it stopped, with no re-bake and no seek — the
+/// other half of [`pause`].
+///
+/// Every-frame playback stops the sound when the picture falls behind (K-171:
+/// a held track over a slow picture, never a track that drifts away from it).
+/// The picture then catches up, and the sound must start again on its own; a
+/// user who must stop and start playback to get the sound back has been given a
+/// fault to work around. Nothing is re-prepared here: the plan and the position
+/// are as they were, thus this is one atomic and one message.
+pub(crate) fn resume() {
+    let mut st = lock();
+    // Nothing loaded means nothing to start; `play` does the preparing.
+    if st.loaded_comp.is_none() {
+        return;
+    }
+    st.playing = true;
+    send(&st, Cmd::Play);
+}
+
 /// Move the audio clock to `secs` (a scrub; play state is untouched).
 pub(crate) fn seek(secs: f64) {
     let st = lock();

@@ -6,6 +6,7 @@
 // change nothing about what the keys do, which is the failure worth a test.
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -205,28 +206,116 @@ void main() {
       );
     });
 
-    /// A clash is not refused — it is reported, because refusing would make
-    /// swapping two actions' keys impossible.
-    testWidgets('taking a chord another action holds warns rather than refuses',
+    /// Taking a chord is never refused — refusing would make swapping two
+    /// actions' keys impossible. What happens next depends on whether the two
+    /// can be told apart, and both halves are pinned here because the page
+    /// says something different about each.
+    ///
+    /// A panel taking an **app-wide** chord is a *shadow*, not a clash
+    /// (K-281): the focused panel gets first refusal and the app-wide binding
+    /// is the fallback, so the chord runs exactly one action and which one is
+    /// never in doubt. The page says so quietly rather than asking to have it
+    /// fixed — the shipped default carries one on purpose (`L` in the
+    /// Timeline).
+    testWidgets('a panel taking an app-wide chord is said, not warned about',
         (tester) async {
-      // The Timeline's zoom-in takes Undo's app-wide chord: both are live in
-      // the Timeline at once, so it is a clash rather than a replacement.
+      // The Timeline's zoom-in takes Undo's app-wide chord.
       //
-      // Made before the page opens, and *not* awaited: a bridge Future only
-      // completes on a real event-loop turn, and there is no tester to turn
-      // one until a widget is pumped. The engine applies the change on the
-      // call itself, which is all this needs.
+      // Made before the page opens, because the note is built from the keymap
+      // the page finds. It is *not* awaited — a bridge Future only completes
+      // on a real event-loop turn, and there is no tester to turn one until a
+      // widget is pumped — but nor is it done when it returns: the call lands
+      // on the engine's worker thread, and a machine quick enough to make that
+      // look instant is not a machine to design a test around (the Linux
+      // runner lost this race). So it is waited for at its source, which needs
+      // a tree to pump: hence the placeholder.
       unawaited(keymapRebind(
         context: BridgeKeyContext.timeline,
         action: 'timeline.zoom.in',
         chord: 'Mod+Z',
       ));
+      await tester.pumpWidget(const SizedBox.shrink());
+      await settleFrb(
+          tester,
+          until: () =>
+              keymapShadows().any((s) => s.action.contains('Zoom time in')));
+
+      // Nothing ambiguous: the Timeline zooms, everywhere else undoes.
+      expect(
+        keymapLookup(context: BridgeKeyContext.timeline, chord: 'Mod+Z'),
+        'timeline.zoom.in',
+      );
+      expect(
+        keymapLookup(context: BridgeKeyContext.viewer, chord: 'Mod+Z'),
+        'edit.undo',
+      );
+
+      await openKeymapPage(tester);
+
+      expect(find.byKey(const ValueKey('keymap-shadows')), findsOneWidget);
+      expect(find.textContaining('something else in one panel'), findsOneWidget);
+      expect(find.textContaining('Undo'), findsWidgets,
+          reason: 'the note names what it took the chord from');
+      expect(find.byKey(const ValueKey('keymap-conflicts')), findsNothing,
+          reason: 'a shadow is not something to go and fix');
+    });
+
+    /// Two bindings in the **same** context are a real clash — nothing can
+    /// tell them apart — and that is what the warning banner is for.
+    ///
+    /// Reached by importing a file rather than by rebinding, because rebinding
+    /// cannot make one: within a context the previous owner is evicted, so the
+    /// chord always has exactly one holder. A shared keymap file is the way a
+    /// duplicate actually arrives, which is the case worth pinning.
+    testWidgets('two bindings in one context still warn', (tester) async {
+      final map = jsonDecode(keymapToJson()) as Map<String, dynamic>;
+      (map['bindings'] as List<dynamic>).addAll([
+        {
+          'context': 'Timeline',
+          'chord': 'Mod+Alt+K',
+          'action': 'timeline.zoom.in',
+        },
+        {
+          'context': 'Timeline',
+          'chord': 'Mod+Alt+K',
+          'action': 'timeline.zoom.out',
+        },
+      ]);
+      unawaited(keymapFromJson(json: jsonEncode(map)));
+      await tester.pumpWidget(const SizedBox.shrink());
+      await settleFrb(tester, until: () => keymapConflicts().isNotEmpty);
+
       await openKeymapPage(tester);
 
       expect(find.byKey(const ValueKey('keymap-conflicts')), findsOneWidget);
       expect(find.textContaining('runs two things'), findsOneWidget);
-      expect(find.textContaining('Undo'), findsWidgets,
-          reason: 'the banner names what is competing');
+    });
+
+    /// **A keymap saved by an older build must not take a new key away**
+    /// (K-302). This is what actually broke `Ctrl+C` in the owner's app while
+    /// every test here passed: a stored keymap replaced the whole map on
+    /// start-up, so `edit.copy` — added after that file was written — had no
+    /// chord at all. Tests start from the shipped defaults; only a real session
+    /// has a file.
+    testWidgets('a stored keymap without Copy in it still copies',
+        (tester) async {
+      final map = jsonDecode(keymapToJson()) as Map<String, dynamic>;
+      (map['bindings'] as List<dynamic>).removeWhere((b) =>
+          ((b as Map)['action'] as String).startsWith('edit.c') ||
+          b['action'] == 'edit.paste');
+      unawaited(keymapFromJson(json: jsonEncode(map)));
+      await tester.pumpWidget(const SizedBox.shrink());
+      await settleFrb(
+        tester,
+        until: () =>
+            keymapLookup(context: BridgeKeyContext.global, chord: 'Mod+C') !=
+            null,
+      );
+
+      expect(keymapLookup(context: BridgeKeyContext.global, chord: 'Mod+C'),
+          'edit.copy',
+          reason: 'the stored file is laid over the defaults, not swapped for '
+              'them, so an action it never heard of keeps its key');
     });
 
     /// The search box filters on the words the table shows, not only the ids

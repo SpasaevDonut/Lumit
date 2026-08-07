@@ -3,6 +3,9 @@ name = "lumit_bridge"
 version = "0.1.0"
 edition = "2021"
 license = "GPL-3.0-only"
+# Never goes to crates.io: these crates are the application, and they
+# reference each other by path (docs/05-ARCHITECTURE.md).
+publish = false
 
 # A cdylib the Flutter desktop runners load over dart:ffi, plus a staticlib for
 # the platforms cargokit links statically (iOS, and Android's release builds).
@@ -81,10 +84,27 @@ features = [
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common",
     "Win32_System_SystemInformation",
+    # `GetProcessMemoryInfo` and its counters struct, for what this process is
+    # actually holding (`resident_memory_bytes`), plus `GetCurrentProcess` for
+    # the pseudo-handle it takes. Threading is named here rather than left to
+    # feature unification: wgpu-hal happens to enable it in this workspace's
+    # build, so the import compiled while the feature was unlisted — which is
+    # coverage by accident, and would vanish the day that dependency changed.
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+    # `GetCursorPos`/`SetCursorPos`, for the camera tools' pointer lock (K-230).
+    "Win32_UI_WindowsAndMessaging",
+    # `timeBeginPeriod`, so the worker's present-pacing sleeps are 1 ms-grained
+    # rather than the ~15.6 ms default tick (see `raise_timer_resolution`).
+    "Win32_Media",
 ]
 
 [dev-dependencies]
 tempfile = "3"
+# The ffmpeg-made fixtures, so tests that need real media can have some —
+# a still and a running clip are the two sides of the K-246 wrap rule, and
+# nothing but real media can tell them apart. Skips itself with no ffmpeg.
+lumit-media = { path = "../lumit-media", features = ["test-fixtures"] }
 
 # The bridge is the one crate that cannot inherit the workspace's
 # `unsafe_code = "deny"`: flutter_rust_bridge's generated glue crosses a C ABI

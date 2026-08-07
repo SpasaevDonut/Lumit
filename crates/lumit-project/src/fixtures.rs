@@ -155,9 +155,10 @@ pub fn stress_document(p: &StressParams) -> Document {
                 footage_ids[layer_index % footage_ids.len()]
             };
             layers.push(Layer {
+                markers: Vec::new(),
                 id: uid(3, layer_index),
                 name: format!("layer {layer_index}"),
-                kind: LayerKind::Footage { item, retime: None },
+                kind: LayerKind::Footage { item },
                 in_point: CompTime(Rational::ZERO),
                 out_point,
                 start_offset: CompTime(Rational::ZERO),
@@ -167,8 +168,10 @@ pub fn stress_document(p: &StressParams) -> Document {
                 label: 0,
                 volume_db: lumit_core::anim::Property::zero(),
                 retime: None,
+                interpolation: Default::default(),
                 blend: Default::default(),
                 masks: Vec::new(),
+                paint: Vec::new(),
                 effects: Vec::new(),
                 switches: Switches::default(),
                 extra: serde_json::Map::new(),
@@ -195,6 +198,14 @@ pub fn stress_document(p: &StressParams) -> Document {
         id: uid(0, 0),
         items,
         auto_folders: AutoFolders::default(),
+        // The default, on, like any new project (K-274).
+        anti_aliasing: Default::default(),
+        // The fixture caches wherever the application is set to, like any
+        // ordinary project.
+        cache_location: None,
+        // Nor does it carry an arrangement: the fixture is a document, not a
+        // sitting in front of one.
+        ui_state: None,
         extra: serde_json::Map::new(),
     }
 }

@@ -1,0 +1,36 @@
+---
+title: Shapes
+description: Draw vector shapes with fills and strokes.
+sidebar:
+  order: 13
+---
+
+import Shot from "../../../components/Shot.astro";
+
+A **Shape layer** holds vector shape groups with fills, strokes, and path operations.
+
+<Shot file="shape-layer.png" caption="A shape layer's contents in the Timeline." />
+
+## Draw a shape
+
+1. Deselect every layer.
+2. Pick a shape tool or the pen tool.
+3. Draw in the Viewer.
+
+With a layer selected, the same tools draw a [mask](/use/masks/) on that layer instead.
+This catches everyone once.
+
+## Fills and strokes
+
+Each shape group carries its own fill and stroke. Both can be animated.
+
+:::note[Not built yet]
+Shape modifiers (repeater, trim paths, offset), gradient fills, dashed strokes,
+animated paths, and reshaping a drawn path on the picture are specified but not
+built. Redraw a shape to change it for now.
+:::
+
+## Related
+
+- [Masks](/use/masks/)
+- [Text](/use/text/)

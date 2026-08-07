@@ -592,3 +592,160 @@ String _number(double v) {
   if (fps <= 0 || groups.isEmpty) return null;
   return (fps: fps, groups: groups);
 }
+
+// ---------------------------------------------------------------------------
+// The Vegas speed envelope (K-247).
+// ---------------------------------------------------------------------------
+
+/// The vertical range a Retime channel's envelope opens at, in per cent
+/// (K-247, K-250).
+///
+/// Headroom over normal playback, and enough below zero to show that dragging
+/// a point down there runs the clip backwards. The room above 100% is the
+/// point of the top figure: at exactly 100 the flat line every un-retimed clip
+/// draws sat on the very top edge of the graph, with nowhere to go but down —
+/// which reads as a ceiling rather than as the ordinary speed it is. It only
+/// ever grows: a curve reaching past either end reframes the axis.
+const (double, double) envelopeDefaultRange = (-25.0, 125.0);
+
+/// The influence that makes a cubic side lie on its chord — the polynomial
+/// subclass (K-078). The envelope authors every side at this influence, which
+/// is what makes its straight lines exactly straight (see [envelopeToKeys]).
+const double _chordInfluence = 1 / 3;
+
+/// The envelope's points for [keys]: the playback speed at each key, in per
+/// cent, where 100 is source rate and a negative value runs backwards.
+///
+/// A key's two sides carry a speed each, and an envelope point is a key whose
+/// two agree ([envelopeToKeys] writes them that way). A channel shaped in the
+/// Time lens instead can disagree at a key; the point then reads the side
+/// facing *into* the clip — the outgoing speed, or the incoming one at the
+/// last key — because that is the speed the span it governs is played at.
+List<double> envelopeSpeeds(List<BridgeKeyframe> keys) => [
+      for (var i = 0; i < keys.length; i++)
+        sideSpeedAtKey(keys, i, isOut: i < keys.length - 1) * 100,
+    ];
+
+/// Keys carrying [speeds] (per cent, one per key), with the source positions
+/// re-integrated from them and the **first key pinned**.
+///
+/// This is the Vegas edit: change a speed and the frames after it change,
+/// while every keyframe *time* and the layer's own box stay exactly where they
+/// are (K-022's covenant, K-070's start-pinning). The first key is what
+/// "pinned" means — a clip's first frame is its own trim-in whatever its
+/// speed, so re-speeding never moves where it starts.
+///
+/// **Why the trapezoid is exact rather than an approximation.** Between two
+/// points the envelope draws a straight line, so the source advanced across a
+/// span is the area under that line: the average of the two speeds times the
+/// span. Setting a cubic's value change to exactly that, with its endpoint
+/// slopes at the two speeds and influence ⅓, makes the cubic's own derivative
+/// come out *exactly* that straight line — the u² term cancels. So the
+/// envelope is not a simplified view of the curve underneath; it is the same
+/// curve, read the other way round. (Substitute Δ/d = (m₀+m₁)/2 into a cubic
+/// Hermite's derivative and the quadratic coefficient is zero.)
+List<BridgeKeyframe> envelopeToKeys(
+    List<BridgeKeyframe> keys, List<double> speeds) {
+  if (keys.isEmpty || speeds.length != keys.length) return keys;
+  // Every key's new source position first, so each side can be compared
+  // against the chord of the span it governs.
+  final values = <double>[keys.first.value];
+  for (var i = 1; i < keys.length; i++) {
+    final dt = rationalSeconds(keys[i].time) - rationalSeconds(keys[i - 1].time);
+    // Non-positive only for keys sharing a time, which the editing ops
+    // forbid; treated as no advance rather than as a reason to fail.
+    values.add(dt > 0
+        ? values[i - 1] + (speeds[i - 1] + speeds[i]) / 2 / 100 * dt
+        : values[i - 1]);
+  }
+
+  /// The side governing the span between `a` and `b`, as seen from whichever
+  /// end this is. **Linear when the speed is the span's own chord** — the two
+  /// are then the same curve, and writing the bezier form anyway would change
+  /// how the key *looks* (a diamond becomes a circle) for no change in what it
+  /// does. Dragging one point of a flat envelope used to re-shape every key on
+  /// the channel that way.
+  BridgeSideInterp side(int at, int a, int b) {
+    final dt = rationalSeconds(keys[b].time) - rationalSeconds(keys[a].time);
+    final chord = dt > 0 ? (values[b] - values[a]) / dt : 0.0;
+    final speed = speeds[at] / 100;
+    if ((speed - chord).abs() < 1e-9) return const BridgeSideInterp.linear();
+    return BridgeSideInterp.bezier(
+      BridgeBezierSide(speed: speed, influence: _chordInfluence),
+    );
+  }
+
+  return [
+    for (var i = 0; i < keys.length; i++)
+      BridgeKeyframe(
+        time: keys[i].time,
+        value: values[i],
+        // The first key has no span before it and the last none after it;
+        // those sides govern nothing, so they stay as plain as possible.
+        interpIn: i == 0
+            ? const BridgeSideInterp.linear()
+            : side(i, i - 1, i),
+        interpOut: i == keys.length - 1
+            ? const BridgeSideInterp.linear()
+            : side(i, i, i + 1),
+      ),
+  ];
+}
+
+/// [keys] with the envelope point at [index] moved to [time], keeping the
+/// speed it had.
+///
+/// **The values are re-integrated, not carried over.** A key's stored tangent
+/// is a speed; the span's *chord* is its average. Move a key in time and the
+/// chord changes while the tangent does not, so a span that was straight stops
+/// being straight — the curve bulges and the graph starts describing playback
+/// that is not what the points say. Re-running the integration through the
+/// same speeds puts every span back on its own straight line, which is what a
+/// later speed drag was silently doing and why the fault appeared to fix
+/// itself the second time you touched a point.
+List<BridgeKeyframe> moveEnvelopePoint(
+    List<BridgeKeyframe> keys, int index, BridgeRational time) {
+  if (index < 0 || index >= keys.length) return keys;
+  final speeds = envelopeSpeeds(keys);
+  final moved = [
+    for (var i = 0; i < keys.length; i++)
+      if (i == index)
+        BridgeKeyframe(
+          time: time,
+          value: keys[i].value,
+          interpIn: keys[i].interpIn,
+          interpOut: keys[i].interpOut,
+        )
+      else
+        keys[i],
+  ];
+  return envelopeToKeys(moved, speeds);
+}
+
+/// [keys] with the envelope point at [index] moved to [percent].
+List<BridgeKeyframe> setEnvelopeSpeed(
+    List<BridgeKeyframe> keys, int index, double percent) {
+  if (index < 0 || index >= keys.length) return keys;
+  final speeds = envelopeSpeeds(keys);
+  speeds[index] = percent;
+  return envelopeToKeys(keys, speeds);
+}
+
+/// The framing for an envelope: [envelopeDefaultRange], grown to hold every
+/// point. Unlike the other lenses this has a floor and a ceiling to start
+/// from, because "100% is normal" is a fact about the axis rather than
+/// something to discover from the data.
+(double, double) fitEnvelopeRange(List<List<BridgeKeyframe>> channels) {
+  var (lo, hi) = envelopeDefaultRange;
+  for (final keys in channels) {
+    for (final v in envelopeSpeeds(keys)) {
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+  }
+  // Padded only where the data pushed past the default, so an untouched
+  // channel opens at exactly the documented range.
+  final (dlo, dhi) = envelopeDefaultRange;
+  final pad = (hi - lo) * 0.08;
+  return (lo < dlo ? lo - pad : dlo, hi > dhi ? hi + pad : dhi);
+}

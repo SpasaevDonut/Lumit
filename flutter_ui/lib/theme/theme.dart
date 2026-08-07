@@ -9,6 +9,7 @@
 // compared side by side.
 
 import 'package:flutter/material.dart';
+import 'package:lumit_flutter/l10n/strings.dart';
 
 Color _rgb(int r, int g, int b) => Color.fromARGB(0xff, r, g, b);
 
@@ -41,9 +42,9 @@ enum LumitColorScheme {
 
   /// Sentence-case display name for menus and settings.
   String get label => switch (this) {
-        LumitColorScheme.dark => 'Dark',
-        LumitColorScheme.darkBlue => 'Dark blue',
-        LumitColorScheme.light => 'Light',
+        LumitColorScheme.dark => l10n.schemeDark,
+        LumitColorScheme.darkBlue => l10n.schemeDarkBlue,
+        LumitColorScheme.light => l10n.schemeLight,
         LumitColorScheme.gruvboxDark => 'Gruvbox dark',
         LumitColorScheme.gruvboxLight => 'Gruvbox light',
         LumitColorScheme.catppuccinMocha => 'Catppuccin Mocha',
@@ -158,6 +159,45 @@ class ScopeColours {
   );
 }
 
+/// The colours a waveform draws in (docs/15-DESIGN.md §6.4). Split out of the
+/// roles the lanes used to borrow when the waveform lane learned to follow the
+/// zoom and to stack its bands (K-280) — §6.4's standing direction is that each
+/// grouping becomes a token of its own as its area is next touched, and this is
+/// that touch. Waveforms are **content, not state**, so none of these is the
+/// accent: a wave says what the sound is, never that something is selected.
+class WaveformColours {
+  /// The single full-range wave, and the envelope a multiwave stack is read
+  /// against — the muted steel-cyan §6.4 names.
+  final Color rest;
+
+  /// The three bands of the multiwave stack: bass, middle, treble. They are
+  /// drawn over one another in one lane, so they are ranked by **brightness**
+  /// rather than by hue — the bass a dim broad body, the treble bright and
+  /// thin over it. Hue-coding them read as three unrelated waveforms; a
+  /// brightness ramp reads as one waveform with its inside showing.
+  final Color low, mid, high;
+
+  const WaveformColours({
+    required this.rest,
+    required this.low,
+    required this.mid,
+    required this.high,
+  });
+
+  /// Value equality, so a painter handed the same colours from a rebuilt theme
+  /// does not repaint every lane for nothing.
+  @override
+  bool operator ==(Object other) =>
+      other is WaveformColours &&
+      other.rest == rest &&
+      other.low == low &&
+      other.mid == mid &&
+      other.high == high;
+
+  @override
+  int get hashCode => Object.hash(rest, low, mid, high);
+}
+
 /// Semantic colour tokens; names mirror docs/15-DESIGN.md §tokens and the
 /// Rust `Theme` struct field-for-field.
 class LumitTheme {
@@ -201,11 +241,31 @@ class LumitTheme {
   /// the surface ramp cannot express because it is a ramp.
   final Color selectionFill;
 
-  /// The two Timeline tokens default from the mode rather than being spelled
+  /// What waveforms draw in (K-280) — the single wave and the three bands of
+  /// the multiwave stack. Its own grouping rather than roles borrowed one at a
+  /// time, per the §6.4 direction.
+  final WaveformColours waveform;
+
+  /// Comp markers on the time ruler (K-254). A plain grey, not a role colour:
+  /// a marker says *here*, not *good* or *careful*, and the ruler already has
+  /// the accent doing the work area. Light on a dark scheme and dark on a light
+  /// one — After Effects' own reading, and the one that stays legible over the
+  /// work-area band either way.
+  final Color marker;
+
+  /// The wash a modal window lays over the app behind it (K-269). Its own
+  /// token because it is not a surface: it is the *absence* of attention, a
+  /// translucent black that dims whatever it covers rather than a colour the
+  /// ramp could supply. Translucent black under a light scheme too — dimming
+  /// is dimming, and a pale scrim over pale panels would say nothing.
+  final Color scrim;
+
+  /// The three Timeline tokens default from the mode rather than being spelled
   /// out by every scheme: they are a *relationship* to the surface ramp (a
-  /// shade beyond `surface1`, a fill that out-contrasts it), and seven schemes
-  /// restating that relationship would be seven chances to get it wrong. A
-  /// custom theme, or any scheme that wants its own, passes them explicitly.
+  /// shade beyond `surface1`, a fill that out-contrasts it, a grey that reads
+  /// against it), and seven schemes restating that relationship would be seven
+  /// chances to get it wrong. A custom theme, or any scheme that wants its own,
+  /// passes them explicitly.
   LumitTheme({
     required this.mode,
     this.shape = ThemeShape.sharp,
@@ -232,9 +292,15 @@ class LumitTheme {
     required this.layer,
     Color? timelineOutOfRange,
     Color? selectionFill,
+    Color? marker,
+    Color? scrim,
+    WaveformColours? waveform,
   })  : timelineOutOfRange =
             timelineOutOfRange ?? defaultOutOfRange(mode, surface1),
-        selectionFill = selectionFill ?? defaultSelectionFill(mode, surface2);
+        selectionFill = selectionFill ?? defaultSelectionFill(mode, surface2),
+        marker = marker ?? defaultMarker(mode),
+        scrim = scrim ?? defaultScrim(mode),
+        waveform = waveform ?? defaultWaveform(mode);
 
   /// The ground outside the work area: a step *away* from the surface ramp's
   /// direction — darker under a dark scheme, and darker again under a light
@@ -252,6 +318,48 @@ class LumitTheme {
     final by = mode == ThemeMode2.dark ? 0x0e : -0x1c;
     return _shift(surface2, by);
   }
+
+  /// The marker grey. A fixed pair rather than a shift off the surface ramp:
+  /// it has to read against the ruler's ground *and* the work-area wash over
+  /// it, so it is pinned to the two values that do, not derived from one of
+  /// the things it must stand out from.
+  static Color defaultMarker(ThemeMode2 mode) =>
+      mode == ThemeMode2.dark ? _rgb(0xc4, 0xc4, 0xc4) : _rgb(0x56, 0x56, 0x56);
+
+  /// The waveform palette. A fixed set per mode rather than a shift off the
+  /// surface ramp, for the same reason the marker grey is: a wave has to read
+  /// against the lane's ground *and* against a selected row's fill over it, and
+  /// a colour derived from one of those cannot promise to stand out from both.
+  /// Steel-cyan at rest (§6.4); the three bands run dim → bright as the
+  /// frequency climbs, so the treble reads as highlights inside the body the
+  /// bass fills. On a light scheme the ramp runs the other way — *darker* is
+  /// what stands out on white, so the treble is the darkest of the three.
+  static WaveformColours defaultWaveform(ThemeMode2 mode) =>
+      mode == ThemeMode2.dark
+          ? WaveformColours(
+              rest: _rgb(0x5d, 0x8a, 0x96),
+              low: _rgb(0x3c, 0x5c, 0x66),
+              mid: _rgb(0x6d, 0x9a, 0xa6),
+              high: _rgb(0xd4, 0xf0, 0xf6),
+            )
+          : WaveformColours(
+              rest: _rgb(0x3f, 0x6b, 0x78),
+              low: _rgb(0x9d, 0xba, 0xc2),
+              mid: _rgb(0x59, 0x87, 0x94),
+              high: _rgb(0x14, 0x33, 0x3c),
+            );
+
+  /// The modal scrim. Black either way — a scrim dims, and on a light scheme
+  /// there is nothing above white to dim *with* — but a shade lighter over a
+  /// light one, where the same opacity would read as a blackout rather than a
+  /// hush (§calm voice: the window in front is louder, the app behind is not
+  /// being punished).
+  static Color defaultScrim(ThemeMode2 mode) => Color.fromARGB(
+        mode == ThemeMode2.dark ? 0x99 : 0x66,
+        0,
+        0,
+        0,
+      );
 
   /// Shift every channel by [by], clamped — the one place the theme nudges a
   /// colour, so "a shade darker" means the same thing wherever it is said.
@@ -332,8 +440,11 @@ class LumitTheme {
         cacheDisk: cacheDisk,
         curve: curve,
         layer: layer,
+        waveform: waveform,
         timelineOutOfRange: timelineOutOfRange,
         selectionFill: selectionFill,
+        marker: marker,
+        scrim: scrim,
       );
 
   /// The full composition a scheme + shape (+ accent override) resolves to —

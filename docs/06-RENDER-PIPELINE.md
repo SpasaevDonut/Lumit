@@ -42,11 +42,22 @@ For a visual layer at comp time `t`, the compiled subgraph is, in order:
 
 1. **Source** — fetch or rasterise the layer source at the resolved source time. For footage:
    decode, colour-interpret, linearise, premultiply (§3). For text/shape/solid: rasterise
-   vectors at the working raster size.
+   vectors at the working raster size. A **shape layer** (K-237,
+   [03-DATA-MODEL.md](03-DATA-MODEL.md) §7.2) has no asset at all: its contents are rasterised
+   into their own bounding box, which is also the layer's natural size — the one kind whose size
+   moves when it is edited. Each item is filled through the mask rasteriser and then outlined
+   through the paint rasteriser, in list order.
 2. **Retime** — for a Footage layer, the retime map converts layer time to source time and the
    layer's frame-interpolation policy (nearest / blend / flow) synthesises non-integer source
    frames ([04-RETIMING.md](04-RETIMING.md)). Overrun holds the boundary frame. Retime affects
    only source fetch; keyframes on masks, effects, and transform remain in layer/comp time.
+2.5. **Paint** — the layer's paint strokes (K-227, [03-DATA-MODEL.md](03-DATA-MODEL.md) §7.1)
+   are stamped into its raster in the order they were made: brush strokes lay colour down,
+   eraser strokes take alpha away, clone strokes copy from the raster **as it was before any
+   stroke in the pass** was stamped. Paint happens before masks, so a mask gates the painted
+   picture and effects see it. A layer with paint on it is rasterised at its real size (a flat
+   solid is otherwise an 8×8 tile), and paint on a Precomp layer forces the nested intermediate
+   exactly as a mask does. Stamping is on the CPU today; a GPU path changes nothing above it.
 3. **Masks** — bezier paths combined top-to-bottom by mode (add, subtract, intersect, lighten,
    darken, difference, none), each with feather, expansion, opacity, inversion. Masks gate the
    layer's alpha before any effect runs, so effects see the masked image.
@@ -86,6 +97,11 @@ Default nesting: the nested comp renders to an intermediate at its own raster si
 the active quality), clipped to its own bounds, then behaves as footage in the parent —
 masked, effected, transformed like any raster layer. The nested comp is sampled at the parent's
 frame times; its own frame rate governs only its internal keyframe display.
+
+That intermediate is **transparent** where the nested comp's own layers do not cover it
+(K-241). A comp's background colour is the backdrop for looking at *that* comp, not a layer
+inside it, so it is painted only by the comp being viewed or exported — a Precomp layer carries
+the alpha its content has, and the parent's stack shows through the gaps.
 
 **Collapse** (the collapse switch on a Precomp layer) removes the intermediate:
 
@@ -132,6 +148,49 @@ the AE 2023 model). Four combinations: alpha or luma, normal or inverted.
   before blending.
 - A matte layer keeps its own visibility switch; being a matte does not disable it. A layer MAY
   matte a layer that is itself matted; cycles are rejected at compile time.
+- A **Precomp** matte source has no pixels of its own: its nested comp is rendered (the same
+  recursion §1.4 performs for a Precomp layer's picture, under the same cycle guard) and that
+  render is the matte signal (K-268). The matte **source mode** (§none/masks/effects, K-142)
+  does not apply to a comp reference — a comp already carries its own layers' masks and
+  effects. Footage inside such a comp decodes with the rest of the frame: the decode plan
+  follows matte and layer-input references whether or not the referenced layer is visible.
+
+### 1.7 Anti-aliasing the composite (K-274)
+
+A layer is drawn as a rectangle placed by its transform. Where the transform turns that
+rectangle off-axis its edge crosses pixels diagonally, and a pixel is either drawn or not —
+so the edge is a staircase, and on a slow rotation the steps crawl. **Multisampling** fixes
+it: the card keeps N coverage samples per pixel, shades once, and averages by how many samples
+the shape actually covered.
+
+- **The count is a project property** (`Document::anti_aliasing`,
+  [03-DATA-MODEL.md](03-DATA-MODEL.md) §2), default 4, and **one value serves preview and
+  export**. Both drive the same realise walk with the same count, which is what keeps the
+  K-031 identity true with anti-aliasing on.
+- **It is orthogonal to preview resolution.** A reduced-resolution preview is a smaller
+  picture with the same edge treatment; the count does not change with the scale.
+- **The composite target is multisampled, the working texture is not.** One multisample
+  colour texture lives beside the single-sample comp frame for the whole composite; every
+  pass attaches the former and resolves into the latter. Every reader downstream — the
+  snapshot copy for shader-computed blends, read-backs, the Scopes trace, the shared-texture
+  hand-off and the display blit — takes the resolved texture, because a multisample texture
+  cannot be sampled or copied to a buffer.
+- **Per-layer motion blur takes the same count**, because its sub-frame placements are the
+  same geometry the composite draws; an aliased smear under an anti-aliased composite would
+  show the seam on every blurring layer.
+- **The count is asked of the adapter, never assumed.** A card that will not multisample the
+  working format at the count asked for falls back to the highest it will, down to 1, and the
+  interface reports which is in use. That is a machine's limit, never a render error.
+- **It is part of a frame's content hash** (§5.2), so a frame banked at one count is never
+  served at another.
+
+What multisampling does *not* fix is worth stating: the inside of a layer's picture is a
+texture lookup and its quality is the sampler's business. A shape's own curves, a mask's edge
+and a glyph's outline are already anti-aliased where they are rasterised. What stair-steps is
+the layer's quad edge, and that is what this addresses.
+
+The *how* — the traps in the composite loop as it stands, and the test plan — is
+[impl/anti-aliasing.md](impl/anti-aliasing.md).
 
 ## 2. ROI and DoD
 
@@ -186,13 +245,13 @@ later), and Application Settings holds only the *default for newly created proje
 Kernels MAY use wider internal accumulators where the algorithm needs them (large
 iterative blurs, scopes), but everything a node reads or writes is project depth.
 
-Why fp16 stays the default (2026-07-13, reviewed with Mack): fp16 here is floating
-point, not AE's integer 16bpc — it already carries values above 1.0 (superwhites, glow
-overshoot, up to 65504) and negatives, in linear light. fp32 buys extra mantissa (deep
-shadow gradients under extreme pushes, very long chains) at 16 bytes/px: double the
-bandwidth on a bandwidth-bound compositor and half the frames per cache byte. The
-depth is part of every cache key's quality field, so switching depth simply re-keys
-the project and the caches rebuild.
+Why fp16 stays the default (K-069): fp16 here is floating point, not AE's integer
+16bpc — it already carries values above 1.0 (superwhites, glow overshoot, up to 65504)
+and negatives, in linear light. fp32 buys extra mantissa (deep shadow gradients under
+extreme pushes, very long chains) at 16 bytes/px: double the bandwidth on a
+bandwidth-bound compositor and half the frames per cache byte. The depth is part of
+every cache key's quality field, so switching depth simply re-keys the project and the
+caches rebuild.
 
 ### 3.2 Input: decode and linearise
 
@@ -285,9 +344,6 @@ the effect Mode param both list them from one source (`BlendMode::ALL`), in AE's
 | Darker colour, Lighter colour | perceptual (non-separable) | Whole-pixel min/max by perceptual luma. |
 | Difference, Exclusion, Divide | perceptual | |
 | Hue, Saturation, Colour, Luminosity | perceptual | HSL decomposition on encoded values (W3C non-separable). |
-| Stencil alpha, Silhouette alpha | n/a (alpha only) | Gate the alpha of the entire composite below. |
-| Stencil luma, Silhouette luma | luma per §3.5a | |
-| Alpha add | n/a (alpha only) | Sums alphas without re-compositing colour; fixes seams on edge-abutting layers. |
 
 **(a) Luma extraction** — everywhere luma is needed (luma mattes, stencil/silhouette luma):
 luma = Rec.709 Y of the sRGB-encoded signal (perceptual luma), so a 50% grey solid yields
@@ -349,6 +405,57 @@ Playback reads VRAM first, promotes RAM→VRAM, and promotes disk→RAM→VRAM a
 (never plays directly from disk). Writes are write-behind on background IO threads; a disk
 write never blocks a render.
 
+**A write-behind queue MUST be bounded and de-duplicated (K-277).** Its entries are whole
+frames, so its depth is a memory budget: at most eight frames may be waiting to be written,
+and a frame already on its way down is never handed over a second time. A frame counts as
+parked only when its write has *finished*, so anything deciding what to copy down MUST ask
+"is it on its way?" as well as "is it there?" — asking only the second is how the idle
+backup re-queued the same frames every few milliseconds until the application held tens of
+gigabytes. A refused park costs that frame its place on disk and nothing else: it is still
+on the card and in memory, and it is offered again later.
+
+**Shipped (K-214).** All three tiers run. The VRAM tier holds finished display textures
+(K-187), the RAM tier holds their bytes, and the disk tier parks them in a folder that
+outlives the session. The rungs between them are built both ways: a frame evicted from VRAM
+is read back off the card and lands in RAM and on disk, and a frame held below is uploaded
+straight back into a texture rather than composited again. What the tiers hold is
+**final comp frames only** — node-output caching is the evaluator's, and is not built.
+
+**"Ahead of the playhead" applies to BOTH lower rungs, and neither used to.** The ring renders
+ahead of the clock, so a frame is composited before it is shown — but the trip *up* the ladder
+was made at the moment the frame was wanted, inside the turn that had to produce it. From memory
+that is an upload: quick, but paid out of the frame's own budget rather than out of the slack the
+ring exists to bank. From disk it is worse — see below. Both rungs are now climbed over the same
+look-ahead window whose source decodes are already posted, so by the time the ring reaches the
+frame it is a hit on the card and no composite happens at all.
+
+**And the disk rung is what makes the tier count during playback.** A read off disk
+goes to the IO thread, and the bytes come back one or two turns of the worker loop later. A
+frame asked for at the moment it must be shown thus always arrives too late, and playback
+composites it again — a span parked on disk was then worth nothing to playback, which is most
+of what the disk tier holds after a project is re-opened. Playback asks for the frames of its
+look-ahead window instead, at the same time as it posts their source decodes, so the frame is
+on the card before playback reaches it. Three refinements close the gaps that lead alone left
+open. Pressing play asks the disk for the first stretch of the run before the first render
+turn — at the start of a run the ring fills by rendering back-to-back, so a lead measured
+from the render head is no lead at all there. In **every-frame mode only**, a frame whose
+copy has been asked for and not yet arrived is given a bounded grace (tens of milliseconds)
+before being composited anyway: the mode promises every frame, not any particular arrival
+time, and the copy is far cheaper than the render. Adaptive playback never waits — it keeps
+chasing its clock, and a frame that has not arrived is composited as before. And a frame
+read back off disk is banked in the RAM tier as well as uploaded, so the next pass over the
+same span climbs from memory instead of reading the same files again — without that, a comp
+larger than the VRAM budget re-read its files on every pass and the IO thread's rate became
+the playback rate.
+
+**Two costs the ladder used to pay for each frame, and no longer pays.** The bytes of a frame
+are held in one allocation that the memory tier and the disk tier share, in place of a copy for
+each (8 MB for each 1080p frame, twice, on the worker thread). And a promotion writes into a
+display texture that the VRAM cache has finished with, in place of making one, whenever nothing
+shows that texture any more. The share count of the texture is what says so, which is the only
+safe test: a write into a texture that a present still shows would put the wrong picture on the
+screen.
+
 ### 5.2 Cache key
 
 Every cache entry is keyed by a 128-bit content hash (BLAKE3-short or xxHash3-128; collisions
@@ -386,6 +493,34 @@ Normative details:
 dependency walker: an edit changes evaluated values, values change hashes, old entries simply
 stop being addressed and age out via eviction.
 
+**As built (K-214).** Every tier is content-keyed, and the invalidation machinery is gone. It
+briefly existed: while the tiers were keyed by `(comp, frame, scale)` an edit did not rename any
+frame, so the only safe answer was for a committed change to drop every held frame of every
+composition — and the cost was paid on the edits that cannot change a pixel. A rename, a
+work-area nudge, a solo toggle, sound added to a layer, an opacity keyframe on a hidden layer:
+each one emptied the cache and the bar went blank with it. None of them does now, and an undo
+finds its frames still filed under the names the restored document asks for.
+
+The one place the key was not honest has been fixed with it: a layer's inherited **parent-chain**
+placement now feeds its contribution (`ALGO_VERSION` 2). A hidden layer contributes nothing —
+correctly, since it draws nothing — but its children still follow it, so moving a hidden parent
+moved the picture while leaving every name alone, and the children served frames from before the
+move. K-206 makes that the common case rather than a corner: a Null is the layer a user hides
+most readily, having nothing to look at.
+
+**The quality axis is one number, and everything that reads it must round the same way.**
+Auto resolution keys at 1% steps, thus two scales inside one step are one quality. Footage also
+folds in the width it decodes at, and that width came from the raw scale — so 0.4235 and 0.4240
+were one quality by the tag and two names by the width. The cache bar asks by a scale rounded to
+a thousandth, which is nearly never the float the render used, thus it named every frame
+differently from the way it was banked and drew nothing over a composition that was full and
+playing. A composition of solids was correct throughout, because a solid folds in the tag alone.
+The decode width now comes from the same rounded scale the tag does (`Quality::keyed_scale`),
+thus the width in the name is the width the pixels were decoded at.
+
+A frame is only nameable once its footage is probed. Until then it renders live and is banked
+nowhere, so an entry can never be a promise the renderer did not keep.
+
 ### 5.3 Eviction
 
 Cost-aware LRU (GreedyDual-style), managed by the resource governor's budgets: each entry
@@ -394,6 +529,24 @@ cheap-to-recompute × large. Additional rules: the displayed frame and a window 
 playhead are pinned; final comp frames outlive intermediates at equal staleness (playback needs
 finals; intermediates rebuild from cached inputs); VRAM eviction demotes to RAM only when
 recompute cost exceeds a readback-cost threshold, otherwise drops.
+
+**As built (K-214), with one deviation, and why.** Every eviction demotes; there is no cost
+threshold on the decision. The threshold is the right idea and the number to compare against
+is not available: a composite is *submitted* to the graphics card and the call returns, so the
+wall-clock the renderer can measure around it is the submit rather than the work — a frame that
+costs the card 8 ms can measure under one. Gating the ladder on that would gate it on noise.
+What bounds the traffic instead is a hard ceiling on how many read-backs may be in flight at
+once (four); a burst of evictions past it drops the extra frames, which costs a re-render and
+nothing else. The read-back is *encoded* at eviction time and collected a worker turn or two
+later, so an eviction never makes the preview wait for the bus. The measured cost is still
+recorded and still used — for eviction **ordering**, which is comparative and where a noisy
+number is good enough.
+
+Two rules fall out of the ladder being two-way. A frame that arrived by being promoted UP is
+not read back when it goes: it is already held below, and demoting it again would be pure
+traffic — this is what stops a scrub across a span larger than the cache from reading the same
+frames off the card over and over. And a frame goes to disk on the way *down*, not when RAM
+later forgets it, so an editor that stops unexpectedly has still banked what it rendered.
 
 ### 5.4 Disk cache format and location
 
@@ -406,6 +559,43 @@ The disk cache lives in the project's sidecar folder (`<project>.lum-cache/`,
   missing or corrupt; a corrupt entry is discarded silently and re-rendered.
 - Default size cap 50 GB, user-set; evicted by the same cost-aware policy using the index.
 
+**As built (K-214).**
+
+- **Where.** Three choices, in Settings → Performance (docs/07 §15): the application's own
+  cache folder keyed by the document's id (the default), a `<project>.lum-cache/` folder beside
+  the project file, or a folder the user picks. The choice is application-wide by default and
+  can be made **per project** instead (K-215), in which case it is stored in the `.lum` through
+  an ordinary op — so it is undoable, and it travels with a copy of the project rather than
+  staying behind in one machine's settings. A project's own answer overrides the application's. The sidecar cannot be the default because it
+  only works once the project *has* a file, and a project should cache from the moment it is
+  created; the document id is written into the `.lum` and survives every save, so an app-data
+  cache still finds its frames tomorrow. An unsaved project set to "beside the project" falls
+  back to the app-data folder until it is saved. Changing the choice moves nothing: the old
+  folder is simply no longer addressed, and may be deleted by hand at any time.
+- **Format.** `KFR1`: magic, pixel format, colourspace, width, height, then LZ4-compressed
+  **RGBA8** — the display-encoded bytes the preview compositor actually produces, which are the
+  same pixels an export writes (K-031). fp16 planes join as a new format tag when the working
+  format reaches the processor; the header carries a format field for exactly that. One
+  canonical channel order on disk, so a cache is not silently unreadable on the next platform:
+  the Windows and macOS zero-copy paths composite in BGRA, and the swizzle is paid on the IO
+  thread in both directions, never on a render.
+- **The index** (K-215). `index.bin` — every entry's hash, size, recompute cost, last use and
+  quality — plus `index.log`, one fixed-size record appended per change since that snapshot.
+  Opening reads the snapshot and replays the log; a record torn by a crash is a partial
+  trailing record and is discarded by length. Either file missing or unreadable means the
+  folder is walked once and the index rebuilt from it, which is this section's "rebuilt by scan
+  if missing or corrupt". So presence, the byte total and the eviction order all cost nothing at
+  run time, and **eviction is the same stale × large ÷ cheap-to-remake policy as the tiers
+  above** rather than the modification-time order a filesystem is limited to.
+
+  A **deviation, recorded rather than silent**: the spec says `index.db`, SQLite. This is a flat
+  map of fixed-size rows, read once at start-up and otherwise held in memory; SQLite would add a
+  C dependency to an engine crate to store it, and the media frame index (docs/10 §3) already
+  sets the house precedent of a plain binary sidecar.
+- Anything unreadable — bad magic, unknown format, truncation, a failed decompression, the
+  wrong pixel count — is deleted and re-rendered. The cache can never make a frame wrong, only
+  faster.
+
 ### 5.5 Idle-time background cache fill
 
 After ~200 ms without user input, an idle-priority scheduler renders final frames outward from
@@ -414,12 +604,64 @@ disk). It yields to any interactive request via epoch cancellation and is the fi
 degradation ladder pauses. Concurrency adapts to measured per-frame cost and memory headroom
 (the MFR lesson) — never a fixed thread count.
 
+**As built.** The fill renders one frame per idle turn, forward-biased two frames ahead for
+each one behind, after a ~200 ms lull.
+
+**And a second job runs on the same lull: the idle backup.** A frame reached the disk tier by
+one route only — pushed out of the VRAM cache, read back on the way down, parked. That route
+needs the cache to be *full*. Give it a budget larger than a session ever fills (10 GB on a
+roomy card) and it is never full, thus nothing is ever pushed out, thus **nothing is ever
+written to disk**: the more memory the user gives the cache, the more certainly the tier that
+exists to make tomorrow start warm stays empty. The failure is silent — the bar is green all
+session, and blank again after a restart.
+
+So the ladder has a second way down. On each idle lull, one held frame that is not yet parked
+is copied down: the frame stays on the card and keeps serving the Viewer, and a copy goes to
+memory and to disk. The copy is the same non-blocking read-back an eviction uses and is bounded
+by the same in-flight ceiling, thus it can never compete with the picture. A frame that has been
+copied down is marked as held below, so the day it *is* pushed out it goes without being read a
+second time.
+
+The idle fill obeys the same rule, and it matters most immediately after the backup has done its
+job: **the fill never composites a frame that is already held below.** It has no deadline — that
+is what makes it the fill — so a frame that exists in memory or in a file is climbed rather than
+made again. Without this, re-opening a project would walk a full disk cache and re-render every
+frame of it, which is the exact opposite of what the cache is for. An upload counts as that
+turn's work, so a request arriving mid-fill still waits at most one frame; asking the disk for a
+copy costs this thread nothing, so the walk queues those as it passes and the copies land while
+it is idle.
+
+The backup runs **alongside** the fill rather than after it. On a long composition the fill has
+frames to make for as long as the budget lasts, so "when the fill is finished" would mean
+"never" — which is how long the disk tier stayed empty.
+
 ### 5.6 Cache bars
 
 The timeline shows, per comp, a per-frame strip: **green** — final frame in RAM or VRAM at
 current quality, plays in real time now; **blue** — on disk only, promotable; **dimmed
 green/blue** — cached at a lower preview resolution than currently displayed. Redrawn from a
 lock-free bitmap snapshot; the UI thread never queries the cache itself (K-017).
+
+**As built (K-214).** The strip is five values per frame — `0` nothing, `1` held coarser,
+`2` held at this resolution, `3` on disk coarser, `4` on disk at this resolution — and playable
+outranks promotable, so a frame both held and parked reads as held.
+
+The snapshot is not an optimisation here, it is the only way the question can be answered.
+Under content keying, "is frame 12 held?" means *naming* frame 12 — hashing the whole
+composition at that time — which needs the renderer's probe results and is not work for the
+thread that paints. So the bar leaves a note saying which composition, how many frames and what
+preview scale it is drawing, and the render worker publishes the strip it asks for: all zeros
+until the worker has answered, which is honest rather than another composition's frames.
+
+Three bounds on that work, all stated rather than hidden. It is recomputed only when something
+has actually moved (the bar's request, the document revision, or one of the three tiers'
+contents), at most every 150 ms — and at most every 500 ms while playback is running, since the
+walk shares the thread that renders and that thread has a deadline. And a composition longer than about a thousand frames is
+**sampled** — one frame per stride stands for its neighbours — because the stripe is a
+thousand-odd pixels wide at most and hashing forty thousand frames to draw it would be work
+nobody can see. The dimmed state probes the adaptive tiers' scales (Half, Third, Quarter),
+which are the scales frames genuinely get cached at, rather than every scale a Viewer could
+be resized to.
 
 ## 6. Preview
 

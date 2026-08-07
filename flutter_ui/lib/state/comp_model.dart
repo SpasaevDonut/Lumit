@@ -72,6 +72,42 @@ class CompModel extends ChangeNotifier {
     return _model?.motionBlurEnabled ?? false;
   }
 
+  /// The engine revision the held model was read at, or null before the first
+  /// read. What a panel caching something *derived* from the model compares
+  /// against: the cache is good for as long as this number is, and an edit
+  /// moves it. Reading it freshens the model first, so it never reports a
+  /// revision older than what the caller is about to draw.
+  BigInt? get revision {
+    _freshen();
+    return _revision;
+  }
+
+  /// The copy in hand, and the revision it was read at, **without asking the
+  /// engine anything** (K-230).
+  ///
+  /// For the paint path, and only for it. Every getter above checks with the
+  /// engine that the document has not moved — once per frame while a frame is
+  /// being built, and *every time* outside one, which is where pointer handlers
+  /// run. That check is a bridge call, so a tool that redraws as the mouse
+  /// moves was asking whether the document had changed at the rate the mouse
+  /// reports, and the answer was always no: moving a mouse changes no document.
+  ///
+  /// Drawing never needs the check. A change refreshes this model and notifies,
+  /// and everything that draws from it is listening — so a paint that used the
+  /// held copy is repainted from the new one the moment there is one. Code that
+  /// has just *committed* an edit and wants to read it back keeps the checking
+  /// getters above.
+  List<BridgeLayerEntry> get heldLayers => _model?.layers ?? const [];
+  BigInt? get heldRevision => _revision;
+
+  /// The comp this model is bound to has gone — deleted, or undone out of
+  /// existence — rather than merely being empty. A comp that is *there* always
+  /// reads as a model, even with no layers in it, so the pair below says
+  /// exactly one thing: something is fronted, and the engine has never heard
+  /// of it. Whoever fronted it is the one that has to move on ([_freshen]
+  /// already refuses to throw), and this is how they find out for free.
+  bool get compGone => _comp != null && _model == null;
+
   /// Point the model at [comp] (or null) and read it.
   void bind(CompositionReference? comp) {
     _comp = comp;

@@ -1,0 +1,48 @@
+---
+title: Audio
+description: Waveforms, beat markers, and what audio can do so far.
+sidebar:
+  order: 15
+---
+
+import Shot from "../../../components/Shot.astro";
+
+Footage keeps its audio: it plays in preview and export writes it. On top of that,
+two audio features are built today - waveforms and beat detection.
+
+<Shot file="waveform.png" caption="A footage layer's waveform in its lane." />
+
+## Waveforms
+
+A Footage layer draws its audio waveform in its Timeline lane, trimmed and retimed
+with the layer.
+
+:::note[Partly built]
+Clips inside a [Sequence layer](/use/sequence-layers/) do not draw waveforms yet.
+:::
+
+## Beat markers
+
+Lumit can read a composition's audio and place a **beat marker** on each detected
+onset, to cut and animate against.
+
+- **Composition ▸ Detect beats** runs the detection.
+- **Composition ▸ Clear beat markers** removes what it placed.
+
+Sensitivity tuning and tapping beats in by hand are not built yet. See
+[Markers](/use/markers/).
+
+## What is still to come
+
+| Feature | What it will do |
+| --- | --- |
+| **Audio layer** | A layer whose source is an audio item, or the audio of a footage item. |
+| **Audio panel** | Level meters and mixing controls. |
+| **Mixing** | Several audio layers per composition, mixed together. |
+
+The audio clock is intended to be the master everything else syncs to.
+
+## Related
+
+- [Markers](/use/markers/)
+- [Exporting](/use/export/)

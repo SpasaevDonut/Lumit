@@ -18,6 +18,9 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../icons/icons.dart';
+import '../l10n/engine_labels.dart';
+import '../l10n/strings.dart';
+import '../shell/comp_settings_frb.dart';
 import '../state/comp_time.dart';
 import '../state/timeline_columns.dart';
 import '../theme/theme.dart';
@@ -38,12 +41,23 @@ class CompTabsFrb extends StatelessWidget {
     // re-read when the engine says it changed shape. Filtered to the tabs the
     // user has opened, so a deleted comp's tab also simply stops matching.
     final selected = uiState.selectedComp?.internalid;
+    // In the tab strip's own order, not the project's: the strip is dragged
+    // into whatever order suits the work, and `openComps` is where that order
+    // lives (and what the session writes down).
+    final byId = {
+      for (final entry in state.comps()) entry.$1.internalid: entry
+    };
     final comps = [
-      for (final entry in state.comps())
-        if (uiState.openComps.contains(entry.$1.internalid) ||
-            entry.$1.internalid == selected)
-          entry,
+      for (final id in uiState.openComps)
+        if (byId[id] != null) byId[id]!,
     ];
+    // A fronted comp always joins `openComps`, so this only catches a comp
+    // fronted from somewhere that has not been through `setSelectedComp` yet.
+    if (selected != null &&
+        !uiState.openComps.contains(selected) &&
+        byId[selected] != null) {
+      comps.add(byId[selected]!);
+    }
     if (comps.isEmpty) return const SizedBox.shrink();
 
     return Container(
@@ -53,19 +67,41 @@ class CompTabsFrb extends StatelessWidget {
         scrollDirection: Axis.horizontal,
         children: [
           for (var i = 0; i < comps.length; i++)
-            _CompTab(
-              key: ValueKey<String>('tl-tab-${comps[i].$1.internalid}'),
-              name: comps[i].$2,
-              active: selected == comps[i].$1.internalid,
-              onTap: () => uiState.setSelectedComp(comps[i].$1),
-              closeKey:
-                  ValueKey<String>('tl-tab-close-${comps[i].$1.internalid}'),
-              onClose: () => uiState.closeComp(
-                comps[i].$1.internalid,
-                // The nearest remaining neighbour fronts: the one to the
-                // left, or the next one when the first tab closes.
-                fallback:
-                    comps.length == 1 ? null : comps[i == 0 ? 1 : i - 1].$1,
+            DragTarget<UuidValue>(
+              onWillAcceptWithDetails: (d) => d.data != comps[i].$1.internalid,
+              onAcceptWithDetails: (d) =>
+                  uiState.moveComp(d.data, comps[i].$1.internalid),
+              builder: (context, candidate, _) => Draggable<UuidValue>(
+                data: comps[i].$1.internalid,
+                feedback: Container(
+                  height: 22,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  color: t.surface2,
+                  child: Center(child: Text(comps[i].$2, style: t.small)),
+                ),
+                childWhenDragging: const SizedBox.shrink(),
+                child: _CompTab(
+                  key: ValueKey<String>('tl-tab-${comps[i].$1.internalid}'),
+                  name: comps[i].$2,
+                  active: selected == comps[i].$1.internalid,
+                  dropping: candidate.isNotEmpty,
+                  onTap: () => uiState.setSelectedComp(comps[i].$1),
+                  onMenu: (position) => showCompTabMenuFrb(
+                    context: context,
+                    comp: comps[i].$1,
+                    position: position,
+                    onChanged: uiState.model.refresh,
+                  ),
+                  closeKey: ValueKey<String>(
+                      'tl-tab-close-${comps[i].$1.internalid}'),
+                  onClose: () => uiState.closeComp(
+                    comps[i].$1.internalid,
+                    // The nearest remaining neighbour fronts: the one to the
+                    // left, or the next one when the first tab closes.
+                    fallback:
+                        comps.length == 1 ? null : comps[i == 0 ? 1 : i - 1].$1,
+                  ),
+                ),
               ),
             ),
         ],
@@ -74,17 +110,49 @@ class CompTabsFrb extends StatelessWidget {
   }
 }
 
+/// A comp tab's context menu. Only one entry so far — the same Composition
+/// settings dialog the Project panel's menu opens, reached from the comp the
+/// user is actually working in rather than by hunting for its project row.
+Future<void> showCompTabMenuFrb({
+  required BuildContext context,
+  required CompositionReference comp,
+  required Offset position,
+  required VoidCallback onChanged,
+}) async {
+  final open = await showLumitPopup<bool>(
+    context: context,
+    position: position,
+    builder: (close) => FloatSurface(
+      width: 210,
+      child: MenuRow(
+        key: const ValueKey('tl-tab-menu-settings'),
+        onPressed: () => close(true),
+        child: Text(l10n.compositionSettingsEllipsis),
+      ),
+    ),
+  );
+  if (open != true || !context.mounted) return;
+  if (await showCompSettingsFrb(context: context, comp: comp)) onChanged();
+}
+
 class _CompTab extends StatelessWidget {
   final String name;
   final bool active;
+
+  /// A tab being dragged is hovering over this one, which is where it would
+  /// land — lit so the drop is visible before it is taken.
+  final bool dropping;
   final VoidCallback onTap;
+  final ValueChanged<Offset> onMenu;
   final Key closeKey;
   final VoidCallback onClose;
   const _CompTab({
     super.key,
     required this.name,
     required this.active,
+    required this.dropping,
     required this.onTap,
+    required this.onMenu,
     required this.closeKey,
     required this.onClose,
   });
@@ -95,10 +163,13 @@ class _CompTab extends StatelessWidget {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
+      onSecondaryTapUp: (d) => onMenu(d.globalPosition),
       child: Container(
         padding: const EdgeInsets.only(left: 10, right: 4),
         decoration: BoxDecoration(
-          color: active ? t.surface0 : null,
+          color: dropping
+              ? t.accent.withValues(alpha: 0.18)
+              : (active ? t.surface0 : null),
           border: Border(
             bottom: BorderSide(
               color: active ? t.accent : const Color(0x00000000),
@@ -165,7 +236,7 @@ class _LayerSearchFrbState extends State<LayerSearchFrb> {
         key: const ValueKey('tl-search'),
         controller: _controller,
         width: widget.width,
-        hint: 'Search layers',
+        hint: l10n.searchLayers,
       );
 }
 
@@ -205,9 +276,9 @@ class ParentPickerFrb extends StatelessWidget {
       width: width,
       child: BareLazyDropdown(
         key: ValueKey<String>('tl-parent-${layer.internallayerId}'),
-        label: info.parent == null ? 'None' : (info.parentName ?? 'None'),
+        label: info.parent == null ? l10n.none : (info.parentName ?? l10n.none),
         options: () => [
-          (null, 'None'),
+          (null, l10n.none),
           for (final e in all)
             if (e.layer.internallayerId != layer.internallayerId)
               (e.layer.internallayerId, e.info.name),
@@ -265,12 +336,12 @@ class MattePickerFrb extends StatelessWidget {
     final t = ThemeScope.of(context).theme;
     final matte = info.matte;
     final sourceName = matte == null
-        ? 'No matte'
+        ? l10n.noMatte
         : all
                 .where((e) => e.layer.internallayerId == matte.layer)
                 .map((e) => e.info.name)
                 .firstOrNull ??
-            'Matte';
+            engineLabel('Matte');
 
     // A fixed overall width whether or not the mode toggles are showing, so
     // the columns after the matte cell never shift as mattes come and go —
@@ -294,7 +365,7 @@ class MattePickerFrb extends StatelessWidget {
               // audio-only clip) is not offered, and neither is this one:
               // matting a layer with itself has no meaning.
               options: () => [
-                (null, 'No matte'),
+                (null, l10n.noMatte),
                 for (final e in all)
                   if (e.layer.internallayerId != layer.internallayerId &&
                       e.layer.hasPicture())
@@ -316,7 +387,7 @@ class MattePickerFrb extends StatelessWidget {
               key: 'tl-matte-luma-${layer.internallayerId}',
               glyph: matte.luma ? 'L' : 'α',
               on: true,
-              tip: matte.luma ? 'Luma matte' : 'Alpha matte',
+              tip: matte.luma ? l10n.tipLumaMatte : l10n.tipAlphaMatte,
               onTap: () => _set(BridgeMatte(
                   layer: matte.layer,
                   luma: !matte.luma,
@@ -327,7 +398,7 @@ class MattePickerFrb extends StatelessWidget {
               key: 'tl-matte-invert-${layer.internallayerId}',
               glyph: '−',
               on: matte.inverted,
-              tip: matte.inverted ? 'Inverted' : 'Not inverted',
+              tip: matte.inverted ? l10n.tipInverted : l10n.tipNotInverted,
               onTap: () => _set(BridgeMatte(
                   layer: matte.layer,
                   luma: matte.luma,
@@ -413,7 +484,7 @@ class _MarkerEditorState extends State<_MarkerEditor> {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    final markers = widget.comp.getMarkers();
+    final markers = markersOf(widget.comp);
 
     return FloatSurface(
       width: 340,
@@ -423,7 +494,7 @@ class _MarkerEditorState extends State<_MarkerEditor> {
         children: [
           Padding(
             padding: const EdgeInsets.all(8),
-            child: Text('Markers', style: t.bodyPrimary),
+            child: Text(l10n.menuMarkers, style: t.bodyPrimary),
           ),
           for (final marker in markers)
             Padding(
@@ -449,12 +520,10 @@ class _MarkerEditorState extends State<_MarkerEditor> {
                     small: true,
                     frameless: true,
                     onPressed: () {
-                      widget.comp.setMarkers(
-                        markers: [
-                          for (final m in markers)
-                            if (m.id != marker.id) m,
-                        ],
-                      );
+                      writeMarkers(widget.comp, [
+                        for (final m in markers)
+                          if (m.id != marker.id) m,
+                      ]);
                       setState(() {});
                     },
                     child:
@@ -466,7 +535,7 @@ class _MarkerEditorState extends State<_MarkerEditor> {
           if (markers.isEmpty)
             Padding(
               padding: const EdgeInsets.all(8),
-              child: Text('No markers yet', style: t.small),
+              child: Text(l10n.noMarkersYet, style: t.small),
             ),
           const SizedBox(height: 6),
           Padding(
@@ -485,21 +554,12 @@ class _MarkerEditorState extends State<_MarkerEditor> {
                   key: const ValueKey('marker-add'),
                   small: true,
                   onPressed: () {
-                    widget.comp.setMarkers(
-                      markers: [
-                        ...markers,
-                        BridgeMarker(
-                          id: UuidValue.fromString(const Uuid().v4()),
-                          time: widget.comp
-                              .timeOfFrame(frame: widget.playheadFrame),
-                          label: _label.text,
-                        ),
-                      ],
-                    );
+                    addMarkerFrb(widget.comp,
+                        frame: widget.playheadFrame, label: _label.text);
                     _label.clear();
                     setState(() {});
                   },
-                  child: Text('Add at playhead', style: t.small),
+                  child: Text(l10n.addAtPlayhead, style: t.small),
                 ),
               ],
             ),
@@ -514,7 +574,7 @@ class _MarkerEditorState extends State<_MarkerEditor> {
                   key: const ValueKey('marker-close'),
                   small: true,
                   onPressed: widget.onClose,
-                  child: const Text('Close'),
+                  child: Text(l10n.close),
                 ),
               ],
             ),
@@ -602,6 +662,8 @@ LumitIcon iconForKind(BridgeLayerKind kind) => switch (kind) {
       BridgeLayerKind.sequence => LumitIcon.sequence,
       BridgeLayerKind.precomp => LumitIcon.comp,
       BridgeLayerKind.text => LumitIcon.text,
+      // Vector art, drawn as the shape tool that usually makes it (K-237).
+      BridgeLayerKind.shape => LumitIcon.rectangle,
       BridgeLayerKind.camera => LumitIcon.camera,
       // An adjustment layer is a comp-sized effect container, drawn as a solid —
       // the same choice layer_style.dart and the egui frontend make.
@@ -612,22 +674,24 @@ LumitIcon iconForKind(BridgeLayerKind kind) => switch (kind) {
 /// The cache bar: a thin stripe under the time ruler showing which frames are
 /// already rendered and held (docs/07-UI-SPEC.md §3.2, docs/15-DESIGN.md §6.3).
 ///
-/// **What the colours mean.** Mint means the frame is held at the resolution the
-/// Viewer is showing — it plays now, which is the promise the bar exists to make
-/// (docs/13 §B5). A dimmed mint means it is held only at a coarser resolution
-/// than is being displayed: there is something, but it would be rendered again
-/// to show it at this size. Nothing drawn means nothing held. No amber, no red,
-/// no pulsing — an empty cache is not a fault.
+/// **What the colours mean.** Mint means the frame is held in memory or on the
+/// graphics card at the resolution the Viewer is showing — it plays now, which is
+/// the promise the bar exists to make (docs/13 §B5). Steel blue means it is
+/// parked on disk only: one promotion from playing, not playable this instant.
+/// Either colour dimmed means it is held only at a coarser resolution than is
+/// being displayed — there is something, but it would be rendered again to show
+/// it at this size. Nothing drawn means nothing held. No amber, no red, no
+/// pulsing — an empty cache is not a fault.
 ///
-/// The design language reserves steel blue for frames on disk only. There is no
-/// disk frame cache in this engine yet, so that state cannot occur and is not
-/// drawn; when one arrives it is a third value from `cachedFrames` and a third
-/// colour here.
-///
-/// **It never polls.** The cache's lock is the one a render holds, so reading it
-/// per paint would put the interface behind the renderer. `revision` is bumped
-/// when a frame arrives, and only then is the cache asked again.
-class TimelineCacheBar extends StatelessWidget {
+/// **It never polls, and it is not asked again just because the panel
+/// rebuilt.** The cache's lock is the one a render holds, so reading it per
+/// paint would put the interface behind the renderer. `revision` is bumped when
+/// a frame arrives, and only then — or when the comp, its length or the
+/// resolution changes — is the cache asked. Held in state rather than read in
+/// `build` for exactly that reason: a zoom flight rebuilds this widget on every
+/// animation frame, and a stateless read made each of those frames take the
+/// render lock and allocate a byte per frame of the composition (K-293).
+class TimelineCacheBar extends StatefulWidget {
   final CompositionReference comp;
   final CacheBarAxis axis;
   final Listenable revision;
@@ -643,32 +707,76 @@ class TimelineCacheBar extends StatelessWidget {
   });
 
   @override
+  State<TimelineCacheBar> createState() => _TimelineCacheBarState();
+}
+
+class _TimelineCacheBarState extends State<TimelineCacheBar> {
+  Uint8List _tiers = Uint8List(0);
+
+  /// What the held [_tiers] were read for. A read is repeated when one of these
+  /// moves, and skipped when the rebuild is only the zoom widening the bar.
+  int? _readFrames;
+  double? _readScale;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.revision.addListener(_invalidate);
+  }
+
+  @override
+  void didUpdateWidget(TimelineCacheBar old) {
+    super.didUpdateWidget(old);
+    if (old.revision != widget.revision) {
+      old.revision.removeListener(_invalidate);
+      widget.revision.addListener(_invalidate);
+    }
+    // A different composition is a different cache. Cleared directly rather
+    // than through [_invalidate]: a build follows this call anyway, and a
+    // `setState` here would only ask for a second one.
+    if (old.comp != widget.comp) _readFrames = null;
+  }
+
+  @override
+  void dispose() {
+    widget.revision.removeListener(_invalidate);
+    super.dispose();
+  }
+
+  /// A frame arrived (or the comp changed): read again on the next build.
+  void _invalidate() {
+    if (!mounted) return;
+    setState(() => _readFrames = null);
+  }
+
+  @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    return ListenableBuilder(
-      listenable: revision,
-      builder: (context, _) {
-        final frames = axis.frames;
-        final tiers = frames <= 0
-            ? Uint8List(0)
-            : comp.cachedFrames(
-                frames: BigInt.from(frames),
-                scale: Provider.of<LumitUiState>(context, listen: false)
-                    .viewerScale,
-              );
-        return SizedBox(
-          height: height,
-          child: CustomPaint(
-            key: const ValueKey('tl-cache-bar'),
-            painter: _CacheBarPainter(
-              tiers: tiers,
-              axis: axis,
-              ready: t.success,
-              coarse: t.success.withValues(alpha: 0.4),
-            ),
-          ),
-        );
-      },
+    final frames = widget.axis.frames;
+    final scale = Provider.of<LumitUiState>(context, listen: false).viewerScale;
+    if (_readFrames != frames || _readScale != scale) {
+      _tiers = frames <= 0
+          ? Uint8List(0)
+          : widget.comp.cachedFrames(
+              frames: BigInt.from(frames),
+              scale: scale,
+            );
+      _readFrames = frames;
+      _readScale = scale;
+    }
+    return SizedBox(
+      height: TimelineCacheBar.height,
+      child: CustomPaint(
+        key: const ValueKey('tl-cache-bar'),
+        painter: _CacheBarPainter(
+          tiers: _tiers,
+          axis: widget.axis,
+          ready: t.success,
+          coarse: t.success.withValues(alpha: 0.4),
+          onDisk: t.cacheDisk,
+          onDiskCoarse: t.cacheDisk.withValues(alpha: 0.4),
+        ),
+      ),
     );
   }
 }
@@ -717,6 +825,11 @@ class TimelineRuler extends StatefulWidget {
   /// is a per-rebuild cost on a panel that rebuilds a lot (docs/13).
   final ({int start, int end, bool whole}) work;
 
+  /// A marker was moved, renamed or removed on the ruler (K-254) — the ruler
+  /// has already written it to the document, and this is the panel being told
+  /// so the rest of it redraws. Null in a ruler with no markers to edit.
+  final VoidCallback? onMarkersChanged;
+
   const TimelineRuler({
     super.key,
     required this.comp,
@@ -726,6 +839,7 @@ class TimelineRuler extends StatefulWidget {
     required this.onSeek,
     required this.work,
     this.onWorkArea,
+    this.onMarkersChanged,
   });
 
   @override
@@ -742,6 +856,113 @@ class _TimelineRulerState extends State<TimelineRuler> {
   /// edge is drawn while the button is down.
   int? _dragFrame;
   bool _dragIsStart = false;
+
+  /// The marker being dragged, and the frame it has reached — the same
+  /// arrangement as the work area's above, for the same reason: a flag that
+  /// waits for the document to come back round visibly trails the pointer.
+  UuidValue? _dragMarker;
+  int? _dragMarkerFrame;
+
+  /// How far into the flag the drag took hold. Without it the flag's left edge
+  /// jumped to the pointer the moment the drag started, which reads as the
+  /// marker flinching away from the grab.
+  double _dragMarkerGrab = 0;
+
+  /// Where a marker draws right now: the document's frame, or the dragged one.
+  int _markerFrame(BridgeMarker marker) =>
+      marker.id == _dragMarker && _dragMarkerFrame != null
+          ? _dragMarkerFrame!
+          : frameAtTime(widget.comp, marker.time);
+
+  /// The last frame of the comp, read once when a drag starts. Asking per
+  /// pointer move was a bridge call per pixel of travel.
+  int _dragMarkerLast = 0;
+
+  /// Write a whole marker list and tell the panel. Every marker edit on the
+  /// ruler goes through here, so there is one place that knows a marker change
+  /// is a document change.
+  void _writeMarkers(List<BridgeMarker> markers) {
+    writeMarkers(widget.comp, markers);
+    widget.onMarkersChanged?.call();
+    if (mounted) setState(() {});
+  }
+
+  /// Follow the pointer. **Nothing is written while the button is down**: the
+  /// flag draws from [_dragMarkerFrame] and the document hears about the move
+  /// once, on release. Committing per frame crossed — the way the work-area
+  /// edges do — cost a document write, a cache flush and a panel rebuild for
+  /// every frame of travel, which is what made the drag feel heavy. A
+  /// work-area edge can afford it because the Viewer preview range changes as
+  /// it moves; a marker has nothing to show until it lands.
+  void _dragMarkerTo(int frame) {
+    final to = frame.clamp(0, _dragMarkerLast < 0 ? 0 : _dragMarkerLast);
+    if (to == _dragMarkerFrame) return;
+    setState(() => _dragMarkerFrame = to);
+  }
+
+  /// The drag ended: write where the flag has been sitting, once.
+  void _dropMarker(BridgeMarker marker) {
+    final to = _dragMarkerFrame;
+    setState(() {
+      _dragMarker = null;
+      _dragMarkerFrame = null;
+    });
+    if (to == null) return;
+    // The same placement rule adding a marker follows, so a flag dropped onto
+    // another behaves exactly as `Ctrl`+digit aimed at an occupied frame does.
+    _writeMarkers(markersWithFrb(widget.comp,
+        frame: to, label: marker.label, id: marker.id));
+  }
+
+  /// The right-click menu on a flag: change what it says, or take it away.
+  void _markerMenu(BuildContext context, BridgeMarker marker, Offset at) {
+    showLumitPopup<void>(
+      context: context,
+      position: at,
+      builder: (close) => FloatSurface(
+        child: IntrinsicWidth(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              MenuRow(
+                key: const ValueKey('marker-menu-edit'),
+                onPressed: () {
+                  close(null);
+                  _editMarker(context, marker);
+                },
+                child: Text(l10n.editMarkerEllipsis),
+              ),
+              MenuRow(
+                key: const ValueKey('marker-menu-delete'),
+                onPressed: () {
+                  close(null);
+                  _writeMarkers([
+                    for (final m in markersOf(widget.comp))
+                      if (m.id != marker.id) m,
+                  ]);
+                },
+                child: Text(l10n.deleteMarker),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _editMarker(BuildContext context, BridgeMarker marker) async {
+    final label =
+        await showMarkerLabelDialogFrb(context: context, initial: marker.label);
+    if (label == null || !mounted) return;
+    _writeMarkers([
+      for (final m in markersOf(widget.comp))
+        if (m.id == marker.id)
+          BridgeMarker(id: m.id, time: m.time, label: label)
+        else
+          m,
+    ]);
+  }
 
   /// The work area as it should draw right now: the panel's, with the edge
   /// being dragged moved to where the pointer is. Each edge stops one frame
@@ -765,7 +986,7 @@ class _TimelineRulerState extends State<TimelineRuler> {
     final comp = widget.comp;
     final axis = widget.axis;
     final work = _work;
-    final markers = comp.getMarkers();
+    final markers = markersOf(comp);
 
     return GestureDetector(
       key: const ValueKey('tl-ruler'),
@@ -831,6 +1052,7 @@ class _TimelineRulerState extends State<TimelineRuler> {
                     child: GestureDetector(
                       key: ValueKey('tl-work-${isStart ? 'start' : 'end'}'),
                       behavior: HitTestBehavior.opaque,
+                      supportedDevices: dragDevices,
                       onHorizontalDragStart: (_) =>
                           setState(() => _dragIsStart = isStart),
                       onHorizontalDragUpdate: (d) {
@@ -875,20 +1097,56 @@ class _TimelineRulerState extends State<TimelineRuler> {
                     ),
                   ),
                 ),
+            // Comp markers (docs/07 §4.1): After Effects' bookmark flags, in
+            // the ruler's lower row where the work-area band lives. The clock
+            // above stays legible, and a flag never sits on a tick.
+            //
+            // Last in the stack so they take the pointer ahead of the
+            // work-area handles: a flag is the smaller target of the two and
+            // has to win where they overlap, or a marker parked on a work-area
+            // edge could not be picked up at all.
             for (final marker in markers)
               Positioned(
-                left: axis.xOf(frameAtTime(comp, marker.time)) - 3,
-                top: 4,
-                child: IgnorePointer(
-                  child: LumitTooltip(
-                    message: marker.label,
-                    child: Container(
-                      width: 6,
-                      height: 6,
-                      decoration: BoxDecoration(
-                        color: t.warning,
-                        borderRadius: BorderRadius.circular(1),
-                      ),
+                // Centred on the frame, so the flag's point sits *on* the
+                // playhead rather than beside it — the point is what says
+                // where, and a shape hung off to one side reads as marking the
+                // frame next door.
+                left: axis.xOf(_markerFrame(marker)) - MarkerFlag.width / 2,
+                // On the floor of the ruler, where the work-area band ends —
+                // markers and the band share the lower row, and a flag lifted
+                // off the edge read as floating over the lanes below.
+                bottom: 0,
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: GestureDetector(
+                    key: ValueKey<String>('tl-marker-${marker.id}'),
+                    behavior: HitTestBehavior.opaque,
+                    onSecondaryTapUp: (d) =>
+                        _markerMenu(context, marker, d.globalPosition),
+                    supportedDevices: dragDevices,
+                    onHorizontalDragStart: (d) => setState(() {
+                      _dragMarker = marker.id;
+                      _dragMarkerFrame = null;
+                      // Measured from the point, not the flag's left edge,
+                      // because the point is what the frame means.
+                      _dragMarkerGrab =
+                          d.localPosition.dx - MarkerFlag.width / 2;
+                      _dragMarkerLast = comp.durationFrames() - 1;
+                    }),
+                    onHorizontalDragUpdate: (d) => _dragMarkerTo(axis.frameAt(
+                        d.globalPosition.dx -
+                            _originX(context) -
+                            _dragMarkerGrab)),
+                    onHorizontalDragEnd: (_) => _dropMarker(marker),
+                    onHorizontalDragCancel: () => setState(() {
+                      _dragMarker = null;
+                      _dragMarkerFrame = null;
+                    }),
+                    child: MarkerFlag(
+                      label: marker.label,
+                      fill: t.marker,
+                      ink: t.surface0,
+                      text: t.caption.copyWith(fontWeight: FontWeight.w400),
                     ),
                   ),
                 ),
@@ -903,6 +1161,266 @@ class _TimelineRulerState extends State<TimelineRuler> {
 /// How wide a work-area edge is to grab. Wider than the 2 px it draws, so the
 /// handle is catchable without the mark being heavy.
 const double _workHandleWidth = 10;
+
+/// A comp marker on the time ruler: a small flag with its **point at the top**,
+/// centred on the moment it marks, and what it says in a box hung off its right
+/// (docs/07 §4.1, K-254).
+///
+/// The point is the whole of the design. It is what carries the meaning — this
+/// frame, not the one next door — so it sits on the playhead and the body of
+/// the flag hangs below it, out of the way of the ticks. The label rides in a
+/// box of the same colour rather than as loose text over the ruler, where it
+/// crossed the ticks and the work-area band and read as neither.
+class MarkerFlag extends StatelessWidget {
+  final String label;
+  final Color fill;
+
+  /// What is drawn *on* the flag and in its label box — the darkest surface, so
+  /// the writing reads as cut out of the marker rather than printed over it.
+  /// The same trick the playhead's notch uses.
+  final Color ink;
+  final TextStyle text;
+
+  static const double width = 11;
+  static const double height = 12;
+
+  /// How far down the point reaches before the flag squares off.
+  static const double _pointDepth = 0.42;
+
+  const MarkerFlag({
+    super.key,
+    required this.label,
+    required this.fill,
+    required this.ink,
+    required this.text,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final flag = SizedBox(
+      width: width,
+      height: height,
+      child: CustomPaint(painter: _MarkerFlagPainter(fill: fill, edge: ink)),
+    );
+    if (label.isEmpty) return flag;
+    return LumitTooltip(
+      message: label,
+      child: Stack(
+        alignment: Alignment.bottomLeft,
+        children: [
+          // The label flies from the point, not from the flag's right edge —
+          // the pole is the marker's centre line and the cloth hangs off it,
+          // which is what makes a long comment read as belonging to *this*
+          // moment rather than as a bar starting somewhere to its right.
+          Padding(
+            padding: const EdgeInsets.only(left: width / 2),
+            child: Container(
+              height: height,
+              padding: const EdgeInsets.only(left: width / 2 + 2, right: 3),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: fill,
+                border: Border.all(color: ink, width: 1),
+              ),
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: text.copyWith(color: ink, height: 1),
+              ),
+            ),
+          ),
+          // Over the cloth, so the point stays the shape you aim at.
+          flag,
+        ],
+      ),
+    );
+  }
+}
+
+class _MarkerFlagPainter extends CustomPainter {
+  final Color fill;
+
+  /// The hairline round the shape. Without it a pale flag sitting on the pale
+  /// work-area band lost its silhouette, and the point — the part that says
+  /// which frame — was the first thing to go.
+  final Color edge;
+  const _MarkerFlagPainter({required this.fill, required this.edge});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // A point at the top opening out to shoulders, then square to the bottom:
+    // the shape hangs *from* the frame it marks.
+    final shoulder = size.height * MarkerFlag._pointDepth;
+    // Inset by half the stroke, so the outline lands inside the box rather
+    // than straddling its edge and going soft on a fractional pixel ratio.
+    const half = 0.5;
+    final path = Path()
+      ..moveTo(size.width / 2, half)
+      ..lineTo(size.width - half, shoulder)
+      ..lineTo(size.width - half, size.height - half)
+      ..lineTo(half, size.height - half)
+      ..lineTo(half, shoulder)
+      ..close();
+    canvas
+      ..drawPath(path, Paint()..color = fill)
+      ..drawPath(
+        path,
+        Paint()
+          ..color = edge
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1,
+      );
+  }
+
+  @override
+  bool shouldRepaint(_MarkerFlagPainter old) =>
+      old.fill != fill || old.edge != edge;
+}
+
+/// Ask for what a marker says. Returns the new label, or null when the user
+/// cancelled — an empty string is a real answer, being a marker with nothing
+/// written on it.
+Future<String?> showMarkerLabelDialogFrb({
+  required BuildContext context,
+  required String initial,
+}) =>
+    showLumitModal<String>(
+      context: context,
+      initialSize: const Size(320, 150),
+      minSize: const Size(260, 140),
+      builder: (close) => _MarkerLabelDialog(initial: initial, onDone: close),
+    );
+
+class _MarkerLabelDialog extends StatefulWidget {
+  final String initial;
+  final ValueChanged<String?> onDone;
+  const _MarkerLabelDialog({required this.initial, required this.onDone});
+
+  @override
+  State<_MarkerLabelDialog> createState() => _MarkerLabelDialogState();
+}
+
+class _MarkerLabelDialogState extends State<_MarkerLabelDialog> {
+  late final TextEditingController _label =
+      TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    _label.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    return FloatSurface(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 10, 10, 6),
+            child: Text(l10n.marker, style: t.bodyPrimary),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: HouseTextField(
+              key: const ValueKey('marker-edit-label'),
+              controller: _label,
+              autofocus: true,
+              hint: l10n.markerHint,
+              onSubmitted: widget.onDone,
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(10),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                HouseButton(
+                  key: const ValueKey('marker-edit-cancel'),
+                  small: true,
+                  frameless: true,
+                  onPressed: () => widget.onDone(null),
+                  child: Text(l10n.cancel, style: t.small),
+                ),
+                const SizedBox(width: 6),
+                HouseButton(
+                  key: const ValueKey('marker-edit-ok'),
+                  small: true,
+                  onPressed: () => widget.onDone(_label.text),
+                  child: Text(l10n.done, style: t.small),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Put a marker labelled [label] at [frame], replacing anything already on that
+/// frame and any marker already carrying that label (K-254).
+///
+/// Two replacement rules, each for its own reason. **One per frame**, because
+/// markers do not stack: two flags on the same moment are two things to click
+/// and one place, and the second would hide the first exactly. **One per
+/// number**, because `1` has to name one place — `Ctrl+1` pressed again *moves*
+/// marker 1 rather than leaving two for the bare `1` to choose between. An
+/// empty label never replaces by label; unlabelled cues are told apart by where
+/// they are, which the frame rule already keeps distinct.
+void addMarkerFrb(
+  CompositionReference comp, {
+  required int frame,
+  String label = '',
+}) =>
+    writeMarkers(comp, markersWithFrb(comp, frame: frame, label: label));
+
+/// [comp]'s marker list with one marker placed at [frame] — the shared
+/// placement rule, used both when a marker is added and when one is dragged
+/// onto a new moment (K-254).
+///
+/// Two things give way to the newcomer. **Whatever is already on that frame**,
+/// because markers do not stack: two flags on one moment are two things to
+/// click and one place, and the second hides the first exactly. **Whatever
+/// else carries the same label**, when the label is not empty, because `1` has
+/// to name one place — `Ctrl+1` pressed again *moves* marker 1 rather than
+/// leaving two for the bare `1` to choose between. Unlabelled cues are told
+/// apart by where they are, which the frame rule already keeps distinct.
+///
+/// [id] is the marker being *moved*, if this is a move; it keeps its identity
+/// rather than being deleted and made again, so undo and selection see one
+/// marker that travelled.
+List<BridgeMarker> markersWithFrb(
+  CompositionReference comp, {
+  required int frame,
+  required String label,
+  UuidValue? id,
+}) =>
+    [
+      for (final m in markersOf(comp))
+        if (m.id != id &&
+            frameAtTime(comp, m.time) != frame &&
+            (label.isEmpty || m.label != label))
+          m,
+      BridgeMarker(
+        id: id ?? UuidValue.fromString(const Uuid().v4()),
+        time: timeOfFrame(comp, frame),
+        label: label,
+      ),
+    ];
+
+/// The frame of the marker labelled [label], or null when there is none — what
+/// the bare digit keys jump to, and what makes them a quiet no-op until the
+/// matching `Ctrl`+digit has been pressed.
+int? markerFrameFrb(CompositionReference comp, String label) {
+  for (final m in markersOf(comp)) {
+    if (m.label == label) return frameAtTime(comp, m.time);
+  }
+  return null;
+}
 
 /// The playhead: a hairline down the whole area with a head at the top.
 ///
@@ -1105,19 +1623,32 @@ class _CacheBarPainter extends CustomPainter {
   final CacheBarAxis axis;
   final Color ready;
   final Color coarse;
+  final Color onDisk;
+  final Color onDiskCoarse;
 
   const _CacheBarPainter({
     required this.tiers,
     required this.axis,
     required this.ready,
     required this.coarse,
+    required this.onDisk,
+    required this.onDiskCoarse,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint();
     for (final (start, end, tier) in cacheBarRuns(tiers)) {
-      paint.color = tier >= 2 ? ready : coarse;
+      // The engine's five states (`cached_frames`): 1 held coarser, 2 held at
+      // this resolution, 3 on disk coarser, 4 on disk at this resolution. An
+      // unknown value from a newer engine draws as the plainest "something is
+      // held" rather than as nothing.
+      paint.color = switch (tier) {
+        1 => coarse,
+        3 => onDiskCoarse,
+        4 => onDisk,
+        _ => ready,
+      };
       final left = axis.xOf(start).clamp(0.0, size.width);
       // The run's right edge is the left edge of the frame after it, so a run
       // covers its last frame rather than stopping at that frame's start. At
@@ -1134,9 +1665,19 @@ class _CacheBarPainter extends CustomPainter {
     }
   }
 
+  /// The bytes are compared by identity on purpose: the bar holds one read
+  /// until a frame arrives (see [TimelineCacheBar]), so a new list *is* new
+  /// news, and comparing a byte per frame of the composition every rebuild
+  /// would cost more than the paint it saves. The mapping is compared by value,
+  /// because a zoom hands the same bytes a different width.
   @override
   bool shouldRepaint(_CacheBarPainter old) =>
-      old.tiers != tiers || old.ready != ready || old.coarse != coarse;
+      !identical(old.tiers, tiers) ||
+      old.axis.frames != axis.frames ||
+      old.axis.xOf(axis.frames) != axis.xOf(axis.frames) ||
+      old.ready != ready ||
+      old.coarse != coarse ||
+      old.onDisk != onDisk;
 }
 
 /// The Timeline's two-tone ground (K-202): the work area at one value, and a
@@ -1202,6 +1743,67 @@ class WorkAreaGroundPainter extends CustomPainter {
       old.outside != outside;
 
   /// Never absorbs a pointer — it is the ground, not a control.
+  @override
+  bool? hitTest(Offset position) => false;
+}
+
+/// The stretches of a collapsed Sequence layer's bar that no clip covers
+/// (K-248).
+///
+/// A Sequence layer's bar runs from its first clip to its last, and the gaps
+/// in between render transparent — they are legal, and never closed for you.
+/// Shut, that used to be invisible: the bar read as solid footage all the way
+/// across. This washes the gaps out, the same idea as the faint outline a
+/// trimmed footage layer draws over the source it is not using (K-212): the
+/// bar says what is there, and what is only reserved.
+class SequenceGapsPainter extends CustomPainter {
+  final List<BridgeClip> clips;
+  final TimelineAxis axis;
+
+  /// The bar's own left edge in the same pixels [axis] speaks, so a gap can be
+  /// placed inside a box that does not start at time zero.
+  final double left;
+  final Color ink;
+
+  const SequenceGapsPainter({
+    required this.clips,
+    required this.axis,
+    required this.left,
+    required this.ink,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (clips.isEmpty) return;
+    final spans = [
+      for (final c in clips)
+        (
+          axis.xOf(c.startFrame.toInt()) - left,
+          axis.xOf(c.endFrame.toInt()) - left
+        ),
+    ]..sort((a, b) => a.$1.compareTo(b.$1));
+
+    final paint = Paint()..color = ink.withValues(alpha: 0.55);
+    var x = 0.0;
+    for (final (start, end) in spans) {
+      if (start > x) {
+        canvas.drawRect(
+            Rect.fromLTRB(x, 0, start.clamp(0.0, size.width), size.height),
+            paint);
+      }
+      if (end > x) x = end;
+    }
+    if (x < size.width) {
+      canvas.drawRect(
+          Rect.fromLTRB(x.clamp(0.0, size.width), 0, size.width, size.height),
+          paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(SequenceGapsPainter old) =>
+      old.clips != clips || old.left != left || old.ink != ink;
+
   @override
   bool? hitTest(Offset position) => false;
 }

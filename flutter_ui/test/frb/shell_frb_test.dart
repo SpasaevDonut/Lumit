@@ -8,6 +8,7 @@ import 'dart:io';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lumit_flutter/shell/cache_confirm_frb.dart';
 import 'package:lumit_flutter/shell/command_palette_frb.dart';
 import 'package:lumit_flutter/shell/export_dialog_frb.dart';
 import 'package:lumit_flutter/shell/recovery_dialog_frb.dart';
@@ -68,14 +69,19 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('open-settings')));
       await tester.pumpAndSettle();
 
-      // General opens first, and states facts about this build.
-      expect(find.textContaining('lumit-bridge'), findsOneWidget);
+      // General opens first. What this build *is* is no longer stated here —
+      // that is Help ▸ About Lumit now (K-244); Settings is for what you
+      // change, and a version number is not that.
+      expect(find.textContaining('lumit-bridge'), findsNothing);
+      expect(find.byKey(const ValueKey('settings-reset-workspace')),
+          findsOneWidget);
 
       // The engine's own readouts and buttons live on Performance (K-193).
       await tester.tap(find.byKey(const ValueKey('settings-page-performance')));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('settings-tier')), findsOneWidget);
       expect(find.byKey(const ValueKey('settings-cache-used')), findsOneWidget);
+
 
       // The budget is a typed number now (K-194), not a pick from a list:
       // dragging it changes what the engine holds, not just the label.
@@ -93,6 +99,169 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('settings-tier-reset')));
       await tester.pump();
       expect(playbackTier().tier, 1);
+
+      // Where the memory has gone (K-294), at the foot of the page: the rows
+      // above each report one store, and this reports the whole process and
+      // what none of them accounts for. Scrolled to, because the page is
+      // taller than the window — and a memory report is a thing you go and
+      // look for.
+      final unaccounted =
+          find.byKey(const ValueKey('settings-memory-unaccounted'));
+      await tester.scrollUntilVisible(unaccounted, 200,
+          scrollable: find.byType(Scrollable).first);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('settings-memory-process')),
+          findsOneWidget);
+      expect(unaccounted, findsOneWidget);
+      expect(find.byKey(const ValueKey('settings-memory-gpu')), findsOneWidget);
+      expect(find.byKey(const ValueKey('settings-memory-decoders')),
+          findsOneWidget);
+      // A real number, not a placeholder: the platform under the test answers
+      // its own size, so the row shows bytes rather than an em dash.
+      expect(
+        tester.widget<Text>(unaccounted).data ?? '',
+        anyOf(contains('MB'), contains('GB')),
+        reason: 'the report is wired to the engine, not a stub',
+      );
+    });
+
+    /// The disk tier's controls: its budget reaches the engine, and where the
+    /// frames go is a choice the settings file remembers (docs/07 §15). The
+    /// folder picker itself cannot open in a widget test, so what is checked is
+    /// that choosing the custom location offers it — and that the two locations
+    /// which need no folder take effect on the spot.
+    testWidgets('the disk cache has a budget and a place to live',
+        (tester) async {
+      final p = freshProject();
+      await tester.pumpWidget(hostPanel(
+        child: Builder(
+          builder: (context) => HouseButton(
+            key: const ValueKey('open-settings'),
+            onPressed: () => showSettingsWindowFrb(context),
+            child: const Text('Open'),
+          ),
+        ),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('open-settings')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('settings-page-performance')));
+      await tester.pumpAndSettle();
+      // The page is a lazy list and the disk tier is the last group on it, so
+      // it has to be scrolled to before it exists at all.
+      await tester.drag(find.byKey(const ValueKey('settings-body-performance')),
+          const Offset(0, -400));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('settings-disk-used')), findsOneWidget);
+      final before = diskCacheStats().budgetBytes.toInt();
+      await tester.drag(find.byKey(const ValueKey('settings-disk-budget')),
+          const Offset(60, 0));
+      await tester.pumpAndSettle();
+      expect(diskCacheStats().budgetBytes.toInt(), greaterThan(before),
+          reason: 'the drag reached the engine');
+      expect(p.uiState.workspace.performance.diskBudgetBytes,
+          diskCacheStats().budgetBytes.toInt(),
+          reason: 'and the settings file remembers it for the next launch');
+
+      // No folder is needed to sit beside the project, so that choice is live
+      // immediately and is written down by name.
+      await tester.tap(find.byKey(const ValueKey('settings-disk-location')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Beside the project').last);
+      await tester.pumpAndSettle();
+      expect(p.uiState.workspace.performance.diskCacheLocation,
+          BridgeCacheLocation.besideProject.name);
+
+      // The custom location grows a Choose… button beside the dropdown; the
+      // others do not, because they have nothing to choose.
+      expect(find.byKey(const ValueKey('settings-disk-folder')), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('settings-disk-location')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('A folder I choose').last);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('settings-disk-folder')), findsOneWidget);
+
+      // Leave the engine on its default, since the location is process-wide.
+      setDiskCacheLocation(location: BridgeCacheLocation.appData, folder: '');
+    });
+
+    /// **A project can be told to cache somewhere of its own** (docs/06 §5.4).
+    /// The scope control decides where the answer is kept: in the settings file
+    /// for every project, or inside this `.lum` so it travels with a copy of it.
+    /// Switching back to Everything clears the project's override rather than
+    /// copying the application's answer into it, so the project follows along
+    /// afterwards.
+    testWidgets('a project can keep its own cache location', (tester) async {
+      final p = freshProject();
+      expect(p.state.project!.cacheLocation(), isNull,
+          reason: 'a fresh project follows the application');
+
+      await tester.pumpWidget(hostPanel(
+        child: Builder(
+          builder: (context) => HouseButton(
+            key: const ValueKey('open-settings'),
+            onPressed: () => showSettingsWindowFrb(context),
+            child: const Text('Open'),
+          ),
+        ),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('open-settings')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('settings-page-performance')));
+      await tester.pumpAndSettle();
+      await tester.drag(find.byKey(const ValueKey('settings-body-performance')),
+          const Offset(0, -400));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('settings-disk-scope')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('This project').last);
+      await tester.pumpAndSettle();
+      expect(p.state.project!.cacheLocation(), isNotNull,
+          reason: 'the project now carries its own answer');
+
+      // And it is a document change, so it undoes like any other edit.
+      p.state.project!.undo();
+      expect(p.state.project!.cacheLocation(), isNull);
+    });
+
+    /// **Clearing the disk tier asks first.** The other two cost a re-render;
+    /// this one deletes files that may be a night's work, and there is nothing
+    /// to undo. With nothing parked there is nothing to ask about, so no
+    /// dialogue appears — a question about deleting nothing is only noise.
+    testWidgets('clearing the disk cache asks before deleting', (tester) async {
+      final p = freshProject();
+      await tester.pumpWidget(hostPanel(
+        child: Builder(
+          builder: (context) => HouseButton(
+            key: const ValueKey('clear-disk'),
+            onPressed: () => confirmClearDiskCache(context),
+            child: const Text('Clear'),
+          ),
+        ),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('clear-disk')));
+      await tester.pumpAndSettle();
+
+      if (diskCacheStats().entries == BigInt.zero) {
+        expect(find.byKey(const ValueKey('disk-clear-confirm')), findsNothing,
+            reason: 'nothing parked, so nothing to ask about');
+        return;
+      }
+      expect(find.byKey(const ValueKey('disk-clear-confirm')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('disk-clear-cancel')));
+      await tester.pumpAndSettle();
+      expect(diskCacheStats().entries, isNot(BigInt.zero),
+          reason: 'saying no keeps the frames');
     });
 
     /// The pages are the point of the window: each shows its own settings and

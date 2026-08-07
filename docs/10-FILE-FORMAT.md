@@ -27,6 +27,11 @@ Rules:
   `{ "format": "lumit-project", "schema_version": "…", "written_by": "lumit x.y.z",
   "min_reader": "…" }`. A reader newer than `schema_version` migrates; older than
   `min_reader` refuses with a clear message; otherwise it loads and preserves unknowns.
+  The current schema is **`0.2.0`**. The one migration in the chain, `0.1.0` → `0.2.0`
+  (K-249), moves a Footage layer's own retime segment store onto the layer as the Retime
+  **property**, and lifts the frame-interpolation policy out beside it; `min_reader` stays
+  `0.1.0`, because the fields a `0.1.0` reader does not know about are preserved rather
+  than fatal (§1.1).
 - `project.json` is pretty-printed with stable key order and stable array order, so two
   saves of the same document are byte-identical and version-control diffs are meaningful.
 - Thumbnails are disposable previews for the Project panel and file browsers; a reader MUST
@@ -43,6 +48,19 @@ Rules:
   (`"channel": "Alpha"`, `"blend": "Screen"`); a data-carrying variant is externally tagged
   (`{ "Footage": { … } }`). Variants are additive, so old readers keep unknown ones via the
   preservation rule below.
+- **The interface arrangement rides along, opaquely** (K-245): `ui_state` is the frontend's
+  own JSON — the panel arrangement, which comps were open, the playhead, the selection — and
+  the engine never reads inside it. Absent by default, so a project nobody has arranged gains
+  no line for it. It is a *hint*: a reader that already has its own record of this project
+  prefers that, and one that cannot make sense of what is here ignores it. What it may **not**
+  contain is anything machine-specific — no pixel window placements, no paths, no usernames
+  (§2's rule, which K-245 narrowed rather than lifted: panel names, tab indices and fractional
+  shares mean the same thing on any machine, and that is all this field is for).
+- **Rendering settings that change the picture travel with the file.** `anti_aliasing`
+  (K-274) is the first of them: the project's coverage-sample count, written as its variant
+  name (`"anti_aliasing": "x4"`). Absent — as it is in any `.lum` written before the field
+  existed — it reads as the default rather than failing, which is the serde-default rule
+  every additive field here follows.
 - **Unknown-field preservation is mandatory**: a reader keeps any keys it does not
   understand and writes them back out. This is what lets shared projects and newer/older
   Lumit versions coexist (K-065) and lets Placeholder effects round-trip
@@ -72,8 +90,12 @@ Relinking one file automatically relinks siblings that resolve under the same pa
 **Collect for sharing**: an explicit command copies the project plus all referenced media
 into one folder, rewriting references relative — the mechanism behind community project
 sharing (K-065). Nothing machine-specific is ever written into `project.json` (no cache
-paths, no window layout, no local usernames); per-machine state lives in app settings, and
-workspaces are app-level with optional project hints.
+paths, no local usernames, no window placements in monitor pixels); per-machine state lives in
+app settings. **Amended by K-245:** the *panel arrangement* is not machine-specific — panel
+names, tab indices and fractional shares read the same anywhere — so it travels in `ui_state`
+(§1.1) precisely so a shared project opens the way its author left it. The machine-local
+workspace store still keeps its own copy per project path, and that copy is preferred on open;
+the file's is what answers on a machine that has never seen the project.
 
 ## 3. The sidecar cache folder
 
@@ -82,18 +104,45 @@ the media index are built; `proxies/`, `peaks/`, and `flow/` are planned
 ([TODO.md](TODO.md)). What exists today:
 
 ```
-<project>.lum-cache/
-└── frames/            # rendered frame cache, LZ4 .kfr files (06-RENDER-PIPELINE.md tier 3)
-
 <global cache root>/
+├── frames/<project-uuid>/         # rendered frame cache (06 §5.4), the default location
+│   ├── frames/                    #   LZ4 .kfr files, sharded by the first two hex chars
+│   ├── index.bin                  #   the index snapshot: hash, size, cost, last use, quality
+│   └── index.log                  #   changes since that snapshot, replayed at open
 ├── media-index/       # frame indexes for exact long-GOP seeking, shared across projects
 └── <project-uuid>/journal/ops.jsonl # the crash-recovery journal (§4)
+
+<project>.lum-cache/   # the same frame cache, when the user asks for it beside the project
+├── frames/
+├── index.bin
+└── index.log
 ```
 
 The intended full per-project layout (`<cache root>/<project-uuid>/` with `disk-cache/`,
 `proxies/`, `peaks/`, `flow/`, `index/`) is the design direction; audio peaks are currently
-computed on demand rather than stored, and the frame cache sits in a `.lum-cache/` sidecar
-beside the project rather than under the global root.
+computed on demand rather than stored.
+
+**Where the frame cache sits is the user's choice (K-214, docs/07 §15):** under the global
+root keyed by the document's uuid (the default), in a `<project>.lum-cache/` sidecar beside the
+project file, or under a folder the user picks. The global root is the platform's own cache
+directory, resolved by `directories::ProjectDirs` exactly as the journal and media index resolve
+theirs, so one Lumit folder serves all three: `%LOCALAPPDATA%\Lumit\Lumit\cache` on Windows
+(**local**, never roaming — a cache this size must not follow a domain profile over the
+network), `~/Library/Caches/dev.Lumit.Lumit` on macOS, and `$XDG_CACHE_HOME/lumit` (default
+`~/.cache/lumit`) on Linux. The cache directory, not the temp directory: these survive a
+reboot, and may be reclaimed by the operating system under disk pressure — which is correct for
+a folder deletable at any time. The sidecar cannot be the default because it
+needs the project to *have* a file, and a project caches from the moment it is created — the
+document uuid is inside the `.lum` and survives every save, so the global-root folder still
+finds its frames after a save and a reopen.
+
+The choice is application-wide by default and **may be made per project** (K-215), in which case
+it is a field on the document (`cache_location`) and therefore inside `project.json`: it travels
+with a copy of the project and survives being opened on another machine, which a setting in one
+machine's settings file cannot. Absent when the project follows the application, so a project
+that has never been given a place of its own gains no line for it and an older build reads the
+file unchanged (§1.1's forward-compatibility rule). Nothing is moved when the choice changes —
+the frames in the old folder simply stop being addressed.
 
 Rules, binding:
 - The global cache root defaults under the user's local app-data and is configurable with a
@@ -125,7 +174,21 @@ Rules, binding:
 - **Template**: an ordinary `.lum` file opened in "new from template" mode (copy, not
   edit-in-place). Community "CC packs" and project files are just these two forms.
 
-## 6. Interchange (summary)
+## 6. Colour themes (`.lumtheme`, K-298)
+
+A custom theme (K-202) written out on its own so it can be shared: a small indented JSON
+document carrying `format: "lumit-theme"`, a `version`, and then the theme itself — `name`,
+`mode` (`light`/`dark`, the base it is built over), and `colours`, a map of token key to
+`#rrggbb`. The colours are exactly what the workspace file stores, so the shared and the
+stored form cannot drift.
+
+Read forgivingly: a colour key this build does not know is ignored and one it does not find
+falls back to the base, so a theme written by a newer Lumit still opens. A file whose
+`format` says something else is refused. Not a document — Lumit does not *open* a
+`.lumtheme`; Settings → Appearance imports one, under a free name if that name is taken.
+`flutter_ui/lib/theme/theme_file.dart`.
+
+## 7. Interchange (summary)
 
 - AE Bridge JSON bundles import into this model — [11-AE-IMPORT.md](11-AE-IMPORT.md).
 - Lottie JSON: import as comps (subset), export is a possible future.

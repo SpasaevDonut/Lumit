@@ -8,6 +8,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/panels/graph_editor_frb.dart';
+import 'package:lumit_flutter/panels/graph_maths.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
@@ -432,14 +433,16 @@ void main() {
 
       await tester.tap(find.byKey(ValueKey<String>(opacityKey(p.layer, 1))));
       await tester.pump();
-      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
-      await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+      // The chord itself is the shell's since K-300 — it asks the claim this
+      // panel registers, which is what a shell test drives end to end
+      // (`Ctrl+C with keyframes selected copies those`). Here the claim is
+      // called directly, because this test mounts the panel and not the shell.
+      expect(p.uiState.copyClaim!(), isTrue);
       await tester.pump();
 
       p.uiState.playheadFrame.value = 75;
       await tester.pump();
-      await tester.sendKeyEvent(LogicalKeyboardKey.keyV);
-      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      expect(p.uiState.pasteClaim!(), isTrue);
       await tester.pumpAndSettle();
 
       final frames = opacityKeys(p.layer)
@@ -448,6 +451,34 @@ void main() {
       expect(frames, contains(75),
           reason: 'the earliest pasted key lands on the playhead');
       expect(frames, hasLength(3));
+    });
+
+    /// **A row with no keyframes still has a value, and Copy takes it**
+    /// (K-301). With the row selected and no individual key picked, `Ctrl+C`
+    /// used to find nothing to copy, give up, and quietly copy the whole layer
+    /// instead — so the one thing the user was pointing at was the one thing
+    /// that did not travel.
+    testWidgets('a static row copies its value, and pasting puts it back',
+        (tester) async {
+      final p = withLayer();
+      p.layer.setTransform(
+          prop: BridgeTransformProp.opacity,
+          value: const BridgeScalar.static_(40));
+      await mountGraph(tester, p);
+
+      expect(p.uiState.copyClaim!(), isTrue,
+          reason: 'the selected row is what Copy takes, keys or no keys');
+
+      p.layer.setTransform(
+          prop: BridgeTransformProp.opacity,
+          value: const BridgeScalar.static_(90));
+      p.uiState.model.refresh();
+      await tester.pump();
+
+      expect(p.uiState.pasteClaim!(), isTrue);
+      await tester.pumpAndSettle();
+      expect(p.layer.getTransform().opacity, const BridgeScalar.static_(40),
+          reason: 'the copied value came back as a value, not as a keyframe');
     });
 
     /// Copy and paste belong to the keyframes, not to the graph: a selection
@@ -487,13 +518,11 @@ void main() {
       await gesture.up();
       await tester.pumpAndSettle();
 
-      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
-      await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+      expect(p.uiState.copyClaim!(), isTrue);
       await tester.pump();
       p.uiState.playheadFrame.value = 90;
       await tester.pump();
-      await tester.sendKeyEvent(LogicalKeyboardKey.keyV);
-      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      expect(p.uiState.pasteClaim!(), isTrue);
       await tester.pumpAndSettle();
 
       final frames = opacityKeys(p.layer)
@@ -561,6 +590,252 @@ void main() {
       expect(channels.map((c) => c.colourIndex).toList(), [0, 1, 2]);
       expect(channels.last.keys, hasLength(2));
     });
+
+    // --- the Vegas speed envelope (K-247) -------------------------------
+
+    /// Turn the preference on the way Settings does, then open the layer's
+    /// Retime row — which is where the default-lens rule fires.
+    Future<void> openRetime(WidgetTester tester, dynamic p,
+        {required bool vegas}) async {
+      (p.uiState as LumitUiState).workspace.interface.retimeOpensToSpeed =
+          vegas;
+      final layer = (p as dynamic).layer as LayerReference;
+      layer.toggleRetimeProperty();
+      tester.view.physicalSize = const Size(1280, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(hostPanel(
+        child: const TimelinePanelFrb(),
+        state: p.state as LumitState,
+        uiState: p.uiState as LumitUiState,
+        size: const Size(1280, 600),
+      ));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('tl-graph')));
+      await tester.pump();
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('tl-retime-name')));
+      await tester.pump();
+    }
+
+    testWidgets('a Retime opens to Velocity, and as one dot per key',
+        (tester) async {
+      final p = withLayer();
+      await openRetime(tester, p, vegas: true);
+
+      // The preference chose the lens on the way in (K-246).
+      final base = 'graph-key-${p.layer.internallayerId}/retime#0';
+      expect(find.byKey(ValueKey<String>('$base-out')), findsOneWidget,
+          reason: 'the speed view is showing');
+      // …and the envelope is one point per key, not the two-sided pair the
+      // ordinary speed graph draws (K-247).
+      expect(find.byKey(ValueKey<String>('$base-in')), findsNothing);
+      final second = 'graph-key-${p.layer.internallayerId}/retime#1';
+      expect(find.byKey(ValueKey<String>('$second-in')), findsNothing);
+      expect(find.byKey(ValueKey<String>('$second-out')), findsOneWidget);
+    });
+
+    testWidgets('with the preference off a Retime opens to Time',
+        (tester) async {
+      final p = withLayer();
+      await openRetime(tester, p, vegas: false);
+      // The value view names its keys without a side.
+      expect(
+          find.byKey(ValueKey<String>(
+              'graph-key-${p.layer.internallayerId}/retime#0')),
+          findsOneWidget);
+    });
+
+    /// The Vegas edit: drag a point's speed and the frames after it change,
+    /// while every keyframe time stays exactly where it was (K-022, K-247).
+    testWidgets('dragging an envelope point re-times without moving a key',
+        (tester) async {
+      final p = withLayer();
+      await openRetime(tester, p, vegas: true);
+
+      List<BridgeKeyframe> retimeKeys() =>
+          keysOf(p.layer.getRetimeProperty() as BridgeScalar);
+      final timesBefore = [
+        for (final k in retimeKeys()) p.comp.frameAtTime(time: k.time)
+      ];
+      final lastBefore = retimeKeys().last.value;
+
+      // Drag the first point upwards: faster, so more source is consumed.
+      await _drag(
+          tester,
+          find.byKey(ValueKey<String>(
+              'graph-key-${p.layer.internallayerId}/retime#0-out')),
+          const Offset(0, -60));
+
+      final after = retimeKeys();
+      expect(after.last.value, greaterThan(lastBefore),
+          reason: 'speeding the first span up advances further into the '
+              'source by the end');
+      expect(after.first.value, closeTo(0, 1e-6),
+          reason: 'the start is pinned — a clip still begins where it began');
+      expect([
+        for (final k in after) p.comp.frameAtTime(time: k.time)
+      ], timesBefore, reason: 'no keyframe moved in time: beats stay synced');
+    });
+
+    // The straightness invariant this lens shares with the sequence view —
+    // moving a point in time keeps its speed and re-works the values, so each
+    // span stays the line its two points describe — is pinned in
+    // `graph_maths_test.dart` against `moveEnvelopePoint` itself. A widget
+    // test here cannot see it: a dot's speed comes from the pointer's own
+    // height, so *every* drag re-integrates on commit and the bend never
+    // survives to be asserted on. The unit test fails without the fix; this
+    // one could not, so it is not written.
+
+    // --- planting and lifting keys, and Shift-constrained drags -----------
+
+    testWidgets('double-clicking the curve plants a key without moving it',
+        (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer, frames: [0, 100]);
+      await mountGraph(tester, p);
+
+      final before = opacityKeys(p.layer);
+      expect(before, hasLength(2));
+      final atHalf = evaluateKeys(before, 0.5);
+
+      // Halfway between the two keys: on a straight span that is exactly on
+      // the curve, whatever the framing happens to be.
+      final base = 'graph-key-${p.layer.internallayerId}/transform/opacity@opacity';
+      final a = tester.getCenter(find.byKey(ValueKey<String>('$base#0')));
+      final b = tester.getCenter(find.byKey(ValueKey<String>('$base#1')));
+      final mid = Offset((a.dx + b.dx) / 2, (a.dy + b.dy) / 2);
+      await tester.tapAt(mid);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tapAt(mid);
+      await tester.pumpAndSettle();
+
+      final after = opacityKeys(p.layer);
+      expect(after, hasLength(3), reason: 'a key was planted');
+      // The curve is unchanged where it already was: planting a point is a
+      // place to grab, not an edit.
+      expect(evaluateKeys(after, 0.5), closeTo(atHalf, 1e-6));
+    });
+
+    testWidgets('Alt-clicking a key lifts it', (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer, frames: [0, 50, 100]);
+      await mountGraph(tester, p);
+      expect(opacityKeys(p.layer), hasLength(3));
+
+      final key = find.byKey(ValueKey<String>(
+          'graph-key-${p.layer.internallayerId}/transform/opacity@opacity#1'));
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+      await tester.tap(key);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+      await tester.pumpAndSettle();
+
+      expect(opacityKeys(p.layer), hasLength(2), reason: 'the middle key went');
+    });
+
+    /// Lifting a key is `Alt`-click or the Pen, never a double-click on the
+    /// key itself.
+    ///
+    /// Registering a double-tap there would make Flutter hold *every* single
+    /// tap back until the double-tap timer expired, and a single tap is the
+    /// commonest gesture in the pane — so clicking a key to select it would
+    /// have gained a visible delay. Clicking a key twice therefore does
+    /// nothing but select it, twice.
+    testWidgets('clicking a key twice does not lift it', (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer, frames: [0, 50, 100]);
+      await mountGraph(tester, p);
+      final key = find.byKey(ValueKey<String>(
+          'graph-key-${p.layer.internallayerId}/transform/opacity@opacity#1'));
+
+      await tester.tap(key);
+      await tester.pump();
+      expect(opacityKeys(p.layer), hasLength(3));
+
+      await tester.tap(key);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tap(key);
+      await tester.pumpAndSettle();
+      expect(opacityKeys(p.layer), hasLength(3),
+          reason: 'the key is still there — double-click plants, it does not lift');
+    });
+
+    testWidgets('the last key of a channel refuses to be lifted',
+        (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer, frames: [0]);
+      await mountGraph(tester, p);
+      final key = find.byKey(ValueKey<String>(
+          'graph-key-${p.layer.internallayerId}/transform/opacity@opacity#0'));
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+      await tester.tap(key);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+      await tester.pumpAndSettle();
+      expect(opacityKeys(p.layer), hasLength(1),
+          reason: 'a keyframed property is never left with no keys at all');
+    });
+
+    /// Shift holds a key drag to one axis, chosen by which way the pointer
+    /// went furthest in pixels.
+    testWidgets('Shift holds a key drag to one axis', (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer, frames: [0, 50, 100]);
+      await mountGraph(tester, p);
+
+      final id =
+          'graph-key-${p.layer.internallayerId}/transform/opacity@opacity#1';
+      // Compared as sets, because a key dragged far enough in time overtakes
+      // its neighbour and the list re-sorts — which says nothing about
+      // whether the constraint held.
+      List<double> values() => [for (final k in opacityKeys(p.layer)) k.value]
+        ..sort();
+      List<int> frames() => [
+            for (final k in opacityKeys(p.layer))
+              p.comp.frameAtTime(time: k.time)
+          ]..sort();
+      final beforeValues = values();
+      final beforeFrames = frames();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      // Mostly sideways, a little up: the sideways travel wins, so the value
+      // must not move at all.
+      await _drag(tester, find.byKey(ValueKey<String>(id)),
+          const Offset(40, -12));
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+
+      expect(frames(), isNot(beforeFrames), reason: 'it moved in time');
+      for (var i = 0; i < beforeValues.length; i++) {
+        expect(values()[i], closeTo(beforeValues[i], 1e-6),
+            reason: 'and not at all in value');
+      }
+    });
+
+    testWidgets('Shift the other way holds the frame instead', (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer, frames: [0, 50, 100]);
+      await mountGraph(tester, p);
+
+      final id =
+          'graph-key-${p.layer.internallayerId}/transform/opacity@opacity#1';
+      final beforeFrames = [
+        for (final k in opacityKeys(p.layer)) p.comp.frameAtTime(time: k.time)
+      ];
+      final beforeValue = opacityKeys(p.layer)[1].value;
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await _drag(tester, find.byKey(ValueKey<String>(id)),
+          const Offset(-12, 60));
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+
+      expect([
+        for (final k in opacityKeys(p.layer)) p.comp.frameAtTime(time: k.time)
+      ], beforeFrames, reason: 'every frame is held');
+      expect(opacityKeys(p.layer)[1].value, lessThan(beforeValue),
+          reason: 'and the value moved');
+    });
+
   }, skip: !engineAvailable);
 }
 

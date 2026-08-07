@@ -4,13 +4,20 @@
 // Driven through the panel rather than in isolation, for the same reason as
 // everywhere else here: what matters is that a click reaches the document.
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
+import 'package:lumit_flutter/panels/graph_maths.dart';
 import 'package:lumit_flutter/panels/timeline_extras_frb.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
 import 'package:lumit_flutter/shell/status_line_frb.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
+import 'package:lumit_flutter/src/rust/api/layer.dart';
+import 'package:lumit_flutter/src/rust/api/project_item.dart';
+
+import 'package:lumit_flutter/state/comp_time.dart';
+import 'package:lumit_flutter/state/tools.dart';
 
 import 'frb_test_support.dart';
 
@@ -98,6 +105,116 @@ void main() {
       await tester.pump();
       expect(p.uiState.selectedComp, isNull);
       expect(find.textContaining('Open a composition'), findsOneWidget);
+    });
+
+    /// The strip is the user's order, not the project's: a tab dragged onto
+    /// another takes its place, and the fronted comp comes along unchanged.
+    testWidgets('dragging a comp tab reorders the strip', (tester) async {
+      final p = withComp();
+      final second = p.state.project!.newComposition(name: 'Titles');
+      p.uiState.setSelectedComp(second);
+      await mount(tester, p);
+
+      final first = find.byKey(ValueKey<String>('tl-tab-${p.comp.internalid}'));
+      expect(tester.getCenter(first).dx,
+          lessThan(tester.getCenter(
+              find.byKey(ValueKey<String>('tl-tab-${second.internalid}'))).dx));
+
+      // Onto the tab to its left, which is where it lands.
+      await tester.drag(
+          find.byKey(ValueKey<String>('tl-tab-${second.internalid}')),
+          tester.getCenter(first) -
+              tester.getCenter(
+                  find.byKey(ValueKey<String>('tl-tab-${second.internalid}'))));
+      await tester.pumpAndSettle();
+
+      expect(p.uiState.openComps,
+          [second.internalid, p.comp.internalid]);
+      expect(p.uiState.selectedComp?.internalid, second.internalid,
+          reason: 'reordering the strip fronts nothing new');
+      expect(
+          tester.getCenter(
+                  find.byKey(ValueKey<String>('tl-tab-${second.internalid}')))
+              .dx,
+          lessThan(tester.getCenter(first).dx),
+          reason: 'and the strip is drawn in the new order');
+    });
+
+    /// Right-clicking a tab reaches the comp's settings, so the comp being
+    /// worked in can be edited without going back to the Project panel.
+    testWidgets('a comp tab offers Composition settings on right click',
+        (tester) async {
+      final p = withComp();
+      await mount(tester, p);
+
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-tab-${p.comp.internalid}')),
+          buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('tl-tab-menu-settings')), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('tl-tab-menu-settings')));
+      await tester.pumpAndSettle();
+      expect(find.text('Composition settings'), findsOneWidget,
+          reason: 'the dialog the Project panel opens, from the tab');
+      expect(tester.takeException(), isNull);
+    });
+
+    /// **The bridge error where the Timeline should be.** Pre-compose, step
+    /// into the new comp, undo: the layers come back and the comp they were
+    /// packed into stops existing — with the Timeline still fronting it, every
+    /// panel read a comp the engine had never heard of. What has gone cannot
+    /// stay fronted, so the user goes back where they came from.
+    testWidgets('undoing away the fronted comp goes back to the previous one',
+        (tester) async {
+      final p = withComp();
+      p.comp.addSolidLayer();
+      final packed = p.comp.precompose(
+        layerIds: [p.comp.getLayers().single.internallayerId],
+        name: 'Packed',
+        leaveAttributes: false,
+        adjustDuration: false,
+      );
+      final inner = switch (packed.getSourceItem()!) {
+        ItemReference_Composition(:final field0) => field0,
+        _ => throw StateError('a Precomp layer draws from a composition'),
+      };
+      p.uiState.setSelectedComp(inner);
+      await mount(tester, p);
+      expect(p.uiState.selectedComp?.internalid, inner.internalid);
+
+      p.state.project!.undo();
+      p.uiState.model.refresh();
+      await tester.pump();
+
+      expect(p.uiState.selectedComp?.internalid, p.comp.internalid,
+          reason: 'the comp the user came from fronts again');
+      expect(find.byKey(ValueKey<String>('tl-tab-${inner.internalid}')),
+          findsNothing, reason: 'and the tab it had goes with it');
+      expect(tester.takeException(), isNull);
+    });
+
+    /// With nowhere to go back to — the comp the user came from has gone too
+    /// — the nearest open tab takes over, looking left before right.
+    testWidgets('a vanished comp falls back to the nearest open tab',
+        (tester) async {
+      final p = withComp();
+      final second = p.state.project!.newComposition(name: 'Titles');
+      p.uiState.setSelectedComp(second);
+      final third = p.state.project!.newComposition(name: 'Doomed');
+      p.uiState.setSelectedComp(third);
+      await mount(tester, p);
+
+      // Both the fronted comp and the one the user came from go.
+      for (final comp in [second, third]) {
+        ItemReference.composition(comp).delete();
+      }
+      p.uiState.model.refresh();
+      await tester.pump();
+
+      expect(p.uiState.selectedComp?.internalid, p.comp.internalid,
+          reason: 'the nearest tab still standing, to the left');
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('search narrows the outline to matching rows', (tester) async {
@@ -275,36 +392,495 @@ void main() {
       await tester.pumpAndSettle();
     });
 
-    testWidgets('the razor cuts a sequence clip and leaves other bars alone',
+    /// Scrubbing during playback used to be unwinnable: the engine handed back
+    /// a frame every tick and each one put the playhead straight back where the
+    /// transport wanted it. Taking hold of the playhead takes it off the
+    /// transport (K-254), and it stays where the drag left it — the
+    /// return-to-start of a normal stop would undo the very gesture.
+    testWidgets('dragging the ruler during playback stops it and holds',
+        (tester) async {
+      final p = withComp();
+      p.comp.addAdjustmentLayer();
+      await mount(tester, p);
+
+      p.uiState.play();
+      await tester.pump();
+      expect(p.uiState.playing.value, isTrue);
+
+      await tester.drag(
+          find.byKey(const ValueKey('tl-ruler')), const Offset(120, 0));
+      await tester.pumpAndSettle();
+
+      expect(p.uiState.playing.value, isFalse,
+          reason: 'taking hold of the playhead stops the transport');
+      expect(p.uiState.playheadFrame.value, greaterThan(0),
+          reason: 'and it stays where the drag left it, not back at the start');
+    });
+
+    /// Markers on the ruler are direct manipulation now (K-254): a flag can be
+    /// dragged to another moment, and its text changed from its own menu. The
+    /// dialogue in the ⋯ menu is still there for adding one by hand.
+    testWidgets('a marker flag drags along the ruler', (tester) async {
+      final p = withComp();
+      p.comp.addAdjustmentLayer();
+      addMarkerFrb(p.comp, frame: 10, label: 'Chorus');
+      await mount(tester, p);
+
+      final id = p.comp.getMarkers().single.id;
+      final flag = find.byKey(ValueKey<String>('tl-marker-$id'));
+      expect(flag, findsOneWidget, reason: 'the marker draws on the ruler');
+
+      await tester.drag(flag, const Offset(80, 0));
+      await tester.pumpAndSettle();
+
+      final moved = p.comp.getMarkers().single;
+      expect(p.comp.frameAtTime(time: moved.time), greaterThan(10),
+          reason: 'the drag moved the marker later in the comp');
+      expect(moved.label, 'Chorus', reason: 'and left what it says alone');
+      expect(moved.id, id, reason: 'it is the same marker, not a new one');
+    });
+
+    testWidgets('right-clicking a marker edits what it says', (tester) async {
+      final p = withComp();
+      p.comp.addAdjustmentLayer();
+      addMarkerFrb(p.comp, frame: 10, label: 'Chorus');
+      await mount(tester, p);
+
+      final id = p.comp.getMarkers().single.id;
+      await tester.tap(find.byKey(ValueKey<String>('tl-marker-$id')),
+          buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('marker-menu-edit')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.byKey(const ValueKey('marker-edit-label')), 'Drop');
+      await tester.tap(find.byKey(const ValueKey('marker-edit-ok')));
+      await tester.pumpAndSettle();
+
+      final edited = p.comp.getMarkers().single;
+      expect(edited.label, 'Drop');
+      expect(p.comp.frameAtTime(time: edited.time), 10,
+          reason: 'renaming did not move it');
+    });
+
+    testWidgets('a marker can be deleted from its own menu', (tester) async {
+      final p = withComp();
+      p.comp.addAdjustmentLayer();
+      addMarkerFrb(p.comp, frame: 10, label: 'Chorus');
+      await mount(tester, p);
+
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-marker-${p.comp.getMarkers().single.id}')),
+          buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('marker-menu-delete')));
+      await tester.pumpAndSettle();
+
+      expect(p.comp.getMarkers(), isEmpty);
+    });
+
+    /// Markers do not stack. Two flags on one frame are two things to click and
+    /// one place, and the second hides the first exactly — so the newcomer wins,
+    /// whether it arrives by shortcut or by being dragged on top.
+    test('a marker added to an occupied frame replaces what is there', () {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      addMarkerFrb(comp, frame: 20, label: 'Chorus');
+      addMarkerFrb(comp, frame: 20, label: 'Drop');
+      expect(comp.getMarkers(), hasLength(1));
+      expect(comp.getMarkers().single.label, 'Drop');
+    });
+
+    /// The drop half of the same rule: a flag dragged onto another takes its
+    /// place, and keeps its own identity rather than being deleted and remade.
+    test('a marker dragged onto another replaces it', () {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      addMarkerFrb(comp, frame: 10, label: 'Chorus');
+      addMarkerFrb(comp, frame: 60, label: 'Drop');
+      final drop = markersOf(comp).firstWhere((m) => m.label == 'Drop');
+
+      writeMarkers(
+          comp,
+          markersWithFrb(comp,
+              frame: 10, label: drop.label, id: drop.id));
+
+      final left = comp.getMarkers();
+      expect(left, hasLength(1), reason: 'the two did not stack');
+      expect(left.single.label, 'Drop', reason: 'the dragged one won');
+      expect(left.single.id, drop.id, reason: 'and it is the same marker');
+      expect(comp.frameAtTime(time: left.single.time), 10);
+    });
+
+    /// The flag's **point** is what says which frame, so it sits on the
+    /// playhead rather than beside it — the whole reason the flag is centred on
+    /// its frame instead of hung off to the right of it.
+    testWidgets('a marker flag points at the frame it marks', (tester) async {
+      final p = withComp();
+      p.comp.addAdjustmentLayer();
+      addMarkerFrb(p.comp, frame: 40, label: 'Chorus');
+      p.uiState.playheadFrame.value = 40;
+      await mount(tester, p);
+
+      final flag = tester.getTopLeft(find.byKey(
+          ValueKey<String>('tl-marker-${markersOf(p.comp).single.id}')));
+      final playhead = tester.getCenter(find.byType(PlayheadMarker).first);
+      expect(flag.dx + MarkerFlag.width / 2, closeTo(playhead.dx, 1.5),
+          reason: 'the point and the playhead are on the same frame');
+    });
+
+    /// A numbered marker names one place, so setting it again moves it rather
+    /// than leaving two for the bare digit to choose between. Unlabelled cues
+    /// are dropped as freely as you like.
+    test('a numbered marker is replaced, an unlabelled one is not', () {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      addMarkerFrb(comp, frame: 10, label: '1');
+      addMarkerFrb(comp, frame: 40, label: '1');
+      expect(comp.getMarkers(), hasLength(1));
+      expect(markerFrameFrb(comp, '1'), 40);
+
+      addMarkerFrb(comp, frame: 5);
+      addMarkerFrb(comp, frame: 7);
+      expect(comp.getMarkers(), hasLength(3));
+      expect(markerFrameFrb(comp, '2'), isNull,
+          reason: 'a digit with no marker is nothing to jump to');
+    });
+
+    // --- layer markers (K-254) -------------------------------------------
+
+    /// A composition dropped into another brings its markers along as the
+    /// layer's own. Copies, with ids of their own: from here the two lists are
+    /// unrelated, so editing the layer's never reaches into the comp it came
+    /// from — or into anywhere else that comp is used.
+    test('a comp dropped in brings its markers along as the layer\'s', () {
+      final p = freshProject();
+      final source = p.state.project!.newComposition(name: 'Beats');
+      addMarkerFrb(source, frame: 12, label: 'Drop');
+      final into = p.state.project!.newComposition(name: 'Scene');
+
+      final layer = into.addPrecompLayer(comp: source);
+      final onLayer = layer.getMarkers();
+      expect(onLayer, hasLength(1));
+      expect(onLayer.single.label, 'Drop');
+      expect(onLayer.single.id, isNot(source.getMarkers().single.id),
+          reason: 'a copy, not the same marker');
+
+      // And the copy is genuinely independent.
+      layer.setMarkers(markers: const []);
+      expect(layer.getMarkers(), isEmpty);
+      expect(source.getMarkers(), hasLength(1),
+          reason: 'clearing the layer left the composition alone');
+    });
+
+    /// Pre-composing carries the comp's markers into the new comp, and leaves
+    /// the Precomp layer without any: the same cues are on the ruler above, and
+    /// drawing them again on the layer would say it twice.
+    test('pre-composing carries markers in and leaves the layer bare', () {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      final solid = comp.addSolidLayer();
+      addMarkerFrb(comp, frame: 30, label: 'Chorus');
+
+      final precomp = comp.precompose(
+        layerIds: [solid.internallayerId],
+        name: 'Packed',
+        leaveAttributes: false,
+        adjustDuration: false,
+      );
+      expect(precomp.getMarkers(), isEmpty,
+          reason: 'the Precomp layer draws no markers of its own');
+      expect(comp.getMarkers(), hasLength(1),
+          reason: 'the outer comp keeps its own');
+
+      final inner = precomp.getSourceItem();
+      expect(inner, isA<ItemReference_Composition>());
+      final packed = (inner as ItemReference_Composition).field0;
+      expect(packed.getMarkers(), hasLength(1),
+          reason: 'and the packed comp got a copy');
+      expect(packed.getMarkers().single.label, 'Chorus');
+      expect(packed.frameAtTime(time: packed.getMarkers().single.time), 30);
+    });
+
+    testWidgets('a layer marker draws on the bar and deletes from its menu',
+        (tester) async {
+      final p = withComp();
+      final source = p.state.project!.newComposition(name: 'Beats');
+      addMarkerFrb(source, frame: 20, label: 'Drop');
+      final layer = p.comp.addPrecompLayer(comp: source);
+      await mount(tester, p);
+
+      final id = layer.getMarkers().single.id;
+      final flag = find.byKey(ValueKey<String>('tl-layer-marker-$id'));
+      expect(flag, findsOneWidget, reason: 'it draws on the layer\'s bar');
+
+      await tester.tap(flag, buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('tl-layer-marker-delete')));
+      await tester.pumpAndSettle();
+
+      expect(layer.getMarkers(), isEmpty);
+      expect(source.getMarkers(), hasLength(1),
+          reason: 'the composition it came from is untouched');
+    });
+
+    // --- the sequence view (K-248) --------------------------------------
+
+    /// A Sequence layer, ready to open. Added layers land at the top of the
+    /// stack, so it is always the first — which lets a test put something
+    /// underneath it first.
+    Future<LayerReference> sequencedLayer(dynamic p) async {
+      final footage = p.state.project!.importFootage(path: 'C:/clips/shot.mov');
+      p.comp.addFootageLayer(footage: footage, asSequence: false);
+      p.comp.getLayers().first.convertToSequenced();
+      return p.comp.getLayers().first as LayerReference;
+    }
+
+    testWidgets('double-clicking a Sequence layer opens its clips in its row',
+        (tester) async {
+      final p = withComp();
+      final layer = await sequencedLayer(p);
+      await mount(tester, p);
+      await tester.pump();
+
+      final clip = layer.getClips().single;
+      expect(find.byKey(ValueKey<String>('seq-clip-${clip.id}')), findsNothing,
+          reason: 'shut until it is opened');
+
+      final name = find.byKey(
+          ValueKey<String>('tl-name-${layer.internallayerId}'));
+      await tester.tap(name);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tap(name);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(ValueKey<String>('seq-clip-${clip.id}')), findsOneWidget,
+          reason: 'the clip is on screen');
+      expect(find.byKey(const ValueKey('seq-envelope')), findsOneWidget,
+          reason: 'and so is the speed envelope beneath it');
+
+      // Double-clicking again shuts it.
+      await tester.tap(name);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tap(name);
+      await tester.pumpAndSettle();
+      expect(find.byKey(ValueKey<String>('seq-clip-${clip.id}')), findsNothing);
+    });
+
+    /// The two halves of the Timeline must agree about how tall every row is.
+    ///
+    /// The outline has nothing of its own to draw for an open sequence view —
+    /// the clips and their envelope are the lane's — so it has to reserve the
+    /// room anyway. It did not, which put every row below the opened layer at
+    /// a different height on each side: names stopped lining up with bars.
+    testWidgets('opening a view moves the outline down with the lanes',
+        (tester) async {
+      final p = withComp();
+      // The solid goes in *first*: a new layer lands at the top of the stack,
+      // so this is the one that ends up below the sequenced layer — and below
+      // is where the misalignment showed.
+      final below = p.comp.addSolidLayer();
+      final layer = await sequencedLayer(p);
+      await mount(tester, p);
+      await tester.pump();
+      Rect nameOf() => tester.getRect(
+          find.byKey(ValueKey<String>('tl-row-${below.internallayerId}')));
+      Rect barOf() => tester.getRect(
+          find.byKey(ValueKey<String>('tl-bar-${below.internallayerId}')));
+
+      final gapBefore = nameOf().top - barOf().top;
+
+      final name =
+          find.byKey(ValueKey<String>('tl-name-${layer.internallayerId}'));
+      await tester.tap(name);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tap(name);
+      await tester.pumpAndSettle();
+
+      expect(nameOf().top - barOf().top, closeTo(gapBefore, 0.5),
+          reason: 'the row below moved by the same amount on both sides');
+    });
+
+    /// A drag must survive the readout appearing.
+    ///
+    /// The readout is a `Stack` child that only exists while a drag runs, and
+    /// unkeyed children are matched by position — so it took the gesture
+    /// detector's slot, Flutter rebuilt that element, and the recogniser
+    /// holding the drag went with it. The gesture ended the instant the
+    /// readout showed up, one frame in. Driven here one step at a time,
+    /// because a single synthetic move never reproduces it (the same reason
+    /// K-212's first round of tests all passed).
+    /// The velocity drag must stay linear.
+    ///
+    /// The axis grows to hold whatever a point reaches, so a point dragged
+    /// past the floor widened it, which stretched what the next pixel of
+    /// travel was worth, which pushed the point further still — a steady hand
+    /// sent the value off exponentially. The axis is frozen for the length of
+    /// a gesture now, so equal travel is equal change.
+    testWidgets('an envelope drag stays linear', (tester) async {
+      final p = withComp();
+      final layer = await sequencedLayer(p);
+      await mount(tester, p);
+      await tester.pump();
+      final name =
+          find.byKey(ValueKey<String>('tl-name-${layer.internallayerId}'));
+      await tester.tap(name);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tap(name);
+      await tester.pumpAndSettle();
+
+      final clip = layer.getClips().single;
+      final strip = tester.getRect(find.byKey(const ValueKey('seq-envelope')));
+      final clipBox =
+          tester.getRect(find.byKey(ValueKey<String>('seq-clip-${clip.id}')));
+      // Near the clip's own start, so the point grabbed is its first — the
+      // one whose speed is read back below.
+      final from = Offset(clipBox.left + 3, strip.top + strip.height * 0.3);
+
+      /// The first point's speed after dragging down by [by] pixels, in equal
+      /// steps. Read off the map rather than `speedPercent`, which is null the
+      /// moment the two ends differ — which is exactly what dragging one does.
+      Future<double> after(double by) async {
+        layer.setClipSpeed(clip: clip.id, percent: 100, endPercent: 100);
+        // The panel draws from the read model, so a write behind its back has
+        // to be published or the next drag starts from the last one's result.
+        p.uiState.model.refresh();
+        await tester.pumpAndSettle();
+        final gesture = await tester.startGesture(from);
+        for (var i = 0; i < 6; i++) {
+          await gesture.moveBy(Offset(0, by / 6));
+          await tester.pump();
+        }
+        await gesture.up();
+        await tester.pumpAndSettle();
+        final map = layer.getClips().single.retime;
+        return envelopeSpeeds(keysOf(map)).first;
+      }
+
+      final near = 100 - await after(20);
+      final far = 100 - await after(40);
+      // Twice the travel, twice the change — not four times, or forty.
+      expect(far, closeTo(near * 2, near * 0.25),
+          reason: 'equal pixels are equal per cent, however far it has gone');
+    });
+
+    testWidgets('a drag keeps going once the readout appears', (tester) async {
+      final p = withComp();
+      final layer = await sequencedLayer(p);
+      await mount(tester, p);
+      await tester.pump();
+      final name =
+          find.byKey(ValueKey<String>('tl-name-${layer.internallayerId}'));
+      await tester.tap(name);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tap(name);
+      await tester.pumpAndSettle();
+
+      final before = layer.getClips().single;
+      final strip = tester.getRect(find.byKey(const ValueKey('seq-envelope')));
+      final clipBox =
+          tester.getRect(find.byKey(ValueKey<String>('seq-clip-${before.id}')));
+      final from = Offset(clipBox.center.dx, strip.top + strip.height * 0.3);
+
+      // One event at a time, because a single synthetic move never
+      // reproduces a drag that dies part way (the same reason K-212's first
+      // round of tests all passed).
+      final gesture = await tester.startGesture(from);
+      for (var i = 0; i < 6; i++) {
+        await gesture.moveBy(const Offset(0, 8));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      final after = layer.getClips().single;
+      expect(after.speedPercent, isNotNull);
+      // The whole 48px of travel, not the first step of it.
+      final oneStepOnly = 100 - (8 / strip.height) * 161;
+      expect(after.speedPercent!, lessThan(oneStepOnly - 20),
+          reason: 'every move counted, not just the one before the readout '
+              'appeared');
+    });
+
+    testWidgets('dragging an envelope point re-speeds only that clip',
+        (tester) async {
+      final p = withComp();
+      final layer = await sequencedLayer(p);
+      await mount(tester, p);
+      await tester.pump();
+      final name = find.byKey(
+          ValueKey<String>('tl-name-${layer.internallayerId}'));
+      await tester.tap(name);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tap(name);
+      await tester.pumpAndSettle();
+
+      final before = layer.getClips().single;
+      expect(before.retimed, isFalse, reason: 'plays at source rate to start');
+
+      // Downwards is slower: the envelope runs fast at the top to backwards at
+      // the bottom, so a drag down the strip lowers the speed. Started over
+      // the clip's own span, which is what picks the clip whose line it is.
+      final strip = tester.getRect(find.byKey(const ValueKey('seq-envelope')));
+      final clipBox =
+          tester.getRect(find.byKey(ValueKey<String>('seq-clip-${before.id}')));
+      await tester.dragFrom(
+        Offset(clipBox.center.dx, strip.top + strip.height * 0.3),
+        const Offset(0, 30),
+      );
+      await tester.pumpAndSettle();
+
+      final after = layer.getClips().single;
+      expect(after.retimed, isTrue);
+      expect(after.speedPercent, isNotNull);
+      expect(after.speedPercent!, lessThan(100),
+          reason: 'dragging down the strip slows the clip');
+      // The covenant: the clip is still exactly where it was on the row.
+      expect(after.startFrame, before.startFrame);
+      expect(after.endFrame, before.endFrame);
+    });
+
+    testWidgets('the razor cuts a sequence clip where it is clicked',
         (tester) async {
       final p = withComp();
       final footage = p.state.project!.importFootage(path: 'C:/clips/shot.mov');
-      p.comp.addFootageLayer(footage: footage);
+      p.comp.addFootageLayer(footage: footage, asSequence: false);
       final layer = p.comp.getLayers().single;
       layer.convertToSequenced();
       final sequenced = p.comp.getLayers().single;
       expect(sequenced.getClips(), hasLength(1));
 
       await mount(tester, p);
-      p.uiState.playheadFrame.value = 12;
       await tester.pump();
 
       // Unarmed, a click on the bar does not cut.
-      final bar =
-          find.byKey(ValueKey<String>('tl-bar-${sequenced.internallayerId}'));
-      await tester.tapAt(tester.getCenter(bar));
+      final bar = find.byKey(
+          ValueKey<String>('tl-bar-body-${sequenced.internallayerId}'));
+      expect(bar, findsOneWidget);
+      final box = tester.getRect(bar);
+      // Near the start of the bar: a Sequence layer's own span is the comp's,
+      // but the clip inside it is only as long as its (unreadable) media makes
+      // it, so a point a third of the way along the *bar* can be past the end
+      // of the clip — where there is nothing to cut.
+      final inside = Offset(box.left + 8, box.center.dy);
+      await tester.tapAt(inside);
       await tester.pump();
       expect(p.comp.getLayers().single.getClips(), hasLength(1),
           reason: 'the razor is a mode, not the default click');
 
+      // The Timeline's menu item arms the toolbar's Razor tool (K-220) —
+      // one razor, two doors.
       await openMore(tester);
       await tester.tap(find.byKey(const ValueKey('tl-razor')));
       await tester.pumpAndSettle();
-      await tester.tapAt(tester.getCenter(bar));
+      expect(p.uiState.tools.tool, ToolMode.razor);
+
+      await tester.tapAt(inside);
       await tester.pumpAndSettle();
 
       expect(p.comp.getLayers().single.getClips(), hasLength(2),
-          reason: 'the armed razor cut the clip at the playhead');
+          reason: 'the armed razor cut the clip under the pointer');
     });
 
     testWidgets('the cache meter reads the engine and clears on click',
@@ -321,16 +897,21 @@ void main() {
 
       expect(find.byKey(const ValueKey('cache-meter')), findsOneWidget);
       // One bar per tier, each with its own megabytes: a merged number cannot
-      // answer "what is cached" for either of them.
+      // answer "what is cached" for any of the three.
       expect(find.text('RAM'), findsOneWidget);
       expect(find.text('VRAM'), findsOneWidget);
-      expect(find.textContaining('MB'), findsNWidgets(2),
+      expect(find.text('Disk'), findsOneWidget);
+      expect(find.textContaining('MB'), findsNWidgets(3),
           reason: 'the megabytes held read out beside each bar');
       // Clicking a tier empties that tier; the readout is live, so this must
-      // not throw with no project rendered yet.
+      // not throw with no project rendered yet. The disk tier asks first rather
+      // than deleting on a click — with nothing parked there is nothing to ask
+      // about, so no dialogue appears and nothing happens.
       await tester.tap(find.byKey(const ValueKey('cache-meter-ram')));
       await tester.pump();
       await tester.tap(find.byKey(const ValueKey('cache-meter-vram')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('cache-meter-disk')));
       await tester.pump();
       expect(find.byKey(const ValueKey('cache-meter')), findsOneWidget);
     });

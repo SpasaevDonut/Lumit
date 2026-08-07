@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
+import 'package:lumit_flutter/state/clipboard.dart';
 
 import 'frb_test_support.dart';
 
@@ -50,6 +51,23 @@ void main() {
       expect(asked, 1, reason: 'space reached the transport');
     });
 
+    /// `Ctrl+Shift+P` was bound with nothing answering it. It asks the menu bar
+    /// for the palette rather than building a list of commands of its own.
+    testWidgets('Ctrl+Shift+P asks for the command palette', (tester) async {
+      final p = await mount(tester);
+      var asked = 0;
+      p.uiState.paletteRequest.addListener(() => asked++);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyP);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+
+      expect(asked, 1);
+    });
+
     /// **The recurring space-bar funeral.** Menus, popups and the palette all
     /// live in the Overlay outside the shell's focus scope; any of them could
     /// walk focus away for good, and every shortcut died until something was
@@ -71,21 +89,35 @@ void main() {
           reason: 'shortcuts must not depend on where focus is sitting');
     });
 
-    testWidgets('the arrows step the playhead within the comp', (tester) async {
+    /// `Mod`+arrow steps the playhead (K-282). The **bare** arrows do not: they
+    /// belong to whatever has focus — a list moving its highlight, a field
+    /// moving its cursor — which is the whole reason the step took a modifier.
+    testWidgets('Ctrl and the arrows step the playhead within the comp',
+        (tester) async {
       final p = await mount(tester);
 
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
-      await tester.pump();
+      Future<void> step(LogicalKeyboardKey arrow) async {
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+        await tester.sendKeyEvent(arrow);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+        await tester.pump();
+      }
+
+      await step(LogicalKeyboardKey.arrowRight);
       expect(p.uiState.playheadFrame.value, 1);
 
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
-      await tester.pump();
+      await step(LogicalKeyboardKey.arrowLeft);
       expect(p.uiState.playheadFrame.value, 0);
 
       // A frame before the comp is not a frame.
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
-      await tester.pump();
+      await step(LogicalKeyboardKey.arrowLeft);
       expect(p.uiState.playheadFrame.value, 0);
+
+      // And a bare arrow leaves the playhead where it is.
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pump();
+      expect(p.uiState.playheadFrame.value, 0,
+          reason: 'the bare arrows are free for whatever has focus');
     });
 
     testWidgets('Home and End go to the ends of the comp', (tester) async {
@@ -139,6 +171,34 @@ void main() {
       expect(comp.getLayers(), isEmpty);
       expect(p.uiState.selectedLayer.value, isNull,
           reason: 'the selection cannot outlive the layer');
+    });
+
+    /// **A finer selection gets Delete first (K-234).** A selected mask row is
+    /// what the key is about, not the layer it sits on — and every key handler
+    /// runs on every key, so the Timeline cannot claim the chord merely by
+    /// handling it. The shell asks, and stands down when the answer is yes.
+    testWidgets('Delete stands down when a panel claims it', (tester) async {
+      final p = await mount(tester);
+      final comp = p.uiState.selectedComp!;
+      comp.addSolidLayer();
+      p.uiState.selectedLayer.value = comp.getLayers().single;
+
+      var claimed = 0;
+      p.uiState.deleteClaim = () {
+        claimed++;
+        return true;
+      };
+      await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+      await tester.pump();
+      expect(claimed, 1, reason: 'the shell asked before deleting');
+      expect(comp.getLayers(), hasLength(1),
+          reason: 'and left the layer alone');
+
+      // A claim that declines gives the key back.
+      p.uiState.deleteClaim = () => false;
+      await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+      await tester.pump();
+      expect(comp.getLayers(), isEmpty);
     });
 
     /// Alt+Shift+T does nothing now (K-200): it was a misremembering of AE's
@@ -307,6 +367,160 @@ void main() {
       expect(comp.frameAtTime(time: work.inPoint), 12,
           reason: 'setting the end leaves the start alone');
       expect(comp.frameAtTime(time: work.outPoint), 30);
+    });
+
+    /// Numbered markers (K-254). The pairing is the whole feature: the chord
+    /// that marks a moment is the key that goes back to it, so both halves are
+    /// asserted together — a set that does not return is not the feature.
+    testWidgets('Shift+1 sets marker 1 and the bare 1 returns to it',
+        (tester) async {
+      final p = await mount(tester);
+      final comp = p.uiState.selectedComp!;
+
+      p.uiState.playheadFrame.value = 24;
+      await tester.pump();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.digit1);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pump();
+
+      final marker = comp.getMarkers().single;
+      expect(marker.label, '1', reason: 'the digit is what the marker says');
+      expect(comp.frameAtTime(time: marker.time), 24);
+
+      p.uiState.playheadFrame.value = 0;
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.digit1);
+      await tester.pump();
+      expect(p.uiState.playheadFrame.value, 24,
+          reason: 'the bare digit went back to the marker');
+    });
+
+    /// A digit with no marker behind it is a key without a meaning yet, not an
+    /// error — and it must not move the playhead anywhere.
+    testWidgets('a digit with no marker does nothing', (tester) async {
+      final p = await mount(tester);
+      p.uiState.playheadFrame.value = 15;
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.digit7);
+      await tester.pump();
+      expect(p.uiState.playheadFrame.value, 15);
+    });
+
+    /// **`Ctrl+C` on a selected layer copied nothing** (K-300). Cut, copy and
+    /// paste had menu rows and no chord in the keymap at all, and no case in
+    /// the shell's handler either — so the three keys everyone reaches for
+    /// first did nothing, and the only way to copy a layer was the Edit menu.
+    testWidgets('Ctrl+C copies the selected layer, Ctrl+V pastes it',
+        (tester) async {
+      final p = await mount(tester);
+      final comp = p.uiState.selectedComp!;
+      final layer = comp.addSolidLayer();
+      p.uiState.setSelection([layer]);
+      await tester.pump();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+      await tester.pump();
+      expect(p.uiState.clipboard.kind, ClipboardKind.layer,
+          reason: 'the chord reached the same call the Edit menu makes');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyV);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+      expect(comp.getLayers(), hasLength(2),
+          reason: 'and Ctrl+V put the copy back into the composition');
+    });
+
+    /// **A copy has to leave a trace the machine can see** (K-302). The layer
+    /// and effect clipboard was in-app only, so copying a layer and pasting
+    /// into a text editor produced nothing — which reads exactly like Copy
+    /// having done nothing at all, and was the first thing the owner tried.
+    testWidgets('a copied layer is on the system clipboard too',
+        (tester) async {
+      // The plugin channel is not wired in a widget test; stand in for the
+      // platform's clipboard so what Lumit writes can be read back.
+      String? written;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            written = (call.arguments as Map)['text'] as String?;
+          }
+          if (call.method == 'Clipboard.getData') return {'text': written};
+          return null;
+        },
+      );
+      addTearDown(() => tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null));
+
+      final p = await mount(tester);
+      final comp = p.uiState.selectedComp!;
+      p.uiState.setSelection([comp.addSolidLayer()]);
+      await tester.pump();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+
+      expect(written, isNotNull,
+          reason: 'something reached the system clipboard');
+      expect(lumitDocumentKind(written!), ClipboardKind.layer,
+          reason: 'and it is the layer document, which another Lumit window '
+              'can take straight back off it');
+
+      // The round trip: an empty tray, a document on the system clipboard —
+      // the state a second Lumit window is in — still pastes.
+      p.uiState.clipboard.clear();
+      expect(await p.uiState.adoptSystemClipboard(), isTrue);
+      expect(p.uiState.clipboard.kind, ClipboardKind.layer);
+    });
+
+    /// With an effect picked out of a stack, the chord takes *that*, not the
+    /// layer under it (K-300) — the finest selection wins, exactly as Delete
+    /// has done since K-234.
+    testWidgets('Ctrl+C takes the picked effect, not the layer it sits on',
+        (tester) async {
+      final p = await mount(tester);
+      final comp = p.uiState.selectedComp!;
+      final layer = comp.addSolidLayer();
+      layer.addEffect(name: 'blur');
+      layer.addEffect(name: 'invert');
+      p.uiState.setSelection([layer]);
+      final second = layer.getEffects()[1];
+      p.uiState.setEffectSelection(layer, [second.id()]);
+      await tester.pump();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+
+      expect(p.uiState.clipboard.kind, ClipboardKind.effects);
+      final bare = comp.addSolidLayer();
+      bare.pasteEffects(text: p.uiState.clipboard.text!, atFrame: 0);
+      expect(bare.getEffects(), hasLength(1));
+      expect(bare.getEffects().single.name(), second.name(),
+          reason: 'the effect that was picked, and only it');
+    });
+
+    /// `M` still reveals Masks in the Timeline, which is why the plain marker
+    /// key is `Shift+M` (K-254).
+    testWidgets('Shift+M drops a marker at the playhead', (tester) async {
+      final p = await mount(tester);
+      final comp = p.uiState.selectedComp!;
+
+      p.uiState.playheadFrame.value = 9;
+      await tester.pump();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyM);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pump();
+
+      expect(comp.getMarkers(), hasLength(1));
+      expect(comp.getMarkers().single.label, isEmpty);
+      expect(comp.frameAtTime(time: comp.getMarkers().single.time), 9);
     });
   }, skip: !engineAvailable);
 }

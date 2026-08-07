@@ -178,17 +178,15 @@ Device loss is routine, not exceptional. Windows resets the driver on any GPU pa
 
 ## 6. Rules for effect authors
 
-Binding for built-in WGSL effects and for plugins (KFX and OFX,
+Binding for built-in WGSL effects and for plugins (LFX and OFX,
 [12-PLUGINS.md](12-PLUGINS.md)); the host enforces what it can and sandboxes the rest.
 Full API contract in [08-EFFECTS.md](08-EFFECTS.md).
 
-- **Declare a cost class**: `trivial` (fused per-pixel), `local` (bounded neighbourhood,
-  declared radius), `global` (whole-frame reach, e.g. FFT blur), `temporal` (samples other
-  frames), `iterative` (cost scales with a parameter). The scheduler uses cost classes for
-  concurrency, tiling, and degradation decisions; an undeclared effect is treated as
-  `global`+`iterative` — the most pessimistic.
-- **Support ROI**: implement `roi_in = f(roi_out)` honestly (06 §2.1). Claiming less reach than
-  the kernel uses produces tile seams and is a correctness bug; claiming a whole-frame
+- **Declare your traits honestly** — cost class, ROI expansion, temporal window, alpha mode,
+  cancellation points, randomness ([08-EFFECTS.md](08-EFFECTS.md) §1.3, which owns the
+  vocabulary). The scheduler plans concurrency, tiling and degradation from them; an
+  undeclared effect is treated as the most pessimistic case. Claiming less reach than the
+  kernel uses produces tile seams and is a correctness bug; claiming a whole-frame
   dependency when untrue forfeits the biggest optimisation in the pipeline.
 - **Support cancellation checkpoints**: check the epoch token between passes and between tiles;
   a single uninterruptible span SHOULD stay under ~10 ms of GPU work on the reference desktop.
@@ -196,24 +194,141 @@ Full API contract in [08-EFFECTS.md](08-EFFECTS.md).
   size; allocate scratch only through the host. The governor denies dispatches that exceed the
   declaration; exceeding it at runtime is a validation failure in dev builds.
 - **Ship the CPU reference implementation** (K-019): it is the GPU version's test oracle and
-  the fallback for §4 step 6. GPU and CPU outputs MUST match within a stated tolerance.
-- **Be deterministic**: all randomness from host-provided seeds; no wall-clock, no global
-  state. Same inputs, same output, always — the cache (06 §5.2) and deterministic export
-  depend on it.
-- **Declare thread safety** (KFX/OFX): a non-thread-safe plugin serialises its own node only;
+  the fallback for §4 step 6. GPU and CPU outputs MUST match within the tolerance
+  [08-EFFECTS.md](08-EFFECTS.md) §1.6 states for it.
+- **Be deterministic** ([14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md) §3): the content
+  cache (06 §5.2) and deterministic export both depend on it, so a breach here is a
+  performance defect as well as a correctness one.
+- **Declare thread safety** (LFX/OFX): a non-thread-safe plugin serialises its own node only;
   the host keeps the rest of the graph parallel and out-of-process plugins cannot take the
   application down.
 
 ## 7. Instrumentation
+
+**v1 status:** this section is the target. What runs in CI today is fmt, clippy, the full
+test suites on macOS/Windows/Linux, the engine-crate coverage gate and the no-hex lint
+(`.github/workflows/ci.yml`); the per-node profiler's first visible piece is built (§7.1's
+per-layer and per-effect indicators, K-276) and the rest of it — continuous collection, the
+recording mode, the profiler panel — and the headless benchmark harness with budget gates
+(§7.3) are not — [TODO.md](TODO.md) tracks them.
+
+### 7.0 Submissions per frame (K-290)
+
+**A frame hands the graphics driver one command buffer, and the number does not grow with the
+layer count.** A submit is a round trip through the driver whose cost does not depend on the
+card, so this is a budget that means the same on every machine — and one that can be *gated*
+rather than benchmarked: `GpuContext::submits_so_far` counts every submission, and the
+regression test asserts the shape rather than a magic number ("adding thirty-one layers adds
+no submissions"). It is checkable on the software rasteriser CI runs, where a timing would
+prove nothing.
+
+The exceptions are deliberate and each is followed by a fence, which is the one thing batching
+cannot defer: the read-backs, the scope trace, and the shared-texture present paths. A
+**measured** frame is the other exception and gives the batching up on purpose — see §7.1.
+
+**The count belongs to the context, not to the process.** It began as one global atomic, and
+that made the gate report a *shared* number: the suite runs its cases in parallel, each with a
+renderer of its own, so any other test rendering between the two reads was counted as this
+render's work. The gate went red on CI — where there are cores enough for the overlap — while
+passing on a quieter machine, which is the worst way for a test to be wrong. The counter now
+lives on `GpuContext` and is shared only with the handles of that same device, so what a
+measurement sees is one renderer's own submissions. Any future budget counted this way MUST be
+scoped the same: a number two tests can both write is not a measurement.
+
+### 7.0.1 The memory report (K-294)
+
+**Every tier that holds memory MUST report its bytes, and the process MUST report its
+total, in one place the user can read.** Settings ▸ Performance ▸ Memory shows what the
+operating system says Lumit is holding, what each byte-budgeted tier admits to, how many
+media decoders are open, and — the figure the section exists for — **what is left over**.
+
+This is a diagnostic obligation, not a nicety. Lumit has twice been reported holding tens
+of gigabytes (K-277, and again after it), and both times the first question — *is a cache
+doing what it was told, or is something holding memory nobody counts?* — took days to
+answer from outside the process. It is one syscall and five atomics from inside. A report
+whose tiers sit at their budgets while the process is a hundred times larger says the
+search is not in this list, which is the most valuable thing it can say.
+
+Rules the report keeps, so its arithmetic can be trusted:
+
+- **VRAM is reported, never subtracted.** On unified memory (every Apple Silicon Mac) the
+  card's frames are part of the process; on a discrete card they are not. Folding them in
+  either way would be wrong on half the machines Lumit runs on.
+- **The graphics driver reports what it holds.** Two ways, because one of them does not
+  exist everywhere. **Live objects** — how many textures and buffers the driver still has
+  — are kept by every backend, Metal included, and a handful at rest against thousands is
+  the difference between a cache doing its job and frames the engine dropped never being
+  destroyed. **Bytes in use and reserved** come from the allocator report, which is Vulkan
+  and D3D12 only: on macOS it answers nothing at all, so that row is not drawn there
+  rather than printing zeroes somebody might reason from. The first draft of this reported
+  only the bytes, and on the one platform the question had been asked on it read *"not
+  reported by this driver"* — a hole is worth knowing about, but a report that only works
+  where there is no problem is not an instrument.
+- **Nothing is counted twice.** A frame waiting in the write-behind queue shares its
+  allocation with the frame cache (one `Arc`, both tiers), so the queue reports a *count*
+  of frames rather than bytes.
+- **What cannot be weighed is counted.** What an open media decoder holds is FFmpeg's and
+  the driver's business; the report says how many are open rather than inventing a size.
+- **A platform that cannot answer says zero**, and the interface says "not known here"
+  rather than printing a guess.
+
+### 7.0.2 Reclaiming what has been dropped (K-295)
+
+**An engine that renders without presenting MUST maintain its graphics device on a
+schedule of its own.** Dropping a texture or a buffer only *marks* it destroyed; the
+driver hands the memory back on the device's next maintain. A renderer that draws to a
+window gets those for free from presenting — Lumit renders into caches, on a worker
+thread, and idles, so it gets none.
+
+The worker calls `GpuContext::reclaim` (a non-blocking `Maintain::Poll`) once per turn.
+It is cheap when there is nothing to drain, and it makes reclamation a property of time
+passing rather than of the user happening to open a panel — which is exactly what was
+observed before it: 5 500 live buffers and 6 GB held, then 8 buffers and 2.9 GB the moment
+something else polled.
+
+Anything that frees memory only as a side effect of an unrelated call is not freeing
+memory. The regression gate is `what_the_engine_drops_the_driver_gets_back`, which renders
+many times the cache's capacity and then asks the driver how many objects it still holds —
+**twice, a batch apart**, and compares the two.
+
+Both readings are taken through `GpuContext::settle`, the blocking sibling of `reclaim`,
+and that is not a detail. Work is submitted and runs later, so a CPU that has run ahead of
+the card is still holding every frame the card has not reached; a non-blocking poll cannot
+free those, however many times it is called. Reading there reads the backlog, and the
+backlog grows with the frame count — which is what this gate did when it was first written,
+reporting 113 live textures on Metal and 577 on D3D12 against 18 on the software
+rasteriser, where the CPU never gets ahead and nothing looked wrong. What is held once the
+queue is empty is what is genuinely held.
+
+The comparison is the assertion, not a ceiling. How many objects a backend rests on is a
+fact about that backend; memory that is dropped and never handed back grows by one object
+per frame on every backend there is.
 
 ### 7.1 Per-node profiler
 
 A built-in profiler, surfaced in the UI — After Effects' composition profiler done properly:
 
 - Per-node CPU spans and GPU timestamp queries collected continuously at negligible cost,
-  not only in a special mode.
+  not only in a special mode. **Not what is built (K-276):** the shipped measurement fences —
+  it waits for the graphics card at each node before reading the clock, because GPU work is
+  *submitted* rather than performed and an unfenced span would time the paperwork. That is a
+  true per-node number at the cost of the processor/card overlap for the frame measured, so
+  it is opt-in (the Timeline column's stopwatch), never on during playback, and off by
+  default. Measuring also gives up the one-command-buffer-per-frame batching (§7.0, K-290) and
+  hands work over layer by layer, because a fence over a queue that has not been submitted
+  waits for nothing — the same processor/card overlap, paid in a second place. A measured frame
+  is also a **composited** frame: while the switch is on the
+  cache ladder is stepped over, because a frame served from a tier costs a copy and so
+  has nothing to say about what its layers cost. Timestamp queries are what would make it continuous and free; TODO tracks the
+  upgrade, and until then the honest description of this rung is "measured when asked".
 - Timeline column: per-layer render time for the current frame, sortable, with effect-level
-  drill-down in a profiler panel ([07-UI-SPEC.md](07-UI-SPEC.md)).
+  drill-down in a profiler panel ([07-UI-SPEC.md](07-UI-SPEC.md)). **Built (K-276):** the
+  column shows each layer's own picture (its source — a Precomp's whole comp included — and
+  its effect stack), and each effect's cost on its heading row in the fold-out and on its
+  title row in the Effect controls panel. Only the top-level layers of the composition being
+  rendered are timed, and the final composite — one pass over the whole stack, not a
+  per-layer act — lands in the frame total rather than on a row. Sorting by the column, and
+  the profiler panel proper, are not built.
 - Recording mode: capture over a playback or export run, then report per-node totals,
   percentiles, cache hit rates, and time spent per degradation-ladder step — answering "why is
   this comp slow" with names and numbers, not vibes.

@@ -35,9 +35,20 @@ pub mod graph;
 pub mod pool;
 pub mod schedule;
 
-/// Bump when any rendering algorithm's output changes: every cached frame
-/// keyed under the old version stops being addressed.
-pub const ALGO_VERSION: u32 = 1;
+/// Bump when any rendering algorithm's output changes — or when the key itself
+/// starts covering something it did not: every cached frame keyed under the old
+/// version stops being addressed, which is what makes a fix to the key safe.
+///
+/// * 1 — the original key.
+/// * 2 — a layer's inherited parent-chain placement joined the key (see
+///   [`feed_layer`]). Under version 1 a hidden parent could be moved without
+///   renaming its children's frames, so those frames were served stale; every
+///   version-1 entry has to stop being addressed for the fix to mean anything.
+/// * 3 — anti-aliasing (K-274). Two reasons at once, either sufficient: the key
+///   now covers the project's sample count, and turning the setting on by
+///   default changes what every comp renders to. Every version-2 frame was made
+///   without anti-aliasing, so none of them may be served again.
+pub const ALGO_VERSION: u32 = 3;
 
 /// A 128-bit content hash addressing one rendered comp frame (docs/06 §5.2:
 /// collisions are treated as impossible; no structural comparison at lookup).
@@ -106,6 +117,11 @@ fn feed_comp(
     h.update(&comp.width.to_le_bytes());
     h.update(&comp.height.to_le_bytes());
     h.update(&quality.divisor.to_le_bytes());
+    // The project's anti-aliasing count (K-274). It changes the pixels of every
+    // comp, so it belongs in the name of every frame: without it a frame banked
+    // before the setting moved would be handed back after it, and the picture
+    // would silently disagree with the setting.
+    h.update(&doc.anti_aliasing.samples().to_le_bytes());
     for c in comp.background.0 {
         h.update(&c.to_le_bytes());
     }
@@ -271,6 +287,20 @@ fn feed_effect_stack(
                     // recurse; `visited` still guards any precomp cycle
                     // inside that source. An unset or dangling reference
                     // feeds a distinct 0 marker (the effect is a no-op).
+                    //
+                    // **This layer** (K-288) feeds its own marker and stops.
+                    // The reference names the effect's own input, not a
+                    // second render, and that input is already in the key:
+                    // this layer's source and the stack above this effect
+                    // are hashed by the walk we are inside, and on an
+                    // adjustment layer the composite below is hashed by the
+                    // other layers' own `feed_layer` calls (draw order is
+                    // content). Recursing here would re-hash the same
+                    // source for no gain.
+                    if *lref == Some(marker_layer.id) {
+                        h.update(&[2]);
+                        continue;
+                    }
                     match lref
                         .as_ref()
                         .and_then(|id| comp.layers.iter().find(|l| l.id == *id))
@@ -425,6 +455,49 @@ fn feed_layer(
     ] {
         feed_f64(h, v);
     }
+    // The parent chain's inherited placement (K-103 parenting): a parented layer
+    // is drawn inside its ancestors' coordinate space, so every ancestor's
+    // evaluated transform is content for THIS layer's pixels.
+    //
+    // **Why it cannot be left to the ancestors' own contributions.** An ancestor
+    // that draws is hashed in its own right, so moving a visible parent already
+    // changed the comp's key. A *hidden* one is not: `feed_comp` skips it, exactly
+    // as the renderer draws nothing for it — while its children still follow it.
+    // Without this the pixels moved and the name did not, so the children served
+    // frames from before the move. A Null is the layer a user hides most readily
+    // (K-206: there is nothing to look at), which makes that the common case
+    // rather than a corner.
+    //
+    // Sampled the way [`lumit_render::build::parent_world_placement`] samples —
+    // each ancestor at its own local time, farthest ancestor first, and only the
+    // values `place_matrix` consumes (opacity does not inherit, so it is not
+    // content here). Hashed only for a layer that HAS a parent, so an unparented
+    // layer's contribution is unchanged.
+    if layer.parent.is_some() {
+        h.update(b"parents/");
+        for ancestor in lumit_core::model::layer_parent_chain(comp, layer.id)
+            .iter()
+            .rev()
+            .filter_map(|id| comp.layers.iter().find(|l| l.id == *id))
+        {
+            let alt = t - ancestor.start_offset.0.to_f64();
+            let atr = &ancestor.transform;
+            for v in [
+                atr.position_x.value_at(alt),
+                atr.position_y.value_at(alt),
+                atr.position_z.value_at(alt),
+                atr.anchor_x.value_at(alt),
+                atr.anchor_y.value_at(alt),
+                atr.scale_x.value_at(alt),
+                atr.scale_y.value_at(alt),
+                atr.rotation.value_at(alt),
+                atr.rotation_x.value_at(alt),
+                atr.rotation_y.value_at(alt),
+            ] {
+                feed_f64(h, v);
+            }
+        }
+    }
     h.update(&[u8::from(layer.switches.three_d)]);
     h.update(&[blend_tag(layer.blend)]);
     // Collapse changes how a Precomp composites (docs/06 §1.4), so it is
@@ -515,6 +588,21 @@ fn feed_layer(
                 }
             }
         }
+    }
+
+    // Paint: strokes are stamped into the layer's own pixels before its masks
+    // gate them (K-227), so they are content in exactly the way masks are — a
+    // brush drag must retire the frames that were named before it.
+    //
+    // Hashed only when the layer carries paint, unlike masks above, which feed
+    // a `nomask` marker either way. That is deliberate: an unpainted layer —
+    // which is nearly every layer in nearly every project — has to keep the
+    // name it already had, or adding this would have thrown away every frame
+    // banked by an earlier version.
+    if !layer.paint.is_empty() {
+        h.update(b"paint");
+        let json = serde_json::to_string(&layer.paint).unwrap_or_default();
+        h.update(json.as_bytes());
     }
 
     // Masks: static paths are plain data (animated paths will evaluate here).
@@ -649,10 +737,9 @@ fn feed_source(
     visited: &mut Vec<Uuid>,
 ) -> Option<()> {
     match &layer.kind {
-        LayerKind::Footage { item, retime } => {
+        LayerKind::Footage { item } => {
             // The retime maps local time → source time; the cache key must key
             // the RETIMED source frame, so two different ramps never collide.
-            // The layer answers with whichever map it carries (K-197).
             let source_time = layer.source_time_at(lt);
             let (identity, frame) = stamper.stamp(*item, source_time)?;
             h.update(b"footage/");
@@ -673,13 +760,14 @@ fn feed_source(
             // middle" bug). Hashing the exact retimed time keys each fraction
             // distinctly; identical times reuse, so it never over-renders a
             // truly repeated position.
-            if let Some(r) = retime {
-                if !matches!(r.interpolation, lumit_core::retime::Interpolation::Nearest) {
-                    h.update(&[interp_tag(&r.interpolation)]);
+            {
+                let interpolation = &layer.interpolation;
+                if !matches!(interpolation, lumit_core::retime::Interpolation::Nearest) {
+                    h.update(&[interp_tag(interpolation)]);
                     feed_f64(h, source_time);
                     // A flow conform rate (K-095) synthesises from different
                     // source frames at the same source time, so it is content.
-                    if let lumit_core::retime::Interpolation::Flow(p) = &r.interpolation {
+                    if let lumit_core::retime::Interpolation::Flow(p) = interpolation {
                         // The conform rate is keyframeable (K-160): hash the
                         // value it reads at this local time, so each rate along
                         // an animated ramp keys its own synthesised frame.
@@ -799,6 +887,17 @@ fn feed_source(
             // hashed at the layer level like any other layer's.
             h.update(b"adjust");
         }
+        LayerKind::Shape { contents } => {
+            // The art *is* the layer, so the art is what the key hashes: a
+            // moved vertex or a recoloured fill must retire the cached frames
+            // that drew the old one. Serialised rather than hashed field by
+            // field, so a new field on a shape item cannot quietly stop
+            // counting.
+            h.update(b"shape/");
+            if let Ok(json) = serde_json::to_vec(contents) {
+                h.update(&json);
+            }
+        }
         LayerKind::Null => {
             // No source of its own and no pixels. Only its transform matters,
             // and the caller hashes that at the layer level like every other
@@ -856,8 +955,30 @@ mod tests {
         CompTime(Rational::from_f64_on_grid(s, Rational::FLICK_DEN).unwrap())
     }
 
+    /// A Retime property from `(layer time, source time)` pairs, straight
+    /// between them — the shape every constant-speed or ramped retime has once
+    /// it is keyframes rather than segments (K-249).
+    fn linear_retime(points: &[(f64, f64)]) -> lumit_core::anim::Property {
+        use lumit_core::anim::{Animation, Keyframe, Property, SideInterp};
+        Property {
+            animation: Animation::Keyframed(
+                points
+                    .iter()
+                    .map(|&(t, s)| Keyframe {
+                        time: Rational::from_f64_on_grid(t, Rational::FLICK_DEN).unwrap(),
+                        value: s,
+                        interp_in: SideInterp::Linear,
+                        interp_out: SideInterp::Linear,
+                    })
+                    .collect(),
+            ),
+            extra: serde_json::Map::new(),
+        }
+    }
+
     fn text_layer(text: &str, in_s: f64, out_s: f64, offset_s: f64) -> Layer {
         Layer {
+            markers: Vec::new(),
             id: Uuid::now_v7(),
             name: "t".into(),
             kind: LayerKind::Text {
@@ -878,8 +999,10 @@ mod tests {
             label: 0,
             volume_db: lumit_core::anim::Property::zero(),
             retime: None,
+            interpolation: Default::default(),
             blend: Default::default(),
             masks: Vec::new(),
+            paint: Vec::new(),
             effects: Vec::new(),
             switches: Switches::default(),
             extra: serde_json::Map::new(),
@@ -963,6 +1086,114 @@ mod tests {
             before,
             key(&doc, &comp, 1.0),
             "moving a Null moves what is parented to it, so its frames must retire"
+        );
+    }
+
+    /// **The hidden-parent hole (ALGO_VERSION 2).** A hidden layer draws
+    /// nothing, so it contributes nothing to the key — but a layer parented to
+    /// it still follows it. Moving a hidden parent therefore moved the picture
+    /// while leaving every name alone, and the children served frames from
+    /// before the move. K-206 makes it the common case rather than a corner: a
+    /// Null is the layer a user hides most readily, having nothing to look at.
+    ///
+    /// Fails without the parent-chain fold in `feed_layer`.
+    #[test]
+    fn moving_a_hidden_parent_retires_its_children() {
+        let doc = Document::new();
+        let mut null = text_layer("null", 0.0, 5.0, 0.0);
+        null.kind = LayerKind::Null;
+        null.switches.visible = false;
+        let mut child = text_layer("child", 0.0, 5.0, 0.0);
+        child.parent = Some(null.id);
+
+        let mut comp = comp_with(vec![child, null]);
+        let before = key(&doc, &comp, 1.0);
+        comp.layers[1].transform.position_x = Property::fixed(400.0);
+        assert_ne!(
+            before,
+            key(&doc, &comp, 1.0),
+            "a hidden parent still places its children, so moving it must retire \
+             their frames"
+        );
+
+        // The grandparent case too: the whole chain places the child, so an
+        // ancestor two steps up is content just as the immediate parent is.
+        let mut grandparent = text_layer("gp", 0.0, 5.0, 0.0);
+        grandparent.kind = LayerKind::Null;
+        grandparent.switches.visible = false;
+        let mut parent = text_layer("p", 0.0, 5.0, 0.0);
+        parent.kind = LayerKind::Null;
+        parent.switches.visible = false;
+        parent.parent = Some(grandparent.id);
+        let mut child = text_layer("child", 0.0, 5.0, 0.0);
+        child.parent = Some(parent.id);
+
+        let mut chain = comp_with(vec![child, parent, grandparent]);
+        let before = key(&doc, &chain, 1.0);
+        chain.layers[2].transform.rotation = Property::fixed(30.0);
+        assert_ne!(before, key(&doc, &chain, 1.0), "the whole chain is content");
+    }
+
+    /// The other half of the same promise: hiding a layer nothing is parented
+    /// to, and then editing it, changes no pixel — so every frame's key, and
+    /// every cached frame with it, must survive. This is the behaviour the
+    /// cache is judged on in the hand ("changing the opacity of a hidden layer
+    /// should not reset the cache"), and the parent-chain fold above must not
+    /// have cost it.
+    #[test]
+    fn editing_a_hidden_layer_keeps_every_frame() {
+        let doc = Document::new();
+        let mut hidden = text_layer("hidden", 0.0, 5.0, 0.0);
+        hidden.switches.visible = false;
+        let mut comp = comp_with(vec![text_layer("shown", 0.0, 5.0, 0.0), hidden]);
+        let before = key(&doc, &comp, 1.0);
+
+        comp.layers[1].transform.opacity = Property::fixed(12.0);
+        comp.layers[1].transform.position_x = Property::fixed(900.0);
+        comp.layers[1].name = "renamed while hidden".into();
+        assert_eq!(
+            before,
+            key(&doc, &comp, 1.0),
+            "a hidden layer with no children draws nothing, whatever is done to it"
+        );
+    }
+
+    /// Edits that cannot reach a pixel keep every key — the whole reason the
+    /// cache is content-keyed rather than emptied on every commit. The work
+    /// area is where the playhead loops, a marker is a label, a label colour is
+    /// Timeline chrome, and volume is sound: none of them is in the picture.
+    #[test]
+    fn picture_free_edits_keep_every_key() {
+        let doc = Document::new();
+        let mut comp = comp_with(vec![text_layer("hi", 0.0, 8.0, 0.0)]);
+        let before = key(&doc, &comp, 1.0);
+
+        comp.work_area = Some((secs(1.0), secs(2.0)));
+        assert_eq!(
+            before,
+            key(&doc, &comp, 1.0),
+            "the work area is not content"
+        );
+
+        comp.markers.push(lumit_core::markers::Marker {
+            id: Uuid::now_v7(),
+            time: secs(1.0),
+            duration: None,
+            label: "beat".into(),
+            kind: lumit_core::markers::MarkerKind::Beat { confidence: 1.0 },
+            extra: serde_json::Map::new(),
+        });
+        assert_eq!(before, key(&doc, &comp, 1.0), "a marker is a label");
+
+        comp.layers[0].label = 5;
+        comp.layers[0].volume_db = Property::fixed(-6.0);
+        comp.layers[0].switches.audible = false;
+        comp.layers[0].switches.shy = true;
+        comp.layers[0].switches.locked = true;
+        assert_eq!(
+            before,
+            key(&doc, &comp, 1.0),
+            "label, volume, audio and the Timeline switches change no pixel"
         );
     }
 
@@ -1659,7 +1890,6 @@ mod tests {
         let mut l = text_layer("", 0.0, 5.0, 0.0);
         l.kind = LayerKind::Footage {
             item: Uuid::now_v7(),
-            retime: None,
         };
         let comp = comp_with(vec![l]);
         assert!(comp_frame_key(&doc, &comp, 1.0, Quality::default(), &UnknownStamper).is_none());
@@ -1671,21 +1901,18 @@ mod tests {
     /// no-retime at t=2.
     #[test]
     fn retime_keys_the_source_frame_not_the_local_frame() {
-        use lumit_core::retime::Retime;
-        use lumit_core::time::Rational;
         let doc = Document::new();
         let item = Uuid::now_v7();
         let footage = |retime| {
             let mut l = text_layer("", 0.0, 10.0, 0.0);
-            l.kind = LayerKind::Footage { item, retime };
+            l.kind = LayerKind::Footage { item };
+            l.retime = retime;
             comp_with(vec![l])
         };
         let plain = footage(None);
-        let half = footage(Some(Retime::constant_speed(
-            Rational::new(10, 1).unwrap(),
-            Rational::ZERO,
-            Rational::new(1, 2).unwrap(),
-        )));
+        // Half speed as the property expresses it (K-249): ten seconds of
+        // layer time reading five of source.
+        let half = footage(Some(linear_retime(&[(0.0, 0.0), (10.0, 5.0)])));
         let k = |c: &Composition, t| {
             comp_frame_key(&doc, c, t, Quality::default(), &StubStamper).unwrap()
         };
@@ -1700,37 +1927,31 @@ mod tests {
     /// frame, while Blend and Flow (and Flow's quality) each key apart.
     #[test]
     fn interpolation_policy_keys_only_when_it_synthesises() {
-        use lumit_core::retime::{FlowParams, Interpolation, Retime};
-        use lumit_core::time::Rational;
+        use lumit_core::retime::{FlowParams, Interpolation};
         let doc = Document::new();
         let item = Uuid::now_v7();
-        let footage = |interp: Option<Interpolation>| {
+        // The policy sits on the layer beside the map (K-249), so an
+        // un-retimed layer has one too — which is the point: a comp and a
+        // source at different rates ask for in-between frames with no retime
+        // in sight.
+        let footage = |interp: Interpolation| {
             let mut l = text_layer("", 0.0, 10.0, 0.0);
-            let retime = interp.map(|i| {
-                let mut r = Retime::constant_speed(
-                    Rational::new(10, 1).unwrap(),
-                    Rational::ZERO,
-                    Rational::ONE,
-                );
-                r.interpolation = i;
-                r
-            });
-            l.kind = LayerKind::Footage { item, retime };
+            l.kind = LayerKind::Footage { item };
+            l.interpolation = interp;
             comp_with(vec![l])
         };
         let k = |c: &Composition| {
             comp_frame_key(&doc, c, 1.0, Quality::default(), &StubStamper).unwrap()
         };
-        let plain = k(&footage(None));
-        assert_eq!(plain, k(&footage(Some(Interpolation::Nearest))));
-        let blend = k(&footage(Some(Interpolation::Blend)));
+        let plain = k(&footage(Interpolation::Nearest));
+        let blend = k(&footage(Interpolation::Blend));
         assert_ne!(plain, blend);
-        let half = k(&footage(Some(Interpolation::Flow(FlowParams::default()))));
-        let full = k(&footage(Some(Interpolation::Flow(FlowParams {
+        let half = k(&footage(Interpolation::Flow(FlowParams::default())));
+        let full = k(&footage(Interpolation::Flow(FlowParams {
             half_resolution: false,
             input_fps: lumit_core::anim::Property::zero(),
             extra: serde_json::Map::new(),
-        }))));
+        })));
         assert_ne!(blend, half);
         assert_ne!(half, full);
     }
@@ -1744,22 +1965,13 @@ mod tests {
     /// so its keys stay shared (the "Nearest keys like no-retime" law holds).
     #[test]
     fn synthesising_interpolation_keys_each_sub_frame_position() {
-        use lumit_core::retime::{FlowParams, Interpolation, Retime};
-        use lumit_core::time::Rational;
+        use lumit_core::retime::{FlowParams, Interpolation};
         let doc = Document::new();
         let item = Uuid::now_v7();
         let footage = |interp: Interpolation| {
             let mut l = text_layer("", 0.0, 10.0, 0.0);
-            let mut r = Retime::constant_speed(
-                Rational::new(10, 1).unwrap(),
-                Rational::ZERO,
-                Rational::ONE,
-            );
-            r.interpolation = interp;
-            l.kind = LayerKind::Footage {
-                item,
-                retime: Some(r),
-            };
+            l.kind = LayerKind::Footage { item };
+            l.interpolation = interp;
             comp_with(vec![l])
         };
         let key = |c: &Composition, t: f64| {
@@ -1805,7 +2017,7 @@ mod tests {
             let mut echo = lumit_core::fx::instantiate("echo").unwrap();
             echo.enabled = enabled;
             l.effects.push(echo);
-            l.kind = LayerKind::Footage { item, retime: None };
+            l.kind = LayerKind::Footage { item };
             comp_with(vec![l])
         };
         let k = |c: &Composition, t: f64| {
@@ -1833,7 +2045,7 @@ mod tests {
             let mut mb = lumit_core::fx::instantiate("motion_blur").unwrap();
             mb.enabled = enabled;
             l.effects.push(mb);
-            l.kind = LayerKind::Footage { item, retime: None };
+            l.kind = LayerKind::Footage { item };
             comp_with(vec![l])
         };
         let k = |c: &Composition, t: f64| {
@@ -1922,28 +2134,19 @@ mod tests {
     /// key — the cache can't serve a frame flowed at the wrong rate.
     #[test]
     fn flow_conform_rate_keys_distinctly() {
-        use lumit_core::retime::{FlowParams, Interpolation, Retime};
-        use lumit_core::time::Rational;
+        use lumit_core::retime::{FlowParams, Interpolation};
         let doc = Document::new();
         let item = Uuid::now_v7();
         let footage = |fps: Option<f64>| {
             let mut l = text_layer("", 0.0, 10.0, 0.0);
-            let mut r = Retime::constant_speed(
-                Rational::new(10, 1).unwrap(),
-                Rational::ZERO,
-                Rational::ONE,
-            );
-            r.interpolation = Interpolation::Flow(FlowParams {
+            l.kind = LayerKind::Footage { item };
+            l.interpolation = Interpolation::Flow(FlowParams {
                 half_resolution: true,
                 input_fps: fps
                     .map(lumit_core::anim::Property::fixed)
                     .unwrap_or_else(lumit_core::anim::Property::zero),
                 extra: serde_json::Map::new(),
             });
-            l.kind = LayerKind::Footage {
-                item,
-                retime: Some(r),
-            };
             comp_with(vec![l])
         };
         let k = |c: &Composition| {

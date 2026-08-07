@@ -21,10 +21,14 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/panels/effect_controls_panel_frb.dart';
 import 'package:lumit_flutter/panels/project_panel_frb.dart';
+import 'package:lumit_flutter/panels/timeline_extras_frb.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
+import 'package:lumit_flutter/panels/viewer_panel_frb.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/frb_generated.dart';
+import 'package:lumit_flutter/state/comp_time.dart';
+import 'package:lumit_flutter/state/tools.dart';
 
 import 'frb_test_support.dart';
 
@@ -61,6 +65,12 @@ class CountingHandler extends BaseHandler {
     return super.executeSync(task);
   }
 }
+
+/// Tap a widget near its left end rather than at its centre. A Timeline
+/// fold-out row spans the whole outline, which is wider than the panels these
+/// tests mount, so `tap` — which aims at the centre — lands off screen.
+Future<void> tapNearLeft(WidgetTester tester, Finder finder) =>
+    tester.tapAt(tester.getTopLeft(finder) + const Offset(5, 8));
 
 void main() {
   final counter = CountingHandler();
@@ -116,7 +126,11 @@ void main() {
       final id = target.internallayerId.toString();
       await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
       await tester.pump();
-      await tester.tap(find.byKey(ValueKey<String>('tl-group-$id/transform')));
+      // Near its left end, not its centre: a fold row spans the whole outline,
+      // and the outline is wider than this panel (the render-time column
+      // widened it again, K-276), so the row's centre is off screen.
+      await tapNearLeft(
+          tester, find.byKey(ValueKey<String>('tl-group-$id/transform')));
       await tester.pump();
       await settleFrb(tester, minRounds: 4, maxRounds: 8);
 
@@ -146,6 +160,177 @@ void main() {
         lessThan(12),
         reason: 'one click re-read far too much across the bridge:\n'
             '${counter.ranking()}',
+      );
+    });
+
+    /// **Markers used to cost a bridge call per rebuild and one per frame of
+    /// drag.** `get_markers` walked the whole list across the seam on every
+    /// ruler build — sixty times a second while playback runs — and a drag
+    /// committed a document write for every frame it crossed, which is what
+    /// made dragging a flag feel heavy. The list is remembered in Dart until
+    /// the document changes, and a drag writes once, on release.
+    testWidgets('markers cost nothing per rebuild and one write per drag',
+        (tester) async {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      comp.addSolidLayer();
+      p.uiState.setSelectedComp(comp);
+      addMarkerFrb(comp, frame: 40, label: 'Chorus');
+
+      tester.view.physicalSize = const Size(1280, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(hostPanel(
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(1280, 600),
+        child: const TimelinePanelFrb(),
+      ));
+      await settleFrb(tester, minRounds: 8);
+
+      // Ten rebuilds of the ruler, driven the way playback drives it.
+      counter
+        ..reset()
+        ..counting = true;
+      for (var i = 1; i <= 10; i++) {
+        p.uiState.playheadFrame.value = i;
+        await tester.pump();
+        tester.element(find.byType(TimelineRuler)).markNeedsBuild();
+        await tester.pump();
+      }
+      counter.counting = false;
+      // ignore: avoid_print
+      print('MARKER REBUILD COST ${counter.total} calls\n${counter.ranking()}');
+      expect(
+        counter.total,
+        lessThan(4),
+        reason: 'the ruler re-read the marker list on every rebuild:\n'
+            '${counter.ranking()}',
+      );
+
+      // And the drag: one write, not one per frame crossed.
+      final flag = find
+          .byKey(ValueKey<String>('tl-marker-${markersOf(comp).single.id}'));
+      counter
+        ..reset()
+        ..counting = true;
+      await tester.drag(flag, const Offset(120, 0));
+      await tester.pump();
+      await settleFrb(tester, minRounds: 4, maxRounds: 8);
+      counter.counting = false;
+      // ignore: avoid_print
+      print('MARKER DRAG COST ${counter.total} calls\n${counter.ranking()}');
+      expect(
+        counter.calls['composition_reference_set_markers'] ?? 0,
+        1,
+        reason: 'a drag must write the document once, on release:\n'
+            '${counter.ranking()}',
+      );
+      expect(
+        counter.total,
+        lessThan(40),
+        reason: 'dragging a marker re-read far too much:\n${counter.ranking()}',
+      );
+
+      // Adding one. Most of what this costs is the ordinary fan-out of *any*
+      // document change — every panel re-reads what it draws — so the budget
+      // that matters is the marker's own share of it, which is the read, the
+      // write, and one time conversion per existing marker.
+      counter
+        ..reset()
+        ..counting = true;
+      addMarkerFrb(comp, frame: 90, label: '2');
+      p.state.notifyDocumentChanged();
+      await tester.pump();
+      await settleFrb(tester, minRounds: 4, maxRounds: 8);
+      counter.counting = false;
+      // ignore: avoid_print
+      print('MARKER ADD COST ${counter.total} calls\n${counter.ranking()}');
+      expect(
+        (counter.calls['composition_reference_get_markers'] ?? 0) +
+            (counter.calls['composition_reference_set_markers'] ?? 0),
+        lessThan(4),
+        reason: 'adding a marker read or wrote the list more than once:\n'
+            '${counter.ranking()}',
+      );
+    });
+
+    /// **Dragging the zoom slider used to re-read the world per frame.**
+    /// The zoom was a plain field, so every step of a drag — and every tick of
+    /// a flight — rebuilt the whole panel: the work area came back across the
+    /// bridge two to four times, the cache bar asked for the composition's
+    /// whole cache map, and the outline rebuilt every row for a change that
+    /// happens entirely to the right of the seam. That is the "super super
+    /// laggy" the owner reported (K-293). Only the lane side listens to the
+    /// zoom now, and the cache bar holds its read until a frame arrives.
+    testWidgets('dragging the zoom slider asks the engine almost nothing',
+        (tester) async {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      final layer = comp.addSolidLayer();
+      comp.addTextLayer();
+      p.uiState.setSelectedComp(comp);
+
+      tester.view.physicalSize = const Size(1280, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(hostPanel(
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(1280, 600),
+        child: const TimelinePanelFrb(),
+      ));
+      await settleFrb(tester, minRounds: 8);
+
+      double barWidth() => tester
+          .getRect(
+              find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}')))
+          .width;
+      final before = barWidth();
+      final track = tester.getRect(find.byKey(const ValueKey('tl-zoom-slider')));
+      counter
+        ..reset()
+        ..counting = true;
+      // Eight steps along the track, the way a hand moves it — not one jump,
+      // because the cost being guarded is *per step*. The first is spent
+      // crossing the drag slop, which is what starts the drag.
+      final gesture =
+          await tester.startGesture(Offset(track.left + 2, track.center.dy));
+      await tester.pump();
+      for (var i = 0; i < 8; i++) {
+        await gesture.moveBy(Offset(track.width / 10, 0));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+      counter.counting = false;
+
+      // A drag that did nothing would cost nothing too, so say that it moved.
+      expect(barWidth(), greaterThan(before),
+          reason: 'the drag actually zoomed');
+      // ignore: avoid_print
+      print('ZOOM DRAG COST ${counter.total} calls\n${counter.ranking()}');
+
+      expect(
+        counter.calls['composition_reference_cached_frames'] ?? 0,
+        lessThan(3),
+        reason: 'the cache map was re-read while only the zoom moved:\n'
+            '${counter.ranking()}',
+      );
+      expect(
+        counter.calls['composition_reference_get_work_area'] ?? 0,
+        lessThan(3),
+        reason: 'the work area was re-read per step of the drag:\n'
+            '${counter.ranking()}',
+      );
+      // Loose, in the house style, and the per-name budgets above are the
+      // teeth: what must not happen is a count that scales with the number of
+      // steps. The revision check the read model makes once a frame is most of
+      // what is left here.
+      expect(
+        counter.total,
+        lessThan(40),
+        reason: 'a zoom drag re-read far too much:\n${counter.ranking()}',
       );
     });
 
@@ -224,7 +409,8 @@ void main() {
       await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
       await tester.pump();
       await settleFrb(tester, minRounds: 2, maxRounds: 6);
-      await tester.tap(find.byKey(ValueKey<String>('tl-group-$id/transform')));
+      await tapNearLeft(
+          tester, find.byKey(ValueKey<String>('tl-group-$id/transform')));
       await tester.pump();
       await settleFrb(tester, minRounds: 2, maxRounds: 6);
       counter.counting = false;
@@ -281,8 +467,8 @@ void main() {
         final id = layer.internallayerId.toString();
         await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
         await tester.pump();
-        await tester
-            .tap(find.byKey(ValueKey<String>('tl-group-$id/transform')));
+        await tapNearLeft(
+            tester, find.byKey(ValueKey<String>('tl-group-$id/transform')));
         await tester.pump();
       }
       await settleFrb(tester, minRounds: 4, maxRounds: 8);
@@ -312,6 +498,204 @@ void main() {
         lessThan(20),
         reason: 'a scrub re-read too much across the bridge:\n'
             '${counter.ranking()}',
+      );
+    });
+
+    /// **The Viewer must ask the engine nothing to show a frame it has.**
+    ///
+    /// A frame arriving moves the playhead and rebuilds the Viewer's bar. That
+    /// bar used to ask two questions on each rebuild: `playback_tier` (twice —
+    /// two widgets show the tier) and `viewer_transport`, which reports what
+    /// this build compiled to and is thus a constant. At 24 fps that was ~72
+    /// calls a second before playback did anything of use, and it grew with the
+    /// rate: a 60 fps composition paid 180.
+    ///
+    /// The tier rides in on the frame now, and the transport is read once.
+    /// Neither question crosses the boundary on a rebuild, thus the budget is
+    /// zero and not "a few".
+    testWidgets('a rebuilt Viewer bar asks the engine nothing', (tester) async {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      comp.addSolidLayer();
+      p.uiState.setSelectedComp(comp);
+
+      await tester.pumpWidget(hostPanel(
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(900, 600),
+        child: const ViewerPanelFrb(),
+      ));
+      await settleFrb(tester, minRounds: 8);
+
+      counter
+        ..reset()
+        ..counting = true;
+      // What a frame arriving does: the playhead moves, and the tier the frame
+      // was made at is published. Ten of them, which is under half a second of
+      // playback.
+      for (var frame = 1; frame <= 10; frame++) {
+        p.uiState.playheadFrame.value = frame;
+        p.uiState.previewTier.value = frame.isEven ? 2 : 1;
+        await tester.pump();
+      }
+      counter.counting = false;
+
+      // ignore: avoid_print
+      print('VIEWER BAR COST ${counter.total} calls\n${counter.ranking()}');
+      expect(
+        counter.calls['composition_reference_playback_tier'] ?? 0,
+        0,
+        reason: 'the tier rides in on the frame; nobody asks for it',
+      );
+      expect(
+        counter.calls['viewer_transport'] ?? 0,
+        0,
+        reason: 'a compile-time constant is read once, not per frame',
+      );
+      // What is left is one `render_frame` for each move of the playhead —
+      // the request the move is for. Measured at 10 for 10 frames; the cap is
+      // two for each frame, so honest growth does not trip it.
+      expect(
+        counter.total,
+        lessThanOrEqualTo(20),
+        reason: 'a frame arriving re-read the engine:\n${counter.ranking()}',
+      );
+      // Ten renders were asked for; let the last of them come back before the
+      // test ends, or the progress tracker's timer is still pending. Waiting on
+      // the condition rather than a round count keeps this independent of how
+      // long a frame happens to take — which under the load of the whole suite
+      // is longer than for this file alone, and is why it failed there and
+      // passed here.
+      await settleFrb(
+        tester,
+        until: () => p.uiState.previewProgress.idle,
+        maxRounds: 100,
+      );
+    });
+    /// **Panning the picture must ask the engine nothing (K-230).**
+    ///
+    /// A pan moves where the picture is drawn and changes nothing else, but it
+    /// rebuilt the whole panel — which re-read the composition's settings, its
+    /// size, and every layer's source item, once per movement of the pointer.
+    /// At the rate a mouse reports that was hundreds of calls a second, one of
+    /// them walking the whole layer list, to re-answer questions only an edit
+    /// can change.
+    testWidgets('panning with the Hand tool asks the engine nothing',
+        (tester) async {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      for (var i = 0; i < 3; i++) {
+        comp.addSolidLayer();
+      }
+      p.uiState.setSelectedComp(comp);
+      p.uiState.tools.select(ToolMode.hand);
+
+      await tester.pumpWidget(hostPanel(
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(900, 600),
+        child: const ViewerPanelFrb(),
+      ));
+      await settleFrb(tester, minRounds: 8);
+
+      final centre = tester.getCenter(find.byType(ViewerPanelFrb));
+      final gesture = await tester.startGesture(centre);
+      // Let the mount's own traffic finish before the count starts: what is
+      // being measured is the cost of the *movement*, not of what the panel was
+      // still doing when the pointer went down.
+      await settleFrb(tester, minRounds: 4);
+
+      counter
+        ..reset()
+        ..counting = true;
+      for (var i = 0; i < 20; i++) {
+        await gesture.moveBy(const Offset(3, 2));
+        // **With time on the clock.** A bare `pump()` does not advance it, so
+        // every frame carries the same timestamp — and code that groups its
+        // work "once per frame" then sees one frame for the whole gesture and
+        // this test sees a cost that does not exist in a running application.
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      counter.counting = false;
+      await gesture.up();
+      await tester.pump();
+
+      // ignore: avoid_print
+      print('PAN COST ${counter.total} calls\n${counter.ranking()}');
+      // Twenty movements, and the composition is read **at most once** in all
+      // of them — the once being an edit event arriving mid-gesture and
+      // dropping the held answers, which is exactly what should drop them.
+      // Before this it was one read per movement, and the layer walk with it.
+      expect(
+        counter.calls['composition_reference_get_settings'] ?? 0,
+        lessThanOrEqualTo(1),
+        reason: 'the panel re-read the composition as the pointer moved:\n'
+            '${counter.ranking()}',
+      );
+      expect(
+        counter.calls['composition_reference_get_layers'] ?? 0,
+        lessThanOrEqualTo(1),
+        reason: 'the panel walked the layers as the pointer moved:\n'
+            '${counter.ranking()}',
+      );
+      // Measured at 7 for twenty movements. The cap is what one invalidation
+      // costs on a three-layer composition, with room for a fourth layer.
+      expect(
+        counter.total,
+        lessThan(12),
+        reason: 'a pan re-read the composition:\n${counter.ranking()}',
+      );
+    });
+
+    /// **Nor must moving the pointer with a camera tool in hand (K-230).**
+    ///
+    /// That layer redraws on every movement — its pointer is drawn, so it has
+    /// to — and finding the active camera reads the layer's focal distance and
+    /// the composition's rate across the bridge. Hovering the picture was
+    /// making both, dozens of times a second, without a button being pressed.
+    testWidgets('hovering with a camera tool armed asks the engine nothing',
+        (tester) async {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      comp.addSolidLayer();
+      comp.addCameraLayer();
+      p.uiState.setSelectedComp(comp);
+      p.uiState.tools.select(ToolMode.cameraOrbit);
+      p.uiState.model.refresh();
+
+      await tester.pumpWidget(hostPanel(
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(900, 600),
+        child: const ViewerPanelFrb(),
+      ));
+      await settleFrb(tester, minRounds: 8);
+
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: Offset.zero);
+      addTearDown(mouse.removePointer);
+      final centre = tester.getCenter(find.byType(ViewerPanelFrb));
+      await mouse.moveTo(centre);
+      await tester.pump();
+
+      counter
+        ..reset()
+        ..counting = true;
+      for (var i = 0; i < 20; i++) {
+        await mouse.moveTo(centre + Offset(i * 3.0, i * 2.0));
+        // Real frames, with time between them — see the note in the pan test
+        // above. Without it this test measured zero while the tool was asking
+        // the engine for the document's revision on every single frame.
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      counter.counting = false;
+
+      // ignore: avoid_print
+      print('CAMERA HOVER COST ${counter.total} calls\n${counter.ranking()}');
+      expect(
+        counter.total,
+        0,
+        reason: 'hovering re-found the camera:\n${counter.ranking()}',
       );
     });
   }, skip: !engineAvailable);

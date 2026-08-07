@@ -26,6 +26,25 @@ fn resolve_stack(
     )
 }
 
+fn resolve_stack_temporal_named(
+    effects: &[EffectInstance],
+    sample_lt: f64,
+    frame_lt: f64,
+    diag_px: f32,
+    px_scale: f32,
+    markers: &MarkerContext,
+) -> Vec<(uuid::Uuid, Resolved)> {
+    super::resolve_stack_temporal_named(
+        effects,
+        sample_lt,
+        frame_lt,
+        diag_px,
+        px_scale,
+        markers,
+        Arc::new(ExpressionContext::detached()),
+    )
+}
+
 fn resolve_stack_temporal(
     effects: &[EffectInstance],
     sample_lt: f64,
@@ -140,6 +159,7 @@ fn posterize_sample_times_snap_covered_layers_to_the_grid() {
     use crate::time::{CompTime, Rational};
     let secs = |n: i64, d: i64| CompTime(Rational::new(n, d).unwrap());
     let layer = |kind: LayerKind, effects: Vec<EffectInstance>| Layer {
+        markers: Vec::new(),
         id: uuid::Uuid::now_v7(),
         name: "l".into(),
         kind,
@@ -152,8 +172,10 @@ fn posterize_sample_times_snap_covered_layers_to_the_grid() {
         label: 0,
         volume_db: crate::anim::Property::zero(),
         retime: None,
+        interpolation: Default::default(),
         blend: Default::default(),
         masks: Vec::new(),
+        paint: Vec::new(),
         effects,
         switches: Switches::default(),
         extra: serde_json::Map::new(),
@@ -314,6 +336,40 @@ fn resolve_stack_evaluates_converts_and_skips_dead_effects() {
     assert!(
         resolve_stack(&[e], 0.0, 1000.0, 1.0, &MarkerContext::NONE).is_empty(),
         "placeholders render as identity"
+    );
+}
+
+// The render-time indicator (docs/13 §7.1) puts a measured millisecond on the
+// row of the effect stack that spent it, and the only thing that can say which
+// row an op came from is the walk that resolved it: `resolve_one` drops
+// placeholders, unknown names and the orchestration-only effects, so filtering
+// the effect list afterwards would misalign the moment a stack held one of
+// those. The named walk must therefore stay op-for-op identical to the plain
+// one, and carry the id beside each op.
+#[test]
+fn the_named_resolve_is_the_plain_one_with_the_ids_kept() {
+    let blur = instantiate("blur").unwrap();
+    let mut off = instantiate("glow").unwrap();
+    off.enabled = false;
+    // Posterize Time is an orchestration-only effect: it is enabled, built in,
+    // and resolves to no op at all — the case a list filter would get wrong.
+    let posterize = instantiate("posterize_time").unwrap();
+    let glow = instantiate("glow").unwrap();
+    let stack = [blur.clone(), off, posterize, glow.clone()];
+
+    let plain = resolve_stack(&stack, 0.0, 1000.0, 1.0, &MarkerContext::NONE);
+    let named = resolve_stack_temporal_named(&stack, 0.0, 0.0, 1000.0, 1.0, &MarkerContext::NONE);
+
+    assert_eq!(
+        named.iter().map(|(_, op)| *op).collect::<Vec<_>>(),
+        plain,
+        "the same ops, in the same order"
+    );
+    assert_eq!(
+        named.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+        vec![blur.id, glow.id],
+        "each op carries the id of the effect that wrote it, disabled and \
+         orchestration-only effects skipped"
     );
 }
 
@@ -4149,6 +4205,7 @@ fn marker_rig(
         extra: serde_json::Map::new(),
     };
     let layer = Layer {
+        markers: Vec::new(),
         id: uuid::Uuid::now_v7(),
         name: "l".into(),
         kind: LayerKind::Adjustment,
@@ -4161,8 +4218,10 @@ fn marker_rig(
         label: 0,
         volume_db: crate::anim::Property::zero(),
         retime: None,
+        interpolation: Default::default(),
         blend: Default::default(),
         masks: Vec::new(),
+        paint: Vec::new(),
         effects: Vec::new(),
         switches: Switches::default(),
         extra: serde_json::Map::new(),
@@ -4680,4 +4739,1245 @@ fn cpu_scanlines_darken_a_periodic_band() {
     assert_eq!(red_at(&inter, 6), 1.0, "period 1 flips: bright second");
     assert_eq!(red_at(&inter, 8), 1.0, "period 2 (even) unflipped again");
     assert_eq!(red_at(&inter, 10), 0.5, "period 2 (even) unflipped again");
+}
+
+// ---------------------------------------------------------------------------
+// Lens flare (docs/08 §3.27, docs/impl/lens-flare.md §8, K-256)
+// ---------------------------------------------------------------------------
+
+// §8.1 — the in-house FFT: a forward-then-inverse round trip returns the
+// input, an 8-point transform matches the direct DFT sum, and Parseval's
+// identity holds under the ortho normalisation.
+#[test]
+fn lens_flare_fft_round_trips_matches_dft_and_conserves_energy() {
+    use crate::fx::fft::{fft_inplace, Cx};
+    let src: Vec<Cx> = (0..8)
+        .map(|i| Cx::new((i as f64 * 0.7).sin(), (i as f64 * 1.3).cos()))
+        .collect();
+
+    // Round trip.
+    let mut data = src.clone();
+    fft_inplace(&mut data, false);
+    let spectrum = data.clone();
+    fft_inplace(&mut data, true);
+    for (a, b) in data.iter().zip(src.iter()) {
+        assert!((a.re - b.re).abs() < 1e-12 && (a.im - b.im).abs() < 1e-12);
+    }
+
+    // Direct ortho DFT.
+    let n = src.len();
+    for (k, s) in spectrum.iter().enumerate() {
+        let mut sum = Cx::ZERO;
+        for (j, x) in src.iter().enumerate() {
+            let ang = -std::f64::consts::TAU * k as f64 * j as f64 / n as f64;
+            sum = sum + *x * Cx::cis(ang);
+        }
+        sum = sum.scale(1.0 / (n as f64).sqrt());
+        assert!((s.re - sum.re).abs() < 1e-12 && (s.im - sum.im).abs() < 1e-12);
+    }
+
+    // Parseval (ortho: energies equal exactly).
+    let e_time: f64 = src.iter().map(|z| z.norm_sq()).sum();
+    let e_freq: f64 = spectrum.iter().map(|z| z.norm_sq()).sum();
+    assert!((e_time - e_freq).abs() < 1e-9);
+}
+
+// §8.2 — the FRFT, pinned against the reference implementation: golden
+// probe values computed by realflare's `frft.py` (numpy, f64) on a fixed
+// 8×8 input, at order 1.0 (exercising the plain branch) and at 0.12 (the
+// small-alpha normalisation branch the ghost-disc bake actually uses —
+// which routes through an extra inverse FFT). Note the discrete FrFT at
+// order 1 is NOT the plain DFT (it approximates the continuous transform);
+// the golden is the truth, not an identity.
+#[test]
+fn lens_flare_frft_matches_the_reference_goldens() {
+    use crate::fx::fft::{frft2, Cx};
+    let (w, h) = (8usize, 8usize);
+    let src: Vec<Cx> = (0..w * h)
+        .map(|i| Cx::new((i as f64 * 0.7).sin() + 0.5 * (i as f64 * 1.3).cos(), 0.0))
+        .collect();
+    type FrftGolden = (f64, [(usize, usize, f64, f64); 4]);
+    let goldens: [FrftGolden; 2] = [
+        (
+            1.0,
+            [
+                (0, 0, 0.009899350669, 0.0),
+                (1, 3, 0.019183561776, -0.002196803383),
+                (4, 4, 0.012801348175, 0.0),
+                (7, 5, 0.019183561776, 0.002196803383),
+            ],
+        ),
+        (
+            0.12,
+            [
+                (0, 0, 0.018843641651, -0.050445840078),
+                (1, 3, 0.093980541881, -0.074974910874),
+                (4, 4, 0.051332648711, -0.015411838816),
+                (7, 5, -0.059131178422, 0.142959643795),
+            ],
+        ),
+    ];
+    for (alpha, probes) in goldens {
+        let mut out = src.clone();
+        frft2(&mut out, w, h, alpha);
+        assert!(out.iter().all(|z| z.re.is_finite() && z.im.is_finite()));
+        for (y, x, re, im) in probes {
+            let z = out[y * w + x];
+            assert!(
+                (z.re - re).abs() < 1e-9 && (z.im - im).abs() < 1e-9,
+                "alpha {alpha} [{y},{x}]: got {} {:+}, want {re} {im:+}",
+                z.re,
+                z.im,
+            );
+        }
+    }
+}
+
+// §8.3 — optics units: the Cauchy fit reproduces n_d exactly and the Abbe
+// number within tolerance; refraction matches Snell; Fresnel at normal
+// incidence is the textbook ((n1-n2)/(n1+n2))²; the quarter-wave MgF₂
+// coating cuts the reflectance, and extra layers cut it further (K-261).
+#[test]
+fn lens_flare_optics_match_the_textbook() {
+    use crate::fx::lens_flare::*;
+    let (a, b) = cauchy_from_abbe(1.62, 60.3);
+    let n_d = cauchy_ior(a, b, 587.56);
+    assert!((n_d - 1.62).abs() < 1e-5, "n_d {n_d}");
+    let n_f = cauchy_ior(a, b, 486.13);
+    let n_c = cauchy_ior(a, b, 656.27);
+    let v = (n_d - 1.0) / (n_f - n_c);
+    assert!((v - 60.3).abs() < 0.05, "V {v}");
+
+    // Snell at 45° into n = 1.5 glass: sin(t) = sin(45°)/1.5.
+    let i = [(0.5f32).sqrt(), 0.0, (0.5f32).sqrt()];
+    let t = refract3(i, [0.0, 0.0, -1.0], 1.0 / 1.5).expect("no TIR at 45°");
+    let sin_t = t[0].hypot(t[1]);
+    assert!((sin_t - (0.5f32).sqrt() / 1.5).abs() < 1e-6);
+    // Total internal reflection from the dense side at a grazing angle.
+    let g = [(0.99f32).sqrt(), 0.0, (0.01f32).sqrt()];
+    assert!(refract3(g, [0.0, 0.0, -1.0], 1.5).is_none());
+
+    // Normal-incidence Fresnel.
+    let r = fresnel_cos(1.0, 1.0, 1.5);
+    let expect = ((1.0f32 - 1.5) / (1.0 + 1.5)).powi(2);
+    assert!((r - expect).abs() < 1e-4, "{r} vs {expect}");
+
+    // The MgF₂ quarter-wave coating at its design wavelength reflects LESS
+    // than bare glass, and each extra layer quarters the residual again.
+    let plain = fresnel_cos(1.0, 1.0, 1.9);
+    let one = surface_reflectance(1.0, 1.0, 1.9, 1.0, 550.0, 1.0);
+    let two = surface_reflectance(1.0, 1.0, 1.9, 2.0, 550.0, 1.0);
+    assert!(one < plain, "coated {one} should be below bare {plain}");
+    assert!(two < one, "multicoat {two} should be below single {one}");
+    // The Coating dial at 0 is bare glass regardless of the file layers.
+    let off = surface_reflectance(1.0, 1.0, 1.9, 2.0, 550.0, 0.0);
+    assert!((off - plain).abs() < 1e-6);
+}
+
+// §8.4 — the prescription library and pair ranking (K-261, curated to
+// twenty K-264): every bundled .lens file parses with a sane surface count,
+// focal length and a stop surface; the bake's pair list is deterministic,
+// non-empty, and every pair joins two genuine glass interfaces.
+#[test]
+fn lens_flare_library_parses_and_pairs_rank_deterministically() {
+    use crate::fx::lens_flare::*;
+    use crate::fx::lens_library::{LENS_LIBRARY, LENS_OPTIONS};
+    assert_eq!(LENS_LIBRARY.len(), 20, "the curated library is twenty");
+    assert_eq!(LENS_OPTIONS.len(), LENS_LIBRARY.len());
+    for (i, entry) in LENS_LIBRARY.iter().enumerate() {
+        assert_eq!(LENS_OPTIONS[i], entry.name, "options align with entries");
+    }
+    // Sorted by name, so the picker reads alphabetically and a saved index
+    // is reproducible from the name list alone.
+    for pair in LENS_LIBRARY.windows(2) {
+        assert!(
+            pair[0].name < pair[1].name,
+            "{} !< {}",
+            pair[0].name,
+            pair[1].name
+        );
+    }
+    for entry in LENS_LIBRARY.iter() {
+        let lens =
+            parse_lens(entry.text).unwrap_or_else(|| panic!("{} failed to parse", entry.name));
+        assert!(
+            (2.0..2000.0).contains(&lens.focal_mm),
+            "{}: focal {}",
+            entry.name,
+            lens.focal_mm
+        );
+        assert!(
+            lens.surfaces.len() >= 3 && lens.surfaces.len() <= 64,
+            "{}: {} surfaces",
+            entry.name,
+            lens.surfaces.len()
+        );
+        assert!(
+            lens.surfaces.iter().all(|s| s.semi_ap_mm > 0.0),
+            "{}: non-positive semi-aperture",
+            entry.name
+        );
+    }
+
+    // Deterministic bake: two runs agree entirely (pairs, sprite, gain).
+    let p = default_flare_params();
+    let a = bake(&p);
+    let b = bake(&p);
+    assert_eq!(a.pairs, b.pairs);
+    assert_eq!(a.starburst, b.starburst);
+    assert_eq!(a.energy_gain, b.energy_gain);
+    assert!(!a.pairs.is_empty());
+    for pair in &a.pairs {
+        assert!(pair[0] < pair[1]);
+        assert!((pair[1] as usize) < a.surfaces.len());
+    }
+}
+
+// The `lens_file` override (K-264): a custom .lens text replaces the
+// picked lens entirely, its bake key never collides with the library's or
+// with a different file's, and an unparsable file degrades to the pick.
+#[test]
+fn lens_flare_custom_lens_file_overrides_and_degrades() {
+    use crate::fx::lens_flare::*;
+    use crate::fx::lens_library::LENS_LIBRARY;
+    let p = default_flare_params();
+    // "Custom file" = the text of a DIFFERENT bundled lens, so the expected
+    // result is exactly what picking that lens produces (native f-number
+    // aside — a custom file estimates it from geometry).
+    let other = crate::fx::lens_flare::LensFlareParams { lens: 0, ..p };
+    let via_pick = bake(&other);
+    let via_file = bake_with(&p, Some(LENS_LIBRARY[0].text));
+    assert_eq!(via_file.surfaces.len(), via_pick.surfaces.len());
+    assert_eq!(via_file.pairs, via_pick.pairs, "same glass, same ghosts");
+    assert_eq!(via_file.focal_mm, via_pick.focal_mm);
+    // The key separates library, custom, and edited-custom.
+    let h = lens_text_hash(LENS_LIBRARY[0].text);
+    let k_lib = bake_key(&p);
+    let k_file = bake_key_with(&p, Some(h));
+    let k_edit = bake_key_with(&p, Some(lens_text_hash("name: edited\n")));
+    assert_ne!(k_lib, k_file);
+    assert_ne!(k_file, k_edit);
+    // Unparsable text degrades to the picked lens, bit-for-bit.
+    let fallback = bake_with(&p, Some("not a prescription"));
+    let picked = bake(&p);
+    assert_eq!(fallback.pairs, picked.pairs);
+    assert_eq!(fallback.starburst, picked.starburst);
+    assert_eq!(fallback.energy_gain, picked.energy_gain);
+}
+
+// Px-dimensioned resolved fields rescale when the stack runs on a raster
+// other than the one it resolved against (K-266) — the adjustment-layer
+// preview bug: the flare's light hit the frame edge at 1500 of a 1920 comp
+// because the preview factor was applied to the raster and not the params.
+#[test]
+fn resolved_px_fields_rescale_for_a_different_raster() {
+    use crate::fx::{rescale_px, Resolved};
+    let mut ops = vec![
+        Resolved::Blur {
+            radius_px: 10.0,
+            edge: 0,
+            mix: 1.0,
+        },
+        Resolved::LensFlare(crate::fx::lens_flare::LensFlareParams {
+            light: [1000.0, 500.0],
+            ..default_flare_params()
+        }),
+    ];
+    rescale_px(&mut ops, 0.5);
+    match &ops[0] {
+        Resolved::Blur { radius_px, mix, .. } => {
+            assert_eq!(*radius_px, 5.0, "px fields scale");
+            assert_eq!(*mix, 1.0, "unitless fields do not");
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+    match &ops[1] {
+        Resolved::LensFlare(p) => {
+            assert_eq!(p.light, [500.0, 250.0], "the flare's light is px@comp");
+            assert_eq!(p.intensity, 1.0);
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+    // Factor 1 is exactly a no-op.
+    let mut same = vec![Resolved::Blur {
+        radius_px: 7.0,
+        edge: 0,
+        mix: 1.0,
+    }];
+    rescale_px(&mut same, 1.0);
+    match &same[0] {
+        Resolved::Blur { radius_px, .. } => assert_eq!(*radius_px, 7.0),
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+// An anamorphic squeeze (or scale) below 1 asks the combine for flare
+// coordinates past the buffer. Up to the 2× padding cap the buffer now
+// renders wider and carries real flare there (K-267); past even the
+// padded extent there is still NO flare (K-266) — the clamp-addressed tap
+// used to repeat the edge row outward as a smear.
+#[test]
+fn lens_flare_combine_does_not_repeat_the_flare_past_its_buffer() {
+    use crate::fx::lens_flare::*;
+    let (w, h) = (64u32, 36u32);
+    // Squeeze 0.5 sits inside the padding: the frame edge samples the
+    // padded buffer's real content, not black.
+    let p_half = LensFlareParams {
+        anamorphic: 0.5,
+        starburst_intensity: 0.0,
+        ghost_softness: 0.0,
+        ..default_flare_params()
+    };
+    let baked = bake(&p_half);
+    let (rw, rh) = flare_pad_dims(w, h, p_half.anamorphic, p_half.scale);
+    assert_eq!((rw, rh), (w * 2, h), "squeeze 0.5 pads to double width");
+    let flare = vec![0.5_f32; (rw * rh * 3) as usize];
+    let mut out = vec![0.0_f32; (w * h * 4) as usize];
+    let lights = manual_light(&p_half, w, h);
+    cpu_combine(&mut out, w, h, &p_half, &baked, &flare, w, h, &lights);
+    let left_edge: f32 = (0..h).map(|y| out[((y * w) * 4) as usize]).sum();
+    assert!(
+        left_edge > 0.0,
+        "K-267: the padded buffer must reach the squeezed frame edge"
+    );
+    // Squeeze 0.25 outruns even the 2× padding cap — and past the padded
+    // buffer there must be nothing, never a repeated edge row.
+    let p_quarter = LensFlareParams {
+        anamorphic: 0.25,
+        ..p_half
+    };
+    let (rw, rh) = flare_pad_dims(w, h, p_quarter.anamorphic, p_quarter.scale);
+    assert_eq!((rw, rh), (w * 2, h), "the padding caps at 2x");
+    let flare = vec![0.5_f32; (rw * rh * 3) as usize];
+    let mut out = vec![0.0_f32; (w * h * 4) as usize];
+    let lights = manual_light(&p_quarter, w, h);
+    cpu_combine(&mut out, w, h, &p_quarter, &baked, &flare, w, h, &lights);
+    // squeeze 0.25 maps x=0 to sx = 32 + (0.5-32)/0.25 = -94, u = -94.5/64
+    // of the base width plus the 32 px pad offset: still far outside.
+    let left_edge: f32 = (0..h).map(|y| out[((y * w) * 4) as usize]).sum();
+    assert_eq!(
+        left_edge, 0.0,
+        "outside the padded buffer there is no flare"
+    );
+    // The centre still receives it.
+    let centre = out[(((h / 2) * w + w / 2) * 4) as usize];
+    assert!(centre > 0.0, "the squeezed flare itself still lands");
+}
+
+// Area sources (K-267): a practical spanning many tiles weighs as its
+// whole lit area — every gated tile's flux lands on its nearest anchor —
+// while a one-tile point source reads exactly as before (its own tile's
+// brightest pixel through the gate). This was the owner's white-circle
+// precomp: detected as one pixel, it flared like a pin-prick.
+#[test]
+fn lens_flare_detects_area_sources_as_summed_flux() {
+    use crate::fx::lens_flare::*;
+    let (w, h) = (256u32, 96u32);
+    let mut matte = vec![0.0_f32; (w * h * 4) as usize];
+    // A white disc spanning several detection tiles…
+    let (cx, cy, r) = (48.0_f32, 48.0_f32, 40.0_f32);
+    // …and a single-pixel practical far to the right.
+    let dot = (16 * w + 240) as usize;
+    for y in 0..h {
+        for x in 0..w {
+            let i = ((y * w + x) * 4) as usize;
+            let inside = (x as f32 + 0.5 - cx).hypot(y as f32 + 0.5 - cy) <= r;
+            if inside || i / 4 == dot {
+                matte[i] = 1.0;
+                matte[i + 1] = 1.0;
+                matte[i + 2] = 1.0;
+                matte[i + 3] = 1.0;
+            }
+        }
+    }
+    let lights = detect_lights(&matte, w, h, 1.0, 0.25, true, [1.0, 1.0, 1.0]);
+    assert_eq!(lights.len(), 2, "one disc anchor, one dot anchor");
+    // The disc's anchor sits inside the disc, the dot's on the dot.
+    let disc = &lights[0];
+    let dot_light = &lights[1];
+    assert!(
+        (disc.pos[0] * w as f32 - cx).abs() < r && (disc.pos[1] * h as f32 - cy).abs() < r,
+        "first anchor must sit in the disc: {:?}",
+        disc.pos
+    );
+    assert!(
+        (dot_light.pos[0] * w as f32 - 240.5).abs() < 1.0,
+        "second anchor must sit on the dot: {:?}",
+        dot_light.pos
+    );
+    // The dot reads as the classic point: white × gate(1.0) — and the disc
+    // reads as MANY tiles of that, several times the dot's flux.
+    let gate = threshold_gate(1.0, 1.0, 0.25);
+    assert!(
+        (dot_light.rgb[0] - gate).abs() < 1e-6,
+        "{:?}",
+        dot_light.rgb
+    );
+    assert!(
+        disc.rgb[0] > dot_light.rgb[0] * 3.0,
+        "area flux must dwarf the point: disc {} vs dot {}",
+        disc.rgb[0],
+        dot_light.rgb[0]
+    );
+}
+
+// §8.5 (CPU side) — the trace lands rays: at the default light the top
+// pairs put finite, weighted rays on the sensor, and stopping the iris
+// down clips rays the wide stop passed.
+#[test]
+fn lens_flare_trace_lands_live_rays_with_sane_weights() {
+    use crate::fx::lens_flare::*;
+    let p = default_flare_params();
+    let baked = bake(&p);
+    let dir = light_direction([0.33, 0.30], 9.0 / 16.0, baked.focal_mm);
+    let side = 12usize;
+    let mut live = 0u32;
+    for pair in baked.pairs.iter().take(10) {
+        for j in 0..side {
+            for i in 0..side {
+                let u = (i as f32 / (side - 1) as f32) * 2.0 - 1.0;
+                let v = (j as f32 / (side - 1) as f32) * 2.0 - 1.0;
+                if u * u + v * v > 1.0 {
+                    continue;
+                }
+                let origin = [u * baked.pupil_mm, v * baked.pupil_mm, baked.start_z_mm];
+                if let Some((pos, w)) =
+                    trace_splat(&baked, *pair, 550.0, origin, dir, 0.75, 1.0, 0.0)
+                {
+                    live += 1;
+                    assert!(pos[0].is_finite() && pos[1].is_finite());
+                    assert!((0.0..=1.0).contains(&w), "weight {w}");
+                }
+            }
+        }
+    }
+    // Off-axis bundles legitimately lose rays to clips and TIR; the pin is
+    // that a solid population still lands.
+    assert!(live > 60, "only {live} live rays across the top pairs");
+
+    // Stopping down kills rays that the wide stop passed.
+    let (mut wide, mut stopped) = (0u32, 0u32);
+    let pair = baked.pairs[0];
+    for j in 0..side {
+        for i in 0..side {
+            let u = (i as f32 / (side - 1) as f32) * 2.0 - 1.0;
+            let v = (j as f32 / (side - 1) as f32) * 2.0 - 1.0;
+            if u * u + v * v > 1.0 {
+                continue;
+            }
+            let origin = [u * baked.pupil_mm, v * baked.pupil_mm, baked.start_z_mm];
+            if trace_splat(&baked, pair, 550.0, origin, dir, 0.75, 1.0, 0.0).is_some() {
+                wide += 1;
+            }
+            let o2 = [origin[0] * 0.2, origin[1] * 0.2, origin[2]];
+            if trace_splat(&baked, pair, 550.0, o2, dir, 0.75, 0.2, 0.0).is_some() {
+                stopped += 1;
+            }
+        }
+    }
+    assert!(wide > 0);
+    let _ = stopped; // the scaled spray always fits the scaled stop
+
+    // The iris mask (K-261): centre 1, far outside 0, deterministic, and a
+    // hexagon carves more of the unit square away than the circle.
+    assert_eq!(pupil_mask(0.0, 0.0, 6, 0.0, 0.0, 0.1), 1.0);
+    assert_eq!(pupil_mask(2.0, 0.0, 6, 0.0, 0.0, 0.1), 0.0);
+    let probe = |roundness: f32| -> f32 {
+        let mut acc = 0.0;
+        for j in 0..64 {
+            for i in 0..64 {
+                let u = (i as f32 / 63.0) * 2.0 - 1.0;
+                let v = (j as f32 / 63.0) * 2.0 - 1.0;
+                acc += pupil_mask(u, v, 6, 0.0, roundness, 0.0);
+            }
+        }
+        acc
+    };
+    assert!(
+        probe(0.0) < probe(1.0),
+        "a hexagon must pass less area than the circle"
+    );
+}
+
+// §8.7 — neutral points: Intensity 0 and Mix 0 leave the working buffer
+// bit-exactly untouched through the combine (the flare buffer is irrelevant
+// then), and a fresh instance resolves to the documented defaults.
+#[test]
+fn lens_flare_neutral_points_and_default_resolve() {
+    use crate::fx::lens_flare::*;
+    let p = default_flare_params();
+    let baked = bake(&p);
+    let (w, h) = (8u32, 6u32);
+    let src: Vec<f32> = (0..(w * h * 4) as usize)
+        .map(|i| (i % 17) as f32 / 16.0)
+        .collect();
+    let flare = vec![0.5f32; (w * h * 3) as usize];
+
+    let mut zero_intensity = src.clone();
+    let pi0 = LensFlareParams {
+        intensity: 0.0,
+        ..p
+    };
+    let lights = manual_light(&pi0, w, h);
+    cpu_combine(
+        &mut zero_intensity,
+        w,
+        h,
+        &pi0,
+        &baked,
+        &flare,
+        w,
+        h,
+        &lights,
+    );
+    assert_eq!(zero_intensity, src, "Intensity 0 must be bit-exact");
+
+    let mut zero_mix = src.clone();
+    let pm0 = LensFlareParams { mix: 0.0, ..p };
+    cpu_combine(&mut zero_mix, w, h, &pm0, &baked, &flare, w, h, &lights);
+    assert_eq!(zero_mix, src, "Mix 0 must be bit-exact");
+
+    // A live combine changes pixels (the effect is not a silent no-op).
+    let mut live = src.clone();
+    cpu_combine(&mut live, w, h, &p, &baked, &flare, w, h, &lights);
+    assert_ne!(live, src);
+
+    // Fresh instance -> resolve carries the documented defaults.
+    let inst = instantiate("lens_flare").unwrap();
+    let ops = resolve_stack(
+        std::slice::from_ref(&inst),
+        0.0,
+        2202.9075,
+        1.0,
+        &MarkerContext::NONE,
+    );
+    match ops.as_slice() {
+        [Resolved::LensFlare(rp)] => {
+            // px@comp defaults at the schema's nominal 1080p (K-260).
+            assert!((rp.light[0] - 640.0).abs() < 1e-3);
+            assert!((rp.light[1] - 360.0).abs() < 1e-3);
+            assert_eq!(rp.intensity, 1.0);
+            assert_eq!(rp.lens, 16, "default lens is the Master Prime 50");
+            assert_eq!(rp.blades, 8);
+            assert_eq!(rp.max_ghosts, 60);
+            assert_eq!(rp.quality, 1);
+            assert_eq!(rp.mix, 1.0);
+        }
+        other => panic!("expected one LensFlare op, got {other:?}"),
+    }
+}
+
+// §8.6 (CPU half) — the reference renderer produces finite energy at the
+// defaults and follows the light. The full GPU-vs-CPU frame bound lives in
+// the lumit-gpu tests.
+#[test]
+fn lens_flare_cpu_reference_renders_energy_and_reacts_to_the_light() {
+    use crate::fx::lens_flare::*;
+    let p = LensFlareParams {
+        quality: 0,
+        max_ghosts: 12,
+        ..default_flare_params()
+    };
+    let baked = bake(&p);
+    let (w, h) = (96u32, 54u32);
+    let a = cpu_flare(&p, &baked, w, h, &manual_light(&p, w, h));
+    let energy_a: f32 = a.iter().sum();
+    assert!(energy_a > 0.0, "the default flare renders no energy");
+    assert!(a.iter().all(|v| v.is_finite()));
+
+    // Moving the light moves the picture.
+    let p2 = LensFlareParams {
+        light: [67.0, 32.0],
+        ..p
+    };
+    let b = cpu_flare(&p2, &baked, w, h, &manual_light(&p2, w, h));
+    assert_ne!(a, b, "the flare must follow the light");
+}
+
+// Forward migration (K-258): a built-in instance saved before its schema
+// grew a parameter gains it at the default on load — the panel had been
+// drawing a dash and set_value refusing the id.
+#[test]
+fn lens_flare_backfill_restores_missing_params() {
+    let mut inst = instantiate("lens_flare").unwrap();
+    // Simulate a pre-K-257 save: strip the params that pass added.
+    inst.params
+        .retain(|p| !matches!(p.id.as_str(), "source_type" | "blend"));
+    assert!(inst.params.iter().all(|p| p.id != "source_type"));
+    let mut effects = vec![inst];
+    backfill_builtin_params(&mut effects);
+    let inst = &effects[0];
+    for id in ["source_type", "blend"] {
+        assert!(
+            inst.params.iter().any(|p| p.id == id),
+            "{id} must be backfilled"
+        );
+    }
+    // Present values are never touched, and a second pass is a no-op.
+    let count = inst.params.len();
+    backfill_builtin_params(&mut effects);
+    assert_eq!(effects[0].params.len(), count);
+}
+
+// The Background → Blend migration (K-289, superseding K-258). A project
+// saved with Transparent lands on Add — the same pixels it always rendered —
+// and one saved with Black lands on Normal, the flare on opaque black that
+// option existed to produce. The dead parameter goes, because the schema no
+// longer declares it and the panel cannot draw a row `set_value` refuses.
+#[test]
+fn lens_flare_background_migrates_to_the_blend_menu() {
+    use crate::fx::lens_flare::{BLEND_ADD, BLEND_NORMAL};
+    for (saved, want) in [(0u32, BLEND_ADD), (1, BLEND_NORMAL)] {
+        let mut inst = instantiate("lens_flare").unwrap();
+        inst.params.retain(|p| p.id != "blend");
+        inst.params.push(crate::model::EffectParam {
+            id: "background".to_owned(),
+            value: EffectValue::Choice(saved),
+            extra: serde_json::Map::new(),
+        });
+        let mut effects = vec![inst];
+        backfill_builtin_params(&mut effects);
+        assert!(
+            effects[0].params.iter().all(|p| p.id != "background"),
+            "the legacy parameter must be dropped"
+        );
+        assert!(
+            matches!(effects[0].param("blend"), Some(EffectValue::Choice(c)) if *c == want),
+            "background {saved} must migrate to blend {want}"
+        );
+        // Idempotent: loading twice cannot re-migrate or duplicate.
+        let count = effects[0].params.len();
+        backfill_builtin_params(&mut effects);
+        assert_eq!(effects[0].params.len(), count);
+        assert!(matches!(effects[0].param("blend"), Some(EffectValue::Choice(c)) if *c == want));
+    }
+}
+
+// "This layer" (K-288): a fresh Lens flare added to a layer points its Matte
+// source at that layer, so switching Source to Matte flares the lights in
+// the picture the effect is already on — and on an adjustment layer, the
+// composite below. Plain `instantiate` (presets, tests) leaves it unset, the
+// labelled no-op it always was, and no other effect's Layer parameter moves.
+#[test]
+fn lens_flare_matte_defaults_to_the_layer_it_is_added_to() {
+    let owner = uuid::Uuid::now_v7();
+
+    let bare = instantiate("lens_flare").unwrap();
+    assert_eq!(bare.layer_ref("matte"), None, "a preset stays unset");
+
+    let mut inst = instantiate("lens_flare").unwrap();
+    point_self_layer_params_at(&mut inst, owner);
+    assert_eq!(inst.layer_ref("matte"), Some(owner));
+
+    // DoF's depth pass is never the picture itself, so it is untouched.
+    let mut dof = instantiate("dof").unwrap();
+    point_self_layer_params_at(&mut dof, owner);
+    assert_eq!(dof.layer_ref("depth"), None);
+}
+
+// Blend (K-289, replacing K-258's Background pair): Normal shows the flare
+// element alone on opaque black, Add is the historical behaviour bit for
+// bit, and every mode keeps the Intensity-0 passthrough exact.
+#[test]
+fn lens_flare_blend_normal_is_the_element_on_opaque_black() {
+    use crate::fx::lens_flare::*;
+    let p = LensFlareParams {
+        blend: BLEND_NORMAL,
+        ..default_flare_params()
+    };
+    let baked = bake(&p);
+    let (w, h) = (8u32, 6u32);
+    let src: Vec<f32> = (0..(w * h * 4) as usize)
+        .map(|i| (i % 13) as f32 / 24.0)
+        .collect();
+    let flare = vec![0.25f32; (w * h * 3) as usize];
+    let lights = manual_light(&p, w, h);
+
+    let mut normal = src.clone();
+    cpu_combine(&mut normal, w, h, &p, &baked, &flare, w, h, &lights);
+    let mut add = src.clone();
+    let pa = LensFlareParams {
+        blend: BLEND_ADD,
+        ..p
+    };
+    cpu_combine(&mut add, w, h, &pa, &baked, &flare, w, h, &lights);
+    for i in 0..(w * h) as usize {
+        assert_eq!(normal[i * 4 + 3], 1.0, "alpha must be opaque");
+        for c in 0..3 {
+            // Add lays the same element over the layer, so Normal is Add
+            // minus the layer: the element by itself.
+            let element = add[i * 4 + c] - src[i * 4 + c];
+            assert!(
+                (normal[i * 4 + c] - element).abs() < 1e-6,
+                "Normal must show the element alone"
+            );
+        }
+    }
+
+    // Neutral points ignore the blend: bit-exact passthrough.
+    let mut neutral = src.clone();
+    let p0 = LensFlareParams {
+        intensity: 0.0,
+        ..p
+    };
+    cpu_combine(&mut neutral, w, h, &p0, &baked, &flare, w, h, &lights);
+    assert_eq!(neutral, src);
+}
+
+// The default Blend is Add, and Add is exactly what the effect did before
+// the menu existed (K-289): `out = in + flare`, alpha saturating at 1. A
+// regression here would silently move every flare anyone has already built.
+#[test]
+fn lens_flare_add_blend_is_the_historical_combine() {
+    use crate::fx::lens_flare::*;
+    let p = LensFlareParams {
+        blend: BLEND_ADD,
+        ..default_flare_params()
+    };
+    let baked = bake(&p);
+    let (w, h) = (8u32, 6u32);
+    let src: Vec<f32> = (0..(w * h * 4) as usize)
+        .map(|i| (i % 13) as f32 / 24.0)
+        .collect();
+    let flare = vec![0.25f32; (w * h * 3) as usize];
+    let lights = manual_light(&p, w, h);
+
+    let mut out = src.clone();
+    cpu_combine(&mut out, w, h, &p, &baked, &flare, w, h, &lights);
+    for i in 0..(w * h) as usize {
+        let add: Vec<f32> = (0..3).map(|c| out[i * 4 + c] - src[i * 4 + c]).collect();
+        let luma = 0.2126 * add[0] + 0.7152 * add[1] + 0.0722 * add[2];
+        assert!(
+            (out[i * 4 + 3] - (src[i * 4 + 3] + luma).min(1.0)).abs() < 1e-6,
+            "alpha must be the historical saturating sum"
+        );
+    }
+
+    // And the schema default really is Add.
+    let inst = instantiate("lens_flare").unwrap();
+    assert!(matches!(
+        inst.param("blend"),
+        Some(EffectValue::Choice(c)) if *c == BLEND_ADD
+    ));
+}
+
+// Every Blend option is reachable, and the resolve clamps an index past the
+// menu rather than faulting (K-289).
+#[test]
+fn lens_flare_blend_options_all_resolve() {
+    use crate::fx::lens_flare::*;
+    let last = BLEND_OPTIONS.len() as u32 - 1;
+    for mode in 0..=last + 3 {
+        let mut inst = instantiate("lens_flare").unwrap();
+        for p in &mut inst.params {
+            if p.id == "blend" {
+                p.value = EffectValue::Choice(mode);
+            }
+        }
+        let ops = resolve_stack(&[inst], 0.0, 2202.9, 1.0, &MarkerContext::NONE);
+        let [Resolved::LensFlare(p)] = ops.as_slice() else {
+            panic!("lens_flare must resolve to exactly one op");
+        };
+        assert_eq!(p.blend, mode.min(last));
+    }
+}
+
+// The blend table itself (K-289), against the formulas written out by hand.
+// The CPU twin is the oracle the WGSL `flare_blend` is pinned to, so it has
+// to be right on its own terms first.
+#[test]
+fn flare_blend_matches_its_formulas() {
+    use crate::fx::lens_flare::*;
+    let d = [0.30_f32, 0.60, 0.10, 0.80];
+    let e = [0.40_f32, 0.20, 0.70, 0.25];
+    let close = |got: [f32; 4], want: [f32; 4], what: &str| {
+        for c in 0..4 {
+            assert!(
+                (got[c] - want[c]).abs() < 1e-6,
+                "{what} channel {c}: {} vs {}",
+                got[c],
+                want[c]
+            );
+        }
+    };
+    close(
+        flare_blend(BLEND_NORMAL, d, e),
+        [e[0], e[1], e[2], 1.0],
+        "Normal",
+    );
+    close(
+        flare_blend(BLEND_ADD, d, e),
+        [0.70, 0.80, 0.80, 1.05],
+        "Add",
+    );
+    close(
+        flare_blend(2, d, e),
+        [
+            d[0] + e[0] - d[0] * e[0],
+            d[1] + e[1] - d[1] * e[1],
+            d[2] + e[2] - d[2] * e[2],
+            d[3] + e[3] - d[3] * e[3],
+        ],
+        "Screen",
+    );
+    close(
+        flare_blend(3, d, e),
+        [d[0] * e[0], d[1] * e[1], d[2] * e[2], d[3] * e[3]],
+        "Multiply",
+    );
+    close(flare_blend(7, d, e), [0.40, 0.60, 0.70, 0.80], "Lighten");
+    close(flare_blend(8, d, e), [0.30, 0.20, 0.10, 0.25], "Darken");
+    close(flare_blend(9, d, e), [0.10, 0.40, 0.60, 0.55], "Difference");
+    close(
+        flare_blend(11, d, e),
+        [0.0, 0.40, 0.0, 0.55],
+        "Subtract clamps at black",
+    );
+    // Divide by a zero element cannot produce a NaN or an infinity.
+    let z = flare_blend(12, d, [0.0; 4]);
+    assert!(z.iter().all(|v| v.is_finite()), "Divide must stay finite");
+}
+
+// Light tint and Use source colour (K-259): the tint multiplies every mode's
+// light, and the toggle chooses whether a detected source's own colour rides
+// with it. Manual carries the tint as its whole colour.
+#[test]
+fn lens_flare_light_tint_and_source_colour_toggle() {
+    use crate::fx::lens_flare::*;
+    // Manual: the light IS the tint (white by default).
+    let p = default_flare_params();
+    assert_eq!(manual_light(&p, 96, 54)[0].rgb, [1.0, 1.0, 1.0]);
+    let warm = LensFlareParams {
+        light_tint: [1.0, 0.5, 0.25],
+        ..p
+    };
+    assert_eq!(manual_light(&warm, 96, 54)[0].rgb, [1.0, 0.5, 0.25]);
+
+    // Matte: one blue-green source, gate fully open.
+    let (w, h) = (64u32, 64u32);
+    let mut matte = vec![0.0f32; (w * h * 4) as usize];
+    let i = ((20 * w + 20) * 4) as usize;
+    matte[i] = 0.5;
+    matte[i + 1] = 2.0;
+    matte[i + 2] = 4.0;
+    matte[i + 3] = 1.0;
+
+    // Source colour ON, tint white: the light is the source colour.
+    let on = detect_lights(&matte, w, h, 0.5, 0.0, true, [1.0; 3]);
+    assert_eq!(on.len(), 1);
+    assert_eq!(on[0].rgb, [0.5, 2.0, 4.0]);
+
+    // Source colour OFF: white through the tint alone — the "this matte only
+    // says where" case.
+    let off = detect_lights(&matte, w, h, 0.5, 0.0, false, [1.0; 3]);
+    assert_eq!(off[0].rgb, [1.0, 1.0, 1.0]);
+    let off_tinted = detect_lights(&matte, w, h, 0.5, 0.0, false, [1.0, 0.5, 0.25]);
+    assert_eq!(off_tinted[0].rgb, [1.0, 0.5, 0.25]);
+    // …and its position is unchanged by either (only the colour differs).
+    assert_eq!(off[0].pos, on[0].pos);
+
+    // Source colour ON with a tint: the two multiply.
+    let both = detect_lights(&matte, w, h, 0.5, 0.0, true, [1.0, 0.5, 0.25]);
+    assert_eq!(both[0].rgb, [0.5, 1.0, 1.0]);
+
+    // A black tint kills the flare without touching detection.
+    let dark = detect_lights(&matte, w, h, 0.5, 0.0, true, [0.0; 3]);
+    assert_eq!(dark[0].rgb, [0.0, 0.0, 0.0]);
+
+    // The tint is NOT a bake input: changing it must not re-key the bake
+    // (animating it would otherwise rebake every frame).
+    assert_eq!(bake_key(&p), bake_key(&warm));
+    assert_eq!(
+        bake_key(&p),
+        bake_key(&LensFlareParams {
+            use_source_colour: false,
+            ..p
+        })
+    );
+}
+
+// The thin-lens focus shift (K-260): zero at infinity, growing as focus
+// nears, never past one focal length. (The K-260 paraxial sensor
+// calibration is superseded by K-261: the FlareSim prescriptions carry
+// their own measured back-focal chains.)
+#[test]
+fn lens_flare_focus_shift_follows_the_thin_lens() {
+    use crate::fx::lens_flare::focus_shift_mm;
+    assert_eq!(focus_shift_mm(0.0, 50.0), 0.0);
+    assert!(focus_shift_mm(100.0, 50.0) < 0.03);
+    let near = focus_shift_mm(1.0, 50.0);
+    assert!((near - 2500.0 / 950.0).abs() < 1e-3, "1 m shift {near}");
+    assert!(focus_shift_mm(0.2, 50.0) <= 50.0);
+}
+
+// The streak guard (K-262), tested where the bug lived. K-261 inflated ANY
+// sub-pixel quad to 4 px² by scaling about its centroid — which for a
+// fold-straddling sliver (near-zero area, large extent) multiplied its
+// length by up to 100×, drawing the "random lines across the flare" the
+// owner reported. Both oracles agreed with each other while drawing it, so
+// parity could never have caught this; the guard itself is the pin.
+#[test]
+fn lens_flare_quad_guard_drops_slivers_and_keeps_ghosts() {
+    use crate::fx::lens_flare::*;
+    let quad = |pts: [[f32; 2]; 4]| -> [FlareVertex; 4] {
+        [
+            FlareVertex {
+                pos: pts[0],
+                rgb: [1.0; 3],
+            },
+            FlareVertex {
+                pos: pts[1],
+                rgb: [1.0; 3],
+            },
+            FlareVertex {
+                pos: pts[2],
+                rgb: [1.0; 3],
+            },
+            FlareVertex {
+                pos: pts[3],
+                rgb: [1.0; 3],
+            },
+        ]
+    };
+    let longest = |v: &[FlareVertex; 4]| {
+        (0..4)
+            .map(|i| {
+                let (a, b) = (v[i].pos, v[(i + 1) % 4].pos);
+                (a[0] - b[0]).hypot(a[1] - b[1])
+            })
+            .fold(0.0f32, f32::max)
+    };
+
+    // A big well-formed cell: drawn untouched.
+    let mut big = quad([[0.0, 0.0], [50.0, 0.0], [50.0, 50.0], [0.0, 50.0]]);
+    let before = big;
+    assert!(inflate_quad(&mut big));
+    assert_eq!(big[2].pos, before[2].pos);
+    assert_eq!(big[0].rgb, before[0].rgb);
+
+    // A compact sub-sample cell (well under the 1 px² floor): inflated,
+    // flux conserved, still compact.
+    let mut tiny = quad([[10.0, 10.0], [10.4, 10.0], [10.4, 10.4], [10.0, 10.4]]);
+    assert!(inflate_quad(&mut tiny));
+    assert!(
+        longest(&tiny) <= MAX_INFLATE_EDGE_PX * 3.0,
+        "{}",
+        longest(&tiny)
+    );
+    assert!(tiny[0].rgb[0] < 1.0, "inflation must dim to conserve flux");
+
+    // THE K-262 BUG: a sub-pixel SLIVER — 40 px long, hair thin. K-261
+    // stretched this to ~400 px; it must be dropped, never inflated.
+    let mut sliver = quad([[10.0, 10.0], [50.0, 10.02], [50.0, 10.03], [10.0, 10.01]]);
+    assert!(
+        !inflate_quad(&mut sliver),
+        "a fold sliver must be dropped, never inflated"
+    );
+
+    // THE K-264 REVERSAL: a long thin quad ABOVE the area floor (150 px²)
+    // is a fold-straddling cell and K-262 dropped it — which cut the
+    // triangular notches out of every caustic rim the owner reported at
+    // Ultra. With the vertex-smoothed density its brightness comes from its
+    // neighbourhood, so it DRAWS, untouched.
+    let mut fold = quad([[0.0, 0.0], [300.0, 0.0], [300.0, 0.5], [0.0, 0.5]]);
+    let before_fold = fold;
+    assert!(
+        inflate_quad(&mut fold),
+        "a drawable-area fold cell draws since K-264 — dropping it notches the rims"
+    );
+    assert_eq!(fold[1].pos, before_fold[1].pos, "and it draws unmodified");
+
+    // An elongated cell that is short is a caustic rim cell: kept, always.
+    let mut rim = quad([[0.0, 0.0], [12.0, 0.0], [12.0, 1.5], [0.0, 1.5]]);
+    assert!(inflate_quad(&mut rim), "rim cells must survive");
+}
+
+// Adaptive grid (K-262): the budget follows the ghost's image size, and a
+// pair's grid is stable and sane whatever its spread.
+#[test]
+fn lens_flare_grid_budget_follows_ghost_size() {
+    use crate::fx::lens_flare::*;
+    // Monotonic (non-strict) in spread, and never outside the clamp. A
+    // tight blob gets the FULL base since K-265 — the half rung starved
+    // caustic rims into sunflower teeth on the owner's EF 70-200.
+    let tight = pair_grid(64, 0.05);
+    let mid = pair_grid(64, 0.3);
+    let wide = pair_grid(64, 1.0);
+    let huge = pair_grid(64, 4.0);
+    assert_eq!(tight, mid, "no half rung: small ghosts keep the base");
+    assert!(mid < wide && wide < huge, "{mid} {wide} {huge}");
+    assert!(tight >= 8 && huge <= 512);
+    // Degenerate inputs stay in range rather than exploding a dispatch.
+    assert!((8..=512).contains(&pair_grid(2, 0.0)));
+    assert!((8..=512).contains(&pair_grid(512, 99.0)));
+    // The Detail dial scales the base through one shared helper (K-265).
+    assert_eq!(detail_base(64, 1.0), 64);
+    assert_eq!(detail_base(64, 2.0), 128);
+    assert_eq!(detail_base(64, 0.25), 16);
+    assert_eq!(detail_base(64, 99.0), 256, "dial clamps at 4x");
+    // …and the wavelength axis scales with it (K-265): more rays barely
+    // touch spectral banding, so the dial must buy bands too.
+    assert_eq!(detail_lambda(32, 1.0), 32);
+    assert_eq!(detail_lambda(32, 2.0), 64);
+    assert_eq!(detail_lambda(32, 4.0), 64, "capped: combos scale linearly");
+    assert_eq!(detail_lambda(8, 0.25), 3, "floor keeps colour honest");
+
+    // Every bundled pair carries a finite, non-negative spread.
+    let p = default_flare_params();
+    let baked = bake(&p);
+    assert_eq!(baked.pairs.len(), baked.spreads.len());
+    assert!(baked.spreads.iter().all(|s| s.is_finite() && *s >= 0.0));
+}
+
+// Frame-time grid probe (K-267): the bake spread is a bounding-box measure
+// and misses folds — a pair the same overall size can stretch several-fold
+// locally at a corner light, and those cells were the owner's choppy
+// polyline edges on the 7Artisans. The probe must see the local stretch
+// and raise the grid, the boost must respect its floor and caps, and the
+// raw-rows entry the GPU seam uses must agree with the typed one exactly.
+#[test]
+fn lens_flare_frame_probe_sees_corner_stretch() {
+    use crate::fx::lens_flare::*;
+    let p = crate::fx::lens_flare::LensFlareParams {
+        lens: 0,
+        ..default_flare_params()
+    };
+    let baked = bake(&p);
+    let pair_count = baked.pairs.len().min(p.max_ghosts as usize);
+    let stop_scale = fstop_scale(baked.native_fstop, p.fstop);
+    let shift = focus_shift_mm(p.focus_m, baked.focal_mm);
+    let corner = light_direction([0.85, 0.78], 9.0 / 16.0, baked.focal_mm);
+    let sp = frame_grid_needs(&baked, pair_count, corner, p.coating, stop_scale, shift);
+    assert_eq!(sp.len(), pair_count);
+    assert!(sp.iter().all(|s| s.is_finite() && *s >= 1.0));
+    // At least one renderable pair must outgrow its bake-floor grid at the
+    // Normal tier — the condition the K-267 budget raise exists for.
+    let grew = sp
+        .iter()
+        .zip(&baked.spreads)
+        .any(|(need, b)| boost_grid(pair_grid(64, *b), *need) > pair_grid(64, *b));
+    assert!(grew, "corner light must raise at least one pair's grid");
+    // The boost never lowers the floor, honours its 3x cap, and stays in
+    // the dispatchable range.
+    assert_eq!(boost_grid(64, 1.0), 64);
+    assert_eq!(boost_grid(64, 63.0), 64, "never below the bake floor");
+    assert_eq!(boost_grid(64, 100.4), 100);
+    assert_eq!(boost_grid(64, 4096.0), 192, "capped at 3x the rung grid");
+    assert_eq!(boost_grid(360, 4096.0), 512, "hard 512 dispatch clamp");
+    assert_eq!(boost_grid(4, 1.0), 8, "degenerate floor stays sane");
+    // The budget plan never lowers a rung, spends at most the headroom,
+    // and raises the pair that asked.
+    let plan = plan_frame_grids(64, &baked.spreads, &sp);
+    assert_eq!(plan.len(), pair_count);
+    let mut baseline = 0u64;
+    let mut spent = 0u64;
+    for (pi, &g) in plan.iter().enumerate() {
+        let rung = pair_grid(64, baked.spreads.get(pi).copied().unwrap_or(1.0));
+        assert!(g >= rung, "pair {pi}: planned {g} under rung {rung}");
+        assert!(g <= 512);
+        baseline += u64::from(rung) * u64::from(rung);
+        spent += u64::from(g) * u64::from(g);
+    }
+    assert!(
+        spent as f64 <= baseline as f64 * (1.0 + f64::from(FRAME_RAY_HEADROOM)) + 512.0 * 512.0,
+        "plan overspends: {spent} vs baseline {baseline}"
+    );
+    assert!(
+        plan.iter()
+            .enumerate()
+            .any(|(pi, &g)| g > pair_grid(64, baked.spreads.get(pi).copied().unwrap_or(1.0))),
+        "the corner frame must actually spend its headroom"
+    );
+    // The raw-rows entry is the same probe.
+    let rows: Vec<[f32; 8]> = baked
+        .surfaces
+        .iter()
+        .map(|s| {
+            [
+                s.radius_mm,
+                s.z_mm,
+                s.semi_ap_mm,
+                s.cauchy_a,
+                s.cauchy_b,
+                s.coating_layers,
+                s.is_stop,
+                0.0,
+            ]
+        })
+        .collect();
+    let sp2 = frame_grid_needs_from_rows(
+        &rows,
+        &baked.pairs,
+        baked.sensor_z_mm,
+        baked.focal_mm,
+        baked.pupil_mm,
+        baked.start_z_mm,
+        pair_count,
+        corner,
+        p.coating,
+        stop_scale,
+        shift,
+    );
+    assert_eq!(sp, sp2, "seam entry must be bit-identical");
+}
+
+/// The documented drop-on defaults, shared by the lens flare tests.
+fn default_flare_params() -> crate::fx::lens_flare::LensFlareParams {
+    crate::fx::lens_flare::LensFlareParams {
+        // Raster pixels (K-260): tests divide by their own raster via
+        // manual_light, so any sane point works; this is 0.33/0.30 of 96×54.
+        light: [31.7, 16.2],
+        intensity: 1.0,
+        lens: 16,
+        fstop: 2.8,
+        focus_m: 100.0,
+        blades: 8,
+        aperture_rotation_deg: 0.0,
+        roundness: 0.15,
+        aperture_softness: 0.05,
+        ghost_intensity: 1.0,
+        ghost_softness: 0.05,
+        max_ghosts: 60,
+        dispersion: 1.0,
+        coating: 0.75,
+        starburst_intensity: 1.0,
+        scale: 1.0,
+        source: 0,
+        threshold: 1.0,
+        threshold_softness: 0.25,
+        light_tint: [1.0, 1.0, 1.0],
+        use_source_colour: true,
+        anamorphic: 1.0,
+        quality: 1,
+        detail: 1.0,
+        blend: crate::fx::lens_flare::BLEND_ADD,
+        mix: 1.0,
+    }
+}
+
+// Matte-mode source detection (impl note §6, K-257): the CPU reference finds
+// the brightest sources deterministically — brightest first, gated by the
+// soft threshold, adjacent maxima suppressed — and the light carries the
+// source pixel's colour times its gate weight.
+#[test]
+fn lens_flare_detects_matte_sources_deterministically() {
+    use crate::fx::lens_flare::*;
+    let (w, h) = (128u32, 96u32);
+    let mut matte = vec![0.0f32; (w * h * 4) as usize];
+    let mut put = |x: u32, y: u32, rgb: [f32; 3]| {
+        let i = ((y * w + x) * 4) as usize;
+        matte[i] = rgb[0];
+        matte[i + 1] = rgb[1];
+        matte[i + 2] = rgb[2];
+        matte[i + 3] = 1.0;
+    };
+    // A bright white source, a dimmer warm one far away, and a neighbour 8 px
+    // from the bright one that suppression must fold into it.
+    put(20, 24, [4.0, 4.0, 4.0]);
+    put(28, 24, [3.0, 3.0, 3.0]);
+    put(100, 70, [1.5, 1.0, 0.5]);
+
+    let lights = detect_lights(&matte, w, h, 1.0, 0.0, true, [1.0; 3]);
+    assert_eq!(
+        lights.len(),
+        2,
+        "the neighbour must be suppressed: {lights:?}"
+    );
+    // Brightest first, at the pixel centre.
+    assert!((lights[0].pos[0] - 20.5 / 128.0).abs() < 1e-6);
+    assert!((lights[0].pos[1] - 24.5 / 96.0).abs() < 1e-6);
+    assert_eq!(lights[0].rgb, [4.0, 4.0, 4.0]);
+    // The warm source keeps its colour.
+    assert!((lights[1].pos[0] - 100.5 / 128.0).abs() < 1e-6);
+    assert_eq!(lights[1].rgb, [1.5, 1.0, 0.5]);
+
+    // The soft gate scales (luma 4 in a [3, 7] gate lands at ~0.16), and a
+    // threshold above every source finds none.
+    let gated = detect_lights(&matte, w, h, 5.0, 2.0, true, [1.0; 3]);
+    assert!(!gated.is_empty());
+    assert!(gated[0].rgb[0] < 4.0, "the gate must attenuate: {gated:?}");
+    assert!(detect_lights(&matte, w, h, 10.0, 0.0, true, [1.0; 3]).is_empty());
+
+    // Determinism: two runs agree bit-for-bit.
+    assert_eq!(
+        lights,
+        detect_lights(&matte, w, h, 1.0, 0.0, true, [1.0; 3])
+    );
+
+    // The gate itself: hard step at softness 0, smooth half-way at the
+    // threshold otherwise.
+    assert_eq!(threshold_gate(0.99, 1.0, 0.0), 0.0);
+    assert_eq!(threshold_gate(1.0, 1.0, 0.0), 1.0);
+    assert!((threshold_gate(1.0, 1.0, 0.5) - 0.5).abs() < 1e-6);
+}
+
+#[test]
+fn zz_debug_cells() {
+    use crate::fx::lens_flare::*;
+    let p = LensFlareParams {
+        lens: 0,
+        quality: 3,
+        ..default_flare_params()
+    };
+    let baked = bake(&p);
+    let (tier_base, _, _) = quality_ladder(p.quality);
+    let base_side = detail_base(tier_base, p.detail);
+    let pc = baked.pairs.len().min(p.max_ghosts as usize);
+    let ss = fstop_scale(baked.native_fstop, p.fstop);
+    let sh = focus_shift_mm(p.focus_m, baked.focal_mm);
+    let (w, h) = (960u32, 540u32);
+    let dir = light_direction([0.85, 0.78], h as f32 / w as f32, baked.focal_mm);
+    let st = screen_transform(w);
+    for (pi, pair) in baked.pairs.iter().take(pc).enumerate() {
+        let spread = baked.spreads.get(pi).copied().unwrap_or(1.0);
+        let side = pair_grid(base_side, spread) as usize;
+        // trace the full grid, find max adjacent-corner distance among
+        // rays whose weight is significant, plus landing bbox
+        let mut pos = vec![None; side * side];
+        for j in 0..side {
+            for i in 0..side {
+                let u = (i as f32 / (side - 1) as f32) * 2.0 - 1.0;
+                let v = (j as f32 / (side - 1) as f32) * 2.0 - 1.0;
+                if u * u + v * v > 1.1f32 {
+                    continue;
+                }
+                let o = [
+                    u * baked.pupil_mm * ss,
+                    v * baked.pupil_mm * ss,
+                    baked.start_z_mm,
+                ];
+                pos[j * side + i] = trace_splat(&baked, *pair, 550.0, o, dir, p.coating, ss, sh);
+            }
+        }
+        let mut dmax = 0.0f32;
+        let mut wmax = 0.0f32;
+        let (mut bx0, mut bx1, mut by0, mut by1) = (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
+        for j in 0..side {
+            for i in 0..side {
+                if let Some((a, wa)) = pos[j * side + i] {
+                    if wa > 1e-5 {
+                        wmax = wmax.max(wa);
+                        bx0 = bx0.min(a[0]);
+                        bx1 = bx1.max(a[0]);
+                        by0 = by0.min(a[1]);
+                        by1 = by1.max(a[1]);
+                        for (ni, nj) in [(i + 1, j), (i, j + 1)] {
+                            if ni < side && nj < side {
+                                if let Some((b, wb)) = pos[nj * side + ni] {
+                                    if wb > 1e-5 {
+                                        let d = (a[0] - b[0]).hypot(a[1] - b[1]);
+                                        dmax = dmax.max(d);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if wmax > 1e-4 && dmax * st > 6.0 {
+            eprintln!("pair {pi} {:?} spread {spread:.2} side {side} maxcell_px {:.0} bbox_px {:.0}x{:.0} wmax {wmax:.4}",
+                pair, dmax * st, (bx1 - bx0) * st, (by1 - by0) * st);
+        }
+    }
 }

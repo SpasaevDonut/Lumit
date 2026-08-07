@@ -12,7 +12,8 @@ use crate::api::{
     layer::LayerReference,
     state::{LumitBridgeState, PROJECTS},
     worker_thread::{
-        RenderCompRequest, RenderCompRequestWithPreview, RenderScopeRequest, WorkerRequest,
+        RenderCompRequest, RenderCompRequestWithPreview, RenderScopeRequest, SamplePixelsRequest,
+        WorkerRequest,
         WorkerRequest::{RenderComp, RenderCompWithPreview},
     },
     BridgeError,
@@ -20,15 +21,89 @@ use crate::api::{
 
 /// One timeline marker (docs/03 §11): a cue on the comp's timebase.
 ///
-/// The engine's marker also carries a duration and a kind; neither has a
-/// control yet, so they are not carried across — a marker written back keeps
-/// what the panel can actually edit and does not pretend to round-trip the rest.
+/// The engine's marker also carries a duration, a kind and any unknown fields
+/// a newer Lumit wrote (docs/10 §1.1); none of the three has a control, so none
+/// of them crosses. They are **not** lost on a write-back: [`core_markers`]
+/// merges each incoming marker onto the one the document already holds under
+/// that id, so the panel edits what it can see and the rest survives untouched
+/// (K-270).
 #[frb(non_opaque)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BridgeMarker {
     pub id: Uuid,
     pub time: BridgeRational,
     pub label: String,
+}
+
+/// A core marker as the bridge carries it. One conversion each way, shared by
+/// the composition's list and by every layer's own (K-254) — two copies of this
+/// mapping is two chances for a marker to mean something different depending on
+/// which row it is drawn on.
+#[frb(ignore)]
+pub(crate) fn bridge_marker(m: &lumit_core::markers::Marker) -> BridgeMarker {
+    BridgeMarker {
+        id: m.id,
+        time: BridgeRational {
+            num: m.time.0.num(),
+            den: m.time.0.den(),
+        },
+        label: m.label.clone(),
+    }
+}
+
+/// A whole marker list coming back from the panel, merged onto the list the
+/// document holds (K-270).
+///
+/// **Why a merge and not a conversion.** The bridge marker carries the three
+/// fields a panel can edit — id, time, label — and the engine's marker carries
+/// three more it cannot: the *kind* (a detected beat's provenance, plus its
+/// confidence), a spanning marker's *duration*, and the `extra` map that keeps
+/// fields a newer Lumit wrote (docs/10 §1.1's forward-compatibility promise).
+/// Rebuilding each marker from the bridge's three fields alone flattened all
+/// three to their defaults, so **dragging or renaming a beat marker on the
+/// ruler turned it into an ordinary cue** — and then *Clear beat markers* could
+/// no longer find it, because there was nothing left to say it had ever been
+/// one. K-254's ruler markers made that a click away.
+///
+/// So each incoming marker is matched by id against what the document already
+/// holds: found, and it keeps that marker's kind, duration and extra; new, and
+/// it is a plain user marker, which is exactly what a marker the panel just
+/// created is. Nothing about the frb surface changes — the panel has no use for
+/// a kind it cannot edit, and inventing a control for one to fix a data-loss
+/// bug would be the wrong order.
+#[frb(ignore)]
+pub(crate) fn core_markers(
+    incoming: Vec<BridgeMarker>,
+    existing: &[lumit_core::markers::Marker],
+) -> Result<Vec<lumit_core::markers::Marker>, BridgeError> {
+    incoming
+        .into_iter()
+        .map(|m| {
+            let was = existing.iter().find(|e| e.id == m.id);
+            core_marker(m, was)
+        })
+        .collect()
+}
+
+#[frb(ignore)]
+pub(crate) fn core_marker(
+    m: BridgeMarker,
+    existing: Option<&lumit_core::markers::Marker>,
+) -> Result<lumit_core::markers::Marker, BridgeError> {
+    use lumit_core::time::{CompTime, Rational};
+    Ok(lumit_core::markers::Marker {
+        id: m.id,
+        time: CompTime(
+            Rational::new(m.time.num, m.time.den).map_err(|_| BridgeError::InvalidTime)?,
+        ),
+        // Everything the panel cannot edit is carried from the marker that was
+        // already there; a marker it has just made has nothing to carry, and
+        // takes the plain-user defaults.
+        duration: existing.and_then(|e| e.duration),
+        label: m.label,
+        kind: existing.map(|e| e.kind).unwrap_or_default(),
+        extra: existing.map(|e| e.extra.clone()).unwrap_or_default(),
+    })
 }
 
 /// Every blend mode, in the order the Timeline's dropdown shows them. The index
@@ -411,7 +486,7 @@ impl CompositionReference {
         let inner = comp.composition()?;
         let outer = self.composition()?;
 
-        let layer = crate::edits::base_layer(
+        let mut layer = crate::edits::base_layer(
             inner.name.clone(),
             lumit_core::model::LayerKind::Precomp { comp: inner.id },
             outer.duration.0,
@@ -422,7 +497,269 @@ impl CompositionReference {
                 outer.height,
             ),
         );
+        // The comp's own markers come with it as the layer's (K-254): a
+        // composition dropped into another is a piece of material, and its
+        // beats are part of what you are placing. Copied, not referenced —
+        // from here they are this layer's, and editing them never reaches back
+        // into the composition they came from. New ids for the same reason.
+        layer.markers = inner
+            .markers
+            .iter()
+            .map(|m| lumit_core::markers::Marker {
+                id: Uuid::now_v7(),
+                ..m.clone()
+            })
+            .collect();
         self.add_at_top(layer)
+    }
+
+    /// Pack `layer_ids` into a new composition and put that comp back in their
+    /// place as a Precomp layer — the Pre-compose dialogue's one call
+    /// (`Ctrl+Shift+C`, docs/07 §13.4).
+    ///
+    /// The new comp inherits this one's size, rate, background and — unless
+    /// `adjust_duration` asks otherwise — its duration too, which is what K-068
+    /// asks of a comp created inside an active one.
+    ///
+    /// `leave_attributes` is the dialogue's first choice, and only ever offered
+    /// for a single layer: the layer moves into the new comp stripped back to
+    /// its source, and its transform, effects, masks, retime, blend and
+    /// switches stay behind on the Precomp layer, so the picture is unchanged
+    /// but the attributes now act on the nested comp. Asking for it with more
+    /// than one layer is refused rather than half-applied. Without it every
+    /// layer moves whole, and the Precomp layer is a plain centred one.
+    ///
+    /// `adjust_duration` trims the new comp to the selection's own span: its
+    /// duration becomes `max(out) - min(in)`, every packed layer shifts back by
+    /// `min(in)`, and the Precomp layer spans that same stretch with a start
+    /// offset that lines inner time zero up with it. Without it the new comp is
+    /// as long as this one and nothing moves in time at all: every packed layer
+    /// keeps the times it had, and the Precomp layer spans the whole comp.
+    ///
+    /// The layers go in at the depth of the topmost one, so a precompose in
+    /// the middle of a stack does not send it to the front. The comp auto-files
+    /// into the Compositions folder however it was made (K-068), and the whole
+    /// move is one [`Op::Batch`], so one undo step puts the layers back.
+    ///
+    /// A packed layer whose parent or matte stayed behind keeps the id it
+    /// pointed at, and the engine reads a link it cannot resolve as no link —
+    /// the parent chain stops there (`layer_parent_chain`). Nothing dangles
+    /// into a crash, and clearing them here would only spell the same result.
+    #[frb(sync)]
+    pub fn precompose(
+        &self,
+        layer_ids: Vec<Uuid>,
+        name: String,
+        leave_attributes: bool,
+        adjust_duration: bool,
+    ) -> Result<LayerReference, BridgeError> {
+        use lumit_core::model::{Composition, MotionBlur, ProjectItem};
+        use lumit_core::ops::AutoFolderKind;
+        use lumit_core::time::CompTime;
+        use lumit_core::Op;
+
+        let comp = self.composition()?;
+        let doc = self.document()?;
+
+        // Read in stack order, not selection order, so the packed comp holds
+        // the layers the way the timeline showed them. What is actually packed
+        // is what was actually found: an id belonging to some other comp would
+        // otherwise fail the batch on its way through `RemoveLayer` and lose
+        // the whole precompose with it.
+        let packed: Vec<lumit_core::model::Layer> = comp
+            .layers
+            .iter()
+            .filter(|l| layer_ids.contains(&l.id))
+            .cloned()
+            .collect();
+        if packed.is_empty() {
+            return Err(BridgeError::InvalidLayer);
+        }
+        // Leaving the attributes behind means there is one layer for them to
+        // act on. Asked for a stack, the dialogue offers Move instead, and the
+        // engine refuses rather than picking a layer for the user.
+        if leave_attributes && packed.len() > 1 {
+            return Err(BridgeError::InvalidLayer);
+        }
+
+        // Every packed layer sits at or below this index, so the slot is still
+        // a valid one once the batch's removals have run.
+        let index = comp
+            .layers
+            .iter()
+            .position(|l| packed.iter().any(|p| p.id == l.id))
+            .unwrap_or(0);
+
+        // The selection's own span, and the shift that brings it back to zero
+        // inside the new comp. Without `adjust_duration` the shift is nothing
+        // and the span is the whole comp, which is what leaves timing alone.
+        let min_in = packed
+            .iter()
+            .map(|l| l.in_point)
+            .min()
+            .unwrap_or(CompTime::ZERO);
+        let max_out = packed
+            .iter()
+            .map(|l| l.out_point)
+            .max()
+            .unwrap_or(CompTime(comp.duration.0));
+        let span = max_out
+            .delta(min_in)
+            .map_err(|_| BridgeError::InvalidTime)?;
+        let (duration, shift, precomp_in, precomp_out) =
+            if adjust_duration && !span.0.is_zero() && !span.0.is_negative() {
+                (span, min_in, min_in, max_out)
+            } else {
+                (
+                    comp.duration,
+                    CompTime::ZERO,
+                    CompTime::ZERO,
+                    CompTime(comp.duration.0),
+                )
+            };
+        // Time moves as a whole: a layer's in point, out point and start
+        // offset all step back by the same amount, so a packed layer plays the
+        // same footage at the same moment of the Precomp layer as before.
+        let shift_back = |t: CompTime| -> Result<CompTime, BridgeError> {
+            t.sub_dur(lumit_core::time::Duration(shift.0))
+                .map_err(|_| BridgeError::InvalidTime)
+        };
+
+        let name = if name.trim().is_empty() {
+            let existing = doc
+                .items
+                .iter()
+                .filter(
+                    |i| matches!(i, ProjectItem::Composition(c) if c.name.starts_with("Pre-comp ")),
+                )
+                .count();
+            format!("Pre-comp {}", existing + 1)
+        } else {
+            name.trim().to_string()
+        };
+
+        let mut inner_layers = Vec::with_capacity(packed.len());
+        for src in &packed {
+            let mut layer = src.clone();
+            if leave_attributes {
+                // Stripped back to its source: the attributes are staying
+                // behind on the Precomp layer, and a copy on both would apply
+                // each of them twice.
+                layer.transform = crate::edits::centred_transform(
+                    f64::from(comp.width),
+                    f64::from(comp.height),
+                    comp.width,
+                    comp.height,
+                );
+                layer.effects.clear();
+                layer.masks.clear();
+                layer.retime = None;
+                layer.blend = Default::default();
+                layer.switches = Default::default();
+                layer.parent = None;
+                layer.matte = None;
+            }
+            layer.in_point = shift_back(src.in_point)?;
+            layer.out_point = shift_back(src.out_point)?;
+            layer.start_offset = shift_back(src.start_offset)?;
+            inner_layers.push(layer);
+        }
+
+        let inner = Composition {
+            id: Uuid::now_v7(),
+            name: name.clone(),
+            width: comp.width,
+            height: comp.height,
+            frame_rate: comp.frame_rate,
+            duration,
+            background: comp.background,
+            work_area: None,
+            layers: inner_layers,
+            // The comp's markers go in with the layers (K-254). They are part
+            // of how the work is laid out, and a packed section that loses its
+            // cues has lost the map to itself. Shifted with everything else
+            // when `adjust_duration` moves time back to zero, and any that fall
+            // outside the new comp's span are left behind rather than parked
+            // where nothing can reach them.
+            markers: comp
+                .markers
+                .iter()
+                .filter_map(|m| {
+                    let time = shift_back(m.time).ok()?;
+                    (!time.0.is_negative() && time.0 <= duration.0).then(|| {
+                        lumit_core::markers::Marker {
+                            id: Uuid::now_v7(),
+                            time,
+                            ..m.clone()
+                        }
+                    })
+                })
+                .collect(),
+            motion_blur: MotionBlur::default(),
+            extra: serde_json::Map::new(),
+        };
+        let inner_id = inner.id;
+
+        // Comps auto-file into the Compositions folder, however they are made
+        // (K-068) — a precomp that landed at the project root would be the one
+        // comp the habit missed.
+        let (folder, mut ops) =
+            crate::edits::ensure_auto_folder_ops(&doc, AutoFolderKind::Compositions);
+        let queued = ops
+            .iter()
+            .filter(|o| matches!(o, Op::AddItem { .. }))
+            .count();
+        ops.push(Op::AddItem {
+            index: doc.items.len() + queued,
+            item: Box::new(ProjectItem::Composition(inner)),
+        });
+        ops.push(crate::edits::file_into_folder_op(&doc, folder, inner_id));
+
+        for layer in &packed {
+            ops.push(Op::RemoveLayer {
+                comp: self.id,
+                layer: layer.id,
+            });
+        }
+
+        let mut layer = crate::edits::base_layer(
+            name,
+            lumit_core::model::LayerKind::Precomp { comp: inner_id },
+            precomp_out.0,
+            if leave_attributes {
+                packed[0].transform.clone()
+            } else {
+                crate::edits::centred_transform(
+                    f64::from(comp.width),
+                    f64::from(comp.height),
+                    comp.width,
+                    comp.height,
+                )
+            },
+        );
+        layer.in_point = precomp_in;
+        layer.out_point = precomp_out;
+        // Inner time zero is the moment the new comp starts in this one, so a
+        // trimmed comp needs the offset to line the two up; an untrimmed one
+        // starts at zero and needs none.
+        layer.start_offset = shift;
+        if leave_attributes {
+            let src = &packed[0];
+            layer.effects = src.effects.clone();
+            layer.masks = src.masks.clone();
+            layer.retime = src.retime.clone();
+            layer.blend = src.blend;
+            layer.switches = src.switches.clone();
+        }
+        let layer_id = layer.id;
+        ops.push(Op::AddLayer {
+            comp: self.id,
+            index,
+            layer: Box::new(layer),
+        });
+
+        self.commit(Op::Batch { ops })?;
+        Ok(LayerReference::new(self.project, self.id, layer_id))
     }
 
     /// Add a Text layer with the "Text" starter document, centred.
@@ -455,6 +792,90 @@ impl CompositionReference {
                 anchor_y: Property::fixed(size * 0.5),
                 position_x: Property::fixed(f64::from(comp.width) * 0.5),
                 position_y: Property::fixed(f64::from(comp.height) * 0.5),
+                ..TransformGroup::default()
+            },
+        );
+        self.add_at_top(layer)
+    }
+
+    /// Add a Shape layer holding `contents`, at the top of the stack (K-237).
+    ///
+    /// The art is in the layer's own coordinates, and the layer is placed so
+    /// that art lands where it was drawn: the anchor sits on the art's own
+    /// top-left corner and Position carries it to the same place in the comp.
+    /// A shape tool that dragged a rectangle across the picture therefore makes
+    /// a layer whose rectangle is exactly where the drag was.
+    #[frb(sync)]
+    pub fn add_shape_layer(
+        &self,
+        name: String,
+        contents: Vec<crate::api::layer::BridgeShapeItem>,
+    ) -> Result<LayerReference, BridgeError> {
+        use lumit_core::anim::Property;
+        use lumit_core::model::TransformGroup;
+
+        if contents.is_empty() || contents.iter().any(|i| i.vertices.len() < 2) {
+            return Err(BridgeError::EmptyPath);
+        }
+        let comp = self.composition()?;
+        let items: Vec<lumit_core::shape::ShapeItem> =
+            contents.iter().map(|i| i.write_item()).collect();
+        // The art's own box: the layer's natural size, and where it sits.
+        let (x0, y0, _x1, _y1) =
+            lumit_core::shape::contents_bounds(&items).ok_or(BridgeError::EmptyPath)?;
+
+        let layer = crate::edits::base_layer(
+            name,
+            lumit_core::model::LayerKind::Shape { contents: items },
+            comp.duration.0,
+            TransformGroup {
+                anchor_x: Property::fixed(0.0),
+                anchor_y: Property::fixed(0.0),
+                position_x: Property::fixed(x0),
+                position_y: Property::fixed(y0),
+                ..TransformGroup::default()
+            },
+        );
+        self.add_at_top(layer)
+    }
+
+    /// Add a text layer **where the Type tool clicked**, already holding the
+    /// document it should hold, as one op (K-230).
+    ///
+    /// The tool used to make a layer and then correct it: `add_text_layer`
+    /// starts a layer saying "Text" in the middle of the composition, and the
+    /// tool then wrote an empty line into it and moved it to the click. Three
+    /// ops for one gesture, so `Ctrl+Z` walked back through two states nobody
+    /// had ever seen — an empty box, then the word "Text" — before the layer
+    /// finally went away. One op is one undo step, and undoing it removes the
+    /// layer, which is what making a layer means.
+    ///
+    /// The anchor sits on the **left end of the baseline**, so what is typed
+    /// runs to the right of the point clicked and sits on it rather than
+    /// straddling it. It is recentred on the finished line when the edit ends.
+    #[frb(sync)]
+    pub fn add_text_layer_at(
+        &self,
+        document: crate::api::assets::BridgeTextDocument,
+        x: f64,
+        y: f64,
+    ) -> Result<LayerReference, BridgeError> {
+        use lumit_core::anim::Property;
+        use lumit_core::model::TransformGroup;
+
+        let comp = self.composition()?;
+        let size = document.size;
+        let layer = crate::edits::base_layer(
+            "Text".into(),
+            lumit_core::model::LayerKind::Text {
+                document: crate::api::assets::text_document_of(document),
+            },
+            comp.duration.0,
+            TransformGroup {
+                anchor_x: Property::fixed(0.0),
+                anchor_y: Property::fixed(size),
+                position_x: Property::fixed(x),
+                position_y: Property::fixed(y),
                 ..TransformGroup::default()
             },
         );
@@ -589,14 +1010,7 @@ impl CompositionReference {
             .composition()?
             .markers
             .iter()
-            .map(|m| BridgeMarker {
-                id: m.id,
-                time: BridgeRational {
-                    num: m.time.0.num(),
-                    den: m.time.0.den(),
-                },
-                label: m.label.clone(),
-            })
+            .map(bridge_marker)
             .collect())
     }
 
@@ -604,30 +1018,86 @@ impl CompositionReference {
     /// also how beat detection commits a regenerated set.
     #[frb(sync)]
     pub fn set_markers(&self, markers: Vec<BridgeMarker>) -> Result<(), BridgeError> {
-        use lumit_core::markers::Marker;
-        use lumit_core::time::{CompTime, Rational};
-
-        let markers = markers
-            .into_iter()
-            .map(|m| {
-                Ok(Marker {
-                    id: m.id,
-                    time: CompTime(
-                        Rational::new(m.time.num, m.time.den)
-                            .map_err(|_| BridgeError::InvalidTime)?,
-                    ),
-                    duration: None,
-                    label: m.label,
-                    kind: lumit_core::markers::MarkerKind::default(),
-                    extra: serde_json::Map::new(),
-                })
-            })
-            .collect::<Result<Vec<_>, BridgeError>>()?;
+        // Merged onto what the comp already holds, so a dragged or renamed beat
+        // marker stays a beat marker (K-270).
+        let markers = core_markers(markers, &self.composition()?.markers)?;
 
         self.commit(lumit_core::Op::SetCompMarkers {
             comp: self.id,
             markers,
         })
+    }
+
+    /// Paste a layer copied by [`crate::api::layer::LayerReference::copy_layer`]
+    /// into this composition, at the top of the stack (K-275).
+    ///
+    /// `at_frame` is where the layer's **in point** lands: the playhead, in the
+    /// ordinary case. `None` keeps the time it was copied at, which is the
+    /// setting for putting the same layer at the same moment in a second comp —
+    /// the two paste behaviours the owner asked for, decided by the caller
+    /// rather than by a mode this end has to remember.
+    ///
+    /// Whichever is chosen, the layer moves as one: in point, out point and
+    /// `start_offset` all shift together (`lumit_core::edit_layer_span`'s
+    /// `MoveIn`, the same rule the `[` key follows), so its keyframes and the
+    /// source frames it shows travel with it rather than sliding against it.
+    ///
+    /// **What is not copied is a reference to something that is not here.** The
+    /// pasted layer gets a fresh id and fresh effect ids — two layers sharing an
+    /// id would make every op that names one ambiguous — and its parent and
+    /// track matte are kept only when they still name a layer in *this* comp.
+    /// A parent that came from another composition is dropped rather than left
+    /// dangling: a layer parented to nothing visible would be a puzzle, and
+    /// re-parenting is one drag.
+    #[frb(sync)]
+    pub fn paste_layer(
+        &self,
+        text: String,
+        at_frame: Option<i64>,
+    ) -> Result<LayerReference, BridgeError> {
+        #[derive(serde::Deserialize)]
+        struct Copied {
+            comp: Uuid,
+            layer: lumit_core::model::Layer,
+        }
+        let copied: Copied = serde_json::from_str(&text).map_err(|_| BridgeError::InvalidItem)?;
+        let mut layer = copied.layer;
+        let comp = self.composition()?;
+
+        layer.id = Uuid::now_v7();
+        for effect in &mut layer.effects {
+            effect.id = Uuid::now_v7();
+        }
+        // A reference only survives if what it names is here. Pasting back into
+        // the comp it was copied from keeps both; pasting elsewhere keeps
+        // neither, because neither id means anything there.
+        let here = |id: Uuid| copied.comp == self.id && comp.layers.iter().any(|l| l.id == id);
+        if layer.parent.is_some_and(|p| !here(p)) {
+            layer.parent = None;
+        }
+        if layer.matte.as_ref().is_some_and(|m| !here(m.layer)) {
+            layer.matte = None;
+        }
+
+        if let Some(frame) = at_frame {
+            let at = comp
+                .frame_rate
+                .time_of_frame(frame.max(0))
+                .map_err(|_| BridgeError::InvalidTime)?;
+            let (in_point, out_point, start_offset) = lumit_core::ops::edit_layer_span(
+                layer.in_point,
+                layer.out_point,
+                layer.start_offset,
+                at,
+                lumit_core::ops::SpanEdit::MoveIn,
+            )
+            .ok_or(BridgeError::InvalidTime)?;
+            layer.in_point = in_point;
+            layer.out_point = out_point;
+            layer.start_offset = start_offset;
+        }
+
+        self.add_at_top(layer)
     }
 
     /// Insert `layer` at the top of the stack.
@@ -685,7 +1155,24 @@ impl CompositionReference {
     /// a frame count: audio-only media has no video frame count or rate, and
     /// reconstructing seconds from those silently clamped such a clip to one frame.
     #[frb(sync)]
-    pub fn add_footage_layer(&self, footage: &FootageReference) -> Result<(), BridgeError> {
+    /// Place `footage` in this composition as a new layer.
+    ///
+    /// `as_sequence` is Settings ▸ Interface ▸ Editing ▸ *Video arrives as a
+    /// Sequence layer* (K-246), forwarded by the frontend. On, media that
+    /// **runs** — a video stream longer than a single frame — arrives as a
+    /// one-clip Sequence layer, ready to be cut on its own row; a still image
+    /// never does, because there is nothing in one frame to cut. Off, and for
+    /// stills either way, this is the plain Footage layer it always was.
+    ///
+    /// It is one call rather than "add, then convert" so the choice is one
+    /// undo step and one funnel: every route into a comp — a drop, a
+    /// double-click, a menu — comes through here and cannot disagree with the
+    /// others about what a video import becomes.
+    pub fn add_footage_layer(
+        &self,
+        footage: &FootageReference,
+        as_sequence: bool,
+    ) -> Result<(), BridgeError> {
         let proj = self.project()?;
         let comp = self.composition()?;
 
@@ -699,10 +1186,25 @@ impl CompositionReference {
             };
 
             let (out, nat_w, nat_h) = Self::footage_span_and_size(&p, f, &comp);
+            let sequenced = as_sequence && Self::runs_as_video(&p, f);
+
+            let kind = if sequenced {
+                lumit_core::model::LayerKind::Sequence {
+                    clips: vec![lumit_core::sequence::Clip::new(
+                        lumit_core::sequence::ClipSource::Footage(item),
+                        lumit_core::time::Rational::ZERO,
+                        out,
+                        lumit_core::time::Rational::ZERO,
+                        out,
+                    )],
+                }
+            } else {
+                lumit_core::model::LayerKind::Footage { item }
+            };
 
             crate::edits::base_layer(
                 f.name.clone(),
-                lumit_core::model::LayerKind::Footage { item, retime: None },
+                kind,
                 out,
                 crate::edits::centred_transform(nat_w, nat_h, comp.width, comp.height),
             )
@@ -717,6 +1219,45 @@ impl CompositionReference {
             })
             .map_err(BridgeError::OpError)?;
         Ok(())
+    }
+
+    /// Whether this media is something to cut: a video stream that runs for
+    /// more than a single frame (K-246).
+    ///
+    /// A still image probes with a video stream too — one frame of it — which
+    /// is why the question is about duration and not about the stream being
+    /// there. Media that will not probe answers **false**: a Sequence layer is
+    /// the more elaborate shape, and guessing wrong towards the plain one is
+    /// the cheaper mistake to undo.
+    ///
+    /// Image sequences will qualify by this same rule once they are a footage
+    /// kind at all (docs/TODO.md) — they run, so they answer true with no
+    /// change here.
+    #[frb(ignore)]
+    fn runs_as_video(state: &LumitBridgeState, footage: &lumit_core::model::FootageItem) -> bool {
+        #[cfg(feature = "media")]
+        {
+            let Some(path) = FootageReference::resolve_path(state, footage) else {
+                return false;
+            };
+            let Ok(info) = lumit_media::probe::probe(&path) else {
+                return false;
+            };
+            let Some(video) = info.video.as_ref() else {
+                return false;
+            };
+            let fps = video.fps();
+            // Half a frame's slack, so a one-frame still cannot creep over the
+            // line on a rounded duration.
+            let one_frame = if fps > 0.0 { 1.0 / fps } else { 0.0 };
+            info.duration_seconds > one_frame * 1.5
+        }
+
+        #[cfg(not(feature = "media"))]
+        {
+            let _ = (state, footage);
+            false
+        }
     }
 
     /// The span end and natural pixel size a placed clip should take: the media's
@@ -913,6 +1454,43 @@ impl CompositionReference {
             layer,
             effects: Some(effects.iter().map(|i| i.get_effects()).collect()),
             transform: None,
+            text: None,
+            paint: None,
+            contents: None,
+            masks: None,
+            clip_retime: None,
+        }))
+    }
+
+    /// Ask for `frame` with one clip's retime replaced — the live envelope
+    /// drag, which never touches the document.
+    ///
+    /// A retime decides *which frame of the source* is decoded, so unlike a
+    /// transform it cannot be previewed by re-compositing pixels that are
+    /// already in hand: the provisional map has to reach the render plan, and
+    /// it does that by riding along with the request and being patched onto a
+    /// clone (K-247).
+    #[frb(sync)]
+    pub fn render_frame_with_clip_retime(
+        &self,
+        frame: u64,
+        scale: f32,
+        layer: LayerReference,
+        clip: Uuid,
+        retime: crate::api::effect::BridgeScalar,
+    ) -> Result<(), BridgeError> {
+        self.dispatch(RenderCompWithPreview(RenderCompRequestWithPreview {
+            comp: self.clone(),
+            frame,
+            scale,
+            layer,
+            effects: None,
+            transform: None,
+            text: None,
+            paint: None,
+            contents: None,
+            masks: None,
+            clip_retime: Some((clip, retime)),
         }))
     }
 
@@ -982,6 +1560,53 @@ impl CompositionReference {
         }))
     }
 
+    /// Ask the worker for the pixels under the dropper: a `window × window`
+    /// square of `frame` centred on the point `(u, v)` of the picture, each a
+    /// fraction from 0 to 1 (docs/07 §6.1).
+    ///
+    /// **A fraction, not a pixel, and that is the point.** The picture actually
+    /// read may be a reduced-resolution preview, so its pixel grid is neither
+    /// the composition's nor anything the caller can know in advance. The reply
+    /// says which raster it cut from (`width`, `height`) and where in that
+    /// raster the window's centre landed, and every pixel the caller then names
+    /// is in that same raster. Asking in composition pixels and indexing the
+    /// reply with them is a real bug that has been made unwritable here: with a
+    /// fitted Viewer the two grids differ by the preview scale, and the
+    /// magnifier showed one repeated edge pixel — a flat colour where the
+    /// picture should be.
+    ///
+    /// A window rather than the nine pixels the magnifier shows, because the
+    /// pointer moves and the picture does not: the caller reads its grid out of
+    /// the window it already holds and asks again only when the pointer nears
+    /// the window's edge, the frame changes, or an edit lands.
+    ///
+    /// `layer` reads that layer **alone** rather than the composite — what a
+    /// depth pick does, since a depth pass is usually hidden and so never
+    /// appears in the composite at all. The answer arrives as
+    /// `WorkerResponse::Sampled`, on the stream the frames and traces already
+    /// ride; a frame with nothing to read publishes nothing, and the magnifier
+    /// keeps what it had.
+    #[frb(sync)]
+    pub fn sample_pixels(
+        &self,
+        frame: u64,
+        u: f64,
+        v: f64,
+        window: u32,
+        scale: f32,
+        layer: Option<LayerReference>,
+    ) -> Result<(), BridgeError> {
+        self.dispatch(WorkerRequest::SamplePixels(SamplePixelsRequest {
+            comp: self.clone(),
+            frame,
+            scale,
+            u,
+            v,
+            window,
+            layer,
+        }))
+    }
+
     /// Ask for `frame` with `layer`'s transform replaced by `transform` — the
     /// same live-drag path as [`Self::render_frame_with_preview`], for the
     /// Transform rows. Never touches the document.
@@ -1000,6 +1625,125 @@ impl CompositionReference {
             layer,
             effects: None,
             transform: Some(transform),
+            text: None,
+            paint: None,
+            contents: None,
+            masks: None,
+            clip_retime: None,
+        }))
+    }
+
+    /// Ask for `frame` with `layer`'s text document replaced by `document` —
+    /// the same live path as the two above, for the Type tool (K-225).
+    ///
+    /// Typing is the one edit where the provisional value changes many times a
+    /// second and the document must *not*: a `set_text` per keystroke would be
+    /// an undo step per keystroke. So the tool previews as it types and writes
+    /// once, when the edit ends.
+    #[frb(sync)]
+    pub fn render_frame_with_text_preview(
+        &self,
+        frame: u64,
+        scale: f32,
+        layer: LayerReference,
+        document: crate::api::assets::BridgeTextDocument,
+    ) -> Result<(), BridgeError> {
+        self.dispatch(RenderCompWithPreview(RenderCompRequestWithPreview {
+            comp: self.clone(),
+            frame,
+            scale,
+            layer,
+            effects: None,
+            transform: None,
+            text: Some(document),
+            paint: None,
+            contents: None,
+            masks: None,
+            clip_retime: None,
+        }))
+    }
+
+    /// Ask for `frame` with `layer`'s paint replaced by `strokes` — the same
+    /// live path as the three above, for a stroke being dragged in the Timeline
+    /// (K-239).
+    ///
+    /// A stroke's opacity is committed once, on release, so the drag is one undo
+    /// step (K-238). Without a preview that also meant the picture did not move
+    /// until the button came up, which is the wrong half of the trade: a value
+    /// you drag has to show what it is doing. The whole list rides along rather
+    /// than one stroke's opacity, because paint is stored and committed as a
+    /// whole list, and a preview that took a different shape from the op would
+    /// be a second way to describe the same thing.
+    #[frb(sync)]
+    pub fn render_frame_with_paint_preview(
+        &self,
+        frame: u64,
+        scale: f32,
+        layer: LayerReference,
+        strokes: Vec<crate::api::layer::BridgeStroke>,
+    ) -> Result<(), BridgeError> {
+        self.dispatch(RenderCompWithPreview(RenderCompRequestWithPreview {
+            comp: self.clone(),
+            frame,
+            scale,
+            layer,
+            effects: None,
+            transform: None,
+            text: None,
+            paint: Some(strokes),
+            contents: None,
+            masks: None,
+            clip_retime: None,
+        }))
+    }
+
+    /// Ask for `frame` with `layer`'s art replaced by `contents` — the shape
+    /// layer's half of the call above (K-239).
+    #[frb(sync)]
+    pub fn render_frame_with_shape_preview(
+        &self,
+        frame: u64,
+        scale: f32,
+        layer: LayerReference,
+        contents: Vec<crate::api::layer::BridgeShapeItem>,
+    ) -> Result<(), BridgeError> {
+        self.dispatch(RenderCompWithPreview(RenderCompRequestWithPreview {
+            comp: self.clone(),
+            frame,
+            scale,
+            layer,
+            effects: None,
+            transform: None,
+            text: None,
+            paint: None,
+            contents: Some(contents),
+            masks: None,
+            clip_retime: None,
+        }))
+    }
+
+    /// Ask for `frame` with `layer`'s masks replaced by `masks` — the mask's
+    /// half of the two calls above (K-240).
+    #[frb(sync)]
+    pub fn render_frame_with_mask_preview(
+        &self,
+        frame: u64,
+        scale: f32,
+        layer: LayerReference,
+        masks: Vec<crate::api::layer::BridgeMask>,
+    ) -> Result<(), BridgeError> {
+        self.dispatch(RenderCompWithPreview(RenderCompRequestWithPreview {
+            comp: self.clone(),
+            frame,
+            scale,
+            layer,
+            effects: None,
+            transform: None,
+            text: None,
+            paint: None,
+            contents: None,
+            clip_retime: None,
+            masks: Some(masks),
         }))
     }
 }

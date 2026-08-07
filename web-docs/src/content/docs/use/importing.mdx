@@ -1,0 +1,61 @@
+---
+title: Importing media
+description: Bring footage into the project and control how Lumit reads it.
+sidebar:
+  order: 2
+---
+
+import Shot from "../../../components/Shot.astro";
+
+Everything you import becomes an **asset** in the Project panel. An asset that points
+at a media file is a **footage item**.
+
+<Shot file="interpretation.png" caption="A footage item's interpretation settings." />
+
+Lumit never modifies the file on disk. The project stores a reference to the path,
+plus how to interpret it.
+
+## Import files
+
+1. Choose **File ▸ Import**.
+2. Select one or more files.
+
+You can also drag files from your file manager onto the Project panel.
+
+## Organise the panel
+
+Use **folders** to group assets. A folder groups assets in the panel and nothing more;
+it does not exist on disk.
+
+Lumit says *folder*, never *bin*.
+
+## Interpretation
+
+Lumit reads the frame rate, alpha, and colour space from the file. When the file is
+wrong or ambiguous, override it:
+
+- **Frame rate** - override the rate the file declares.
+- **Alpha** - straight or premultiplied.
+- **Colour space** - the tag Lumit should assume.
+
+An override changes every layer that uses the asset.
+
+## Missing files
+
+If a file moves, the asset reports that it is missing. Relink it to the new path and
+every layer using it recovers.
+
+## Proxies
+
+A **proxy** is a smaller stand-in for a footage item that keeps preview fast. Lumit
+generates it in the background and you toggle it globally, so a proxy never reaches
+your export.
+
+:::note[Partly built]
+Proxy generation is not finished.
+:::
+
+## Related
+
+- [Compositions](/use/compositions/)
+- [Layers](/use/layers/)

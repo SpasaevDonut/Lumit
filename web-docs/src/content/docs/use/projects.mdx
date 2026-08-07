@@ -1,0 +1,55 @@
+---
+title: Projects
+description: The .lum file, saving, autosave, and crash recovery.
+sidebar:
+  order: 0
+---
+
+import Shot from "../../../components/Shot.astro";
+
+A **project** is the complete editable document: assets, compositions, settings. It is
+saved as a single `.lum` file. Exactly one project is open at a time.
+
+<Shot file="recovery-dialog.png" caption="The crash-recovery dialogue: the journal, the newest autosave, or the saved file." />
+
+Media is never embedded. The project stores references to files on disk, and Lumit never
+modifies those files.
+
+## Save and open
+
+- **File ▸ Save** writes the project. With no path yet, it behaves as Save as.
+- **File ▸ Save as…** writes to a new path.
+- **File ▸ Open project…** opens a `.lum` file, and **Open recent** lists the last few.
+
+Saves are atomic: Lumit writes a temporary file and renames it over the target, so a
+crash mid-save can never corrupt the previous save.
+
+## Autosave
+
+Lumit keeps rotating autosave copies in an `autosaves/` folder beside the project,
+written every five minutes and before risky operations such as starting an export. The
+newest five are kept.
+
+:::note[Not built yet]
+The autosave interval and keep count cannot be changed yet. A settings page for them is
+planned.
+:::
+
+## Crash recovery
+
+Between saves, Lumit also journals every edit. After a crash, the next launch offers one
+dialogue with three choices:
+
+| Choice | Recovers |
+| --- | --- |
+| **Replay the edit journal** | Everything up to the moment things stopped. |
+| **Open the newest autosave** | The project as it was at the last autosave. |
+| **Open the saved file as it is** | Only what you saved yourself. |
+
+**File ▸ Recover…** opens the same dialogue at any time.
+
+## Related
+
+- [Importing media](/use/importing/)
+- [Compositions](/use/compositions/)
+- [Exporting](/use/export/)

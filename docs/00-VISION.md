@@ -3,7 +3,8 @@
 **A native motion-graphics and compositing editor that plays back what you built, at speed,
 without crashing — built first for the editors After Effects forgot.**
 
-Status: design phase. This document is the why; the rest of [docs/](.) is the what and how.
+Status: in build ([TODO.md](TODO.md) tracks the gaps). This document is the why; the rest of
+[docs/](.) is the what and how.
 
 ---
 

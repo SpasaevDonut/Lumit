@@ -20,12 +20,9 @@ Names are display strings only; renaming MUST never break a reference.
 
 ### 1.2 Time is rational
 
-Authoritative time is never floating point (see [14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md)).
-
-```rust
-struct RationalTime { num: i64, den: i64 }   // seconds = num / den 
-struct FrameRate    { num: u32, den: u32 }   // e.g. 60000/1001
-```
+Authoritative time is never floating point: it is an exact rational number of seconds, with
+a rational `FrameRate` beside it (the rule is [14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md)
+§2; the type and its arithmetic are [impl/rational-time.md](impl/rational-time.md)).
 
 The four timebases - `SourceTime`, `ClipTime`, `LayerTime`, `CompTime`
 ([01-GLOSSARY.md](01-GLOSSARY.md) §4) - are distinct newtypes over `Rational`. Conversions
@@ -53,8 +50,45 @@ struct Document {
     id: Uuid,
     items: Vec<ProjectItem>,   // flat storage; Project-panel order = Vec order; folders hold children by id
     auto_folders: AutoFolders, // where new solids / comps are auto-filed (K-068)
+    anti_aliasing: AntiAliasing,           // coverage samples per pixel: Off/X2/X4/X8, default X4 (K-274)
+    cache_location: Option<CacheLocation>, // this project's own frame-cache folder (K-215)
+    ui_state: Option<serde_json::Value>,   // how the interface was arranged, opaque (K-245)
 }
 ```
+
+`anti_aliasing` is how hard the renderer works at the edges of transformed layers (K-274,
+[impl/anti-aliasing.md](impl/anti-aliasing.md)). It is a **project** property rather than a
+preference, and that is the decision, not an implementation detail: it changes what a comp
+looks like, so it must travel in the `.lum` and match when the file is opened on another
+machine. **One value serves preview and export** — a preview that anti-aliased differently
+from the file would break the K-031 preview-equals-export identity that the whole render path
+is built around. Default `X8`: on, eight coverage samples per pixel (K-286), falling back to four on a card
+that will not give eight. Set through an ordinary
+op, so it is undoable and journalled like any other change to the picture, and — unlike
+`cache_location` — it *does* change pixels, so the sample count is part of a frame's content
+hash (docs/06 §5.2) and a frame banked at one setting is never served at another.
+
+What a given graphics card will actually do is a separate question from what the project asks
+for. The count is asked of the adapter and never assumed; one that cannot manage the count
+falls back to the highest it will, down to off, and the interface says which is in use. That is
+a fact about the machine, never an error and never a rewrite of the project.
+
+`cache_location` is the one piece of *machine* preference the document carries, and it is here on
+purpose (K-215, docs/06 §5.4): where a project's rendered frames are parked belongs to the
+project — a scratch drive it lives on, or beside itself so the cache travels with a copy — and a
+setting held in one machine's settings file could not travel with it. `None`, the usual case,
+means the project follows the application-wide choice. It is set through an ordinary op, so it is
+undoable and journalled like any other change, and it changes no pixel: cache entries are named
+by content, and where they are kept is not part of that name.
+
+`ui_state` is the other field that is not the work itself: how the interface was arranged for
+this project (K-245) — the panel layout, the open comp tabs, the playhead, the selection — as
+whatever JSON the frontend wrote. **The engine never reads inside it.** It is carried so that a
+project handed to somebody else opens the way its author left it; the shape belongs to the
+frontend, and an engine that understood it would have to change every time a panel gained a
+setting. Unlike `cache_location` it is *not* an op: recording it is not undoable, not
+journalled, and does not move the store's revision, because moving a panel is not an edit to the
+work (`DocumentStore::set_ui_state`). The frontend writes it just before a save.
 
 A `ProjectItem` (the intended **Asset**) is one of the following. **v1 ships
 `Footage`, `Folder`, `Composition`, `Solid`**; the audio/still/sequence kinds
@@ -137,14 +171,19 @@ struct Layer {
     matte: Option<MatteRef>,           // { layer, channel: Alpha|Luma, inverted, source } (K-142)
     transform: TransformGroup,         // §6
     masks: Vec<Mask>,                  // §7
+    paint: Vec<PaintStroke>,           // §7.1, stamped before masks
     effects: Vec<EffectInstance>,      // §8, ordered top-to-bottom
     volume_db: Property,               // K-172: animatable Volume (docs/09 §6); 0 dB unity, −100 = −∞
     retime: Option<Property>,          // K-197: Retime as an ordinary keyframable property —
                                        // layer-local time → source time, in seconds. None = not
                                        // retimed (no row, no map). Ctrl+Alt+T installs the identity.
+    markers: Vec<Marker>,              // §11, K-254: the layer's OWN cues, drawn on its bar.
+                                       // Times are layer-local. A comp dropped into another
+                                       // brings a copy of its markers here; the two lists are
+                                       // unrelated from then on.
     switches: Switches,
 }
-// Future (not in v1): `stretch` (uniform rate multiplier) and per-layer `markers`.
+// Future (not in v1): `stretch` (uniform rate multiplier).
 // Mute stays the `audible` switch, and audio comes only from a footage layer's own
 // stream (§5.2, docs/09); the once-sketched `audio: AudioProps` grouping collapsed
 // to the single `volume_db` property when it shipped (K-172) — fades are its
@@ -196,10 +235,9 @@ Invariants:
 | `Camera { zoom: Property }` | yes | — | AE camera: `zoom` is focal distance in comp pixels (z=0 maps 1:1). Only affects 3D-switch layers; the topmost visible camera is active. |
 | `Adjustment` | yes | — | No source of its own; its masks + effect stack apply to the composite of every layer beneath it, within its span. (There is no `adjustment` switch — it is this kind.) |
 | `Null` | yes | — | No source and no size; carries only a transform, so layers parent to it and move as a rig. Never draws, emits no node in the evaluation graph, and reports no picture — so it is not offered as a matte or a layer-valued effect parameter. Masks and effects can be added to it but never run (as on a Camera). The bridge enum names this kind `NullLayer` for Dart's sake only (K-206). |
-| `Shape { contents: Vec<ShapeElement> }` | future | §9.2 | |
+| `Shape { contents: Vec<ShapeItem> }` | yes | Its vector art | §7.2 (K-237). Flat list; nested groups and modifiers are future (§9.2). |
 | `Audio { item: Uuid }` | future | An audio item | v1 audio is only a footage layer's own stream (§5.2, docs/09). |
-| `Light` | future | — | Paired with Camera; not in v1. |
-| `Light { light: LightProps }` | §9.3 | 3D only. |
+| `Light { light: LightProps }` | future | §9.3 | Paired with Camera; 3D only, not in v1. |
 
 ### 5.3 Clips (Sequence layers only)
 
@@ -338,6 +376,70 @@ Masks apply in order before the effect stack ([06-RENDER-PIPELINE.md](06-RENDER-
 (`None|Add|Subtract|Intersect|Lighten|Darken|Difference` — v1 is **Add only**), and `feather` /
 `expansion`. Variable-width feather is post-v1; the model will reserve per-vertex feather data.
 
+### 7.1 Paint strokes (K-227)
+
+```rust
+struct PaintStroke {
+    id: Uuid,
+    name: String,
+    points: Vec<(f64, f64)>,          // layer space, in the order drawn
+    colour: LinearColour,
+    width: f64,                       // brush diameter, layer pixels
+    hardness: f64,                    // 0 fully soft .. 1 hard edge
+    opacity: f64,                     // 0..100
+    mode: PaintMode,                  // Paint | Erase | Clone
+    clone_offset: (f64, f64),         // Clone: where the pixels come from
+}
+```
+
+A stroke stores the **gesture**, never the pixels: it is re-stamped at whatever resolution the
+frame is rendered at, so a stroke painted at a quarter preview exports at full size, and every
+setting stays changeable. The path is a **polyline** rather than a `BezierPath` — a stroke is a
+record of a drag, not a shape edited vertex by vertex — and it is thinned before it is stored
+(samples closer than two screen pixels dropped, first and last always kept).
+
+Strokes are stamped into the layer's own raster **before** its masks gate it and before its
+effects run ([06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md)). `Clone` reads the raster as it was
+before *any* stroke in the pass was stamped, so a clone never picks up paint laid down beside
+it. The op is `SetLayerPaint` — the whole list, exactly invertible, like `SetLayerMasks`.
+
+**Future:** pressure and tilt, non-round brush shapes, spacing and scatter, write-on (per-stroke
+start and end times), per-stroke blending modes, and a GPU stamping path. None of them changes
+the shape above.
+
+### 7.2 Shape layers (K-237)
+
+```rust
+LayerKind::Shape { contents: Vec<ShapeItem> }
+
+struct ShapeItem {
+    id: Uuid,
+    name: String,
+    path: BezierPath,                 // the mask's path type, unchanged
+    fill: Option<LinearColour>,       // None draws no fill
+    stroke: Option<LinearColour>,     // None, or a zero width, draws no outline
+    stroke_width: f64,                // layer pixels
+    opacity: f64,                     // 0..100
+}
+```
+
+A shape layer's art **is** its picture: vector paths rasterised at whatever resolution the
+frame is rendered at, so they stay crisp at any scale. The path type is the mask's, deliberately
+— a shape's path and a mask's path differ in what they do, not in what they are.
+
+The list is **flat**: After Effects' nested groups exist to carry its shape modifiers (repeater,
+trim paths, wiggle), and none of those are built.
+
+**The layer's natural size is the box its art fills**, bounding the curves by their control
+points, and it *changes as the art is edited* — the only layer kind whose size is not fixed by
+its source. Anything caching a layer's size must key on the document revision.
+
+The op is `SetShapeContents` — the whole list, exactly invertible, like `SetLayerMasks` and
+`SetLayerPaint`.
+
+**Future:** nested groups and the shape modifiers, gradient fills, dashed strokes, joins and
+caps other than round, and animated paths.
+
 ## 8. Effects
 
 ```rust
@@ -384,12 +486,12 @@ previous line. A frame-varying expression therefore keys per frame by constructi
 constant one keys once. Per-character animation of an expression-driven line is **future**,
 with the styled-runs model.
 
-### 9.2 Shape (future — no Shape layer in v1)
+### 9.2 Shape — how the shipped flat list grows
 
-There is no `LayerKind::Shape` yet. The intended `ShapeElement` tree: groups; parametric
-rectangle/ellipse/polystar; bezier path; fill (solid, linear/radial gradient); stroke (width,
-caps, joins, dashes); trim paths. Repeater, offset, wiggle-path are tier 2
-([08-EFFECTS.md](08-EFFECTS.md) keeps the list).
+`LayerKind::Shape` ships as §7.2's flat `Vec<ShapeItem>` (K-237). The intended growth is a
+`ShapeElement` tree: groups; parametric rectangle/ellipse/polystar; fill (solid, linear/radial
+gradient); stroke (width, caps, joins, dashes); trim paths. Repeater, offset, wiggle-path are
+tier 2 ([08-EFFECTS.md](08-EFFECTS.md) keeps the list).
 
 ### 9.3 2.5D (K-023)
 
@@ -427,6 +529,14 @@ struct Marker {
 
 Beat markers are ordinary markers with provenance; regenerating beats replaces only
 `Beat`-kind markers ([09-AUDIO.md](09-AUDIO.md)).
+
+**Two owners (K-254).** A composition holds markers on its ruler; a layer holds markers of
+its own on its bar, in `Layer::markers`, timed in the layer's own time so they move with it.
+A layer's list is always a **copy**, never a view: dropping a composition into another
+copies that comp's markers onto the layer with fresh ids, and editing either list afterwards
+leaves the other alone. Pre-composing copies the comp's markers into the new composition and
+leaves the Precomp layer's list empty — the cues are on the ruler above it already. One
+marker per frame per owner: placing one where a marker already sits replaces it.
 
 ## 12. Schema evolution
 

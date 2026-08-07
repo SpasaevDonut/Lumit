@@ -789,6 +789,9 @@ pub fn collapse_state(doc: &Document, comp: &Composition, layer: &Layer, lt: f64
         })
     });
     let forced = !layer.masks.is_empty()
+        // Paint is stamped into the layer's own raster (K-227), which splicing
+        // a collapsed precomp never produces.
+        || !layer.paint.is_empty()
         // §1.4: any live effect on the Precomp layer itself — its stack runs
         // on the nested comp's raster, which splicing never produces.
         || (layer.switches.fx && layer.effects.iter().any(|e| e.enabled))
@@ -808,14 +811,12 @@ pub fn collapse_state(doc: &Document, comp: &Composition, layer: &Layer, lt: f64
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum LayerKind {
-    Footage {
-        item: Uuid,
-        /// Retime map (docs/04-RETIMING.md): local time → source time. None =
-        /// no retiming (plays at source rate). Defaulted for projects saved
-        /// before Retime existed.
-        #[serde(default)]
-        retime: Option<crate::retime::Retime>,
-    },
+    /// One footage item as the layer's source. Retiming lives on the layer
+    /// itself ([`Layer::retime`]), not here: this variant carried a second,
+    /// rival retime store until K-249 deleted it, and a document written
+    /// before that is converted on open (the `0.1.0` → `0.2.0` migration in
+    /// `lumit-project`).
+    Footage { item: Uuid },
     /// A SolidDef asset as this layer's source (docs/01-GLOSSARY.md: Solid
     /// layer; docs/03-DATA-MODEL.md §5.2 — solids are assets so they dedupe).
     Solid { def: Uuid },
@@ -841,6 +842,17 @@ pub enum LayerKind {
     /// masks and effect stack apply to the accumulated composite of every layer
     /// beneath it, within its span. A comp-sized container for effects.
     Adjustment,
+    /// Vector art as the layer's own picture (docs/03-DATA-MODEL.md §7.2,
+    /// K-237): one or more paths, each with a fill and a stroke, drawn at
+    /// whatever resolution the frame is rendered at.
+    ///
+    /// The paths are `mask::BezierPath` — the same path type a mask uses, and
+    /// deliberately so: a shape layer's path and a mask's path differ in what
+    /// they *do*, not in what they are.
+    Shape {
+        #[serde(default)]
+        contents: Vec<crate::shape::ShapeItem>,
+    },
     /// A Null layer (docs/01-GLOSSARY.md): an invisible layer with no source
     /// and no size, carrying only a transform, so other layers can be parented
     /// to it and moved as a rig. It never draws. Masks and effects can be added
@@ -1064,6 +1076,21 @@ pub struct Layer {
     /// organisational — never rendered into the picture.
     #[serde(default)]
     pub label: u8,
+    /// The layer's own markers (docs/03 §11): cues drawn on its bar rather than
+    /// on the comp's ruler.
+    ///
+    /// **A copy, not a view.** Dropping a composition into another one brings
+    /// that comp's markers along as the layer's, so its beats are visible where
+    /// the layer sits — but they are this layer's from then on, and deleting
+    /// one here never reaches into the composition it came from. The alternative
+    /// (drawing the source comp's live list) makes a delete on one row change a
+    /// different comp, and every other place that comp is used.
+    ///
+    /// Pre-composing deliberately leaves this empty: the markers it copies into
+    /// the new comp are the ones already on the ruler above, and drawing them
+    /// again on the Precomp layer would say the same thing twice.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub markers: Vec<crate::markers::Marker>,
     /// Per-layer audio volume in dB (docs/09 §6): 0 = unity, boostable to
     /// +50; −100 and below reads as −∞ (exact silence). Animatable like any
     /// property — fades are volume keyframes. Only heard on layers whose
@@ -1084,12 +1111,31 @@ pub struct Layer {
     /// visible and gives the row something to key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retime: Option<Property>,
+    /// How a fractional source moment becomes pixels: nearest, blend, or
+    /// optical flow (docs/04-RETIMING.md §10).
+    ///
+    /// A **render policy, not part of the map** — §10 is explicit that the two
+    /// are orthogonal — so it sits beside [`Self::retime`] rather than inside
+    /// it, exactly as [`crate::sequence::Clip`] has carried its own since it
+    /// was written. It used to live inside the layer's segment store, which
+    /// tied "how in-betweens are made" to "which retime system you use" for no
+    /// reason; K-249 untangled them when that store went.
+    ///
+    /// Applies whether or not the layer is retimed: an un-retimed layer whose
+    /// comp runs at a different rate from its source is already asking for
+    /// frames between two it has.
+    #[serde(default)]
+    pub interpolation: crate::retime::Interpolation,
     #[serde(default)]
     pub blend: BlendMode,
     /// Masks gate the layer's alpha before effects/transform
     /// (docs/06-RENDER-PIPELINE.md render order).
     #[serde(default)]
     pub masks: Vec<crate::mask::Mask>,
+    /// Paint strokes stamped into the layer's own pixels, before its masks
+    /// gate them and before its effects run (docs/03 §7.1, K-227).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paint: Vec<crate::paint::PaintStroke>,
     /// The ordered effect stack (docs/03 §8; applied top-to-bottom after
     /// masks, before transform — docs/06 render order).
     #[serde(default)]
@@ -1102,10 +1148,19 @@ pub struct Layer {
 }
 
 impl Layer {
-    /// The identity Retime for a layer `duration` seconds long: two linear keys
-    /// running source time alongside local time, so the layer plays at source
-    /// rate. What Ctrl+Alt+T installs — the AE Time Remap starting state.
-    pub fn identity_retime(duration: Rational) -> Property {
+    /// The identity Retime across a layer's own span: two linear keys running
+    /// source time alongside local time, so the layer plays at source rate.
+    /// What Ctrl+Alt+T installs — the AE Time Remap starting state.
+    ///
+    /// `from` and `to` are the layer's **local** in and out points — its comp
+    /// span less its `start_offset` — not zero and its duration (K-213). A
+    /// trimmed layer's visible range does not begin at its own zero, and keys
+    /// that stopped short of it froze the tail: past the last key a property
+    /// holds, so the part of the layer beyond `duration` played one frame over
+    /// and over. Spanning the real range is also what puts the two keys on the
+    /// layer's start and end where the Timeline draws them, rather than at the
+    /// start of the composition.
+    pub fn identity_retime(from: Rational, to: Rational) -> Property {
         let key = |time: Rational, value: f64| crate::anim::Keyframe {
             time,
             value,
@@ -1114,11 +1169,35 @@ impl Layer {
         };
         Property {
             animation: crate::anim::Animation::Keyframed(vec![
-                key(Rational::ZERO, 0.0),
-                key(duration, duration.to_f64()),
+                key(from, from.to_f64()),
+                key(to, to.to_f64()),
             ]),
             extra: serde_json::Map::new(),
         }
+    }
+
+    /// Whether a Retime map is the **identity** one — every moment of the layer
+    /// showing the same moment of its source, which is what switching Retime on
+    /// installs and what an untouched map still is (K-236).
+    ///
+    /// Worth asking, because "the layer has a Retime property" and "the layer
+    /// has been retimed" are different questions, and only the second one
+    /// justifies putting keys into a cut. A map with two keys that read back
+    /// their own times is a map nobody has shaped.
+    pub fn is_identity_retime(retime: &Property) -> bool {
+        let crate::anim::Animation::Keyframed(keys) = &retime.animation else {
+            // A Static map holds one moment for the whole layer, which is a
+            // freeze — a deliberate retime, not an identity.
+            return false;
+        };
+        keys.iter().all(|key| {
+            matches!(key.interp_in, crate::anim::SideInterp::Linear)
+                && matches!(key.interp_out, crate::anim::SideInterp::Linear)
+                // The value *is* the time it sits at: source time equals layer
+                // time, which is the whole of what identity means. Compared as
+                // the f64 the keyframe stores, since that is what was written.
+                && (key.value - key.time.to_f64()).abs() < 1e-9
+        })
     }
 
     /// Which moment of the source this layer shows at layer-local time `lt`
@@ -1128,19 +1207,9 @@ impl Layer {
     /// The one place the mapping is decided, so the render plan and the frame
     /// cache key can never disagree about which source frame a layer shows.
     pub fn source_time_at(&self, lt: f64) -> f64 {
-        // ponytail: the pre-K-197 segment store still answers for layers that
-        // carry one (the Source card's speed row writes it). Delete that arm —
-        // and `LayerKind::Footage::retime` with it — once the Retime property
-        // owns every case.
-        if let Some(retime) = &self.retime {
-            return retime.value_at(lt);
-        }
-        match &self.kind {
-            LayerKind::Footage {
-                retime: Some(retime),
-                ..
-            } => retime.evaluate(lt),
-            _ => lt,
+        match &self.retime {
+            Some(retime) => retime.value_at(lt),
+            None => lt,
         }
     }
 }
@@ -1235,10 +1304,126 @@ pub struct Document {
     /// Where new solids/comps are filed (see [`AutoFolders`]).
     #[serde(default)]
     pub auto_folders: AutoFolders,
+    /// How hard the renderer works at the edges of transformed layers
+    /// (K-274, docs/impl/anti-aliasing.md).
+    ///
+    /// A **project** property, not a preference, and deliberately so: it
+    /// changes what a comp looks like, so it has to travel in the `.lum` and
+    /// match when the file is opened on another machine. One value serves both
+    /// preview and export — a preview that anti-aliased differently from the
+    /// file would break the K-031 preview-equals-export identity, which the
+    /// whole render path is built around.
+    #[serde(default)]
+    pub anti_aliasing: AntiAliasing,
+    /// Where *this project's* rendered frames are parked, overriding the
+    /// application-wide choice (docs/06-RENDER-PIPELINE.md §5.4, docs/07 §15).
+    ///
+    /// `None` — the usual case — means "whatever the application is set to". A
+    /// project only carries one of these when the user has asked for this project
+    /// in particular to cache somewhere: a scratch drive it lives on, or beside
+    /// itself so the cache travels with it. It is in the document rather than in
+    /// the settings file precisely because it belongs to the project, so it
+    /// survives being opened on another machine and moves with a copy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_location: Option<CacheLocation>,
+    /// How the interface was arranged for this project, as the frontend's own
+    /// JSON: the panel layout, which comps were open, where the playhead sat
+    /// (K-245, docs/10-FILE-FORMAT.md §1.2).
+    ///
+    /// **Opaque to the engine.** Nothing here reads inside it; it is carried,
+    /// stored and handed back. That is deliberate — the shape belongs to
+    /// whichever frontend wrote it, and an engine that understood it would have
+    /// to be changed every time a panel gained a setting.
+    ///
+    /// It lives in the document, rather than only in the local settings file,
+    /// so a project shared with someone else opens arranged the way its author
+    /// left it. It is a *hint*: a reader that already has its own record of this
+    /// project prefers that, and one that cannot make sense of this ignores it.
+    /// `None` for a project that has never been arranged, which is why an older
+    /// build's file gains no line for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_state: Option<serde_json::Value>,
     /// Unknown fields from newer Lumit versions, preserved on load/save
     /// (docs/10-FILE-FORMAT.md §1.1 — mandatory forward compatibility).
     #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+/// How many coverage samples per pixel the composite is drawn with (K-274,
+/// docs/impl/anti-aliasing.md).
+///
+/// # In plain terms
+///
+/// A layer is drawn as a rectangle placed by its transform. Rotate it a few
+/// degrees and its edge crosses a pixel diagonally — but a pixel is either
+/// drawn or not, so the edge comes out as a staircase, and on a slow rotation
+/// the steps crawl. Asking about coverage more than once per pixel and
+/// averaging the answers is what smooths it, and these are the numbers of
+/// questions on offer. More is smoother and costs more memory; [`Self::Off`]
+/// is the picture Lumit made before this setting existed.
+///
+/// The named counts are the ones graphics hardware actually implements, which
+/// is why this is four choices rather than a free number. A card that will not
+/// give the count asked for falls back to the highest it will — down to
+/// [`Self::Off`] — and says which it used; that is a machine's limit, never a
+/// project's error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AntiAliasing {
+    /// One sample per pixel: no anti-aliasing.
+    Off,
+    X2,
+    /// Four samples: the standard trade, and what a card that will not give
+    /// eight falls back to.
+    X4,
+    /// The default (K-274: on by default; K-286). Eight samples smooths the
+    /// shallow diagonals four still steps on, which is where the crawl is
+    /// most visible, and it costs one more multisample attachment beside the
+    /// comp frame rather than more shading. A card that will not give eight
+    /// falls back to [`Self::X4`] and says so.
+    #[default]
+    X8,
+}
+
+impl AntiAliasing {
+    /// The sample count to hand the renderer.
+    #[must_use]
+    pub fn samples(self) -> u32 {
+        match self {
+            Self::Off => 1,
+            Self::X2 => 2,
+            Self::X4 => 4,
+            Self::X8 => 8,
+        }
+    }
+
+    /// The setting a sample count corresponds to; anything not one of the four
+    /// counts reads as [`Self::Off`], so a value from a newer build that this
+    /// one cannot draw degrades to the picture it can.
+    #[must_use]
+    pub fn from_samples(n: u32) -> Self {
+        match n {
+            2 => Self::X2,
+            4 => Self::X4,
+            8 => Self::X8,
+            _ => Self::Off,
+        }
+    }
+}
+
+/// Where a project's rendered frames are parked (docs/06 §5.4). The document's
+/// own answer; the application-wide setting has the same three choices.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CacheLocation {
+    /// Under the application's own cache folder, keyed by document id.
+    AppData,
+    /// In a `<project>.lum-cache/` folder beside the project file, so a copy of
+    /// the project carries its cache with it. Falls back to [`Self::AppData`]
+    /// until the project has been saved and therefore has a file to sit beside.
+    BesideProject,
+    /// Under a folder the user picked.
+    Custom { folder: String },
 }
 
 impl Document {
@@ -1247,6 +1432,9 @@ impl Document {
             id: Uuid::now_v7(),
             items: Vec::new(),
             auto_folders: AutoFolders::default(),
+            anti_aliasing: AntiAliasing::default(),
+            cache_location: None,
+            ui_state: None,
             extra: serde_json::Map::new(),
         }
     }
@@ -1318,6 +1506,50 @@ mod tests {
 
     fn secs(s: i64) -> CompTime {
         CompTime(Rational::new(s, 1).unwrap())
+    }
+
+    /// **What "has been retimed" means** (K-236). Switching Retime on installs
+    /// the identity map, so the presence of the property says nothing about
+    /// whether the layer has actually been retimed — and only the second
+    /// justifies a razor putting keys into both halves of a cut.
+    #[test]
+    fn an_untouched_retime_map_is_the_identity_one() {
+        let map =
+            Layer::identity_retime(Rational::new(0, 1).unwrap(), Rational::new(4, 1).unwrap());
+        assert!(Layer::is_identity_retime(&map));
+    }
+
+    #[test]
+    fn a_shaped_retime_map_is_not() {
+        let mut map =
+            Layer::identity_retime(Rational::new(0, 1).unwrap(), Rational::new(4, 1).unwrap());
+        // Half speed: the layer's four seconds show the source's first two.
+        if let crate::anim::Animation::Keyframed(keys) = &mut map.animation {
+            if let Some(last) = keys.last_mut() {
+                last.value = 2.0;
+            }
+        }
+        assert!(!Layer::is_identity_retime(&map));
+    }
+
+    #[test]
+    fn an_eased_map_that_happens_to_end_where_it_started_is_not_identity() {
+        // The values read back their own times, but the curve between them
+        // does not: an eased pair is a ramp, not an identity.
+        let mut map =
+            Layer::identity_retime(Rational::new(0, 1).unwrap(), Rational::new(4, 1).unwrap());
+        if let crate::anim::Animation::Keyframed(keys) = &mut map.animation {
+            if let Some(first) = keys.first_mut() {
+                first.interp_out = crate::anim::SideInterp::Hold;
+            }
+        }
+        assert!(!Layer::is_identity_retime(&map));
+    }
+
+    #[test]
+    fn a_frozen_frame_is_a_retime_however_it_is_written() {
+        let frozen = Property::fixed(1.5);
+        assert!(!Layer::is_identity_retime(&frozen));
     }
 
     /// `BlendMode::ALL` must list every variant exactly once (the layer
@@ -1645,6 +1877,7 @@ mod tests {
             extra: serde_json::Map::new(),
         };
         let cam = |name: &str, zoom: f64, z_pos: f64, visible: bool, in_s: i64, out_s: i64| Layer {
+            markers: Vec::new(),
             id: Uuid::now_v7(),
             name: name.into(),
             kind: LayerKind::Camera {
@@ -1662,8 +1895,10 @@ mod tests {
             label: 0,
             volume_db: crate::anim::Property::zero(),
             retime: None,
+            interpolation: Default::default(),
             blend: BlendMode::Normal,
             masks: Vec::new(),
+            paint: Vec::new(),
             effects: Vec::new(),
             switches: Switches {
                 visible,

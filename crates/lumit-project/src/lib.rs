@@ -15,7 +15,7 @@ use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
 pub const FORMAT: &str = "lumit-project";
-pub const SCHEMA_VERSION: &str = "0.1.0";
+pub const SCHEMA_VERSION: &str = "0.2.0";
 pub const MIN_READER: &str = "0.1.0";
 
 #[derive(Debug, thiserror::Error)]
@@ -80,11 +80,114 @@ struct Migration {
     apply: fn(&mut serde_json::Value),
 }
 
-/// The ordered migration chain. Empty today: `0.1.0` is the first schema, so no
-/// older document exists to upgrade. Each future schema bump appends one
-/// `Migration` here (from the previous version to the new one); [`run_migrations`]
-/// then walks a file up the chain to the current schema on open.
-static MIGRATIONS: &[Migration] = &[];
+/// The ordered migration chain. Each schema bump appends one `Migration` here
+/// (from the previous version to the new one); [`run_migrations`] then walks a
+/// file up the chain to the current schema on open.
+static MIGRATIONS: &[Migration] = &[Migration {
+    from: "0.1.0",
+    to: "0.2.0",
+    apply: retime_onto_the_layer,
+}];
+
+/// `0.1.0` → `0.2.0` (K-249): a Footage layer's own retime segment store moves
+/// onto the layer as the Retime **property**, and the frame-interpolation
+/// policy moves out beside it.
+///
+/// Until K-249 a layer could be retimed two ways — the keyframable property on
+/// the layer, and a rival segment store inside `kind.Footage`. One had to go,
+/// and the property won, so a document written by the old build has its segment
+/// store converted here, before it is ever typed: the store's own exact reader
+/// turns it into the identical keyframes, which is why this is lossless for
+/// every curve the old rows could actually author.
+///
+/// **The property wins if both are present.** A layer carrying each was already
+/// evaluating the property alone (`source_time_at` preferred it), so keeping it
+/// is what makes the file open looking the way it last rendered.
+/// Lift the old segment store out of `owner["retime"]`, leaving nothing
+/// readable behind.
+///
+/// `take` puts null in its place, which serde reads as the absent field the
+/// new shape expects — and makes the store unreachable whatever happens next,
+/// so it can never be read twice.
+fn take_retime_store(owner: &mut serde_json::Value) -> Option<lumit_core::retime::Retime> {
+    let old = owner.get_mut("retime").map(serde_json::Value::take)?;
+    serde_json::from_value(old).ok() // unreadable: opens un-retimed, not wrong
+}
+
+/// Write `store` onto `dest` as the Retime **property**, with its
+/// interpolation policy beside it.
+///
+/// **The property wins if there is already one.** A layer carrying each was
+/// evaluating the property alone (`source_time_at` preferred it), so keeping
+/// it is what makes the file open looking the way it last rendered. A clip
+/// never had two, so the rule costs it nothing.
+fn write_retime_property(
+    dest: &mut serde_json::Map<String, serde_json::Value>,
+    store: lumit_core::retime::Retime,
+) {
+    // The policy is not part of the map (docs/04 §10) and now lives beside it.
+    // Carried across whether or not the map is; `or_insert` leaves a clip's
+    // own policy, which it always had, exactly as written.
+    if let Ok(policy) = serde_json::to_value(&store.interpolation) {
+        dest.entry("interpolation").or_insert(policy);
+    }
+    if dest.get("retime").is_some_and(|r| !r.is_null()) {
+        return;
+    }
+    // Built as a real `Property` and serialised, rather than as hand-written
+    // JSON: the shape then follows the type, and a later change to either
+    // cannot silently make this write a document the same build refuses to
+    // read.
+    let property = lumit_core::anim::Property {
+        animation: lumit_core::anim::Animation::Keyframed(store.source_keyframes()),
+        extra: serde_json::Map::new(),
+    };
+    if let Ok(v) = serde_json::to_value(property) {
+        dest.insert("retime".into(), v);
+    }
+}
+
+fn retime_onto_the_layer(value: &mut serde_json::Value) {
+    let Some(comps) = value.get_mut("comps").and_then(|c| c.as_array_mut()) else {
+        return;
+    };
+    for comp in comps {
+        let Some(layers) = comp.get_mut("layers").and_then(|l| l.as_array_mut()) else {
+            continue;
+        };
+        for layer in layers {
+            // A Sequence layer's clips carried the same segment store, and
+            // move to the same property shape (K-249's second half).
+            if let Some(clips) = layer
+                .pointer_mut("/kind/Sequence/clips")
+                .and_then(|c| c.as_array_mut())
+            {
+                for clip in clips {
+                    let Some(store) = take_retime_store(clip) else {
+                        continue;
+                    };
+                    if let Some(fields) = clip.as_object_mut() {
+                        write_retime_property(fields, store);
+                    }
+                }
+            }
+            // Taken out of the layer's *kind* and written onto the layer
+            // itself — the one place the two owners differ. Sequenced so the
+            // take lands before the object is reached for, or writing the
+            // property would put the old store back.
+            let store = match layer.pointer_mut("/kind/Footage") {
+                Some(footage) => take_retime_store(footage),
+                None => None,
+            };
+            let Some(store) = store else {
+                continue;
+            };
+            if let Some(fields) = layer.as_object_mut() {
+                write_retime_property(fields, store);
+            }
+        }
+    }
+}
 
 /// Walk `value` (raw `project.json` at schema `version`) up `chain` to the
 /// current schema, applying each migration whose `from` matches the running
@@ -189,6 +292,18 @@ pub fn open(path: &Path) -> Result<(Document, Manifest), ProjectError> {
             _ => serde_json::from_str(&s)?,
         }
     };
+    let mut doc = doc;
+    // Forward-migrate effect stacks (K-258): a built-in whose schema grew
+    // since this file was saved gains the new parameters at their defaults,
+    // so the panel has values to draw and edits have ids to write.
+    for item in &mut doc.items {
+        if let lumit_core::model::ProjectItem::Composition(comp) = item {
+            for layer in &mut comp.layers {
+                lumit_core::fx::backfill_builtin_params(&mut layer.effects);
+            }
+        }
+    }
+
     Ok((doc, manifest))
 }
 
@@ -242,6 +357,42 @@ pub fn journal_path(doc_id: Uuid) -> Option<PathBuf> {
             .join("journal")
             .join("ops.jsonl"),
     )
+}
+
+/// Where a document's parked frames live when the disk frame cache is kept in
+/// the application's own data area rather than beside the project file
+/// (docs/06-RENDER-PIPELINE.md §5.4, Settings → Performance → Cache).
+///
+/// In plain terms: the frames the cache parks have to go *somewhere*, and beside
+/// the project file only works once the project HAS a file. Keyed by the
+/// document's own id, which is written into the `.lum` and survives every save
+/// and reopen, so a project caches from the moment it is created and still finds
+/// its frames tomorrow.
+///
+/// The platform's own cache directory, through the same `ProjectDirs` call the
+/// journal and the media index make, so there is one Lumit folder rather than
+/// three:
+///
+/// | | |
+/// |---|---|
+/// | Windows | `%LOCALAPPDATA%\Lumit\Lumit\cache\frames\<id>\` |
+/// | macOS | `~/Library/Caches/dev.Lumit.Lumit/frames/<id>/` |
+/// | Linux | `$XDG_CACHE_HOME/lumit/frames/<id>/` (default `~/.cache/lumit`) |
+///
+/// On Windows that is **local** app data, never roaming: a roaming profile would
+/// try to copy the cache to a network share at logoff, and this one can be tens
+/// of gigabytes.
+///
+/// The *cache* directory, not the temp directory — temp is emptied on reboot, so
+/// every project would come back cold. These survive a reboot, and the operating
+/// system may reclaim them under disk pressure, which is exactly right for a
+/// folder deletable at any time with no correctness effect.
+///
+/// `None` only when the platform has no home directory; the caller then runs
+/// with no disk tier rather than failing.
+pub fn frame_cache_dir(doc_id: Uuid) -> Option<PathBuf> {
+    let dirs = directories::ProjectDirs::from("dev", "Lumit", "Lumit")?;
+    Some(dirs.cache_dir().join("frames").join(doc_id.to_string()))
 }
 
 /// Media frame-index cache directory (docs/10-FILE-FORMAT.md §3) — global,
@@ -693,6 +844,68 @@ mod tests {
                 extra: serde_json::Map::new(),
             },
         }
+    }
+
+    /// **Where a document's parked frames go, pinned per platform.**
+    ///
+    /// Not a restatement of `directories`' documentation: what is checked is that
+    /// the frame cache lands in the *same* Lumit folder as the journal and the
+    /// media index (one folder, not three), under the platform's **cache**
+    /// directory rather than its data or config directory, and keyed by the
+    /// document id. Each of those is a one-word edit away from being wrong — and
+    /// two of the ways it can be wrong are quiet: parking tens of gigabytes under
+    /// Windows' *roaming* app data makes a work machine copy the lot to a network
+    /// share at logoff, and parking them under the temp directory makes every
+    /// project come back cold after a reboot, which reads as "the cache is
+    /// broken" rather than as a wrong path.
+    #[test]
+    fn the_frame_cache_sits_in_lumits_own_cache_folder() {
+        let id = Uuid::now_v7();
+        let (Some(frames), Some(index), Some(journal), Some(presets)) = (
+            frame_cache_dir(id),
+            media_index_dir(),
+            journal_path(id),
+            presets_dir(),
+        ) else {
+            // No home directory at all (a bare container): the disk tier is off
+            // rather than misplaced, which is the documented answer.
+            eprintln!("skipping: this platform has no home directory");
+            return;
+        };
+
+        // One Lumit folder: the frame cache shares the cache root with the media
+        // index and the journal, both of which pre-date it.
+        let cache_root = index.parent().expect("media-index has a parent");
+        assert!(
+            frames.starts_with(cache_root),
+            "frames at {frames:?} left the cache root {cache_root:?}"
+        );
+        assert!(journal.starts_with(cache_root));
+        assert!(
+            frames.to_string_lossy().contains(&id.to_string()),
+            "the document id is what makes a project find its frames again"
+        );
+
+        // The cache directory, not the data or config one: presets and settings
+        // are kilobytes that should be backed up, and this is gigabytes that
+        // should not.
+        assert!(
+            !frames.starts_with(presets.parent().expect("presets has a parent")),
+            "the frame cache must not sit with the presets in app data"
+        );
+
+        // Never roaming (Windows), and never temp (all three).
+        let shown = frames.to_string_lossy().to_lowercase();
+        assert!(
+            !shown.contains("roaming"),
+            "a cache this size must not follow a roaming profile over the \
+             network: {frames:?}"
+        );
+        assert!(
+            !frames.starts_with(std::env::temp_dir()),
+            "temp is emptied on reboot, so every project would come back cold: \
+             {frames:?}"
+        );
     }
 
     fn doc_with_item() -> Document {
@@ -1165,12 +1378,183 @@ mod tests {
         }
     }
 
-    /// An empty chain (today's real [`MIGRATIONS`]) is a no-op.
+    /// An empty chain is a no-op, and the real chain leaves a document with
+    /// nothing to migrate alone.
     #[test]
     fn no_migrations_leaves_json_unchanged() {
         let v = serde_json::json!({ "x": 5 });
         assert_eq!(run_migrations(&[], v.clone(), (0, 1, 0)), v);
         assert_eq!(run_migrations(MIGRATIONS, v.clone(), (0, 1, 0)), v);
+    }
+
+    /// A `0.1.0` document whose Footage layer carries the old segment store
+    /// opens with that retiming on the layer's Retime **property** (K-249),
+    /// and reads the same source moments it always did.
+    ///
+    /// Half speed is the case worth pinning: at four seconds of layer time the
+    /// layer shows two seconds of source, before and after.
+    #[test]
+    fn the_old_segment_store_becomes_the_retime_property() {
+        use lumit_core::retime::Retime;
+        use lumit_core::time::Rational;
+
+        let store = Retime::constant_speed(
+            Rational::new(10, 1).unwrap(),
+            Rational::ZERO,
+            Rational::new(1, 2).unwrap(),
+        );
+        assert!(
+            (store.evaluate(4.0) - 2.0).abs() < 1e-9,
+            "the fixture is half speed"
+        );
+
+        let doc = serde_json::json!({
+            "comps": [{
+                "layers": [{
+                    "kind": { "Footage": {
+                        "item": Uuid::now_v7(),
+                        "retime": serde_json::to_value(&store).unwrap(),
+                    }}
+                }]
+            }]
+        });
+        let doc = run_migrations(MIGRATIONS, doc, (0, 1, 0));
+
+        let layer = &doc["comps"][0]["layers"][0];
+        assert!(
+            layer["kind"]["Footage"]["retime"].is_null(),
+            "the old store is emptied, so it can never be read a second time"
+        );
+        let property: lumit_core::anim::Property =
+            serde_json::from_value(layer["retime"].clone()).expect("a Retime property");
+        assert!(
+            (property.value_at(4.0) - 2.0).abs() < 1e-9,
+            "and it still shows the source moment it used to"
+        );
+    }
+
+    /// A Sequence layer's **clips** convert too — the second half of K-249,
+    /// and the one that would otherwise have left the sequence view editing a
+    /// representation nothing else spoke.
+    #[test]
+    fn a_clips_segment_store_becomes_the_retime_property() {
+        use lumit_core::retime::Retime;
+        use lumit_core::time::Rational;
+
+        let store = Retime::constant_speed(
+            Rational::new(4, 1).unwrap(),
+            Rational::ZERO,
+            Rational::new(2, 1).unwrap(),
+        );
+        let doc = serde_json::json!({
+            "comps": [{
+                "layers": [{
+                    "kind": { "Sequence": { "clips": [{
+                        "id": Uuid::now_v7(),
+                        "source": { "Footage": Uuid::now_v7() },
+                        "source_in": [0, 1],
+                        "source_out": [8, 1],
+                        "place_start": [0, 1],
+                        "place_duration": [4, 1],
+                        "retime": serde_json::to_value(&store).unwrap(),
+                    }]}}
+                }]
+            }]
+        });
+
+        let out = run_migrations(MIGRATIONS, doc, (0, 1, 0));
+        // It typed as a real Clip, which is the whole test: the migration has
+        // to produce a document *this* build can read.
+        let clip: lumit_core::sequence::Clip = serde_json::from_value(
+            out["comps"][0]["layers"][0]["kind"]["Sequence"]["clips"][0].clone(),
+        )
+        .expect("a clip");
+        assert_eq!(
+            clip.constant_speed(),
+            Some(2.0),
+            "double speed before, double speed after"
+        );
+        // …and it reads the same source moments it used to.
+        assert!((clip.source_time(1.0) - store.evaluate(1.0)).abs() < 1e-6);
+        assert!((clip.source_time(3.0) - store.evaluate(3.0)).abs() < 1e-6);
+    }
+
+    /// The policy for making in-between frames rides across too — it was never
+    /// part of the map (docs/04 §10), and it is not lost with the store.
+    #[test]
+    fn the_migration_carries_the_interpolation_policy_out() {
+        use lumit_core::retime::{Interpolation, Retime};
+        use lumit_core::time::Rational;
+
+        let mut store = Retime::identity(Rational::new(5, 1).unwrap(), Rational::ZERO);
+        store.interpolation = Interpolation::Blend;
+        let doc = serde_json::json!({
+            "comps": [{
+                "layers": [{
+                    "kind": { "Footage": {
+                        "item": Uuid::now_v7(),
+                        "retime": serde_json::to_value(&store).unwrap(),
+                    }}
+                }]
+            }]
+        });
+
+        let out = run_migrations(MIGRATIONS, doc, (0, 1, 0));
+        let policy: Interpolation =
+            serde_json::from_value(out["comps"][0]["layers"][0]["interpolation"].clone())
+                .expect("a policy");
+        assert_eq!(policy, Interpolation::Blend);
+    }
+
+    /// A layer that already carried the property keeps it: both routes existed
+    /// at once, and the property is the one that was actually evaluating
+    /// (`source_time_at` preferred it), so keeping it is what makes the file
+    /// open looking the way it last rendered.
+    #[test]
+    fn the_property_wins_when_a_layer_carried_both() {
+        use lumit_core::retime::Retime;
+        use lumit_core::time::Rational;
+
+        let segments = Retime::constant_speed(
+            Rational::new(10, 1).unwrap(),
+            Rational::ZERO,
+            Rational::new(1, 2).unwrap(),
+        );
+        // The property says "hold source zero throughout" — nothing like the
+        // segment store beside it, so which one survived is unambiguous.
+        let property = lumit_core::anim::Property::fixed(0.0);
+        let doc = serde_json::json!({
+            "comps": [{
+                "layers": [{
+                    "retime": serde_json::to_value(&property).unwrap(),
+                    "kind": { "Footage": {
+                        "item": Uuid::now_v7(),
+                        "retime": serde_json::to_value(&segments).unwrap(),
+                    }}
+                }]
+            }]
+        });
+
+        let out = run_migrations(MIGRATIONS, doc, (0, 1, 0));
+        let kept: lumit_core::anim::Property =
+            serde_json::from_value(out["comps"][0]["layers"][0]["retime"].clone())
+                .expect("a Retime property");
+        assert!((kept.value_at(4.0) - 0.0).abs() < 1e-9);
+    }
+
+    /// A document with nothing to migrate survives the walk untouched — a
+    /// layer of another kind, and a footage layer that was never retimed.
+    #[test]
+    fn the_migration_leaves_untouched_layers_alone() {
+        let doc = serde_json::json!({
+            "comps": [{
+                "layers": [
+                    { "kind": { "Footage": { "item": Uuid::now_v7() } } },
+                    { "kind": "Adjustment" },
+                ]
+            }]
+        });
+        assert_eq!(run_migrations(MIGRATIONS, doc.clone(), (0, 1, 0)), doc);
     }
 
     /// docs/10 §1: a file is walked up the chain from its own version — earlier
@@ -1241,6 +1625,71 @@ mod tests {
         assert_eq!(back.fingerprint, m.fingerprint);
     }
 
+    /// **A project's own cache location travels with it.** The whole reason it
+    /// lives in the document rather than in the settings file: copy the project
+    /// to another machine, or hand it to someone else, and the folder it caches
+    /// to comes along. A project that has not been given one saves nothing at
+    /// all — an absent field, so an older build reads the file unchanged and a
+    /// project's file does not grow a line for a choice nobody made.
+    #[test]
+    fn a_projects_own_cache_location_survives_a_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("edit.lum");
+
+        let mut doc = doc_with_item();
+        assert!(doc.cache_location.is_none(), "no override by default");
+        save(&doc, &path).unwrap();
+        assert!(open(&path).unwrap().0.cache_location.is_none());
+
+        doc.cache_location = Some(lumit_core::model::CacheLocation::Custom {
+            folder: "E:/scratch".into(),
+        });
+        save(&doc, &path).unwrap();
+        assert_eq!(
+            open(&path).unwrap().0.cache_location,
+            Some(lumit_core::model::CacheLocation::Custom {
+                folder: "E:/scratch".into()
+            })
+        );
+
+        // The other two carry no folder, and still round-trip as themselves.
+        doc.cache_location = Some(lumit_core::model::CacheLocation::BesideProject);
+        save(&doc, &path).unwrap();
+        assert_eq!(
+            open(&path).unwrap().0.cache_location,
+            Some(lumit_core::model::CacheLocation::BesideProject)
+        );
+    }
+
+    /// **A project's arrangement travels with it** (K-245): hand the file to
+    /// someone else and it opens with the panels where its author left them.
+    /// The engine stores it as the frontend's own JSON without reading inside,
+    /// so it round-trips whole; a project nobody has arranged saves no field at
+    /// all, and an older build reads that file unchanged.
+    #[test]
+    fn the_saved_arrangement_survives_a_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("arranged.lum");
+
+        let mut doc = doc_with_item();
+        assert!(doc.ui_state.is_none(), "nothing arranged by default");
+        save(&doc, &path).unwrap();
+        assert!(open(&path).unwrap().0.ui_state.is_none());
+        let bare = std::fs::metadata(&path).unwrap().len();
+
+        let arrangement = serde_json::json!({
+            "dock": { "kind": "tabs", "active": 1 },
+            "session": { "frame": 12, "open_comps": ["a", "b"] },
+        });
+        doc.ui_state = Some(arrangement.clone());
+        save(&doc, &path).unwrap();
+        assert_eq!(open(&path).unwrap().0.ui_state, Some(arrangement));
+        assert!(
+            std::fs::metadata(&path).unwrap().len() > bare,
+            "it is really in the file, not only in the document"
+        );
+    }
+
     #[test]
     fn save_open_round_trip_and_no_temp_litter() {
         let dir = tempfile::tempdir().unwrap();
@@ -1257,6 +1706,55 @@ mod tests {
         assert_eq!(manifest.format, FORMAT);
         save(&doc, &path).unwrap();
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    /// The anti-aliasing setting is a project property (K-274,
+    /// docs/impl/anti-aliasing.md §5, test 7): a non-default value must survive
+    /// a save and reload, and a `.lum` written before the field existed must
+    /// load at the default rather than failing.
+    #[test]
+    fn the_anti_aliasing_setting_round_trips_and_defaults_when_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("edit.lum");
+        let mut doc = doc_with_item();
+        doc.anti_aliasing = lumit_core::model::AntiAliasing::X8;
+        save(&doc, &path).unwrap();
+        let (loaded, _) = open(&path).unwrap();
+        assert_eq!(loaded.anti_aliasing, lumit_core::model::AntiAliasing::X8);
+
+        // An older file: the same project with the key removed entirely, which
+        // is exactly what a `.lum` written before this field looks like.
+        let older = dir.path().join("older.lum");
+        strip_document_key(&path, &older, "anti_aliasing");
+        let (old, _) = open(&older).unwrap();
+        assert_eq!(
+            old.anti_aliasing,
+            lumit_core::model::AntiAliasing::default(),
+            "a file with no setting must load at the default, not fail"
+        );
+    }
+
+    /// Rewrite a `.lum` with one key deleted from its document JSON — how a
+    /// test stands in for a file written by a build that predates a field.
+    fn strip_document_key(from: &Path, to: &Path, key: &str) {
+        let (_, manifest) = open(from).unwrap();
+        let mut zip = ZipArchive::new(File::open(from).unwrap()).unwrap();
+        let mut raw = String::new();
+        {
+            use std::io::Read;
+            zip.by_name("project.json")
+                .unwrap()
+                .read_to_string(&mut raw)
+                .unwrap();
+        }
+        let mut value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert!(
+            value.as_object_mut().unwrap().remove(key).is_some(),
+            "{key} was not in the saved document, so removing it proves nothing"
+        );
+        let doc: Document = serde_json::from_value(value).unwrap();
+        let _ = manifest;
+        save(&doc, to).unwrap();
     }
 
     #[test]

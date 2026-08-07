@@ -242,6 +242,7 @@ impl KernelExecutor for GpuKernels {
                     None,
                     seed,
                     1.0,
+                    1,
                 );
                 drop(frames);
                 Ok(self.frames.borrow_mut().push(out))
@@ -381,7 +382,7 @@ struct Rig {
 impl Rig {
     fn new(size: (u32, u32)) -> Option<Self> {
         let Ok(ctx) = GpuContext::headless() else {
-            eprintln!("skipping: no GPU adapter");
+            lumit_gpu::no_adapter();
             return None;
         };
         let ctx = Rc::new(ctx);

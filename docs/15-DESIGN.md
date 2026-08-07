@@ -18,8 +18,7 @@ though it is a dense professional tool rather than a web app.
 ### 1.1 Inherited unchanged
 
 - **Semantic tokens only.** Every colour in the application comes from a named theme token.
-  Since egui is not CSS, the token layer is a Rust struct (§4) rather than `theme.css`, but the
-  rule is identical: a hex literal in widget code is a lint failure. The sole sanctioned
+  The token layer is a struct (§4) rather than `theme.css`, but the rule is identical: a hex literal in widget code is a lint failure. The sole sanctioned
   exception, per the household rule, is the application icon / favicon set.
 - **Type stack.** Schibsted Grotesk for display (wordmark, workspace titles, dialog headings);
   Source Serif 4 for rare accent lines (about box, empty states); Inter for body and panel
@@ -178,13 +177,14 @@ The Viewer toolbar sits outside the zone; its active-state ticks use `accent` li
 toolbar. Scopes panels are exempt (their traces are content), but their chrome follows the
 same neutral rule since they sit beside the Viewer in the Colour workspace.
 
-## 4. Tokens in Rust
+## 4. The token layer
 
 ### 4.1 The theme struct
 
-egui has no cascade, so the token layer is a plain struct, constructed once per theme and
-passed by reference. Shape (illustrative — exact module layout per
-[05-ARCHITECTURE.md](05-ARCHITECTURE.md)):
+There is no cascade, so the token layer is a plain struct, constructed once per theme and
+passed by reference. Since the Flutter port (K-174/K-182) it lives Dart-side as `LumitTheme`
+(`flutter_ui/lib/theme/theme.dart`); the sketch below keeps the original Rust-flavoured
+shape as the token inventory (illustrative — `Color32` reads as `Color`):
 
 ```rust
 /// Every colour Lumit ever paints. Constructed by `Theme::dark()` (and later
@@ -235,7 +235,15 @@ Appearance → Customise…, and a saved custom theme is *a name, a light-or-dar
 colours over it* — so a theme keeps working when a token is added, taking the new one from
 its base. `flutter_ui/lib/theme/theme_tokens.dart` is the single declaration of what is
 editable (a test counts it against the struct); `viewer_surround` is deliberately absent for
-the §2.1 reason. Two tokens were added with it, both defaulting from the mode rather than
+the §2.1 reason.
+
+**Sharing a theme (K-298).** A theme is also a file: `.lumtheme`, an indented JSON document
+carrying a format marker, a version, and the same name/base/colours the workspace file
+stores (`flutter_ui/lib/theme/theme_file.dart`). Settings → Appearance offers **Duplicate,
+Rename…, Delete, Import… and Export…** beside **Customise…**, the editor offers **Save a
+copy…**, and the picker carries an eight-swatch preview of the selection. A theme read from
+a file is applied over its base like any other, so one written by a newer Lumit still opens
+with the colours this build knows; a name already taken is numbered rather than overwritten. Two tokens were added with it, both defaulting from the mode rather than
 being restated per scheme: `timeline_out_of_range` (the Timeline's ground outside the work
 area) and `selection_fill` (under a selected row, half-strength under a highlighted one —
 its own colour because a selection has to out-contrast whichever ground it lands on, which
@@ -245,26 +253,28 @@ on a light scheme means going *darker* while the surfaces go lighter).
 (`flutter_ui/lib/theme/theme.dart`) carries the structural roles — the surfaces, text, hairlines,
 `accent`/`accent_hover`, `success`/`warning`/`error`, the `curve[4]` ramp, `layer`
 (`LayerColours`, §6.1) — plus two the code has split out that this listing does not yet name:
-`scope` (`ScopeColours`, the four scope-chrome accents) and `cache_disk` (the disk tier of the
-cache bar, §6.3). Not yet split into their own tokens, and derived ad-hoc from existing roles in
+`scope` (`ScopeColours`, the four scope-chrome accents), `cache_disk` (the disk tier of the
+cache bar, §6.3), `marker` (comp markers on the time ruler, §6.4 — the first of the
+`marker` grouping to be split out, K-254; the beat variant still waits) and `waveform`
+(`WaveformColours`: `rest` plus the three multiwave bands, K-280). Not yet split into their own tokens, and derived ad-hoc from existing roles in
 v1: `disabled` and `fill_tonal` (the `cloud`/`oat` mappings below are reserved, not present);
-the `keyframe`, `marker`, `overrun_hatch`, `waveform` and `selection` groupings (widgets reach
+the `keyframe`, `overrun_hatch` and `selection` groupings (widgets reach
 for `text_secondary`, `accent`, `warning`, etc. directly); and `shadow_float`. Splitting each
 into a named token — so no widget derives a semantic colour itself — is the standing direction,
 done as each area is next touched; the no-hex rule already holds regardless.
 
 Binding rules:
 
-- **All colours in widget code come from `&Theme`.** `Color32::from_rgb`,
-  `Color32::from_hex`, and hex literals are permitted only inside the theme module. This is
-  enforced in CI (clippy `disallowed-methods` outside `theme/`, plus a grep gate), per
-  [14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md). A hex literal in widget code is a lint
-  failure, exactly as it would be in a household component.
+- **All colours in widget code come from the theme.** Hex literals and colour constructors
+  are permitted only inside `flutter_ui/lib/theme/`. CI's `no-hex-outside-theme` job greps
+  every Rust crate (no colour may live engine-side at all); on the Dart side the rule holds
+  by convention and review today — a Dart-side lint gate is owed ([TODO.md](TODO.md)). A hex
+  literal in widget code is a defect, exactly as it would be in a household component.
 - Derived alphas (e.g. `accent` @ 16% selection fill) are computed in the theme constructor and
   stored as their own fields — widget code does not do colour arithmetic either.
 - The app icon is the sole hex exception, mirroring the household favicon rule.
-- egui's own `Visuals` is populated *from* `Theme` in one place, so stock egui widgets agree
-  with custom ones.
+- The toolkit's own default styling is populated *from* `Theme` in one place, so stock
+  widgets agree with custom ones.
 
 ### 4.2 Household → Rust mapping
 
@@ -299,9 +309,10 @@ them.
 
 ## 5. Iconography
 
-The **Iconoir** set (MIT), embedded as an icon font via the `iconflow` crate (K-085,
-reversing this section's earlier hand-drawn-only rule): one consistent, professionally drawn
-family, rendered as glyphs so every icon takes the theme colour exactly like text —
+The **Iconoir** set (MIT), embedded via the `iconoir_flutter` package (K-085 picked the set,
+reversing this section's earlier hand-drawn-only rule; the icon-font `iconflow` crate went
+with the egui shell in K-182): one consistent, professionally drawn
+family, every icon taking the theme colour exactly like text —
 `text_secondary` at rest, `text_primary` on hover, `accent` when active — at 16px for panel
 toolbars, 20px for the transport. **16 is a floor, not a preference** (K-209): an Iconoir
 glyph carries a 1.5-unit stroke on a 24-unit grid, so 16px is the size at which that stroke
@@ -332,9 +343,9 @@ read as *muted siblings* — desaturated, mid-lightness, clearly quieter than `a
 full Timeline looks organised, not carnival. Selection (accent) must visibly beat every one
 of them.
 
-v1 ships an identity colour token for each of the six layer kinds that exist today. The
-`LayerColours` class (`flutter_ui/lib/theme/theme.dart`) carries exactly these six; the
-panels map each layer kind to its token and glyph.
+v1 ships an identity colour token for six layer kinds. The `LayerColours` class
+(`flutter_ui/lib/theme/theme.dart`) carries exactly these six; the panels map each layer
+kind to its token and glyph.
 
 | Layer type | Token | Value | v1 |
 |---|---|---|---|
@@ -345,11 +356,14 @@ panels map each layer kind to its token and glyph.
 | Text layer | `layer.text` | `#8c8468` (parchment) | ✓ |
 | Camera layer | `layer.camera` | `#806f4a` (dry gold) | ✓ |
 
-The seventh kind that exists today, the **Adjustment layer**, has no token of its own in v1:
-it borrows `layer.solid` (neutral) and the Solid glyph, since it renders no source of its own.
-When it earns a distinct identity the natural value is `#8c6b58` (kraft-brown).
+Three further kinds exist today without a token of their own: the **Adjustment layer**
+borrows `layer.solid` (neutral) and the Solid glyph, since it renders no source of its own
+(when it earns a distinct identity the natural value is `#8c6b58`, kraft-brown); the
+**Shape layer** (K-237) and **Null layer** (K-206) likewise borrow — their reserved values
+below stand for when each earns its token.
 
-Reserved for the layer kinds v1 does not yet model (no `LayerKind` variant, no token):
+Reserved values (Shape and Null are modelled but untokened; Audio and Light have no
+`LayerKind` variant yet):
 
 | Layer type | Token | Value |
 |---|---|---|
@@ -380,19 +394,24 @@ Sequence layer show thumbnails/waveforms.
 The cache bar is a thin stripe under the time ruler showing which frames are cached, per
 tier. Cached is *good news* — quiet and cool, never alarming.
 
-Two of Nebula's tiers ship today (the VRAM tier is future, docs/06 §5.6). Both runs draw as a
-2px band beneath the ruler:
+All three of Nebula's tiers ship (K-214, docs/06 §5.6). Every run draws as a 2px band beneath
+the ruler:
 
-| Tier | Token | Value | Meaning |
+| State | Token | Value | Meaning |
 |---|---|---|---|
-| RAM cache | `success` | `#5fcfae` (mint) | in memory, plays right now |
-| Disk cache | `cache_disk` | `#5f93b8` (steel blue) | parked on disk, promotable |
+| Held, this resolution | `success` | `#5fcfae` (mint) | on the card or in memory: plays right now |
+| Held, coarser | `success` at 40% | dimmed mint | held, but would be re-rendered at this size |
+| On disk, this resolution | `cache_disk` | `#5f93b8` (steel blue) | parked on disk, promotable |
+| On disk, coarser | `cache_disk` at 40% | dimmed steel blue | parked, and coarser than shown |
 | Uncached | — | (no bar) | neutral — the normal starting state |
 
 Mint reads as hot (playable now); the disk tier's cooler blue marks frames that are one
-promotion away (docs/06 §5.6). The fuller design — a VRAM tier and tiers differing in *both*
-brightness and fill height, so the bar reads without colour vision — lands with the VRAM cache
-tier and its dedicated tonal ramp; until then the mint/blue hue split carries the distinction.
+promotion away (docs/06 §5.6). The card's tier and memory's share one colour deliberately:
+they answer the same question — *does this frame play now?* — and a frame in memory is one
+upload from the screen. Which of the two holds it is the status line's cache meter's business,
+where each tier has its own bar. The fuller design — tiers differing in *both* brightness and
+fill height, so the bar reads without colour vision — lands with a dedicated tonal ramp; until
+then the mint/blue hue split plus the dimming carries the distinction.
 Per the household no-punishment rule, **uncached is neutral, never alarming** — no amber, no
 red, no pulsing. An uncached timeline is the normal starting state of every project, not a
 failure.
@@ -406,12 +425,34 @@ failure.
   marks the exact exhaustion point, and hovering the span says what it means ("Source ends
   here — holding the last frame"). Warning, not error: the render is well-defined
   (boundary-frame hold), the editor just needs to see it.
+- **Comp markers (shipped, K-254)**: a `marker` token of its own — a plain grey, `#c4c4c4`
+  on a dark scheme and `#565656` on a light one, editable in the theme editor like any other
+  role. Grey rather than a role colour on purpose: a marker says *here*, not *good* or
+  *careful*, and the ruler already spends the accent on the work area. The flag is an 11×12
+  shape with its **point at the top**, centred on the frame it marks so the point sits on the
+  playhead, hanging into the ruler's lower row. What it says rides in a box of the same
+  colour flying from the flag's **centre point**, `caption` weight 400 in `surface_0`,
+  rather than as loose text over the ticks. Flag and box both carry a 1px `surface_0`
+  outline and sit flush with the floor of the ruler. **One marker per frame** — a second
+  dropped on an occupied frame replaces the first, since two flags on one moment are two
+  things to click and one place.
 - **Beat markers**: `marker.beat` = `#aef3e7` (mint) 1px ticks in the ruler with a small
-  triangular head. Manual markers: `marker.manual` = `text_secondary`; span markers draw a
-  hairline-bounded band. Marker labels: mono 11px.
-- **Clip waveforms**: `waveform.rest` = `#5d8a96` (muted steel-cyan) filled envelope at 80%
-  opacity on `surface_2`; on selected clips the envelope brightens to `text_secondary`.
-  Waveforms never render in `accent` — they are content, not state.
+  triangular head — still to come, and it needs a token of its own beside `marker`. Span
+  markers draw a hairline-bounded band.
+- **Clip waveforms (shipped, K-280)**: `waveform.rest` = `#5d8a96` (muted steel-cyan) filled
+  envelope at 80% opacity on `surface_2`, with the RMS core drawn solid inside it; on selected
+  clips the envelope brightens to `text_secondary` (still to come). Waveforms never render in
+  `accent` — they are content, not state, and the lane that did borrow `accent` was corrected
+  when this grouping became real tokens. The **multiwave** stack (K-280, K-284) adds three band
+  colours beside `rest`, drawn **over one another in one lane around one centre line** and so
+  ranked by *brightness* rather than by hue — the bass a dim broad body, the treble bright and
+  thin over it, which is how the reference reads: one silhouette with its inside showing.
+  `waveform.low` `#3c5c66`, `waveform.mid` `#6d9aa6`, `waveform.high` `#d4f0f6` on a dark
+  scheme; on a light one the ramp runs the other way (`#9dbac2` / `#598794` / `#14333c`),
+  because *darker* is what stands out on white. Band strokes are opaque — three softened
+  envelopes over one another blend into a wash and lose the ranking — and only the single wave
+  keeps the 80% envelope with the solid RMS core over it. All four default from the mode
+  rather than being restated per scheme, and all four are editable like any other token.
 
 ### 6.5 Selection, focus, drop targets
 
@@ -423,7 +464,7 @@ failure.
   grab target stays ≥24px wide (§7.2) whatever the head draws.
 - **Focus ring** (the household `ring-clay` equivalent): every focusable control shows a 1px
   `accent` stroke offset 1px outside its bounds when keyboard-focused. Focus is never
-  invisible; egui's `Visuals` focus stroke is set from this token so stock widgets comply.
+  invisible; the toolkit's focus stroke is set from this token so stock widgets comply.
 - **Drop targets** (asset drags, panel docking, clip insertion points): 1.5px dashed `accent`
   border + `accent` @ 10% fill; an insertion caret between clips is a 2px `accent` line. Dock
   previews use the same treatment at panel scale.
@@ -453,6 +494,10 @@ mono while focused.
 ### 7.2 Hit targets (recorded deviation KD-2, = K-116)
 
 - Toolbar, transport, dialog, and Viewer-toolbar controls: ≥44px hit extent (household gate).
+  **The tool strip keeps this across and not down** (K-230): its buttons are 44px wide, which
+  is the axis the row is read and aimed along, in a strip 30px tall. The strip runs the full
+  width of the window, so a 44px band of mostly empty chrome is height taken from the panels
+  underneath for nothing; the 16px icon (§5) still has room around it.
 - Dense-surface controls (Timeline rows, clips, keyframes, curve handles, property lanes,
   cache bar): ≥24px visual extent on the smaller axis, with hit-slop extending the
   interactive region to ≥32px. Keyframes render at 9px but hit-test at 32px with
@@ -476,7 +521,7 @@ section's 4/8/12/16px scale) does not vary by shape; only radius, gap, inset and
 - **The user controls tempo.** Nothing auto-advances, no scroll hijack, no easing applied to
   scroll or zoom. Timeline zoom tracks the wheel/gesture 1:1.
 - Micro-motion (hover fills, panel tab underlines, drawer/menu entrances, drop-target
-  pulses) uses egui's animation utilities with spring-like ease-out, **≤150ms**, transform
+  pulses) uses spring-like ease-out, **≤150ms**, transform
   and opacity only. One signature interaction, per the household budget: the drag ghost —
   clips and assets in flight lag the cursor slightly and settle with a single small
   overshoot on drop.
@@ -485,9 +530,8 @@ section's 4/8/12/16px scale) does not vary by shape; only radius, gap, inset and
   cut), **None** (springs don't mount — animation times set to zero, drag ghosts pin to the
   cursor, drop-target pulses become static fills; the OS's own reduced-motion request maps
   onto this tier). Any meaning carried by motion is also carried by colour or text at every
-  tier. Backed by one lever over egui's own animation timing, so it reaches what egui's
-  internals animate today (collapsing headers, resizable-panel expand/collapse, scrollbar
-  fade, dialog fade-in) — it does not retroactively animate Lumit's own menus/dropdowns, which
+  tier. Backed by one lever over the toolkit's own animation timing, so it reaches what the
+  toolkit animates internally — it does not retroactively animate Lumit's own menus/dropdowns, which
   have no animation of their own yet regardless of this setting.
 - **Playback is not motion.** The Viewer playing at 60fps, scrub feedback, progressive
   preview refinement, and waveform scrolling are *content*, exempt from all of the above,
@@ -513,7 +557,11 @@ section's 4/8/12/16px scale) does not vary by shape; only radius, gap, inset and
 ## 10. Voice and copy
 
 - British English, sentence case, calm, no exclamation marks, no emoji. UI strings go through
-  the i18n table (K-005).
+  the i18n table (K-005) — `flutter_ui/lib/l10n/app_en.arb`, translated on Crowdin (K-303).
+  British English is the source and stays the source; there is no en-US.
+- **A tooltip is a name, not a lesson**: under five words, two where two will do
+  ([07-UI-SPEC.md](07-UI-SPEC.md) §13.2, K-303). Explanation belongs in the settings row's
+  own sentence, in an empty state, or nowhere.
 - The app is **"Lumit"** — never abbreviated in UI. Features use glossary names exactly:
   Retime (not time remap), speed (not velocity), clip (not event), layer (not track), export
   (not render), playhead (not CTI). [01-GLOSSARY.md](01-GLOSSARY.md) §9 is binding for copy.
@@ -598,8 +646,8 @@ Viewer included, cards identically; there is no exemption (an earlier option —
 Viewer flush as a deliberate exception — was considered and rejected: consistency won, and
 K-074's "no top bit" rule is specifically about the tab bar, not panel margins, so it isn't
 affected either way). A stated, permanent limitation: stacked tab-bar containers (a group of
-panels sharing tabs) stay square-cornered under Round — `egui_tiles` 0.12.0's `Behavior` trait
-has no hook to round a tab bar's own container, and patching the crate for this alone isn't
+panels sharing tabs) stay square-cornered under Round — the docking container offers no hook
+to round a tab bar's own container, and patching it for this alone isn't
 planned.
 
 ## 13. New-panel checklist
@@ -623,30 +671,44 @@ The Lumit equivalent of the household §9 checklist. Every new panel or feature 
 10. Works at the dense end: test at minimum row height, minimum panel width, and 125%/150%
     Windows display scaling.
 
-## Brand: the mark and the splash (K-008)
+## Brand: the mark and the splash (K-008, K-251)
 
-**The mark.** A faceted glass form inherited from the project's Kiriko era — a point-up
-hexagon with hairline facet spokes and an inner facet ring, three facets cut in clay that
-read as a K. It predates the Lumit name (K-083) and is due for redesign with the retheme;
-the letterform in particular no longer matches. Files:
-`assets/brand/lumit-mark.svg` (transparent) and `lumit-icon.svg` (dark rounded tile —
-the app icon; with the mark's own colours these are the only permitted hex values outside
-the theme module: facet hairlines `#3d4042`, outline `#5c6165`, clay `#e05a72`, mist fill
-`#22262a→#141618`). The wordmark is the word "Lumit" set in Schibsted Grotesk beside or
-beneath the mark; no custom lettering. The mark MUST also be paintable from theme tokens
-in code (it is pure strokes, no raster assets) so the splash and about box never ship
-image files.
+**The mark: the twin keyframes** (K-251, replacing the Kiriko facet placeholder). Two
+rounded keyframe diamonds side by side, as on a timeline — cool blue on the left,
+violet-magenta on the right — and where they overlap the light goes additive white: a
+white keyframe burning in the middle. Keyframes are motion, the overlap is compositing,
+the white is luminance; the whole program in one glyph. The design followed a corpus
+study of ~1,270 top-chart and editing-app icons (K-251 records the findings): at most
+two hue families, one large glyph, dark tile, and none of the category's burned imagery
+(play button, film strip, clapperboard, lens ring, colour wheel, AI sparkle).
 
-**Status of the current mark: approved placeholder** (owner, 2026-07-13). The destination
-for the brand's artwork is more ambitious, in the owner's words: a **broken-glass look**,
-styled like something out of Persona 5 — hard-edged silhouettes, aggressive shard-shaped
-composition, beautiful graphic stylisation. Direction for the eventual splash art: the
-Lumit mark or a silhouette figure seen through/composed of fractured glass shards, flat
-high-contrast shapes on the dark ramp with clay as the single cutting colour, mist filling
-the negative space. Persona 5 is the energy reference, not a template to copy — no borrowed
-assets or traced compositions; Lumit's own geometry (the hexagonal facet grammar above)
-supplies the shard language. The boot-log splash below ships with the placeholder mark now;
-the art replaces the mark's slot without changing the splash's structure.
+Files, all in `assets/brand/`, all regenerated by `scripts/gen-icons.py`:
+
+| File | Role |
+|---|---|
+| `lumit-mark.svg` | The bare mark, transparent — the Windows/Linux app icon (no tile; the white core is enclosed by the coloured keys, so it survives any background) |
+| `lumit-icon.svg` | The mark on the dark rounded tile — macOS only |
+| `lumit-project.svg` / `.ico` | `.lum` project documents: dark folded-corner file, the twin keys, `LUM` kicker |
+| `lumit-preset.svg` / `.ico` | `.lumfx` presets: same chassis, a single violet key (one applied stack), `LUMFX` kicker |
+| `lumit-theme.svg` / `.ico` | `.lumtheme` colour themes (K-298): same chassis, three overlapping swatches in the two key gradients and the core white — colours rather than keyframes, because that is what the file carries — `THEME` kicker. The centres sit on an equilateral triangle whose circumradius **is** the swatch radius, so all three circles pass through the one point at the centre and share no area — which is what makes them equally visible, each giving up the same lens to each neighbour. They overlap **cyclically**: blue over white, violet over blue, white over violet, which no painting order can produce, so the violet swatch is clipped to outside the white circle instead. Nothing is painted where something else will cover it: a hidden shape still shows its softened edge pixels through the join as a hairline, two quarter-opacity rims stacking read as a blot, and a rim drawn as two arcs meeting end to end leaves a seam |
+
+The SVG sources carry the mark's own palette and are the only permitted hex values
+outside the theme module: keys `#86e2ff→#2f6fe0` (blue) and `#8a70ff→#ff4f9e`
+(violet-magenta), core white/`#eaf4ff`, rim `#0c0e14`, tile `#16181d→#0d0f13`, bloom
+`#b7c6e2`, document chassis `#181b21→#101217`, fold `#272b34`, kicker `#aab6c6`. The
+wordmark is the word "Lumit" set in Schibsted Grotesk beside or beneath the mark; no
+custom lettering. The mark MUST also be paintable from theme-module constants in code
+(four rounded rects and three gradients, no raster assets) so the splash and about box
+never ship image files.
+
+**Splash art direction (unchanged).** The destination for the splash's artwork remains,
+in the owner's words, a **broken-glass look**, styled like something out of Persona 5 —
+hard-edged silhouettes, aggressive shard-shaped composition, beautiful graphic
+stylisation: the mark or a silhouette figure seen through fractured glass shards, flat
+high-contrast shapes on the dark ramp, mist filling the negative space. Persona 5 is the
+energy reference, not a template to copy — no borrowed assets or traced compositions.
+The boot-log splash below ships with the plain mark now; the art replaces the mark's
+slot without changing the splash's structure.
 
 **The splash.** A small frameless window, centred on the monitor (~460×300), surface_0,
 shown while the application boots:
@@ -671,7 +733,7 @@ shown while the application boots:
 
 - **Exact ramp values under real hardware.** §2.1 targets were chosen on paper; they MUST be
   validated on a consumer gaming monitor (the audience's hardware — often wide-gamut,
-  aggressively vivid presets) before being frozen. Does `surface_0` at `#141618` hold up on an
+  aggressively vivid presets) before being frozen. Does `surface_0` at `#0b0c0e` hold up on an
   sRGB laptop panel at low brightness?
 - **Viewer surround options.** Should the neutral-surround slider expose named stops
   (Dark/Mid/Match panel) or a continuous value? Grading convention favours a couple of fixed,
@@ -679,8 +741,8 @@ shown while the application boots:
 - **Layer-type colour user overrides.** AE users expect per-layer label colours. If Lumit
   offers them, the picker SHOULD be a curated muted swatch set derived from §6.1, not a free
   colour wheel — otherwise the Timeline's calm is one preset pack away from destruction.
-- **egui text rendering at 11px.** K-012 flags text polish as a known egui risk; if 11px mono
-  kickers render poorly on Windows ClearType, the dense scale may need to shift to 12/13/14px.
+- **Text rendering at 11px.** K-012 flags text polish as a known risk; if 11px mono kickers
+  render poorly on Windows ClearType, the dense scale may need to shift to 12/13/14px.
   Decide after the first Timeline prototype.
 - **Wide-gamut / HDR Viewer output.** When the Viewer gains HDR output, the neutrality zone
   rules need restating in display-referred terms; the SDR spec here deliberately ignores it.

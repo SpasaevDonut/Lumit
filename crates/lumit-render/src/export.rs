@@ -505,7 +505,6 @@ fn run(
             src as u64,
             crate::plan::Quality::default(),
             1.0,
-            None,
         )?;
         // Letterbox into the delivery frame when the size was changed.
         let (tw, th) = sink.size();
@@ -711,6 +710,7 @@ mod tests {
             background: LinearColour::BLACK,
             work_area: None,
             layers: vec![lumit_core::model::Layer {
+                markers: Vec::new(),
                 id: Uuid::now_v7(),
                 name: "Solid".into(),
                 kind: LayerKind::Solid { def: solid_id },
@@ -723,8 +723,10 @@ mod tests {
                 label: 0,
                 volume_db: lumit_core::anim::Property::zero(),
                 retime: None,
+                interpolation: Default::default(),
                 blend: Default::default(),
                 masks: Vec::new(),
+                paint: Vec::new(),
                 effects: Vec::new(),
                 switches: Switches::default(),
                 extra: serde_json::Map::new(),
@@ -761,7 +763,7 @@ mod tests {
         let cancel = AtomicBool::new(false);
         match run(doc, comp, &[], path, spec, &tx, &cancel) {
             Err(e) if e.starts_with("export renderer:") => {
-                eprintln!("skipping: no GPU adapter");
+                lumit_gpu::no_adapter();
                 None
             }
             other => Some(other),

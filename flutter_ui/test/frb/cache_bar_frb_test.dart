@@ -130,18 +130,18 @@ void main() {
       // about timing rather than about the bar.
     });
 
-    /// Positional keys do not change when the picture does, so a committed edit
-    /// has to drop the composition's frames — otherwise the bar would promise a
-    /// frame that is no longer what the document says.
+    /// **An edit that cannot change a pixel must not empty the bar (K-178).**
     ///
-    /// A *rename* is used deliberately, because it is the case that shows what
-    /// this costs: renaming a layer cannot change a single pixel, and every held
-    /// frame is retired anyway. That is the K-178 regret, and the reason the
-    /// content-hash keying in docs/TODO.md is still worth doing — but a cache
-    /// that lies is worse than one that is cold.
-    testWidgets('an edit empties the bar for that composition', (tester) async {
+    /// A rename is the case that used to show what positional keying cost:
+    /// renaming a layer changes no pixel, and every held frame of the
+    /// composition was retired anyway, so the stripe went blank on a keystroke.
+    /// Frames are named by a hash of their content now, so the rename produces
+    /// the same names and the bar stays exactly as it was — which is the
+    /// behaviour this whole tier stack exists for. Fails against the old
+    /// invalidate-everything commit hook.
+    testWidgets('a rename leaves the bar alone', (tester) async {
       final p = freshProject();
-      final comp = p.state.project!.newComposition(name: 'Scene');
+      final comp = _stampComp(p.state.project!, 'Scene');
       final layer = comp.addSolidLayer();
       final other = p.state.project!.newComposition(name: 'Other');
       p.uiState.setSelectedComp(comp);
@@ -162,7 +162,7 @@ void main() {
       await settleFrb(
         tester,
         minRounds: 20,
-        maxRounds: 200,
+        maxRounds: 400,
         until: () =>
             comp.cachedFrames(
                 frames: BigInt.from(4), scale: p.uiState.viewerScale)[0] !=
@@ -175,15 +175,20 @@ void main() {
       );
 
       layer.rename(name: 'Renamed');
+      // The strip is a published mirror the worker refreshes, so give it a turn
+      // to recompute after the commit — the point being that when it does, the
+      // frame is still held.
+      await settleFrb(tester, minRounds: 20, maxRounds: 200);
       expect(
-        comp.cachedFrames(frames: BigInt.from(4), scale: p.uiState.viewerScale),
-        everyElement(0),
-        reason: 'the edit retired this composition\'s frames',
+        comp.cachedFrames(
+            frames: BigInt.from(4), scale: p.uiState.viewerScale)[0],
+        2,
+        reason: 'a rename cannot change a pixel, so the frame is still held',
       );
       expect(
         other.cachedFrames(frames: BigInt.from(4), scale: 1.0),
         everyElement(0),
-        reason: 'and never held any of the other one\'s',
+        reason: 'and the other composition never held any',
       );
     });
 
@@ -338,23 +343,22 @@ void main() {
       });
     });
 
-    /// **A commit that lands while the worker is parked must not be served from
-    /// the caches it retired.** The worker's caches are position-keyed, so a
-    /// commit drops them; it used to do that at the top of its loop turn, which
-    /// for an idle worker is *before* the request the commit provoked. The
-    /// render was then answered from the pre-edit cache and left there —
-    /// toggling a layer's visibility showed the old picture until the playhead
-    /// moved. The engine counts such a serve; the count must not move.
-    testWidgets('an edit is never served from the caches it retired',
-        (tester) async {
+    /// **An undo comes back to a warm cache (K-178).** This is the other half of
+    /// content keying, and the one a user feels most: make a change, dislike it,
+    /// undo — and the frames from before the change are still filed under the
+    /// names the restored document asks for, so nothing has to be rendered again.
+    ///
+    /// Under positional keying both the edit and the undo emptied the cache, so
+    /// an undo meant caching the whole work area from scratch. There is no
+    /// counter for "did not re-render" — the observable is that the bar is green
+    /// again immediately, without waiting for a fill.
+    ///
+    /// (This replaces a test that guarded a race the design has removed: a
+    /// commit landing while the worker was parked used to be served from the
+    /// caches that commit had retired. With nothing retired on commit, there is
+    /// no wrong side of the invalidation to be on.)
+    testWidgets('an undo finds its frames still held', (tester) async {
       final p = freshProject();
-      // A third of a second of comp, so the idle fill runs out of frames to
-      // bank quickly. That matters: with frames left to fill the worker comes
-      // back round its loop every couple of milliseconds and syncs its caches
-      // on the way, which hides the race. An idle editor with a warm playhead —
-      // the state a user is in when they click the eye — parks for 200 ms at a
-      // time, and every commit inside one of those parks used to be served
-      // stale.
       final comp = _stampComp(p.state.project!, 'Scene',
           duration: const BridgeRational(num: 1, den: 3));
       final layer = comp.addSolidLayer();
@@ -367,21 +371,30 @@ void main() {
         size: const Size(700, 500),
       ));
       await tester.pump();
-      // Let the first frame render, the fill finish the handful of frames this
-      // comp has, and the worker settle into its long park — the state the race
-      // needs.
-      await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 2500)));
+      List<int> tiers() => comp.cachedFrames(
+          frames: BigInt.from(4), scale: p.uiState.viewerScale);
+      await settleFrb(
+        tester,
+        minRounds: 20,
+        maxRounds: 400,
+        until: () => tiers()[0] != 0,
+      );
+      expect(tiers()[0], 2, reason: 'the shown frame is held');
 
-      final before = cacheStats().staleServes;
-      // Hide the layer: a commit, then the frame request it provokes.
+      // A real edit: the picture changes, so the frame is renamed and the bar
+      // goes cold for it (nothing was thrown away — the old frame is still
+      // there under its own name, which is the next assertion).
       layer.setSwitch(switch_: BridgeLayerSwitch.visible, on_: false);
-      p.uiState.requestFrame();
-      await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 600)));
+      await settleFrb(tester, minRounds: 20, maxRounds: 200);
 
-      expect(cacheStats().staleServes, before,
-          reason: 'the worker served a frame from caches the edit had retired');
+      p.state.project!.undo();
+      await settleFrb(tester, minRounds: 20, maxRounds: 200);
+      expect(
+        tiers()[0],
+        2,
+        reason: 'the undone document asks for the name it asked for before, '
+            'and the frame is still held',
+      );
     });
 
     /// **A budget set before the worker existed still reaches the cache.** The
@@ -425,6 +438,65 @@ void main() {
     /// and the ones in the way were far off and stale. What it keeps now is a
     /// window around the playhead — so the frames near where you *are* end up
     /// held and the ones near where you *were* are the ones evicted for them.
+    /// **A frame held in memory climbs back onto the card on its own.**
+    ///
+    /// The rungs of the ladder used to be climbed at the moment a frame was
+    /// wanted — inside the turn that had to produce it. The climb from memory is
+    /// only an upload, but it was paid out of that frame's budget instead of out
+    /// of the slack the idle fill and the ring exist to bank. It is done in
+    /// advance now (`line_up_frame`), and this pins the visible consequence: a
+    /// frame pushed off the card and held in memory comes *back* to the card
+    /// without anything asking for it, and without being composited again.
+    testWidgets('a frame held in memory is put back on the card on its own',
+        (tester) async {
+      final p = freshProject();
+      final comp = _stampComp(p.state.project!, 'Scene');
+      p.uiState.setSelectedComp(comp);
+
+      // Room for two frames, so banking a few pushes the earlier ones off the
+      // card and into memory — which is the state this test is about.
+      const room = (160 * 90 * 4 + 64) * 2;
+      setVramCacheBudget(bytes: BigInt.from(room));
+      addTearDown(() => setVramCacheBudget(bytes: BigInt.from(512 << 20)));
+
+      await tester.pumpWidget(hostPanel(
+        child: const ViewerPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(700, 500),
+      ));
+      await tester.pump();
+
+      List<int> tiers() =>
+          comp.cachedFrames(frames: BigInt.from(40), scale: 1.0);
+
+      // Let the fill work around frame 0 until the frames near it are banked
+      // and the ones behind have been pushed down into memory.
+      await tester.runAsync(() async {
+        for (var i = 0; i < 80; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          if (tiers()[1] == 2 && tiers()[2] == 2) return;
+        }
+        fail('the fill never warmed the frames around frame 0');
+      });
+
+      // Everything the fill has touched reads as held — on the card or one
+      // upload away, which is what tier 2 means. The point is that it STAYS
+      // that way while the fill carries on displacing things: a frame that
+      // falls to memory is climbed back up rather than re-rendered, so the bar
+      // never goes backwards.
+      final held = tiers().where((t) => t == 2).length;
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 600)));
+      expect(
+        tiers().where((t) => t == 2).length,
+        greaterThanOrEqualTo(held),
+        reason: 'frames that fell to memory were climbed back, not lost',
+      );
+      expect(cacheStats().entries.toInt(), greaterThan(0),
+          reason: 'and memory is holding the ones that left the card');
+    });
+
     testWidgets('the fill follows the playhead even when the cache is full',
         (tester) async {
       final p = freshProject();
@@ -473,11 +545,24 @@ void main() {
         fail('a full cache banked nothing around the new playhead');
       });
 
-      // And what made room is the far side: the old neighbourhood is gone,
-      // which is the whole point of a window that follows.
+      // And what made room is the far side — but "made room" no longer means
+      // "lost". **This is the demotion ladder end to end** (docs/06 §5.1, §5.3):
+      // each frame evicted from the card is read back into memory and parked on
+      // disk, so the old neighbourhood is still held — green, because a frame in
+      // memory is one upload from the screen rather than a re-composite. Before
+      // the ladder these frames were simply dropped and the two tiers below the
+      // card were bookkeeping with nothing in them.
       final held = tiers();
-      expect(held[1], 0, reason: 'the frames by the old position were evicted');
-      expect(held[2], 0);
+      expect(held[1], 2, reason: 'evicted from the card, not thrown away');
+      expect(held[2], 2);
+      expect(cacheStats().entries.toInt(), greaterThan(0),
+          reason: 'the frames that left the card were read back into memory');
+      // The disk side of the same hand-off is proven in Rust
+      // (`diskio::tests`, and `headless::tests` for the read-back), not here:
+      // the disk numbers this process can see belong to whichever render worker
+      // published last, and a test file keeps one worker per project alive, so
+      // asserting on them here would be asserting on which worker spoke most
+      // recently.
     });
 
     /// The idle fill (K-187): show a frame, leave the engine alone for a
@@ -488,6 +573,12 @@ void main() {
     testWidgets('the idle fill warms frames around the playhead',
         (tester) async {
       final p = freshProject();
+      // Nothing measured here: a measured frame is deliberately composited
+      // rather than served from a tier (K-276), which is the opposite of what
+      // this test is about and enough extra work under a loaded runner to eat
+      // the fill's window.
+      p.uiState.renderTimings.setMeasuring(false);
+      addTearDown(() => p.uiState.renderTimings.setMeasuring(true));
       final comp = p.state.project!.newComposition(name: 'Scene');
       // A postage-stamp comp, because the question is whether the fill *banks*
       // frames, not how fast a machine can composite one. At the default

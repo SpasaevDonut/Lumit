@@ -899,6 +899,7 @@ extension BridgeParamKindPatterns on BridgeParamKind {
   @optionalTypeArgs
   TResult maybeMap<TResult extends Object?>({
     TResult Function(BridgeParamKind_Float value)? float,
+    TResult Function(BridgeParamKind_Int value)? int,
     TResult Function(BridgeParamKind_Choice value)? choice,
     TResult Function(BridgeParamKind_Bool value)? bool,
     TResult Function(BridgeParamKind_Colour value)? colour,
@@ -911,6 +912,8 @@ extension BridgeParamKindPatterns on BridgeParamKind {
     switch (_that) {
       case BridgeParamKind_Float() when float != null:
         return float(_that);
+      case BridgeParamKind_Int() when int != null:
+        return int(_that);
       case BridgeParamKind_Choice() when choice != null:
         return choice(_that);
       case BridgeParamKind_Bool() when bool != null:
@@ -944,6 +947,7 @@ extension BridgeParamKindPatterns on BridgeParamKind {
   @optionalTypeArgs
   TResult map<TResult extends Object?>({
     required TResult Function(BridgeParamKind_Float value) float,
+    required TResult Function(BridgeParamKind_Int value) int,
     required TResult Function(BridgeParamKind_Choice value) choice,
     required TResult Function(BridgeParamKind_Bool value) bool,
     required TResult Function(BridgeParamKind_Colour value) colour,
@@ -955,6 +959,8 @@ extension BridgeParamKindPatterns on BridgeParamKind {
     switch (_that) {
       case BridgeParamKind_Float():
         return float(_that);
+      case BridgeParamKind_Int():
+        return int(_that);
       case BridgeParamKind_Choice():
         return choice(_that);
       case BridgeParamKind_Bool():
@@ -985,6 +991,7 @@ extension BridgeParamKindPatterns on BridgeParamKind {
   @optionalTypeArgs
   TResult? mapOrNull<TResult extends Object?>({
     TResult? Function(BridgeParamKind_Float value)? float,
+    TResult? Function(BridgeParamKind_Int value)? int,
     TResult? Function(BridgeParamKind_Choice value)? choice,
     TResult? Function(BridgeParamKind_Bool value)? bool,
     TResult? Function(BridgeParamKind_Colour value)? colour,
@@ -996,6 +1003,8 @@ extension BridgeParamKindPatterns on BridgeParamKind {
     switch (_that) {
       case BridgeParamKind_Float() when float != null:
         return float(_that);
+      case BridgeParamKind_Int() when int != null:
+        return int(_that);
       case BridgeParamKind_Choice() when choice != null:
         return choice(_that);
       case BridgeParamKind_Bool() when bool != null:
@@ -1031,6 +1040,13 @@ extension BridgeParamKindPatterns on BridgeParamKind {
             double? hardMin, double? hardMax)?
         float,
     TResult Function(
+            PlatformInt64 default_,
+            PlatformInt64 sliderMin,
+            PlatformInt64 sliderMax,
+            PlatformInt64? hardMin,
+            PlatformInt64? hardMax)?
+        int,
+    TResult Function(
             List<String> options, int default_, Uint32List dividersAfter)?
         choice,
     TResult Function(bool default_)? bool,
@@ -1044,6 +1060,9 @@ extension BridgeParamKindPatterns on BridgeParamKind {
     switch (_that) {
       case BridgeParamKind_Float() when float != null:
         return float(_that.default_, _that.sliderMin, _that.sliderMax,
+            _that.hardMin, _that.hardMax);
+      case BridgeParamKind_Int() when int != null:
+        return int(_that.default_, _that.sliderMin, _that.sliderMax,
             _that.hardMin, _that.hardMax);
       case BridgeParamKind_Choice() when choice != null:
         return choice(_that.options, _that.default_, _that.dividersAfter);
@@ -1081,6 +1100,13 @@ extension BridgeParamKindPatterns on BridgeParamKind {
             double sliderMax, double? hardMin, double? hardMax)
         float,
     required TResult Function(
+            PlatformInt64 default_,
+            PlatformInt64 sliderMin,
+            PlatformInt64 sliderMax,
+            PlatformInt64? hardMin,
+            PlatformInt64? hardMax)
+        int,
+    required TResult Function(
             List<String> options, int default_, Uint32List dividersAfter)
         choice,
     required TResult Function(bool default_) bool,
@@ -1094,6 +1120,9 @@ extension BridgeParamKindPatterns on BridgeParamKind {
     switch (_that) {
       case BridgeParamKind_Float():
         return float(_that.default_, _that.sliderMin, _that.sliderMax,
+            _that.hardMin, _that.hardMax);
+      case BridgeParamKind_Int():
+        return int(_that.default_, _that.sliderMin, _that.sliderMax,
             _that.hardMin, _that.hardMax);
       case BridgeParamKind_Choice():
         return choice(_that.options, _that.default_, _that.dividersAfter);
@@ -1128,6 +1157,13 @@ extension BridgeParamKindPatterns on BridgeParamKind {
             double? hardMin, double? hardMax)?
         float,
     TResult? Function(
+            PlatformInt64 default_,
+            PlatformInt64 sliderMin,
+            PlatformInt64 sliderMax,
+            PlatformInt64? hardMin,
+            PlatformInt64? hardMax)?
+        int,
+    TResult? Function(
             List<String> options, int default_, Uint32List dividersAfter)?
         choice,
     TResult? Function(bool default_)? bool,
@@ -1140,6 +1176,9 @@ extension BridgeParamKindPatterns on BridgeParamKind {
     switch (_that) {
       case BridgeParamKind_Float() when float != null:
         return float(_that.default_, _that.sliderMin, _that.sliderMax,
+            _that.hardMin, _that.hardMax);
+      case BridgeParamKind_Int() when int != null:
+        return int(_that.default_, _that.sliderMin, _that.sliderMax,
             _that.hardMin, _that.hardMax);
       case BridgeParamKind_Choice() when choice != null:
         return choice(_that.options, _that.default_, _that.dividersAfter);
@@ -1269,6 +1308,113 @@ class _$BridgeParamKind_FloatCopyWithImpl<$Res>
           ? _self.hardMax
           : hardMax // ignore: cast_nullable_to_non_nullable
               as double?,
+    ));
+  }
+}
+
+/// @nodoc
+
+class BridgeParamKind_Int extends BridgeParamKind {
+  const BridgeParamKind_Int(
+      {required this.default_,
+      required this.sliderMin,
+      required this.sliderMax,
+      this.hardMin,
+      this.hardMax})
+      : super._();
+
+  final PlatformInt64 default_;
+  final PlatformInt64 sliderMin;
+  final PlatformInt64 sliderMax;
+  final PlatformInt64? hardMin;
+  final PlatformInt64? hardMax;
+
+  /// Create a copy of BridgeParamKind
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $BridgeParamKind_IntCopyWith<BridgeParamKind_Int> get copyWith =>
+      _$BridgeParamKind_IntCopyWithImpl<BridgeParamKind_Int>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is BridgeParamKind_Int &&
+            (identical(other.default_, default_) ||
+                other.default_ == default_) &&
+            (identical(other.sliderMin, sliderMin) ||
+                other.sliderMin == sliderMin) &&
+            (identical(other.sliderMax, sliderMax) ||
+                other.sliderMax == sliderMax) &&
+            (identical(other.hardMin, hardMin) || other.hardMin == hardMin) &&
+            (identical(other.hardMax, hardMax) || other.hardMax == hardMax));
+  }
+
+  @override
+  int get hashCode => Object.hash(
+      runtimeType, default_, sliderMin, sliderMax, hardMin, hardMax);
+
+  @override
+  String toString() {
+    return 'BridgeParamKind.int(default_: $default_, sliderMin: $sliderMin, sliderMax: $sliderMax, hardMin: $hardMin, hardMax: $hardMax)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $BridgeParamKind_IntCopyWith<$Res>
+    implements $BridgeParamKindCopyWith<$Res> {
+  factory $BridgeParamKind_IntCopyWith(
+          BridgeParamKind_Int value, $Res Function(BridgeParamKind_Int) _then) =
+      _$BridgeParamKind_IntCopyWithImpl;
+  @useResult
+  $Res call(
+      {PlatformInt64 default_,
+      PlatformInt64 sliderMin,
+      PlatformInt64 sliderMax,
+      PlatformInt64? hardMin,
+      PlatformInt64? hardMax});
+}
+
+/// @nodoc
+class _$BridgeParamKind_IntCopyWithImpl<$Res>
+    implements $BridgeParamKind_IntCopyWith<$Res> {
+  _$BridgeParamKind_IntCopyWithImpl(this._self, this._then);
+
+  final BridgeParamKind_Int _self;
+  final $Res Function(BridgeParamKind_Int) _then;
+
+  /// Create a copy of BridgeParamKind
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? default_ = null,
+    Object? sliderMin = null,
+    Object? sliderMax = null,
+    Object? hardMin = freezed,
+    Object? hardMax = freezed,
+  }) {
+    return _then(BridgeParamKind_Int(
+      default_: null == default_
+          ? _self.default_
+          : default_ // ignore: cast_nullable_to_non_nullable
+              as PlatformInt64,
+      sliderMin: null == sliderMin
+          ? _self.sliderMin
+          : sliderMin // ignore: cast_nullable_to_non_nullable
+              as PlatformInt64,
+      sliderMax: null == sliderMax
+          ? _self.sliderMax
+          : sliderMax // ignore: cast_nullable_to_non_nullable
+              as PlatformInt64,
+      hardMin: freezed == hardMin
+          ? _self.hardMin
+          : hardMin // ignore: cast_nullable_to_non_nullable
+              as PlatformInt64?,
+      hardMax: freezed == hardMax
+          ? _self.hardMax
+          : hardMax // ignore: cast_nullable_to_non_nullable
+              as PlatformInt64?,
     ));
   }
 }

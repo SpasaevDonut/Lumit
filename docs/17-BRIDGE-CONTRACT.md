@@ -46,10 +46,8 @@ crates/lumit-core, -project,    the engine (unchanged by the bridge)
     [05-ARCHITECTURE.md](05-ARCHITECTURE.md) - engine crates never know the UI
     exists - is unbroken. The bridge is not an engine crate; it is the seam.
 - The Viewer render path goes through `lumit-render`'s headless renderer
-    (`lumit_render::headless`), an **engine** crate the egui frontend drives too.
-    Until K-178 that compositor lived inside `lumit-ui` and the bridge had to depend
-    on the egui frontend to reach it - a deliberate temporary edge logged as K-175,
-    now retired. The bridge depends on no frontend at all.
+    (`lumit_render::headless`), an **engine** crate. The bridge depends on no
+    frontend at all (K-178 retired the last such edge).
 - Long-running work (decode, export, beat detection) runs on worker threads with
     channels inside the engine; the bridge exposes progress through poll functions
     the frontend calls on a cadence.
@@ -83,14 +81,9 @@ undo step:
     pixels without producing a hundred commits, journal writes and undo entries.
     Only the release commits.
 
-The predecessor — a hand-written `extern "C"` surface passing whole documents as
-JSON text — was deleted once every panel had moved across (K-179). Its shape
-explains the two rules above: it is exactly what they exist to avoid.
-
 ### The four binding rules
 
-These are the contract. Three of them survived the change of transport unchanged
-(K-179); the fourth did not, and the difference matters.
+These are the contract.
 
 1. **No panic crosses the boundary.** A panic must never unwind into Dart —
     unwinding across languages is undefined behaviour
@@ -118,10 +111,9 @@ These are the contract. Three of them survived the change of transport unchanged
     notified *after* the store's own lock is dropped, because it crosses into
     Dart and a lock held across that boundary is forbidden.
 
-4. **The library is required, not optional.** The previous transport bound
-    symbols by name and degraded to placeholder behaviour when the `.dll` was
-    absent; flutter_rust_bridge compares a content hash at start-up and refuses
-    to run against a mismatched or missing library. So `cargo build -p
+4. **The library is required, not optional.** flutter_rust_bridge compares a
+    content hash at start-up and refuses to run against a mismatched or missing
+    library; there is no degraded placeholder mode. So `cargo build -p
     lumit_bridge` is a build dependency of the Flutter tests, and a stale library
     fails loudly rather than misbehaving quietly. Widget tests therefore drive
     the **real engine** — see `flutter_ui/test/frb/frb_test_support.dart` for why
@@ -152,6 +144,14 @@ other side of this boundary.
     only that subtree rebuilds. This is the whole difference from the previous
     transport, which returned a refreshed snapshot of the entire document after
     every edit.
+- **A capability is not document state, and reads as its own answer.** Most reads
+    ask the document; a few ask the *machine*, and the two must not be conflated.
+    `ProjectReference::anti_aliasing` returns what the project asks for;
+    `anti_aliasing_in_use` returns what this graphics card will actually give
+    (K-274, K-286). Keeping them as two calls is what lets a limited adapter be
+    reported without rewriting the project — and the capability read takes no
+    engine lock, because a panel asking what the card can do must never queue
+    behind a frame.
 - **Rational time crosses as integers.** Frame counts and rates cross as exact
     `{num, den}` pairs or integer frame indices derived from a composition's own
     frame rate, never as floating-point seconds
@@ -159,6 +159,17 @@ other side of this boundary.
     `CompositionReference::time_of_frame`/`frame_at_time` exist so no frontend
     has to do that arithmetic itself: at 29.97 fps a frame is 1001/30000 s, and a
     keyframe placed in floating point does not land on the frame it was set on.
+- **Keyframe times cross on the composition's clock (K-213).** The engine keys every
+    animatable property in the layer's **own** time — comp time less its `start_offset` —
+    which is what makes a layer's animation travel with it when it is moved. The frontend
+    thinks in comp frames: that is what the ruler counts, what a lane draws against, and
+    what a key drag commits. So the seam converts, in both directions, by the owning
+    layer's `start_offset`: `BridgeScalar::read_at` carries a key out to comp time,
+    `animation_at` carries it back. Both take the offset as an argument rather than
+    defaulting it, so a new reader cannot forget one. Anything crossing with keyframes in
+    it — the whole transform, a Retime property, an effect parameter, a camera's zoom, a
+    volume curve, a staged `BridgeEffectInstance` — carries the same conversion. Read raw,
+    every key on a layer that had been moved drew at the start of the composition.
 
 ### Versioning
 
@@ -190,17 +201,78 @@ path, documented beside the types in
     surface plus its size (an NT handle there, an `IOSurfaceID` here). Only
     Linux needs more (fd, stride, offset, DRM format).
 - **Small stills still cross as pixels**, deliberately: footage thumbnails
-    (`BridgeRenderedFrame`) and the 256×256 scope traces. Both are bounded and
-    rare, which is what makes the per-byte codec tolerable there.
+    (`BridgeRenderedFrame`), the 256×256 scope traces, and the dropper's
+    129×129 windows (`BridgeSampledPixels`, K-210 — 66 KiB). All are bounded and
+    rare, which is what makes the per-byte codec tolerable there. A window is a
+    *reading*, not a picture: it answers "what is around this pixel", and the
+    size cap is enforced engine-side (`worker_thread::cut_patch`, `MAX_WINDOW`)
+    rather than trusted from the caller, so no request can turn this into a
+    frame transport by the back door. It is deliberately **bigger than the nine
+    pixels the magnifier shows**: the frontend reads its grid out of the window
+    it already holds, so following the pointer costs no calls at all and a read
+    happens only when the pointer nears the window's edge. The request names a
+    **fraction of the picture**, not a pixel, and the reply says which raster it
+    cut from: the engine may be working at preview resolution, so neither side
+    can name a pixel in the other's grid.
+- **Readings ride the frame stream and have their own lane.** A scope trace
+    (`WorkerResponse::Scope`) and a dropper patch (`WorkerResponse::Sampled`)
+    come back on the worker's one response stream, so neither needs a second
+    channel. In the worker's drain policy each is its own class: a frame, a
+    trace and a patch are three different questions, and none may supersede
+    another — only its own kind, where the newest wins (a pointer that has moved
+    on makes the previous position worthless).
+- **Instrumentation rides it too (K-276).** Two further messages come back on the
+    same stream, both small and both about a frame rather than being one:
+    `WorkerResponse::RenderProgress` (`BridgeRenderProgress`: frame, stage code,
+    0..1 fraction, and a `done` flag) says how far the frame the user is waiting
+    on has got, and `WorkerResponse::FrameProfile` (`BridgeFrameProfile`: the
+    frame, its total, and per-layer/per-effect milliseconds with ids as strings)
+    says what a measured frame cost. Two rules bound them. **Progress is sent
+    only for a frame someone is waiting on** — the worker turns it on around the
+    interactive render paths and off again, so playback, the idle cache fill and
+    scope traces are silent — and the *worker*, not the engine, sends the closing
+    `done`, so a frame that faults or is served from the cache still ends its
+    own bar. **Timings are sent only while the frontend has asked for them**
+    (`api::cache::set_render_profiling`, read per frame): measuring fences the
+    graphics card at each node, so an unasked-for frame costs exactly what it
+    did before this existed.
+
+## Display text crosses the bridge in English (K-303)
+
+Some of what the bridge sends is meant to be read by a person: `BridgeEffectInfo`'s
+`label` and `category_label`, the parameter and choice labels in an effect's schema, and
+the keymap's `description` and context headings. **These stay British English on the wire
+and are always sent alongside the stable id they belong to** (`match_name`, the parameter
+`id`, the action id). The engine has no notion of a language and is not being given one.
+
+The frontend translates them on arrival, by looking the English text up in
+`flutter_ui/lib/l10n/engine_labels.dart`. Two consequences bind anything added here:
+
+- **A new display string in the engine needs a matching entry in that table**, in the same
+  commit. `flutter_ui/test/l10n/engine_labels_test.dart` reads the Rust sources and fails
+  otherwise, so it cannot be forgotten quietly.
+- **Build a display string with `format!` and it cannot be translated**, because the
+  lookup is by whole text. Send the pieces and let the frontend assemble them, or give the
+  string a stable id of its own.
+
+Nothing else the bridge sends is display text: a layer name, a comp name, a file path and
+a preset name are the *user's* words, and are passed through untouched.
 
 ## Feature gates
 
 - **`media`** (default on) pulls `lumit-media` (FFmpeg) for probing and decoding.
     Without it, footage does not probe and thumbnails are absent.
-- **Note.** `--no-default-features` does **not** currently build: the render
-    worker is part of the API surface, which is deliberately identical whatever
-    the features are so the generated Dart is one shape everywhere. Recorded in
-    [TODO.md](TODO.md).
+- **Note.** `--no-default-features` builds and tests (K-273). It is **not** a
+    build without FFmpeg: `lumit-render` and `lumit-audio` depend on
+    `lumit-media` unconditionally and the bridge depends on both, so the library
+    is still linked. The feature governs the bridge's own decode paths. The API surface is
+    identical whatever the features are — the generated Dart is one shape
+    everywhere — so a function never *disappears* with a feature: it stays
+    compiled and its body degrades. Beat detection is the shape to copy: always
+    present, and `NoAudioPipeline` on a build with no audio pipeline. What a
+    media-less build actually loses is decoding — no probe, no thumbnails, no
+    waveform peaks, and the decode-ahead thread drains its queue without
+    producing anything — never a call that is not there.
 - **`render`** (default on) enables the composited-comp Viewer path and export
 through the headless seam.
 - **`shared-texture`**, **`shared-texture-linux`**, **`shared-texture-macos`**
@@ -220,14 +292,15 @@ that read-back is gone.
     `lumit-eval`'s realtime controller (K-171); the frontend reads the current tier
     and scale back through `api::shell::playback_tier` to drive the Auto
     resolution setting.
+    **The Viewer does not ask.** Each published frame carries the tier it was made
+    at (`BridgeSharedFrameInfo::tier`), thus the two places that show the tier are
+    given it. They asked for it in their `build()` before, which is one call across
+    the boundary for each of them for each frame of playback. The transport is the
+    same shape of question and gets the same answer: it reports what the build
+    compiled to, thus the frontend reads it once and keeps it.
 - **Known synchronous seams** (probing on import, beat detection) still run on the
 calling thread and are honest follow-ups in [TODO.md](TODO.md); they function
 today, the conversion is a threading refactor, not a missing capability.
 
-## See also
-
-- [05-ARCHITECTURE.md](05-ARCHITECTURE.md) - crates, threads, the dependency rule.
-- [06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md) - how a frame is produced.
-- [GUIDE.md](GUIDE.md) - the plain-English tour of the codebase.
-- [archive/flutter-port/](archive/flutter-port/) - the historical record of the
-    egui-to-Flutter port that produced this seam (frozen; not maintained).
+The historical record of the port that produced this seam is frozen in
+[archive/flutter-port/](archive/flutter-port/).

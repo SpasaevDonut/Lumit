@@ -24,6 +24,8 @@ pub enum OpError {
     InvalidSpan,
     #[error("invalid parent: would form a cycle, self-parent, or unknown layer")]
     InvalidParent,
+    #[error("the layer is locked")]
+    LayerLocked,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -86,6 +88,25 @@ pub enum Op {
         comp: Uuid,
         layer: Uuid,
         masks: Vec<crate::mask::Mask>,
+    },
+    /// Replace a layer's whole paint stroke list (docs/03 §7.1, K-227).
+    ///
+    /// The whole list, exactly invertible, exactly as `SetLayerMasks` is: a
+    /// stroke added, deleted, recoloured or renamed is one shape of edit and one
+    /// undo step. A stroke is a gesture and gestures arrive whole.
+    SetLayerPaint {
+        comp: Uuid,
+        layer: Uuid,
+        strokes: Vec<crate::paint::PaintStroke>,
+    },
+    /// Replace a shape layer's whole contents (docs/03 §7.2, K-237).
+    ///
+    /// The whole list, exactly invertible, like `SetLayerMasks` and
+    /// `SetLayerPaint`: vector art arrives and changes as a whole.
+    SetShapeContents {
+        comp: Uuid,
+        layer: Uuid,
+        contents: Vec<crate::shape::ShapeItem>,
     },
     /// Replace a layer's whole effect stack (docs/03 §8; coarse + exactly
     /// invertible like SetLayerMasks — add/remove/reorder/param edits all
@@ -186,6 +207,13 @@ pub enum Op {
         comp: Uuid,
         markers: Vec<crate::markers::Marker>,
     },
+    /// Replace a layer's own marker list (docs/03 §11) — coarse-grained and
+    /// trivially invertible, exactly like [`Op::SetCompMarkers`].
+    SetLayerMarkers {
+        comp: Uuid,
+        layer: Uuid,
+        markers: Vec<crate::markers::Marker>,
+    },
     SetLayerBlend {
         comp: Uuid,
         layer: Uuid,
@@ -240,11 +268,17 @@ pub enum Op {
         layer: Uuid,
         retime: Option<crate::anim::Property>,
     },
-    /// Replace a Footage layer's Retime map (None = play at source rate).
-    SetLayerRetime {
+    /// Set how a layer's fractional source moments become pixels — nearest,
+    /// blend or flow (docs/04-RETIMING.md §10).
+    ///
+    /// A render policy, independent of the retime map, which is why it is its
+    /// own op rather than part of `SetRetimeProperty`: changing how in-betweens
+    /// are made must not touch the map, and un-retimed layers have the setting
+    /// too.
+    SetLayerInterpolation {
         comp: Uuid,
         layer: Uuid,
-        retime: Option<crate::retime::Retime>,
+        interpolation: crate::retime::Interpolation,
     },
     /// Several ops as one undo step (e.g. "create Solids folder + solid +
     /// layer"). Applied in order; the inverse is the reversed inverses. If a
@@ -263,6 +297,27 @@ pub enum Op {
     SetAutoFolder {
         kind: AutoFolderKind,
         folder: Option<Uuid>,
+    },
+    /// Set (or clear) this project's own cache location — where *its* rendered
+    /// frames are parked, overriding the application-wide choice (docs/06 §5.4).
+    ///
+    /// An op like any other, so it is undoable, journalled and saved with the
+    /// project. It changes no pixel: the frames a cache holds are named by their
+    /// content, and where they are kept is not part of that name, so moving the
+    /// folder costs nothing already cached elsewhere.
+    SetCacheLocation {
+        location: Option<crate::model::CacheLocation>,
+    },
+    /// Set how hard the renderer works at the edges of transformed layers
+    /// (K-274, docs/impl/anti-aliasing.md).
+    ///
+    /// An op like any other — undoable, journalled and saved with the project —
+    /// because it is a property of the project rather than a preference: it
+    /// changes what the comp looks like, in the preview and in the export
+    /// alike, so it has to travel in the file and be undoable like any other
+    /// change to the picture.
+    SetAntiAliasing {
+        anti_aliasing: crate::model::AntiAliasing,
     },
     /// Edit a composition's settings after creation (AE: Composition
     /// Settings). Layers keep their spans; a shorter duration simply clips
@@ -293,7 +348,86 @@ pub enum AutoFolderKind {
 }
 
 /// Apply `op` to `doc`, returning the exact inverse operation.
+/// The `(comp, layer)` a lock would protect this op from, or `None` when the
+/// lock has nothing to say about it.
+///
+/// **Lock protects the work, not the housekeeping.** A locked layer refuses
+/// every edit to what it *is* — its transform, effects, masks, paint, art,
+/// text, clips, markers, blend, matte, parent, retime, volume, switches, its
+/// span, its place in the stack and its existence. It still accepts the three
+/// that are about the Timeline's own bookkeeping rather than the composition:
+/// the lock itself (or it could never be undone), **shy** (a filter on the
+/// list, which changes no pixel and no timing) and the **label** colour.
+///
+/// Ops that name no layer — a comp setting, a project item, a folder — are not
+/// the lock's business and answer `None`.
+#[must_use]
+fn lock_guards(op: &Op) -> Option<(Uuid, Uuid)> {
+    match op {
+        // The three a locked layer still accepts.
+        Op::SetLayerLocked { .. } | Op::SetLayerShy { .. } | Op::SetLayerLabel { .. } => None,
+
+        Op::RemoveLayer { comp, layer }
+        | Op::ReorderLayer { comp, layer, .. }
+        | Op::SetLayerSpan { comp, layer, .. }
+        | Op::RenameLayer { comp, layer, .. }
+        | Op::SetLayerMasks { comp, layer, .. }
+        | Op::SetLayerPaint { comp, layer, .. }
+        | Op::SetShapeContents { comp, layer, .. }
+        | Op::SetLayerEffects { comp, layer, .. }
+        | Op::SetLayerFx { comp, layer, .. }
+        | Op::SetLayerThreeD { comp, layer, .. }
+        | Op::SetSequenceClips { comp, layer, .. }
+        | Op::SetLayerAudible { comp, layer, .. }
+        | Op::SetLayerVisible { comp, layer, .. }
+        | Op::SetLayerSolo { comp, layer, .. }
+        | Op::SetLayerMotionBlur { comp, layer, .. }
+        | Op::SetLayerCollapse { comp, layer, .. }
+        | Op::SetTextDocument { comp, layer, .. }
+        | Op::SetLayerMarkers { comp, layer, .. }
+        | Op::SetLayerBlend { comp, layer, .. }
+        | Op::SetLayerMatte { comp, layer, .. }
+        | Op::SetLayerParent { comp, layer, .. }
+        | Op::SetTransformProperty { comp, layer, .. }
+        | Op::SetCameraZoom { comp, layer, .. }
+        | Op::SetLayerVolume { comp, layer, .. }
+        | Op::SetRetimeProperty { comp, layer, .. }
+        | Op::SetLayerInterpolation { comp, layer, .. } => Some((*comp, *layer)),
+
+        // Everything else names no layer to lock: comp settings, project items,
+        // folders, and `Batch`, whose members are each guarded on their own way
+        // through `apply`.
+        _ => None,
+    }
+}
+
+/// Whether `layer` in `comp` is locked. An unknown comp or layer is not locked:
+/// the op's own arm reports what is actually missing, which is a better error
+/// than "locked".
+#[must_use]
+fn is_locked(doc: &Document, comp: Uuid, layer: Uuid) -> bool {
+    doc.comp(comp)
+        .and_then(|c| c.layers.iter().find(|l| l.id == layer))
+        .is_some_and(|l| l.switches.locked)
+}
+
 pub fn apply(doc: &mut Document, op: &Op) -> Result<Op, OpError> {
+    // **The lock is enforced here, not in the interface** (K-291). The Timeline
+    // already refused the *gestures* — the bar, the razor, rename, reorder,
+    // delete — but a locked layer's transform, effect and volume rows went on
+    // editing it, so the switch did not mean what it says. One guard covers
+    // every op, every caller and every op yet to be written; a guard per row
+    // would have to be remembered each time a row is added, and forgetting one
+    // is exactly how this hole opened.
+    //
+    // A `Batch` is guarded by its members: each goes through here on its way
+    // in, and a refusal rolls the whole batch back, so a batch is still all or
+    // nothing.
+    if let Some((comp, layer)) = lock_guards(op) {
+        if is_locked(doc, comp, layer) {
+            return Err(OpError::LayerLocked);
+        }
+    }
     match op {
         Op::AddItem { index, item } => {
             if *index > doc.items.len() {
@@ -423,6 +557,48 @@ pub fn apply(doc: &mut Document, op: &Op) -> Result<Op, OpError> {
                 comp: *comp,
                 layer: *layer,
                 masks: previous,
+            })
+        }
+        Op::SetLayerPaint {
+            comp,
+            layer,
+            strokes,
+        } => {
+            let c = doc.comp_mut(*comp).ok_or(OpError::UnknownComp)?;
+            let l = c
+                .layers
+                .iter_mut()
+                .find(|l| l.id == *layer)
+                .ok_or(OpError::UnknownLayer)?;
+            let previous = std::mem::replace(&mut l.paint, strokes.clone());
+            Ok(Op::SetLayerPaint {
+                comp: *comp,
+                layer: *layer,
+                strokes: previous,
+            })
+        }
+        Op::SetShapeContents {
+            comp,
+            layer,
+            contents,
+        } => {
+            let c = doc.comp_mut(*comp).ok_or(OpError::UnknownComp)?;
+            let l = c
+                .layers
+                .iter_mut()
+                .find(|l| l.id == *layer)
+                .ok_or(OpError::UnknownLayer)?;
+            let crate::model::LayerKind::Shape {
+                contents: existing, ..
+            } = &mut l.kind
+            else {
+                return Err(OpError::UnknownLayer);
+            };
+            let previous = std::mem::replace(existing, contents.clone());
+            Ok(Op::SetShapeContents {
+                comp: *comp,
+                layer: *layer,
+                contents: previous,
             })
         }
         Op::SetLayerEffects {
@@ -696,6 +872,24 @@ pub fn apply(doc: &mut Document, op: &Op) -> Result<Op, OpError> {
                 markers: previous,
             })
         }
+        Op::SetLayerMarkers {
+            comp,
+            layer,
+            markers,
+        } => {
+            let c = doc.comp_mut(*comp).ok_or(OpError::UnknownComp)?;
+            let l = c
+                .layers
+                .iter_mut()
+                .find(|l| l.id == *layer)
+                .ok_or(OpError::UnknownLayer)?;
+            let previous = std::mem::replace(&mut l.markers, markers.clone());
+            Ok(Op::SetLayerMarkers {
+                comp: *comp,
+                layer: *layer,
+                markers: previous,
+            })
+        }
         Op::SetLayerBlend { comp, layer, blend } => {
             let c = doc.comp_mut(*comp).ok_or(OpError::UnknownComp)?;
             let l = c
@@ -833,10 +1027,10 @@ pub fn apply(doc: &mut Document, op: &Op) -> Result<Op, OpError> {
                 retime: previous,
             })
         }
-        Op::SetLayerRetime {
+        Op::SetLayerInterpolation {
             comp,
             layer,
-            retime,
+            interpolation,
         } => {
             let c = doc.comp_mut(*comp).ok_or(OpError::UnknownComp)?;
             let l = c
@@ -844,14 +1038,11 @@ pub fn apply(doc: &mut Document, op: &Op) -> Result<Op, OpError> {
                 .iter_mut()
                 .find(|l| l.id == *layer)
                 .ok_or(OpError::UnknownLayer)?;
-            let crate::model::LayerKind::Footage { retime: slot, .. } = &mut l.kind else {
-                return Err(OpError::UnknownLayer);
-            };
-            let previous = std::mem::replace(slot, retime.clone());
-            Ok(Op::SetLayerRetime {
+            let previous = std::mem::replace(&mut l.interpolation, interpolation.clone());
+            Ok(Op::SetLayerInterpolation {
                 comp: *comp,
                 layer: *layer,
-                retime: previous,
+                interpolation: previous,
             })
         }
         Op::Batch { ops } => {
@@ -881,6 +1072,16 @@ pub fn apply(doc: &mut Document, op: &Op) -> Result<Op, OpError> {
             Ok(Op::SetFolderChildren {
                 folder: *folder,
                 children: previous,
+            })
+        }
+        Op::SetCacheLocation { location } => {
+            let previous = std::mem::replace(&mut doc.cache_location, location.clone());
+            Ok(Op::SetCacheLocation { location: previous })
+        }
+        Op::SetAntiAliasing { anti_aliasing } => {
+            let previous = std::mem::replace(&mut doc.anti_aliasing, *anti_aliasing);
+            Ok(Op::SetAntiAliasing {
+                anti_aliasing: previous,
             })
         }
         Op::SetAutoFolder { kind, folder } => {
@@ -997,6 +1198,112 @@ pub fn edit_layer_span(
         }
         SpanEdit::TrimIn => (playhead < out_point).then_some((playhead, out_point, start_offset)),
         SpanEdit::TrimOut => (playhead > in_point).then_some((in_point, playhead, start_offset)),
+    }
+}
+
+/// The span a layer takes when its Retime is switched off (K-212).
+///
+/// **In plain terms:** while a layer is retimed it can be any length, because
+/// it chooses which source moment each of its own frames shows. Switch that off
+/// and the layer plays at source rate again, so it has to be re-hung on the
+/// source. The frame that was already showing at the in point is the anchor:
+/// the layer keeps its in point and shows that same frame there, then carries
+/// on at source rate until either the source runs out or the layer's existing
+/// out point arrives — whichever comes first. It never grows: a layer trimmed
+/// short stays short.
+///
+/// `anchor` is the source moment showing at `in_point`, read through the map
+/// that is about to be removed. `source_length` is the source's own length, or
+/// `None` when it has none (or could not be read) — then only the anchor is
+/// honoured and the out point is left alone.
+///
+/// Returns `(in_point, out_point, start_offset)`, or `None` when the arithmetic
+/// would overflow or the result would not be a real span — in which case the
+/// caller leaves the span exactly as it found it.
+#[must_use]
+pub fn unretimed_span(
+    in_point: CompTime,
+    out_point: CompTime,
+    anchor: crate::time::SourceTime,
+    source_length: Option<Duration>,
+) -> Option<(CompTime, CompTime, CompTime)> {
+    // Layer time zero goes wherever it must for `anchor` to show at the in
+    // point: an un-retimed layer reads its source at its own clock, so the
+    // offset *is* the difference between the two.
+    let start_offset = in_point.sub_dur(Duration(anchor.0)).ok()?;
+    let out = match source_length {
+        Some(len) => {
+            let available = len.0.checked_sub(anchor.0).ok()?;
+            // Anchored at or past the end of the source there is nothing to
+            // measure from; the layer holds its last frame and keeps its span.
+            if available.is_negative() || available.is_zero() {
+                out_point
+            } else {
+                out_point.min(in_point.add_dur(Duration(available)).ok()?)
+            }
+        }
+        None => out_point,
+    };
+    (out > in_point).then_some((in_point, out, start_offset))
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod unretime_tests {
+    use super::*;
+    use crate::time::{Rational, SourceTime};
+
+    fn ct(secs: i64) -> CompTime {
+        CompTime(Rational::new(secs, 1).unwrap())
+    }
+    fn st(secs: i64) -> SourceTime {
+        SourceTime(Rational::new(secs, 1).unwrap())
+    }
+    fn dur(secs: i64) -> Duration {
+        Duration(Rational::new(secs, 1).unwrap())
+    }
+
+    /// The simple case: the layer was showing the source's first frame, so it
+    /// simply plays from there until the source runs out.
+    #[test]
+    fn anchored_on_the_first_frame_runs_to_the_source_end() {
+        // In at comp 10, showing source 0, and a 5-second source: the layer
+        // ends at comp 15 however long the retimed version was.
+        let (i, o, off) = unretimed_span(ct(10), ct(100), st(0), Some(dur(5))).unwrap();
+        assert_eq!((i, o, off), (ct(10), ct(15), ct(10)));
+    }
+
+    /// Anchored part-way in, only what is left of the source is available.
+    #[test]
+    fn anchored_mid_source_runs_out_sooner() {
+        let (i, o, off) = unretimed_span(ct(10), ct(100), st(2), Some(dur(5))).unwrap();
+        assert_eq!(i, ct(10));
+        assert_eq!(o, ct(13), "three seconds of source were left");
+        assert_eq!(off, ct(8), "source zero sits two seconds before the in");
+    }
+
+    /// It never grows: a layer already shorter than the source keeps its length.
+    #[test]
+    fn a_trimmed_layer_keeps_its_length() {
+        let (_, o, _) = unretimed_span(ct(10), ct(12), st(0), Some(dur(5))).unwrap();
+        assert_eq!(o, ct(12));
+    }
+
+    /// No readable length — missing media, or a kind with no source of its own
+    /// — re-anchors and leaves the out point alone rather than guessing.
+    #[test]
+    fn no_source_length_leaves_the_out_point_alone() {
+        let (i, o, off) = unretimed_span(ct(10), ct(100), st(2), None).unwrap();
+        assert_eq!((i, o, off), (ct(10), ct(100), ct(8)));
+    }
+
+    /// Anchored at or past the end of the source, there is nothing left to
+    /// measure: the span survives intact rather than collapsing to nothing.
+    #[test]
+    fn an_anchor_past_the_source_end_keeps_the_span() {
+        let (_, o, off) = unretimed_span(ct(10), ct(20), st(5), Some(dur(5))).unwrap();
+        assert_eq!(o, ct(20));
+        assert_eq!(off, ct(5));
     }
 }
 

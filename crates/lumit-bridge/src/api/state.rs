@@ -63,6 +63,7 @@ pub struct ScopedChange {
 }
 
 #[frb(non_opaque)]
+#[derive(Clone)]
 pub struct BridgeSharedFrameInfoLinux {
     pub fd: i32,
     /// Which frame of the composition this is. The frontend does not track this
@@ -77,6 +78,15 @@ pub struct BridgeSharedFrameInfoLinux {
     pub drm_fourcc: u32,
     /// The DRM modifier (`DRM_FORMAT_MOD_LINEAR` = 0 on the linear-tiling path).
     pub modifier: u64,
+    /// The preview tier this frame was made at: 1 Full, 2 Half, 3 Third,
+    /// 4 Quarter.
+    ///
+    /// Carried on the frame in place of being asked for. Two Viewer widgets
+    /// showed the tier, and each one asked the engine for it in its `build()` —
+    /// two calls across the boundary for each frame of playback, for a number
+    /// that only changes when a frame is made. The frame that changes it now
+    /// brings it.
+    pub tier: u32,
 }
 
 /// The Windows zero-copy Viewer frame (K-177): an NT handle to a shared D3D12
@@ -84,6 +94,7 @@ pub struct BridgeSharedFrameInfoLinux {
 /// boundary. The handle is stable for the session and changes only when the
 /// comp's dimensions do. The format is always RGBA8, so it is not carried.
 #[frb(non_opaque)]
+#[derive(Clone)]
 pub struct BridgeSharedFrameInfo {
     /// The NT `HANDLE` value. `u64` because a Windows handle is 64-bit; it
     /// reaches Dart as a `BigInt`.
@@ -94,6 +105,15 @@ pub struct BridgeSharedFrameInfo {
     pub frame: u64,
     pub width: u32,
     pub height: u32,
+    /// The preview tier this frame was made at: 1 Full, 2 Half, 3 Third,
+    /// 4 Quarter.
+    ///
+    /// Carried on the frame in place of being asked for. Two Viewer widgets
+    /// showed the tier, and each one asked the engine for it in its `build()` —
+    /// two calls across the boundary for each frame of playback, for a number
+    /// that only changes when a frame is made. The frame that changes it now
+    /// brings it.
+    pub tier: u32,
 }
 
 /// A small still picture as plain pixels — the thumbnail payload
@@ -102,6 +122,7 @@ pub struct BridgeSharedFrameInfo {
 /// bridge are these thumbnails and the scope traces, both small by
 /// construction.
 #[frb(non_opaque)]
+#[derive(Clone)]
 pub struct BridgeRenderedFrame {
     /// Which frame of the source this is (0 for a thumbnail's poster frame).
     pub frame: u64,
@@ -119,8 +140,117 @@ pub struct BridgeRenderedFrame {
 /// serialises a `Vec<u8>` one byte at a time, measured at 8.8 ms for a 1080p
 /// frame, which is why the read-back frame transport was deleted.
 #[frb(non_opaque)]
+#[derive(Clone)]
 pub struct BridgeScopeTrace {
     pub rgba: Vec<u8>,
+}
+
+/// The pixels under the dropper: a square window of the picture, centred on the
+/// point the pointer was over when it was asked for (docs/07 §6.1).
+///
+/// **A window rather than the nine pixels the magnifier shows**, so the pointer
+/// can move without asking again: the frontend cuts the magnifier's grid out of
+/// what it already has, and re-reads only when the pointer approaches the edge
+/// of it. That turns a sweep across the picture from a request per mouse move
+/// into a handful.
+///
+/// Small by construction — 129×129 is 66 KiB, against a 1080p frame's 8 MiB —
+/// so it crosses the boundary as plain pixels without breaking the K-183 rule
+/// that *frames* only ever cross as GPU handles. It is the answer to a question
+/// about a few pixels, not a picture to display.
+#[frb(non_opaque)]
+#[derive(Clone)]
+pub struct BridgeSampledPixels {
+    /// The window's side length in pixels: `window × window`, always odd, so
+    /// there is a single centre pixel.
+    pub window: u32,
+    /// Tightly packed display-ready sRGB RGBA8, `window * window * 4`,
+    /// row-major from the top-left of the window. Edge pixels repeat where the
+    /// window runs off the picture, so it is always exactly this size and can
+    /// be indexed without a border case.
+    pub rgba: Vec<u8>,
+    /// The raster the window was taken from, and where in it the centre pixel
+    /// sits — which is what says where in the picture the window lies.
+    ///
+    /// **This raster, not the composition's.** The picture read may be a
+    /// reduced-resolution preview, so these are the only coordinates in which
+    /// the window can be indexed; a caller holding composition pixels must map
+    /// through `width`/`height` rather than assume they line up.
+    pub width: u32,
+    pub height: u32,
+    pub x: u32,
+    pub y: u32,
+    /// Which frame this is of, so a window that arrives after the playhead has
+    /// moved on can be recognised as stale rather than drawn.
+    pub frame: u64,
+    /// True when the window is of one layer rendered alone rather than of the
+    /// composite — a depth pass being read for a focal point, say.
+    pub layer_alone: bool,
+}
+
+/// How far the frame the user is waiting for has got (docs/13 §7.1).
+///
+/// Sent only for a frame somebody is *waiting on* — a scrub, a value drag, a
+/// playhead move — and never during playback, where a frame due in 16 ms has
+/// neither the need for a bar nor the time to describe itself. A frame served
+/// from the cache reports nothing at all, because there was nothing to wait
+/// for: it simply arrives.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BridgeRenderProgress {
+    /// Which frame this is about, so a report that arrives after the playhead
+    /// has moved on can be recognised as stale rather than drawn.
+    pub frame: u64,
+    /// The stage's wire code — 0 planning, 1 decoding, 2 building, 3
+    /// compositing, 4 presenting ([`lumit_render::RenderStage::code`]).
+    pub stage: u32,
+    /// How much of the whole frame is done, 0..=1. An estimate built from
+    /// fixed stage weights, which is what a progress bar needs and all it can
+    /// honestly claim.
+    pub fraction: f64,
+    /// True on the last report of a frame — the render is finished (or was
+    /// abandoned) and the bar should go. Sent by the worker rather than the
+    /// engine, so a frame that failed still ends its own bar.
+    pub done: bool,
+}
+
+/// One effect's measured cost within its layer, in milliseconds.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeEffectTiming {
+    /// The effect *instance* id, as a string — the row in the layer's stack.
+    pub effect: String,
+    pub ms: f64,
+}
+
+/// One layer's measured cost for the frame just made.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeLayerTiming {
+    pub layer: String,
+    /// The layer's own picture: its source (a Precomp's whole comp included)
+    /// and its effect stack. The final composite is one pass over the whole
+    /// stack rather than a per-layer act, so it lands in `total_ms` and on no
+    /// row — see `lumit_render::profile`.
+    pub ms: f64,
+    pub effects: Vec<BridgeEffectTiming>,
+}
+
+/// What one measured frame cost, per layer and per effect — the Timeline's
+/// render-time column and the Effect controls panel's readouts (docs/13 §7.1).
+///
+/// Published only while the frontend has asked to be measuring
+/// (`set_render_profiling`), because measuring is not free: it fences the
+/// graphics card at each node so a millisecond means the work rather than the
+/// paperwork.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeFrameProfile {
+    pub frame: u64,
+    /// The whole frame, wall-clock, including the stages no layer owns.
+    pub total_ms: f64,
+    /// The composition's top-level layers, bottom-most first.
+    pub layers: Vec<BridgeLayerTiming>,
 }
 
 /// What the render worker publishes for one frame. Which frame variant a build
@@ -129,6 +259,7 @@ pub struct BridgeScopeTrace {
 /// generated Dart is identical on every platform and the Viewer holds one
 /// `switch` over the lot.
 #[frb(non_opaque)]
+#[derive(Clone)]
 pub enum WorkerResponse {
     /// Linux, `shared-texture-linux`.
     RenderedDMABuf(BridgeSharedFrameInfoLinux),
@@ -137,6 +268,10 @@ pub enum WorkerResponse {
     /// A scope trace, which rides the same stream as the frames so the panel
     /// needs no second channel.
     Scope(BridgeScopeTrace),
+    /// The pixels under the dropper — the answer to one
+    /// `CompositionReference::sample_pixels`, riding the same stream for the
+    /// same reason a trace does.
+    Sampled(BridgeSampledPixels),
     /// Playback finished on its own — it ran off the end of the composition.
     ///
     /// Sent so the transport can show itself stopped without the frontend having
@@ -148,6 +283,12 @@ pub enum WorkerResponse {
     /// `cached_frames` itself. Without this the fill worked invisibly — the
     /// bar only redrew when a frame arrived, and a fill shows no frame.
     CacheFilled,
+    /// How far the frame being waited for has got — the Viewer's preview
+    /// progress bar (docs/07 §2.5).
+    RenderProgress(BridgeRenderProgress),
+    /// What the frame just made cost, layer by layer and effect by effect —
+    /// the render-time indicators (docs/13 §7.1).
+    FrameProfile(BridgeFrameProfile),
 }
 
 type CallbackStream = StreamSink<ScopedChange>;
@@ -201,6 +342,15 @@ pub(crate) fn op_scope(op: &lumit_core::Op) -> (Option<Uuid>, Option<Uuid>, bool
         | Op::SetMediaRef { .. }
         | Op::SetFolderChildren { .. }
         | Op::SetAutoFolder { .. }
+        // Where this project parks its frames. No panel draws it — Settings
+        // reads it directly — but it is a document change like any other, so it
+        // belongs in the item scope rather than in a silent default.
+        | Op::SetCacheLocation { .. }
+        // How hard the renderer works at the edges (K-274). No panel draws it
+        // either — Settings reads it directly — but it is a document change,
+        // and one that renames every frame of every comp, so it must be
+        // reported rather than fall through silently.
+        | Op::SetAntiAliasing { .. }
         // A solid def is a project item, and its name shows in the panel.
         | Op::SetSolidDef { .. } => (None, None, true),
 
@@ -217,8 +367,11 @@ pub(crate) fn op_scope(op: &lumit_core::Op) -> (Option<Uuid>, Option<Uuid>, bool
 
         // One layer's own contents.
         Op::SetLayerSpan { comp, layer, .. }
+        | Op::SetLayerMarkers { comp, layer, .. }
         | Op::RenameLayer { comp, layer, .. }
         | Op::SetLayerMasks { comp, layer, .. }
+        | Op::SetLayerPaint { comp, layer, .. }
+        | Op::SetShapeContents { comp, layer, .. }
         | Op::SetLayerEffects { comp, layer, .. }
         | Op::SetLayerFx { comp, layer, .. }
         | Op::SetLayerThreeD { comp, layer, .. }
@@ -238,7 +391,7 @@ pub(crate) fn op_scope(op: &lumit_core::Op) -> (Option<Uuid>, Option<Uuid>, bool
         | Op::SetTransformProperty { comp, layer, .. }
         | Op::SetCameraZoom { comp, layer, .. }
         | Op::SetLayerVolume { comp, layer, .. }
-        | Op::SetLayerRetime { comp, layer, .. }
+        | Op::SetLayerInterpolation { comp, layer, .. }
         | Op::SetRetimeProperty { comp, layer, .. } => (Some(*comp), Some(*layer), false),
 
         // A batch is as broad as its members: the item flag is the union, and
@@ -267,7 +420,7 @@ impl LumitBridgeState {
         let document = Document::new();
         let journal = journal_for(&document);
         let store = DocumentStore::new(document);
-        let mut state = LumitBridgeState {
+        let state = LumitBridgeState {
             saved_revision: store.revision(),
             store,
             path: None,
@@ -320,16 +473,18 @@ impl LumitBridgeState {
 
         let (comp, layer, items) = op_scope(&document_change.op);
 
-        // Frames are filed by position, not by content, so the edit that just
-        // landed did not change any frame's name — drop the held frames or the
-        // Viewer would be served the picture from before it.
+        // **Nothing is invalidated here, and that is the point (K-178).** This
+        // used to drop every held frame of every composition on every committed
+        // op, because frames were filed by position: the edit did not change any
+        // frame's *name*, so the only safe answer was to throw them all away.
+        // The cost was paid on edits that cannot change a pixel — a rename, a
+        // work-area nudge, a solo toggle, sound added to a layer — and the cache
+        // bar went blank with each one.
         //
-        // All of them, not the scope's composition: `op_scope` answers "which
-        // panel redraws", which is a different and narrower question. A batched
-        // edit names no composition, a solid or a relink belongs to the project
-        // rather than to one comp, and a precomp layer means an edit to one
-        // composition changes every composition that contains it.
-        crate::framecache::invalidate_all();
+        // Frames are now filed under a hash of what is in them (docs/06 §5.2),
+        // so an edit renames exactly the frames it changed and every other frame
+        // stays addressable. An undo asks for the names it asked for before and
+        // finds them still held. There is no invalidation step left to get right.
 
         let change = ScopedChange {
             project: ProjectReference::new(project_id),
@@ -374,7 +529,7 @@ impl LumitBridgeState {
 
         let journal = journal_for(&doc);
         let store = DocumentStore::new(doc);
-        let mut state = LumitBridgeState {
+        let state = LumitBridgeState {
             saved_revision: store.revision(),
             store,
             path: Some(path),
@@ -401,6 +556,10 @@ impl LumitBridgeState {
                     e.media.clear();
                 }
             }
+            // The waveform summaries are keyed by file path and shared between
+            // projects, so they are not any one project's to clear — but the
+            // project being closed is the reason they were built (K-280).
+            crate::peaks::clear();
 
             // Clear any other project that is currently open
             // Will also prevent any existing references from working
