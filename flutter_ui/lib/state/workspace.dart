@@ -190,6 +190,19 @@ class Workspace extends ChangeNotifier {
   PerformanceSettings performance = PerformanceSettings();
   InterfaceSettings interface = InterfaceSettings();
 
+  /// Whether Lumit looks for a newer version on launch (K-294).
+  ///
+  /// On by default, and offered on the setup screen as well as in Settings: an
+  /// editor that quietly falls years behind is how people end up reporting bugs
+  /// that were fixed long ago. It is a *look*, not a download — the installer
+  /// is only fetched when the user asks for it, so leaving this on never costs
+  /// anybody a surprise few hundred megabytes.
+  bool autoUpdate = true;
+
+  /// When the last update check finished, in milliseconds since the epoch.
+  /// Zero means never. Kept so six launches in a morning ask GitHub once.
+  int lastUpdateCheckMs = 0;
+
   /// Whether the first-run screen has had its answer (K-246, docs/07 §13.1).
   ///
   /// **True unless [load] finds no settings file.** Only loading can tell a
@@ -383,6 +396,22 @@ class Workspace extends ChangeNotifier {
     save();
   }
 
+  /// Turn automatic update checks on or off (K-294). Written straight out: it
+  /// is one boolean, and a setting that did not survive the restart it is about
+  /// would be a poor joke.
+  void setAutoUpdate(bool on) {
+    autoUpdate = on;
+    notifyListeners();
+    save();
+  }
+
+  /// Record that a check has just happened, so the next launch does not repeat
+  /// it. Saved without notifying — nothing on screen reads this.
+  void rememberUpdateCheck(int atMillis) {
+    lastUpdateCheckMs = atMillis;
+    save();
+  }
+
   void setThemedScopes(bool on) {
     themedScopes = on;
     notifyListeners();
@@ -568,6 +597,8 @@ class Workspace extends ChangeNotifier {
         'performance': performance.toJson(),
         'interface': interface.toJson(),
         'first_run_done': firstRunDone,
+        'auto_update': autoUpdate,
+        'last_update_check_ms': lastUpdateCheckMs,
         'keymap': keymapJson,
         'custom_themes': [for (final t in customThemes) t.toJson()],
         'custom_theme': customThemeName,
@@ -611,6 +642,11 @@ class Workspace extends ChangeNotifier {
     }
     // Absent means an existing user, not a new one — see the field.
     firstRunDone = j['first_run_done'] as bool? ?? true;
+    // Absent means a settings file written before there were updates to check
+    // for; the default is on, and an existing user gets the same offer a new
+    // one does.
+    autoUpdate = j['auto_update'] as bool? ?? true;
+    lastUpdateCheckMs = j['last_update_check_ms'] as int? ?? 0;
     keymapJson = j['keymap'] is String ? j['keymap'] as String : null;
     customThemes = [];
     final rawThemes = j['custom_themes'];

@@ -494,9 +494,9 @@ entry above.
     command with a place waiting for it: Close project, History, Cut/Copy/Paste,
     layer settings and the mask/transform/blending/matte/style families, the
     whole Animation menu, the View menu's zoom/resolution/grid/ruler rows,
-    Trim and Crop comp to work area, Add to export queue, Check for updates and
-    the help links. Delete each mark as the command lands. Suggested chords for
-    the AE-shaped ones are in K-244.
+    Trim and Crop comp to work area, Add to export queue and the help links
+    (Check for updates is built — K-294). Delete each mark as the command
+    lands. Suggested chords for the AE-shaped ones are in K-244.
 
 ## Later - roadmap features not yet built
 

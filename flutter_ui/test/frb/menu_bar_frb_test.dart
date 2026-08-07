@@ -728,6 +728,19 @@ void main() {
           reason: 'File is the first heading, at the left');
     });
 
+    /// The update row is live rather than listed-and-dead (K-294). It is not
+    /// *pressed* here: pressing it asks GitHub, and a test suite has no
+    /// business on the network — what the press does is `updates_test.dart`,
+    /// against a service whose seams are stopped up.
+    testWidgets('Help ▸ Check for updates is a built command', (tester) async {
+      await mount(tester);
+      await tester.tap(find.byKey(const ValueKey<String>('menu-Help')));
+      await tester.pump();
+      expect(find.text('Check for updates'), findsOneWidget);
+      expect(find.text('Check for updates (Not implemented)'), findsNothing);
+      await dismiss(tester);
+    });
+
     testWidgets('Help ▸ About Lumit opens the About window', (tester) async {
       await mount(tester);
       await choose(tester, 'Help', 'About Lumit');

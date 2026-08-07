@@ -3808,3 +3808,78 @@ libraries are folded into the app itself (so it runs without Homebrew), but
 it carries no paid Apple signature yet, so macOS warns before first launch —
 the proper signing lands with the macOS pass in the TODO, and a release still
 publishes even if this job fails.
+
+## 11. Keeping Lumit up to date, in plain terms
+
+Every release already ends up in the same place: a GitHub Release, tagged `v0.1.0`
+or whatever the version is, with the finished installers hanging off it — a
+`setup.exe` for Windows, a disk image for macOS, a bundle and a Flatpak for
+Linux. That is the whole raw material the updater needs, and it means Lumit has
+no update server to run and nothing to pay for.
+
+**What "check for updates" actually does.** GitHub will answer a small,
+public question — *what is the newest release of this repository, and what is
+attached to it?* — over the same sort of web request a browser makes. Lumit asks
+it, reads the tag (`v0.2.0`), strips the `v`, and compares that with the version
+this build reports on start-up: the very first line of the boot log, the one the
+About window shows. Comparing versions is fiddlier than it looks — `0.10.0` is
+newer than `0.9.0` even though it sorts earlier as text, and `0.2.0-rc.1` is
+*older* than `0.2.0` because a release candidate comes before the release. There
+is a small function for exactly that, and a test for each of those traps.
+
+**One menu row does everything.** Help ▸ Check for updates is not a button that
+opens an update window; it is the update, in a row. Press it and it goes grey and
+says *Checking for updates…*. A second later it either says *Click to update -
+v0.2.0* or goes back to *Check for updates*, with "Lumit is up to date" in the
+status line at the bottom. Press the offered version and Lumit asks whether to
+fetch it, tells you how big it is, and shows a bar while it comes; the row
+counts along too, in case you closed the window and went back to editing. When it
+has arrived the row says *Restart to finish updating* until you do.
+
+Making a menu row behave like that needed one new trick: menus in Lumit are
+normally a list of labels decided the moment the menu opens, and pressing any row
+closes the menu. This one row is a `MenuEntry.live` — it redraws itself while the
+menu is open and it stays open when pressed, because the whole point of pressing
+it is to watch what happens. It is the only row like that, deliberately.
+
+**Automatic updates.** There is a tick on the setup screen, and the same tick in
+Settings ▸ General ▸ Updates. It is on to begin with, and it means one specific
+thing: when Lumit starts, and no more than once a day, it *looks*. It never
+downloads anything on its own. If there is something newer, all that happens is
+that the Help row is already saying so the next time you open the menu. Someone
+editing on a hotel connection should never discover Lumit quietly spending their
+data allowance.
+
+**Why the whole installer, rather than a patch.** Patches are smaller, and that
+is genuinely nice; the price is publishing a separate patch for every pair of
+versions people might be coming from, writing the tool that applies them, and
+then writing the fallback for when somebody's particular pair does not exist.
+That is three new things that can be broken in order to save bandwidth GitHub
+gives us for free. So: the whole installer, every time, on a click you made.
+
+**What stops a bad download from being run.** The release says how many bytes the
+installer is and — where GitHub provides one — its SHA-256, which is a
+fingerprint of the file's contents: change one byte and the fingerprint changes
+completely. Lumit checks both before it will run anything, and deletes the file
+if either disagrees. An installer is the most dangerous file Lumit ever touches;
+a truncated download or a swapped file is caught here or not at all.
+
+**Why you have to restart.** An installer cannot overwrite a program that is
+running, which is a rule of the operating system rather than a choice of ours. So
+the last window says *Restart to finish updating*. If you have unsaved work open,
+it offers **Save and restart** as well as **Restart without saving** — losing an
+evening's work to a version number would be an absurd way to lose it — and
+**Later**, which keeps the downloaded installer so you can finish whenever you
+like. On Windows the installer runs itself quietly and Lumit closes; on macOS the
+disk image opens and Lumit closes; on Linux Lumit only shows you the downloaded
+file, because unpacking a bundle or installing a Flatpak is something you do
+where you want it, not something an editor should do behind you.
+
+**Where the code is.** `flutter_ui/lib/state/updates.dart` knows about versions,
+downloads and files; `flutter_ui/lib/shell/update_dialog_frb.dart` is the windows
+you see. None of it is in Rust: the engine has no business knowing about the
+internet, and this way nothing that renders frames grows a network dependency.
+Every point where the updater touches the outside world — asking GitHub,
+downloading, running an installer, quitting — is a swappable seam, which is how
+the tests exercise the entire sequence without ever going near a network or
+actually running anything.

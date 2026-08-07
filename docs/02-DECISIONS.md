@@ -6365,3 +6365,56 @@ deliberately painter-drawn glyph, and this is one.
 The − / + / Fit buttons are gone: the slider's two ends *are* Fit and full zoom, and a slider
 also says where you are between them, which three buttons never did. `HouseSlider` gained a
 width and a value-hiding option rather than a second slider being written for a toolbar.
+
+**K-294 · DECIDED · Updates are checked from the Help row itself, fetched whole from the
+GitHub Release, and installed on a restart the user chooses.** Help ▸ Check for updates was
+the last row of the bar that was listed and dead. It is now the whole update sequence in one
+row, and nothing else is added to the interface for it.
+
+**The row is the state machine.** Press it and it greys and reads "Checking for updates…";
+a moment later it is either "Click to update - v0.2.0" — the version in the row, where
+somebody deciding whether to update is already looking — or back to "Check for updates",
+with "Lumit is up to date" in the status line. Press it in the offered state and the update
+is fetched; while it comes the row reads "Downloading update… 42%"; once it is on disk and
+verified it reads "Restart to finish updating" until the restart happens. A row that said
+"You are up to date" and stayed that way would be a stale claim by the next morning, which
+is why success goes back to the resting wording rather than boasting about it. This needed
+one small thing of the menu bar: `MenuEntry.live` is a row that rebuilds in place while its
+menu is open and does *not* close the menu when pressed, because the point of pressing it is
+to watch what it does. It is the only live row there is, and rows should have to earn it.
+
+**Full installers, never patches.** Releases already publish the finished installer per
+platform (`release.yml`, a `v*` tag): `setup.exe`, `.dmg`, `.tar.gz`, `.flatpak`. The updater
+downloads whichever suits the machine, entire. A delta scheme means publishing a patch per
+pair of versions, a tool to apply them and a fallback for the pairs that are missing — three
+new failure modes to save bandwidth GitHub serves for nothing (K-279: no bandwidth cap, no
+server of ours). The saving is real and the cost is a few hundred megabytes on a deliberate
+click, a few times a year.
+
+**Nothing is downloaded without being asked, and nothing is run without being checked.**
+Automatic updates are on by default and are offered twice — on the setup screen (K-246) and
+in Settings ▸ General ▸ Updates — but what "on" means is *looking*, once a day at launch, and
+saying so in the menu. The download always waits for a press: this is a video application and
+someone editing on a hotel connection should not find Lumit spending their data. Before the
+downloaded file is executed it must match the length the release published and, where GitHub
+publishes a `digest`, its SHA-256; a file that fails either is deleted rather than run. An
+installer is the most dangerous file Lumit ever touches, so verification is a gate and not a
+diagnostic.
+
+**Finishing means restarting, and the work comes first.** An installer cannot replace files
+that are running, so the last window says so: *Restart to finish updating*. With unsaved work
+open the buttons are **Save and restart** / **Restart without saving** / **Later**; with a
+clean project, **Restart now** / **Later**. Later keeps the verified installer and the row
+that offers it, so the update is not lost by declining it once. Windows starts Inno Setup
+silently (`/SILENT /CLOSEAPPLICATIONS /NORESTART` — the install questions were answered the
+first time and asking them again is ceremony) and quits; macOS opens the disk image and
+quits; **Linux only reveals the download** and does not quit, because a tarball is unpacked
+wherever its owner keeps it and a Flatpak is installed by Flatpak, neither of which Lumit
+should do on somebody's behalf.
+
+**It lives in Dart, not in the engine.** `state/updates.dart` and
+`shell/update_dialog_frb.dart`, with `dart:io`'s own HTTP client and `crypto` for the digest
+— no new Rust dependency, no TLS stack pulled into a crate that renders frames. An updater is
+shell business by every test docs/05 applies: it touches no document, no timeline and no GPU,
+and the engine crates stay free of the network. The version it compares against is the one
+the boot log already reports (K-008), so there is no second source of truth to keep in step.
