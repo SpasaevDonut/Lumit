@@ -269,10 +269,17 @@ fix. Also unbuilt: an **export**'s progress still has its own path
 code (`flutter_ui/lib/l10n/`, `crowdin.yml`); what is left is other people's turn and
 three small gaps:
 
-- **Create the Crowdin project and point it at this repo.** File-based, source
-  `app_en.arb`, targets German, Kazakh, Ukrainian and Simplified Chinese. Then set
-  `CROWDIN_PROJECT_ID` and `CROWDIN_PERSONAL_TOKEN` and run `crowdin push sources`. The
-  four `app_*.arb` files here are empty placeholders until the first `pull`.
+- **Confirm the Crowdin language settings took, on the next pull (K-311).** The project
+  exists and the first pull has landed: German, Kazakh, Ukrainian, Simplified and
+  Traditional Chinese. That pull also reddened main twice over, and both causes were
+  settings rather than code: Crowdin wrote its own `zh-CN` into `@@locale`, which Flutter's
+  generator refuses when it disagrees with the file name, and en-US was on as a target
+  language, which lands a copy of the British source (K-303). Both have since been changed
+  on Crowdin — the language mapping now sends `zh` and `zh_Hant`, and en-US is off — but
+  neither has been through a sync yet. What is owed is the check: after the next
+  `crowdin pull translations`, `test/l10n/arb_test.dart` passing is the proof. If the
+  `@@locale` values come back hyphenated anyway, Crowdin ignores its mapping for file
+  content and the fix moves into CI, as a step on the sync branch that rewrites the key.
 - **The two numbered shortcut labels stay English.** `lumit-keymap` builds "Add marker
   {n} at the playhead" and "Go to marker {n}" with `format!`, so they are not literals
   the lookup table can hold (`lib/l10n/engine_labels.dart`). Give the bridge the number

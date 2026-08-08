@@ -4368,9 +4368,24 @@ set to, and stores nothing until you choose — so if you never open the picker,
 Lumit follows your operating system for ever, including after you change it.
 
 The list names each language in its own language: Deutsch, Қазақша, Українська,
-简体中文. That is deliberate. Somebody who has set Lumit to a language they turn
-out not to read needs to be able to find their way back, and they will not do it
-by looking for the word "German".
+简体中文, 繁體中文. That is deliberate. Somebody who has set Lumit to a language they
+turn out not to read needs to be able to find their way back, and they will not
+do it by looking for the word "German".
+
+The words themselves are not written here. `lib/l10n/app_en.arb` is the one file
+anybody types English into; every other `app_*.arb` beside it is sent back by
+Crowdin, the site the translators work on, and editing one of those in this repo
+achieves nothing — the next sync writes over it. So a wrong translation is fixed
+on Crowdin, and so is anything about *which* languages exist.
+
+One trap is worth knowing, because it stopped the build once (K-311). Each of
+those files names its own language twice: once in its file name, and once in a
+key inside it called `@@locale`. Flutter refuses to build if the two disagree,
+and Crowdin fills that key in with its own spelling of the language — "zh-CN"
+where Flutter wants "zh". The cure is a setting on Crowdin rather than an edit
+here, and `test/l10n/arb_test.dart` now compares the two on every run, so if it
+happens again the failure says which file and what to do about it, instead of the
+whole build stopping with an error about locales.
 ### A text layer that says whatever the expression works out
 
 Until now a text layer said one fixed thing. You typed some words, and those

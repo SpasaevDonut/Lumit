@@ -7054,3 +7054,31 @@ skipped quarantined, and the updater's payload is the easier of the two to forge
 
 Signing the Windows installer still waits on a code-signing certificate, so SmartScreen
 still warns. That remains a purchase rather than code, and it does not block a release.
+
+**K-311 · DECIDED · Traditional Chinese is the fifth language, and the locale a
+translation file names is settled on Crowdin rather than repaired here.** K-303 named four
+target languages and said adding Traditional later meant adding `zh-TW: zh_Hant` to
+`crowdin.yml` and leaving `zh` as the fallback. The first real Crowdin pull landed it, so
+that is now done: `app_zh_Hant.arb` sits beside `app_zh.arb`, and Settings ▸ Interface ▸
+Language lists 繁體中文 under its own name like the rest.
+
+**A script, not a country.** The file is `zh_Hant` and not `zh_TW` because `localeTag` in
+`lib/l10n/strings.dart` writes a locale's *script* into the settings file. A country name
+comes back from Flutter's generator as a `countryCode`, which `localeTag` does not write —
+so `zh_TW` and `zh` would both save as `"zh"` and the user's choice would not survive a
+restart.
+
+**The `@@locale` trap, which cost a red main.** Crowdin writes its own code into the
+`@@locale` key inside every file it sends back — `zh-CN` into the file `crowdin.yml` asked
+it to call `app_zh.arb`. Flutter's generator refuses to run when that key and the file name
+disagree, and it runs on `flutter pub get`, so the first pull took down all three Flutter
+jobs before a single test was reached. The fix belongs on Crowdin, in the per-language
+custom ARB code, because a hand-edit in this repo is overwritten by the next sync (K-303).
+What this repo owes is a loud failure: `test/l10n/arb_test.dart` now checks every `.arb`
+against its own file name, so the next bad sync fails one named test with the remedy in its
+message instead of an opaque `pub get` error.
+
+**There is still no en-US.** The same pull brought an `app_en_US.arb` — the British source
+copied under another name, from a target language enabled by mistake. K-303 said British
+English is the source and stays it; the file is deleted and the test above keeps it deleted,
+pointing at the Crowdin setting that produced it.

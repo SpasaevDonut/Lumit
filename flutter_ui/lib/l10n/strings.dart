@@ -95,4 +95,5 @@ const Map<String, String> languageNames = {
   'kk': 'Қазақша',
   'uk': 'Українська',
   'zh': '简体中文',
+  'zh-Hant': '繁體中文',
 };

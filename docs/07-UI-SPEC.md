@@ -1842,11 +1842,11 @@ travel in the `.lum` and are marked below:
   launch, at most once a day — on by default, plus a readout of the installed version and a
   button driving the same check the Help row does. Checking is all "on" means; the download
   always waits to be asked for.
-- **Language** (K-303), under Interface: which language the interface is written in.
+- **Language** (K-303, K-311), under Interface: which language the interface is written in.
   Defaults to the machine's own and stores nothing until chosen, so an unset Lumit follows
   the operating system for ever rather than freezing whichever language it first opened in.
-  The list names each language in its own language — Deutsch, Қазақша, Українська, 简体中文
-  — so somebody who has chosen one they cannot read can find their way back.
+  The list names each language in its own language — Deutsch, Қазақша, Українська, 简体中文,
+  繁體中文 — so somebody who has chosen one they cannot read can find their way back.
 - **Keymap**, **Interface** (UI scale, tooltips, reduced motion follows OS or override),
   **Autosave** (interval, copies kept), **Plugins** (search paths, disabled list,
   per-plugin overrides).
