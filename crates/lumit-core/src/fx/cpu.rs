@@ -2090,14 +2090,19 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
                             let scratch_width = (0.75 + 0.5 * h01(15, cx, cy)) * scratch_scale;
                             if s_dist < scratch_width {
                                 let line_val = (1.0 - s_dist / scratch_width) * scratch_amount * 0.7;
-                                dirt_r += line_val;
-                                dirt_g += line_val;
-                                dirt_b += line_val;
+                                dirt_r += line_val * p.scratch_tint[0];
+                                dirt_g += line_val * p.scratch_tint[1];
+                                dirt_b += line_val * p.scratch_tint[2];
                             }
                         }
                     }
                 }
             }
+
+            // Apply Bokeh Tint to accumulated bokeh particles
+            dirt_r *= tint[0];
+            dirt_g *= tint[1];
+            dirt_b *= tint[2];
 
             // 3. Glass dirt & organic dust spots (controlled by p.dirt, 3x3 grid search to avoid cell clipping)
             if p.dirt > 0.0 {
@@ -2118,20 +2123,19 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
                             let d_dist = (px - d_cx).hypot(py - d_cy) / d_rad.max(0.5);
                             if d_dist <= 1.0 {
                                 let spot_val = (1.0 - d_dist * d_dist) * p.dirt * 0.5;
-                                dirt_r += spot_val * 0.9;
-                                dirt_g += spot_val * 0.85;
-                                dirt_b += spot_val * 0.75;
+                                dirt_r += spot_val * p.dirt_tint[0];
+                                dirt_g += spot_val * p.dirt_tint[1];
+                                dirt_b += spot_val * p.dirt_tint[2];
                             }
                         }
                     }
                 }
             }
 
-
-            // Apply Master Intensity & Tint
-            dirt_r *= intensity * tint[0];
-            dirt_g *= intensity * tint[1];
-            dirt_b *= intensity * tint[2];
+            // Apply Master Intensity
+            dirt_r *= intensity;
+            dirt_g *= intensity;
+            dirt_b *= intensity;
 
             // 3. Optical vignetting darkening
             if vignette_strength > 0.0 {

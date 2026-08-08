@@ -3,8 +3,9 @@
 
 struct Params {
     tint: vec4<f32>,
-
     bg_colour: vec4<f32>,
+    scratch_tint: vec4<f32>,
+    dirt_tint: vec4<f32>,
     sun_pos: vec2<f32>,
     intensity: f32,
     density: f32,
@@ -242,14 +243,18 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
                     let scratch_width = (0.75 + 0.5 * block_hash01(seed, 15u, cx, cy, 0)) * scratch_scale;
                     if (s_dist < scratch_width) {
                         let line_val = (1.0 - s_dist / scratch_width) * scratch_amount * 0.7;
-                        dirt_r += line_val;
-                        dirt_g += line_val;
-                        dirt_b += line_val;
+                        dirt_r += line_val * p.scratch_tint.r;
+                        dirt_g += line_val * p.scratch_tint.g;
+                        dirt_b += line_val * p.scratch_tint.b;
                     }
                 }
             }
         }
     }
+
+    dirt_r *= tint.r;
+    dirt_g *= tint.g;
+    dirt_b *= tint.b;
 
     if (p.dirt > 0.0) {
         let d_cell_size = clamp(64.0 * p.scratch_scale, 16.0, 512.0);
@@ -268,18 +273,18 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
                     let d_dist = sqrt((px - d_cx) * (px - d_cx) + (py - d_cy) * (py - d_cy)) / max(d_rad, 0.5);
                     if (d_dist <= 1.0) {
                         let spot_val = (1.0 - d_dist * d_dist) * p.dirt * 0.5;
-                        dirt_r += spot_val * 0.9;
-                        dirt_g += spot_val * 0.85;
-                        dirt_b += spot_val * 0.75;
+                        dirt_r += spot_val * p.dirt_tint.r;
+                        dirt_g += spot_val * p.dirt_tint.g;
+                        dirt_b += spot_val * p.dirt_tint.b;
                     }
                 }
             }
         }
     }
 
-    dirt_r *= intensity * tint.r;
-    dirt_g *= intensity * tint.g;
-    dirt_b *= intensity * tint.b;
+    dirt_r *= intensity;
+    dirt_g *= intensity;
+    dirt_b *= intensity;
 
     if (vignette_strength > 0.0) {
         let r_sq = nx * nx + ny * ny;

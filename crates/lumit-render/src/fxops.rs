@@ -1032,7 +1032,9 @@ pub fn run_ops(
 
                         scratches: p.scratches,
                         scratch_var: p.scratch_var,
+                        scratch_tint: p.scratch_tint,
                         dirt: p.dirt,
+                        dirt_tint: p.dirt_tint,
                         tint: p.tint,
                         vignette: p.vignette,
                         blend_mode: p.blend_mode,

@@ -2956,6 +2956,7 @@ pub const BUILTINS: &[EffectSchema] = &[
                     "defocus_var",
                     "color_var",
                     "chromatic",
+                    "tint",
                 ],
                 collapsed: false,
                 visible_when: None,
@@ -2966,9 +2967,10 @@ pub const BUILTINS: &[EffectSchema] = &[
                     "scratches",
                     "scratch_scale",
                     "scratch_var",
+                    "scratch_tint",
                     "dirt",
+                    "dirt_tint",
                     "vignette",
-                    "tint",
                 ],
                 collapsed: true,
                 visible_when: None,
@@ -3114,6 +3116,14 @@ pub const BUILTINS: &[EffectSchema] = &[
                 },
             },
             ParamSchema {
+                id: "tint",
+                label: "Bokeh tint",
+                kind: ParamKind::Colour {
+                    default: [1.0, 0.95, 0.85, 1.0],
+                    range: (0.0, 2.0),
+                },
+            },
+            ParamSchema {
                 id: "scratches",
                 label: "Scratches & dust",
                 kind: ParamKind::Float {
@@ -3141,6 +3151,14 @@ pub const BUILTINS: &[EffectSchema] = &[
                 },
             },
             ParamSchema {
+                id: "scratch_tint",
+                label: "Scratch tint",
+                kind: ParamKind::Colour {
+                    default: [1.0, 1.0, 1.0, 1.0],
+                    range: (0.0, 2.0),
+                },
+            },
+            ParamSchema {
                 id: "dirt",
                 label: "Glass dirt specks",
                 kind: ParamKind::Float {
@@ -3150,20 +3168,20 @@ pub const BUILTINS: &[EffectSchema] = &[
                 },
             },
             ParamSchema {
+                id: "dirt_tint",
+                label: "Dirt specks tint",
+                kind: ParamKind::Colour {
+                    default: [0.9, 0.85, 0.75, 1.0],
+                    range: (0.0, 2.0),
+                },
+            },
+            ParamSchema {
                 id: "vignette",
                 label: "Optical vignette",
                 kind: ParamKind::Float {
                     default: 0.3,
                     slider: (0.0, 1.0),
                     hard: (Some(0.0), Some(1.0)),
-                },
-            },
-            ParamSchema {
-                id: "tint",
-                label: "Tint",
-                kind: ParamKind::Colour {
-                    default: [1.0, 0.95, 0.85, 1.0],
-                    range: (0.0, 2.0),
                 },
             },
             ParamSchema {

@@ -503,6 +503,8 @@ impl FxEngine {
             bytemuck::bytes_of(&LensDirtParams {
                 tint: op.tint,
                 bg_colour: op.bg_colour,
+                scratch_tint: op.scratch_tint,
+                dirt_tint: op.dirt_tint,
                 sun_pos: op.sun_pos,
                 intensity: op.intensity,
                 density: op.density,
@@ -549,7 +551,9 @@ pub struct LensDirtOp {
     pub chromatic: f32,
     pub scratches: f32,
     pub scratch_var: f32,
+    pub scratch_tint: [f32; 4],
     pub dirt: f32,
+    pub dirt_tint: [f32; 4],
     pub tint: [f32; 4],
     pub vignette: f32,
     pub blend_mode: u32,
@@ -567,6 +571,8 @@ pub struct LensDirtOp {
 struct LensDirtParams {
     tint: [f32; 4],
     bg_colour: [f32; 4],
+    scratch_tint: [f32; 4],
+    dirt_tint: [f32; 4],
     sun_pos: [f32; 2],
     intensity: f32,
     density: f32,
