@@ -551,8 +551,9 @@ list, not a re-statement of the roadmap.
     layers (§6.1 reserves the values; both kinds borrow today).
 - **Platform.** The macOS pass - native menu bar, VideoToolbox, ProRes,
     notarisation (K-033); it also owes `application:openFile:` (a double-clicked
-    `.lum` opening, K-252) and adding `packaging/macos/*.icns` to the bundle's
-    resources. The Metal/IOSurface Viewer path is unverified on real hardware.
+    `.lum` opening, K-252). The document `.icns` files now ship inside the
+    bundle, so the icons themselves are done.
+    The Metal/IOSurface Viewer path is unverified on real hardware.
     Developer ID signing and notarisation for the DMG (it bundles its FFmpeg
     dylibs but is ad-hoc signed, so Gatekeeper warns) — blocked on an Apple
     Developer Program membership, not on code; signing the Windows installer,

@@ -3962,8 +3962,8 @@ only means anything once the card has caught up.
 The icon you see in the taskbar is not one picture — it is a small bag of
 pictures. Windows keeps them all in a single `.ico` file (ours holds seven
 sizes, 256 pixels down to 16), and shows whichever one fits the spot: big for
-the desktop, tiny for a browser-style tab. macOS does the same thing with a
-folder of loose PNGs instead of a bag.
+the desktop, tiny for a browser-style tab. macOS wants something different
+again, and gets its own section below.
 
 Nobody draws seven pictures by hand. The artwork is drawn **once**, as an SVG —
 a text file of drawing instructions ("a rounded square here, this gradient
@@ -3972,8 +3972,10 @@ there") that can be rendered at any size without going blurry. The five SVGs in
 
 - `lumit-mark.svg` — the mark itself: two keyframe diamonds overlapping, white
   where they cross. This bare form is the Windows and Linux icon.
-- `lumit-icon.svg` — the same mark sitting on a dark rounded tile. Only macOS
-  uses this, because macOS expects every icon to bring its own tile.
+- `lumit-icon.svg` — the same mark sitting on a dark rounded tile. Nothing
+  ships from this file any more; it is kept as the flat reference drawing the
+  macOS icon below was built from, and as the picture to hand anyone who asks
+  for "the icon" as one image.
 - `lumit-project.svg`, `lumit-preset.svg` and `lumit-theme.svg` — document
   icons for `.lum` project files, `.lumfx` presets and `.lumtheme` colour
   themes: a dark page with a folded corner and the mark inside, like the little
@@ -3981,12 +3983,43 @@ there") that can be rendered at any size without going blurry. The five SVGs in
   overlapping colour swatches instead of the mark, since colours are what is in
   the file.
 
-`scripts/gen-icons.py` turns those four drawings into every pixel file the
-operating systems want (run `pip install resvg-py pillow` once, then
+`scripts/gen-icons.py` turns those drawings into every pixel file Windows and
+Linux want (run `pip install resvg-py pillow` once, then
 `python scripts/gen-icons.py`). It renders each size straight from the SVG
 rather than shrinking one big picture — that is what keeps the 16-pixel
 version crisp instead of mushy. You only run it after editing an SVG; the
 generated files are committed, so a fresh checkout builds without it.
+
+### The macOS icon is a stack of layers, not a picture (K-309)
+
+macOS 26 stopped treating an app icon as a flat image. Its icons are made of
+**layers**, and the system lights them itself: it puts the rounded tile behind
+them, bevels the edges, adds the shadow, and slides a highlight across the
+glass as you tilt the window — plus the dark, tinted and clear variants a user
+can switch the whole Dock to. Handing it a finished picture gets none of that;
+it has to be given the pieces.
+
+So the macOS app icon is not a PNG we render. It is
+`assets/brand/lumit-icon.icon` — a small folder Apple's free **Icon Composer**
+app writes, holding the six pieces of the mark as separate SVGs (tile, bloom,
+blue key, magenta key, core glow, core diamond) and an `icon.json` saying how
+they stack: which ones are glass, how opaque each is in dark mode, how deep
+the shadow goes. Open the folder in Icon Composer to change any of it.
+
+Those layers look slightly *unfinished* next to the flat icon, and that is the
+point. The flat drawing paints in its own lighting — a rounded corner on the
+tile, a shadow under the keys, a dark rim around each key standing in for an
+edge catching light. macOS 26 draws all three for real, so the layers leave
+them out; painted in, you would get each one twice, and a hand-drawn shadow
+that does not move when the system's does looks worse than no shadow at all.
+
+Xcode compiles that folder during the macOS build (the `.icon` is listed in
+the Runner target, and `ASSETCATALOG_COMPILER_APPICON_NAME` names it), and
+from the same layers it also generates the old-style flat `.icns` for Macs
+before 26 — so one source covers every macOS version, and there is nothing to
+regenerate by hand. The loose PNGs that used to live in
+`Runner/Assets.xcassets` are gone; they were the old flat icon, and keeping
+two sources of the same artwork is how they drift apart.
 
 The document icons only appear next to your `.lum` files once something tells
 the operating system "files ending in .lum belong to Lumit, use this icon".
@@ -4014,9 +4047,15 @@ installers live in `packaging/` (decision K-252):
 - **macOS** — `packaging/macos/make-dmg.sh` produces the usual drag-to-
   Applications disk image (on a Mac): a white window with the app on the
   left, the Applications folder on the right, and a curved arrow showing
-  the drag. The
-  file-type declarations are in the app's Info.plist already, but their icons
-  and double-click opening land with the larger macOS pass in the TODO.
+  the drag. macOS needs no registry writing and no install script: an app
+  *declares* the types it owns in its own Info.plist, and the system reads
+  that the first time it sees the app. The three document icons
+  (`packaging/macos/lumit-project.icns` and friends) are resources of the app
+  target, so they travel inside the bundle where those declarations point at
+  them. What is still missing is double-click *opening* — the declarations
+  tell macOS which app owns a `.lum`, but the app is handed the file through
+  `application:openFile:`, which it does not yet answer; that lands with the
+  larger macOS pass in the TODO.
 
 None of this runs on `flutter run` — a dev run shows the app icon (it is baked
 into the executable) but registers nothing.

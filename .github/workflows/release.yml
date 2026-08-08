@@ -194,6 +194,18 @@ jobs:
           flutter-version: 3.44.7
           channel: stable
           cache: true
+      # The app icon is an Icon Composer document (K-309): actool needs Xcode 26
+      # or newer to compile it. Mirrors ci.yml's `flutter-macos` job.
+      - name: Select the newest Xcode (26+ for the .icon)
+        run: |
+          latest="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          sudo xcode-select -s "$latest"
+          ver="$(xcodebuild -version | head -1 | awk '{print $2}')"
+          echo "Using Xcode $ver ($latest)"
+          [ "${ver%%.*}" -ge 26 ] || {
+            echo "::error::Xcode $ver cannot compile assets/brand/lumit-icon.icon (needs 26+)"
+            exit 1
+          }
       - name: Build the disk image
         run: |
           version="${GITHUB_REF_NAME#v}"
