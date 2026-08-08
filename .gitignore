@@ -9,3 +9,5 @@ packaging/flatpak/bundle/
 .flatpak-builder/
 flatpak-build/
 flatpak-repo/
+buildartix.sh
+

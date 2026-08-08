@@ -1048,7 +1048,47 @@ pub fn run_ops(
                     &probe,
                 );
             }
+            Resolved::LensDirt(p) => {
+                tex = fx.lens_dirt(
+                    ctx,
+                    &tex,
+                    w,
+                    h,
+                    &lumit_gpu::fx::LensDirtOp {
+                        intensity: p.intensity,
+                        density: p.density,
+                        bokeh_layers: p.bokeh_layers,
+                        scale: p.scale,
+                        scale_var_x: p.scale_var_x,
+                        scale_var_y: p.scale_var_y,
+                        rotation_var: p.rotation_var,
+                        scratch_scale: p.scratch_scale,
+                        defocus: p.defocus,
+                        defocus_var: p.defocus_var,
+                        color_var: p.color_var,
+                        chromatic: p.chromatic,
+
+                        scratches: p.scratches,
+                        scratch_var: p.scratch_var,
+                        scratch_tint: p.scratch_tint,
+                        dirt: p.dirt,
+                        dirt_tint: p.dirt_tint,
+                        tint: p.tint,
+                        vignette: p.vignette,
+                        blend_mode: p.blend_mode,
+                        bg_mode: p.bg_mode,
+                        bg_colour: p.bg_colour,
+                        sun_pos: p.sun_pos,
+                        sun_intensity: p.sun_intensity,
+                        sun_radius: p.sun_radius,
+                        seed: p.seed,
+                        mix: p.mix,
+
+                    },
+                );
+            }
         }
+
         if let (Some(started), Some(into)) = (started, timings.as_mut()) {
             // Same reason as the per-layer fence in `realise`: a frame's
             // commands are batched, and timing a queue that has not been

@@ -728,8 +728,93 @@ pub enum Resolved {
     /// through `lens_flare::bake`, cached GPU-side by [`lens_flare::bake_key`]
     /// — so nothing travels beside the op. GPU-only: the CPU degradation rung
     /// renders it as a labelled no-op (the K-114 LUT precedent).
+    /// Lens flare (docs/08 §3.27, docs/impl/lens-flare.md, K-256): traced
+    /// ghosts and the Fourier starburst. The op carries its full parameter
+    /// bundle ([`LensFlareParams`], all plain numbers); the baked resources
+    /// (disc/starburst textures, ghost ranking) derive from those numbers
+    /// through `lens_flare::bake`, cached GPU-side by [`lens_flare::bake_key`]
+    /// — so nothing travels beside the op. GPU-only: the CPU degradation rung
+    /// renders it as a labelled no-op (the K-114 LUT precedent).
     LensFlare(crate::fx::lens_flare::LensFlareParams),
+    /// Lens dirt generator (docs/08 §3.28): procedurally generates out-of-focus
+    /// aperture bokeh disks, micro dust specks, hairline scratches, smudges,
+    /// and optical vignetting overlay.
+    LensDirt(LensDirtParams),
 }
+
+/// Resolved parameters for the procedural Lens Dirt generator (docs/08 §3.28).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LensDirtParams {
+    pub intensity: f32,
+    pub density: f32,
+    pub bokeh_layers: u32,
+    pub scale: f32,
+    pub scale_var_x: f32,
+    pub scale_var_y: f32,
+    pub rotation_var: f32,
+    pub scratch_scale: f32,
+    pub defocus: f32,
+    pub defocus_var: f32,
+    pub color_var: f32,
+    pub chromatic: f32,
+
+    pub scratches: f32,
+    pub scratch_var: f32,
+    pub scratch_tint: [f32; 4],
+    pub dirt: f32,
+    pub dirt_tint: [f32; 4],
+    pub tint: [f32; 4],
+    pub vignette: f32,
+    /// Blend mode wire code: 0 = Screen, 1 = Add, 2 = Overlay, 3 = Solo (dirt map only).
+    pub blend_mode: u32,
+    /// Background mode wire code: 0 = Transparent, 1 = Color fill, 2 = Sun / Light source.
+    pub bg_mode: u32,
+    pub bg_colour: [f32; 4],
+    pub sun_pos: [f32; 2],
+    pub sun_intensity: f32,
+    pub sun_radius: f32,
+    pub seed: u32,
+    pub mix: f32,
+}
+
+impl Default for LensDirtParams {
+    fn default() -> Self {
+        Self {
+            intensity: 1.0,
+            density: 50.0,
+            bokeh_layers: 3,
+            scale: 1.0,
+            scale_var_x: 0.0,
+            scale_var_y: 0.0,
+            rotation_var: 0.0,
+            scratch_scale: 1.0,
+            defocus: 0.5,
+            defocus_var: 0.0,
+            color_var: 0.0,
+            chromatic: 0.3,
+            scratches: 0.4,
+            scratch_var: 0.2,
+            scratch_tint: [1.0, 1.0, 1.0, 1.0],
+            dirt: 0.3,
+            dirt_tint: [0.9, 0.85, 0.75, 1.0],
+            tint: [1.0, 0.95, 0.85, 1.0],
+            vignette: 0.3,
+            blend_mode: 0,
+            bg_mode: 0,
+            bg_colour: [0.05, 0.05, 0.08, 1.0],
+            sun_pos: [0.5, 0.3],
+            sun_intensity: 1.0,
+            sun_radius: 0.4,
+            seed: 42,
+            mix: 1.0,
+        }
+    }
+}
+
+
+
+
+
 
 /// Resolve a layer's live stack at layer time `lt` for a raster whose
 /// diagonal is `diag_px` pixels; `px_scale` is raster pixels per comp pixel
@@ -840,9 +925,11 @@ pub fn rescale_px(ops: &mut [Resolved], f: f32) {
                 p.light[0] *= f;
                 p.light[1] *= f;
             }
+            Resolved::LensDirt(_) => {}
         }
     }
 }
+
 
 pub fn resolve_stack(
     effects: &[EffectInstance],
@@ -2254,6 +2341,98 @@ fn resolve_one(
                 mix,
             })
         }
+        "lens_dirt" => {
+            let intensity = (e.float_at("intensity", lt).unwrap_or(1.0) as f32).max(0.0);
+            let density = (e.float_at("density", lt).unwrap_or(100.0) as f32).clamp(0.0, 2000.0);
+            let bokeh_layers = (e.float_at("bokeh_layers", lt).unwrap_or(3.0) as u32).clamp(1, 10);
+
+            let scale = (e.float_at("scale", lt).unwrap_or(1.0) as f32).clamp(0.01, 20.0);
+            let scale_var_x = (e.float_at("scale_var_x", lt).unwrap_or(0.0) as f32).clamp(0.0, 2.0);
+            let scale_var_y = (e.float_at("scale_var_y", lt).unwrap_or(0.0) as f32).clamp(0.0, 2.0);
+            let rotation_var = (e.float_at("rotation_var", lt).unwrap_or(0.0) as f32).clamp(0.0, 1.0);
+            let scratch_scale = (e.float_at("scratch_scale", lt).unwrap_or(1.0) as f32).clamp(0.01, 20.0);
+            let defocus = (e.float_at("defocus", lt).unwrap_or(0.5) as f32).clamp(0.0, 1.0);
+            let defocus_var = (e.float_at("defocus_var", lt).unwrap_or(0.0) as f32).clamp(0.0, 1.0);
+            let color_var = (e.float_at("color_var", lt).unwrap_or(0.0) as f32).clamp(0.0, 1.0);
+            let chromatic = (e.float_at("chromatic", lt).unwrap_or(0.3) as f32).clamp(0.0, 2.0);
+            let scratches = (e.float_at("scratches", lt).unwrap_or(0.4) as f32).clamp(0.0, 1.0);
+            let scratch_var = (e.float_at("scratch_var", lt).unwrap_or(0.2) as f32).clamp(0.0, 1.0);
+            let scratch_tint = match e.colour_at("scratch_tint", lt) {
+                Some(c) => [c[0] as f32, c[1] as f32, c[2] as f32, c[3] as f32],
+                None => [1.0, 1.0, 1.0, 1.0],
+            };
+            let dirt = (e.float_at("dirt", lt).unwrap_or(0.3) as f32).clamp(0.0, 1.0);
+            let dirt_tint = match e.colour_at("dirt_tint", lt) {
+                Some(c) => [c[0] as f32, c[1] as f32, c[2] as f32, c[3] as f32],
+                None => [0.9, 0.85, 0.75, 1.0],
+            };
+            let tint = match e.colour_at("tint", lt) {
+                Some(c) => [c[0] as f32, c[1] as f32, c[2] as f32, c[3] as f32],
+                None => [1.0, 0.95, 0.85, 1.0],
+            };
+
+            let vignette = (e.float_at("vignette", lt).unwrap_or(0.3) as f32).clamp(0.0, 1.0);
+            let blend_mode = match e.param("blend_mode") {
+                Some(EffectValue::Choice(c)) => (*c).min(3),
+                _ => 0,
+            };
+            let bg_mode = match e.param("bg_mode") {
+                Some(EffectValue::Choice(c)) => (*c).min(2),
+                _ => 0,
+            };
+            let bg_colour = match e.colour_at("bg_colour", lt) {
+                Some(c) => [c[0] as f32, c[1] as f32, c[2] as f32, c[3] as f32],
+                None => [0.05, 0.05, 0.08, 1.0],
+            };
+            let sun_pos_x = e.float_at("sun_pos_x", lt).unwrap_or(50.0) as f32 / 100.0;
+            let sun_pos_y = e.float_at("sun_pos_y", lt).unwrap_or(30.0) as f32 / 100.0;
+
+            let sun_pos = [sun_pos_x, sun_pos_y];
+            let sun_intensity = (e.float_at("sun_intensity", lt).unwrap_or(1.0) as f32).max(0.0);
+
+            let sun_radius = (e.float_at("sun_radius", lt).unwrap_or(0.4) as f32).clamp(0.01, 5.0);
+
+            let seed = match e.param("seed") {
+                Some(EffectValue::Seed(s)) => *s,
+                _ => 0,
+            };
+            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            Some(Resolved::LensDirt(LensDirtParams {
+                intensity,
+                density,
+                bokeh_layers,
+                scale,
+                scale_var_x,
+                scale_var_y,
+                rotation_var,
+                scratch_scale,
+                defocus,
+                defocus_var,
+                color_var,
+                chromatic,
+                scratches,
+                scratch_var,
+                scratch_tint,
+                dirt,
+                dirt_tint,
+                tint,
+                vignette,
+                blend_mode,
+                bg_mode,
+                bg_colour,
+                sun_pos,
+                sun_intensity,
+                sun_radius,
+                seed,
+                mix,
+            }))
+        }
+
+
+
+
+
         _ => None,
     }
 }
+

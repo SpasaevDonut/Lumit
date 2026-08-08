@@ -224,6 +224,7 @@ impl FxEngine {
         let glow_mod = module(include_str!("../fx_glow.wgsl"), "fx-glow");
         let block_glitch_mod = module(include_str!("../fx_block_glitch.wgsl"), "fx-block-glitch");
         let scanlines_mod = module(include_str!("../fx_scanlines.wgsl"), "fx-scanlines");
+        let lens_dirt_mod = module(include_str!("../fx_lens_dirt.wgsl"), "fx-lens-dirt");
         let echo_mod = module(include_str!("../fx_echo.wgsl"), "fx-echo");
         let motion_blur_mod = module(include_str!("../fx_motionblur.wgsl"), "fx-motion-blur");
         let datamosh_mod = module(include_str!("../fx_datamosh.wgsl"), "fx-datamosh");
@@ -262,6 +263,7 @@ impl FxEngine {
         let glow_combine = pipeline(&glow_mod, "fx-glow", "glow_combine");
         let block_glitch = pipeline(&block_glitch_mod, "fx-block-glitch", "block_glitch");
         let scanlines = pipeline(&scanlines_mod, "fx-scanlines", "scanlines");
+        let lens_dirt = pipeline(&lens_dirt_mod, "fx-lens-dirt", "lens_dirt");
         let echo_accumulate = pipeline(&echo_mod, "fx-echo-accumulate", "echo_accumulate");
         let echo_mix = pipeline(&echo_mod, "fx-echo-mix", "echo_mix");
         let motion_blur = ctx
@@ -345,6 +347,8 @@ impl FxEngine {
             glow_combine,
             block_glitch,
             scanlines,
+            lens_dirt,
+
             echo_accumulate,
             echo_mix,
             motion_blur,

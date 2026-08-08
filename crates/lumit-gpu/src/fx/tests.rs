@@ -4297,3 +4297,197 @@ fn lens_flare_montage() {
     ppm.extend_from_slice(&canvas);
     std::fs::write(std::env::var("LUMIT_FLARE_DUMP").unwrap(), ppm).unwrap();
 }
+
+#[test]
+fn wgsl_lens_dirt_matches_the_cpu_oracle() {
+    let Ok(ctx) = GpuContext::headless() else {
+        crate::no_adapter();
+        return;
+    };
+    let fx = FxEngine::new(&ctx);
+    let (w, h) = (32u32, 24u32);
+    let img = corpus(w, h);
+    for (name, op) in [
+        (
+            "neutral",
+            LensDirtOp {
+                intensity: 0.0,
+                density: 50.0,
+                bokeh_layers: 2,
+                scale: 1.0,
+                scale_var_x: 0.0,
+                scale_var_y: 0.0,
+                rotation_var: 0.0,
+                scratch_scale: 1.0,
+                defocus: 0.5,
+                defocus_var: 0.0,
+                color_var: 0.0,
+                chromatic: 0.3,
+                scratches: 0.4,
+                scratch_var: 0.2,
+                scratch_tint: [1.0, 1.0, 1.0, 1.0],
+                dirt: 0.3,
+                dirt_tint: [0.9, 0.85, 0.75, 1.0],
+                tint: [1.0, 0.95, 0.85, 1.0],
+                vignette: 0.3,
+                blend_mode: 0,
+                bg_mode: 0,
+                bg_colour: [0.05, 0.05, 0.08, 1.0],
+                sun_pos: [0.5, 0.3],
+                sun_intensity: 1.0,
+                sun_radius: 0.4,
+                seed: 42,
+                mix: 1.0,
+            },
+        ),
+        (
+            "mix-zero",
+            LensDirtOp {
+                intensity: 1.0,
+                density: 50.0,
+                bokeh_layers: 2,
+                scale: 1.0,
+                scale_var_x: 0.0,
+                scale_var_y: 0.0,
+                rotation_var: 0.0,
+                scratch_scale: 1.0,
+                defocus: 0.5,
+                defocus_var: 0.0,
+                color_var: 0.0,
+                chromatic: 0.3,
+                scratches: 0.4,
+                scratch_var: 0.2,
+                scratch_tint: [1.0, 1.0, 1.0, 1.0],
+                dirt: 0.3,
+                dirt_tint: [0.9, 0.85, 0.75, 1.0],
+                tint: [1.0, 0.95, 0.85, 1.0],
+                vignette: 0.3,
+                blend_mode: 0,
+                bg_mode: 0,
+                bg_colour: [0.05, 0.05, 0.08, 1.0],
+                sun_pos: [0.5, 0.3],
+                sun_intensity: 1.0,
+                sun_radius: 0.4,
+                seed: 42,
+                mix: 0.0,
+            },
+        ),
+        (
+            "screen-default",
+            LensDirtOp {
+                intensity: 1.2,
+                density: 60.0,
+                bokeh_layers: 2,
+                scale: 1.2,
+                scale_var_x: 0.3,
+                scale_var_y: 0.2,
+                rotation_var: 0.5,
+                scratch_scale: 1.5,
+                defocus: 0.6,
+                defocus_var: 0.3,
+                color_var: 0.4,
+                chromatic: 0.4,
+                scratches: 0.5,
+                scratch_var: 0.3,
+                scratch_tint: [1.0, 1.0, 1.0, 1.0],
+                dirt: 0.4,
+                dirt_tint: [0.9, 0.85, 0.75, 1.0],
+                tint: [1.0, 0.9, 0.8, 1.0],
+                vignette: 0.4,
+                blend_mode: 0,
+                bg_mode: 2,
+                bg_colour: [0.05, 0.05, 0.08, 1.0],
+                sun_pos: [0.5, 0.3],
+                sun_intensity: 1.0,
+                sun_radius: 0.4,
+                seed: 1234,
+                mix: 1.0,
+            },
+        ),
+        (
+            "add-blend",
+            LensDirtOp {
+                intensity: 0.8,
+                density: 40.0,
+                bokeh_layers: 2,
+                scale: 0.8,
+                scale_var_x: 0.1,
+                scale_var_y: 0.4,
+                rotation_var: 0.2,
+                scratch_scale: 0.8,
+                defocus: 0.3,
+                defocus_var: 0.1,
+                color_var: 0.2,
+                chromatic: 0.2,
+                scratches: 0.3,
+                scratch_var: 0.1,
+                scratch_tint: [1.0, 1.0, 1.0, 1.0],
+                dirt: 0.2,
+                dirt_tint: [0.9, 0.85, 0.75, 1.0],
+                tint: [0.9, 0.95, 1.0, 1.0],
+                vignette: 0.2,
+                blend_mode: 1,
+                bg_mode: 1,
+                bg_colour: [0.1, 0.1, 0.15, 1.0],
+                sun_pos: [0.3, 0.4],
+                sun_intensity: 0.8,
+                sun_radius: 0.5,
+                seed: 5678,
+                mix: 0.8,
+            },
+        ),
+    ] {
+        let mut cpu = img.clone();
+        let cpu_p = lumit_core::fx::LensDirtParams {
+            intensity: op.intensity,
+            density: op.density,
+            bokeh_layers: op.bokeh_layers,
+            scale: op.scale,
+            scale_var_x: op.scale_var_x,
+            scale_var_y: op.scale_var_y,
+            rotation_var: op.rotation_var,
+            scratch_scale: op.scratch_scale,
+            defocus: op.defocus,
+            defocus_var: op.defocus_var,
+            color_var: op.color_var,
+            chromatic: op.chromatic,
+            scratches: op.scratches,
+            scratch_var: op.scratch_var,
+            scratch_tint: op.scratch_tint,
+            dirt: op.dirt,
+            dirt_tint: op.dirt_tint,
+            tint: op.tint,
+            vignette: op.vignette,
+            blend_mode: op.blend_mode,
+            bg_mode: op.bg_mode,
+            bg_colour: op.bg_colour,
+            sun_pos: op.sun_pos,
+            sun_intensity: op.sun_intensity,
+            sun_radius: op.sun_radius,
+            seed: op.seed,
+            mix: op.mix,
+        };
+
+
+
+
+
+        lumit_core::fx::cpu::lens_dirt(&mut cpu, w, h, &cpu_p);
+
+        let tex = upload_linear_f32(&ctx, &img, w, h);
+        let out = fx.lens_dirt(&ctx, &tex, w, h, &op);
+        let gpu = readback_linear_f32(&ctx, &out, w, h).unwrap();
+
+        let worst = worst_f16_ulp(&cpu, &gpu);
+        eprintln!("lens_dirt {name}: worst {worst} ulp");
+        assert!(worst <= 2, "{name}: worst {worst} fp16 ULP");
+        if name == "neutral" || name == "mix-zero" {
+            assert_eq!(gpu, img, "{name}: must be the bit-exact identity");
+        }
+
+        let out2 = fx.lens_dirt(&ctx, &tex, w, h, &op);
+        let gpu2 = readback_linear_f32(&ctx, &out2, w, h).unwrap();
+        assert_eq!(gpu, gpu2, "GPU lens_dirt must be bit-stable");
+    }
+}
+

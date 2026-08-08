@@ -3334,10 +3334,316 @@ pub const BUILTINS: &[EffectSchema] = &[
                     dividers_after: &[0],
                 },
             },
+
+            MIX_PARAM,
+        ],
+    },
+    EffectSchema {
+        groups: &[
+            ParamGroup {
+                label: "Bokeh particles",
+                params: &[
+                    "bokeh_layers",
+                    "scale",
+                    "scale_var_x",
+                    "scale_var_y",
+                    "rotation_var",
+                    "defocus",
+                    "defocus_var",
+                    "color_var",
+                    "chromatic",
+                    "tint",
+                ],
+                collapsed: false,
+                visible_when: None,
+            },
+            ParamGroup {
+                label: "Scratches & Imperfections",
+                params: &[
+                    "scratches",
+                    "scratch_scale",
+                    "scratch_var",
+                    "scratch_tint",
+                    "dirt",
+                    "dirt_tint",
+                    "vignette",
+                ],
+                collapsed: true,
+                visible_when: None,
+            },
+            ParamGroup {
+                label: "Background",
+                params: &["bg_colour"],
+                collapsed: false,
+                visible_when: Some(("bg_mode", &[1, 2])),
+            },
+            ParamGroup {
+                label: "Sun / Light source",
+                params: &["sun_pos_x", "sun_pos_y", "sun_intensity", "sun_radius"],
+                collapsed: false,
+                visible_when: Some(("bg_mode", &[2])),
+            },
+            ParamGroup {
+                label: "Random seed",
+                params: &["seed"],
+                collapsed: true,
+                visible_when: None,
+            },
+        ],
+        match_name: "lens_dirt",
+        label: "Lens dirt",
+        version: 1,
+        category: FxCategory::Stylise,
+        traits: EffectTraits {
+            cost: CostClass::Moderate,
+            roi: Roi::Exact,
+            temporal: &[0],
+            premultiplied: true,
+            seeded: true,
+            beat_input: false,
+        },
+        params: &[
+            ParamSchema {
+                id: "intensity",
+                label: "Intensity",
+                kind: ParamKind::Float {
+                    default: 1.0,
+                    slider: (0.0, 4.0),
+                    hard: (Some(0.0), None),
+                },
+            },
+            ParamSchema {
+                id: "density",
+                label: "Density",
+                kind: ParamKind::Float {
+                    default: 100.0,
+                    slider: (0.0, 500.0),
+                    hard: (Some(0.0), Some(2000.0)),
+                },
+            },
+            ParamSchema {
+                id: "blend_mode",
+                label: "Blend mode",
+                kind: ParamKind::Choice {
+                    options: &["Screen", "Add", "Overlay", "Solo"],
+                    default: 0,
+                    dividers_after: &[],
+                },
+            },
+            ParamSchema {
+                id: "bokeh_layers",
+                label: "Layers",
+                kind: ParamKind::Int {
+                    default: 3,
+                    slider: (1, 8),
+                    hard: (Some(1), Some(10)),
+                },
+            },
+            ParamSchema {
+                id: "scale",
+                label: "Size",
+                kind: ParamKind::Float {
+                    default: 1.0,
+                    slider: (0.1, 5.0),
+                    hard: (Some(0.01), Some(20.0)),
+                },
+            },
+            ParamSchema {
+                id: "scale_var_x",
+                label: "Aspect jitter X",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(2.0)),
+                },
+            },
+            ParamSchema {
+                id: "scale_var_y",
+                label: "Aspect jitter Y",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(2.0)),
+                },
+            },
+            ParamSchema {
+                id: "rotation_var",
+                label: "Rotation jitter",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(1.0)),
+                },
+            },
+            ParamSchema {
+                id: "defocus",
+                label: "Defocus",
+                kind: ParamKind::Float {
+                    default: 0.5,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(1.0)),
+                },
+            },
+            ParamSchema {
+                id: "defocus_var",
+                label: "Defocus jitter",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(1.0)),
+                },
+            },
+            ParamSchema {
+                id: "color_var",
+                label: "Color jitter",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(1.0)),
+                },
+            },
+            ParamSchema {
+                id: "chromatic",
+                label: "Chromatic dispersion",
+                kind: ParamKind::Float {
+                    default: 0.3,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(2.0)),
+                },
+            },
+            ParamSchema {
+                id: "tint",
+                label: "Bokeh tint",
+                kind: ParamKind::Colour {
+                    default: [1.0, 0.95, 0.85, 1.0],
+                    range: (0.0, 2.0),
+                },
+            },
+            ParamSchema {
+                id: "scratches",
+                label: "Scratches & dust",
+                kind: ParamKind::Float {
+                    default: 0.4,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(1.0)),
+                },
+            },
+            ParamSchema {
+                id: "scratch_scale",
+                label: "Scratch scale",
+                kind: ParamKind::Float {
+                    default: 1.0,
+                    slider: (0.1, 5.0),
+                    hard: (Some(0.01), Some(20.0)),
+                },
+            },
+            ParamSchema {
+                id: "scratch_var",
+                label: "Scratch jitter",
+                kind: ParamKind::Float {
+                    default: 0.2,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(1.0)),
+                },
+            },
+            ParamSchema {
+                id: "scratch_tint",
+                label: "Scratch tint",
+                kind: ParamKind::Colour {
+                    default: [1.0, 1.0, 1.0, 1.0],
+                    range: (0.0, 2.0),
+                },
+            },
+            ParamSchema {
+                id: "dirt",
+                label: "Glass dirt specks",
+                kind: ParamKind::Float {
+                    default: 0.3,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(1.0)),
+                },
+            },
+            ParamSchema {
+                id: "dirt_tint",
+                label: "Dirt specks tint",
+                kind: ParamKind::Colour {
+                    default: [0.9, 0.85, 0.75, 1.0],
+                    range: (0.0, 2.0),
+                },
+            },
+            ParamSchema {
+                id: "vignette",
+                label: "Optical vignette",
+                kind: ParamKind::Float {
+                    default: 0.3,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(1.0)),
+                },
+            },
+            ParamSchema {
+                id: "bg_mode",
+                label: "Background mode",
+                kind: ParamKind::Choice {
+                    options: &["Transparent", "Color", "Sun / Light source"],
+                    default: 0,
+                    dividers_after: &[],
+                },
+            },
+            ParamSchema {
+                id: "bg_colour",
+                label: "Background color",
+                kind: ParamKind::Colour {
+                    default: [0.05, 0.05, 0.08, 1.0],
+                    range: (0.0, 2.0),
+                },
+            },
+            ParamSchema {
+                id: "sun_pos_x",
+                label: "Sun position X",
+                kind: ParamKind::Float {
+                    default: 50.0,
+                    slider: (0.0, 100.0),
+                    hard: (None, None),
+                },
+            },
+            ParamSchema {
+                id: "sun_pos_y",
+                label: "Sun position Y",
+                kind: ParamKind::Float {
+                    default: 30.0,
+                    slider: (0.0, 100.0),
+                    hard: (None, None),
+                },
+            },
+            ParamSchema {
+                id: "sun_intensity",
+                label: "Sun intensity",
+                kind: ParamKind::Float {
+                    default: 1.0,
+                    slider: (0.0, 4.0),
+                    hard: (Some(0.0), None),
+                },
+            },
+            ParamSchema {
+                id: "sun_radius",
+                label: "Sun radius",
+                kind: ParamKind::Float {
+                    default: 0.4,
+                    slider: (0.05, 1.5),
+                    hard: (Some(0.01), Some(5.0)),
+                },
+            },
+            ParamSchema {
+                id: "seed",
+                label: "Random seed",
+                kind: ParamKind::Seed,
+            },
             MIX_PARAM,
         ],
     },
 ];
+
+
 
 /// Look a schema up by its match name.
 pub fn schema(match_name: &str) -> Option<&'static EffectSchema> {

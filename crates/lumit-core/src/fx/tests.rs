@@ -6862,3 +6862,128 @@ fn profile_reaches_a_depth_pass_squeezed_into_a_fifth_of_its_range() {
     // end: one doubling per unit means Profile 6.
     assert!(((6.0f32).exp2() - 64.0).abs() < 1e-3);
 }
+
+#[test]
+fn lens_dirt_neutral_points_and_default_resolve() {
+    use crate::fx::cpu::lens_dirt;
+    use crate::fx::resolved::LensDirtParams;
+
+    let plain = instantiate("lens_dirt").unwrap();
+    assert_eq!(plain.effect.match_name, "lens_dirt");
+
+    let markers = MarkerContext::NONE;
+    let resolved = resolve_stack(&[plain], 0.0, 1000.0, 1.0, &markers).pop().unwrap();
+    if let Resolved::LensDirt(p) = resolved {
+        assert_eq!(p.intensity, 1.0);
+        assert_eq!(p.density, 100.0);
+        assert_eq!(p.bokeh_layers, 3);
+        assert_eq!(p.scale, 1.0);
+        assert_eq!(p.scale_var_x, 0.0);
+        assert_eq!(p.scale_var_y, 0.0);
+        assert_eq!(p.rotation_var, 0.0);
+        assert_eq!(p.scratch_scale, 1.0);
+        assert_eq!(p.defocus, 0.5);
+        assert_eq!(p.defocus_var, 0.0);
+        assert_eq!(p.chromatic, 0.3);
+        assert_eq!(p.scratches, 0.4);
+        assert_eq!(p.tint, [1.0, 0.95, 0.85, 1.0]);
+        assert_eq!(p.vignette, 0.3);
+        assert_eq!(p.blend_mode, 0);
+        assert_eq!(p.bg_mode, 0);
+        assert_eq!(p.bg_colour, [0.05, 0.05, 0.08, 1.0]);
+        assert_eq!(p.sun_pos, [0.5, 0.3]);
+        assert_eq!(p.sun_intensity, 1.0);
+        assert_eq!(p.sun_radius, 0.4);
+        assert_eq!(p.mix, 1.0);
+    } else {
+        panic!("expected Resolved::LensDirt");
+    }
+
+    let mut image = vec![0.5f32; 16 * 16 * 4];
+    let copy = image.clone();
+    let p_zero = LensDirtParams {
+        intensity: 0.0,
+        density: 100.0,
+        bokeh_layers: 3,
+        scale: 1.0,
+        scale_var_x: 0.0,
+        scale_var_y: 0.0,
+        rotation_var: 0.0,
+        scratch_scale: 1.0,
+        defocus: 0.5,
+        defocus_var: 0.0,
+        color_var: 0.0,
+        chromatic: 0.3,
+        scratches: 0.4,
+        scratch_var: 0.2,
+        scratch_tint: [1.0, 1.0, 1.0, 1.0],
+        dirt: 0.3,
+        dirt_tint: [0.9, 0.85, 0.75, 1.0],
+        tint: [1.0, 0.95, 0.85, 1.0],
+        vignette: 0.3,
+        blend_mode: 0,
+        bg_mode: 0,
+        bg_colour: [0.05, 0.05, 0.08, 1.0],
+        sun_pos: [0.5, 0.3],
+        sun_intensity: 1.0,
+        sun_radius: 0.4,
+        seed: 42,
+        mix: 1.0,
+    };
+    lens_dirt(&mut image, 16, 16, &p_zero);
+    assert_eq!(image, copy, "intensity 0 must be bit-exact identity");
+}
+
+#[test]
+fn lens_dirt_seed_determinism() {
+    use crate::fx::cpu::lens_dirt;
+    use crate::fx::resolved::LensDirtParams;
+
+    let p = LensDirtParams {
+        intensity: 1.0,
+        density: 100.0,
+        bokeh_layers: 3,
+        scale: 1.0,
+        scale_var_x: 0.0,
+        scale_var_y: 0.0,
+        rotation_var: 0.0,
+        scratch_scale: 1.0,
+        defocus: 0.5,
+        defocus_var: 0.0,
+        color_var: 0.0,
+        chromatic: 0.3,
+        scratches: 0.4,
+        scratch_var: 0.2,
+        scratch_tint: [1.0, 1.0, 1.0, 1.0],
+        dirt: 0.3,
+        dirt_tint: [0.9, 0.85, 0.75, 1.0],
+        tint: [1.0, 0.95, 0.85, 1.0],
+        vignette: 0.3,
+        blend_mode: 0,
+        bg_mode: 0,
+        bg_colour: [0.05, 0.05, 0.08, 1.0],
+        sun_pos: [0.5, 0.3],
+        sun_intensity: 1.0,
+        sun_radius: 0.4,
+        seed: 12345,
+        mix: 1.0,
+    };
+
+
+
+
+
+    let mut img1 = vec![0.2f32; 128 * 128 * 4];
+    let mut img2 = vec![0.2f32; 128 * 128 * 4];
+    lens_dirt(&mut img1, 128, 128, &p);
+    lens_dirt(&mut img2, 128, 128, &p);
+    assert_eq!(img1, img2, "two runs with same seed must be bit-identical");
+
+    let p_diff = LensDirtParams { seed: 9999, ..p };
+    let mut img3 = vec![0.2f32; 128 * 128 * 4];
+    lens_dirt(&mut img3, 128, 128, &p_diff);
+    assert_ne!(img1, img3, "different seed must yield different pattern");
+}
+
+
+
