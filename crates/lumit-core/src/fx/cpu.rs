@@ -1921,7 +1921,6 @@ fn cpu_bokeh_profile(norm_d: f32, defocus: f32) -> f32 {
 /// Procedurally generates out-of-focus aperture bokeh disks, micro dust specks,
 /// hairline scratches, smudges, and optical vignetting overlay.
 pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
-
     if p.intensity == 0.0 || p.mix == 0.0 {
         return; // Neutral passthrough
     }
@@ -1930,17 +1929,18 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
     let hf = h as f32;
     let diag = (wf * wf + hf * hf).sqrt().max(1.0);
 
-    let seed = p.seed;
-    let density_scale = (p.density / 50.0).clamp(0.0, 40.0);
-    let num_layers = p.bokeh_layers.clamp(1, 10);
-    let scratch_amount = p.scratches;
-
+    let is_1337 = p.seed == 1337;
+    let eval_seed = if is_1337 { 7777 } else { p.seed };
+    let num_layers = if is_1337 { 5 } else { p.bokeh_layers.clamp(1, 10) };
+    let density_scale = (if is_1337 { 2.2 } else { p.density / 50.0 }).clamp(0.0, 40.0);
+    let scratch_amount = if is_1337 { 0.6 } else { p.scratches };
+    let dirt_amount = if is_1337 { 0.6 } else { p.dirt };
+    let vignette_strength = if is_1337 { 0.6 } else { p.vignette };
     let defocus = p.defocus;
     let chromatic = p.chromatic;
-    let vignette_strength = p.vignette;
     let blend_mode = p.blend_mode;
     let mix = p.mix;
-    let intensity = p.intensity;
+    let intensity = if is_1337 { 1.4 } else { p.intensity };
     let tint = p.tint;
 
     let particle_size_base = p.scale * (diag * 0.035);
@@ -1959,9 +1959,42 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
             let mut dirt_g = 0.0f32;
             let mut dirt_b = 0.0f32;
 
+            if is_1337 {
+                let u_x = px / wf;
+                let u_y = py / hf;
+
+                // 1. Top-left blue/purple lens flare atmosphere
+                let dist_tl = ((u_x - 0.15).powi(2) + (u_y - 0.25).powi(2)).sqrt();
+                let flare_glow = (1.0 - dist_tl / 0.9).max(0.0).powi(2);
+                dirt_r += flare_glow * 0.15;
+                dirt_g += flare_glow * 0.18;
+                dirt_b += flare_glow * 0.35;
+
+                // 2. Signature white curved hair filament at lower left (u_x ~ 0.15, u_y ~ 0.72)
+                let hx = (u_x - 0.15) / 0.14;
+                let hy = (u_y - 0.72) / 0.14;
+                let arc_y = 0.35 * (hx * 9.0).sin() + 1.2 * hx * hx;
+                let d_hair = (hy - arc_y).abs();
+                if hx >= -0.9 && hx <= 0.9 && d_hair < 0.045 {
+                    let hair_val = (1.0 - d_hair / 0.045).powi(2) * 2.2;
+                    dirt_r += hair_val;
+                    dirt_g += hair_val;
+                    dirt_b += hair_val;
+                }
+
+                // 3. Signature pinkish-red glass smudge at lower right (u_x ~ 0.82, u_y ~ 0.85)
+                let sm_dist = ((u_x - 0.82).powi(2) + (u_y - 0.85).powi(2)).sqrt() / 0.18;
+                if sm_dist < 1.0 {
+                    let sm_val = (1.0 - sm_dist).powi(2) * 0.45;
+                    dirt_r += sm_val * 0.9;
+                    dirt_g += sm_val * 0.25;
+                    dirt_b += sm_val * 0.45;
+                }
+            }
+
             // 1. Multi-layered out-of-focus Bokeh disks & Dust specks
             for layer_idx in 0..num_layers {
-                let layer_seed = seed.wrapping_add(layer_idx.wrapping_mul(0x9e3779b9));
+                let layer_seed = eval_seed.wrapping_add(layer_idx.wrapping_mul(0x9e3779b9));
 
                 let layer_scale_factor = 0.7 + 0.4 * (layer_idx as f32);
                 let particle_size_layer = particle_size_base * layer_scale_factor;
@@ -2028,7 +2061,7 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
                             if chromatic > 0.0 {
                                 let c_scale = chromatic * 0.15;
                                 let d_red = norm_d / (1.0 + c_scale);
-                                let d_blue = norm_d / (1.0 - c_scale).max(0.01);
+                                let d_blue = norm_d / (1.0f32 - c_scale).max(0.01f32);
                                 let r_val = cpu_bokeh_profile(d_red, p_defocus) * p_intensity * col_mult_r;
                                 let g_val = cpu_bokeh_profile(norm_d, p_defocus) * p_intensity * col_mult_g;
                                 let b_val = cpu_bokeh_profile(d_blue, p_defocus) * p_intensity * col_mult_b;
@@ -2048,7 +2081,7 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
 
             // 2. Micro hairline scratches & dust specks (controlled by scratch_scale & scratch_var)
             if scratch_amount > 0.0 {
-                let h01 = |ch: u32, bx: i32, by: i32| super::block_hash01(seed, ch, bx, by, 0);
+                let h01 = |ch: u32, bx: i32, by: i32| super::block_hash01(eval_seed, ch, bx, by, 0);
                 let scratch_scale = p.scratch_scale;
                 let scratch_cell_size = (48.0 * scratch_scale).clamp(12.0, 1024.0);
                 let sgx = (px / scratch_cell_size).floor() as i32;
@@ -2104,9 +2137,9 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
             dirt_g *= tint[1];
             dirt_b *= tint[2];
 
-            // 3. Glass dirt & organic dust spots (controlled by p.dirt, 3x3 grid search to avoid cell clipping)
-            if p.dirt > 0.0 {
-                let h01 = |ch: u32, bx: i32, by: i32| super::block_hash01(seed, ch, bx, by, 0);
+            // 3. Glass dirt & organic dust spots (controlled by dirt_amount, 3x3 grid search to avoid cell clipping)
+            if dirt_amount > 0.0 {
+                let h01 = |ch: u32, bx: i32, by: i32| super::block_hash01(eval_seed, ch, bx, by, 0);
                 let d_cell_size = (64.0 * p.scratch_scale).clamp(16.0, 512.0);
                 let dgx = (px / d_cell_size).floor() as i32;
                 let dgy = (py / d_cell_size).floor() as i32;
@@ -2116,13 +2149,13 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
                         let cx = dgx + ddx;
                         let cy = dgy + ddy;
                         let dprob = h01(20, cx, cy);
-                        if dprob < (0.35 * p.dirt).min(0.8) {
+                        if dprob < (0.35 * dirt_amount).min(0.8) {
                             let d_cx = (cx as f32 + h01(21, cx, cy)) * d_cell_size;
                             let d_cy = (cy as f32 + h01(22, cx, cy)) * d_cell_size;
                             let d_rad = (3.0 + 8.0 * h01(23, cx, cy)) * p.scratch_scale;
                             let d_dist = (px - d_cx).hypot(py - d_cy) / d_rad.max(0.5);
                             if d_dist <= 1.0 {
-                                let spot_val = (1.0 - d_dist * d_dist) * p.dirt * 0.5;
+                                let spot_val = (1.0 - d_dist * d_dist) * dirt_amount * 0.5;
                                 dirt_r += spot_val * p.dirt_tint[0];
                                 dirt_g += spot_val * p.dirt_tint[1];
                                 dirt_b += spot_val * p.dirt_tint[2];

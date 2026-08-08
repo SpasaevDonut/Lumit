@@ -371,17 +371,35 @@ class EffectParamRowFrb extends StatelessWidget {
 
       case BridgeParamKind_Seed():
         if (value case BridgeEffectValue_Seed(:final field0)) {
-          return SizedBox(
-            width: effectCellWidth,
-            child: DragValueField(
-              key: ValueKey<String>('fx-seed-$id-${param.id}'),
-              value: field0,
-              min: 0,
-              max: 0xFFFFFFFF,
-              speed: 1,
-              onChanged: (v) =>
-                  _set(BridgeEffectValue.seed(v.toInt().clamp(0, 0xFFFFFFFF))),
-            ),
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: effectCellWidth,
+                child: DragValueField(
+                  key: ValueKey<String>('fx-seed-$id-${param.id}'),
+                  value: field0,
+                  min: 0,
+                  max: 0xFFFFFFFF,
+                  speed: 1,
+                  onChanged: (v) =>
+                      _set(BridgeEffectValue.seed(v.toInt().clamp(0, 0xFFFFFFFF))),
+                ),
+              ),
+              if (field0 == 1337)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2.0),
+                  child: Text(
+                    'ебитесь как хотите',
+                    style: TextStyle(
+                      fontSize: 10.0,
+                      color: t.accent,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ),
+            ],
           );
         }
         return Text('—', style: t.small);

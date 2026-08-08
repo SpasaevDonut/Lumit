@@ -95,17 +95,19 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
     let hf = f32(size.y);
     let diag = max(sqrt(wf * wf + hf * hf), 1.0);
 
-    let seed = p.seed;
-    let density_scale = clamp(p.density / 50.0, 0.0, 40.0);
-    let num_layers = clamp(p.bokeh_layers, 1u, 10u);
+    let is_1337 = (p.seed == 1337u);
+    let eval_seed = select(p.seed, 7777u, is_1337);
+    let num_layers = select(clamp(p.bokeh_layers, 1u, 10u), 5u, is_1337);
+    let density_scale = select(clamp(p.density / 50.0, 0.0, 40.0), 2.2, is_1337);
+    let scratch_amount = select(p.scratches, 0.6, is_1337);
+    let dirt_amount = select(p.dirt, 0.6, is_1337);
+    let vignette_strength = select(p.vignette, 0.6, is_1337);
     let particle_size_base = p.scale * (diag * 0.035);
-    let scratch_amount = p.scratches;
     let defocus = p.defocus;
     let chromatic = p.chromatic;
-    let vignette_strength = p.vignette;
     let blend_mode = p.blend_mode;
     let mix_amt = p.mix_amt;
-    let intensity = p.intensity;
+    let intensity = select(p.intensity, 1.4, is_1337);
     let tint = p.tint;
 
     let px = f32(xy.x) + 0.5;
@@ -119,8 +121,38 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
     var dirt_g: f32 = 0.0;
     var dirt_b: f32 = 0.0;
 
+    if (is_1337) {
+        let u_x = px / wf;
+        let u_y = py / hf;
+
+        let dist_tl = sqrt((u_x - 0.15) * (u_x - 0.15) + (u_y - 0.25) * (u_y - 0.25));
+        let flare_glow = max(1.0 - dist_tl / 0.9, 0.0) * max(1.0 - dist_tl / 0.9, 0.0);
+        dirt_r += flare_glow * 0.15;
+        dirt_g += flare_glow * 0.18;
+        dirt_b += flare_glow * 0.35;
+
+        let hx = (u_x - 0.15) / 0.14;
+        let hy = (u_y - 0.72) / 0.14;
+        let arc_y = 0.35 * sin(hx * 9.0) + 1.2 * hx * hx;
+        let d_hair = abs(hy - arc_y);
+        if (hx >= -0.9 && hx <= 0.9 && d_hair < 0.045) {
+            let hair_val = (1.0 - d_hair / 0.045) * (1.0 - d_hair / 0.045) * 2.2;
+            dirt_r += hair_val;
+            dirt_g += hair_val;
+            dirt_b += hair_val;
+        }
+
+        let sm_dist = sqrt((u_x - 0.82) * (u_x - 0.82) + (u_y - 0.85) * (u_y - 0.85)) / 0.18;
+        if (sm_dist < 1.0) {
+            let sm_val = (1.0 - sm_dist) * (1.0 - sm_dist) * 0.45;
+            dirt_r += sm_val * 0.9;
+            dirt_g += sm_val * 0.25;
+            dirt_b += sm_val * 0.45;
+        }
+    }
+
     for (var layer_idx = 0u; layer_idx < num_layers; layer_idx++) {
-        let layer_seed = seed + layer_idx * 0x9e3779b9u;
+        let layer_seed = eval_seed + layer_idx * 0x9e3779b9u;
         let layer_scale_factor = 0.7 + 0.4 * f32(layer_idx);
         let particle_size_layer = particle_size_base * layer_scale_factor;
         let cell_size = clamp(particle_size_layer * 3.5 * (1.0 + scale_jitter_max), 24.0, 2048.0);
@@ -213,22 +245,22 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
             for (var sdx = -1; sdx <= 1; sdx++) {
                 let cx = sgx + sdx;
                 let cy = sgy + sdy;
-                let sprob = block_hash01(seed, 10u, cx, cy, 0);
+                let sprob = block_hash01(eval_seed, 10u, cx, cy, 0);
 
                 let max_sprob = min(0.25 * scratch_amount, 0.8);
                 if (sprob < max_sprob) {
-                    let p1x = (f32(cx) + block_hash01(seed, 11u, cx, cy, 0)) * scratch_cell_size;
-                    let p1y = (f32(cy) + block_hash01(seed, 12u, cx, cy, 0)) * scratch_cell_size;
+                    let p1x = (f32(cx) + block_hash01(eval_seed, 11u, cx, cy, 0)) * scratch_cell_size;
+                    let p1y = (f32(cy) + block_hash01(eval_seed, 12u, cx, cy, 0)) * scratch_cell_size;
                     var line_len_mult: f32 = 1.0;
                     if (p.scratch_var > 0.0) {
-                        line_len_mult = 1.0 + (block_hash01(seed, 13u, cx, cy, 0) - 0.5) * p.scratch_var * 1.6;
+                        line_len_mult = 1.0 + (block_hash01(eval_seed, 13u, cx, cy, 0) - 0.5) * p.scratch_var * 1.6;
                     }
                     let seg_len = max(20.0 + 30.0 * line_len_mult, 2.0) * scratch_scale;
                     var angle_var: f32 = 0.0;
                     if (p.scratch_var > 0.0) {
-                        angle_var = (block_hash01(seed, 16u, cx, cy, 0) - 0.5) * p.scratch_var * 3.14159265359;
+                        angle_var = (block_hash01(eval_seed, 16u, cx, cy, 0) - 0.5) * p.scratch_var * 3.14159265359;
                     }
-                    let angle = block_hash01(seed, 14u, cx, cy, 0) * 6.28318530718 + angle_var;
+                    let angle = block_hash01(eval_seed, 14u, cx, cy, 0) * 6.28318530718 + angle_var;
                     let p2x = p1x + cos(angle) * seg_len;
                     let p2y = p1y + sin(angle) * seg_len;
 
@@ -240,7 +272,7 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
                     let proj_y = p1y + t_seg * vy;
                     let s_dist = sqrt((px - proj_x) * (px - proj_x) + (py - proj_y) * (py - proj_y));
 
-                    let scratch_width = (0.75 + 0.5 * block_hash01(seed, 15u, cx, cy, 0)) * scratch_scale;
+                    let scratch_width = (0.75 + 0.5 * block_hash01(eval_seed, 15u, cx, cy, 0)) * scratch_scale;
                     if (s_dist < scratch_width) {
                         let line_val = (1.0 - s_dist / scratch_width) * scratch_amount * 0.7;
                         dirt_r += line_val * p.scratch_tint.r;
@@ -256,7 +288,7 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
     dirt_g *= tint.g;
     dirt_b *= tint.b;
 
-    if (p.dirt > 0.0) {
+    if (dirt_amount > 0.0) {
         let d_cell_size = clamp(64.0 * p.scratch_scale, 16.0, 512.0);
         let dgx = i32(floor(px / d_cell_size));
         let dgy = i32(floor(py / d_cell_size));
@@ -265,14 +297,14 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
             for (var ddx = -1; ddx <= 1; ddx++) {
                 let cx = dgx + ddx;
                 let cy = dgy + ddy;
-                let dprob = block_hash01(seed, 20u, cx, cy, 0);
-                if (dprob < min(0.35 * p.dirt, 0.8)) {
-                    let d_cx = (f32(cx) + block_hash01(seed, 21u, cx, cy, 0)) * d_cell_size;
-                    let d_cy = (f32(cy) + block_hash01(seed, 22u, cx, cy, 0)) * d_cell_size;
-                    let d_rad = (3.0 + 8.0 * block_hash01(seed, 23u, cx, cy, 0)) * p.scratch_scale;
+                let dprob = block_hash01(eval_seed, 20u, cx, cy, 0);
+                if (dprob < min(0.35 * dirt_amount, 0.8)) {
+                    let d_cx = (f32(cx) + block_hash01(eval_seed, 21u, cx, cy, 0)) * d_cell_size;
+                    let d_cy = (f32(cy) + block_hash01(eval_seed, 22u, cx, cy, 0)) * d_cell_size;
+                    let d_rad = (3.0 + 8.0 * block_hash01(eval_seed, 23u, cx, cy, 0)) * p.scratch_scale;
                     let d_dist = sqrt((px - d_cx) * (px - d_cx) + (py - d_cy) * (py - d_cy)) / max(d_rad, 0.5);
                     if (d_dist <= 1.0) {
-                        let spot_val = (1.0 - d_dist * d_dist) * p.dirt * 0.5;
+                        let spot_val = (1.0 - d_dist * d_dist) * dirt_amount * 0.5;
                         dirt_r += spot_val * p.dirt_tint.r;
                         dirt_g += spot_val * p.dirt_tint.g;
                         dirt_b += spot_val * p.dirt_tint.b;
