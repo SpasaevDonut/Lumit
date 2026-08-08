@@ -742,37 +742,59 @@ pub enum Resolved {
     LensDirt(LensDirtParams),
 }
 
-/// Resolved parameters for the procedural Lens Dirt generator (docs/08 §3.28).
+/// Resolved parameters for the Lens dirt effect (docs/08 §3.28, K-314).
+///
+/// Scalars only. The optional **dirt plate** is a whole texture — the referenced
+/// layer rendered alone — so, like the LUT's cube and Depth of field's depth
+/// pass, it travels beside the resolved op in a `layer_inputs` slot rather than
+/// inside it. A `lens_dirt` instance always resolves to exactly one of these, so
+/// the 1:1 op-to-slot ordering holds.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LensDirtParams {
+    /// Master brightness. 0 is a bit-exact passthrough.
     pub intensity: f32,
+    /// **How much the dirt answers to the picture's own light**, 0..1 — the
+    /// control the whole effect turns on. 1 multiplies the dirt field by a
+    /// blurred, thresholded copy of the frame's highlights, so muck is visible
+    /// only where light passes through it; 0 leaves it uniform, which is what a
+    /// generator on an empty layer needs.
+    pub response: f32,
+    /// The linear level a pixel must exceed to count as a highlight, and how far
+    /// its light spreads across the glass (raster px, already scaled by the §2.3
+    /// preview factor).
+    pub threshold: f32,
+    pub spread: f32,
+    /// Whether a dirt plate layer is bound. False generates the field
+    /// procedurally from the controls below.
+    pub plate_bound: bool,
+    /// Which channel of the plate is read as dirt — an index into
+    /// [`CHANNEL_OPTIONS`](super::CHANNEL_OPTIONS).
+    pub plate_channel: u32,
+    /// The procedural field. Every one of these is inert while a plate is bound,
+    /// which is what the panel greys them for.
     pub density: f32,
-    pub bokeh_layers: u32,
     pub scale: f32,
-    pub scale_var_x: f32,
-    pub scale_var_y: f32,
-    pub rotation_var: f32,
-    pub scratch_scale: f32,
+    /// How noise-warped each speck's outline is. 0 is a clean ellipse, 1 a blob.
+    pub roughness: f32,
+    /// How out of focus the glass is: a soft disc with a brighter rim.
     pub defocus: f32,
-    pub defocus_var: f32,
-    pub color_var: f32,
-    pub chromatic: f32,
-
+    /// The low-frequency greasy veil — the part that lifts blacks near a light
+    /// rather than adding bright dots.
+    pub smudge: f32,
+    pub specks: f32,
     pub scratches: f32,
+    pub scratch_scale: f32,
     pub scratch_var: f32,
-    pub scratch_tint: [f32; 4],
-    pub dirt: f32,
-    pub dirt_tint: [f32; 4],
     pub tint: [f32; 4],
+    pub colour_var: f32,
+    /// Edge-only dispersion, not a per-channel radius scale.
+    pub chromatic: f32,
     pub vignette: f32,
-    /// Blend mode wire code: 0 = Screen, 1 = Add, 2 = Overlay, 3 = Solo (dirt map only).
+    /// 0 = Screen, 1 = Add.
     pub blend_mode: u32,
-    /// Background mode wire code: 0 = Transparent, 1 = Color fill, 2 = Sun / Light source.
-    pub bg_mode: u32,
-    pub bg_colour: [f32; 4],
-    pub sun_pos: [f32; 2],
-    pub sun_intensity: f32,
-    pub sun_radius: f32,
+    /// 0 = Transparent (over the layer's own picture), 1 = Black (the dirt
+    /// element on opaque black).
+    pub background: u32,
     pub seed: u32,
     pub mix: f32,
 }
@@ -781,40 +803,31 @@ impl Default for LensDirtParams {
     fn default() -> Self {
         Self {
             intensity: 1.0,
-            density: 50.0,
-            bokeh_layers: 3,
+            response: 1.0,
+            threshold: 1.0,
+            spread: 60.0,
+            plate_bound: false,
+            plate_channel: 4,
+            density: 100.0,
             scale: 1.0,
-            scale_var_x: 0.0,
-            scale_var_y: 0.0,
-            rotation_var: 0.0,
-            scratch_scale: 1.0,
+            roughness: 0.7,
             defocus: 0.5,
-            defocus_var: 0.0,
-            color_var: 0.0,
-            chromatic: 0.3,
+            smudge: 0.4,
+            specks: 0.3,
             scratches: 0.4,
+            scratch_scale: 1.0,
             scratch_var: 0.2,
-            scratch_tint: [1.0, 1.0, 1.0, 1.0],
-            dirt: 0.3,
-            dirt_tint: [0.9, 0.85, 0.75, 1.0],
-            tint: [1.0, 0.95, 0.85, 1.0],
+            tint: [1.0, 0.97, 0.92, 1.0],
+            colour_var: 0.15,
+            chromatic: 0.3,
             vignette: 0.3,
             blend_mode: 0,
-            bg_mode: 0,
-            bg_colour: [0.05, 0.05, 0.08, 1.0],
-            sun_pos: [0.5, 0.3],
-            sun_intensity: 1.0,
-            sun_radius: 0.4,
+            background: 0,
             seed: 42,
             mix: 1.0,
         }
     }
 }
-
-
-
-
-
 
 /// Resolve a layer's live stack at layer time `lt` for a raster whose
 /// diagonal is `diag_px` pixels; `px_scale` is raster pixels per comp pixel
@@ -929,7 +942,6 @@ pub fn rescale_px(ops: &mut [Resolved], f: f32) {
         }
     }
 }
-
 
 pub fn resolve_stack(
     effects: &[EffectInstance],
@@ -2342,97 +2354,93 @@ fn resolve_one(
             })
         }
         "lens_dirt" => {
-            let intensity = (e.float_at("intensity", lt).unwrap_or(1.0) as f32).max(0.0);
-            let density = (e.float_at("density", lt).unwrap_or(100.0) as f32).clamp(0.0, 2000.0);
-            let bokeh_layers = (e.float_at("bokeh_layers", lt).unwrap_or(3.0) as u32).clamp(1, 10);
+            // Scalars only; the optional dirt plate is threaded beside the op,
+            // and a `lens_dirt` instance always resolves to exactly one
+            // Resolved::LensDirt so the 1:1 op-to-slot ordering holds
+            // (docs/impl/layer-input.md §2).
+            let f = |id: &str, fallback: f64| {
+                e.float_at_with_context(id, lt, expression_context.clone())
+                    .unwrap_or(fallback) as f32
+            };
+            let intensity = f("intensity", 1.0).max(0.0);
+            let response = f("response", 1.0).clamp(0.0, 1.0);
+            let threshold = f("threshold", 1.0).max(0.0);
+            // px@comp (§2.3), so a Half preview lights the same area of the
+            // picture as Full. Capped for the same reason every gather radius is
+            // (docs/13): the spread is a separable blur, and an uncapped one
+            // submits enough work to stall the preview.
+            const MAX_SPREAD_PX: f32 = 256.0;
+            let spread = (f("spread", 60.0) * px_scale).clamp(0.0, MAX_SPREAD_PX);
 
-            let scale = (e.float_at("scale", lt).unwrap_or(1.0) as f32).clamp(0.01, 20.0);
-            let scale_var_x = (e.float_at("scale_var_x", lt).unwrap_or(0.0) as f32).clamp(0.0, 2.0);
-            let scale_var_y = (e.float_at("scale_var_y", lt).unwrap_or(0.0) as f32).clamp(0.0, 2.0);
-            let rotation_var = (e.float_at("rotation_var", lt).unwrap_or(0.0) as f32).clamp(0.0, 1.0);
-            let scratch_scale = (e.float_at("scratch_scale", lt).unwrap_or(1.0) as f32).clamp(0.01, 20.0);
-            let defocus = (e.float_at("defocus", lt).unwrap_or(0.5) as f32).clamp(0.0, 1.0);
-            let defocus_var = (e.float_at("defocus_var", lt).unwrap_or(0.0) as f32).clamp(0.0, 1.0);
-            let color_var = (e.float_at("color_var", lt).unwrap_or(0.0) as f32).clamp(0.0, 1.0);
-            let chromatic = (e.float_at("chromatic", lt).unwrap_or(0.3) as f32).clamp(0.0, 2.0);
-            let scratches = (e.float_at("scratches", lt).unwrap_or(0.4) as f32).clamp(0.0, 1.0);
-            let scratch_var = (e.float_at("scratch_var", lt).unwrap_or(0.2) as f32).clamp(0.0, 1.0);
-            let scratch_tint = match e.colour_at("scratch_tint", lt) {
-                Some(c) => [c[0] as f32, c[1] as f32, c[2] as f32, c[3] as f32],
-                None => [1.0, 1.0, 1.0, 1.0],
+            let plate_bound = matches!(e.param("plate"), Some(EffectValue::Layer(Some(_))));
+            let plate_channel = match e.param("plate_channel") {
+                Some(EffectValue::Choice(c)) => (*c).min(CHANNEL_OPTIONS.len() as u32 - 1),
+                _ => 4, // Luminance
             };
-            let dirt = (e.float_at("dirt", lt).unwrap_or(0.3) as f32).clamp(0.0, 1.0);
-            let dirt_tint = match e.colour_at("dirt_tint", lt) {
-                Some(c) => [c[0] as f32, c[1] as f32, c[2] as f32, c[3] as f32],
-                None => [0.9, 0.85, 0.75, 1.0],
-            };
+
+            let density = f("density", 100.0).clamp(0.0, 2000.0);
+            let scale = f("scale", 1.0).clamp(0.01, 20.0);
+            let roughness = f("roughness", 0.7).clamp(0.0, 1.0);
+            let defocus = f("defocus", 0.5).clamp(0.0, 1.0);
+            let smudge = f("smudge", 0.4).clamp(0.0, 1.0);
+            let specks = f("specks", 0.3).clamp(0.0, 1.0);
+            let scratches = f("scratches", 0.4).clamp(0.0, 1.0);
+            let scratch_scale = f("scratch_scale", 1.0).clamp(0.01, 20.0);
+            let scratch_var = f("scratch_var", 0.2).clamp(0.0, 1.0);
+
             let tint = match e.colour_at("tint", lt) {
                 Some(c) => [c[0] as f32, c[1] as f32, c[2] as f32, c[3] as f32],
-                None => [1.0, 0.95, 0.85, 1.0],
+                None => [1.0, 0.97, 0.92, 1.0],
             };
+            let colour_var = f("colour_var", 0.15).clamp(0.0, 1.0);
+            let chromatic = f("chromatic", 0.3).clamp(0.0, 2.0);
+            let vignette = f("vignette", 0.3).clamp(0.0, 1.0);
 
-            let vignette = (e.float_at("vignette", lt).unwrap_or(0.3) as f32).clamp(0.0, 1.0);
             let blend_mode = match e.param("blend_mode") {
-                Some(EffectValue::Choice(c)) => (*c).min(3),
+                Some(EffectValue::Choice(c)) => (*c).min(1),
                 _ => 0,
             };
-            let bg_mode = match e.param("bg_mode") {
-                Some(EffectValue::Choice(c)) => (*c).min(2),
+            let background = match e.param("background") {
+                Some(EffectValue::Choice(c)) => (*c).min(1),
                 _ => 0,
             };
-            let bg_colour = match e.colour_at("bg_colour", lt) {
-                Some(c) => [c[0] as f32, c[1] as f32, c[2] as f32, c[3] as f32],
-                None => [0.05, 0.05, 0.08, 1.0],
-            };
-            let sun_pos_x = e.float_at("sun_pos_x", lt).unwrap_or(50.0) as f32 / 100.0;
-            let sun_pos_y = e.float_at("sun_pos_y", lt).unwrap_or(30.0) as f32 / 100.0;
-
-            let sun_pos = [sun_pos_x, sun_pos_y];
-            let sun_intensity = (e.float_at("sun_intensity", lt).unwrap_or(1.0) as f32).max(0.0);
-
-            let sun_radius = (e.float_at("sun_radius", lt).unwrap_or(0.4) as f32).clamp(0.01, 5.0);
-
             let seed = match e.param("seed") {
                 Some(EffectValue::Seed(s)) => *s,
                 _ => 0,
             };
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
+
             Some(Resolved::LensDirt(LensDirtParams {
                 intensity,
+                response,
+                threshold,
+                spread,
+                plate_bound,
+                plate_channel,
                 density,
-                bokeh_layers,
                 scale,
-                scale_var_x,
-                scale_var_y,
-                rotation_var,
-                scratch_scale,
+                roughness,
                 defocus,
-                defocus_var,
-                color_var,
-                chromatic,
+                smudge,
+                specks,
                 scratches,
+                scratch_scale,
                 scratch_var,
-                scratch_tint,
-                dirt,
-                dirt_tint,
                 tint,
+                colour_var,
+                chromatic,
                 vignette,
                 blend_mode,
-                bg_mode,
-                bg_colour,
-                sun_pos,
-                sun_intensity,
-                sun_radius,
+                background,
                 seed,
                 mix,
             }))
         }
 
-
-
-
-
         _ => None,
     }
 }
-

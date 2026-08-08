@@ -3334,60 +3334,139 @@ pub const BUILTINS: &[EffectSchema] = &[
                     dividers_after: &[0],
                 },
             },
-
             MIX_PARAM,
         ],
     },
+    // Lens dirt (docs/08 §3.28, K-314): grease, dust and hairline scratches on
+    // the front element, lit by the picture's own highlights.
+    //
+    // **In plain terms, and this is the whole effect.** A clean lens is
+    // invisible. A dirty one is *also* invisible — right up until a bright light
+    // shines through it, and then the muck lights up. Dirt does not emit; it
+    // forward-scatters whatever is passing through it. So the dirt field here is
+    // generated once and then MULTIPLIED by a blurred, thresholded copy of the
+    // picture's own highlights, which is why the effect appears around a street
+    // lamp and disappears in a dark shot on its own. Every reference production
+    // renderer does exactly this — Unreal's `BloomDirtMask`, Unity HDRP's Lens
+    // Dirt, Godot's glow map — because dirt added unconditionally is the single
+    // thing that makes a lens-dirt effect look painted on.
+    //
+    // **Light response 0 turns that off** and the dirt is uniform, which is what
+    // an empty layer used as a generator wants: with nothing bright in the
+    // picture there is nothing to respond to.
+    //
+    // **A photographed plate beats any generator.** Real lens dirt is
+    // irregular in a way procedural blobs are not, so the effect takes a **Dirt
+    // plate** layer reference (docs/impl/layer-input.md, the machinery Depth of
+    // field's depth pass rides). A bound plate replaces the procedural field
+    // entirely and is modulated the same way — which is the stock-footage
+    // workflow, and the one that actually looks real.
+    //
+    // Dirt sits on **one glass plane**. There is deliberately no layer count:
+    // stacking depth layers of particles was the contributed effect's way of
+    // getting size variety, and the honest way is a size distribution within one
+    // field. Premultiplied, Moderate cost, `{0}` temporal, seeded. ROI is
+    // full-frame: the highlight response blurs light across the glass, so a
+    // pixel's value depends on light well outside its own tile.
     EffectSchema {
         groups: &[
             ParamGroup {
-                label: "Bokeh particles",
-                params: &[
-                    "bokeh_layers",
-                    "scale",
-                    "scale_var_x",
-                    "scale_var_y",
-                    "rotation_var",
-                    "defocus",
-                    "defocus_var",
-                    "color_var",
-                    "chromatic",
-                    "tint",
-                ],
+                // Open, not collapsed: this is the group that decides whether
+                // the effect reads as a lens or as an overlay.
+                label: "Light response",
+                params: &["response", "threshold", "spread"],
                 collapsed: false,
                 visible_when: None,
             },
             ParamGroup {
-                label: "Scratches & Imperfections",
+                label: "Dirt",
                 params: &[
+                    "density",
+                    "scale",
+                    "roughness",
+                    "defocus",
+                    "smudge",
+                    "specks",
                     "scratches",
                     "scratch_scale",
                     "scratch_var",
-                    "scratch_tint",
-                    "dirt",
-                    "dirt_tint",
-                    "vignette",
                 ],
                 collapsed: true,
                 visible_when: None,
             },
             ParamGroup {
-                label: "Background",
-                params: &["bg_colour"],
-                collapsed: false,
-                visible_when: Some(("bg_mode", &[1, 2])),
-            },
-            ParamGroup {
-                label: "Sun / Light source",
-                params: &["sun_pos_x", "sun_pos_y", "sun_intensity", "sun_radius"],
-                collapsed: false,
-                visible_when: Some(("bg_mode", &[2])),
-            },
-            ParamGroup {
-                label: "Random seed",
-                params: &["seed"],
+                label: "Colour",
+                params: &["tint", "colour_var", "chromatic"],
                 collapsed: true,
                 visible_when: None,
+            },
+        ],
+        enabled_when: &[
+            // A channel of nothing is nothing.
+            EnabledWhen {
+                param: "plate_channel",
+                on: "plate",
+                cond: EnabledCond::LayerSet,
+            },
+            // A bound plate replaces the procedural field, so every control that
+            // shapes that field stops deciding anything. Greyed rather than
+            // hidden: the settings are still there when the plate is unpicked.
+            EnabledWhen {
+                param: "density",
+                on: "plate",
+                cond: EnabledCond::LayerUnset,
+            },
+            EnabledWhen {
+                param: "scale",
+                on: "plate",
+                cond: EnabledCond::LayerUnset,
+            },
+            EnabledWhen {
+                param: "roughness",
+                on: "plate",
+                cond: EnabledCond::LayerUnset,
+            },
+            EnabledWhen {
+                param: "defocus",
+                on: "plate",
+                cond: EnabledCond::LayerUnset,
+            },
+            EnabledWhen {
+                param: "smudge",
+                on: "plate",
+                cond: EnabledCond::LayerUnset,
+            },
+            EnabledWhen {
+                param: "specks",
+                on: "plate",
+                cond: EnabledCond::LayerUnset,
+            },
+            EnabledWhen {
+                param: "scratches",
+                on: "plate",
+                cond: EnabledCond::LayerUnset,
+            },
+            EnabledWhen {
+                param: "scratch_scale",
+                on: "plate",
+                cond: EnabledCond::LayerUnset,
+            },
+            EnabledWhen {
+                param: "scratch_var",
+                on: "plate",
+                cond: EnabledCond::LayerUnset,
+            },
+            // Threshold and Spread describe how the highlights are found, which
+            // is only a question while something is responding to them.
+            EnabledWhen {
+                param: "threshold",
+                on: "response",
+                cond: EnabledCond::FloatAbove(0.0),
+            },
+            EnabledWhen {
+                param: "spread",
+                on: "response",
+                cond: EnabledCond::FloatAbove(0.0),
             },
         ],
         match_name: "lens_dirt",
@@ -3396,7 +3475,10 @@ pub const BUILTINS: &[EffectSchema] = &[
         category: FxCategory::Stylise,
         traits: EffectTraits {
             cost: CostClass::Moderate,
-            roi: Roi::Exact,
+            // The highlight response spreads light across the glass, so a
+            // pixel's value depends on light outside its own tile — an exact
+            // ROI would be a lie.
+            roi: Roi::FullFrame,
             temporal: &[0],
             premultiplied: true,
             seeded: true,
@@ -3406,6 +3488,7 @@ pub const BUILTINS: &[EffectSchema] = &[
             ParamSchema {
                 id: "intensity",
                 label: "Intensity",
+                // The master. 0 is a bit-exact passthrough.
                 kind: ParamKind::Float {
                     default: 1.0,
                     slider: (0.0, 4.0),
@@ -3413,30 +3496,100 @@ pub const BUILTINS: &[EffectSchema] = &[
                 },
             },
             ParamSchema {
+                // A photographed dirt plate — a smeared filter shot against a
+                // light, the way every stock pack ships one. Unset (the default)
+                // uses the procedural field below; bound, it replaces it and is
+                // modulated by the same highlight response.
+                //
+                // No `self_default` (K-288): a dirt plate is never the picture
+                // itself. Pointing it at this layer is still allowed and reads
+                // the effect's own input, which is a legitimate if odd thing to
+                // want.
+                id: "plate",
+                label: "Dirt plate",
+                kind: ParamKind::Layer {
+                    self_default: false,
+                },
+            },
+            ParamSchema {
+                // Which channel of the plate is the dirt. Luminance by default:
+                // a plate is a photograph, and how bright a spot is is how much
+                // muck is there.
+                id: "plate_channel",
+                label: "Plate channel",
+                kind: ParamKind::Choice {
+                    options: CHANNEL_OPTIONS,
+                    default: 4, // Luminance
+                    dividers_after: CHOICE_UNGROUPED,
+                },
+            },
+            ParamSchema {
+                // How the lit dirt returns over the picture. Screen is the
+                // default because scattered light adds without blowing past
+                // white; Add is the harder, brighter reading a flare element
+                // wants. Overlay and Solo are gone: Overlay's contrast pivot is
+                // meaningless on unbounded linear values, and Solo is what the
+                // Background choice does honestly.
+                id: "blend_mode",
+                label: "Blend mode",
+                kind: ParamKind::Choice {
+                    options: &["Screen", "Add"],
+                    default: 0,
+                    dividers_after: CHOICE_UNGROUPED,
+                },
+            },
+            // ---- Light response ----
+            ParamSchema {
+                // How much the dirt answers to the picture's own light.
+                //
+                // **1 is the physical reading and the default**: dirt is only
+                // visible where light passes through it. **0 is the generator**:
+                // the dirt is uniform, which is what an empty layer with nothing
+                // bright in it needs, and what the contributed effect did
+                // always. In between is a lift — a little muck visible in the
+                // shadows, a lot around the lamps.
+                id: "response",
+                label: "Light response",
+                kind: ParamKind::Float {
+                    default: 1.0,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(1.0)),
+                },
+            },
+            ParamSchema {
+                // What counts as a highlight. Scene white by default, so
+                // ordinary midtones do not light the glass — only the sources
+                // that actually would.
+                id: "threshold",
+                label: "Highlight threshold",
+                kind: ParamKind::Float {
+                    default: 1.0,
+                    slider: (0.0, 4.0),
+                    hard: (Some(0.0), None),
+                },
+            },
+            ParamSchema {
+                // How far a highlight's light spreads across the glass before it
+                // reaches a speck. px@comp (§2.3), so a Half preview lights the
+                // same area as Full. Wide by default: the scatter is a haze, not
+                // a hard mask, and a narrow spread outlines the lamp instead of
+                // lighting the muck around it.
+                id: "spread",
+                label: "Light spread",
+                kind: ParamKind::Float {
+                    default: 60.0,
+                    slider: (0.0, 200.0),
+                    hard: (Some(0.0), None),
+                },
+            },
+            // ---- Dirt ----
+            ParamSchema {
                 id: "density",
                 label: "Density",
                 kind: ParamKind::Float {
                     default: 100.0,
                     slider: (0.0, 500.0),
                     hard: (Some(0.0), Some(2000.0)),
-                },
-            },
-            ParamSchema {
-                id: "blend_mode",
-                label: "Blend mode",
-                kind: ParamKind::Choice {
-                    options: &["Screen", "Add", "Overlay", "Solo"],
-                    default: 0,
-                    dividers_after: &[],
-                },
-            },
-            ParamSchema {
-                id: "bokeh_layers",
-                label: "Layers",
-                kind: ParamKind::Int {
-                    default: 3,
-                    slider: (1, 8),
-                    hard: (Some(1), Some(10)),
                 },
             },
             ParamSchema {
@@ -3449,33 +3602,28 @@ pub const BUILTINS: &[EffectSchema] = &[
                 },
             },
             ParamSchema {
-                id: "scale_var_x",
-                label: "Aspect jitter X",
+                // How irregular each speck's outline is: 0 is the clean ellipse
+                // the contributed effect drew, 1 is a noise-warped blob.
+                //
+                // **This is the other half of why procedural dirt reads as CG.**
+                // Real muck has no analytic edge; a perfect circle says
+                // "generated" before any other cue does. The radius is perturbed
+                // by two octaves of value noise and the interior opacity varies
+                // with it, so no two specks share a silhouette.
+                id: "roughness",
+                label: "Roughness",
                 kind: ParamKind::Float {
-                    default: 0.0,
-                    slider: (0.0, 1.0),
-                    hard: (Some(0.0), Some(2.0)),
-                },
-            },
-            ParamSchema {
-                id: "scale_var_y",
-                label: "Aspect jitter Y",
-                kind: ParamKind::Float {
-                    default: 0.0,
-                    slider: (0.0, 1.0),
-                    hard: (Some(0.0), Some(2.0)),
-                },
-            },
-            ParamSchema {
-                id: "rotation_var",
-                label: "Rotation jitter",
-                kind: ParamKind::Float {
-                    default: 0.0,
+                    default: 0.7,
                     slider: (0.0, 1.0),
                     hard: (Some(0.0), Some(1.0)),
                 },
             },
             ParamSchema {
+                // How out of focus the glass is. Dirt on the front element sits
+                // far outside the focal plane, so it images as a soft disc with
+                // a brighter rim — the aperture's own shape, seen through it.
+                // One value for the whole field, because there is one plane of
+                // glass.
                 id: "defocus",
                 label: "Defocus",
                 kind: ParamKind::Float {
@@ -3485,43 +3633,33 @@ pub const BUILTINS: &[EffectSchema] = &[
                 },
             },
             ParamSchema {
-                id: "defocus_var",
-                label: "Defocus jitter",
+                // The greasy low-frequency veil — fingerprints, breath, a cloth
+                // wiped across the glass. **Contributes more to a convincing
+                // dirty lens than the specks do**, because what it mostly does
+                // is lift the blacks and cut local contrast near a light rather
+                // than add bright dots.
+                id: "smudge",
+                label: "Smudge",
                 kind: ParamKind::Float {
-                    default: 0.0,
+                    default: 0.4,
                     slider: (0.0, 1.0),
                     hard: (Some(0.0), Some(1.0)),
                 },
             },
             ParamSchema {
-                id: "color_var",
-                label: "Color jitter",
-                kind: ParamKind::Float {
-                    default: 0.0,
-                    slider: (0.0, 1.0),
-                    hard: (Some(0.0), Some(1.0)),
-                },
-            },
-            ParamSchema {
-                id: "chromatic",
-                label: "Chromatic dispersion",
+                // The fine dust: many small, few large, on a power law rather
+                // than one size per cell.
+                id: "specks",
+                label: "Dust specks",
                 kind: ParamKind::Float {
                     default: 0.3,
                     slider: (0.0, 1.0),
-                    hard: (Some(0.0), Some(2.0)),
-                },
-            },
-            ParamSchema {
-                id: "tint",
-                label: "Bokeh tint",
-                kind: ParamKind::Colour {
-                    default: [1.0, 0.95, 0.85, 1.0],
-                    range: (0.0, 2.0),
+                    hard: (Some(0.0), Some(1.0)),
                 },
             },
             ParamSchema {
                 id: "scratches",
-                label: "Scratches & dust",
+                label: "Scratches",
                 kind: ParamKind::Float {
                     default: 0.4,
                     slider: (0.0, 1.0),
@@ -3539,39 +3677,51 @@ pub const BUILTINS: &[EffectSchema] = &[
             },
             ParamSchema {
                 id: "scratch_var",
-                label: "Scratch jitter",
+                label: "Scratch variation",
                 kind: ParamKind::Float {
                     default: 0.2,
                     slider: (0.0, 1.0),
                     hard: (Some(0.0), Some(1.0)),
                 },
             },
+            // ---- Colour ----
             ParamSchema {
-                id: "scratch_tint",
-                label: "Scratch tint",
+                // The overall cast. Near-white by default and deliberately so: a
+                // tint is a grade, and dirt lit by a white light is white.
+                id: "tint",
+                label: "Tint",
                 kind: ParamKind::Colour {
-                    default: [1.0, 1.0, 1.0, 1.0],
+                    default: [1.0, 0.97, 0.92, 1.0],
                     range: (0.0, 2.0),
                 },
             },
             ParamSchema {
-                id: "dirt",
-                label: "Glass dirt specks",
+                id: "colour_var",
+                label: "Colour variation",
                 kind: ParamKind::Float {
-                    default: 0.3,
+                    default: 0.15,
                     slider: (0.0, 1.0),
                     hard: (Some(0.0), Some(1.0)),
                 },
             },
             ParamSchema {
-                id: "dirt_tint",
-                label: "Dirt specks tint",
-                kind: ParamKind::Colour {
-                    default: [0.9, 0.85, 0.75, 1.0],
-                    range: (0.0, 2.0),
+                // Dispersion at a speck's EDGE, not across its whole disc.
+                // Scaling the radius per channel — the contributed reading —
+                // draws clean concentric rings, which is a diffraction pattern
+                // and not what a smear of grease does; a real fringe lives in
+                // the last few per cent of the falloff.
+                id: "chromatic",
+                label: "Chromatic fringe",
+                kind: ParamKind::Float {
+                    default: 0.3,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(2.0)),
                 },
             },
             ParamSchema {
+                // Optical falloff toward the corners, applied to the dirt rather
+                // than to the picture: less light reaches the edge of the
+                // element, so less muck lights up there.
                 id: "vignette",
                 label: "Optical vignette",
                 kind: ParamKind::Float {
@@ -3581,69 +3731,29 @@ pub const BUILTINS: &[EffectSchema] = &[
                 },
             },
             ParamSchema {
-                id: "bg_mode",
-                label: "Background mode",
+                // What the dirt is composited over. **Transparent** (the
+                // default) leaves the layer's own picture underneath, which is
+                // the ordinary use. **Black** makes the layer opaque black first
+                // — the dirt element on its own, ready to be screened over a
+                // grade in another application, and the only way this effect can
+                // produce something on an empty layer.
+                id: "background",
+                label: "Background",
                 kind: ParamKind::Choice {
-                    options: &["Transparent", "Color", "Sun / Light source"],
+                    options: &["Transparent", "Black"],
                     default: 0,
-                    dividers_after: &[],
-                },
-            },
-            ParamSchema {
-                id: "bg_colour",
-                label: "Background color",
-                kind: ParamKind::Colour {
-                    default: [0.05, 0.05, 0.08, 1.0],
-                    range: (0.0, 2.0),
-                },
-            },
-            ParamSchema {
-                id: "sun_pos_x",
-                label: "Sun position X",
-                kind: ParamKind::Float {
-                    default: 50.0,
-                    slider: (0.0, 100.0),
-                    hard: (None, None),
-                },
-            },
-            ParamSchema {
-                id: "sun_pos_y",
-                label: "Sun position Y",
-                kind: ParamKind::Float {
-                    default: 30.0,
-                    slider: (0.0, 100.0),
-                    hard: (None, None),
-                },
-            },
-            ParamSchema {
-                id: "sun_intensity",
-                label: "Sun intensity",
-                kind: ParamKind::Float {
-                    default: 1.0,
-                    slider: (0.0, 4.0),
-                    hard: (Some(0.0), None),
-                },
-            },
-            ParamSchema {
-                id: "sun_radius",
-                label: "Sun radius",
-                kind: ParamKind::Float {
-                    default: 0.4,
-                    slider: (0.05, 1.5),
-                    hard: (Some(0.01), Some(5.0)),
+                    dividers_after: CHOICE_UNGROUPED,
                 },
             },
             ParamSchema {
                 id: "seed",
-                label: "Random seed",
+                label: "Seed",
                 kind: ParamKind::Seed,
             },
             MIX_PARAM,
         ],
     },
 ];
-
-
 
 /// Look a schema up by its match name.
 pub fn schema(match_name: &str) -> Option<&'static EffectSchema> {
@@ -3861,6 +3971,8 @@ pub fn param_enabled(inst: &EffectInstance, id: &str) -> bool {
                 (EnabledCond::ChoiceIs(want), EffectValue::Choice(got)) => *got == want,
                 (EnabledCond::ChoiceIsNot(no), EffectValue::Choice(got)) => *got != no,
                 (EnabledCond::LayerSet, EffectValue::Layer(layer)) => layer.is_some(),
+                (EnabledCond::LayerUnset, EffectValue::Layer(layer)) => layer.is_none(),
+                (EnabledCond::FloatAbove(v), EffectValue::Float(p)) => p.value_at(0.0) as f32 > v,
                 // A rule pointed at the wrong kind of parameter is a schema
                 // mistake, not a reason to grey a row the owner can then never
                 // reach. `every_enablement_rule_names_a_parameter_of_its_kind`

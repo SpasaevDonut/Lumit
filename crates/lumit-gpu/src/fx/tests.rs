@@ -4298,6 +4298,18 @@ fn lens_flare_montage() {
     std::fs::write(std::env::var("LUMIT_FLARE_DUMP").unwrap(), ppm).unwrap();
 }
 
+/// The §1.6 oracle for Lens dirt (docs/08 §3.28, K-314): the WGSL kernel
+/// matches `lumit_core::fx::cpu::lens_dirt` across the field's controls, the
+/// blend modes and the background choice.
+///
+/// The **light response** is deliberately 0 in every case here. It is not that
+/// the modulation goes untested — it is pinned on the arithmetic in
+/// `lens_dirt_is_only_visible_where_light_passes_through_it` — but the GPU
+/// builds its highlight pass from `glow_bright` and two gaussian blurs, each
+/// already quantised to fp16, so comparing it against an f32 CPU blur would
+/// measure the pre-passes' rounding rather than this kernel's agreement. What is
+/// compared here is what this kernel alone computes: the dirt field, the
+/// compositing and the coverage.
 #[test]
 fn wgsl_lens_dirt_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
@@ -4305,189 +4317,114 @@ fn wgsl_lens_dirt_matches_the_cpu_oracle() {
         return;
     };
     let fx = FxEngine::new(&ctx);
-    let (w, h) = (32u32, 24u32);
+    let (w, h) = (48u32, 36u32);
     let img = corpus(w, h);
-    for (name, op) in [
+    let tex = upload_linear_f32(&ctx, &img, w, h);
+
+    let base = crate::fx::LensDirtOp {
+        response: 0.0,
+        ..Default::default()
+    };
+    let cases: Vec<(&str, crate::fx::LensDirtOp)> = vec![
+        ("defaults", base),
         (
-            "neutral",
-            LensDirtOp {
-                intensity: 0.0,
-                density: 50.0,
-                bokeh_layers: 2,
-                scale: 1.0,
-                scale_var_x: 0.0,
-                scale_var_y: 0.0,
-                rotation_var: 0.0,
-                scratch_scale: 1.0,
-                defocus: 0.5,
-                defocus_var: 0.0,
-                color_var: 0.0,
-                chromatic: 0.3,
-                scratches: 0.4,
-                scratch_var: 0.2,
-                scratch_tint: [1.0, 1.0, 1.0, 1.0],
-                dirt: 0.3,
-                dirt_tint: [0.9, 0.85, 0.75, 1.0],
-                tint: [1.0, 0.95, 0.85, 1.0],
-                vignette: 0.3,
-                blend_mode: 0,
-                bg_mode: 0,
-                bg_colour: [0.05, 0.05, 0.08, 1.0],
-                sun_pos: [0.5, 0.3],
-                sun_intensity: 1.0,
-                sun_radius: 0.4,
-                seed: 42,
-                mix: 1.0,
+            "dense specks",
+            crate::fx::LensDirtOp {
+                density: 400.0,
+                specks: 1.0,
+                ..base
             },
         ),
         (
-            "mix-zero",
-            LensDirtOp {
-                intensity: 1.0,
-                density: 50.0,
-                bokeh_layers: 2,
-                scale: 1.0,
-                scale_var_x: 0.0,
-                scale_var_y: 0.0,
-                rotation_var: 0.0,
-                scratch_scale: 1.0,
-                defocus: 0.5,
-                defocus_var: 0.0,
-                color_var: 0.0,
-                chromatic: 0.3,
-                scratches: 0.4,
-                scratch_var: 0.2,
-                scratch_tint: [1.0, 1.0, 1.0, 1.0],
-                dirt: 0.3,
-                dirt_tint: [0.9, 0.85, 0.75, 1.0],
-                tint: [1.0, 0.95, 0.85, 1.0],
-                vignette: 0.3,
-                blend_mode: 0,
-                bg_mode: 0,
-                bg_colour: [0.05, 0.05, 0.08, 1.0],
-                sun_pos: [0.5, 0.3],
-                sun_intensity: 1.0,
-                sun_radius: 0.4,
-                seed: 42,
-                mix: 0.0,
+            "smooth outlines",
+            crate::fx::LensDirtOp {
+                roughness: 0.0,
+                ..base
             },
         ),
         (
-            "screen-default",
-            LensDirtOp {
-                intensity: 1.2,
-                density: 60.0,
-                bokeh_layers: 2,
-                scale: 1.2,
-                scale_var_x: 0.3,
-                scale_var_y: 0.2,
-                rotation_var: 0.5,
-                scratch_scale: 1.5,
-                defocus: 0.6,
-                defocus_var: 0.3,
-                color_var: 0.4,
-                chromatic: 0.4,
-                scratches: 0.5,
-                scratch_var: 0.3,
-                scratch_tint: [1.0, 1.0, 1.0, 1.0],
-                dirt: 0.4,
-                dirt_tint: [0.9, 0.85, 0.75, 1.0],
-                tint: [1.0, 0.9, 0.8, 1.0],
-                vignette: 0.4,
-                blend_mode: 0,
-                bg_mode: 2,
-                bg_colour: [0.05, 0.05, 0.08, 1.0],
-                sun_pos: [0.5, 0.3],
-                sun_intensity: 1.0,
-                sun_radius: 0.4,
-                seed: 1234,
-                mix: 1.0,
+            "heavy smudge",
+            crate::fx::LensDirtOp {
+                smudge: 1.0,
+                ..base
             },
         ),
         (
-            "add-blend",
-            LensDirtOp {
-                intensity: 0.8,
-                density: 40.0,
-                bokeh_layers: 2,
-                scale: 0.8,
-                scale_var_x: 0.1,
-                scale_var_y: 0.4,
-                rotation_var: 0.2,
-                scratch_scale: 0.8,
-                defocus: 0.3,
-                defocus_var: 0.1,
-                color_var: 0.2,
-                chromatic: 0.2,
-                scratches: 0.3,
-                scratch_var: 0.1,
-                scratch_tint: [1.0, 1.0, 1.0, 1.0],
-                dirt: 0.2,
-                dirt_tint: [0.9, 0.85, 0.75, 1.0],
-                tint: [0.9, 0.95, 1.0, 1.0],
-                vignette: 0.2,
+            "sharp glass",
+            crate::fx::LensDirtOp {
+                defocus: 0.0,
+                ..base
+            },
+        ),
+        (
+            "scratched",
+            crate::fx::LensDirtOp {
+                scratches: 1.0,
+                scratch_scale: 2.0,
+                scratch_var: 0.8,
+                ..base
+            },
+        ),
+        (
+            "fringed",
+            crate::fx::LensDirtOp {
+                chromatic: 1.5,
+                colour_var: 0.8,
+                ..base
+            },
+        ),
+        (
+            "add blend",
+            crate::fx::LensDirtOp {
                 blend_mode: 1,
-                bg_mode: 1,
-                bg_colour: [0.1, 0.1, 0.15, 1.0],
-                sun_pos: [0.3, 0.4],
-                sun_intensity: 0.8,
-                sun_radius: 0.5,
-                seed: 5678,
-                mix: 0.8,
+                ..base
             },
         ),
-    ] {
+        (
+            "on black",
+            crate::fx::LensDirtOp {
+                background: 1,
+                ..base
+            },
+        ),
+        (
+            "vignetted",
+            crate::fx::LensDirtOp {
+                vignette: 1.0,
+                ..base
+            },
+        ),
+        ("partial mix", crate::fx::LensDirtOp { mix: 0.4, ..base }),
+    ];
+
+    for (name, op) in &cases {
         let mut cpu = img.clone();
-        let cpu_p = lumit_core::fx::LensDirtParams {
-            intensity: op.intensity,
-            density: op.density,
-            bokeh_layers: op.bokeh_layers,
-            scale: op.scale,
-            scale_var_x: op.scale_var_x,
-            scale_var_y: op.scale_var_y,
-            rotation_var: op.rotation_var,
-            scratch_scale: op.scratch_scale,
-            defocus: op.defocus,
-            defocus_var: op.defocus_var,
-            color_var: op.color_var,
-            chromatic: op.chromatic,
-            scratches: op.scratches,
-            scratch_var: op.scratch_var,
-            scratch_tint: op.scratch_tint,
-            dirt: op.dirt,
-            dirt_tint: op.dirt_tint,
-            tint: op.tint,
-            vignette: op.vignette,
-            blend_mode: op.blend_mode,
-            bg_mode: op.bg_mode,
-            bg_colour: op.bg_colour,
-            sun_pos: op.sun_pos,
-            sun_intensity: op.sun_intensity,
-            sun_radius: op.sun_radius,
-            seed: op.seed,
-            mix: op.mix,
-        };
-
-
-
-
-
-        lumit_core::fx::cpu::lens_dirt(&mut cpu, w, h, &cpu_p);
-
-        let tex = upload_linear_f32(&ctx, &img, w, h);
-        let out = fx.lens_dirt(&ctx, &tex, w, h, &op);
+        let cpu_p: lumit_core::fx::LensDirtParams = op.into();
+        lumit_core::fx::cpu::lens_dirt(&mut cpu, None, None, w, h, &cpu_p);
+        let out = fx.lens_dirt(&ctx, &tex, w, h, None, op);
         let gpu = readback_linear_f32(&ctx, &out, w, h).unwrap();
-
         let worst = worst_f16_ulp(&cpu, &gpu);
         eprintln!("lens_dirt {name}: worst {worst} ulp");
         assert!(worst <= 2, "{name}: worst {worst} fp16 ULP");
-        if name == "neutral" || name == "mix-zero" {
-            assert_eq!(gpu, img, "{name}: must be the bit-exact identity");
-        }
-
-        let out2 = fx.lens_dirt(&ctx, &tex, w, h, &op);
+        // Determinism (§2.4): a second run is bit-identical to the first.
+        let out2 = fx.lens_dirt(&ctx, &tex, w, h, None, op);
         let gpu2 = readback_linear_f32(&ctx, &out2, w, h).unwrap();
-        assert_eq!(gpu, gpu2, "GPU lens_dirt must be bit-stable");
+        assert_eq!(gpu, gpu2, "{name}: GPU lens_dirt must be bit-stable");
+    }
+
+    // Intensity 0 and Mix 0 are bit-exact passthroughs.
+    for op in [
+        crate::fx::LensDirtOp {
+            intensity: 0.0,
+            ..base
+        },
+        crate::fx::LensDirtOp { mix: 0.0, ..base },
+    ] {
+        let out = fx.lens_dirt(&ctx, &tex, w, h, None, &op);
+        assert_eq!(
+            readback_linear_f32(&ctx, &out, w, h).unwrap(),
+            img,
+            "a neutral Lens dirt must be the bit-exact input"
+        );
     }
 }
-

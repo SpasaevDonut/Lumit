@@ -411,35 +411,21 @@ class EffectParamRowFrb extends StatelessWidget {
 
       case BridgeParamKind_Seed():
         if (value case BridgeEffectValue_Seed(:final field0)) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SizedBox(
-                width: effectCellWidth,
-                child: DragValueField(
-                  key: ValueKey<String>('fx-seed-$id-${param.id}'),
-                  value: field0,
-                  min: 0,
-                  max: 0xFFFFFFFF,
-                  speed: 1,
-                  onChanged: (v) =>
-                      _set(BridgeEffectValue.seed(v.toInt().clamp(0, 0xFFFFFFFF))),
-                ),
-              ),
-              if (field0 == 1337)
-                Padding(
-                  padding: const EdgeInsets.only(top: 2.0),
-                  child: Text(
-                    'ебитесь как хотите',
-                    style: TextStyle(
-                      fontSize: 10.0,
-                      color: t.accent,
-                      fontStyle: FontStyle.italic,
-                    ),
-                  ),
-                ),
-            ],
+          // No annotation on any particular value. Lens dirt's plate seed
+          // (K-314) is meant to be found, not signposted — a row that announces
+          // itself is not an easter egg, it is a feature with a strange label —
+          // and a public panel is not the place for an aside in one language.
+          return SizedBox(
+            width: effectCellWidth,
+            child: DragValueField(
+              key: ValueKey<String>('fx-seed-$id-${param.id}'),
+              value: field0,
+              min: 0,
+              max: 0xFFFFFFFF,
+              speed: 1,
+              onChanged: (v) =>
+                  _set(BridgeEffectValue.seed(v.toInt().clamp(0, 0xFFFFFFFF))),
+            ),
           );
         }
         return Text('—', style: t.small);
@@ -1133,6 +1119,9 @@ Set<String> disabledParams(
       (BridgeEnabledCond_ChoiceIs(:final field0), BridgeEffectValue_Choice(field0: final v)) => v == field0,
       (BridgeEnabledCond_ChoiceIsNot(:final field0), BridgeEffectValue_Choice(field0: final v)) => v != field0,
       (BridgeEnabledCond_LayerSet(), BridgeEffectValue_Layer(field0: final v)) => v != null,
+      (BridgeEnabledCond_LayerUnset(), BridgeEffectValue_Layer(field0: final v)) => v == null,
+      (BridgeEnabledCond_FloatAbove(:final field0), BridgeEffectValue_Float(field0: final v)) =>
+        (v is BridgeScalar_Static ? v.field0 : 0.0) > field0,
       // A rule pointed at the wrong kind of parameter is a schema mistake the
       // Rust-side test fails the build for; here it leaves the row live rather
       // than locking one the owner can never reach.

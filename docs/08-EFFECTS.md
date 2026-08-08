@@ -1681,56 +1681,126 @@ stable when they land.
 
 ---
 
-### 3.28 Lens dirt generator (`lens_dirt`)
+### 3.28 Lens dirt — grease and dust on the front element (`lens_dirt`)
 
-**In plain terms.** Procedurally generates organic camera lens dust specks, out-of-focus aperture bokeh disks, micro-hairline scratches, lens smudges, and optical vignetting, composited over the input layer (or output solo) to simulate light striking an uncleaned camera lens.
+Muck on the glass: a greasy veil, dust specks and hairline scratches, lit by the
+picture's own highlights.
 
-**Match name:** `lens_dirt`  
-**Category:** Stylise (`FxCategory::Stylise`)  
-**Traits:** Moderate cost (`CostClass::Moderate`), Exact ROI (`Roi::Exact`), `{0}` temporal, premultiplied linear RGBA, seeded (`seeded: true`), no beat input.
+**In plain terms, and this is the whole effect.** A clean lens is invisible. A
+dirty one is *also* invisible — right up until a bright light shines through it,
+and then the muck lights up. Dirt does not emit; it forward-scatters whatever is
+passing through it. So the dirt field is generated once and then **multiplied by
+a blurred, thresholded copy of the frame's own highlights**, which is why the
+effect appears around a street lamp and disappears in a dark shot. Every
+production renderer does exactly this — Unreal's `BloomDirtMask`, Unity HDRP's
+Lens Dirt, Godot's glow map, and the Nuke workflow of a scanned plate keyed by a
+luma matte — because dirt added *unconditionally* is the single thing that makes
+a lens-dirt pass look painted on rather than photographed.
 
-**Parameters:**
-- `intensity` (Float, default `1.0`, slider `0.0`..`4.0`, hard `0.0`..`None`): Master brightness scale. `0.0` is neutral passthrough.
-- `density` (Float, default `100.0`, slider `0.0`..`500.0`, hard `0.0`..`2000.0`): Spatial density of dust specks and out-of-focus bokeh disks.
-- `blend_mode` (Choice `["Screen", "Add", "Overlay", "Solo"]`, default `0` Screen): Compositing mode against source frame.
+**A photographed plate beats any generator.** Real dirt is irregular in a way
+procedural blobs are not, so the effect takes a **Dirt plate** layer reference
+(§1.2, [impl/layer-input.md](impl/layer-input.md) — the machinery Depth of
+field's depth pass rides). A bound plate *replaces* the procedural field and is
+modulated the same way, which is the stock-footage workflow and the one that
+actually looks real. The procedural field is the fallback, not the headline.
 
-**Group: Bokeh particles** (Disclosure group)
-- `bokeh_layers` (Int, default `3`, slider `1`..`8`, hard `1`..`10`): Number of independent depth layers of stacked bokeh particles.
-- `scale` (Float, default `1.0`, slider `0.1`..`5.0`, hard `0.01`..`20.0`): Base size multiplier for out-of-focus bokeh disks.
-- `scale_var_x` (Float, default `0.0`, slider `0.0`..`1.0`, hard `0.0`..`2.0`): Per-particle horizontal scale randomizer / aspect variance.
-- `scale_var_y` (Float, default `0.0`, slider `0.0`..`1.0`, hard `0.0`..`2.0`): Per-particle vertical scale randomizer / aspect variance.
-- `rotation_var` (Float, default `0.0`, slider `0.0`..`1.0`, hard `0.0`..`1.0`): Per-particle rotation randomizer for oval/anamorphic bokeh disks.
-- `defocus` (Float, default `0.5`, slider `0.0`..`1.0`, hard `0.0`..`1.0`): Bokeh disc edge softness vs ring iris highlights.
-- `defocus_var` (Float, default `0.0`, slider `0.0`..`1.0`, hard `0.0`..`1.0`): Per-particle defocus randomizer for mixed sharp iris rings and soft halos.
-- `color_var` (Float, default `0.0`, slider `0.0`..`1.0`, hard `0.0`..`1.0`): Per-particle color jitter for subtle warm/cool highlight color variation across bokeh disks.
-- `chromatic` (Float, default `0.3`, slider `0.0`..`1.0`, hard `0.0`..`2.0`): Spectral color dispersion at bokeh edges and dust spots.
-- `tint` (Colour, default `[1.0, 0.95, 0.85, 1.0]`, edit range `0.0`..`2.0`): Dedicated RGBA color tint for out-of-focus bokeh highlights.
+**Dirt sits on one plane of glass.** There is deliberately no layer count:
+stacking depth layers of particles is a way of getting size variety, and the
+honest way is a size distribution within one field.
 
-**Group: Scratches & Imperfections** (Disclosure group)
-- `scratches` (Float, default `0.4`, slider `0.0`..`1.0`, hard `0.0`..`1.0`): Micro hairline scratches and glass smudge density.
-- `scratch_scale` (Float, default `1.0`, slider `0.1`..`5.0`, hard `0.01`..`20.0`): Size and length multiplier for micro hairline scratches and dust specks.
-- `scratch_var` (Float, default `0.2`, slider `0.0`..`1.0`, hard `0.0`..`1.0`): Per-hairline length, angle, and curvature variation randomizer.
-- `scratch_tint` (Colour, default `[1.0, 1.0, 1.0, 1.0]`, edit range `0.0`..`2.0`): Dedicated RGBA color tint for hairline scratches and dust specks.
-- `dirt` (Float, default `0.3`, slider `0.0`..`1.0`, hard `0.0`..`1.0`): Density of organic lens dirt specks and glass smudges.
-- `dirt_tint` (Colour, default `[0.9, 0.85, 0.75, 1.0]`, edit range `0.0`..`2.0`): Dedicated RGBA color tint for organic lens dirt spots and smudges.
-- `vignette` (Float, default `0.3`, slider `0.0`..`1.0`, hard `0.0`..`1.0`): Optical lens edge darkening / falloff.
+**Parameters:** Intensity (0–4, default 1; 0 is a bit-exact passthrough), Dirt
+plate (a layer reference; unset uses the procedural field), Plate channel
+(default Luminance — a plate is a photograph, and how bright a spot is is how
+much muck is there), Blend mode (Screen / Add, default Screen); then:
 
+- **Light response** (open, not collapsed — this group decides whether the effect
+  reads as a lens or as an overlay): Light response (0–1, default 1: 1 is the
+  physical reading, **0 is the uniform generator** an empty layer needs),
+  Highlight threshold (default 1.0, scene white) and Light spread (px@comp,
+  default 60 — how far a highlight's light travels across the glass before it
+  reaches a speck; wide on purpose, because the scatter is a haze and a narrow
+  spread outlines the lamp instead of lighting the muck around it).
+- **Dirt** (collapsed): Density, Size, Roughness (default 0.7 — how noise-warped
+  each speck's outline is), Defocus (default 0.5), Smudge (default 0.4), Dust
+  specks, Scratches, Scratch scale, Scratch variation.
+- **Colour** (collapsed): Tint (near-white by default — dirt lit by a white light
+  is white), Colour variation, Chromatic fringe.
 
+Then Optical vignette (applied to the dirt, not the picture: less light reaches
+the edge of the element, so less muck lights up there), **Background**
+(Transparent / Black, default Transparent), Seed, Mix.
 
-**Group: Background & Sun Light Source** (Disclosure group)
-- `bg_mode` (Choice `["Transparent", "Color", "Sun / Light source"]`, default `0` Transparent): Background rendering mode.
-- `bg_colour` (Colour, default `[0.05, 0.05, 0.08, 1.0]`, edit range `0.0`..`2.0`): Custom background color fill (visible when `bg_mode` > 0).
-- `sun_pos` (Point, default `[0.5, 0.3]`): Screen-normalized coordinates `[x, y]` of procedural sun/light source (visible when `bg_mode` = 2).
-- `sun_intensity` (Float, default `1.0`, slider `0.0`..`4.0`, hard `0.0`..`None`): Brightness multiplier of background sun light source (visible when `bg_mode` = 2).
-- `sun_radius` (Float, default `0.4`, slider `0.05`..`1.5`, hard `0.01`..`5.0`): Falloff radius of background sun light source (visible when `bg_mode` = 2).
+**Algorithm sketch.** Three passes. One keeps only the light above **Highlight
+threshold**; two and three widen it with the shared separable gaussian at **Light
+spread** pixels, Repeat edges so the response holds along frame borders. The
+dirt kernel then builds its field — a plate sample, or the procedural sum of the
+smudge, the specks and the scratches — multiplies it by
+`1 − response + response · light`, applies the vignette, the Intensity and the
+Tint, and composites the result over the picture (or over opaque black) by
+**Blend mode**.
 
-**Group: Random seed** (Disclosure group)
-- `seed` (Seed): Deterministic pseudo-random seed driving particle distribution.
-- `mix` (Float, default `100.0`, slider `0.0`..`100.0`, hard `0.0`..`100.0`): Host uniform blend.
+**What each part of the procedural field is for.** The **smudge** is two octaves
+of low-frequency value noise, squared: fingerprints, breath, a cloth wiped across
+the glass. It contributes more to a convincing dirty lens than the specks do,
+because what it mostly does is lift the blacks and cut local contrast near a
+light rather than add bright dots. The **specks** follow a **power-law size
+distribution** (many tiny, few large) with up to three per grid cell so they
+*cluster* — one per cell is a lattice however it is jittered — and their radii
+are perturbed by noise sampled around their own rims, with the interior opacity
+varying too, so no two share a silhouette. Perfectly elliptical specks are the
+loudest single tell that a dirt pass was generated. **Defocus** shapes each speck
+as a soft disc with a brighter rim, because dirt on the front element sits far
+outside the focal plane and images as the aperture itself. The **scratches** fade
+along their own length, since a cloth does not press evenly.
 
+**The chromatic fringe lives at the edge**, not across the disc. Scaling a
+speck's radius per channel draws clean concentric rings — that is a diffraction
+pattern, not what a smear of grease does — so the dispersion tints only the last
+quarter of the falloff, where the two glass-air interfaces actually disperse.
 
+**The dirt carries its own coverage.** Adding light to RGB while leaving alpha
+alone breaks the premultiplied invariant (RGB above alpha) and, on a transparent
+layer, produces colour nothing can ever see. The lit dirt is composited as a
+premultiplied source whose alpha is its own brightness, which is also what makes
+**Background** work at all: Transparent leaves the layer's picture underneath,
+Black makes the layer opaque black first — the dirt element on its own, ready to
+be screened over a grade elsewhere, and the only way this effect produces
+anything on an empty layer.
 
-**Oracle & WGSL.** A grid-jittered procedural kernel generates bokeh disks, chromatic iris rings, scratch line SDFs, and smudge textures. CPU and WGSL implementations match within 2 fp16 ULPs.
+Operates on **premultiplied** colour, `moderate` cost, `{0}` temporal, seeded,
+**full-frame ROI** (the light spread means a pixel depends on light well outside
+its own tile). Category **Stylise**. `Intensity 0` and `Mix 0` are bit-exact
+passthroughs, pinned by the kernel oracle.
+
+**Threading the plate (K-031).** `Resolved::LensDirt` carries only the scalars;
+the plate is a whole texture, so — like the LUT's cube and the depth pass — the
+referenced layer's render travels **beside** the resolved op in a `layer_inputs`
+slot. `build.rs`'s `layer_input_param` is the one list naming which built-in
+takes a layer and by which parameter, so the slots and the ops cannot drift.
+
+**Seed 1337 draws the plate (K-314).** A deliberate easter egg: the embedded
+image is the Wikimedia Commons lens-dirt photograph the effect is modelled on
+(`assets/README.md` records the provenance), and at that seed every
+dirt-*generation* control is ignored — there is nothing to generate — while Tint,
+Blend mode, Background, Intensity and Mix go on working, because those are about
+how a picture is composited rather than about what the dirt is. It answers to no
+light response and takes no vignette: it is a photograph, not a density map.
+
+**Status (v1, shipped, K-314):** the above. Contributed as a procedural overlay
+generator and reworked before landing — the light response, the plate input, the
+premultiplied fix, the noise-warped outlines, the smudge, the clustered power-law
+specks and the edge-only fringe are all this rework. Dropped from the
+contribution: the multi-layer particle stack (dirt is on one plane), the
+per-particle defocus and rotation variance that only made sense across layers,
+the procedural sun (the light response answers to real light instead), and the
+Overlay and Solo blend modes — Overlay's contrast pivot is meaningless on
+unbounded linear values, and Solo is what the Background choice does honestly.
+
+**Open.** The speck distribution's constants (the fourth-power radius draw, the
+three-per-cell cap, the 0.30 occupancy factor) are chosen by eye against
+reference plates rather than measured, and are the honest place to correct this
+later. The plate is resampled to fill the layer's raster and its own transform is
+not applied — the same v1 limitation the depth pass carries.
 
 
 ---

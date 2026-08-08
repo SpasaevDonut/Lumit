@@ -6031,9 +6031,15 @@ fn every_enablement_rule_names_a_parameter_of_its_kind() {
                         options.len()
                     );
                 }
-                EnabledCond::LayerSet => assert!(
+                EnabledCond::LayerSet | EnabledCond::LayerUnset => assert!(
                     matches!(on, ParamKind::Layer { .. }),
                     "{}: `{}` is read as a Layer reference but is not one",
+                    s.match_name,
+                    rule.on
+                ),
+                EnabledCond::FloatAbove(_) => assert!(
+                    matches!(on, ParamKind::Float { .. } | ParamKind::Int { .. }),
+                    "{}: `{}` is read as a number but is not one",
                     s.match_name,
                     rule.on
                 ),
@@ -6863,127 +6869,248 @@ fn profile_reaches_a_depth_pass_squeezed_into_a_fifth_of_its_range() {
     assert!(((6.0f32).exp2() - 64.0).abs() < 1e-3);
 }
 
+// ---------------------------------------------------------------------------
+// Lens dirt (docs/08 §3.28, K-314)
+// ---------------------------------------------------------------------------
+
+/// A frame with one bright light in the middle and dark everywhere else — the
+/// picture the whole effect is about.
+fn lit_frame(w: u32, h: u32) -> Vec<f32> {
+    let mut img = vec![0.0f32; (w * h * 4) as usize];
+    let (cx, cy) = (w as f32 * 0.5, h as f32 * 0.5);
+    for y in 0..h {
+        for x in 0..w {
+            let i = ((y * w + x) * 4) as usize;
+            let d = ((x as f32 - cx).powi(2) + (y as f32 - cy).powi(2)).sqrt();
+            // A small hot core, well above the 1.0 threshold, on a dark field.
+            let v = if d < 6.0 { 8.0 } else { 0.02 };
+            img[i] = v;
+            img[i + 1] = v;
+            img[i + 2] = v;
+            img[i + 3] = 1.0;
+        }
+    }
+    img
+}
+
+/// The light pass the effect reads, built exactly as the dispatcher builds it.
+fn lit_response(img: &[f32], w: u32, h: u32, p: &LensDirtParams) -> Vec<f32> {
+    let n = (w * h) as usize;
+    let mut lum = vec![0.0f32; n];
+    cpu::lens_dirt_highlights(img, &mut lum, p.threshold);
+    let mut wide = vec![0.0f32; n * 4];
+    for (i, v) in lum.iter().enumerate() {
+        wide[i * 4] = *v;
+        wide[i * 4 + 1] = *v;
+        wide[i * 4 + 2] = *v;
+        wide[i * 4 + 3] = *v;
+    }
+    cpu::blur_gaussian(&mut wide, w, h, p.spread, 1, 1.0);
+    (0..n).map(|i| wide[i * 4]).collect()
+}
+
+/// **The whole point of the effect** (K-314): dirt is only visible where light
+/// passes through it.
+///
+/// A clean lens is invisible; a dirty one is *also* invisible until something
+/// bright shines through it. So the same dirt field, over the same frame, must
+/// be far stronger near a light than away from one — and at Light response 0 it
+/// must stop caring, because that is the uniform-generator setting an empty
+/// layer needs.
+///
+/// This is the regression the contributed effect did not have: it added its dirt
+/// unconditionally, which is the single thing that makes a lens-dirt pass look
+/// painted on rather than photographed.
 #[test]
-fn lens_dirt_neutral_points_and_default_resolve() {
-    use crate::fx::cpu::lens_dirt;
-    use crate::fx::resolved::LensDirtParams;
+fn lens_dirt_is_only_visible_where_light_passes_through_it() {
+    let (w, h) = (96u32, 96u32);
+    let img = lit_frame(w, h);
+    let p = LensDirtParams {
+        // Dense enough that every region has muck in it, so what is being
+        // measured is the response and not where a speck happened to land.
+        density: 500.0,
+        smudge: 1.0,
+        response: 1.0,
+        spread: 20.0,
+        vignette: 0.0,
+        ..LensDirtParams::default()
+    };
+    let light = lit_response(&img, w, h, &p);
 
-    let plain = instantiate("lens_dirt").unwrap();
-    assert_eq!(plain.effect.match_name, "lens_dirt");
+    let mut lit = img.clone();
+    cpu::lens_dirt(&mut lit, Some(&light), None, w, h, &p);
 
-    let markers = MarkerContext::NONE;
-    let resolved = resolve_stack(&[plain], 0.0, 1000.0, 1.0, &markers).pop().unwrap();
-    if let Resolved::LensDirt(p) = resolved {
-        assert_eq!(p.intensity, 1.0);
-        assert_eq!(p.density, 100.0);
-        assert_eq!(p.bokeh_layers, 3);
-        assert_eq!(p.scale, 1.0);
-        assert_eq!(p.scale_var_x, 0.0);
-        assert_eq!(p.scale_var_y, 0.0);
-        assert_eq!(p.rotation_var, 0.0);
-        assert_eq!(p.scratch_scale, 1.0);
-        assert_eq!(p.defocus, 0.5);
-        assert_eq!(p.defocus_var, 0.0);
-        assert_eq!(p.chromatic, 0.3);
-        assert_eq!(p.scratches, 0.4);
-        assert_eq!(p.tint, [1.0, 0.95, 0.85, 1.0]);
-        assert_eq!(p.vignette, 0.3);
-        assert_eq!(p.blend_mode, 0);
-        assert_eq!(p.bg_mode, 0);
-        assert_eq!(p.bg_colour, [0.05, 0.05, 0.08, 1.0]);
-        assert_eq!(p.sun_pos, [0.5, 0.3]);
-        assert_eq!(p.sun_intensity, 1.0);
-        assert_eq!(p.sun_radius, 0.4);
-        assert_eq!(p.mix, 1.0);
-    } else {
-        panic!("expected Resolved::LensDirt");
+    // Added light, summed over a patch — the dirt's own contribution.
+    let added = |out: &[f32], x0: u32, y0: u32| -> f32 {
+        let mut s = 0.0;
+        for y in y0..y0 + 12 {
+            for x in x0..x0 + 12 {
+                let i = ((y * w + x) * 4) as usize;
+                s += (out[i] - img[i]).max(0.0);
+            }
+        }
+        s
+    };
+    let near = added(&lit, 42, 42); // over the light
+    let far = added(&lit, 2, 2); // the dark corner
+    assert!(
+        near > far * 10.0,
+        "dirt must light up around a source and stay dark away from it: {near} vs {far}"
+    );
+
+    // Light response 0 is the generator: the same field, uniformly visible.
+    let uniform_p = LensDirtParams { response: 0.0, ..p };
+    let mut uniform = img.clone();
+    cpu::lens_dirt(&mut uniform, None, None, w, h, &uniform_p);
+    let u_far = added(&uniform, 2, 2);
+    assert!(
+        u_far > far * 10.0,
+        "at response 0 the dark corner must show its dirt: {u_far} vs {far}"
+    );
+}
+
+/// **The premultiplied-alpha fix.** Light added to RGB has to bring coverage
+/// with it, or a transparent layer gets colour nothing can ever see — which is
+/// why the contributed effect's background modes could not show at all.
+#[test]
+fn lens_dirt_carries_its_own_coverage() {
+    let (w, h) = (32u32, 32u32);
+    // A fully transparent layer: nothing but the dirt to see.
+    let img = vec![0.0f32; (w * h * 4) as usize];
+    let p = LensDirtParams {
+        response: 0.0,
+        density: 500.0,
+        smudge: 1.0,
+        ..LensDirtParams::default()
+    };
+    let mut out = img.clone();
+    cpu::lens_dirt(&mut out, None, None, w, h, &p);
+
+    let mut lit_pixels = 0;
+    for i in (0..out.len()).step_by(4) {
+        let rgb = out[i].max(out[i + 1]).max(out[i + 2]);
+        if rgb > 1e-4 {
+            lit_pixels += 1;
+            assert!(
+                out[i + 3] >= rgb - 1e-5,
+                "premultiplied: alpha must not sit below the colour it carries ({} vs {})",
+                out[i + 3],
+                rgb
+            );
+        }
+    }
+    assert!(lit_pixels > 0, "the generator must have drawn something");
+
+    // Background Black makes the layer opaque first — the dirt element on its
+    // own, which is the only way this effect produces anything on an empty
+    // layer.
+    let on_black = LensDirtParams { background: 1, ..p };
+    let mut black = img.clone();
+    cpu::lens_dirt(&mut black, None, None, w, h, &on_black);
+    for i in (0..black.len()).step_by(4) {
+        assert!(
+            black[i + 3] >= 1.0 - 1e-6,
+            "a Black background is opaque everywhere"
+        );
+    }
+}
+
+/// A bound plate REPLACES the procedural field.
+#[test]
+fn a_dirt_plate_replaces_the_procedural_field() {
+    let (w, h) = (32u32, 32u32);
+    let img = vec![0.0f32; (w * h * 4) as usize];
+    // A plate that is dirty on its left half and clean on its right.
+    let mut plate = vec![0.0f32; (w * h * 4) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let i = ((y * w + x) * 4) as usize;
+            let v = if x < w / 2 { 1.0 } else { 0.0 };
+            plate[i] = v;
+            plate[i + 1] = v;
+            plate[i + 2] = v;
+            plate[i + 3] = 1.0;
+        }
+    }
+    let p = LensDirtParams {
+        response: 0.0,
+        vignette: 0.0,
+        ..LensDirtParams::default()
+    };
+    let mut out = img.clone();
+    cpu::lens_dirt(&mut out, None, Some(&plate), w, h, &p);
+
+    let sample = |x: u32, y: u32| out[((y * w + x) * 4) as usize];
+    assert!(sample(4, 16) > 0.5, "the plate's dirty half shows");
+    assert!(sample(28, 16) < 1e-5, "its clean half does not");
+}
+
+/// Neutral settings, and the seed doing what a seed is for.
+#[test]
+fn lens_dirt_neutrals_and_seed() {
+    let (w, h) = (24u32, 24u32);
+    let img = lit_frame(w, h);
+
+    // Intensity 0 and Mix 0 are both bit-exact passthroughs.
+    for p in [
+        LensDirtParams {
+            intensity: 0.0,
+            ..LensDirtParams::default()
+        },
+        LensDirtParams {
+            mix: 0.0,
+            ..LensDirtParams::default()
+        },
+    ] {
+        let mut out = img.clone();
+        cpu::lens_dirt(&mut out, None, None, w, h, &p);
+        assert_eq!(out, img, "a neutral Lens dirt is the bit-exact input");
     }
 
-    let mut image = vec![0.5f32; 16 * 16 * 4];
-    let copy = image.clone();
-    let p_zero = LensDirtParams {
-        intensity: 0.0,
-        density: 100.0,
-        bokeh_layers: 3,
-        scale: 1.0,
-        scale_var_x: 0.0,
-        scale_var_y: 0.0,
-        rotation_var: 0.0,
-        scratch_scale: 1.0,
-        defocus: 0.5,
-        defocus_var: 0.0,
-        color_var: 0.0,
-        chromatic: 0.3,
-        scratches: 0.4,
-        scratch_var: 0.2,
-        scratch_tint: [1.0, 1.0, 1.0, 1.0],
-        dirt: 0.3,
-        dirt_tint: [0.9, 0.85, 0.75, 1.0],
-        tint: [1.0, 0.95, 0.85, 1.0],
-        vignette: 0.3,
-        blend_mode: 0,
-        bg_mode: 0,
-        bg_colour: [0.05, 0.05, 0.08, 1.0],
-        sun_pos: [0.5, 0.3],
-        sun_intensity: 1.0,
-        sun_radius: 0.4,
-        seed: 42,
-        mix: 1.0,
-    };
-    lens_dirt(&mut image, 16, 16, &p_zero);
-    assert_eq!(image, copy, "intensity 0 must be bit-exact identity");
-}
-
-#[test]
-fn lens_dirt_seed_determinism() {
-    use crate::fx::cpu::lens_dirt;
-    use crate::fx::resolved::LensDirtParams;
-
+    // Two seeds, two fields; the same seed twice, the same field (§2.4).
     let p = LensDirtParams {
-        intensity: 1.0,
-        density: 100.0,
-        bokeh_layers: 3,
-        scale: 1.0,
-        scale_var_x: 0.0,
-        scale_var_y: 0.0,
-        rotation_var: 0.0,
-        scratch_scale: 1.0,
-        defocus: 0.5,
-        defocus_var: 0.0,
-        color_var: 0.0,
-        chromatic: 0.3,
-        scratches: 0.4,
-        scratch_var: 0.2,
-        scratch_tint: [1.0, 1.0, 1.0, 1.0],
-        dirt: 0.3,
-        dirt_tint: [0.9, 0.85, 0.75, 1.0],
-        tint: [1.0, 0.95, 0.85, 1.0],
-        vignette: 0.3,
-        blend_mode: 0,
-        bg_mode: 0,
-        bg_colour: [0.05, 0.05, 0.08, 1.0],
-        sun_pos: [0.5, 0.3],
-        sun_intensity: 1.0,
-        sun_radius: 0.4,
-        seed: 12345,
-        mix: 1.0,
+        response: 0.0,
+        seed: 1,
+        ..LensDirtParams::default()
     };
-
-
-
-
-
-    let mut img1 = vec![0.2f32; 128 * 128 * 4];
-    let mut img2 = vec![0.2f32; 128 * 128 * 4];
-    lens_dirt(&mut img1, 128, 128, &p);
-    lens_dirt(&mut img2, 128, 128, &p);
-    assert_eq!(img1, img2, "two runs with same seed must be bit-identical");
-
-    let p_diff = LensDirtParams { seed: 9999, ..p };
-    let mut img3 = vec![0.2f32; 128 * 128 * 4];
-    lens_dirt(&mut img3, 128, 128, &p_diff);
-    assert_ne!(img1, img3, "different seed must yield different pattern");
+    let mut a = img.clone();
+    cpu::lens_dirt(&mut a, None, None, w, h, &p);
+    let mut again = img.clone();
+    cpu::lens_dirt(&mut again, None, None, w, h, &p);
+    assert_eq!(a, again, "the same seed must render the same dirt");
+    let mut b = img.clone();
+    cpu::lens_dirt(&mut b, None, None, w, h, &LensDirtParams { seed: 2, ..p });
+    assert_ne!(a, b, "a different seed must move the dirt");
 }
 
+/// The panel's greying, and the controls a bound plate makes inert.
+#[test]
+fn lens_dirt_greys_what_a_plate_replaces() {
+    let mut e = instantiate("lens_dirt").unwrap();
+    // No plate: the procedural controls are live, the plate's channel is not.
+    assert!(param_enabled(&e, "density"));
+    assert!(param_enabled(&e, "roughness"));
+    assert!(!param_enabled(&e, "plate_channel"));
+    // Response is 1 by default, so the rows describing how highlights are found
+    // are live.
+    assert!(param_enabled(&e, "threshold"));
+    assert!(param_enabled(&e, "spread"));
 
+    // Pick a plate and the generator's controls stop deciding anything.
+    set_layer(&mut e, "plate", Some(uuid::Uuid::now_v7()));
+    assert!(param_enabled(&e, "plate_channel"));
+    for id in ["density", "scale", "roughness", "smudge", "specks"] {
+        assert!(!param_enabled(&e, id), "{id} is replaced by the plate");
+    }
+    // The response still applies to a plate, so those rows stay live.
+    assert!(param_enabled(&e, "threshold"));
 
+    // Turn the response off and the highlight rows go quiet.
+    for p in e.params.iter_mut() {
+        if p.id == "response" {
+            p.value = EffectValue::Float(Property::fixed(0.0));
+        }
+    }
+    assert!(!param_enabled(&e, "threshold"));
+    assert!(!param_enabled(&e, "spread"));
+}

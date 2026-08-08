@@ -1049,43 +1049,48 @@ pub fn run_ops(
                 );
             }
             Resolved::LensDirt(p) => {
-                tex = fx.lens_dirt(
+                // The k-th layer-input-consuming op binds the k-th slot, and
+                // Lens dirt takes one exactly as Depth of field does — same
+                // counter, same ordering, same 1:1 contract
+                // (docs/impl/layer-input.md §2, `build.rs`'s
+                // `layer_input_param`). An absent slot is not a fault: the
+                // effect generates its dirt procedurally instead.
+                let plate = layer_inputs.get(dof_i).and_then(|o| o.texture(&tex));
+                dof_i += 1;
+                // The plate is not `Copy` and the borrow below outlives the
+                // reassignment, so the new texture is bound to a local first.
+                let next = fx.lens_dirt(
                     ctx,
                     &tex,
                     w,
                     h,
+                    plate,
                     &lumit_gpu::fx::LensDirtOp {
                         intensity: p.intensity,
+                        response: p.response,
+                        threshold: p.threshold,
+                        spread: p.spread,
+                        plate_channel: p.plate_channel,
                         density: p.density,
-                        bokeh_layers: p.bokeh_layers,
                         scale: p.scale,
-                        scale_var_x: p.scale_var_x,
-                        scale_var_y: p.scale_var_y,
-                        rotation_var: p.rotation_var,
-                        scratch_scale: p.scratch_scale,
+                        roughness: p.roughness,
                         defocus: p.defocus,
-                        defocus_var: p.defocus_var,
-                        color_var: p.color_var,
-                        chromatic: p.chromatic,
-
+                        smudge: p.smudge,
+                        specks: p.specks,
                         scratches: p.scratches,
+                        scratch_scale: p.scratch_scale,
                         scratch_var: p.scratch_var,
-                        scratch_tint: p.scratch_tint,
-                        dirt: p.dirt,
-                        dirt_tint: p.dirt_tint,
                         tint: p.tint,
+                        colour_var: p.colour_var,
+                        chromatic: p.chromatic,
                         vignette: p.vignette,
                         blend_mode: p.blend_mode,
-                        bg_mode: p.bg_mode,
-                        bg_colour: p.bg_colour,
-                        sun_pos: p.sun_pos,
-                        sun_intensity: p.sun_intensity,
-                        sun_radius: p.sun_radius,
+                        background: p.background,
                         seed: p.seed,
                         mix: p.mix,
-
                     },
                 );
+                tex = next;
             }
         }
 

@@ -263,7 +263,19 @@ impl FxEngine {
         let glow_combine = pipeline(&glow_mod, "fx-glow", "glow_combine");
         let block_glitch = pipeline(&block_glitch_mod, "fx-block-glitch", "block_glitch");
         let scanlines = pipeline(&scanlines_mod, "fx-scanlines", "scanlines");
-        let lens_dirt = pipeline(&lens_dirt_mod, "fx-lens-dirt", "lens_dirt");
+        // Lens dirt takes THREE sampled inputs (source, highlight pass, dirt
+        // plate), so it rides Motion blur's layout rather than the shared
+        // two-input one.
+        let lens_dirt = ctx
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("fx-lens-dirt"),
+                layout: Some(&mb_pl),
+                module: &lens_dirt_mod,
+                entry_point: Some("lens_dirt"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
         let echo_accumulate = pipeline(&echo_mod, "fx-echo-accumulate", "echo_accumulate");
         let echo_mix = pipeline(&echo_mod, "fx-echo-mix", "echo_mix");
         let motion_blur = ctx

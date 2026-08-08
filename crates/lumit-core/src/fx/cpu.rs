@@ -1,4 +1,4 @@
-use super::{LensDirtParams, MatteKeyParams, MbView, Resolved, MAX_BLADES};
+use super::{block_hash01, LensDirtParams, MatteKeyParams, MbView, Resolved, MAX_BLADES};
 
 /// Apply one resolved effect to an RGBA f32 image (premultiplied,
 /// linear light), in place.
@@ -224,10 +224,34 @@ pub fn apply(rgba: &mut [f32], w: u32, h: u32, fx: &Resolved) {
         // is staged in the lumit-gpu tests (trace at ULP, frame at the
         // perceptual bound) against `lens_flare::cpu_flare`/`cpu_combine`.
         Resolved::LensFlare(..) => {}
-        Resolved::LensDirt(p) => lens_dirt(rgba, w, h, p),
+        // Lens dirt (docs/08 §3.28). A bound dirt PLATE is a texture that never
+        // reaches this single-buffer dispatcher, so that half stays procedural
+        // here — like Echo, Motion blur and LUT — and its §1.6 oracle runs
+        // through `lens_dirt` directly from the lumit-gpu test. The highlight
+        // pass needs no texture at all, so this rung builds it properly rather
+        // than dropping the modulation that is the whole effect (K-019).
+        Resolved::LensDirt(p) => {
+            let light = (p.response > 0.0).then(|| {
+                let n = (w as usize) * (h as usize);
+                // The pass the GPU runs as glow_bright + two blur passes: the
+                // same threshold, the same Repeat-edge separable gaussian, and
+                // the same radius, so the two paths light the same pixels.
+                let mut lum = vec![0.0f32; n];
+                lens_dirt_highlights(rgba, &mut lum, p.threshold);
+                let mut wide = vec![0.0f32; n * 4];
+                for (i, v) in lum.iter().enumerate() {
+                    wide[i * 4] = *v;
+                    wide[i * 4 + 1] = *v;
+                    wide[i * 4 + 2] = *v;
+                    wide[i * 4 + 3] = *v;
+                }
+                blur_gaussian(&mut wide, w, h, p.spread, 1, 1.0);
+                (0..n).map(|i| wide[i * 4]).collect::<Vec<f32>>()
+            });
+            lens_dirt(rgba, light.as_deref(), None, w, h, p);
+        }
     }
 }
-
 
 /// Glow (docs/08 §3.3, v1 core): bright-pass every premultiplied channel
 /// through [`super::glow_bright`] — alpha included, so the halo carries
@@ -2356,23 +2380,392 @@ pub fn scanlines(
     }
 }
 
-fn cpu_bokeh_profile(norm_d: f32, defocus: f32) -> f32 {
-    if norm_d > 1.0 {
+// ---------------------------------------------------------------------------
+// Lens dirt (docs/08 §3.28, K-314)
+// ---------------------------------------------------------------------------
+
+/// Value noise in 0..1 at a point, by bilinear blend of four cell hashes.
+///
+/// Cheap on purpose: the dirt field wants *irregularity*, not a good spectrum,
+/// and every operation here is a multiply, an add and a hash — nothing whose
+/// exact form differs between Rust and WGSL (§1.6).
+fn dirt_noise(x: f32, y: f32, seed: u32, channel: u32) -> f32 {
+    let xi = x.floor();
+    let yi = y.floor();
+    let tx = x - xi;
+    let ty = y - yi;
+    // Smoothstep the interpolant so the field has no visible cell lattice.
+    let sx = tx * tx * (3.0 - 2.0 * tx);
+    let sy = ty * ty * (3.0 - 2.0 * ty);
+    let (cx, cy) = (xi as i32, yi as i32);
+    let h = |dx: i32, dy: i32| block_hash01(seed, channel, cx + dx, cy + dy, 0);
+    let a = h(0, 0);
+    let b = h(1, 0);
+    let c = h(0, 1);
+    let d = h(1, 1);
+    let top = a + (b - a) * sx;
+    let bot = c + (d - c) * sx;
+    top + (bot - top) * sy
+}
+
+/// Two octaves of [`dirt_noise`], the second at four times the frequency and a
+/// third of the weight. Enough to break an outline; more octaves cost taps and
+/// buy nothing a lens speck shows.
+fn dirt_fbm(x: f32, y: f32, seed: u32, channel: u32) -> f32 {
+    let a = dirt_noise(x, y, seed, channel);
+    let b = dirt_noise(x * 4.0 + 11.3, y * 4.0 - 7.1, seed, channel ^ 0x9e37);
+    (a * 0.75 + b * 0.25).clamp(0.0, 1.0)
+}
+
+/// One speck's radial profile, 0 at the rim and 1 at the centre.
+///
+/// **Defocus is what makes it a lens speck rather than a dot.** Dirt on the
+/// front element sits far outside the focal plane, so it images as the aperture
+/// itself: a soft disc with a brighter rim, because the out-of-focus cone's edge
+/// integrates more of the aperture than its middle. At defocus 0 it is a plain
+/// soft dot.
+fn speck_profile(norm_d: f32, defocus: f32) -> f32 {
+    if norm_d >= 1.0 {
         return 0.0;
     }
-    let ring = if defocus > 0.05 {
-        let ring_pos = (1.0 - defocus * 0.45).clamp(0.1, 0.95);
-        if norm_d >= ring_pos {
-            let t = (norm_d - ring_pos) / (1.0 - ring_pos);
-            0.5 + 1.0 * t * t
-        } else {
-            let t_in = norm_d / ring_pos;
-            0.5 + 0.5 * t_in * t_in
-        }
+    let core = 1.0 - norm_d * norm_d;
+    if defocus <= 0.05 {
+        return core;
+    }
+    // Where the rim sits: more defocus pushes it outward and thins it.
+    let rim_pos = (1.0 - defocus * 0.45).clamp(0.1, 0.95);
+    let ring = if norm_d >= rim_pos {
+        let t = (norm_d - rim_pos) / (1.0 - rim_pos);
+        0.5 + t * t
     } else {
-        1.0 - norm_d * norm_d
+        let t = norm_d / rim_pos;
+        0.5 + 0.5 * t * t
     };
-    (1.0 - norm_d * norm_d) * ring
+    core * ring
+}
+
+/// The **dirt field** at one pixel: how much muck sits on the glass there, per
+/// channel, before any light is applied to it.
+///
+/// Returns a linear amount, not a colour — `[r, g, b]` differ only through the
+/// per-speck colour jitter and the edge fringe. Three things are summed:
+///
+/// - **the smudge**, a low-frequency greasy veil. It contributes more to a
+///   convincing dirty lens than the specks do, because what it mostly does is
+///   lift the blacks and cut local contrast near a light rather than add bright
+///   dots — which is what a wiped, breathed-on filter actually does to a shot;
+/// - **the specks**, on a power-law size distribution (many tiny, few large)
+///   within ONE plane of glass, their outlines warped by noise so no two share a
+///   silhouette. Perfectly elliptical specks are the single loudest tell that a
+///   dirt pass was generated rather than photographed;
+/// - **the scratches**, hairlines from a cloth wiped across the element.
+///
+/// The 3×3 neighbourhood walk is what stops a speck being clipped at its own
+/// cell boundary: a particle's radius can exceed its cell, so every pixel must
+/// consider the eight cells around it too.
+fn dirt_field(px: f32, py: f32, diag: f32, p: &LensDirtParams) -> [f32; 3] {
+    let mut out = [0.0f32; 3];
+
+    // --- The greasy veil ---
+    if p.smudge > 0.0 {
+        // Very low frequency: a handful of broad patches across the frame, not a
+        // texture. Squared so it stays mostly clear with a few heavy areas,
+        // which is how a wiped filter actually looks.
+        let n = dirt_fbm(px / (diag * 0.35), py / (diag * 0.35), p.seed, 40);
+        let veil = (n * n) * p.smudge * 0.5;
+        out[0] += veil;
+        out[1] += veil;
+        out[2] += veil;
+    }
+
+    // --- The specks ---
+    if p.specks > 0.0 && p.density > 0.0 {
+        // One grid, one plane of glass. Cell size follows the largest speck the
+        // size distribution can produce, so the 3×3 walk always covers it.
+        let base_r = p.scale * diag * 0.012;
+        let cell = (base_r * 4.0).clamp(16.0, 2048.0);
+        let occupancy = (p.density / 100.0).clamp(0.0, 20.0);
+        let gx = (px / cell).floor() as i32;
+        let gy = (py / cell).floor() as i32;
+
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                let (cx, cy) = (gx + dx, gy + dy);
+                // Up to three specks per cell, so they CLUSTER: one per cell is
+                // a lattice however it is jittered, and real dirt arrives in
+                // clumps.
+                for k in 0..3u32 {
+                    let ch = k * 16;
+                    // Each successive speck in a cell is rarer than the last.
+                    let keep = occupancy * 0.30 / (1.0 + k as f32);
+                    if block_hash01(p.seed, ch, cx, cy, 0) > keep.min(0.95f32) {
+                        continue;
+                    }
+                    let sx = (cx as f32 + block_hash01(p.seed, ch + 1, cx, cy, 0)) * cell;
+                    let sy = (cy as f32 + block_hash01(p.seed, ch + 2, cx, cy, 0)) * cell;
+                    // **Power law, not uniform.** A uniform radius gives a field
+                    // of same-sized dots; muck is overwhelmingly small with the
+                    // occasional big smear, and the fourth power of a uniform
+                    // draw is a serviceable stand-in for that.
+                    let u = block_hash01(p.seed, ch + 3, cx, cy, 0);
+                    let radius = (base_r * (0.12 + 1.6 * u * u * u * u)).max(0.5);
+
+                    let ox = px - sx;
+                    let oy = py - sy;
+                    let dist = (ox * ox + oy * oy).sqrt();
+                    if dist > radius * 1.35 {
+                        continue;
+                    }
+                    // **The outline is warped, not analytic.** The radius is
+                    // modulated by noise sampled around the speck's own rim, so
+                    // the edge wanders the way a smear of grease does.
+                    let warp = if p.roughness > 0.0 {
+                        let n = dirt_fbm(
+                            sx * 0.05 + ox / radius.max(0.5),
+                            sy * 0.05 + oy / radius.max(0.5),
+                            p.seed,
+                            ch + 4,
+                        );
+                        1.0 + (n - 0.5) * p.roughness * 0.9
+                    } else {
+                        1.0
+                    };
+                    let effective = (radius * warp).max(0.25);
+                    let norm = dist / effective;
+                    let base = speck_profile(norm, p.defocus);
+                    if base <= 0.0 {
+                        continue;
+                    }
+                    // The interior is not flat either: a second noise term thins
+                    // parts of the speck, so it reads as a deposit rather than
+                    // as a stamp.
+                    let interior = if p.roughness > 0.0 {
+                        let n = dirt_fbm(px * 0.08, py * 0.08, p.seed, ch + 5);
+                        1.0 - p.roughness * 0.5 * (1.0 - n)
+                    } else {
+                        1.0
+                    };
+                    let amount = base * interior * p.specks;
+
+                    // Per-speck colour jitter: dirt is not neutral, and a field
+                    // in which every speck is the same colour reads as one
+                    // stamp repeated.
+                    let mut rgb = [amount, amount, amount];
+                    if p.colour_var > 0.0 {
+                        for (c, slot) in rgb.iter_mut().enumerate() {
+                            let j = block_hash01(p.seed, ch + 6 + c as u32, cx, cy, 0);
+                            *slot *= (1.0 + (j - 0.5) * p.colour_var * 0.8).max(0.0);
+                        }
+                    }
+                    // **The fringe lives at the EDGE.** Scaling the radius per
+                    // channel draws clean concentric rings — a diffraction
+                    // pattern, not what a smear does. This tints only the last
+                    // few per cent of the falloff, where the two glass-air
+                    // interfaces actually disperse.
+                    if p.chromatic > 0.0 {
+                        let edge = ((norm - 0.75) / 0.25).clamp(0.0, 1.0);
+                        let f = edge * edge * p.chromatic * 0.6;
+                        rgb[0] *= 1.0 + f;
+                        rgb[2] *= 1.0 - f * 0.5;
+                    }
+                    out[0] += rgb[0];
+                    out[1] += rgb[1];
+                    out[2] += rgb[2];
+                }
+            }
+        }
+    }
+
+    // --- The scratches ---
+    if p.scratches > 0.0 {
+        let cell = (48.0 * p.scratch_scale).clamp(12.0, 1024.0);
+        let gx = (px / cell).floor() as i32;
+        let gy = (py / cell).floor() as i32;
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                let (cx, cy) = (gx + dx, gy + dy);
+                if block_hash01(p.seed, 80, cx, cy, 0) >= (0.25 * p.scratches).min(0.8f32) {
+                    continue;
+                }
+                let ax = (cx as f32 + block_hash01(p.seed, 81, cx, cy, 0)) * cell;
+                let ay = (cy as f32 + block_hash01(p.seed, 82, cx, cy, 0)) * cell;
+                let len_mult =
+                    1.0 + (block_hash01(p.seed, 83, cx, cy, 0) - 0.5) * p.scratch_var * 1.6;
+                let seg = ((20.0 + 30.0 * len_mult).max(2.0f32)) * p.scratch_scale;
+                let angle_var = (block_hash01(p.seed, 86, cx, cy, 0) - 0.5)
+                    * p.scratch_var
+                    * std::f32::consts::PI;
+                let angle = block_hash01(p.seed, 84, cx, cy, 0) * std::f32::consts::TAU + angle_var;
+                let vx = angle.cos() * seg;
+                let vy = angle.sin() * seg;
+                let t = (((px - ax) * vx + (py - ay) * vy) / (vx * vx + vy * vy).max(1e-4))
+                    .clamp(0.0, 1.0);
+                let d = ((px - (ax + t * vx)).powi(2) + (py - (ay + t * vy)).powi(2)).sqrt();
+                let width = (0.75 + 0.5 * block_hash01(p.seed, 85, cx, cy, 0)) * p.scratch_scale;
+                if d < width {
+                    // A scratch is not a uniform line: it fades along its own
+                    // length, because a cloth does not press evenly.
+                    let along = 1.0 - (2.0 * t - 1.0).abs() * 0.6;
+                    let v = (1.0 - d / width) * along * p.scratches * 0.7;
+                    out[0] += v;
+                    out[1] += v;
+                    out[2] += v;
+                }
+            }
+        }
+    }
+
+    out
+}
+
+/// Lens dirt (docs/08 §3.28, K-314) — the CPU reference: the §1.6 oracle the
+/// WGSL kernel must agree with, and the degradation ladder's fallback rung.
+///
+/// **In plain terms, and this is the whole effect.** A clean lens is invisible.
+/// A dirty one is *also* invisible — right up until a bright light shines
+/// through it, and then the muck lights up. Dirt does not emit; it
+/// forward-scatters whatever passes through it. So the dirt field is generated
+/// once and then **multiplied by a blurred, thresholded copy of the picture's
+/// own highlights**, which is why the effect appears around a street lamp and
+/// disappears in a dark shot on its own. Adding dirt unconditionally is the one
+/// thing that makes a lens-dirt effect look painted on, and it is what every
+/// production renderer avoids the same way (Unreal's `BloomDirtMask`, Unity
+/// HDRP's Lens Dirt, Godot's glow map — all a texture times the bloom).
+///
+/// `light` is that highlight pass, already thresholded and blurred, as a
+/// single channel at this raster. The GPU path computes it in two pre-passes it
+/// shares with Glow; this function takes it as an argument for the same reason
+/// the depth pass is an argument to [`dof`] — the oracle has to be handed the
+/// identical numbers the kernel reads. `None` means "no light pass", which is
+/// only correct when `response` is 0.
+///
+/// `plate` is the optional photographed dirt plate, RGBA at this raster. When
+/// present it **replaces** the procedural field entirely: real lens dirt is
+/// irregular in ways procedural blobs are not, and a scanned plate modulated by
+/// the same highlight response is the workflow that actually looks real.
+pub fn lens_dirt(
+    rgba: &mut [f32],
+    light: Option<&[f32]>,
+    plate: Option<&[f32]>,
+    w: u32,
+    h: u32,
+    p: &LensDirtParams,
+) {
+    // Neutral: no dirt at all, and no background substitution either — a zero
+    // intensity is the bit-exact input.
+    if p.intensity == 0.0 || p.mix == 0.0 {
+        return;
+    }
+    let wf = w as f32;
+    let hf = h as f32;
+    let diag = (wf * wf + hf * hf).sqrt().max(1.0);
+    let original = rgba.to_vec();
+
+    for y in 0..h {
+        for x in 0..w {
+            let i = ((y * w + x) * 4) as usize;
+            let px = x as f32 + 0.5;
+            let py = y as f32 + 0.5;
+
+            // The dirt field: a plate if one is bound, else the procedural one.
+            let mut eff = match plate {
+                Some(plate) => {
+                    let d = channel_of(&plate[i..i + 4], p.plate_channel);
+                    [d, d, d]
+                }
+                None => dirt_field(px, py, diag, p),
+            };
+
+            // **The light response.** `response` 1 is the physical reading —
+            // muck is visible only where light passes through it. 0 leaves the
+            // field uniform, which is what an empty layer used as a generator
+            // needs: with nothing bright in the picture there is nothing to
+            // respond to.
+            if p.response > 0.0 {
+                let lit = light.map_or(0.0, |l| l[(y * w + x) as usize]).max(0.0);
+                let factor = 1.0 - p.response + p.response * lit;
+                eff[0] *= factor;
+                eff[1] *= factor;
+                eff[2] *= factor;
+            }
+
+            // Optical vignette, applied to the DIRT rather than to the picture:
+            // less light reaches the edge of the element, so less muck lights up
+            // there.
+            if p.vignette > 0.0 {
+                let nx = (px / wf - 0.5) * 2.0;
+                let ny = (py / hf - 0.5) * 2.0;
+                let v = (1.0 - p.vignette * 0.5 * (nx * nx + ny * ny)).clamp(0.0, 1.0);
+                eff[0] *= v;
+                eff[1] *= v;
+                eff[2] *= v;
+            }
+
+            for (c, slot) in eff.iter_mut().enumerate() {
+                *slot = (*slot * p.intensity * p.tint[c]).max(0.0);
+            }
+
+            // The picture the dirt sits over. **Black** makes the layer opaque
+            // black first — the dirt element on its own, ready to be screened
+            // over a grade elsewhere, and the only way this effect produces
+            // anything on an empty layer.
+            let base = if p.background == 1 {
+                [0.0, 0.0, 0.0, 1.0]
+            } else {
+                [
+                    original[i],
+                    original[i + 1],
+                    original[i + 2],
+                    original[i + 3],
+                ]
+            };
+
+            // **The dirt carries its own coverage.** Adding light to RGB while
+            // leaving alpha alone breaks the premultiplied invariant (RGB above
+            // alpha) and, on a transparent layer, produces colour nothing can
+            // ever see — which is why the contributed effect's Background modes
+            // could not actually show. The lit dirt is composited as a
+            // premultiplied source whose alpha is its own brightness.
+            let eff_a = eff[0].max(eff[1]).max(eff[2]).clamp(0.0, 1.0);
+            let mut out = [0.0f32; 4];
+            match p.blend_mode {
+                1 => {
+                    // Add: scattered light on top, coverage saturating at 1.
+                    for c in 0..3 {
+                        out[c] = base[c] + eff[c];
+                    }
+                    out[3] = (base[3] + eff_a).min(1.0);
+                }
+                _ => {
+                    // Screen: light adds without pushing past white, which is
+                    // what scattered light does and why it is the default.
+                    for c in 0..3 {
+                        out[c] = base[c] + eff[c] - base[c] * eff[c];
+                    }
+                    out[3] = base[3] + eff_a - base[3] * eff_a;
+                }
+            }
+
+            for c in 0..4 {
+                rgba[i + c] = original[i + c] * (1.0 - p.mix) + out[c] * p.mix;
+            }
+        }
+    }
+}
+
+/// The highlight pass the light response reads: everything above `threshold`,
+/// as one channel, before it is blurred.
+///
+/// Shared so the GPU's two pre-passes and this reference cannot disagree about
+/// what counts as a highlight. Rec.709 luminance, the same weights every other
+/// effect in the suite uses, and a plain hinge rather than a soft knee — the
+/// blur that follows is what softens it.
+pub fn lens_dirt_highlights(rgba: &[f32], out: &mut [f32], threshold: f32) {
+    for (i, slot) in out.iter_mut().enumerate() {
+        let j = i * 4;
+        let lum = 0.2126 * rgba[j] + 0.7152 * rgba[j + 1] + 0.0722 * rgba[j + 2];
+        *slot = (lum - threshold).max(0.0);
+    }
 }
 
 pub fn decode_qoi_1337() -> (Vec<u8>, usize, usize) {
@@ -2417,320 +2810,13 @@ pub fn decode_qoi_1337() -> (Vec<u8>, usize, usize) {
             }
             continue;
         }
-        let h_idx = (prev.0 as usize * 3 + prev.1 as usize * 5 + prev.2 as usize * 7 + prev.3 as usize * 11) % 64;
+        let h_idx = (prev.0 as usize * 3
+            + prev.1 as usize * 5
+            + prev.2 as usize * 7
+            + prev.3 as usize * 11)
+            % 64;
         index[h_idx] = prev;
         out.extend_from_slice(&[prev.0, prev.1, prev.2, prev.3]);
     }
     (out, w, h)
 }
-
-/// Lens Dirt Overlay Generator (docs/08 §3.28).
-/// Procedurally generates out-of-focus aperture bokeh disks, micro dust specks,
-/// hairline scratches, smudges, and optical vignetting overlay.
-pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
-    if p.intensity == 0.0 || p.mix == 0.0 {
-        return; // Neutral passthrough
-    }
-    let is_1337 = p.seed == 1337;
-    let (ee_bytes, ee_w, ee_h) = if is_1337 {
-        decode_qoi_1337()
-    } else {
-        (Vec::new(), 0, 0)
-    };
-
-    let original = rgba.to_vec();
-    let wf = w as f32;
-    let hf = h as f32;
-    let diag = (wf * wf + hf * hf).sqrt().max(1.0);
-
-    let eval_seed = p.seed;
-    let num_layers = p.bokeh_layers.clamp(1, 10);
-    let density_scale = (p.density / 50.0).clamp(0.0, 40.0);
-    let scratch_amount = p.scratches;
-    let dirt_amount = p.dirt;
-    let vignette_strength = p.vignette;
-    let defocus = p.defocus;
-    let chromatic = p.chromatic;
-    let blend_mode = p.blend_mode;
-    let mix = p.mix;
-    let intensity = p.intensity;
-    let tint = p.tint;
-
-    let particle_size_base = p.scale * (diag * 0.035);
-    let scale_jitter_max = p.scale_var_x.max(p.scale_var_y);
-
-    for y in 0..h {
-        let py = y as f32 + 0.5;
-        let ny = (py / hf - 0.5) * 2.0;
-
-        for x in 0..w {
-            let px = x as f32 + 0.5;
-            let nx = (px / wf - 0.5) * 2.0;
-            let idx = ((y * w + x) * 4) as usize;
-
-            if is_1337 {
-                let u_x = (px / wf).clamp(0.0, 1.0);
-                let u_y = (py / hf).clamp(0.0, 1.0);
-                let tx = ((u_x * (ee_w - 1) as f32) as usize).min(ee_w - 1);
-                let ty = ((u_y * (ee_h - 1) as f32) as usize).min(ee_h - 1);
-                let ee_idx = (ty * ee_w + tx) * 4;
-                rgba[idx] = ee_bytes[ee_idx] as f32 / 255.0;
-                rgba[idx + 1] = ee_bytes[ee_idx + 1] as f32 / 255.0;
-                rgba[idx + 2] = ee_bytes[ee_idx + 2] as f32 / 255.0;
-                rgba[idx + 3] = 1.0;
-                continue;
-            }
-
-            let mut dirt_r = 0.0f32;
-            let mut dirt_g = 0.0f32;
-            let mut dirt_b = 0.0f32;
-
-            // 1. Multi-layered out-of-focus Bokeh disks & Dust specks
-            for layer_idx in 0..num_layers {
-                let layer_seed = eval_seed.wrapping_add(layer_idx.wrapping_mul(0x9e3779b9));
-
-                let layer_scale_factor = 0.7 + 0.4 * (layer_idx as f32);
-                let particle_size_layer = particle_size_base * layer_scale_factor;
-                let cell_size = (particle_size_layer * 3.5 * (1.0 + scale_jitter_max))
-                    .clamp(24.0, 2048.0);
-
-                let max_p: f32 = (0.20 * density_scale / (num_layers as f32).sqrt()).clamp(0.05, 0.95);
-
-                let gx = (px / cell_size).floor() as i32;
-                let gy = (py / cell_size).floor() as i32;
-
-                for dy in -1..=1 {
-                    for dx in -1..=1 {
-                        let cx = gx + dx;
-                        let cy = gy + dy;
-
-                        let prob = super::block_hash01(layer_seed, 0, cx, cy, 0);
-                        if prob > max_p {
-                            continue;
-                        }
-
-                        let center_x = (cx as f32 + super::block_hash01(layer_seed, 1, cx, cy, 0)) * cell_size;
-                        let center_y = (cy as f32 + super::block_hash01(layer_seed, 2, cx, cy, 0)) * cell_size;
-                        let radius_base = particle_size_layer * (0.3 + 1.2 * super::block_hash01(layer_seed, 3, cx, cy, 0));
-                        let p_intensity = 0.2 + 0.8 * super::block_hash01(layer_seed, 4, cx, cy, 0);
-
-                        let rx_mult = 1.0 + (super::block_hash01(layer_seed, 5, cx, cy, 0) - 0.5) * 2.0 * p.scale_var_x;
-                        let ry_mult = 1.0 + (super::block_hash01(layer_seed, 6, cx, cy, 0) - 0.5) * 2.0 * p.scale_var_y;
-                        let rad_x = (radius_base * rx_mult).max(0.1);
-                        let rad_y = (radius_base * ry_mult).max(0.1);
-
-                        let mut dx_raw = px - center_x;
-                        let mut dy_raw = py - center_y;
-                        if p.rotation_var > 0.0 {
-                            let angle = (super::block_hash01(layer_seed, 7, cx, cy, 0) - 0.5) * std::f32::consts::PI * p.rotation_var;
-                            let cos_a = angle.cos();
-                            let sin_a = angle.sin();
-                            let rx = dx_raw * cos_a + dy_raw * sin_a;
-                            let ry = -dx_raw * sin_a + dy_raw * cos_a;
-                            dx_raw = rx;
-                            dy_raw = ry;
-                        }
-
-                        let dist_x = dx_raw / rad_x;
-                        let dist_y = dy_raw / rad_y;
-                        let norm_d = (dist_x * dist_x + dist_y * dist_y).sqrt();
-
-                        let p_defocus = if p.defocus_var > 0.0 {
-                            (defocus + (super::block_hash01(layer_seed, 8, cx, cy, 0) - 0.5) * p.defocus_var).clamp(0.0, 1.0)
-                        } else {
-                            defocus
-                        };
-
-                        if norm_d <= 1.3 {
-                            let (col_mult_r, col_mult_g, col_mult_b) = if p.color_var > 0.0 {
-                                let cr = 1.0 + (super::block_hash01(layer_seed, 9, cx, cy, 0) - 0.5) * p.color_var * 0.8;
-                                let cg = 1.0 + (super::block_hash01(layer_seed, 10, cx, cy, 0) - 0.5) * p.color_var * 0.8;
-                                let cb = 1.0 + (super::block_hash01(layer_seed, 11, cx, cy, 0) - 0.5) * p.color_var * 0.8;
-                                (cr.max(0.0), cg.max(0.0), cb.max(0.0))
-                            } else {
-                                (1.0, 1.0, 1.0)
-                            };
-
-                            if chromatic > 0.0 {
-                                let c_scale = chromatic * 0.15;
-                                let d_red = norm_d / (1.0 + c_scale);
-                                let d_blue = norm_d / (1.0f32 - c_scale).max(0.01f32);
-                                let r_val = cpu_bokeh_profile(d_red, p_defocus) * p_intensity * col_mult_r;
-                                let g_val = cpu_bokeh_profile(norm_d, p_defocus) * p_intensity * col_mult_g;
-                                let b_val = cpu_bokeh_profile(d_blue, p_defocus) * p_intensity * col_mult_b;
-                                dirt_r += r_val;
-                                dirt_g += g_val;
-                                dirt_b += b_val;
-                            } else {
-                                let base_val = cpu_bokeh_profile(norm_d, p_defocus) * p_intensity;
-                                dirt_r += base_val * col_mult_r;
-                                dirt_g += base_val * col_mult_g;
-                                dirt_b += base_val * col_mult_b;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 2. Micro hairline scratches & dust specks (controlled by scratch_scale & scratch_var)
-            if scratch_amount > 0.0 {
-                let h01 = |ch: u32, bx: i32, by: i32| super::block_hash01(eval_seed, ch, bx, by, 0);
-                let scratch_scale = p.scratch_scale;
-                let scratch_cell_size = (48.0 * scratch_scale).clamp(12.0, 1024.0);
-                let sgx = (px / scratch_cell_size).floor() as i32;
-                let sgy = (py / scratch_cell_size).floor() as i32;
-
-                for sdy in -1..=1 {
-                    for sdx in -1..=1 {
-                        let cx = sgx + sdx;
-                        let cy = sgy + sdy;
-                        let sprob = h01(10, cx, cy);
-
-                        let max_sprob: f32 = (0.25 * scratch_amount).min(0.8);
-                        if sprob < max_sprob {
-                            let p1x = (cx as f32 + h01(11, cx, cy)) * scratch_cell_size;
-                            let p1y = (cy as f32 + h01(12, cx, cy)) * scratch_cell_size;
-                            let line_len_mult = if p.scratch_var > 0.0 {
-                                1.0 + (h01(13, cx, cy) - 0.5) * p.scratch_var * 1.6
-                            } else {
-                                1.0
-                            };
-                            let seg_len = (20.0 + 30.0 * line_len_mult).max(2.0) * scratch_scale;
-                            let angle_var = if p.scratch_var > 0.0 {
-                                (h01(16, cx, cy) - 0.5) * p.scratch_var * 3.14159
-                            } else {
-                                0.0
-                            };
-                            let angle = h01(14, cx, cy) * std::f32::consts::TAU + angle_var;
-                            let p2x = p1x + angle.cos() * seg_len;
-                            let p2y = p1y + angle.sin() * seg_len;
-
-                            let vx = p2x - p1x;
-                            let vy = p2y - p1y;
-                            let len_sq = (vx * vx + vy * vy).max(1e-4);
-                            let t_seg = (((px - p1x) * vx + (py - p1y) * vy) / len_sq).clamp(0.0, 1.0);
-                            let proj_x = p1x + t_seg * vx;
-                            let proj_y = p1y + t_seg * vy;
-                            let s_dist = (px - proj_x).hypot(py - proj_y);
-
-                            let scratch_width = (0.75 + 0.5 * h01(15, cx, cy)) * scratch_scale;
-                            if s_dist < scratch_width {
-                                let line_val = (1.0 - s_dist / scratch_width) * scratch_amount * 0.7;
-                                dirt_r += line_val * p.scratch_tint[0];
-                                dirt_g += line_val * p.scratch_tint[1];
-                                dirt_b += line_val * p.scratch_tint[2];
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Apply Bokeh Tint to accumulated bokeh particles
-            dirt_r *= tint[0];
-            dirt_g *= tint[1];
-            dirt_b *= tint[2];
-
-            // 3. Glass dirt & organic dust spots (controlled by dirt_amount, 3x3 grid search to avoid cell clipping)
-            if dirt_amount > 0.0 {
-                let h01 = |ch: u32, bx: i32, by: i32| super::block_hash01(eval_seed, ch, bx, by, 0);
-                let d_cell_size = (64.0 * p.scratch_scale).clamp(16.0, 512.0);
-                let dgx = (px / d_cell_size).floor() as i32;
-                let dgy = (py / d_cell_size).floor() as i32;
-
-                for ddy in -1..=1 {
-                    for ddx in -1..=1 {
-                        let cx = dgx + ddx;
-                        let cy = dgy + ddy;
-                        let dprob = h01(20, cx, cy);
-                        if dprob < (0.35 * dirt_amount).min(0.8) {
-                            let d_cx = (cx as f32 + h01(21, cx, cy)) * d_cell_size;
-                            let d_cy = (cy as f32 + h01(22, cx, cy)) * d_cell_size;
-                            let d_rad = (3.0 + 8.0 * h01(23, cx, cy)) * p.scratch_scale;
-                            let d_dist = (px - d_cx).hypot(py - d_cy) / d_rad.max(0.5);
-                            if d_dist <= 1.0 {
-                                let spot_val = (1.0 - d_dist * d_dist) * dirt_amount * 0.5;
-                                dirt_r += spot_val * p.dirt_tint[0];
-                                dirt_g += spot_val * p.dirt_tint[1];
-                                dirt_b += spot_val * p.dirt_tint[2];
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Apply Master Intensity
-            dirt_r *= intensity;
-            dirt_g *= intensity;
-            dirt_b *= intensity;
-
-                // 3. Optical vignetting darkening
-                if vignette_strength > 0.0 {
-                    let r_sq = nx * nx + ny * ny;
-                    let v_factor: f32 = (1.0 - vignette_strength * 0.5 * r_sq).clamp(0.0, 1.0);
-                    dirt_r *= v_factor;
-                    dirt_g *= v_factor;
-                    dirt_b *= v_factor;
-                }
-
-            let (bg_r, bg_g, bg_b) = if p.bg_mode == 0 {
-                (0.0f32, 0.0f32, 0.0f32)
-            } else {
-                let mut br = p.bg_colour[0];
-                let mut bg = p.bg_colour[1];
-                let mut bb = p.bg_colour[2];
-                if p.bg_mode == 2 {
-                    let min_dim = wf.min(hf).max(1.0);
-                    let u = px / wf;
-                    let v = py / hf;
-                    let sun_dx = (u - p.sun_pos[0]) * (wf / min_dim);
-                    let sun_dy = (v - p.sun_pos[1]) * (hf / min_dim);
-                    let sun_dist = (sun_dx * sun_dx + sun_dy * sun_dy).sqrt();
-
-                    let core = (1.0 - (sun_dist / (p.sun_radius * 0.2).max(0.001)).clamp(0.0, 1.0)).powi(2) * 2.0;
-                    let halo = 1.0 / (1.0 + (sun_dist / (p.sun_radius * 0.8).max(0.001)).powi(2));
-                    let sun_light = (core + halo) * p.sun_intensity;
-
-                    br += tint[0] * sun_light;
-                    bg += tint[1] * sun_light;
-                    bb += tint[2] * sun_light;
-                }
-                (br, bg, bb)
-            };
-
-            let eff_r = bg_r + dirt_r;
-            let eff_g = bg_g + dirt_g;
-            let eff_b = bg_b + dirt_b;
-
-            let src_r = original[idx];
-            let src_g = original[idx + 1];
-            let src_b = original[idx + 2];
-            let src_a = original[idx + 3];
-
-            let (out_r, out_g, out_b) = match blend_mode {
-                0 => (
-                    1.0 - (1.0 - src_r) * (1.0 - eff_r),
-                    1.0 - (1.0 - src_g) * (1.0 - eff_g),
-                    1.0 - (1.0 - src_b) * (1.0 - eff_b),
-                ),
-                1 => (
-                    src_r + eff_r,
-                    src_g + eff_g,
-                    src_b + eff_b,
-                ),
-                2 => (
-                    if src_r < 0.5 { 2.0 * src_r * (eff_r + 0.5) } else { 1.0 - 2.0 * (1.0 - src_r) * (1.0 - (eff_r + 0.5)) },
-                    if src_g < 0.5 { 2.0 * src_g * (eff_g + 0.5) } else { 1.0 - 2.0 * (1.0 - src_g) * (1.0 - (eff_g + 0.5)) },
-                    if src_b < 0.5 { 2.0 * src_b * (eff_b + 0.5) } else { 1.0 - 2.0 * (1.0 - src_b) * (1.0 - (eff_b + 0.5)) },
-                ),
-                _ => (eff_r, eff_g, eff_b),
-            };
-
-
-            rgba[idx] = original[idx] * (1.0 - mix) + out_r * mix;
-            rgba[idx + 1] = original[idx + 1] * (1.0 - mix) + out_g * mix;
-            rgba[idx + 2] = original[idx + 2] * (1.0 - mix) + out_b * mix;
-            rgba[idx + 3] = src_a;
-        }
-    }
-}
-

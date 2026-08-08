@@ -500,7 +500,7 @@ pub fn list_parameter_groups(effect: String) -> Vec<BridgeParamGroup> {
 /// `lumit_core::fx::param_enabled` is the same rule in Rust and the authority
 /// the tests pin.
 #[frb(non_opaque)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BridgeEnabledWhen {
     pub param: String,
     pub on: String,
@@ -510,7 +510,7 @@ pub struct BridgeEnabledWhen {
 /// The condition half of a [`BridgeEnabledWhen`], mirroring
 /// [`lumit_core::fx::EnabledCond`].
 #[frb(non_opaque)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum BridgeEnabledCond {
     /// Editable while the named bool holds this value.
     BoolIs(bool),
@@ -520,6 +520,13 @@ pub enum BridgeEnabledCond {
     ChoiceIsNot(u32),
     /// Editable while the named layer reference actually names a layer.
     LayerSet,
+    /// Editable while the named layer reference is unset — the shape a control
+    /// takes when picking a layer *replaces* what it does.
+    LayerUnset,
+    /// Editable while the named number is strictly above this value, sampled at
+    /// time zero (greying is an affordance, and a row flickering along an
+    /// animated curve would be worse than one that never greyed).
+    FloatAbove(f64),
 }
 
 /// Every greying rule `effect` declares (empty for an effect whose controls are
@@ -546,6 +553,8 @@ pub fn list_enabled_when(effect: String) -> Vec<BridgeEnabledWhen> {
                 EnabledCond::ChoiceIs(i) => BridgeEnabledCond::ChoiceIs(i),
                 EnabledCond::ChoiceIsNot(i) => BridgeEnabledCond::ChoiceIsNot(i),
                 EnabledCond::LayerSet => BridgeEnabledCond::LayerSet,
+                EnabledCond::LayerUnset => BridgeEnabledCond::LayerUnset,
+                EnabledCond::FloatAbove(v) => BridgeEnabledCond::FloatAbove(f64::from(v)),
             },
         })
         .collect()

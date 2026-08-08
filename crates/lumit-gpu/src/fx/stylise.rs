@@ -3,7 +3,7 @@
 
 use crate::GpuContext;
 
-use super::{upload_linear_f32, work_texture, FxEngine};
+use super::{upload_linear_f32, work_texture, BlurParams, FxEngine, GlowParams};
 
 /// One resolved matte key (docs/08 §3.21, K-121/K-154): a Keylight-style
 /// colour-difference keyer on straight (unpremultiplied) colour. Mirrors
@@ -482,7 +482,340 @@ impl FxEngine {
         out
     }
 
-  fn decode_qoi_1337() -> (Vec<u8>, usize, usize) {
+    /// Apply one Lens dirt (docs/08 §3.28, K-314) to a linear working texture,
+    /// returning a new texture of the same size.
+    ///
+    /// **Three passes, because the effect is a modulation and not an overlay.**
+    /// Dirt does not emit; it forward-scatters whatever light passes through it,
+    /// so the generated field has to be multiplied by the picture's own
+    /// highlights or the muck looks painted on. Pass one keeps only the light
+    /// above `threshold` (the Glow bright kernel, unchanged — it is the same
+    /// question), passes two and three widen it with the shared separable
+    /// gaussian at `spread` pixels, Repeat edges so the response holds along
+    /// frame borders, and the dirt kernel multiplies by that.
+    ///
+    /// `plate` is the optional photographed dirt plate rendered at this raster;
+    /// when bound it **replaces** the procedural field. With none bound the
+    /// caller passes any same-size texture — the kernel never samples it.
+    /// Shares [`Self::mb_layout`] with Motion blur: source, highlight pass and
+    /// plate are its three sampled inputs. A zero Intensity or a Mix of 0 is a
+    /// bit-exact passthrough.
+    pub fn lens_dirt(
+        &self,
+        ctx: &GpuContext,
+        src: &wgpu::Texture,
+        w: u32,
+        h: u32,
+        plate: Option<&wgpu::Texture>,
+        op: &LensDirtOp,
+    ) -> wgpu::Texture {
+        use wgpu::util::DeviceExt;
+        let out = work_texture(ctx, w, h, "fx-lens-dirt-out");
+
+        // Pass one and two/three: the highlight response. Skipped entirely when
+        // nothing is responding — `response` 0 is the uniform generator, and the
+        // kernel then never reads the light texture.
+        let light = work_texture(ctx, w, h, "fx-lens-dirt-light");
+        if op.response > 0.0 {
+            let bright = work_texture(ctx, w, h, "fx-lens-dirt-bright");
+            let tmp = work_texture(ctx, w, h, "fx-lens-dirt-tmp");
+            // The Glow bright pass with a hard knee: the blur that follows is
+            // what softens the mask, so a second soft edge here would only make
+            // the threshold vague.
+            self.dispatch(
+                ctx,
+                &self.glow_bright,
+                src,
+                src,
+                &bright,
+                w,
+                h,
+                bytemuck::bytes_of(&GlowParams {
+                    tint: [1.0, 1.0, 1.0, 1.0],
+                    threshold: op.threshold,
+                    knee: 0.0,
+                    intensity: 1.0,
+                    mix_amt: 1.0,
+                }),
+            );
+            let sigma = (op.spread * 0.5).max(1e-3);
+            for (pass_src, pass_dst, dir) in
+                [(&bright, &tmp, [1.0, 0.0]), (&tmp, &light, [0.0, 1.0])]
+            {
+                self.dispatch(
+                    ctx,
+                    &self.blur,
+                    pass_src,
+                    pass_src,
+                    pass_dst,
+                    w,
+                    h,
+                    bytemuck::bytes_of(&BlurParams {
+                        dir,
+                        radius: op.spread,
+                        sigma,
+                        edge: 1, // Repeat: the response holds along the borders
+                        mix_amt: 1.0,
+                        _pad: [0.0; 2],
+                    }),
+                );
+            }
+        }
+
+        // The easter egg substitutes its own plate (K-314) and is a photograph
+        // rather than a density map, so the kernel takes its colour whole.
+        let egg_tex;
+        let plate_tex = if op.seed == EASTER_EGG_SEED {
+            let (bytes, ew, eh) = decode_qoi_1337();
+            // The plate is 8-bit sRGB; the working format is linear, so it is
+            // linearised here rather than bound raw — a photograph bound as if
+            // it were already linear reads far too dark.
+            let linear: Vec<f32> = bytes
+                .iter()
+                .enumerate()
+                .map(|(i, b)| {
+                    let v = f32::from(*b) / 255.0;
+                    if i % 4 == 3 {
+                        v // alpha is not gamma-encoded
+                    } else if v <= 0.04045 {
+                        v / 12.92
+                    } else {
+                        ((v + 0.055) / 1.055).powf(2.4)
+                    }
+                })
+                .collect();
+            egg_tex = upload_linear_f32(ctx, &linear, ew as u32, eh as u32);
+            &egg_tex
+        } else {
+            plate.unwrap_or(src)
+        };
+
+        let ubuf = ctx
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("fx-lens-dirt-params"),
+                contents: bytemuck::bytes_of(&LensDirtParams {
+                    tint: op.tint,
+                    intensity: op.intensity,
+                    response: op.response,
+                    density: op.density,
+                    scale: op.scale,
+                    roughness: op.roughness,
+                    defocus: op.defocus,
+                    smudge: op.smudge,
+                    specks: op.specks,
+                    scratches: op.scratches,
+                    scratch_scale: op.scratch_scale,
+                    scratch_var: op.scratch_var,
+                    colour_var: op.colour_var,
+                    chromatic: op.chromatic,
+                    vignette: op.vignette,
+                    mix_amt: op.mix,
+                    blend_mode: op.blend_mode,
+                    background: op.background,
+                    plate_bound: u32::from(plate.is_some()),
+                    plate_channel: op.plate_channel,
+                    seed: op.seed,
+                    easter_egg: u32::from(op.seed == EASTER_EGG_SEED),
+                    _pad0: 0,
+                    _pad1: 0,
+                    _pad2: 0,
+                }),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let view = |t: &wgpu::Texture| t.create_view(&Default::default());
+        let bind = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("fx-lens-dirt-bind"),
+            layout: &self.mb_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view(src)),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&view(&light)),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&view(plate_tex)),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&view(&out)),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: ubuf.as_entire_binding(),
+                },
+            ],
+        });
+        let mut enc = ctx.encoder("fx-lens-dirt-enc");
+        {
+            let mut cpass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("fx-lens-dirt-pass"),
+                timestamp_writes: None,
+            });
+            cpass.set_pipeline(&self.lens_dirt);
+            cpass.set_bind_group(0, &bind, &[]);
+            cpass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
+        }
+        drop(enc);
+        out
+    }
+}
+
+/// The seed that draws the plate instead of generating one (docs/08 §3.28).
+///
+/// A **deliberate easter egg**, not an accident: the owner asked for it, the
+/// image is the Wikimedia Commons lens-dirt plate the effect is modelled on, and
+/// the whole joke is that you would not notice unless you knew to look. Every
+/// dirt-generation control is ignored at this seed — there is nothing to
+/// generate — while Tint, Blend mode, Background, Intensity and Mix go on
+/// working, because those are about how a picture is *composited* rather than
+/// about what the dirt is.
+pub const EASTER_EGG_SEED: u32 = 1337;
+
+/// One resolved Lens dirt (docs/08 §3.28). Field for field this is
+/// `lumit_core::fx::LensDirtParams`, which is what lets the §1.6 oracle set both
+/// paths up from one value.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LensDirtOp {
+    pub intensity: f32,
+    /// 0..1: how much the dirt answers to the picture's own light. 0 is the
+    /// uniform generator, 1 the physical reading.
+    pub response: f32,
+    /// The highlight hinge, and how far a highlight's light spreads across the
+    /// glass (raster px).
+    pub threshold: f32,
+    pub spread: f32,
+    /// Which channel of a bound plate is read as dirt.
+    pub plate_channel: u32,
+    pub density: f32,
+    pub scale: f32,
+    pub roughness: f32,
+    pub defocus: f32,
+    pub smudge: f32,
+    pub specks: f32,
+    pub scratches: f32,
+    pub scratch_scale: f32,
+    pub scratch_var: f32,
+    pub tint: [f32; 4],
+    pub colour_var: f32,
+    pub chromatic: f32,
+    pub vignette: f32,
+    /// 0 Screen, 1 Add.
+    pub blend_mode: u32,
+    /// 0 Transparent, 1 Black.
+    pub background: u32,
+    pub seed: u32,
+    pub mix: f32,
+}
+
+impl Default for LensDirtOp {
+    fn default() -> Self {
+        Self {
+            intensity: 1.0,
+            response: 1.0,
+            threshold: 1.0,
+            spread: 60.0,
+            plate_channel: 4,
+            density: 100.0,
+            scale: 1.0,
+            roughness: 0.7,
+            defocus: 0.5,
+            smudge: 0.4,
+            specks: 0.3,
+            scratches: 0.4,
+            scratch_scale: 1.0,
+            scratch_var: 0.2,
+            tint: [1.0, 0.97, 0.92, 1.0],
+            colour_var: 0.15,
+            chromatic: 0.3,
+            vignette: 0.3,
+            blend_mode: 0,
+            background: 0,
+            seed: 42,
+            mix: 1.0,
+        }
+    }
+}
+
+#[cfg(test)]
+impl From<&LensDirtOp> for lumit_core::fx::LensDirtParams {
+    fn from(op: &LensDirtOp) -> Self {
+        Self {
+            intensity: op.intensity,
+            response: op.response,
+            threshold: op.threshold,
+            spread: op.spread,
+            plate_bound: false,
+            plate_channel: op.plate_channel,
+            density: op.density,
+            scale: op.scale,
+            roughness: op.roughness,
+            defocus: op.defocus,
+            smudge: op.smudge,
+            specks: op.specks,
+            scratches: op.scratches,
+            scratch_scale: op.scratch_scale,
+            scratch_var: op.scratch_var,
+            tint: op.tint,
+            colour_var: op.colour_var,
+            chromatic: op.chromatic,
+            vignette: op.vignette,
+            blend_mode: op.blend_mode,
+            background: op.background,
+            seed: op.seed,
+            mix: op.mix,
+        }
+    }
+}
+
+/// The `lens_dirt` kernel's uniform. Layout mirrors `fx_lens_dirt.wgsl`'s
+/// `Params` field for field: one vec4 then fifteen floats and seven `u32`s,
+/// padded to a whole number of 16-byte rows.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct LensDirtParams {
+    tint: [f32; 4],
+    intensity: f32,
+    response: f32,
+    density: f32,
+    scale: f32,
+    roughness: f32,
+    defocus: f32,
+    smudge: f32,
+    specks: f32,
+    scratches: f32,
+    scratch_scale: f32,
+    scratch_var: f32,
+    colour_var: f32,
+    chromatic: f32,
+    vignette: f32,
+    mix_amt: f32,
+    blend_mode: u32,
+    background: u32,
+    plate_bound: u32,
+    plate_channel: u32,
+    seed: u32,
+    easter_egg: u32,
+    // Twenty-seven words is not a whole number of 16-byte rows, and WGSL rounds
+    // a struct's SIZE up to its alignment while `repr(C)` does not — so without
+    // this the uniform buffer is 108 bytes where the shader expects 112 and the
+    // dispatch is rejected outright.
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+}
+
+/// The embedded plate, decoded (docs/08 §3.28).
+///
+/// **Provenance:** a Wikimedia Commons lens-dirt photograph, free to use, stored
+/// as QOI — a thirty-line lossless format that needs no dependency and keeps the
+/// asset at about 120 KB rather than 1.2 MB. See `assets/README.md` for the
+/// source and licence.
+fn decode_qoi_1337() -> (Vec<u8>, usize, usize) {
     let bytes = include_bytes!("../../../../assets/easter_egg_1337.qoi");
     let w = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
     let h = u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
@@ -524,213 +857,13 @@ impl FxEngine {
             }
             continue;
         }
-        let h_idx = (prev.0 as usize * 3 + prev.1 as usize * 5 + prev.2 as usize * 7 + prev.3 as usize * 11) % 64;
+        let h_idx = (prev.0 as usize * 3
+            + prev.1 as usize * 5
+            + prev.2 as usize * 7
+            + prev.3 as usize * 11)
+            % 64;
         index[h_idx] = prev;
         out.extend_from_slice(&[prev.0, prev.1, prev.2, prev.3]);
     }
     (out, w, h)
 }
-
-    /// Render the procedural Lens Dirt overlay (docs/08 §3.28).
-    pub fn lens_dirt(
-        &self,
-        ctx: &GpuContext,
-        src: &wgpu::Texture,
-        w: u32,
-        h: u32,
-        op: &LensDirtOp,
-    ) -> wgpu::Texture {
-        let out = work_texture(ctx, w, h, "fx-lens-dirt-out");
-        let ee_tex;
-        let (src_tex, orig_tex) = if op.seed == 1337 {
-            let (ee_bytes, ee_w, ee_h) = Self::decode_qoi_1337();
-            let mut ee_f32 = Vec::with_capacity(ee_bytes.len());
-            for b in ee_bytes {
-                ee_f32.push(b as f32 / 255.0);
-            }
-            ee_tex = upload_linear_f32(ctx, &ee_f32, ee_w as u32, ee_h as u32);
-            (src, &ee_tex)
-        } else {
-            (src, src)
-        };
-        self.dispatch(
-            ctx,
-            &self.lens_dirt,
-            src_tex,
-            orig_tex,
-            &out,
-            w,
-            h,
-            bytemuck::bytes_of(&LensDirtParams {
-                tint: op.tint,
-                bg_colour: op.bg_colour,
-                scratch_tint: op.scratch_tint,
-                dirt_tint: op.dirt_tint,
-                sun_pos: op.sun_pos,
-                intensity: op.intensity,
-                density: op.density,
-                scale: op.scale,
-                scale_var_x: op.scale_var_x,
-                scale_var_y: op.scale_var_y,
-                rotation_var: op.rotation_var,
-                scratch_scale: op.scratch_scale,
-                defocus: op.defocus,
-                defocus_var: op.defocus_var,
-                chromatic: op.chromatic,
-                scratches: op.scratches,
-                vignette: op.vignette,
-                sun_intensity: op.sun_intensity,
-                sun_radius: op.sun_radius,
-                blend_mode: op.blend_mode,
-                bg_mode: op.bg_mode,
-                bokeh_layers: op.bokeh_layers,
-                seed: op.seed,
-                mix_amt: op.mix,
-                color_var: op.color_var,
-                scratch_var: op.scratch_var,
-                dirt: op.dirt,
-            }),
-        );
-        out
-    }
-}
-
-/// One resolved Lens Dirt generator (docs/08 §3.28).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LensDirtOp {
-    pub intensity: f32,
-    pub density: f32,
-    pub bokeh_layers: u32,
-    pub scale: f32,
-    pub scale_var_x: f32,
-    pub scale_var_y: f32,
-    pub rotation_var: f32,
-    pub scratch_scale: f32,
-    pub defocus: f32,
-    pub defocus_var: f32,
-    pub color_var: f32,
-    pub chromatic: f32,
-    pub scratches: f32,
-    pub scratch_var: f32,
-    pub scratch_tint: [f32; 4],
-    pub dirt: f32,
-    pub dirt_tint: [f32; 4],
-    pub tint: [f32; 4],
-    pub vignette: f32,
-    pub blend_mode: u32,
-    pub bg_mode: u32,
-    pub bg_colour: [f32; 4],
-    pub sun_pos: [f32; 2],
-    pub sun_intensity: f32,
-    pub sun_radius: f32,
-    pub seed: u32,
-    pub mix: f32,
-}
-
-impl Default for LensDirtOp {
-    fn default() -> Self {
-        Self {
-            intensity: 1.0,
-            density: 50.0,
-            bokeh_layers: 3,
-            scale: 1.0,
-            scale_var_x: 0.0,
-            scale_var_y: 0.0,
-            rotation_var: 0.0,
-            scratch_scale: 1.0,
-            defocus: 0.5,
-            defocus_var: 0.0,
-            color_var: 0.0,
-            chromatic: 0.3,
-            scratches: 0.4,
-            scratch_var: 0.2,
-            scratch_tint: [1.0, 1.0, 1.0, 1.0],
-            dirt: 0.3,
-            dirt_tint: [0.9, 0.85, 0.75, 1.0],
-            tint: [1.0, 0.95, 0.85, 1.0],
-            vignette: 0.3,
-            blend_mode: 0,
-            bg_mode: 0,
-            bg_colour: [0.05, 0.05, 0.08, 1.0],
-            sun_pos: [0.5, 0.3],
-            sun_intensity: 1.0,
-            sun_radius: 0.4,
-            seed: 42,
-            mix: 1.0,
-        }
-    }
-}
-
-#[cfg(test)]
-impl From<&LensDirtOp> for lumit_core::fx::LensDirtParams {
-    fn from(op: &LensDirtOp) -> Self {
-        Self {
-            intensity: op.intensity,
-            density: op.density,
-            bokeh_layers: op.bokeh_layers,
-            scale: op.scale,
-            scale_var_x: op.scale_var_x,
-            scale_var_y: op.scale_var_y,
-            rotation_var: op.rotation_var,
-            scratch_scale: op.scratch_scale,
-            defocus: op.defocus,
-            defocus_var: op.defocus_var,
-            color_var: op.color_var,
-            chromatic: op.chromatic,
-            scratches: op.scratches,
-            scratch_var: op.scratch_var,
-            scratch_tint: op.scratch_tint,
-            dirt: op.dirt,
-            dirt_tint: op.dirt_tint,
-            tint: op.tint,
-            vignette: op.vignette,
-            blend_mode: op.blend_mode,
-            bg_mode: op.bg_mode,
-            bg_colour: op.bg_colour,
-            sun_pos: op.sun_pos,
-            sun_intensity: op.sun_intensity,
-            sun_radius: op.sun_radius,
-            seed: op.seed,
-            mix: op.mix,
-        }
-    }
-}
-
-
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct LensDirtParams {
-    tint: [f32; 4],
-    bg_colour: [f32; 4],
-    scratch_tint: [f32; 4],
-    dirt_tint: [f32; 4],
-    sun_pos: [f32; 2],
-    intensity: f32,
-    density: f32,
-    scale: f32,
-    scale_var_x: f32,
-    scale_var_y: f32,
-    rotation_var: f32,
-    scratch_scale: f32,
-    defocus: f32,
-    defocus_var: f32,
-    chromatic: f32,
-    scratches: f32,
-    vignette: f32,
-    sun_intensity: f32,
-    sun_radius: f32,
-    blend_mode: u32,
-    bg_mode: u32,
-    bokeh_layers: u32,
-    seed: u32,
-    mix_amt: f32,
-    color_var: f32,
-    scratch_var: f32,
-    dirt: f32,
-}
-
-
-
-
-
-
