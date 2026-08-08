@@ -4006,6 +4006,13 @@ blue key, magenta key, core glow, core diamond) and an `icon.json` saying how
 they stack: which ones are glass, how opaque each is in dark mode, how deep
 the shadow goes. Open the folder in Icon Composer to change any of it.
 
+Those layers look slightly *unfinished* next to the flat icon, and that is the
+point. The flat drawing paints in its own lighting — a rounded corner on the
+tile, a shadow under the keys, a dark rim around each key standing in for an
+edge catching light. macOS 26 draws all three for real, so the layers leave
+them out; painted in, you would get each one twice, and a hand-drawn shadow
+that does not move when the system's does looks worse than no shadow at all.
+
 Xcode compiles that folder during the macOS build (the `.icon` is listed in
 the Runner target, and `ASSETCATALOG_COMPILER_APPICON_NAME` names it), and
 from the same layers it also generates the old-style flat `.icns` for Macs

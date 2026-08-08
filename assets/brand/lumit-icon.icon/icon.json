@@ -4,30 +4,11 @@
   },
   "groups" : [
     {
+      "blend-mode" : "hard-light",
+      "blur-material" : 1,
       "layers" : [
         {
-          "glass" : true,
-          "hidden" : false,
-          "image-name" : "06-core.svg",
-          "name" : "06-core",
-          "opacity-specializations" : [
-            {
-              "value" : 0.49
-            },
-            {
-              "appearance" : "dark",
-              "value" : 0.49
-            }
-          ],
-          "position" : {
-            "scale" : 1,
-            "translation-in-points" : [
-              0,
-              0
-            ]
-          }
-        },
-        {
+          "blend-mode" : "lighten",
           "glass" : false,
           "hidden" : false,
           "image-name" : "05-core-glow.svg",
@@ -47,6 +28,7 @@
           }
         },
         {
+          "blend-mode" : "lighten",
           "glass" : false,
           "hidden" : false,
           "image-name" : "02-bloom.svg",
@@ -59,15 +41,71 @@
               0
             ]
           }
-        },
+        }
+      ],
+      "name" : "Glows",
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "specular" : false,
+      "translucency" : {
+        "enabled" : false,
+        "value" : 0
+      }
+    },
+    {
+      "blur-material" : 0.4,
+      "layers" : [
         {
-          "fill-specializations" : [
+          "fill" : {
+            "solid" : "srgb:1.00000,1.00000,1.00000,1.00000"
+          },
+          "glass" : true,
+          "hidden" : false,
+          "image-name" : "06-core.svg",
+          "name" : "06-core",
+          "opacity-specializations" : [
             {
-              "value" : "none"
+              "value" : 0.5
             },
             {
               "appearance" : "dark",
-              "value" : "automatic"
+              "value" : 0.49
+            }
+          ],
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "name" : "Centre Icon",
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 1
+      }
+    },
+    {
+      "blur-material" : 0.5,
+      "layers" : [
+        {
+          "fill-specializations" : [
+            {
+              "value" : {
+                "solid" : "srgb:1.00000,1.00000,1.00000,1.00000"
+              }
+            },
+            {
+              "appearance" : "dark",
+              "value" : "none"
             }
           ],
           "glass" : true,
@@ -97,6 +135,7 @@
           }
         },
         {
+          "fill" : "none",
           "hidden" : false,
           "image-name" : "03-key-blue.svg",
           "name" : "03-key-blue",
@@ -107,7 +146,22 @@
               0
             ]
           }
-        },
+        }
+      ],
+      "lighting" : "individual",
+      "name" : "Keyframes",
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 0.25
+      },
+      "specular" : true,
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.25
+      }
+    },
+    {
+      "layers" : [
         {
           "hidden" : false,
           "image-name" : "01-tile-bg.svg",
@@ -119,21 +173,10 @@
               0
             ]
           }
-        },
-        {
-          "glass" : true,
-          "hidden" : true,
-          "image-name" : "lumit-icon.svg",
-          "name" : "lumit-icon",
-          "position" : {
-            "scale" : 2,
-            "translation-in-points" : [
-              0,
-              0
-            ]
-          }
         }
       ],
+      "lighting" : "individual",
+      "name" : "Base Layers",
       "shadow" : {
         "kind" : "neutral",
         "opacity" : 0.5

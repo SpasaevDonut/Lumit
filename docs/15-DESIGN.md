@@ -702,11 +702,12 @@ wordmark is the word "Lumit" set in Schibsted Grotesk beside or beneath the mark
 custom lettering.
 
 **The macOS layers carry no lighting of their own** (K-309). The layer SVGs inside
-`lumit-icon.icon` are the flat icon's own geometry with two things deliberately removed:
-the tile's corner radius, because macOS applies the platform squircle mask itself, and
-the drop shadow under the keys, because Liquid Glass generates the shadow and the
-specular highlight per layer. Painting either one in means it doubles up in every
-appearance the system offers. The mark MUST also be paintable from theme-module constants in code
+`lumit-icon.icon` are the flat icon's own geometry with three things deliberately
+removed: the tile's corner radius, because macOS applies the platform squircle mask
+itself; the drop shadow under the keys, because Liquid Glass generates the shadow per
+layer; and the keys' dark rim stroke, which in the flat icon stands in for a lit edge
+that the system now draws for real. Painting any of them in means it doubles up in
+every appearance the system offers — the same edge twice, once painted and once lit. The mark MUST also be paintable from theme-module constants in code
 (four rounded rects and three gradients, no raster assets) so the splash and about box
 never ship image files.
 

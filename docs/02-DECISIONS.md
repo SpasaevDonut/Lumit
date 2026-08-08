@@ -7002,8 +7002,10 @@ question was never whether to render better PNGs.
   opacity, shadow depth. The flat `lumit-icon.svg` stays in the brand set as the reference
   drawing and the single-image hand-out, but nothing ships from it any more.
 - **The layers omit their own lighting**: no corner radius on the tile, no drop shadow
-  under the keys. Both are supplied by the system per appearance, and a painted-in copy
-  doubles up in all of them (docs/15-DESIGN.md, brand).
+  under the keys, and no dark rim stroke around them — that stroke exists in the flat
+  icon to imply a lit edge, and Liquid Glass bevels and lights each layer for real. All
+  three are supplied by the system per appearance, and a painted-in copy doubles up in
+  all of them (docs/15-DESIGN.md, brand).
 - **Xcode compiles it, so there is nothing to regenerate.** The `.icon` is a resource of
   the Runner target — referenced in place at `../../assets/brand/`, not copied into
   `flutter_ui/`, so the brand folder stays the one home for artwork — and
