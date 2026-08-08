@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <!-- Left keyframe, on its own as an Icon Composer layer (docs/15-DESIGN.md,
+       brand; K-251). The whole mark is lumit-mark.svg; this is one of its three
+       shapes, on the same 512 canvas so the layers stack in register.
+
+       No drop shadow and no glow: Icon Composer applies its own depth, and a
+       shadow baked into the artwork fights it. -->
+  <defs>
+    <linearGradient id="key-a" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#86e2ff"/><stop offset="1" stop-color="#2f6fe0"/>
+    </linearGradient>
+  </defs>
+  <path d="M35 256 L180 111 L253 184 L181 256 L253 328 L180 401 Z"
+        fill="url(#key-a)" stroke="#0c0e14" stroke-opacity="0.25" stroke-width="8"
+        stroke-linejoin="round"/>
+</svg>
