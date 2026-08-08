@@ -207,39 +207,46 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
         let scratch_cell_size = clamp(48.0 * scratch_scale, 12.0, 1024.0);
         let sgx = i32(floor(px / scratch_cell_size));
         let sgy = i32(floor(py / scratch_cell_size));
-        let sprob = block_hash01(seed, 10u, sgx, sgy, 0);
 
-        let max_sprob = min(0.25 * scratch_amount, 0.8);
-        if (sprob < max_sprob) {
-            let p1x = (f32(sgx) + block_hash01(seed, 11u, sgx, sgy, 0)) * scratch_cell_size;
-            let p1y = (f32(sgy) + block_hash01(seed, 12u, sgx, sgy, 0)) * scratch_cell_size;
-            var line_len_mult: f32 = 1.0;
-            if (p.scratch_var > 0.0) {
-                line_len_mult = 1.0 + (block_hash01(seed, 13u, sgx, sgy, 0) - 0.5) * p.scratch_var * 1.6;
-            }
-            let seg_len = max(20.0 + 30.0 * line_len_mult, 2.0) * scratch_scale;
-            var angle_var: f32 = 0.0;
-            if (p.scratch_var > 0.0) {
-                angle_var = (block_hash01(seed, 16u, sgx, sgy, 0) - 0.5) * p.scratch_var * 3.14159265359;
-            }
-            let angle = block_hash01(seed, 14u, sgx, sgy, 0) * 6.28318530718 + angle_var;
-            let p2x = p1x + cos(angle) * seg_len;
-            let p2y = p1y + sin(angle) * seg_len;
+        for (var sdy = -1; sdy <= 1; sdy++) {
+            for (var sdx = -1; sdx <= 1; sdx++) {
+                let cx = sgx + sdx;
+                let cy = sgy + sdy;
+                let sprob = block_hash01(seed, 10u, cx, cy, 0);
 
-            let vx = p2x - p1x;
-            let vy = p2y - p1y;
-            let len_sq = max(vx * vx + vy * vy, 1e-4);
-            let t_seg = clamp(((px - p1x) * vx + (py - p1y) * vy) / len_sq, 0.0, 1.0);
-            let proj_x = p1x + t_seg * vx;
-            let proj_y = p1y + t_seg * vy;
-            let s_dist = sqrt((px - proj_x) * (px - proj_x) + (py - proj_y) * (py - proj_y));
+                let max_sprob = min(0.25 * scratch_amount, 0.8);
+                if (sprob < max_sprob) {
+                    let p1x = (f32(cx) + block_hash01(seed, 11u, cx, cy, 0)) * scratch_cell_size;
+                    let p1y = (f32(cy) + block_hash01(seed, 12u, cx, cy, 0)) * scratch_cell_size;
+                    var line_len_mult: f32 = 1.0;
+                    if (p.scratch_var > 0.0) {
+                        line_len_mult = 1.0 + (block_hash01(seed, 13u, cx, cy, 0) - 0.5) * p.scratch_var * 1.6;
+                    }
+                    let seg_len = max(20.0 + 30.0 * line_len_mult, 2.0) * scratch_scale;
+                    var angle_var: f32 = 0.0;
+                    if (p.scratch_var > 0.0) {
+                        angle_var = (block_hash01(seed, 16u, cx, cy, 0) - 0.5) * p.scratch_var * 3.14159265359;
+                    }
+                    let angle = block_hash01(seed, 14u, cx, cy, 0) * 6.28318530718 + angle_var;
+                    let p2x = p1x + cos(angle) * seg_len;
+                    let p2y = p1y + sin(angle) * seg_len;
 
-            let scratch_width = (0.75 + 0.5 * block_hash01(seed, 15u, sgx, sgy, 0)) * scratch_scale;
-            if (s_dist < scratch_width) {
-                let line_val = (1.0 - s_dist / scratch_width) * scratch_amount * 0.7;
-                dirt_r += line_val;
-                dirt_g += line_val;
-                dirt_b += line_val;
+                    let vx = p2x - p1x;
+                    let vy = p2y - p1y;
+                    let len_sq = max(vx * vx + vy * vy, 1e-4);
+                    let t_seg = clamp(((px - p1x) * vx + (py - p1y) * vy) / len_sq, 0.0, 1.0);
+                    let proj_x = p1x + t_seg * vx;
+                    let proj_y = p1y + t_seg * vy;
+                    let s_dist = sqrt((px - proj_x) * (px - proj_x) + (py - proj_y) * (py - proj_y));
+
+                    let scratch_width = (0.75 + 0.5 * block_hash01(seed, 15u, cx, cy, 0)) * scratch_scale;
+                    if (s_dist < scratch_width) {
+                        let line_val = (1.0 - s_dist / scratch_width) * scratch_amount * 0.7;
+                        dirt_r += line_val;
+                        dirt_g += line_val;
+                        dirt_b += line_val;
+                    }
+                }
             }
         }
     }
@@ -248,16 +255,24 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
         let d_cell_size = clamp(64.0 * p.scratch_scale, 16.0, 512.0);
         let dgx = i32(floor(px / d_cell_size));
         let dgy = i32(floor(py / d_cell_size));
-        let dprob = block_hash01(seed, 20u, dgx, dgy, 0);
-        if (dprob < min(0.35 * p.dirt, 0.8)) {
-            let d_cx = (f32(dgx) + block_hash01(seed, 21u, dgx, dgy, 0)) * d_cell_size;
-            let d_cy = (f32(dgy) + block_hash01(seed, 22u, dgx, dgy, 0)) * d_cell_size;
-            let d_rad = (3.0 + 8.0 * block_hash01(seed, 23u, dgx, dgy, 0)) * p.scratch_scale;
-            let d_dist = sqrt((px - d_cx) * (px - d_cx) + (py - d_cy) * (py - d_cy)) / max(d_rad, 0.5);
-            if (d_dist <= 1.0) {
-                let spot_val = (1.0 - d_dist * d_dist) * p.dirt * 0.5;
-                dirt_r += spot_val * 0.9;
-                dirt_g += spot_val * 0.85;
+
+        for (var ddy = -1; ddy <= 1; ddy++) {
+            for (var ddx = -1; ddx <= 1; ddx++) {
+                let cx = dgx + ddx;
+                let cy = dgy + ddy;
+                let dprob = block_hash01(seed, 20u, cx, cy, 0);
+                if (dprob < min(0.35 * p.dirt, 0.8)) {
+                    let d_cx = (f32(cx) + block_hash01(seed, 21u, cx, cy, 0)) * d_cell_size;
+                    let d_cy = (f32(cy) + block_hash01(seed, 22u, cx, cy, 0)) * d_cell_size;
+                    let d_rad = (3.0 + 8.0 * block_hash01(seed, 23u, cx, cy, 0)) * p.scratch_scale;
+                    let d_dist = sqrt((px - d_cx) * (px - d_cx) + (py - d_cy) * (py - d_cy)) / max(d_rad, 0.5);
+                    if (d_dist <= 1.0) {
+                        let spot_val = (1.0 - d_dist * d_dist) * p.dirt * 0.5;
+                        dirt_r += spot_val * 0.9;
+                        dirt_g += spot_val * 0.85;
+                        dirt_b += spot_val * 0.75;
+                    }
+                }
             }
         }
     }

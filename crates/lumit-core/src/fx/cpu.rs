@@ -2053,62 +2053,76 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
                 let scratch_cell_size = (48.0 * scratch_scale).clamp(12.0, 1024.0);
                 let sgx = (px / scratch_cell_size).floor() as i32;
                 let sgy = (py / scratch_cell_size).floor() as i32;
-                let sprob = h01(10, sgx, sgy);
 
-                let max_sprob: f32 = (0.25 * scratch_amount).min(0.8);
-                if sprob < max_sprob {
-                    let p1x = (sgx as f32 + h01(11, sgx, sgy)) * scratch_cell_size;
-                    let p1y = (sgy as f32 + h01(12, sgx, sgy)) * scratch_cell_size;
-                    let line_len_mult = if p.scratch_var > 0.0 {
-                        1.0 + (h01(13, sgx, sgy) - 0.5) * p.scratch_var * 1.6
-                    } else {
-                        1.0
-                    };
-                    let seg_len = (20.0 + 30.0 * line_len_mult).max(2.0) * scratch_scale;
-                    let angle_var = if p.scratch_var > 0.0 {
-                        (h01(16, sgx, sgy) - 0.5) * p.scratch_var * 3.14159
-                    } else {
-                        0.0
-                    };
-                    let angle = h01(14, sgx, sgy) * std::f32::consts::TAU + angle_var;
-                    let p2x = p1x + angle.cos() * seg_len;
-                    let p2y = p1y + angle.sin() * seg_len;
+                for sdy in -1..=1 {
+                    for sdx in -1..=1 {
+                        let cx = sgx + sdx;
+                        let cy = sgy + sdy;
+                        let sprob = h01(10, cx, cy);
 
-                    let vx = p2x - p1x;
-                    let vy = p2y - p1y;
-                    let len_sq = (vx * vx + vy * vy).max(1e-4);
-                    let t_seg = (((px - p1x) * vx + (py - p1y) * vy) / len_sq).clamp(0.0, 1.0);
-                    let proj_x = p1x + t_seg * vx;
-                    let proj_y = p1y + t_seg * vy;
-                    let s_dist = (px - proj_x).hypot(py - proj_y);
+                        let max_sprob: f32 = (0.25 * scratch_amount).min(0.8);
+                        if sprob < max_sprob {
+                            let p1x = (cx as f32 + h01(11, cx, cy)) * scratch_cell_size;
+                            let p1y = (cy as f32 + h01(12, cx, cy)) * scratch_cell_size;
+                            let line_len_mult = if p.scratch_var > 0.0 {
+                                1.0 + (h01(13, cx, cy) - 0.5) * p.scratch_var * 1.6
+                            } else {
+                                1.0
+                            };
+                            let seg_len = (20.0 + 30.0 * line_len_mult).max(2.0) * scratch_scale;
+                            let angle_var = if p.scratch_var > 0.0 {
+                                (h01(16, cx, cy) - 0.5) * p.scratch_var * 3.14159
+                            } else {
+                                0.0
+                            };
+                            let angle = h01(14, cx, cy) * std::f32::consts::TAU + angle_var;
+                            let p2x = p1x + angle.cos() * seg_len;
+                            let p2y = p1y + angle.sin() * seg_len;
 
-                    let scratch_width = (0.75 + 0.5 * h01(15, sgx, sgy)) * scratch_scale;
-                    if s_dist < scratch_width {
-                        let line_val = (1.0 - s_dist / scratch_width) * scratch_amount * 0.7;
-                        dirt_r += line_val;
-                        dirt_g += line_val;
-                        dirt_b += line_val;
+                            let vx = p2x - p1x;
+                            let vy = p2y - p1y;
+                            let len_sq = (vx * vx + vy * vy).max(1e-4);
+                            let t_seg = (((px - p1x) * vx + (py - p1y) * vy) / len_sq).clamp(0.0, 1.0);
+                            let proj_x = p1x + t_seg * vx;
+                            let proj_y = p1y + t_seg * vy;
+                            let s_dist = (px - proj_x).hypot(py - proj_y);
+
+                            let scratch_width = (0.75 + 0.5 * h01(15, cx, cy)) * scratch_scale;
+                            if s_dist < scratch_width {
+                                let line_val = (1.0 - s_dist / scratch_width) * scratch_amount * 0.7;
+                                dirt_r += line_val;
+                                dirt_g += line_val;
+                                dirt_b += line_val;
+                            }
+                        }
                     }
                 }
             }
 
-            // 3. Glass dirt & organic dust spots (controlled by p.dirt)
+            // 3. Glass dirt & organic dust spots (controlled by p.dirt, 3x3 grid search to avoid cell clipping)
             if p.dirt > 0.0 {
                 let h01 = |ch: u32, bx: i32, by: i32| super::block_hash01(seed, ch, bx, by, 0);
                 let d_cell_size = (64.0 * p.scratch_scale).clamp(16.0, 512.0);
                 let dgx = (px / d_cell_size).floor() as i32;
                 let dgy = (py / d_cell_size).floor() as i32;
-                let dprob = h01(20, dgx, dgy);
-                if dprob < (0.35 * p.dirt).min(0.8) {
-                    let d_cx = (dgx as f32 + h01(21, dgx, dgy)) * d_cell_size;
-                    let d_cy = (dgy as f32 + h01(22, dgx, dgy)) * d_cell_size;
-                    let d_rad = (3.0 + 8.0 * h01(23, dgx, dgy)) * p.scratch_scale;
-                    let d_dist = (px - d_cx).hypot(py - d_cy) / d_rad.max(0.5);
-                    if d_dist <= 1.0 {
-                        let spot_val = (1.0 - d_dist * d_dist) * p.dirt * 0.5;
-                        dirt_r += spot_val * 0.9;
-                        dirt_g += spot_val * 0.85;
-                        dirt_b += spot_val * 0.75;
+
+                for ddy in -1..=1 {
+                    for ddx in -1..=1 {
+                        let cx = dgx + ddx;
+                        let cy = dgy + ddy;
+                        let dprob = h01(20, cx, cy);
+                        if dprob < (0.35 * p.dirt).min(0.8) {
+                            let d_cx = (cx as f32 + h01(21, cx, cy)) * d_cell_size;
+                            let d_cy = (cy as f32 + h01(22, cx, cy)) * d_cell_size;
+                            let d_rad = (3.0 + 8.0 * h01(23, cx, cy)) * p.scratch_scale;
+                            let d_dist = (px - d_cx).hypot(py - d_cy) / d_rad.max(0.5);
+                            if d_dist <= 1.0 {
+                                let spot_val = (1.0 - d_dist * d_dist) * p.dirt * 0.5;
+                                dirt_r += spot_val * 0.9;
+                                dirt_g += spot_val * 0.85;
+                                dirt_b += spot_val * 0.75;
+                            }
+                        }
                     }
                 }
             }
