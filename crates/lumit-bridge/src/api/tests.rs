@@ -663,7 +663,13 @@ fn effect_with_every_kind() -> lumit_core::model::EffectInstance {
         id: Uuid::now_v7(),
         effect: EffectKey {
             namespace: EffectNamespace::Builtin,
-            match_name: "blur".into(),
+            // Deliberately a name no schema declares. This fixture exists to
+            // exercise the *value type* — one parameter per kind — not any real
+            // effect, and its parameters are invented to match. Borrowing a
+            // shipped effect's name would mean `BridgeEffectInstance::new`
+            // filling in that effect's own declared parameters beside these
+            // which is right for a real instance and pure noise here.
+            match_name: "test_every_value_kind".into(),
             version: 1,
             extra: serde_json::Map::new(),
         },
@@ -781,6 +787,106 @@ fn every_effect_value_kind_round_trips_through_the_document() {
     layer.set_effects(staged).expect("committed");
 
     assert_eq!(stack_of(&layer), vec![original]);
+}
+
+/// An effect saved before its schema grew a parameter must still be able to
+/// reach it.
+///
+/// `instantiate` copies the schema's parameters at the moment an effect is
+/// created, and nothing brings an older instance up to a schema that grew after
+/// it. Every such parameter therefore *rendered* right — the resolve step falls
+/// back to the declared default — while being **uneditable**, because the read
+/// that draws the row and the write behind it both looked only at what the
+/// instance already carried. The row came out blank and the write was refused.
+///
+/// Bokeh is the case that forced this: an instance saved before its aperture and
+/// tonal controls existed could not reach Vertices, Roundness, Rotation or
+/// Exposure — which is the entire feature.
+#[test]
+fn an_old_instance_reaches_a_parameter_its_schema_grew_later() {
+    let (project, layer) = project_with_layer();
+    // A Bokeh as it would have been saved before its aperture controls existed:
+    // the schema's instance with those parameters taken back out.
+    let mut old = lumit_core::fx::instantiate("bokeh").expect("bokeh");
+    let grown = [
+        "vertices",
+        "roundness",
+        "rotation",
+        "exposure",
+        "depth_channel",
+    ];
+    old.params.retain(|p| !grown.contains(&p.id.as_str()));
+    // Something the user had already set must survive untouched.
+    let radius_before = old
+        .params
+        .iter()
+        .find(|p| p.id == "blur_radius")
+        .expect("blur_radius")
+        .value
+        .clone();
+    seed_stack(&project, &layer, vec![old]);
+
+    // The read reports every parameter the schema declares, at its default.
+    let mut staged = layer.get_effects().expect("stack");
+    let info = staged[0].get_info();
+    for id in grown {
+        assert!(
+            info.values.iter().any(|v| v.id == id),
+            "{id} must be reported so its row has something to draw"
+        );
+    }
+    assert!(
+        matches!(
+            staged[0].get_value("depth_channel".into()),
+            Ok(BridgeEffectValue::Choice(5))
+        ),
+        "a grown parameter reads at its declared default ((R+G+B)/3)"
+    );
+
+    // And the write lands: the parameter is added to the instance rather than
+    // refused, and committing keeps it.
+    staged[0]
+        .set_value(
+            "rotation".into(),
+            BridgeEffectValue::Float(BridgeScalar::Static(30.0)),
+        )
+        .expect("a grown parameter must be writable");
+    layer.set_effects(staged).expect("committed");
+
+    let after = stack_of(&layer);
+    let stored = after[0]
+        .params
+        .iter()
+        .find(|p| p.id == "rotation")
+        .expect("the written parameter is now on the instance");
+    assert!(
+        matches!(&stored.value, lumit_core::model::EffectValue::Float(f)
+            if (f.value_at(0.0) - 30.0).abs() < 1e-9),
+        "the value written is the value stored"
+    );
+    assert_eq!(
+        after[0]
+            .params
+            .iter()
+            .find(|p| p.id == "blur_radius")
+            .expect("blur_radius")
+            .value,
+        radius_before,
+        "filling absences must never rewrite a value the instance already held"
+    );
+
+    // A name no schema declares is still refused — that is a caller bug, not an
+    // old project.
+    let mut staged = layer.get_effects().expect("stack");
+    assert!(
+        staged[0]
+            .set_value(
+                "no_such_param".into(),
+                BridgeEffectValue::Float(BridgeScalar::Static(1.0))
+            )
+            .is_err(),
+        "an undeclared parameter is still refused"
+    );
 }
 
 /// A keyframed Float must read as its curve, not as its value at time zero. The
@@ -1233,6 +1339,99 @@ fn every_builtin_lists_its_parameters() {
             .len();
         assert_eq!(params.len(), declared, "{} lost a parameter", info.name);
     }
+}
+
+/// The twirls and greying rules cross too, and every rule still names rows the
+/// panel will actually be drawing.
+///
+/// `EffectSchema::groups` existed in the core schema from K-145 but never
+/// crossed the bridge, so Shake and Matte key declared twirls the panel could
+/// not know about and drew flat. This is the sweep that keeps the layout side
+/// honest now that something depends on it.
+#[test]
+fn every_builtin_lists_its_layout() {
+    for info in crate::api::effect::list_effects() {
+        let layout = crate::api::effect::list_param_layout(info.name.clone());
+        let ids: Vec<String> = crate::api::effect::list_parameters(info.name.clone())
+            .into_iter()
+            .map(|p| p.id)
+            .collect();
+        let declared = lumit_core::fx::BUILTINS
+            .iter()
+            .find(|s| s.match_name == info.name)
+            .expect("listed effects are built in");
+
+        assert_eq!(layout.groups.len(), declared.groups.len());
+        for g in &layout.groups {
+            for member in &g.params {
+                assert!(
+                    ids.contains(member),
+                    "{}: twirl `{}` names `{member}`, which the panel never sees",
+                    info.name,
+                    g.label
+                );
+            }
+        }
+        assert_eq!(layout.enabled_when.len(), declared.enabled_when.len());
+        for rule in &layout.enabled_when {
+            assert!(ids.contains(&rule.param) && ids.contains(&rule.on));
+        }
+    }
+}
+
+/// Bokeh is what the layout crossing exists for, so it is what pins it: the
+/// Depth map twirl and the two greyed rows arrive on the far side intact.
+#[test]
+fn bokehs_twirl_and_greying_rules_cross_the_bridge() {
+    use crate::api::effect::{BridgeEnabledCond, BridgeParamKind};
+
+    let layout = crate::api::effect::list_param_layout("bokeh".into());
+    assert_eq!(layout.groups.len(), 1);
+    assert_eq!(layout.groups[0].label, "Depth map");
+    assert!(layout.groups[0].collapsed);
+    assert_eq!(layout.groups[0].params.len(), 12);
+
+    assert_eq!(layout.enabled_when.len(), 2);
+    let rule = |param: &str| {
+        layout
+            .enabled_when
+            .iter()
+            .find(|r| r.param == param)
+            .unwrap_or_else(|| panic!("no rule for {param}"))
+            .clone()
+    };
+    let channel = rule("custom_channel");
+    assert_eq!(channel.on, "custom_shape");
+    assert_eq!(channel.cond, BridgeEnabledCond::LayerSet);
+    let distance = rule("focal_distance");
+    assert_eq!(distance.on, "use_focus_point");
+    assert_eq!(distance.cond, BridgeEnabledCond::BoolIs(false));
+
+    // The two new control kinds cross as themselves, not flattened into Float.
+    let params = crate::api::effect::list_parameters("bokeh".into());
+    let kind = |id: &str| {
+        params
+            .iter()
+            .find(|p| p.id == id)
+            .unwrap_or_else(|| panic!("no {id}"))
+            .kind
+            .clone()
+    };
+    assert!(matches!(
+        kind("rotation"),
+        BridgeParamKind::Angle { default, .. } if default == 90.0
+    ));
+    assert!(matches!(kind("focus_point"), BridgeParamKind::Point { .. }));
+}
+
+/// An unknown effect gets an empty layout rather than an error, for the same
+/// reason its parameter list is empty: a project carrying an effect this build
+/// does not know still opens.
+#[test]
+fn the_layout_of_an_unknown_effect_is_empty() {
+    let layout = crate::api::effect::list_param_layout("not-an-effect".into());
+    assert!(layout.groups.is_empty());
+    assert!(layout.enabled_when.is_empty());
 }
 
 // --- Transform ------------------------------------------------------------

@@ -33,6 +33,7 @@ import '../state/file_dialogs.dart';
 import '../state/preview_throttle.dart';
 import '../state/timeline_columns.dart';
 import '../theme/theme.dart';
+import '../widgets/angle_dial.dart';
 import '../widgets/colour_picker.dart';
 import '../widgets/controls.dart';
 import 'fx_section.dart';
@@ -92,6 +93,15 @@ class EffectParamRowFrb extends StatelessWidget {
   final UuidValue ownerLayerId;
   final List<BridgeLayerEntry> ownerLayers;
 
+  /// Whether this row is editable, per the effect's conditional-enablement
+  /// rules (`EnabledWhen` in the schema, `listParamLayout` across the bridge).
+  ///
+  /// A greyed row still draws its value — you can read what focus distance
+  /// *would* be — but takes no gesture, because while Use focus point is ticked
+  /// the number decides nothing and offering it to drag would be a lie about
+  /// what is in charge.
+  final bool enabled;
+
   /// Clicking the parameter's *name* selects it for the graph editor
   /// (docs/07 §4.3) — the name, not the whole row.
   final VoidCallback? onLabelTap;
@@ -125,6 +135,7 @@ class EffectParamRowFrb extends StatelessWidget {
     this.graphColour,
     this.twoColumn = false,
     this.siblings = const {},
+    this.enabled = true,
   });
 
   @override
@@ -142,23 +153,35 @@ class EffectParamRowFrb extends StatelessWidget {
   Widget _build(BuildContext context, int frame) {
     final t = ThemeScope.of(context).theme;
     final id = effectId;
-    final scalar = _animatableScalarOf(value);
-    // Only the number-shaped kinds animate; a choice or a file has nothing to
-    // interpolate, so those rows carry no stopwatch at all.
-    final keyframes = scalar == null
+    final scalars = _animatableScalarsOf(value);
+    // Only the number-shaped kinds animate; a choice, a layer or a file has
+    // nothing to interpolate, so those rows carry no stopwatch at all. A point
+    // carries one stopwatch over both its axes: they are separate properties,
+    // which is what makes a per-axis curve possible, but one stopwatch covering
+    // them has to act on both or it is lying about what it controls.
+    final keyframes = scalars == null
         ? null
         : KeyframeControlsFrb(
-            // An effect parameter is one value, so one channel.
-            scalars: [scalar],
+            scalars: scalars,
             comp: comp,
             playheadFrame: playheadFrame,
             onSeek: onSeek,
             rowKey: '$id-${param.id}',
-            onWrite: (next) => _set(BridgeEffectValue.float(next.single)),
+            onWrite: (next) => _set(
+              next.length == 2
+                  ? BridgeEffectValue.point(
+                      BridgePoint(x: next[0], y: next[1]))
+                  : BridgeEffectValue.float(next.single),
+            ),
           );
 
     // The name is the row's handle for the graph editor, so it is built once
-    // and drawn by whichever layout the row takes.
+    // and drawn by whichever layout the row takes. A greyed row's name is
+    // muted with it: half a row going quiet reads as a rendering fault rather
+    // than as "this control is not the one in charge".
+    final labelStyle = !enabled
+        ? t.body.copyWith(color: t.textDisabled)
+        : (graphColour == null ? t.body : t.body.copyWith(color: graphColour));
     final label = GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onLabelTap,
@@ -170,14 +193,16 @@ class EffectParamRowFrb extends StatelessWidget {
       ),
     );
 
+    final control = _greyed(_control(context, t, id, value, frame));
+
     if (twoColumn && valueColumn == null) {
       return Padding(
         padding: rowPadding,
         child: fxTwoColumnRow(
           context: context,
           name: label,
-          keyframeControls: keyframes,
-          control: _control(context, t, id, value, frame),
+          keyframeControls: keyframes == null ? null : _greyed(keyframes),
+          control: control,
         ),
       );
     }
@@ -186,7 +211,7 @@ class EffectParamRowFrb extends StatelessWidget {
       padding: rowPadding,
       child: Row(
         children: [
-          if (keyframes != null) keyframes,
+          if (keyframes != null) _greyed(keyframes),
           const SizedBox(width: 4),
           Expanded(child: label),
           if (valueColumn case final col?) ...[
@@ -194,13 +219,13 @@ class EffectParamRowFrb extends StatelessWidget {
               width: col.width,
               child: Align(
                 alignment: Alignment.centerLeft,
-                child: _control(context, t, id, value, frame),
+                child: control,
               ),
             ),
             SizedBox(width: col.rightInset),
           ] else ...[
             const SizedBox(width: 10),
-            _control(context, t, id, value, frame),
+            control,
           ],
         ],
       ),
@@ -564,6 +589,205 @@ class EffectParamRowFrb extends StatelessWidget {
       );
     }
     return null;
+  }
+
+  /// A number in degrees with the dial under it (docs/07 §6).
+  ///
+  /// The dial drags live and commits on release, exactly as the number does, so
+  /// the two are interchangeable. It is unbounded in both: an angle animates
+  /// through full turns rather than wrapping, and a keyframe pair that wrapped
+  /// would spin backwards through the whole circle on the way to the next key.
+  Widget _angleControl(
+    BuildContext context, {
+    required BridgeScalar scalar,
+    required int frame,
+    required double step,
+    required String keyName,
+  }) {
+    final animated = scalar is! BridgeScalar_Static;
+    final shown = animated
+        ? sampleScalar(scalar: scalar, time: timeOfFrame(comp, frame))
+        : scalar.field0;
+
+    void write(double v) {
+      // On a curve the edit lands in the key under the playhead, or plants one
+      // — never flattening what is already there.
+      final next = animated
+          ? scalarWithValueAt(scalar, v, comp, frame)
+          : BridgeScalar.static_(v);
+      _set(BridgeEffectValue.float(next));
+    }
+
+    return SizedBox(
+      width: effectCellWidth,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          DragValueField(
+            key: ValueKey<String>('fx-angle-$keyName'),
+            value: shown,
+            min: -1000000,
+            max: 1000000,
+            speed: 1,
+            decimals: 1,
+            suffix: '°',
+            onChanged: (v) => write(v.toDouble()),
+            onChangeLive: animated
+                ? null
+                : (v) => _setLive(BridgeEffectValue.float(
+                    BridgeScalar.static_(v.toDouble()))),
+            onChangeEnd: (v) => write(v.toDouble()),
+          ),
+          const SizedBox(height: 3),
+          AngleDial(
+            key: ValueKey<String>('fx-dial-$keyName'),
+            degrees: shown,
+            step: step,
+            enabled: enabled,
+            // A dial drag is a drag like any other: preview each tick, commit
+            // the release. On a curve there is no live preview, for the same
+            // reason the number has none — the value being previewed is not
+            // the one that will be stored.
+            onChanged: (v) => animated
+                ? null
+                : _setLive(
+                    BridgeEffectValue.float(BridgeScalar.static_(v))),
+            onChangeEnd: write,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Two number fields and the crosshair that fills them in from the picture.
+  ///
+  /// **The crosshair is the point of this control.** Setting a focus point by
+  /// typing two numbers means reading coordinates off the Viewer and copying
+  /// them across; arming this and clicking the thing you want sharp is the same
+  /// edit without the arithmetic, which is why docs/07 §6 asks for it and why
+  /// the Focus point row exists at all rather than being a distance slider.
+  Widget _pointControl(BuildContext context, LumitTheme t, UuidValue id,
+      BridgePoint point, int frame) {
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    final owner = '$id-${param.id}';
+
+    double shown(BridgeScalar s) => s is BridgeScalar_Static
+        ? s.field0
+        : sampleScalar(scalar: s, time: timeOfFrame(comp, frame));
+
+    // The Viewer reports where the click landed in **composition** pixels, but
+    // a point parameter is authored in the **layer's own** pixels — the frame
+    // the effect stack runs in, and the frame its auxiliary inputs (a depth
+    // pass) are resampled to. On an untransformed full-frame layer the two are
+    // the same, which is exactly why getting it wrong stays invisible until
+    // someone scales or moves the layer and the focus lands somewhere else.
+    //
+    // The conversion is the Viewer's own [ViewerLayerMap.layerOf] with the
+    // screen mapping taken out (origin zero, view scale 1), so a picked point
+    // and a dragged move handle cannot disagree about where a layer is. A layer
+    // whose transform is animated has no single position to invert, so the
+    // point is taken as given rather than guessed at.
+    Offset toLayerSpace(double x, double y) {
+      final owner = ownerLayers
+          .where((l) => l.layer.internallayerId == ownerLayerId)
+          .firstOrNull;
+      if (owner == null) return Offset(x, y);
+      final tf = owner.layer.getTransform();
+      double? still(BridgeScalar s) =>
+          s is BridgeScalar_Static ? s.field0 : null;
+      final px = still(tf.positionX);
+      final py = still(tf.positionY);
+      if (px == null || py == null) return Offset(x, y);
+      return ViewerLayerMap.of(
+        positionX: px,
+        positionY: py,
+        anchorX: still(tf.anchorX) ?? 0,
+        anchorY: still(tf.anchorY) ?? 0,
+        scaleXPercent: still(tf.scaleX) ?? 100,
+        scaleYPercent: still(tf.scaleY) ?? 100,
+        rotationDegrees: still(tf.rotation) ?? 0,
+        origin: Offset.zero,
+        viewScale: 1,
+      ).layerOf(Offset(x, y));
+    }
+
+    // One write for both axes: they are two properties, but they are one point,
+    // and two ops for one click is what the whole-value shape exists to avoid.
+    void writeBoth(double x, double y) {
+      BridgeScalar axis(BridgeScalar was, double v) => was is BridgeScalar_Static
+          ? BridgeScalar.static_(v)
+          : scalarWithValueAt(was, v, comp, frame);
+      _set(BridgeEffectValue.point(BridgePoint(
+        x: axis(point.x, x),
+        y: axis(point.y, y),
+      )));
+    }
+
+    Widget axisField(String axis, BridgeScalar scalar, bool isX) => SizedBox(
+          width: effectCellWidth - 12,
+          child: DragValueField(
+            key: ValueKey<String>('fx-point-$axis-$owner'),
+            value: shown(scalar),
+            min: -1000000,
+            max: 1000000,
+            speed: 1,
+            decimals: 1,
+            onChanged: (v) => isX
+                ? writeBoth(v.toDouble(), shown(point.y))
+                : writeBoth(shown(point.x), v.toDouble()),
+          ),
+        );
+
+    return ValueListenableBuilder<ViewerPickRequest?>(
+      valueListenable: ui.viewerPick,
+      builder: (context, armed, _) {
+        final mine = armed?.owner == owner;
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            axisField('x', point.x, true),
+            const SizedBox(width: 4),
+            axisField('y', point.y, false),
+            const SizedBox(width: 4),
+            LumitTooltip(
+              message: mine
+                  ? 'Click in the Viewer to place the point, or press Escape'
+                  : 'Pick this point in the Viewer',
+              child: GestureDetector(
+                key: ValueKey<String>('fx-pick-$owner'),
+                behavior: HitTestBehavior.opaque,
+                // Armed again while already armed means "never mind", which is
+                // the only way out that does not need the keyboard.
+                onTap: () => mine
+                    ? ui.cancelViewerPick()
+                    : ui.armViewerPick(ViewerPickRequest(
+                        owner: owner,
+                        onPicked: (x, y) {
+                          final p = toLayerSpace(x, y);
+                          writeBoth(p.dx, p.dy);
+                        },
+                      )),
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CustomPaint(
+                      painter: _CrosshairPainter(
+                        // Lit while it is this row's pick that is armed, so a
+                        // panel full of points says which one is waiting.
+                        colour: mine ? t.accent : t.textSecondary,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   /// A colour swatch. The four channels animate independently in the model, so a

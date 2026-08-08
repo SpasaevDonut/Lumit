@@ -2762,7 +2762,6 @@ fn wgsl_lut_matches_the_cpu_oracle() {
         }
     }
 }
-
 /// The CPU oracle for [`FxEngine::dof`]: byte-for-byte the WGSL kernel's
 /// maths (the same CoC ramp with explicit min/max/mul, the same integer
 /// disc taps in the same row-major order, box weighted, edges clamped,

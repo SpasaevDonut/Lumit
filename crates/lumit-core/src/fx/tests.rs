@@ -5981,3 +5981,686 @@ fn zz_debug_cells() {
         }
     }
 }
+
+// Every piece of schema metadata that names a parameter by string can rot:
+// rename the parameter and the group or the enablement rule quietly stops
+// matching anything, with no compiler to catch it. This sweeps the whole
+// catalogue so a rename fails the build instead of silently un-grouping a
+// twirl or un-greying a row.
+#[test]
+fn every_enablement_rule_names_a_parameter_of_its_kind() {
+    for s in BUILTINS {
+        let kind_of = |id: &str| s.params.iter().find(|p| p.id == id).map(|p| p.kind);
+
+        for rule in s.enabled_when {
+            assert!(
+                kind_of(rule.param).is_some(),
+                "{}: rule greys `{}`, which it does not declare",
+                s.match_name,
+                rule.param
+            );
+            let on = kind_of(rule.on).unwrap_or_else(|| {
+                panic!(
+                    "{}: rule reads `{}`, which it does not declare",
+                    s.match_name, rule.on
+                )
+            });
+            // A rule pointed at the wrong kind of parameter can never fire —
+            // `param_enabled` leaves the row live rather than locking it
+            // unreachably — so the mistake has to be caught here.
+            match rule.cond {
+                EnabledCond::BoolIs(_) => assert!(
+                    matches!(on, ParamKind::Bool { .. }),
+                    "{}: `{}` is read as a Bool but is not one",
+                    s.match_name,
+                    rule.on
+                ),
+                EnabledCond::ChoiceIs(i) | EnabledCond::ChoiceIsNot(i) => {
+                    let ParamKind::Choice { options, .. } = on else {
+                        panic!(
+                            "{}: `{}` is read as a Choice but is not one",
+                            s.match_name, rule.on
+                        );
+                    };
+                    assert!(
+                        (i as usize) < options.len(),
+                        "{}: rule names option {i} of `{}`, which has {}",
+                        s.match_name,
+                        rule.on,
+                        options.len()
+                    );
+                }
+                EnabledCond::LayerSet => assert!(
+                    matches!(on, ParamKind::Layer {}),
+                    "{}: `{}` is read as a Layer reference but is not one",
+                    s.match_name,
+                    rule.on
+                ),
+            }
+            assert_ne!(
+                rule.param, rule.on,
+                "{}: `{}` cannot gate itself",
+                s.match_name, rule.param
+            );
+        }
+
+        // K-145 requires a group's members to be a contiguous run of `params`,
+        // because the twirl renders in place where its first member sits — a
+        // gap would swallow whatever sat in it.
+        for g in s.groups {
+            let mut positions = g.params.iter().map(|id| {
+                s.params
+                    .iter()
+                    .position(|p| p.id == *id)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "{}: group `{}` names `{id}`, which it does not declare",
+                            s.match_name, g.label
+                        )
+                    })
+            });
+            let first = positions
+                .next()
+                .unwrap_or_else(|| panic!("{}: group `{}` is empty", s.match_name, g.label));
+            let mut prev = first;
+            for pos in positions {
+                assert_eq!(
+                    pos,
+                    prev + 1,
+                    "{}: group `{}` is not a contiguous run of params",
+                    s.match_name,
+                    g.label
+                );
+                prev = pos;
+            }
+        }
+    }
+}
+
+// Bokeh's parameter surface replicates the reference panel the owner edits in,
+// so the surface itself is the thing under test: the order rows appear in, the
+// factory defaults, and which kind of control each row is. A default drifting
+// here is not a cosmetic change — it is the effect no longer arriving looking
+// the way it is supposed to.
+#[test]
+fn bokeh_declares_the_reference_panel_surface() {
+    let s = schema("bokeh").unwrap();
+    assert_eq!(s.label, "Bokeh");
+    // Beside Lens blur, not instead of it.
+    assert!(schema("dof").is_some(), "Lens blur is left alone");
+
+    let ids: Vec<&str> = s.params.iter().map(|p| p.id).collect();
+    assert_eq!(
+        ids,
+        vec![
+            "blur_radius",
+            "vertices",
+            "roundness",
+            "concentration",
+            "deform",
+            "rotation",
+            "custom_shape",
+            "custom_channel",
+            "exposure",
+            "threshold",
+            "repeat_edge_pixels",
+            "depth",
+            "depth_channel",
+            "depth_placement",
+            "depth_resolution",
+            "focal_distance",
+            "use_focus_point",
+            "focus_point",
+            "profile",
+            "depth_invert",
+            "composite_mode",
+            "remove_edge_leak",
+            "detect_edge_threshold",
+            "display",
+            "mix",
+        ],
+        "row order is part of what is being replicated"
+    );
+
+    let kind = |id: &str| s.params.iter().find(|p| p.id == id).unwrap().kind;
+    let float_default = |id: &str| match kind(id) {
+        ParamKind::Float { default, .. } => default,
+        other => panic!("{id} is {other:?}, not a Float"),
+    };
+
+    // The factory defaults, confirmed against the reference panel.
+    assert_eq!(float_default("blur_radius"), 10.0);
+    assert_eq!(float_default("vertices"), 6.0);
+    assert_eq!(float_default("roundness"), 0.0);
+    assert_eq!(float_default("concentration"), 0.0);
+    assert_eq!(float_default("deform"), 0.0);
+    assert_eq!(float_default("threshold"), 0.0);
+    assert_eq!(float_default("focal_distance"), 1.0);
+    assert_eq!(float_default("depth_resolution"), 6.0);
+    assert_eq!(float_default("profile"), 0.0);
+    assert_eq!(float_default("remove_edge_leak"), 0.0);
+    assert_eq!(float_default("detect_edge_threshold"), 0.10);
+
+    // Exposure arrives at the top of its range on purpose (§1.2's "drop it on
+    // and it already looks right"): this effect is for the balls of light, and
+    // a neutral default would make it an ordinary blur. Lens blur keeps 0.
+    assert!(matches!(
+        kind("exposure"),
+        ParamKind::Float {
+            default: 30.0,
+            slider: (-30.0, 30.0),
+            hard: (Some(-30.0), Some(30.0)),
+        }
+    ));
+
+    // Roundness reaches concave — five vertices at −1 is a star — which is why
+    // it is not Lens blur's 0..1 curvature.
+    assert!(matches!(
+        kind("roundness"),
+        ParamKind::Float {
+            hard: (Some(-1.0), Some(1.0)),
+            ..
+        }
+    ));
+
+    // Rotation is the dial, the first in the codebase, and it winds freely.
+    assert!(matches!(
+        kind("rotation"),
+        ParamKind::Angle { default: 90.0, .. }
+    ));
+    // Focus point is the point kind, the other first.
+    assert!(matches!(kind("focus_point"), ParamKind::Point { .. }));
+    // Edge behaviour is a switch carrying its own label, not the three-way
+    // EdgesMode choice.
+    assert!(matches!(
+        kind("repeat_edge_pixels"),
+        ParamKind::Bool { default: true }
+    ));
+    assert!(matches!(
+        kind("use_focus_point"),
+        ParamKind::Bool { default: true }
+    ));
+    // Both auxiliary pictures are layer references, and both take a channel
+    // from the one shared list.
+    assert!(matches!(kind("custom_shape"), ParamKind::Layer {}));
+    assert!(matches!(kind("depth"), ParamKind::Layer {}));
+    for id in ["custom_channel", "depth_channel"] {
+        assert!(matches!(
+            kind(id),
+            ParamKind::Choice {
+                options: CHANNEL_OPTIONS,
+                default: 5, // (R+G+B)/3
+                ..
+            }
+        ));
+    }
+    assert_eq!(CHANNEL_OPTIONS[5], "(R+G+B)/3");
+
+    // The vertex count is bounded by the kernel's uniform array, in both
+    // directions: below 3 there is no polygon, above MAX_BLADES there is no
+    // room in the uniform.
+    assert!(matches!(
+        kind("vertices"),
+        ParamKind::Float {
+            hard: (Some(3.0), Some(m)),
+            ..
+        } if m == MAX_BLADES as f64
+    ));
+
+    // The Depth map twirl, closed by default: the first rows are the look and
+    // this is the plumbing behind it.
+    assert_eq!(s.groups.len(), 1);
+    assert_eq!(s.groups[0].label, "Depth map");
+    assert!(s.groups[0].collapsed);
+    assert_eq!(s.groups[0].params.len(), 12);
+    assert_eq!(s.groups[0].params[0], "depth");
+    assert_eq!(s.groups[0].params[11], "detect_edge_threshold");
+    // Display is the one row the reference panel does not have, added
+    // deliberately (docs/08 §3.27). It sits OUTSIDE the twirl: a diagnostic is
+    // not part of the depth plumbing, and tucking it away is the opposite of
+    // what it is for.
+    assert!(!s.groups[0].params.contains(&"display"));
+    assert!(matches!(
+        kind("display"),
+        ParamKind::Choice {
+            options: &["Rendered", "Depth map", "Focus map"],
+            default: 0,
+            ..
+        }
+    ));
+}
+
+// The two greyed rows the reference panel has. `param_enabled` is the authority
+// on the question and the panel draws from it, so the semantics are pinned
+// here rather than left to the Dart side to rediscover.
+#[test]
+fn bokeh_greys_the_rows_its_switches_take_over() {
+    let mut e = instantiate("bokeh").unwrap();
+
+    // A fresh instance: Use focus point is on, so the focal distance number
+    // decides nothing and its row is greyed. No custom shape is picked, so the
+    // channel selector has nothing to take a channel of.
+    assert!(!param_enabled(&e, "focal_distance"));
+    assert!(!param_enabled(&e, "custom_channel"));
+    // Everything without a rule against it stays live, which is most rows.
+    for id in ["blur_radius", "vertices", "exposure", "focus_point", "mix"] {
+        assert!(param_enabled(&e, id), "{id} has no rule and must stay live");
+    }
+
+    // Untick Use focus point and the distance is what focus means again.
+    set_bool(&mut e, "use_focus_point", false);
+    assert!(param_enabled(&e, "focal_distance"));
+    // The other rule is independent of it.
+    assert!(!param_enabled(&e, "custom_channel"));
+
+    // Picking a layer as the aperture image gives the channel row its subject.
+    set_layer(&mut e, "custom_shape", Some(uuid::Uuid::now_v7()));
+    assert!(param_enabled(&e, "custom_channel"));
+    // Clearing it greys the row again — a dangling reference reads as unset.
+    set_layer(&mut e, "custom_shape", None);
+    assert!(!param_enabled(&e, "custom_channel"));
+
+    // An instance that predates the deciding parameter must not lock a row it
+    // can never unlock: the rule cannot be judged, so it greys nothing. This is
+    // the `fill_missing_params` trap from the other side.
+    let mut old = instantiate("bokeh").unwrap();
+    old.params.retain(|p| p.id != "use_focus_point");
+    assert!(param_enabled(&old, "focal_distance"));
+
+    // An effect with no built-in schema at all (an OFX or placeholder instance)
+    // has no rules, so nothing is greyed.
+    let mut foreign = instantiate("bokeh").unwrap();
+    foreign.effect.match_name = "not_a_builtin".to_owned();
+    assert!(param_enabled(&foreign, "focal_distance"));
+}
+
+// A fresh Bokeh focuses on the middle of the frame, the way a fresh Transform
+// rotates about the middle (T23). The schema cannot know the raster, so the
+// apply site fills it in; landing focus in the top-left corner would be exactly
+// the §1.2 failure the raster-aware constructor exists to prevent.
+#[test]
+fn a_fresh_bokeh_focuses_on_the_middle_of_the_frame() {
+    let e = instantiate_for_raster("bokeh", 1920.0, 1440.0).unwrap();
+    let Some(EffectValue::Point(x, y)) = e.param("focus_point") else {
+        panic!("focus_point is not a point");
+    };
+    assert_eq!(x.value_at(0.0), 960.0);
+    assert_eq!(y.value_at(0.0), 720.0);
+
+    // Plain `instantiate` keeps the pure schema default, which is what presets
+    // and tests want.
+    let pure = instantiate("bokeh").unwrap();
+    let Some(EffectValue::Point(x, y)) = pure.param("focus_point") else {
+        panic!("focus_point is not a point");
+    };
+    assert_eq!(x.value_at(0.0), 0.0);
+    assert_eq!(y.value_at(0.0), 0.0);
+}
+
+fn set_bool(e: &mut EffectInstance, id: &str, v: bool) {
+    for p in &mut e.params {
+        if p.id == id {
+            p.value = EffectValue::Bool(v);
+        }
+    }
+}
+
+fn set_layer(e: &mut EffectInstance, id: &str, v: Option<uuid::Uuid>) {
+    for p in &mut e.params {
+        if p.id == id {
+            p.value = EffectValue::Layer(v);
+        }
+    }
+}
+
+// The aperture's two load-bearing geometric claims, because the kernel's scan
+// box depends on both and neither is obvious from the formula.
+//
+// **It stays inscribed in the circle at every setting.** The gather scans a
+// `ceil(coc)` box and tests each integer offset; that box is only a correct
+// bound if no accepted tap lies outside the circle of radius `coc`. Roundness
+// reaching below zero and Deform squeezing an axis both had to preserve that,
+// and a change that broke it would not fail the oracle — both paths would
+// simply miss the same taps — so it is pinned here instead.
+//
+// **Negative Roundness really is a star.** The vertices stay on the circle while
+// the edge midpoints pull in, which is what makes the shape a star rather than
+// just a smaller polygon.
+#[test]
+fn the_bokeh_aperture_stays_inside_its_circle() {
+    let coc = 12.0f32;
+    let coc2 = coc * coc;
+    let ri = coc.ceil() as i32;
+
+    for sides in [3u32, 5, 6, 8] {
+        let (blade_normals, apothem2) = aperture_blades(sides, 17.0);
+        for roundness in [-1.0f32, -0.5, 0.0, 0.5, 1.0] {
+            for deform in [[1.0f32, 1.0], [2.0, 1.0], [1.0, 3.0]] {
+                let p = cpu::BokehParams {
+                    blur_radius: coc,
+                    blade_normals,
+                    blade_count: sides,
+                    apothem2,
+                    roundness,
+                    concentration: 0.0,
+                    deform_scale: deform,
+                    threshold: 0.0,
+                    bokeh_power: 1.0,
+                    repeat_edge: true,
+                    depth_channel: 5,
+                    depth_invert: false,
+                    depth_bands: 64.0,
+                    focal_distance: 0.5,
+                    use_focus_point: false,
+                    focus_point: [0.0, 0.0],
+                    focus_falloff: 1.0,
+                    composite_mode: 0,
+                    remove_edge_leak: 0.0,
+                    detect_edge_threshold: 0.1,
+                    display: 0,
+                    mix: 1.0,
+                };
+                let mut accepted = 0;
+                for dy in -ri..=ri {
+                    for dx in -ri..=ri {
+                        if cpu::bokeh_tap_inside(dx as f32, dy as f32, coc2, &p) {
+                            accepted += 1;
+                            let r2 = (dx * dx + dy * dy) as f32;
+                            assert!(
+                                r2 <= coc2 + 1e-3,
+                                "n{sides} roundness {roundness} deform {deform:?}: \
+                                 tap ({dx},{dy}) is outside the circle of confusion, \
+                                 so ceil(coc) no longer bounds the gather"
+                            );
+                        }
+                    }
+                }
+                // The centre tap is always in, which is what keeps the running
+                // weight non-zero at any radius.
+                assert!(accepted > 0);
+                assert!(cpu::bokeh_tap_inside(0.0, 0.0, coc2, &p));
+            }
+        }
+    }
+
+    // The star property, on a hexagon with a vertex placed on the +x axis so the
+    // two directions are exactly where they are expected. `aperture_blades`
+    // puts an edge normal at `rotation`, so rotating by half a step (30° for
+    // six sides) moves a vertex there instead.
+    let (blade_normals, apothem2) = aperture_blades(6, 30.0);
+    let star = |roundness: f32| cpu::BokehParams {
+        blur_radius: coc,
+        blade_normals,
+        blade_count: 6,
+        apothem2,
+        roundness,
+        concentration: 0.0,
+        deform_scale: [1.0, 1.0],
+        threshold: 0.0,
+        bokeh_power: 1.0,
+        repeat_edge: true,
+        depth_channel: 5,
+        depth_invert: false,
+        depth_bands: 64.0,
+        focal_distance: 0.5,
+        use_focus_point: false,
+        focus_point: [0.0, 0.0],
+        focus_falloff: 1.0,
+        composite_mode: 0,
+        remove_edge_leak: 0.0,
+        detect_edge_threshold: 0.1,
+        display: 0,
+        mix: 1.0,
+    };
+    // How far the aperture reaches along a ray, by bisection on the inside test.
+    let reach = |p: &cpu::BokehParams, ux: f32, uy: f32| {
+        let (mut lo, mut hi) = (0.0f32, coc * 1.5);
+        for _ in 0..40 {
+            let mid = 0.5 * (lo + hi);
+            if cpu::bokeh_tap_inside(ux * mid, uy * mid, coc2, p) {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        lo
+    };
+    // Which direction happens to be a vertex depends on the rotation phase, so
+    // the extremes are found rather than assumed: the farthest direction is a
+    // vertex and the nearest is an edge midpoint, whatever the phase.
+    let extremes = |p: &cpu::BokehParams| {
+        let (mut lo, mut hi) = (f32::MAX, 0.0f32);
+        for i in 0..360 {
+            let a = (i as f32).to_radians();
+            let r = reach(p, a.cos(), a.sin());
+            lo = lo.min(r);
+            hi = hi.max(r);
+        }
+        (lo, hi)
+    };
+
+    let (poly_min, poly_max) = extremes(&star(0.0));
+    let (star_min, star_max) = extremes(&star(-1.0));
+    let (round_min, round_max) = extremes(&star(1.0));
+
+    // The vertices sit on the circle at any roundness: along a vertex both terms
+    // carry the same k²r², so the test collapses to r ≤ coc whatever the
+    // coefficient. This is what keeps the aperture inscribed rather than merely
+    // small.
+    assert!(
+        (poly_max - coc).abs() < 0.05 && (star_max - coc).abs() < 0.05,
+        "a vertex must reach the circle at any roundness: {poly_max} vs {star_max}"
+    );
+    // A plain polygon's nearest point is its apothem, k·coc.
+    let apothem = coc * apothem2.sqrt();
+    assert!(
+        (poly_min - apothem).abs() < 0.05,
+        "roundness 0 must be the inscribed polygon: {poly_min} vs {apothem}"
+    );
+    // Negative roundness pulls the edge midpoints in past the apothem, which is
+    // the difference between a star and a smaller hexagon.
+    assert!(
+        star_min < poly_min * 0.95,
+        "negative roundness must pinch the edge midpoints in ({star_min} vs {poly_min})"
+    );
+
+    // Roundness 1 is the circle, which is why the reference panel needs no
+    // Circle entry: every direction reaches the same distance.
+    assert!(
+        (round_max - round_min).abs() < 0.05 && (round_max - coc).abs() < 0.05,
+        "roundness 1 must be the circle: {round_min} to {round_max}"
+    );
+}
+
+// The defocus ramp is continuous in depth — a value nearer the focus depth is
+// never blurred more than one further from it, and there are no steps.
+//
+// **The regression this guards.** Resolution was read as a band count that
+// quantised this ramp into (by default) seven levels. On a real depth pass —
+// nearly all the content in a narrow band, one near object well outside it —
+// that put the entire band in level zero and the object in level five, so focus
+// was all-or-nothing and no shape of ramp could recover it. The guess is
+// withdrawn (docs/08 §3.27); this is what stops it coming back by accident.
+#[test]
+fn the_defocus_ramp_is_continuous_in_depth() {
+    let focus = 0.78f32;
+    // However many bands are asked for, the ramp does not step.
+    for bands in [1.0f32, 6.0, 32.0] {
+        let mut seen: Vec<f32> = Vec::new();
+        for i in 0..=200 {
+            let d = i as f32 / 200.0;
+            let r = cpu::bokeh_ramp(d, focus, 1.0, bands);
+            if !seen.iter().any(|s| (s - r).abs() < 1e-7) {
+                seen.push(r);
+            }
+        }
+        assert!(
+            seen.len() > 100,
+            "the ramp must be continuous, got {} distinct levels at bands {bands}",
+            seen.len()
+        );
+    }
+
+    // The narrow band a real depth pass occupies must separate rather than move
+    // as one — the complaint that found this.
+    let scene = [0.70f32, 0.74, 0.78, 0.82, 0.86];
+    let mut levels: Vec<f32> = scene
+        .iter()
+        .map(|d| cpu::bokeh_ramp(*d, focus, 1.0, 6.0))
+        .collect();
+    levels.dedup_by(|a, b| (*a - *b).abs() < 1e-7);
+    assert!(
+        levels.len() >= 3,
+        "a narrow depth band must not collapse to one blur amount: {levels:?}"
+    );
+
+    // In focus is exactly zero, and the ramp still reaches full blur.
+    assert_eq!(cpu::bokeh_ramp(focus, focus, 1.0, 6.0), 0.0);
+    assert_eq!(cpu::bokeh_ramp(1.0, 0.0, 1.0, 6.0), 1.0);
+}
+
+#[test]
+fn profile_moves_the_focus_transition_where_the_content_is() {
+    // A scene band around 0.75 and a near object at 0.05 — the shape a real
+    // depth pass has.
+    let focus = 0.78;
+    let scene = [0.70f32, 0.75, 0.80, 0.85];
+    let near = 0.05f32;
+    // Enough bands that the quantisation is not what is being measured.
+    let bands = 256.0;
+
+    // At the neutral falloff the scene is essentially untouched and the near
+    // object is essentially gone: the two ends, nothing between them.
+    let plain_scene: Vec<f32> = scene
+        .iter()
+        .map(|d| bokeh_ramp_at(*d, focus, 1.0, bands))
+        .collect();
+    let plain_near = bokeh_ramp_at(near, focus, 1.0, bands);
+    assert!(
+        plain_scene.iter().all(|s| *s < 0.05),
+        "the scene band should barely blur at the neutral falloff: {plain_scene:?}"
+    );
+    assert!(
+        plain_near > 0.8,
+        "the near object is already all but gone: {plain_near}"
+    );
+
+    // Tightening it (a positive Profile) brings the transition into the scene
+    // band itself, so the scene now separates front-to-back instead of moving
+    // as one.
+    let tight = (2.0f32 * 0.8).exp2();
+    let tight_scene: Vec<f32> = scene
+        .iter()
+        .map(|d| bokeh_ramp_at(*d, focus, tight, bands))
+        .collect();
+    let spread = tight_scene.iter().cloned().fold(0.0f32, f32::max)
+        - tight_scene.iter().cloned().fold(1.0f32, f32::min);
+    let plain_spread = plain_scene.iter().cloned().fold(0.0f32, f32::max)
+        - plain_scene.iter().cloned().fold(1.0f32, f32::min);
+    assert!(
+        spread > plain_spread * 2.0,
+        "a tighter profile must separate the scene band, got {tight_scene:?}"
+    );
+
+    // Loosening it (a negative Profile) softens the near object instead of
+    // obliterating it — the far extreme is no longer automatically full blur.
+    let loose = (-2.0f32).exp2();
+    let loose_near = bokeh_ramp_at(near, focus, loose, bands);
+    assert!(
+        loose_near < plain_near * 0.5,
+        "a looser profile must soften rather than obliterate: {loose_near} vs {plain_near}"
+    );
+    assert!(loose_near > 0.0, "and it must still blur something");
+
+    // The ramp is monotone in depth distance at every falloff — a further thing
+    // is never sharper than a nearer one.
+    for falloff in [0.25f32, 1.0, 4.0] {
+        let mut prev = -1.0f32;
+        for i in 0..=100 {
+            let d = focus + i as f32 / 100.0;
+            let s = bokeh_ramp_at(d.min(1.0), focus, falloff, bands);
+            assert!(
+                s >= prev - 1e-6,
+                "the ramp must not go back down at {falloff}"
+            );
+            prev = s;
+        }
+    }
+}
+
+fn bokeh_ramp_at(d: f32, focus: f32, falloff: f32, bands: f32) -> f32 {
+    cpu::bokeh_ramp(d, focus, falloff, bands)
+}
+
+// Profile must reach far enough for a depth pass whose content is squeezed into
+// a fraction of its range — which is what a real one looks like.
+//
+// **The case that set the range.** A linear depth channel off game footage put
+// the sky at 1.0 and compressed an entire room into 0.0–0.2, so the depth
+// differences that matter were a tenth of the range. At the original ±1 the
+// control could compress the falloff only fourfold, and focus stayed
+// all-or-nothing however it was set: the room moved as one block whichever end
+// it was focused on.
+#[test]
+fn profile_reaches_a_depth_pass_squeezed_into_a_fifth_of_its_range() {
+    // The distribution measured off the owner's footage through the Focus map:
+    // the room in the bottom fifth, the ceiling pinned at the far end.
+    let room = [0.02f32, 0.06, 0.10, 0.14, 0.18];
+    let ceiling = 1.0f32;
+    let focus = 0.10f32;
+
+    let spread = |falloff: f32| {
+        let levels: Vec<f32> = room
+            .iter()
+            .map(|d| cpu::bokeh_ramp(*d, focus, falloff, 6.0))
+            .collect();
+        levels.iter().cloned().fold(0.0f32, f32::max)
+            - levels.iter().cloned().fold(1.0f32, f32::min)
+    };
+
+    // At the neutral falloff the whole room is effectively one blur amount —
+    // the complaint.
+    assert!(
+        spread(1.0) < 0.05,
+        "the neutral falloff cannot separate this pass: {}",
+        spread(1.0)
+    );
+    // The old ceiling (fourfold) still could not.
+    assert!(
+        spread(4.0) < 0.4,
+        "fourfold was not enough, which is why the range widened: {}",
+        spread(4.0)
+    );
+    // 64× — Profile 6 on the current scale, the middle of the slider — spreads
+    // the room across most of the range, which is what makes the control usable
+    // on real depth.
+    assert!(
+        spread(64.0) > 0.9,
+        "the widened range must separate the room: {}",
+        spread(64.0)
+    );
+
+    // And the far extreme is still all but fully blurred at every setting —
+    // widening the reach must not cost the background its defocus.
+    for falloff in [1.0f32, 4.0, 64.0] {
+        let far = cpu::bokeh_ramp(ceiling, focus, falloff, 6.0);
+        assert!(
+            far > 0.95,
+            "the background must stay defocused at {falloff}: {far}"
+        );
+    }
+
+    // The schema must actually offer the range the maths needs.
+    let s = schema("bokeh").unwrap();
+    let profile = s.params.iter().find(|p| p.id == "profile").unwrap();
+    assert!(matches!(
+        profile.kind,
+        ParamKind::Float {
+            hard: (Some(-10.0), Some(10.0)),
+            ..
+        }
+    ));
+    // And the scale must put that 64× in the middle of the slider, not at its
+    // end: one doubling per unit means Profile 6.
+    assert!(((6.0f32).exp2() - 64.0).abs() < 1e-3);
+}

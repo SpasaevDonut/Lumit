@@ -228,6 +228,7 @@ impl FxEngine {
         let motion_blur_mod = module(include_str!("../fx_motionblur.wgsl"), "fx-motion-blur");
         let datamosh_mod = module(include_str!("../fx_datamosh.wgsl"), "fx-datamosh");
         let dof_mod = module(include_str!("../fx_dof.wgsl"), "fx-dof");
+        let bokeh_mod = module(include_str!("../fx_bokeh.wgsl"), "fx-bokeh");
         let adjust_mod = module(include_str!("../fx_adjust.wgsl"), "fx-adjust");
         let lut_mod = module(include_str!("../fx_lut.wgsl"), "fx-lut");
         let blur = pipeline(&blur_mod, "fx-blur", "blur_pass");
@@ -294,6 +295,16 @@ impl FxEngine {
                 compilation_options: Default::default(),
                 cache: None,
             });
+        let bokeh = ctx
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("fx-bokeh"),
+                layout: Some(&mb_pl),
+                module: &bokeh_mod,
+                entry_point: Some("bokeh"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
         let adjust = ctx
             .device
             .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -350,6 +361,7 @@ impl FxEngine {
             motion_blur,
             datamosh,
             dof,
+            bokeh,
             adjust,
             lut,
             layout,

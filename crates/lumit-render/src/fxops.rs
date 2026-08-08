@@ -234,9 +234,11 @@ pub fn run_ops(
     let mut tex = tex;
     // The k-th Resolved::Lut op consumes the k-th `luts` slot (the whole
     // threading contract — see resolve_stack's `lut` arm and CompLayerDraw's
-    // lut_files); a slot is present only when its `.cube` file loaded. The
-    // k-th Resolved::Dof op consumes the k-th `layer_inputs` slot the same way
-    // (its depth-layer render).
+    // lut_files); a slot is present only when its `.cube` file loaded. The k-th
+    // layer-input-consuming op — Dof or Bokeh — consumes the k-th
+    // `layer_inputs` slot the same way. Both share one counter because
+    // `build.rs`'s `layer_inputs_for` enumerates them with one predicate, in one
+    // order; two counters would let the two sides drift apart silently.
     let mut lut_i = 0usize;
     let mut dof_i = 0usize;
     let mut flare_i = 0usize;

@@ -327,6 +327,23 @@ pub enum BridgeParamKind {
         hard_min: Option<i64>,
         hard_max: Option<i64>,
     },
+    /// Degrees, drawn as a dial beneath the number (docs/07 §6). The value
+    /// crossing the bridge is a [`BridgeEffectValue::Float`] — an angle is a
+    /// number of degrees, and this kind only says which control to draw.
+    /// Unbounded, so the dial winds through full turns.
+    Angle {
+        default: f64,
+        /// Snapping increment in degrees while a modifier is held.
+        dial_step: f64,
+    },
+    /// A 2D point in composition space, drawn as an x and a y field plus the
+    /// crosshair button that arms a click-in-Viewer pick (docs/07 §6). The
+    /// value is a [`BridgeEffectValue::Point`], which has crossed the bridge
+    /// since before any effect could declare one.
+    Point {
+        default_x: f64,
+        default_y: f64,
+    },
     Choice {
         options: Vec<String>,
         default: u32,
@@ -425,6 +442,13 @@ pub fn list_parameters(effect: String) -> Vec<BridgeParamInfo> {
                     filter: filter.iter().map(|f| (*f).to_owned()).collect(),
                     filter_name: filter_name.to_owned(),
                 },
+                ParamKind::Angle { default, dial_step } => {
+                    BridgeParamKind::Angle { default, dial_step }
+                }
+                ParamKind::Point { default } => BridgeParamKind::Point {
+                    default_x: default.0,
+                    default_y: default.1,
+                },
                 // `self_default` is an engine-side instantiation detail
                 // (K-288) — the panel draws the same picker either way, and
                 // the value it edits already carries the layer id.
@@ -478,6 +502,63 @@ pub fn list_parameter_groups(effect: String) -> Vec<BridgeParamGroup> {
                 .visible_when
                 .map(|(_, vs)| vs.to_vec())
                 .unwrap_or_default(),
+        })
+        .collect()
+}
+
+/// One greying rule: `param`'s row is editable only while `on` satisfies
+/// `cond`. The panel evaluates it against values it already holds, so ticking
+/// a switch greys its dependent row without a round trip;
+/// `lumit_core::fx::param_enabled` is the same rule in Rust and the authority
+/// the tests pin.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BridgeEnabledWhen {
+    pub param: String,
+    pub on: String,
+    pub cond: BridgeEnabledCond,
+}
+
+/// The condition half of a [`BridgeEnabledWhen`], mirroring
+/// [`lumit_core::fx::EnabledCond`].
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BridgeEnabledCond {
+    /// Editable while the named bool holds this value.
+    BoolIs(bool),
+    /// Editable while the named choice is on this option index.
+    ChoiceIs(u32),
+    /// Editable while the named choice is on anything but this index.
+    ChoiceIsNot(u32),
+    /// Editable while the named layer reference actually names a layer.
+    LayerSet,
+}
+
+/// Every greying rule `effect` declares (empty for an effect whose controls are
+/// all independent, which is most of them, or for an unknown name — a project
+/// carrying an effect this build does not know still opens).
+#[frb(sync)]
+pub fn list_enabled_when(effect: String) -> Vec<BridgeEnabledWhen> {
+    use lumit_core::fx::EnabledCond;
+
+    let Some(schema) = lumit_core::fx::BUILTINS
+        .iter()
+        .find(|s| s.match_name == effect)
+    else {
+        return Vec::new();
+    };
+    schema
+        .enabled_when
+        .iter()
+        .map(|r| BridgeEnabledWhen {
+            param: r.param.to_owned(),
+            on: r.on.to_owned(),
+            cond: match r.cond {
+                EnabledCond::BoolIs(v) => BridgeEnabledCond::BoolIs(v),
+                EnabledCond::ChoiceIs(i) => BridgeEnabledCond::ChoiceIs(i),
+                EnabledCond::ChoiceIsNot(i) => BridgeEnabledCond::ChoiceIsNot(i),
+                EnabledCond::LayerSet => BridgeEnabledCond::LayerSet,
+            },
         })
         .collect()
 }
@@ -861,6 +942,20 @@ pub(crate) fn read_instance_info(
     effect: &EffectInstance,
     offset: Rational,
 ) -> BridgeEffectInstanceInfo {
+    // Report every parameter the schema declares, not only the ones this
+    // instance happens to carry — the same filling [`BridgeEffectInstance::new`]
+    // does, for the other way in: the comp read model (K-184) hands raw
+    // `EffectInstance`s straight here without a handle. Without it a parameter
+    // added after the instance was saved draws a blank row.
+    //
+    // Filled on a clone, because reading may not edit the document. The value
+    // lands for real when the user changes it, through the staged copy.
+    let mut filled = effect.clone();
+    let effect = if lumit_core::fx::fill_missing_params(&mut filled) {
+        &filled
+    } else {
+        effect
+    };
     BridgeEffectInstanceInfo {
         id: effect.id,
         name: effect.effect.match_name.clone(),
@@ -884,6 +979,21 @@ impl BridgeEffectInstance {
     /// honest offset to take.
     #[frb(ignore)]
     pub fn new(effect: EffectInstance, offset: Rational) -> BridgeEffectInstance {
+        // Give the staged copy every parameter its schema declares before the
+        // frontend touches it. `instantiate` copies the schema at the
+        // moment an effect is created and nothing has ever brought an older
+        // instance up to a schema that grew afterwards, so a parameter added
+        // later read as absent and refused writes — the row drew blank and the
+        // control was dead. Filling here rather than in each accessor is what
+        // makes that true for `get_info`, `get_value`, `get_parameters` and
+        // `set_value` alike, since all four read this one field.
+        //
+        // This is a staged copy: `LayerReference::set_effects` is what commits,
+        // so a filled parameter reaches the document only alongside an edit the
+        // user actually made. An effect with no built-in schema (OFX, a
+        // placeholder) is left exactly as it is.
+        let mut effect = effect;
+        lumit_core::fx::fill_missing_params(&mut effect);
         BridgeEffectInstance { effect, offset }
     }
 
@@ -950,6 +1060,9 @@ impl BridgeEffectInstance {
     /// control can never quietly change what a parameter *is*.
     #[frb(sync)]
     pub fn set_value(&mut self, id: String, value: BridgeEffectValue) -> Result<(), BridgeError> {
+        // Every parameter the schema declares is already present: `new` fills
+        // the staged copy. A name that is still missing is one no schema
+        // declares — a caller bug, not an old project — and stays refused.
         let offset = self.offset;
         let param = self
             .effect

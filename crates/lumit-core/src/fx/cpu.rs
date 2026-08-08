@@ -1,4 +1,4 @@
-use super::{MatteKeyParams, MbView, Resolved};
+use super::{MatteKeyParams, MbView, Resolved, MAX_BLADES};
 
 /// Apply one resolved effect to an RGBA f32 image (premultiplied,
 /// linear light), in place.
@@ -211,12 +211,15 @@ pub fn apply(rgba: &mut [f32], w: u32, h: u32, fx: &Resolved) {
         // The §1.6 oracle reference is `lut::Lut3d::sample`, exercised
         // directly in the lumit-gpu test, not through cpu::apply.
         Resolved::Lut { .. } => {}
-        // Depth of field reads a depth texture (the referenced layer
-        // rendered alone) that never reaches this single-buffer dispatcher,
-        // so — like Echo, Motion blur and LUT — the CPU-degradation rung
-        // renders it as identity. The §1.6 oracle reference is
-        // `dof_reference` in the lumit-gpu test (the depth is a texture, not
-        // a number), not through cpu::apply.
+        // Lens blur. A BOUND depth is a texture (the referenced layer rendered
+        // alone) that never reaches this single-buffer dispatcher, so that case
+        // stays identity here — like Echo, Motion blur and LUT — and its §1.6
+        // oracle runs through `dof` directly from the lumit-gpu test.
+        //
+        // The UNBOUND case needs no texture at all, so this rung serves
+        // it properly rather than dropping the effect: same function, same
+        // maths, `None` depth. That is K-019 as written — the oracle is
+        // shipping code — for the half of the effect that can reach it.
         Resolved::Dof { .. } => {}
         // Lens flare is GPU-only (K-256, the K-114 LUT precedent): its render
         // pass and baked textures never reach this single-buffer dispatcher,
@@ -1524,6 +1527,423 @@ pub fn gaussian_weights(radius_px: f32) -> Vec<f32> {
         *v /= sum;
     }
     w
+}
+
+/// Bokeh's resolved scalars, gathered into one struct.
+///
+/// Twenty-odd arguments is not a signature anyone can call correctly, and the
+/// WGSL kernel's uniform has the same fields in the same order — keeping them
+/// together is what lets the §1.6 oracle set up both paths from one value and
+/// makes a field added to one side an obvious omission on the other.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BokehParams {
+    pub blur_radius: f32,
+    pub blade_normals: [[f32; 2]; MAX_BLADES],
+    pub blade_count: u32,
+    pub apothem2: f32,
+    pub roundness: f32,
+    pub concentration: f32,
+    pub deform_scale: [f32; 2],
+    pub threshold: f32,
+    pub bokeh_power: f32,
+    pub repeat_edge: bool,
+    pub depth_channel: u32,
+    pub depth_invert: bool,
+    pub depth_bands: f32,
+    pub focal_distance: f32,
+    pub use_focus_point: bool,
+    pub focus_point: [f32; 2],
+    /// The Profile control, resolved: a multiplier on the depth distance before
+    /// the ramp. 1 is the plain full-range falloff; above 1 the transition
+    /// bites sooner, below 1 it stretches past the range.
+    pub focus_falloff: f32,
+    pub composite_mode: u32,
+    pub remove_edge_leak: f32,
+    pub detect_edge_threshold: f32,
+    /// 0 Rendered, 1 Depth map, 2 Focus map.
+    pub display: u32,
+    pub mix: f32,
+}
+
+/// One channel of an auxiliary picture, by the shared
+/// [`CHANNEL_OPTIONS`](super::CHANNEL_OPTIONS) index — how a depth pass or an
+/// aperture image is reduced to the single number an effect reads.
+///
+/// Arithmetic only, deliberately: no `atan2` for hue, no `pow`, nothing whose
+/// exact form differs between Rust and WGSL (§1.6). Hue is the standard
+/// piecewise-linear sixth-of-a-turn form rather than the polar one, and every
+/// divide is guarded — a grey pixel has no hue and zero chroma must not become
+/// a NaN in the middle of a depth read.
+pub fn channel_of(rgba: &[f32], channel: u32) -> f32 {
+    let (r, g, b, a) = (rgba[0], rgba[1], rgba[2], rgba[3]);
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let chroma = max - min;
+    match channel {
+        0 => r,
+        1 => g,
+        2 => b,
+        3 => a,
+        // Rec.709, the same weights every other effect in the suite uses.
+        4 => 0.2126 * r + 0.7152 * g + 0.0722 * b,
+        6 => {
+            // Hue, normalised to 0..1. A grey pixel (zero chroma) has no hue;
+            // zero is the conventional answer and the only one that cannot
+            // divide by nothing.
+            if chroma <= 0.0 {
+                return 0.0;
+            }
+            let sixth = 1.0 / 6.0;
+            let hue = if max == r {
+                sixth * (((g - b) / chroma) % 6.0)
+            } else if max == g {
+                sixth * (((b - r) / chroma) + 2.0)
+            } else {
+                sixth * (((r - g) / chroma) + 4.0)
+            };
+            if hue < 0.0 {
+                hue + 1.0
+            } else {
+                hue
+            }
+        }
+        7 => {
+            // Saturation (HSL): zero on grey and at either extreme of
+            // lightness, where the denominator collapses.
+            let l = 0.5 * (max + min);
+            if chroma <= 0.0 {
+                return 0.0;
+            }
+            let denom = 1.0 - (2.0 * l - 1.0).abs();
+            if denom <= 0.0 {
+                0.0
+            } else {
+                chroma / denom
+            }
+        }
+        8 => 0.5 * (max + min), // Lightness (HSL)
+        // 5 and anything unknown: the plain mean of the colour channels, which
+        // is the default and reads the same whichever channel a grey depth pass
+        // was written to.
+        _ => (r + g + b) / 3.0,
+    }
+}
+
+/// Bokeh (docs/08 §3.27) — the advanced lens blur's CPU reference: the §1.6
+/// oracle the WGSL kernel must agree with, and the degradation ladder's fallback
+/// rung (K-019).
+///
+/// `depth` is the referenced layer's picture at this raster, **RGBA** rather
+/// than the single channel [`dof`] takes, because which channel carries depth is
+/// this effect's own control. `None` is the unbound case: the whole frame
+/// defocuses uniformly at `blur_radius`, and every part of the
+/// depth model resolve has already neutralised.
+///
+/// **Each added control contributes nothing of its own at its neutral value,
+/// and the branches below are why.** Concentration 0 and Remove edge leak 0 take
+/// the *unweighted* path rather than multiplying every tap by one: a weighted
+/// gather computes `Σ(c·w)/Σw`, which is not an identity in IEEE 754 even when
+/// every `w` is 1 — the trap a single-tap gather falls into.
+///
+/// It does **not** follow that a neutral Bokeh equals [`dof`] bit for bit.
+/// Resolution always quantises the ramp, this effect has no separate focus
+/// range, and its radius is one number rather than a near/far pair. The two
+/// share a gather; they are not the same effect wearing two labels.
+#[allow(clippy::too_many_arguments)]
+pub fn bokeh(rgba: &mut [f32], depth: Option<&[f32]>, w: u32, h: u32, p: &BokehParams) {
+    let wi = w as i32;
+    let hi = h as i32;
+    let original = rgba.to_vec();
+    let bound = depth.is_some();
+
+    // The depth at one pixel, post-channel-pick and post-invert.
+    let depth_at = |dm: &[f32], i: usize| {
+        let d = channel_of(&dm[i * 4..i * 4 + 4], p.depth_channel);
+        if p.depth_invert {
+            1.0 - d
+        } else {
+            d
+        }
+    };
+
+    // Focus is either the number or whatever depth sits under the point — the
+    // reason Focal distance greys out in the panel. The point is in this
+    // raster's pixels already (resolve scaled it), and is clamped rather than
+    // wrapped: a point dragged off the frame focuses on the nearest edge.
+    let focus = match (depth, p.use_focus_point) {
+        (Some(dm), true) => {
+            let fx = (p.focus_point[0].floor() as i32).clamp(0, wi - 1);
+            let fy = (p.focus_point[1].floor() as i32).clamp(0, hi - 1);
+            depth_at(dm, (fy * wi + fx) as usize)
+        }
+        _ => p.focal_distance,
+    };
+
+    let ramp = |d: f32| bokeh_ramp(d, focus, p.focus_falloff, p.depth_bands);
+
+    // The gather is unweighted unless something actually asks for weights, and
+    // then it is weighted for every tap. Two paths, not one path with a factor.
+    let weighted = p.concentration != 0.0 || (p.remove_edge_leak > 0.0 && bound);
+
+    for y in 0..hi {
+        for x in 0..wi {
+            let pi = (y * wi + x) as usize;
+            let oi = pi * 4;
+            let d_centre = depth.map_or(0.0, |dm| depth_at(dm, pi));
+            // The diagnostic views (mirror the kernel): write the view straight
+            // out, ignoring the gather, the composite and Mix alike. Resolve
+            // forces Rendered when no depth is bound, so these only ever run
+            // with a real depth pass behind them.
+            if p.display == 1 {
+                // Depth map: what the effect is actually reading, after the
+                // channel pick and the invert — the view that says whether the
+                // pass is aligned, upside down, or crushed to its two ends.
+                rgba[oi] = d_centre;
+                rgba[oi + 1] = d_centre;
+                rgba[oi + 2] = d_centre;
+                rgba[oi + 3] = 1.0;
+                continue;
+            }
+            if p.display == 2 {
+                // Focus map: white where sharp, darkening out of focus — where
+                // the effect thinks focus landed and how fast it falls away.
+                let m = 1.0 - ramp(d_centre);
+                rgba[oi] = m;
+                rgba[oi + 1] = m;
+                rgba[oi + 2] = m;
+                rgba[oi + 3] = 1.0;
+                continue;
+            }
+            let coc = match depth {
+                None => p.blur_radius,
+                Some(_) => p.blur_radius * ramp(d_centre),
+            };
+            // In focus: the aperture is a point, so the pixel keeps itself,
+            // untouched by the gather, the composite and Mix alike. The only way
+            // a sharp pixel stays bit-exact (`dof`'s §3.4 lesson).
+            if coc <= 0.0 {
+                continue;
+            }
+            let coc2 = coc * coc;
+            let ri = coc.ceil() as i32;
+
+            // **Pass one: the brightest excess in the aperture, per channel.**
+            //
+            // The power mean cannot be computed as `(Σ c^p / n)^(1/p)` in f32.
+            // At this effect's own default — Exposure 30, so `p = 32` — a
+            // channel at scene-linear 0.08 raises to 8e-36 and one at 0.05 to
+            // 2e-42, below the smallest normal. Averaging those and rooting them
+            // back yields zero, so **every channel below roughly 0.116 linear
+            // collapses to black**, per channel independently, which reads as
+            // black holes and saturated speckle rather than as a blur. A floor
+            // on the *mean* cannot save it: the underflow has already happened
+            // in the taps.
+            //
+            // Factoring the largest excess `M` out first is the standard fix and
+            // an exact identity:
+            //
+            //     (Σ w·c^p / Σw)^(1/p)  =  M · (Σ w·(c/M)^p / Σw)^(1/p)
+            //
+            // Every `c/M` is then in `[0, 1]`, the brightest tap contributes
+            // exactly 1, and the mean is bounded below by that tap's share of
+            // the weight — so nothing underflows and no floor is needed at all.
+            // It costs a second walk of the aperture, which is why this is two
+            // loops rather than one.
+            let mut peak = [0.0f32; 4];
+            for dy in -ri..=ri {
+                for dx in -ri..=ri {
+                    if in_bokeh_aperture(dx as f32, dy as f32, coc2, p).is_none() {
+                        continue;
+                    }
+                    let (sx, sy) = if p.repeat_edge {
+                        ((x + dx).clamp(0, wi - 1), (y + dy).clamp(0, hi - 1))
+                    } else {
+                        let (ox, oy) = (x + dx, y + dy);
+                        if ox < 0 || oy < 0 || ox >= wi || oy >= hi {
+                            continue;
+                        }
+                        (ox, oy)
+                    };
+                    let si = ((sy * wi + sx) * 4) as usize;
+                    for c in 0..4 {
+                        peak[c] = peak[c].max((original[si + c] - p.threshold).max(0.0));
+                    }
+                }
+            }
+
+            // Pass two: the gather proper.
+            let mut acc_lo = [0.0f32; 4];
+            let mut acc_hi = [0.0f32; 4];
+            let mut n = 0.0f32;
+            for dy in -ri..=ri {
+                for dx in -ri..=ri {
+                    let Some(r2) = in_bokeh_aperture(dx as f32, dy as f32, coc2, p) else {
+                        continue;
+                    };
+                    // Edge policy. Transparent contributes nothing *and keeps
+                    // its weight*, so a gather running off the frame darkens
+                    // toward the edge instead of brightening — the same reading
+                    // `edge_index` gives the blur family.
+                    let (sx, sy) = if p.repeat_edge {
+                        ((x + dx).clamp(0, wi - 1), (y + dy).clamp(0, hi - 1))
+                    } else {
+                        let ox = x + dx;
+                        let oy = y + dy;
+                        if ox < 0 || oy < 0 || ox >= wi || oy >= hi {
+                            n += if weighted {
+                                tap_weight(r2, coc2, p)
+                            } else {
+                                1.0
+                            };
+                            continue;
+                        }
+                        (ox, oy)
+                    };
+                    let si = ((sy * wi + sx) * 4) as usize;
+
+                    let mut wgt = if weighted {
+                        tap_weight(r2, coc2, p)
+                    } else {
+                        1.0
+                    };
+                    // Edge leak: a tap sitting across a depth discontinuity, in
+                    // *front* of this pixel, is sharp foreground colour bleeding
+                    // into a defocused background — the standard artefact of
+                    // gathering across an edge. Pull it back rather than drop
+                    // it, so the suppression is continuous in the slider.
+                    if weighted && p.remove_edge_leak > 0.0 {
+                        if let Some(dm) = depth {
+                            let dt = depth_at(dm, (sy * wi + sx) as usize);
+                            if (dt - d_centre).abs() > p.detect_edge_threshold && dt < d_centre {
+                                wgt *= 1.0 - p.remove_edge_leak;
+                            }
+                        }
+                    }
+
+                    for c in 0..4 {
+                        let v = original[si + c];
+                        acc_lo[c] += v.min(p.threshold) * wgt;
+                        // Normalised by the brightest excess, so the ratio is in
+                        // [0, 1] and its power cannot underflow (see pass one).
+                        // A peak of zero means nothing in the aperture is above
+                        // the threshold at all; the excess term is then zero and
+                        // the plain average is the whole answer.
+                        if peak[c] > 0.0 {
+                            let e = (v - p.threshold).max(0.0) / peak[c];
+                            acc_hi[c] += e.powf(p.bokeh_power) * wgt;
+                        }
+                    }
+                    n += wgt;
+                }
+            }
+            if n <= 0.0 {
+                continue;
+            }
+            for c in 0..4 {
+                // `M · (mean of the normalised powers)^(1/p)` — the identity
+                // pass one factored out, put back together. No floor: the
+                // brightest tap contributes exactly 1 to the sum, so the mean is
+                // at least its share of the weight and nothing underflows.
+                let rooted = if peak[c] > 0.0 {
+                    peak[c] * (acc_hi[c] / n).powf(1.0 / p.bokeh_power)
+                } else {
+                    0.0
+                };
+                let v = acc_lo[c] / n + rooted;
+                let o = original[oi + c];
+                // Composite mode: how the defocused result returns over the
+                // original. Normal is the plain replace, which is what makes
+                // mode 0 identical to `dof`'s blend.
+                let composited = match p.composite_mode {
+                    1 => o + v,
+                    2 => o + v - o * v,
+                    3 => o.max(v),
+                    4 => o.min(v),
+                    _ => v,
+                };
+                rgba[oi + c] = o * (1.0 - p.mix) + composited * p.mix;
+            }
+        }
+    }
+}
+
+/// Bokeh's defocus ramp: how far out of focus a depth is, as 0..1.
+///
+/// Distance from `focus`, scaled by `falloff`, smoothed, then quantised into
+/// `bands`. Mirrors `fx_bokeh.wgsl`'s `ramp` operation for operation, and is
+/// public so the band count's whole point — fewer distinct radii — is testable
+/// without running a gather.
+///
+/// **`falloff` is what the Profile control sets, and it is the difference
+/// between usable and all-or-nothing.** Without it the ramp reaches full blur
+/// only at a depth *distance of 1* — the entire range — which sounds gentle and
+/// is the opposite. A real depth pass puts nearly all of its content in a narrow
+/// band with one near object well outside it, so focusing anywhere leaves the
+/// scene almost sharp and that one object almost fully blurred, with nothing in
+/// between. Scaling the distance first is what puts the transition where the
+/// content actually is: above 1 the ramp bites sooner (a hard, shallow
+/// depth of field), below 1 it stretches out past the range so even the far
+/// extreme is only softened. The host computes it, so the kernel sees a plain
+/// multiplier and no `exp2`.
+///
+/// The smoothstep is longhand for the same reason [`dof`]'s is: the built-in's
+/// exact form is not guaranteed to match across the two languages.
+///
+/// **`_bands` is deliberately unused.** Resolution was read as a band count that
+/// quantised this ramp — one of the three controls docs/08 §3.27 records as
+/// guessed rather than observed — and the guess was actively wrong. A real depth
+/// pass puts nearly all its content in a narrow band, and quantising into the
+/// default six levels put that whole band in level zero and the one near object
+/// in level five: focus became all-or-nothing, and no shape of ramp could
+/// recover it because the quantisation snapped the result back to the two ends.
+/// The ramp is continuous again and the control is inert until someone can say
+/// what it does in the reference plugin. Keeping the parameter plumbed (rather
+/// than deleting it) is what makes turning it back on a one-line change.
+pub fn bokeh_ramp(d: f32, focus: f32, falloff: f32, _bands: f32) -> f32 {
+    let e = ((d - focus).abs() * falloff).clamp(0.0, 1.0);
+    e * e * (3.0 - 2.0 * e)
+}
+
+/// Whether a tap at offset `(dx, dy)` falls inside Bokeh's aperture — the bool
+/// half of [`in_bokeh_aperture`], public so the aperture's geometry can be
+/// tested directly. The scan box's correctness rests on every accepted tap
+/// lying inside the circle of radius `√coc2`, and that is a property of the
+/// shape, not of any picture it is run over.
+pub fn bokeh_tap_inside(dx: f32, dy: f32, coc2: f32, p: &BokehParams) -> bool {
+    in_bokeh_aperture(dx, dy, coc2, p).is_some()
+}
+
+/// One tap's radial weight (Concentration). Written multiplicatively in `coc2`
+/// so there is no division and no guard at `coc = 0`; the weights are only ever
+/// used as a ratio, so the common `coc2` factor cancels in the mean.
+///
+/// 0 is the flat disc — but the caller branches around this entirely at 0
+/// rather than trusting `w = coc2` to cancel exactly, because it does not: a
+/// constant factor through a sum is not an IEEE identity.
+fn tap_weight(r2: f32, coc2: f32, p: &BokehParams) -> f32 {
+    (coc2 + p.concentration * (2.0 * r2 - coc2)).max(0.0)
+}
+
+/// The tap's deformed `r²` when it is inside the aperture, else `None`.
+///
+/// Two things separate this from [`in_aperture`]. **Roundness reaches below
+/// zero**: the same test with a negative coefficient rewards distance from the
+/// centre, so the edge midpoints pull in while the vertices stay exactly on the
+/// circle — a star, with no new maths and no branch. **Deform** multiplies the
+/// tap offset before the test, and its multipliers are always ≥ 1, so the
+/// aperture only ever shrinks on one axis. Both matter for the same reason: the
+/// region stays inscribed in the circle of confusion at every setting, so the
+/// kernel's `ceil(coc)` scan box remains a correct bound on the taps.
+fn in_bokeh_aperture(dx: f32, dy: f32, coc2: f32, p: &BokehParams) -> Option<f32> {
+    let ax = dx * p.deform_scale[0];
+    let ay = dy * p.deform_scale[1];
+    let r2 = ax * ax + ay * ay;
+    let mut m = 0.0f32;
+    for n in p.blade_normals.iter().take(p.blade_count as usize) {
+        m = m.max(ax * n[0] + ay * n[1]);
+    }
+    let inside = (1.0 - p.roundness) * m * m + p.roundness * p.apothem2 * r2 <= p.apothem2 * coc2;
+    inside.then_some(r2)
 }
 
 /// Resolve a sample index under an edge policy; None = transparent.

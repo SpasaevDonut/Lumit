@@ -461,10 +461,16 @@ pub fn build_comp_draws_at(
             use lumit_core::model::EffectNamespace;
             effects
                 .iter()
+                // "One slot per effect op that declares a Layer parameter"
+                // (docs/impl/layer-input.md §2) — the contract has always been
+                // general; this is the list of built-ins that take one. Both
+                // name their depth reference `depth`, and both resolve to
+                // exactly one op, so the 1:1 ordering with `run_ops`'s counter
+                // holds across the two.
                 .filter(|e| {
                     e.enabled
                         && e.effect.namespace == EffectNamespace::Builtin
-                        && e.effect.match_name == "dof"
+                        && matches!(e.effect.match_name.as_str(), "dof" | "bokeh")
                 })
                 .map(|e| {
                     // "This layer" (K-288): a reference to the layer the effect

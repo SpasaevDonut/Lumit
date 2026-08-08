@@ -1356,6 +1356,90 @@ ColorFilter? channelFilterFor(ViewerChannel channel) => switch (channel) {
 Rect checkerArea(Rect picture, Size panel) =>
     picture.intersect(Offset.zero & panel);
 
+/// The armed point pick: a crosshair cursor over the picture, waiting for the
+/// click that answers a parameter row (docs/07 §6).
+///
+/// **Why it is an overlay rather than a listener.** While a pick is armed the
+/// click has exactly one meaning, and every other thing a click does in the
+/// Viewer — panning the picture, grabbing a layer's move handle — has to stand
+/// down for it. Sitting on top and taking the gesture is what makes that true;
+/// a listener further up the tree would fire *as well as* the pan underneath,
+/// so picking a focus point would also nudge the picture.
+///
+/// A click outside the picture, or Escape, cancels rather than picking: the
+/// surround is not a place in the composition, so there is no point there to
+/// report.
+class _PickOverlay extends StatefulWidget {
+  /// Where the picture actually sits on screen, and how big the comp is —
+  /// together they turn a screen point into a composition point.
+  final Rect fitted;
+  final BridgeCompSize size;
+  final void Function(double x, double y) onPicked;
+  final VoidCallback onCancel;
+
+  const _PickOverlay({
+    required this.fitted,
+    required this.size,
+    required this.onPicked,
+    required this.onCancel,
+  });
+
+  @override
+  State<_PickOverlay> createState() => _PickOverlayState();
+}
+
+class _PickOverlayState extends State<_PickOverlay> {
+  final FocusNode _focus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    // Escape has to reach us without the user clicking first, so the overlay
+    // takes focus the moment it is armed.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focus.requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _focus.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Focus(
+      focusNode: _focus,
+      autofocus: true,
+      onKeyEvent: (_, event) {
+        if (event is KeyDownEvent &&
+            event.logicalKey == LogicalKeyboardKey.escape) {
+          widget.onCancel();
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: MouseRegion(
+        cursor: SystemMouseCursors.precise,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapDown: (d) {
+            final scale = widget.fitted.width / widget.size.width;
+            if (scale <= 0 || !widget.fitted.contains(d.localPosition)) {
+              // Outside the picture is not a place in the composition.
+              widget.onCancel();
+              return;
+            }
+            final p = (d.localPosition - widget.fitted.topLeft) / scale;
+            widget.onPicked(p.dx, p.dy);
+          },
+        ),
+      ),
+    );
+  }
+}
+
 /// The transparency checkerboard behind the picture.
 ///
 /// [picture] is where the picture is drawn in the panel; the board fills that

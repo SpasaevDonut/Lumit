@@ -66,7 +66,7 @@ pub struct MatteDraw {
 /// effect stack is not applied), exactly as a matte source is — so a depth
 /// reference can never recurse into another effect, and the preview and export
 /// threads produce the same depth pass (K-031).
-pub struct DofInputDraw {
+pub struct LayerInputDraw {
     pub rgba: Vec<u8>,
     pub tex_w: u32,
     pub tex_h: u32,

@@ -430,6 +430,23 @@ class LumitNotice {
   const LumitNotice(this.message, {this.error = false});
 }
 
+/// A parameter row waiting for a click in the Viewer.
+///
+/// `owner` names the row that armed it — the effect id and parameter — so the
+/// crosshair that is currently armed can draw itself lit while the others stay
+/// plain, and so a rebuild can tell "my pick" from "someone else's".
+class ViewerPickRequest {
+  /// Distinguishes this row from every other; the row builds it from the effect
+  /// id and the parameter id.
+  final String owner;
+
+  /// Where the click landed, in composition pixels with the origin at the
+  /// picture's top-left — the space a point parameter is authored in.
+  final void Function(double x, double y) onPicked;
+
+  const ViewerPickRequest({required this.owner, required this.onPicked});
+}
+
 class LumitUiState extends ChangeNotifier {
   /// Everything that outlives the session: the panel layout, the appearance,
   /// UI scale, tooltips, autosave and export defaults.
@@ -535,6 +552,36 @@ class LumitUiState extends ChangeNotifier {
   final ValueNotifier<int> paletteRequest = ValueNotifier(0);
 
   void requestPalette() => paletteRequest.value++;
+
+  /// The point pick a parameter row is waiting on, or null when none is armed
+  /// (docs/07 §6: "point parameters with a crosshair button that arms a
+  /// click-in-Viewer pick").
+  ///
+  /// **Why it lives here.** The row that wants the point and the Viewer that
+  /// can supply it are different panels with no path between them; this is the
+  /// one place both already reach. The row arms it and waits, the Viewer's next
+  /// click inside the picture completes it, and Escape or a second click on the
+  /// crosshair cancels — the same shape as [togglePlayRequest], a request one
+  /// panel raises and another answers.
+  ///
+  /// Only one pick can be armed at a time, which is what the whole-value
+  /// notifier expresses: arming a second crosshair cancels the first rather
+  /// than leaving two rows waiting for the same click.
+  final ValueNotifier<ViewerPickRequest?> viewerPick = ValueNotifier(null);
+
+  /// Arm a pick, cancelling whatever was armed before it.
+  void armViewerPick(ViewerPickRequest request) => viewerPick.value = request;
+
+  /// Disarm without picking — Escape, or the crosshair clicked a second time.
+  void cancelViewerPick() => viewerPick.value = null;
+
+  /// The Viewer reporting where the click landed, in composition pixels.
+  void completeViewerPick(double x, double y) {
+    final request = viewerPick.value;
+    if (request == null) return;
+    viewerPick.value = null;
+    request.onPicked(x, y);
+  }
 
   /// Bumped each time a rendered frame reaches the Viewer, on any of the three
   /// transports. Watched by anything that redraws when the picture does — the
