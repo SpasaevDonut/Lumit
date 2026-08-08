@@ -110,7 +110,9 @@ const links = [
   .nav-reveal {
     display: grid;
     grid-template-columns: 0fr;
-    transition: grid-template-columns 0.35s cubic-bezier(0.33, 1, 0.68, 1);
+    /* The delay is a grace period on collapse only: an open label holds for a
+       beat after the pointer leaves, in case it is coming straight back. */
+    transition: grid-template-columns 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.15s;
   }
   .nav-label {
     overflow: hidden;
@@ -120,15 +122,24 @@ const links = [
        would hold the box open at its own width when closed. */
     text-indent: 0.4em;
     opacity: 0;
-    transition: opacity 0.25s ease;
+    transition: opacity 0.25s ease 0.15s;
+  }
+  /* While the pointer is anywhere over the nav, the grace period is off: a
+     label vacates at once for whichever neighbour is being hovered instead.
+     Opening never waits — its own hover rule below also zeroes the delay. */
+  [data-iconnav]:hover .nav-reveal,
+  [data-iconnav]:hover .nav-label {
+    transition-delay: 0s;
   }
   .nav-item:hover .nav-reveal,
   .nav-item:focus-visible .nav-reveal {
     grid-template-columns: 1fr;
+    transition-delay: 0s;
   }
   .nav-item:hover .nav-label,
   .nav-item:focus-visible .nav-label {
     opacity: 1;
+    transition-delay: 0s;
   }
 </style>
 
