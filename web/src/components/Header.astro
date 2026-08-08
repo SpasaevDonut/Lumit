@@ -1,9 +1,10 @@
 ---
 // Same-page sections stay plain text; the destinations that leave the page
 // are icons that reveal their label on hover or keyboard focus: the icon
-// holds still and the label unrolls on its right. Each item animates
-// independently, so sliding along the row opens the next label while the
-// last one is still closing.
+// holds still and the name flies out on its left, character by character
+// from the icon outward. The items sit flush — each one's padding meets the
+// next — so a pointer crossing the strip is always over something, and the
+// next label starts opening the moment the last one starts closing.
 //
 // Icons are inline 24x24 paths, stroke unless `fill` (the two brand marks).
 const links = [
@@ -60,17 +61,25 @@ const links = [
       <img src="/lumit-mark.svg" alt="" width="26" height="26" class="block" />
       <span class="text-[19px] font-semibold tracking-[-0.035em] text-fg">Lumit</span>
     </a>
-    <nav class="flex items-center gap-5" data-iconnav>
+    <nav class="-mr-2.5 flex items-center" data-iconnav>
       {
         links.map((l) =>
           l.icon ? (
             <a
               href={l.href}
               class:list={[
-                "nav-item items-center text-fg-2 no-underline transition-colors hover:text-fg focus-visible:text-fg",
+                "nav-item items-center self-stretch px-2.5 text-fg-2 no-underline transition-colors hover:text-fg focus-visible:text-fg",
                 l.small ? "inline-flex" : "hidden sm:inline-flex",
               ]}
             >
+              <span class="nav-reveal">
+                <span class="nav-label text-[14.5px]">
+                  {l.label.split("").map((c, i) => (
+                    <span class="nav-char" style={`--i: ${i}`}>{c}</span>
+                  ))}
+                  <span class="inline-block w-[0.4em]" />
+                </span>
+              </span>
               <svg
                 width="19"
                 height="19"
@@ -83,13 +92,12 @@ const links = [
                 stroke-linejoin="round"
                 set:html={l.icon}
               />
-              <span class="nav-reveal"><span class="nav-label text-[14.5px]">{l.label}</span></span>
             </a>
           ) : (
             <a
               href={l.href}
               class:list={[
-                "text-[14.5px] text-fg-2 no-underline transition-colors hover:text-fg",
+                "px-2.5 text-[14.5px] text-fg-2 no-underline transition-colors hover:text-fg",
                 !l.small && "hidden sm:inline",
               ]}
             >
@@ -106,29 +114,37 @@ const links = [
   /* The reveal is a one-column grid animating 0fr -> 1fr: the track eases over
      the label's exact width, which is what makes it feel smooth — a max-width
      transition eases over an arbitrary cap instead, so most of its duration is
-     spent on width that isn't there. */
+     spent on width that isn't there. The label sits before the icon, and the
+     nav is right-aligned, so the icon holds still while the name grows out of
+     its left side.
+     The 0.15s delay is a grace period on collapse only: an open label holds
+     for a beat after the pointer leaves, in case it is coming straight back. */
   .nav-reveal {
     display: grid;
     grid-template-columns: 0fr;
-    /* The delay is a grace period on collapse only: an open label holds for a
-       beat after the pointer leaves, in case it is coming straight back. */
     transition: grid-template-columns 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.15s;
   }
   .nav-label {
     overflow: hidden;
     white-space: nowrap;
     min-width: 0;
-    /* The icon gap; text-indent scales away with the track, where padding
-       would hold the box open at its own width when closed. */
-    text-indent: 0.4em;
+  }
+  /* Each character starts a half-em toward the icon and slides to rest as it
+     fades in, staggered from the icon outward — the word flies out of the
+     icon rather than fading in as a block. */
+  .nav-char {
+    display: inline-block;
     opacity: 0;
-    transition: opacity 0.25s ease 0.15s;
+    transform: translateX(0.5em);
+    transition:
+      opacity 0.18s ease 0.15s,
+      transform 0.3s cubic-bezier(0.33, 1, 0.68, 1) 0.15s;
   }
   /* While the pointer is anywhere over the nav, the grace period is off: a
      label vacates at once for whichever neighbour is being hovered instead.
-     Opening never waits — its own hover rule below also zeroes the delay. */
+     Opening never waits — the hover rules below set their own delays. */
   [data-iconnav]:hover .nav-reveal,
-  [data-iconnav]:hover .nav-label {
+  [data-iconnav]:hover .nav-char {
     transition-delay: 0s;
   }
   .nav-item:hover .nav-reveal,
@@ -136,10 +152,11 @@ const links = [
     grid-template-columns: 1fr;
     transition-delay: 0s;
   }
-  .nav-item:hover .nav-label,
-  .nav-item:focus-visible .nav-label {
+  .nav-item:hover .nav-char,
+  .nav-item:focus-visible .nav-char {
     opacity: 1;
-    transition-delay: 0s;
+    transform: translateX(0);
+    transition-delay: calc(var(--i) * 0.022s);
   }
 </style>
 

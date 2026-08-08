@@ -105,7 +105,7 @@ const roadmap = [
         <Wordmark class="mb-9 w-[min(340px,68vw)]" />
         <a class="pill" href="/download">
           <span class="h-1.5 w-1.5 rounded-full bg-key-cy"></span>
-          <b class="font-medium text-fg">v0.1.0</b> - public beta
+          <b class="font-medium text-fg" data-ver>v0.2.0</b> - public beta
         </a>
       </div>
       <h1
@@ -305,12 +305,14 @@ const roadmap = [
 
 <script>
   // Name the visitor's OS on the hero button and point it straight at that
-  // platform's installer. Pure enhancement: the button ships pointing at
-  // /download, and every failure here leaves it there. "View all download
-  // options" underneath is the route for everyone else.
+  // platform's installer, and let the version pill say whatever the latest
+  // GitHub release says. Pure enhancement: the button ships pointing at
+  // /download and the pill ships with the version current at deploy time,
+  // and every failure here leaves them be. "View all download options"
+  // underneath is the route for everyone else.
   const ASSET: Record<string, RegExp> = {
     Windows: /windows.*\.exe$/i,
-    Linux: /linux.*\.tar\.gz$/i,
+    Linux: /linux.*\.flatpak$/i,
     macOS: /\.dmg$/i,
   };
 
@@ -324,24 +326,26 @@ const roadmap = [
         : null;
 
   const btn = document.querySelector<HTMLAnchorElement>("[data-dl]");
+  const ver = document.querySelector("[data-ver]");
 
-  if (os) {
-    if (btn) btn.textContent = `Download for ${os}`;
+  if (os && btn) btn.textContent = `Download for ${os}`;
 
-    type Asset = { name: string; browser_download_url: string };
-    fetch("https://api.github.com/repos/luminalmvm/Lumit/releases/latest")
-      .then((r) => {
-        if (!r.ok) throw new Error(String(r.status));
-        return r.json() as Promise<{ assets: Asset[] }>;
-      })
-      .then((rel) => {
+  type Asset = { name: string; browser_download_url: string };
+  fetch("https://api.github.com/repos/luminalmvm/Lumit/releases/latest")
+    .then((r) => {
+      if (!r.ok) throw new Error(String(r.status));
+      return r.json() as Promise<{ tag_name: string; assets: Asset[] }>;
+    })
+    .then((rel) => {
+      if (ver && rel.tag_name) ver.textContent = rel.tag_name;
+      if (os && btn) {
         const asset = rel.assets.find((a) => ASSET[os].test(a.name));
-        if (asset && btn) btn.href = asset.browser_download_url;
-      })
-      .catch(() => {
-        /* the /download link the button ships with stands */
-      });
-  }
+        if (asset) btn.href = asset.browser_download_url;
+      }
+    })
+    .catch(() => {
+      /* the shipped pill and /download link stand */
+    });
 
   // Feature clips play on hover. A clip that fails to load takes its whole media
   // block with it, so cards degrade to plain text until the file exists.
