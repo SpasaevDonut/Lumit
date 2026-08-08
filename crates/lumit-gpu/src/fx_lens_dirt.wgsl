@@ -127,10 +127,10 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
         let ee_size = vec2<f32>(textureDimensions(src));
         let ee_coord = vec2<i32>(i32(u_x * (ee_size.x - 1.0)), i32(u_y * (ee_size.y - 1.0)));
         let ee_col = textureLoad(src, ee_coord, 0);
-        dirt_r = ee_col.r;
-        dirt_g = ee_col.g;
-        dirt_b = ee_col.b;
-    } else {
+        let orig_a = textureLoad(orig, xy, 0).a;
+        textureStore(dst, xy, vec4<f32>(ee_col.rgb, orig_a));
+        return;
+    }
         for (var layer_idx = 0u; layer_idx < num_layers; layer_idx++) {
             let layer_seed = eval_seed + layer_idx * 0x9e3779b9u;
             let layer_scale_factor = 0.7 + 0.4 * f32(layer_idx);
@@ -303,7 +303,6 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
             dirt_g *= v_factor;
             dirt_b *= v_factor;
         }
-    }
 
     var bg_r: f32 = 0.0;
     var bg_g: f32 = 0.0;

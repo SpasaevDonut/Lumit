@@ -1969,12 +1969,15 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
                 let tx = ((u_x * (EE_W - 1) as f32) as usize).min(EE_W - 1);
                 let ty = ((u_y * (EE_H - 1) as f32) as usize).min(EE_H - 1);
                 let ee_idx = (ty * EE_W + tx) * 4;
-                dirt_r = EASTER_EGG_1337_BYTES[ee_idx] as f32 / 255.0;
-                dirt_g = EASTER_EGG_1337_BYTES[ee_idx + 1] as f32 / 255.0;
-                dirt_b = EASTER_EGG_1337_BYTES[ee_idx + 2] as f32 / 255.0;
-            } else {
-                // 1. Multi-layered out-of-focus Bokeh disks & Dust specks
-                for layer_idx in 0..num_layers {
+                rgba[idx] = EASTER_EGG_1337_BYTES[ee_idx] as f32 / 255.0;
+                rgba[idx + 1] = EASTER_EGG_1337_BYTES[ee_idx + 1] as f32 / 255.0;
+                rgba[idx + 2] = EASTER_EGG_1337_BYTES[ee_idx + 2] as f32 / 255.0;
+                rgba[idx + 3] = original[idx + 3];
+                continue;
+            }
+
+            // 1. Multi-layered out-of-focus Bokeh disks & Dust specks
+            for layer_idx in 0..num_layers {
                 let layer_seed = eval_seed.wrapping_add(layer_idx.wrapping_mul(0x9e3779b9));
 
                 let layer_scale_factor = 0.7 + 0.4 * (layer_idx as f32);
@@ -2159,7 +2162,6 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
                     dirt_g *= v_factor;
                     dirt_b *= v_factor;
                 }
-            }
 
             let (bg_r, bg_g, bg_b) = if p.bg_mode == 0 {
                 (0.0f32, 0.0f32, 0.0f32)
