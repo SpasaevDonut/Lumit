@@ -312,6 +312,22 @@ A single compact bar at the bottom of the Viewer holds, left to right:
     grey / custom.
 11. **Current time** readout in the comp's timecode; click to type a time. A time outside
     the composition lands on the nearest end rather than being refused (K-287).
+12. **Exposure** (K-314): a small box scrubbing on drag and taking a typed number, with an
+    aperture icon beside it, reading signed stops to one decimal — `+0.0`, `+1.4`, `-2.3`.
+    The number means what the Exposure effect's does: the same `2^stops` gain in
+    scene-linear (K-106), so the two agree. **Preview only; it MUST NOT change the
+    export.**
+13. **Tone mapping** toggle (K-314): an icon, no menu. A fixed highlight rolloff — the
+    identity below the knee, so an ordinary composite is untouched, and a smooth shoulder
+    above it that folds however-bright highlights back under 1 instead of letting them clip
+    flat. It is the "what is actually up there" switch for a comp whose values run past 1,
+    not a grade. **Preview only; it MUST NOT change the export**, and it MUST NOT adapt to
+    the frame's content: a picture that re-exposes itself per frame breathes across every
+    cut, and a revisited frame would stop being the frame it was.
+
+Items 12 and 13 both persist **per comp** with the project, and while either is engaged
+the Viewer MUST say the picture is not the export — item 8's badge is where that lives,
+stated calmly rather than warned about (15-DESIGN).
 
 The bar MUST remain one row; overflow collapses from the right into a chevron menu.
 

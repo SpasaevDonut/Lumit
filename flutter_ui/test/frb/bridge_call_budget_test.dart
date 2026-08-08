@@ -290,7 +290,8 @@ void main() {
               find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}')))
           .width;
       final before = barWidth();
-      final track = tester.getRect(find.byKey(const ValueKey('tl-zoom-slider')));
+      final track =
+          tester.getRect(find.byKey(const ValueKey('tl-zoom-slider')));
       counter
         ..reset()
         ..counting = true;
@@ -555,6 +556,16 @@ void main() {
         0,
         reason: 'a compile-time constant is read once, not per frame',
       );
+      // The exposure box and the tone-map switch (K-314) are told to the engine
+      // when they *change*, and are drawn from the value the frontend already
+      // holds. A rebuild must not restate them: that would be a call per frame
+      // for a setting that has not moved, and every one of them would ask for
+      // the frame again in turn.
+      expect(
+        counter.calls['composition_reference_set_display_view'] ?? 0,
+        0,
+        reason: 'the display view is pushed on change, never on a rebuild',
+      );
       // What is left is one `render_frame` for each move of the playhead —
       // the request the move is for. Measured at 10 for 10 frames; the cap is
       // two for each frame, so honest growth does not trip it.
@@ -575,6 +586,7 @@ void main() {
         maxRounds: 100,
       );
     });
+
     /// **Panning the picture must ask the engine nothing (K-230).**
     ///
     /// A pan moves where the picture is drawn and changes nothing else, but it
@@ -785,8 +797,8 @@ void main() {
       // ignore: avoid_print
       print('POINT DRAG COST ${counter.total} calls\n${counter.ranking()}');
       expect(
-        counter
-                .calls['composition_reference_render_frame_with_shape_preview'] ??
+        counter.calls[
+                'composition_reference_render_frame_with_shape_preview'] ??
             0,
         greaterThan(0),
         reason: 'the drag showed no picture until it was let go:\n'

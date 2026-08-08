@@ -54,6 +54,7 @@ import '../state/preview_throttle.dart';
 import '../state/settings.dart';
 import '../state/tools.dart';
 import '../state/timecode.dart';
+import '../state/workspace.dart' show ViewerLook;
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 import '../widgets/dropper_overlay.dart';
@@ -297,6 +298,9 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
             channel: _channel,
             grid: _grid,
             wireframes: _wireframes,
+            look: ui.viewerLook,
+            onStops: ui.setViewerStops,
+            onToneMap: ui.toggleViewerToneMap,
             playing: playing,
             frame: frame,
             settings: settings,
@@ -1407,6 +1411,12 @@ class _Toolbar extends StatelessWidget {
   final ViewerChannel channel;
   final bool grid;
   final bool wireframes;
+
+  /// How the fronted comp is being looked at (K-314). Passed down rather than
+  /// read here: this bar rebuilds for every frame that arrives, and a control
+  /// that asks the engine what it is set to would cross the boundary sixty
+  /// times a second to be told what the frontend already knows.
+  final ViewerLook look;
   final bool playing;
   final int frame;
   final BridgeCompSettings settings;
@@ -1415,6 +1425,8 @@ class _Toolbar extends StatelessWidget {
   final ValueChanged<ViewerChannel> onChannel;
   final VoidCallback onGrid;
   final VoidCallback onWireframes;
+  final ValueChanged<double> onStops;
+  final VoidCallback onToneMap;
   final VoidCallback onPlayPause;
   final ValueChanged<int> onSeek;
 
@@ -1433,6 +1445,9 @@ class _Toolbar extends StatelessWidget {
     required this.channel,
     required this.grid,
     required this.wireframes,
+    required this.look,
+    required this.onStops,
+    required this.onToneMap,
     required this.playing,
     required this.frame,
     required this.settings,
@@ -1521,6 +1536,52 @@ class _Toolbar extends StatelessWidget {
               onPressed: onGrid,
               child: Text(l10n.viewerGrid,
                   style: t.small.copyWith(color: grid ? t.accent : null)),
+            ),
+          ),
+          const SizedBox(width: 6),
+          // Exposure and the tone map (K-314, docs/07 §2.2 items 12-13): the
+          // two preview-only controls. Both read in the accent while they are
+          // engaged, which is — until the colour-management badge of item 8
+          // exists — the whole of how the Viewer says the picture is not the
+          // export. That badge is where the statement belongs (docs/TODO.md).
+          lumitIcon(
+            LumitIcon.aperture,
+            size: iconSize,
+            color: look.stops == 0 ? t.textSecondary : t.accent,
+          ),
+          const SizedBox(width: 4),
+          LumitTooltip(
+            message: l10n.tipViewerExposure,
+            child: DragValueField(
+              key: const ValueKey('viewer-exposure'),
+              value: look.stops,
+              // Ten stops each way: past that a picture is white or black
+              // whatever is in it, so the drag has somewhere to stop.
+              min: -10,
+              max: 10,
+              speed: 0.1,
+              decimals: 1,
+              signed: true,
+              resetTo: 0,
+              // Snapped to the tenth the box actually reads, so a drag cannot
+              // leave a hair of exposure behind that shows as `+0.0` while the
+              // engine treats the view as engaged and banks nothing.
+              onChanged: (v) => onStops((v * 10).round() / 10),
+            ),
+          ),
+          const SizedBox(width: 6),
+          LumitTooltip(
+            message: l10n.tipViewerToneMap,
+            child: HouseButton(
+              key: const ValueKey('viewer-tone-map'),
+              small: true,
+              frameless: true,
+              onPressed: onToneMap,
+              child: lumitIcon(
+                LumitIcon.toneMap,
+                size: iconSize,
+                color: look.toneMap ? t.accent : t.textSecondary,
+              ),
             ),
           ),
           const SizedBox(width: 6),

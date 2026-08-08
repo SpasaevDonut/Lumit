@@ -1770,7 +1770,7 @@ pub fn render_for_display(
     layers: &[CompositeLayer<'_>],
 ) -> wgpu::Texture {
     let linear = compositor.composite(ctx, width, height, background, layers);
-    colour.display(ctx, &linear)
+    colour.display(ctx, &linear, crate::DisplayParams::NEUTRAL)
 }
 
 #[cfg(test)]
@@ -2100,7 +2100,7 @@ mod tests {
                 &[layer(z)],
                 Some(cam),
             );
-            let shown = colour.display(&ctx, &linear);
+            let shown = colour.display(&ctx, &linear, crate::DisplayParams::NEUTRAL);
             let back = colour.readback8(&ctx, &shown).unwrap();
             back.chunks_exact(4).filter(|p| p[0] > 200).count() as f64
         };
@@ -2427,7 +2427,7 @@ mod tests {
                 pre: None,
             }],
         );
-        let shown = colour.display(&ctx, &linear);
+        let shown = colour.display(&ctx, &linear, crate::DisplayParams::NEUTRAL);
         let back = colour.readback8(&ctx, &shown).unwrap();
         let px = |x: usize, y: usize| back[(y * 8 + x) * 4];
         assert!(px(1, 4) > 240, "inside mask stays white: {}", px(1, 4));

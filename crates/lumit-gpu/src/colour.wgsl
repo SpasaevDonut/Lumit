@@ -28,8 +28,66 @@ fn vs_fullscreen(@builtin(vertex_index) i: u32) -> VsOut {
 
 @group(0) @binding(0) var src: texture_2d<f32>;
 @group(0) @binding(1) var samp: sampler;
+@group(0) @binding(2) var<uniform> view: ViewParams;
+
+// The two viewer-only controls (docs/07-UI-SPEC.md §2.2, docs/06 §3.3, K-314).
+// Neither may ever reach an export: every export path passes the neutral value,
+// which this shader short-circuits on so a neutral pass is bit-identical to the
+// plain copy it used to be.
+struct ViewParams {
+    /// 2^stops, computed host-side so the Viewer's number and the Exposure
+    /// effect's multiply by the identical float (K-106). 1.0 is neutral.
+    gain: f32,
+    /// 0 off, 1 on. A fixed curve, no measurement, no carried state — the
+    /// picture at a frame never depends on which frame preceded it.
+    tone_map: u32,
+    _pad0: f32,
+    _pad1: f32,
+};
+
+/// Rec. 709 luminance, the working space's own primaries (docs/06 §3).
+fn luma(c: vec3<f32>) -> f32 {
+    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
+
+/// Where the shoulder starts. Below this the curve is the identity, exactly —
+/// which is the whole promise of the control: on an ordinary composite whose
+/// values never pass 1, turning it on changes nothing at all.
+const KNEE: f32 = 0.8;
+
+/// Fold everything above the knee into the room left below 1.
+///
+/// `knee + room * (1 - exp(-(L - knee) / room))` has slope exactly 1 at the
+/// knee, so the join is smooth, and approaches 1 without ever reaching it, so
+/// no highlight — however bright — clips flat. It is a rolloff, not a grade:
+/// scaling RGB by the luminance ratio keeps hue and saturation where the
+/// author put them.
+fn tone_map_rgb(c: vec3<f32>) -> vec3<f32> {
+    let l = luma(c);
+    if (l <= KNEE) {
+        return c;
+    }
+    let room = 1.0 - KNEE;
+    let mapped = KNEE + room * (1.0 - exp(-(l - KNEE) / room));
+    return c * (mapped / l);
+}
 
 @fragment
 fn fs_copy(in: VsOut) -> @location(0) vec4<f32> {
-    return textureSample(src, samp, in.uv);
+    let s = textureSample(src, samp, in.uv);
+    // The neutral point, bit-exact: the linearise pass and every export take
+    // this branch, so they are the copy they always were.
+    if (view.gain == 1.0 && view.tone_map == 0u) {
+        return s;
+    }
+    // A scene-linear gain is a scalar, so premultiplied alpha rides through it
+    // untouched (K-106). The curve is not linear, so it has to see the colour
+    // the author authored: unpremultiply, map, put it back.
+    var rgb = s.rgb * view.gain;
+    if (view.tone_map != 0u && s.a > 0.0) {
+        rgb = tone_map_rgb(rgb / s.a) * s.a;
+    } else if (view.tone_map != 0u) {
+        rgb = tone_map_rgb(rgb);
+    }
+    return vec4<f32>(rgb, s.a);
 }

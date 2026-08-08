@@ -15,6 +15,15 @@ import '../theme/theme.dart';
 import 'dock.dart';
 import 'settings.dart';
 
+/// How the Viewer is looking at one composition (K-314): exposure in stops and
+/// whether the tone map is engaged. A record rather than a class because it is
+/// two numbers with no behaviour, and records compare by value — which is what
+/// [SavedSession]'s equality needs.
+typedef ViewerLook = ({double stops, bool toneMap});
+
+/// Neither control engaged: the picture is the export.
+const ViewerLook neutralLook = (stops: 0.0, toneMap: false);
+
 /// The per-project session the egui shell restores on open (its `SavedSession`,
 /// crates/lumit-ui/src/app_state/mod.rs): which compositions are open, which is
 /// fronted, where the playhead sits, and which layer is selected. Ids are the
@@ -26,6 +35,13 @@ class SavedSession {
   final String? activeComp;
   final int frame;
   final String? selectedLayer;
+
+  /// The Viewer's exposure and tone map, per composition id (K-314). A way of
+  /// *looking*, not an edit to the work: it rides in the session (and thus in
+  /// the `.lum`'s `ui_state` blob, K-245) rather than in the document, so
+  /// Ctrl+Z never undoes an exposure nudge and setting one does not make the
+  /// project dirty. Comps looking at neutral are simply absent.
+  final Map<String, ViewerLook> viewerLooks;
 
   /// How the panels were arranged for this project, as [DockSplit.toJson]
   /// (K-245) — the arrangement itself, not the name of a preset, because the
@@ -44,6 +60,7 @@ class SavedSession {
     this.frame = 0,
     this.selectedLayer,
     this.dock,
+    this.viewerLooks = const {},
   });
 
   Map<String, dynamic> toJson() => {
@@ -52,7 +69,28 @@ class SavedSession {
         'frame': frame,
         'selected_layer': selectedLayer,
         'dock': dock,
+        'viewer_looks': {
+          for (final e in viewerLooks.entries)
+            e.key: {'stops': e.value.stops, 'tone_map': e.value.toneMap},
+        },
       };
+
+  /// The looks out of a session's JSON, dropping any entry that is not the
+  /// shape this build writes — a project from another build must open, looking
+  /// neutral, rather than fail to open.
+  static Map<String, ViewerLook> _looksFromJson(Object? raw) {
+    if (raw is! Map) return const {};
+    return {
+      for (final e in raw.entries)
+        if (e.key is String &&
+            e.value is Map &&
+            (e.value as Map)['stops'] is num)
+          e.key as String: (
+            stops: ((e.value as Map)['stops'] as num).toDouble(),
+            toneMap: (e.value as Map)['tone_map'] == true,
+          ),
+    };
+  }
 
   factory SavedSession.fromJson(Map<String, dynamic> j) => SavedSession(
         openComps: j['open_comps'] is List
@@ -70,6 +108,7 @@ class SavedSession {
         dock: j['dock'] is Map
             ? (j['dock'] as Map).cast<String, dynamic>()
             : null,
+        viewerLooks: _looksFromJson(j['viewer_looks']),
       );
 
   /// The arrangement compared by value. Encoding is the cheap deep compare
@@ -84,6 +123,7 @@ class SavedSession {
       other.frame == frame &&
       other.selectedLayer == selectedLayer &&
       other._dockKey == _dockKey &&
+      mapEquals(other.viewerLooks, viewerLooks) &&
       listEquals(other.openComps, openComps);
 
   @override
@@ -93,6 +133,9 @@ class SavedSession {
         selectedLayer,
         _dockKey,
         Object.hashAll(openComps),
+        Object.hashAll([
+          for (final e in viewerLooks.entries) Object.hash(e.key, e.value),
+        ]),
       );
 }
 

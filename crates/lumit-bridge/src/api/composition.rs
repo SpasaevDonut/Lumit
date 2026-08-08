@@ -1410,6 +1410,22 @@ impl CompositionReference {
         ))
     }
 
+    /// Set what the Viewer looks *through*: `stops` of exposure and whether the
+    /// tone map is engaged (K-314, docs/07 §2.2 items 12-13).
+    ///
+    /// **Preview only.** It moves the display encode of every frame the session
+    /// renderer composites from here on and nothing else — no document, no op,
+    /// no undo step. An export builds its own renderer and this is never sent
+    /// to it, so the export is neutral by construction.
+    ///
+    /// The frontend follows this with its ordinary request for the frame under
+    /// the playhead: a setting changes what the *next* frame looks like, and
+    /// without an ask the picture would not move until something else did.
+    #[frb(sync)]
+    pub fn set_display_view(&self, stops: f64, tone_map: bool) -> Result<(), BridgeError> {
+        self.dispatch(WorkerRequest::SetDisplayView { stops, tone_map })
+    }
+
     /// Stop playing, and silence the sound. Harmless when nothing is playing.
     #[frb(sync)]
     pub fn stop_playback(&self) -> Result<(), BridgeError> {

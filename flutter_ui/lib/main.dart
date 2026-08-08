@@ -1307,8 +1307,67 @@ class LumitUiState extends ChangeNotifier {
     }
     _selectedComp = reference;
     model.bind(reference);
+    // Each comp is looked at its own way (K-314), so fronting one is what puts
+    // its exposure and tone map back on the engine's renderer — which holds
+    // exactly one view, for whatever the Viewer is showing.
+    pushViewerLook();
     rememberSession();
     notifyListeners();
+  }
+
+  // --- How the Viewer is looking (K-314) -----------------------------------
+
+  /// Exposure and tone map per composition id. Not in the document: a way of
+  /// looking is not an edit, so this rides in the session blob (see
+  /// [session]) and never in an op.
+  final Map<String, ViewerLook> viewerLooks = {};
+
+  /// How the fronted comp is being looked at, neutral until something says
+  /// otherwise.
+  ViewerLook get viewerLook =>
+      viewerLooks[_selectedComp?.internalid.toString()] ?? neutralLook;
+
+  /// Set the exposure, leaving the tone map as it is; and the mirror of it.
+  ///
+  /// Two setters rather than one taking a whole [ViewerLook], because each
+  /// control must change only its own half. A control that rebuilt the pair
+  /// from the value it was *drawn* with would carry a stale reading for the
+  /// other half into the write — two changes between two rebuilds, and the
+  /// second undoes the first.
+  void setViewerStops(double stops) =>
+      setViewerLook((stops: stops, toneMap: viewerLook.toneMap));
+
+  void toggleViewerToneMap() =>
+      setViewerLook((stops: viewerLook.stops, toneMap: !viewerLook.toneMap));
+
+  /// Set how the fronted comp is looked at, tell the engine, and write it down.
+  void setViewerLook(ViewerLook look) {
+    final id = _selectedComp?.internalid.toString();
+    if (id == null) return;
+    if (look == neutralLook) {
+      viewerLooks.remove(id);
+    } else {
+      viewerLooks[id] = look;
+    }
+    pushViewerLook();
+    rememberSession();
+    notifyListeners();
+  }
+
+  /// Tell the engine what the Viewer is looking through, and ask for the frame
+  /// again — a setting changes what the *next* frame looks like, so without the
+  /// ask the picture would not move until something else moved it.
+  void pushViewerLook() {
+    final comp = selectedComp;
+    if (comp == null) return;
+    final look = viewerLook;
+    try {
+      comp.setDisplayView(stops: look.stops, toneMap: look.toneMap);
+    } catch (_) {
+      // No worker yet, or a comp that has gone. The next change asks again.
+      return;
+    }
+    requestFrame();
   }
 
   // --- The per-project session ---------------------------------------------
@@ -1347,6 +1406,7 @@ class LumitUiState extends ChangeNotifier {
         frame: playheadFrame.value,
         selectedLayer: selectedLayer.value?.internallayerId.toString(),
         dock: workspace.dock.toJson(),
+        viewerLooks: Map.of(viewerLooks),
       );
 
   /// The same thing as JSON, for the copy that goes inside the `.lum` so it
@@ -1408,6 +1468,7 @@ class LumitUiState extends ChangeNotifier {
       openComps.clear();
       clearSelection();
       playheadFrame.value = 0;
+      viewerLooks.clear();
       setSelectedComp(null);
 
       final path = project?.path();
@@ -1426,6 +1487,11 @@ class LumitUiState extends ChangeNotifier {
       final known = {
         for (final (comp, _) in _app.comps()) comp.internalid.toString(): comp,
       };
+      // Only for comps this document still has: a look kept against a comp id
+      // that has gone would be written back out for ever.
+      viewerLooks.addEntries(
+        session.viewerLooks.entries.where((e) => known.containsKey(e.key)),
+      );
       for (final id in session.openComps) {
         final comp = known[id];
         if (comp != null) openComps.add(comp.internalid);

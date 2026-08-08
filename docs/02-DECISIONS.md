@@ -7153,6 +7153,57 @@ every existing project has banked.
 with its own tool, and `ToolMode.penMaskFeather` already exists in the toolbar as a stub
 with nothing behind it. It stays in TODO.
 
+**K-314 · DECIDED · The Viewer gets an exposure and a tone map that the export can never
+see, and the tone map is a fixed highlight rolloff.** Two controls in the Viewer bar
+(07-UI-SPEC §2.2), both preview only, both inside the display transform where
+06-RENDER-PIPELINE §3.3 already reserved room for exactly this. Exposure reads signed
+stops to one decimal and means what the Exposure effect means — the same `2^stops`
+scene-linear gain, computed host-side, so the two agree by construction (K-106). The tone
+map is an icon toggle with a tooltip and no menu.
+
+**The curve is a knee at 0.8 and an exponential shoulder above it**, applied to luminance
+so hue and saturation stay where the author put them:
+`knee + room · (1 − exp(−(L − knee) / room))`, `room = 1 − knee`. Its slope at the knee is
+exactly 1, so the join is smooth, and it approaches 1 without reaching it, so no highlight
+clips flat however bright. Below the knee it is the identity, exactly.
+
+**That identity is the reason for the choice.** Reinhard darkens mid grey by about 15%,
+the ACES fits impose filmic contrast across the whole range and carry the familiar hue
+skews, and AgX — the best-looking of them on genuinely blown content, and Blender's
+default — is a *look*: it moves mids and saturation on a composite that never exceeds 1.
+Any of those makes turning the toggle on change a picture that had nothing wrong with it,
+which reads as the Viewer lying about the export. The rolloff cannot: on an ordinary
+composite it does nothing at all, and on one running past 1 it shows what is up there.
+AgX remains the right answer later as a *selectable* transform when OCIO lands, and the
+tone-mapping **effect** (08-EFFECTS, still unbuilt) must share this curve, so this entry
+binds twice.
+
+**"Auto" was asked for and is not what shipped.** A measured, time-smoothed exposure makes
+the displayed frame depend on which frames preceded it: scrubbing back to frame one shows
+different pixels than frame one showed, which breaks the cache tier outright and puts a
+clock in the pixel path that 14-ENGINEERING-RULES §7 forbids. Unsmoothed measurement is
+worse — the picture pumps on every cut. No compositor's viewer adapts per frame; After
+Effects, Resolve and Blender all apply a fixed transform. So the control is named "tone
+mapping", because nothing about a constant is automatic, and the word "auto" is left free
+for the day a measured white point is genuinely built.
+
+**Export is neutral by construction, not by discipline.** `DisplayParams` defaults to
+neutral on `HeadlessRenderer`, the shader short-circuits on it so a neutral pass is
+bit-identical to the plain copy it replaced, and an export builds its own renderer that
+nobody ever calls the setter on. The K-031 promise — the Viewer at full resolution is the
+export — survives as "the Viewer at full resolution and neutral view".
+
+**A non-neutral view makes a frame unnameable**, so nothing rendered while a control is
+engaged enters any cache tier and the neutral frames already banked stay banked, returning
+as hits the moment it goes back to neutral. Widening the frame key through three tiers
+would have been the alternative; this costs a cache miss while the control is engaged and
+cannot mis-serve an exposed frame to something expecting the composite.
+
+**The settings persist per composition, in the project, through `ui_state`** — the blob
+K-245 already writes into the `.lum`, which is not undoable and does not mark the project
+dirty. A way of looking is not an edit to the work, so Ctrl+Z must never undo an exposure
+nudge, and a comp reopens looking how it was left.
+
 **K-315 · DECIDED · A mask path animates through its own keyframe list, and mismatched point
 counts resample upward.** From the owner (2026-08-08): the deferral K-224 recorded ("neither
 can a mask path be keyframed") is closed for the engine half.
