@@ -7083,6 +7083,29 @@ fn lens_dirt_neutrals_and_seed() {
     assert_ne!(a, b, "a different seed must move the dirt");
 }
 
+/// The embedded plate decodes to a whole picture.
+///
+/// `decode_qoi_1337` walks a byte stream with unguarded indexing, and the
+/// engine crates may not panic (docs/14 §4) — so the one asset it ever reads is
+/// decoded here, which is both the proof that the asset is intact and the reason
+/// a corrupted one fails the build rather than a render.
+#[test]
+fn the_embedded_dirt_plate_decodes() {
+    let (bytes, w, h) = cpu::decode_qoi_1337();
+    assert!(w > 0 && h > 0, "the plate has a size");
+    assert_eq!(
+        bytes.len(),
+        w * h * 4,
+        "the decode fills exactly one RGBA picture"
+    );
+    // A photograph, not a flat fill: it has to actually vary.
+    let first = bytes[0];
+    assert!(
+        bytes.iter().step_by(4).any(|b| *b != first),
+        "the plate is a picture, not one colour"
+    );
+}
+
 /// The panel's greying, and the controls a bound plate makes inert.
 #[test]
 fn lens_dirt_greys_what_a_plate_replaces() {
