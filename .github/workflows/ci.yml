@@ -374,6 +374,21 @@ jobs:
       # link. A universal build needs both kegs present and is out of scope for
       # this gate, which exists to compile the Swift runner and resolve the
       # podspec — both of which the host slice does.
+      # The app icon is an Icon Composer document (K-309), and only actool from
+      # Xcode 26 or newer compiles one. Runner images carry several Xcodes and
+      # the default is not always the newest, so pick the newest explicitly and
+      # say so plainly if it is still too old — an unreadable actool error at
+      # the end of a ten-minute build is not a diagnosis.
+      - name: Select the newest Xcode (26+ for the .icon)
+        run: |
+          latest="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          sudo xcode-select -s "$latest"
+          ver="$(xcodebuild -version | head -1 | awk '{print $2}')"
+          echo "Using Xcode $ver ($latest)"
+          [ "${ver%%.*}" -ge 26 ] || {
+            echo "::error::Xcode $ver cannot compile assets/brand/lumit-icon.icon (needs 26+)"
+            exit 1
+          }
       - name: flutter build macos --release
         working-directory: flutter_ui
         env:
@@ -545,6 +560,13 @@ jobs:
             echo "Read the colour off LumitTheme instead; add a token if none fits."
             exit 1
           fi
+
+      # Two keys Icon Composer 26 writes into the .icon that actool then cannot
+      # compile — the script says which and why. Run here, on Linux, in about a
+      # second: without it the same mistake surfaces five minutes into the macOS
+      # build job and reads as a corrupt icon file (K-312).
+      - name: Icon Composer keys actool cannot compile
+        run: python3 scripts/check-icon.py
 
   # clippy cannot enforce the no-panic rule (docs/14 §4) on the bridge's frb
   # API. `#[frb(...)]` is a proc-macro attribute, and clippy's restriction lints

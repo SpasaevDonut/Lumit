@@ -51,6 +51,14 @@ const _bannedWordIsAnotherSense = {
   'toolCameraPan',
 };
 
+/// Every `.arb` in lib/l10n, source and translations alike, in a stable order.
+List<File> _arbFiles() => (Directory('lib/l10n')
+        .listSync()
+        .whereType<File>()
+        .where((f) => f.path.endsWith('.arb'))
+        .toList())
+    ..sort((a, b) => a.path.compareTo(b.path));
+
 Map<String, dynamic> _arb() =>
     json.decode(File('lib/l10n/app_en.arb').readAsStringSync())
         as Map<String, dynamic>;
@@ -141,10 +149,39 @@ void main() {
 
   test('the target languages have a file to be translated into', () {
     // Crowdin writes these; an empty one is normal and means "not started".
-    for (final tag in ['de', 'kk', 'uk', 'zh']) {
+    for (final tag in ['de', 'kk', 'uk', 'zh', 'zh_Hant']) {
       expect(File('lib/l10n/app_$tag.arb').existsSync(), isTrue,
           reason:
               'app_$tag.arb is missing — crowdin.yml expects to land there');
     }
+  });
+
+  test('every .arb names the locale its filename says', () {
+    // Flutter's generator refuses to run when these disagree, and it runs on
+    // `flutter pub get` — so a sync that lands `"@@locale": "zh-CN"` in a file
+    // called app_zh.arb takes down every Flutter job in CI before a single test
+    // is reached. Crowdin writes its own code into that key, so the fix is the
+    // per-language custom code in the Crowdin project (see crowdin.yml).
+    final wrong = <String>[];
+    for (final file in _arbFiles()) {
+      final name = file.uri.pathSegments.last;
+      final fromName = name.substring('app_'.length, name.length - '.arb'.length);
+      final declared = (json.decode(file.readAsStringSync())
+          as Map<String, dynamic>)['@@locale'] as String?;
+      if (declared != fromName) {
+        wrong.add('$name says "@@locale": "$declared" — expected "$fromName"');
+      }
+    }
+    expect(wrong, isEmpty,
+        reason: 'set the language\'s custom ARB code on Crowdin so the next '
+            'sync lands the right one; see crowdin.yml');
+  });
+
+  test('there is no en-US', () {
+    // K-303: British English is the source and stays the source. An
+    // app_en_US.arb is a copy of the source under another name, and it arrives
+    // only because en-US was enabled as a target language by mistake.
+    expect(File('lib/l10n/app_en_US.arb').existsSync(), isFalse,
+        reason: 'turn en-US off as a target language on Crowdin (K-303)');
   });
 }

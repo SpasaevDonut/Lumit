@@ -17,6 +17,20 @@
 # Target languages are chosen in the Crowdin project's own settings; the mapping
 # below only says what each one is called on disk, because Crowdin's locale names
 # (zh-CN) and Flutter's (zh) disagree.
+#
+# Two things the mapping cannot do, so they are settings on Crowdin itself:
+#
+#   - Crowdin writes its own code into the `@@locale` key inside each file, and
+#     Flutter refuses to generate when that value and the file name disagree —
+#     `zh-CN` in a file called app_zh.arb takes `flutter pub get` down, and with
+#     it every Flutter job in CI. Crowdin's project settings have a per-language
+#     "custom language code" for exactly this: set the ARB code to the name used
+#     below (`zh`, `zh_Hant`), not to Crowdin's own. `test/l10n/arb_test.dart`
+#     fails loudly if a sync ever lands one that disagrees again.
+#   - British English is the source and there is no en-US (K-303). Enabling
+#     en-US as a target lands an app_en_US.arb that is a copy of the source; if
+#     one appears, it was turned on by mistake on Crowdin — turn it off there
+#     rather than deleting the file here.
 project_id_env: CROWDIN_PROJECT_ID
 api_token_env: CROWDIN_PERSONAL_TOKEN
 
@@ -35,10 +49,13 @@ files:
       locale_with_underscore:
         # Crowdin id -> the name Flutter's generator expects. Simplified Chinese
         # lands as plain `zh` rather than `zh_Hans`: Flutter requires a
-        # script-less base file to fall back to, and with only one Chinese script
-        # translated, `zh` is that base. Adding Traditional later means adding
-        # `zh-TW: zh_Hant` here and leaving this line as the fallback.
+        # script-less base file to fall back to, and `zh` is that base — the
+        # Traditional file below is a script variant of it, which is why it is
+        # `zh_Hant` and not `zh_TW`. A country in that name would come back as
+        # a countryCode, and `localeTag` in lib/l10n/strings.dart writes the
+        # script, so `zh_TW` and `zh` would both save as "zh".
         zh-CN: zh
+        zh-TW: zh_Hant
         kk: kk
         de: de
         uk: uk

@@ -6987,3 +6987,126 @@ in one request, because a preview of the art alone would show the untouched half
 and the commit would put it back. One layer at a time, as with a move: the engine patches
 one layer into its clone. A layer whose mask *and* art are dragged together previews the
 art; the mask catches up on release.
+
+**K-309 · DECIDED · The macOS application icon is a layer stack, not a rendered picture:
+`lumit-icon.icon`, compiled by Xcode.** Extends K-251's brand set (the artwork is
+unchanged) and takes the icon half of K-033's macOS pass. macOS 26 composites app icons
+itself — the squircle mask, the bevel, the shadow, the specular highlight that tracks the
+pointer, and the dark, tinted and clear appearances a user can put the whole Dock into.
+None of that is available to a flat image: the system needs the pieces separately, so the
+question was never whether to render better PNGs.
+
+- **The source is `assets/brand/lumit-icon.icon`**, an Icon Composer document holding the
+  mark's six pieces as SVG layers (tile, bloom, blue key, magenta key, core glow, core
+  diamond) and an `icon.json` recording the stack — which layers are glass, per-appearance
+  opacity, shadow depth. The flat `lumit-icon.svg` stays in the brand set as the reference
+  drawing and the single-image hand-out, but nothing ships from it any more.
+- **The layers omit their own lighting**: no corner radius on the tile, no drop shadow
+  under the keys, and no dark rim stroke around them — that stroke exists in the flat
+  icon to imply a lit edge, and Liquid Glass bevels and lights each layer for real. All
+  three are supplied by the system per appearance, and a painted-in copy doubles up in
+  all of them (docs/15-DESIGN.md, brand).
+- **Xcode compiles it, so there is nothing to regenerate.** The `.icon` is a resource of
+  the Runner target — referenced in place at `../../assets/brand/`, not copied into
+  `flutter_ui/`, so the brand folder stays the one home for artwork — and
+  `ASSETCATALOG_COMPILER_APPICON_NAME` names it. `actool` also emits a flat `.icns` from
+  the same layers for Macs before 26, verified against the project's 10.15 deployment
+  target, so one source covers every supported macOS.
+- **`Runner/Assets.xcassets` and its `AppIcon.appiconset` are deleted**, and
+  `scripts/gen-icons.py` no longer writes macOS PNGs. The catalog held nothing else, and
+  the appiconset was the same artwork by a second route: two sources of one drawing is how
+  they come to disagree. The script keeps the Windows `.ico` files and the document
+  `.icns` files, which are unaffected.
+
+This is the icon only. Signing and notarisation stay open under K-033: the disk image is
+still ad-hoc signed, which Gatekeeper reads as unsigned.
+
+**K-310 · DECIDED · The macOS artefacts are Developer ID signed and notarised in CI;
+the Windows installer stays unsigned.** Supersedes the fourth paragraph of **K-304**
+(2026-08-07), which recorded that neither artefact was signed and parked both behind a
+purchase. The Apple Developer Program membership has been bought, so half of that
+paragraph has expired; the Windows half has not.
+
+A tagged release now produces a `.app` and a `.dmg` that are signed with a Developer ID
+Application certificate, built with the hardened runtime and a trusted timestamp,
+notarised by Apple and stapled. Gatekeeper opens them without the right-click ceremony,
+including on a machine that has never been online — that is what stapling buys, and it is
+the reason to staple rather than to rely on Apple being reachable at first launch.
+
+Signing is *opt-in through the environment*, not compulsory. `make-dmg.sh` signs ad hoc
+when `MACOS_SIGN_IDENTITY` is unset and skips notarisation when `APPLE_API_KEY_PATH` is,
+which is what a laptop build and a fork both get. This keeps one script for both worlds:
+the alternative — a signed path only CI exercises — is a path that breaks silently and is
+discovered by a tag. The six secrets live in the repository; the identity string is one of
+them rather than a literal in the workflow, because it carries a legal name and this is a
+public repository (the name is embedded in every signed binary regardless, which is
+unavoidable and normal, but there is no reason to commit it as well).
+
+Two details are load-bearing and easy to lose. **`codesign --deep` is banned here.** It
+walks nested bundles but is unreliable for the loose dylibs `dylibbundler` copies into
+`Contents/Frameworks`, and notarisation answers a missed binary with a rejection twenty
+minutes after the tag; the contents are signed explicitly instead, innermost first, since
+a bundle signature seals a hash that signing its frameworks afterwards would change.
+**Notarisation happens twice**, because a ticket covers exactly what was submitted: once
+for the `.app` that K-297's in-place updater downloads as a bare `.zip`, once for the
+`.dmg` a first-time user double-clicks. One submission would leave whichever artefact was
+skipped quarantined, and the updater's payload is the easier of the two to forget.
+
+Signing the Windows installer still waits on a code-signing certificate, so SmartScreen
+still warns. That remains a purchase rather than code, and it does not block a release.
+
+**K-311 · DECIDED · Traditional Chinese is the fifth language, and the locale a
+translation file names is settled on Crowdin rather than repaired here.** K-303 named four
+target languages and said adding Traditional later meant adding `zh-TW: zh_Hant` to
+`crowdin.yml` and leaving `zh` as the fallback. The first real Crowdin pull landed it, so
+that is now done: `app_zh_Hant.arb` sits beside `app_zh.arb`, and Settings ▸ Interface ▸
+Language lists 繁體中文 under its own name like the rest.
+
+**A script, not a country.** The file is `zh_Hant` and not `zh_TW` because `localeTag` in
+`lib/l10n/strings.dart` writes a locale's *script* into the settings file. A country name
+comes back from Flutter's generator as a `countryCode`, which `localeTag` does not write —
+so `zh_TW` and `zh` would both save as `"zh"` and the user's choice would not survive a
+restart.
+
+**The `@@locale` trap, which cost a red main.** Crowdin writes its own code into the
+`@@locale` key inside every file it sends back — `zh-CN` into the file `crowdin.yml` asked
+it to call `app_zh.arb`. Flutter's generator refuses to run when that key and the file name
+disagree, and it runs on `flutter pub get`, so the first pull took down all three Flutter
+jobs before a single test was reached. The fix belongs on Crowdin, in the per-language
+custom ARB code, because a hand-edit in this repo is overwritten by the next sync (K-303).
+What this repo owes is a loud failure: `test/l10n/arb_test.dart` now checks every `.arb`
+against its own file name, so the next bad sync fails one named test with the remedy in its
+message instead of an opaque `pub get` error.
+
+**There is still no en-US.** The same pull brought an `app_en_US.arb` — the British source
+copied under another name, from a target language enabled by mistake. K-303 said British
+English is the source and stays it; the file is deleted and the test above keeps it deleted,
+pointing at the Crowdin setting that produced it.
+
+**K-312 · DECIDED · Two of Icon Composer's settings are unusable, and a one-second
+Linux check keeps them out.** K-309 made the macOS icon a layer stack authored in Icon
+Composer and compiled by `actool`. Two things Icon Composer 26 writes into `icon.json`
+cannot then be compiled: a non-empty top-level `features` array, and a `specular` whose
+value is the string `"inside"` rather than `true` or `false`. Both arrived with the icon
+revision that landed alongside the signing work, and both were invisible until the
+localisation fix (K-311) unblocked the macOS build job they had been hiding behind.
+
+**The failure names the wrong thing.** `actool` does not report an unsupported setting;
+it dies part-way through with `attempt to insert nil object from objects[0]` and a
+twenty-frame backtrace through `AssetCatalogFoundation`, under the heading *Could not
+open "lumit-icon.icon"*. That reads as a corrupt file, and sends you looking at the SVGs
+— which are fine. Each key was found by bisecting `icon.json` against the last revision
+that compiled, one property at a time.
+
+**What the icon loses is a highlight's address, not the effect.** The `refractivity`
+blocks are untouched and still compile; `features` only *declares* which of them the
+document uses, and the icon renders the same without it. `specular: "inside"` becomes
+`specular: true`, which keeps the specular highlight on that group and gives up only the
+choice of where inside it sits. The rendered `.icns` was checked by eye after the change.
+
+**`scripts/check-icon.py` runs in the design-token lint job**, on Linux, in about a
+second. The macOS build already catches this, but it catches it five minutes in and only
+on a runner with Xcode 26 — and reopening the icon in Icon Composer and saving is enough
+to put both keys back, so this is a mistake with a standing invitation to recur. The
+script is the regression test K-007 asks for: it fails on the `icon.json` as it was, and
+passes on the one that compiles.
