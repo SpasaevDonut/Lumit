@@ -1,11 +1,54 @@
 ---
+// Same-page sections stay plain text; the destinations that leave the page
+// are icons that reveal their label on hover or keyboard focus: the icon
+// holds still and the label unrolls on its right. Each item animates
+// independently, so sliding along the row opens the next label while the
+// last one is still closing.
+//
+// Icons are inline 24x24 paths, stroke unless `fill` (the two brand marks).
 const links = [
-  { href: "/#features", label: "Features", small: false },
-  { href: "/#roadmap", label: "Roadmap", small: false },
-  { href: "/releases", label: "Releases", small: false },
-  { href: "/download", label: "Download", small: true },
-  { href: "https://docs.lumitlab.com", label: "Docs", small: true },
-  { href: "https://github.com/luminalmvm/Lumit", label: "GitHub", small: true },
+  {
+    href: "/#features",
+    label: "Features",
+    small: false,
+  },
+  {
+    href: "/#roadmap",
+    label: "Roadmap",
+    small: false,
+  },
+  {
+    href: "/releases",
+    label: "Releases",
+    small: false,
+    icon: `<path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.1" fill="currentColor" stroke="none"/>`,
+  },
+  {
+    href: "/download",
+    label: "Download",
+    small: true,
+    icon: `<path d="M12 4v11m0 0 4.5-4.5M12 15l-4.5-4.5"/><path d="M4 20h16"/>`,
+  },
+  {
+    href: "https://docs.lumitlab.com",
+    label: "Docs",
+    small: true,
+    icon: `<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/>`,
+  },
+  {
+    href: "https://github.com/luminalmvm/Lumit",
+    label: "GitHub",
+    small: true,
+    fill: true,
+    icon: `<path d="M12 2C6.48 2 2 6.58 2 12.26c0 4.53 2.87 8.37 6.84 9.73.5.09.68-.22.68-.49 0-.24-.01-.87-.01-1.7-2.78.62-3.37-1.37-3.37-1.37-.45-1.18-1.11-1.5-1.11-1.5-.91-.64.07-.62.07-.62 1 .07 1.53 1.06 1.53 1.06.9 1.57 2.36 1.12 2.94.86.09-.67.35-1.12.63-1.38-2.22-.26-4.56-1.14-4.56-5.07 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.7 0 0 .84-.28 2.75 1.05a9.36 9.36 0 0 1 5 0c1.91-1.33 2.75-1.05 2.75-1.05.55 1.4.2 2.44.1 2.7.64.72 1.03 1.63 1.03 2.75 0 3.94-2.34 4.8-4.57 5.06.36.32.68.94.68 1.9 0 1.37-.01 2.47-.01 2.81 0 .27.18.59.69.48A10.02 10.02 0 0 0 22 12.26C22 6.58 17.52 2 12 2z"/>`,
+  },
+  {
+    href: "https://discord.gg/dc3p3XC7mM",
+    label: "Discord",
+    small: true,
+    fill: true,
+    icon: `<path d="M20.32 4.37a19.8 19.8 0 0 0-4.93-1.51 13.78 13.78 0 0 0-.64 1.28 18.27 18.27 0 0 0-5.5 0 12.64 12.64 0 0 0-.64-1.28c-1.71.29-3.37.8-4.93 1.51A20.26 20.26 0 0 0 .1 18.06a19.9 19.9 0 0 0 6.07 3.03c.49-.66.93-1.37 1.3-2.1a12.88 12.88 0 0 1-2.05-.98c.17-.12.34-.25.5-.38a14.2 14.2 0 0 0 12.16 0c.17.13.33.26.5.38-.65.39-1.34.72-2.05.98.38.73.81 1.44 1.3 2.1a19.84 19.84 0 0 0 6.07-3.03 20.19 20.19 0 0 0-3.58-13.69zM8.02 15.33c-1.18 0-2.16-1.08-2.16-2.42 0-1.33.95-2.42 2.16-2.42 1.21 0 2.18 1.09 2.16 2.42 0 1.34-.95 2.42-2.16 2.42zm7.96 0c-1.18 0-2.16-1.08-2.16-2.42 0-1.33.95-2.42 2.16-2.42 1.21 0 2.18 1.09 2.16 2.42 0 1.34-.95 2.42-2.16 2.42z"/>`,
+  },
 ];
 ---
 
@@ -17,20 +60,75 @@ const links = [
       <img src="/lumit-mark.svg" alt="" width="26" height="26" class="block" />
       <span class="text-[19px] font-semibold tracking-[-0.035em] text-fg">Lumit</span>
     </a>
-    <nav class="flex gap-6">
+    <nav class="flex items-center gap-5" data-iconnav>
       {
-        links.map((l) => (
-          <a
-            href={l.href}
-            class:list={[
-              "text-[14.5px] text-fg-2 no-underline transition-colors hover:text-fg",
-              !l.small && "hidden sm:inline",
-            ]}
-          >
-            {l.label}
-          </a>
-        ))
+        links.map((l) =>
+          l.icon ? (
+            <a
+              href={l.href}
+              class:list={[
+                "nav-item items-center text-fg-2 no-underline transition-colors hover:text-fg focus-visible:text-fg",
+                l.small ? "inline-flex" : "hidden sm:inline-flex",
+              ]}
+            >
+              <svg
+                width="19"
+                height="19"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+                fill={l.fill ? "currentColor" : "none"}
+                stroke={l.fill ? "none" : "currentColor"}
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                set:html={l.icon}
+              />
+              <span class="nav-reveal"><span class="nav-label text-[14.5px]">{l.label}</span></span>
+            </a>
+          ) : (
+            <a
+              href={l.href}
+              class:list={[
+                "text-[14.5px] text-fg-2 no-underline transition-colors hover:text-fg",
+                !l.small && "hidden sm:inline",
+              ]}
+            >
+              {l.label}
+            </a>
+          ),
+        )
       }
     </nav>
   </div>
 </header>
+
+<style>
+  /* The reveal is a one-column grid animating 0fr -> 1fr: the track eases over
+     the label's exact width, which is what makes it feel smooth — a max-width
+     transition eases over an arbitrary cap instead, so most of its duration is
+     spent on width that isn't there. */
+  .nav-reveal {
+    display: grid;
+    grid-template-columns: 0fr;
+    transition: grid-template-columns 0.35s cubic-bezier(0.33, 1, 0.68, 1);
+  }
+  .nav-label {
+    overflow: hidden;
+    white-space: nowrap;
+    min-width: 0;
+    /* The icon gap; text-indent scales away with the track, where padding
+       would hold the box open at its own width when closed. */
+    text-indent: 0.4em;
+    opacity: 0;
+    transition: opacity 0.25s ease;
+  }
+  .nav-item:hover .nav-reveal,
+  .nav-item:focus-visible .nav-reveal {
+    grid-template-columns: 1fr;
+  }
+  .nav-item:hover .nav-label,
+  .nav-item:focus-visible .nav-label {
+    opacity: 1;
+  }
+</style>
+
