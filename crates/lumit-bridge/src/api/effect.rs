@@ -336,14 +336,6 @@ pub enum BridgeParamKind {
         /// Snapping increment in degrees while a modifier is held.
         dial_step: f64,
     },
-    /// A 2D point in composition space, drawn as an x and a y field plus the
-    /// crosshair button that arms a click-in-Viewer pick (docs/07 §6). The
-    /// value is a [`BridgeEffectValue::Point`], which has crossed the bridge
-    /// since before any effect could declare one.
-    Point {
-        default_x: f64,
-        default_y: f64,
-    },
     Choice {
         options: Vec<String>,
         default: u32,
@@ -445,10 +437,6 @@ pub fn list_parameters(effect: String) -> Vec<BridgeParamInfo> {
                 ParamKind::Angle { default, dial_step } => {
                     BridgeParamKind::Angle { default, dial_step }
                 }
-                ParamKind::Point { default } => BridgeParamKind::Point {
-                    default_x: default.0,
-                    default_y: default.1,
-                },
                 // `self_default` is an engine-side instantiation detail
                 // (K-288) — the panel draws the same picker either way, and
                 // the value it edits already carries the layer id.
@@ -951,11 +939,8 @@ pub(crate) fn read_instance_info(
     // Filled on a clone, because reading may not edit the document. The value
     // lands for real when the user changes it, through the staged copy.
     let mut filled = effect.clone();
-    let effect = if lumit_core::fx::fill_missing_params(&mut filled) {
-        &filled
-    } else {
-        effect
-    };
+    lumit_core::fx::backfill_builtin_params(std::slice::from_mut(&mut filled));
+    let effect = &filled;
     BridgeEffectInstanceInfo {
         id: effect.id,
         name: effect.effect.match_name.clone(),
@@ -993,7 +978,7 @@ impl BridgeEffectInstance {
         // user actually made. An effect with no built-in schema (OFX, a
         // placeholder) is left exactly as it is.
         let mut effect = effect;
-        lumit_core::fx::fill_missing_params(&mut effect);
+        lumit_core::fx::backfill_builtin_params(std::slice::from_mut(&mut effect));
         BridgeEffectInstance { effect, offset }
     }
 

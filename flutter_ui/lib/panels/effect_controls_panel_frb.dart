@@ -622,6 +622,16 @@ class _EffectSection extends StatelessWidget {
       };
     }
 
+    // Which rows another parameter has taken over (`EnabledWhen`, K-290).
+    // Judged on what the panel is SHOWING, staged drag included, so ticking a
+    // checkbox greys its dependent row on the spot rather than after the commit
+    // round-trips.
+    final shown = {
+      for (final p in params)
+        if ((stagedValue(id, p.id) ?? values[p.id]) case final v?) p.id: v,
+    };
+    final disabled = disabledParams(info.name, shown);
+
     Widget rowFor(BridgeParamInfo param) => EffectParamRowFrb(
           key: ValueKey<String>('fx-row-$id-${param.id}'),
           effectId: id,
@@ -635,6 +645,7 @@ class _EffectSection extends StatelessWidget {
           onWrite: onWrite,
           onLive: onLive,
           twoColumn: true,
+          enabled: !disabled.contains(param.id),
           // The effect's other values, for a control whose behaviour
           // depends on a sibling (the depth-of-field dropper reads the
           // effect's own `depth` layer).
@@ -667,6 +678,11 @@ class _EffectSection extends StatelessWidget {
             onWrite: onWrite,
             onLive: onLive,
             twoColumn: true,
+            // A point is one row over two parameters, so it goes quiet only
+            // when both halves have been taken over — which is how the schema
+            // declares them.
+            enabled:
+                !disabled.contains(param.id) || !disabled.contains(next.id),
             pickPixels: pickablePointParams[param.id],
           ));
           i += 2;

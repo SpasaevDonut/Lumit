@@ -615,8 +615,19 @@ pub enum Resolved {
     /// missing or cyclic depth reference leaves that slot empty and the op is
     /// a passthrough. `aperture == 0`, an all-in-band depth, or `mix == 0` are
     /// bit-exact passthroughs.
+    ///
+    /// **Every control the aperture and highlight groups added is neutral at
+    /// its default, and the kernel reaches that by *branching* rather than by
+    /// multiplying by one** (K-290): Roundness 1 takes the plain `r² ≤ coc²`
+    /// circle test, Concentration 0 and Remove edge leak 0 take the unweighted
+    /// accumulation, and Exposure 0 takes the unsplit sum — because
+    /// `Σ(c·w)/Σw` is not an identity in IEEE 754 even when every `w` is one,
+    /// and neither is splitting a tap at a threshold and adding it back. A
+    /// project saved before any of this therefore renders bit-identically,
+    /// which is what let the aperture fold into the shipped effect rather than
+    /// arrive as a second one beside it.
     Dof {
-        /// The in-focus depth, 0..1.
+        /// The in-focus depth, 0..1. Ignored while `use_focus_point` is set.
         focus: f32,
         /// Half-width of the sharp band around `focus`, 0..1.
         range: f32,
@@ -632,9 +643,80 @@ pub enum Resolved {
         /// circle-of-confusion, swapping near and far. A `Copy` scalar, so the
         /// enum stays `Copy` and threads beside the depth texture unchanged.
         depth_invert: bool,
+        /// The aperture polygon's outward edge normals, unit length, the first
+        /// `blade_count` entries live. Host-computed: WGSL's transcendentals
+        /// carry no guarantee of matching Rust's, which is exactly what the
+        /// §1.6 oracle measures.
+        blade_normals: [[f32; 2]; MAX_BLADES],
+        /// 3..=[`MAX_BLADES`]. Inert while `roundness` is 1 — a circle has no
+        /// blades — which is why the schema needs no Circle entry.
+        blade_count: u32,
+        /// `cos²(π/N)`, host-computed.
+        apothem2: f32,
+        /// Roundness, −1..1. Positive bows the blades outward toward the
+        /// circle; **negative goes concave** — the same inside test with the
+        /// sign flipped pulls the edge midpoints in while the vertices stay on
+        /// the circle, which is a star. The aperture therefore stays inscribed
+        /// in the circle at every value, so the kernel's `ceil(radius)` scan
+        /// box remains a correct bound on the taps. 1 takes the plain circle
+        /// test and is the shipped default.
+        roundness: f32,
+        /// Radial weighting inside the aperture, −1..1. 0 is the flat disc and
+        /// takes the unweighted branch.
+        concentration: f32,
+        /// Anamorphic squeeze as a pair of multipliers on the tap offset before
+        /// the inside test, computed host-side (K-137's precedent for a
+        /// host-side single division). Both are ≥ 1 and exactly one is > 1, so
+        /// the aperture only ever *shrinks* on one axis — it can never exceed
+        /// the circle, and the scan box is untouched. `[1.0, 1.0]` at Deform 0.
+        deform_scale: [f32; 2],
+        /// The tonal split level, and the power the excess is raised to — the
+        /// split-at-threshold power mean. `bokeh_power` is
+        /// `2^(Exposure/EXPOSURE_STOPS_PER_DOUBLING)`, host-computed; **1 is
+        /// the plain arithmetic mean and takes the unsplit branch**.
+        threshold: f32,
+        bokeh_power: f32,
+        /// Clamp the gather to the frame edge instead of pulling in
+        /// transparency (Repeat edge pixels). True is the shipped default and
+        /// the historical behaviour.
+        repeat_edge: bool,
+        /// Whether a depth layer is bound. False defocuses the whole frame
+        /// uniformly at the far-side radius — the "no depth, one radius"
+        /// reading, which is also what makes the effect usable as a plain
+        /// aperture blur.
+        depth_bound: bool,
+        /// Which channel of the depth layer is read as depth — an index into
+        /// [`CHANNEL_OPTIONS`](super::CHANNEL_OPTIONS). 0 (Red) is the channel
+        /// this effect has always read.
+        depth_channel: u32,
+        /// When set, focus is whatever depth sits under `focus_point` and
+        /// `focus` is ignored — the greyed row in the panel.
+        use_focus_point: bool,
+        /// Where to read that depth, in the consuming layer's raster pixels
+        /// (already scaled by the preview factor). Authored in layer space —
+        /// the frame the effect stack and its resampled depth both live in.
+        focus_point: [f32; 2],
+        /// The Profile control, resolved to a multiplier on the depth distance
+        /// before the ramp (`2^profile`, computed host-side so the kernel sees
+        /// a plain multiply). 1 is the neutral, and multiplying by exactly 1 is
+        /// exact in IEEE 754, so this one needs no branch. Above 1 the
+        /// transition bites sooner, below 1 it stretches out past the range so
+        /// even the far extreme is softened rather than obliterated. This is
+        /// what stops focus being all-or-nothing on a real depth pass, whose
+        /// content sits in a narrow band with one near object well outside it.
+        focus_falloff: f32,
+        /// How the defocused result returns over the original: 0 Normal,
+        /// 1 Add, 2 Screen, 3 Lighten, 4 Darken.
+        composite_mode: u32,
+        /// How hard a tap across a depth discontinuity **and in front of** this
+        /// pixel is pulled back, and how big a depth jump counts as one. 0 leak
+        /// takes the unweighted branch.
+        remove_edge_leak: f32,
+        detect_edge_threshold: f32,
         /// Diagnostic view: 0 = Rendered (the blurred output), 1 = Depth map
         /// (post-invert greyscale), 2 = Focus map (the smooth in-focus mask).
         /// Modes 1/2 ignore the blur and Mix and write the view directly.
+        /// Forced to 0 when `depth_bound` is false — there is nothing to show.
         display: u32,
         /// 0..1.
         mix: f32,
@@ -742,10 +824,17 @@ pub fn rescale_px(ops: &mut [Resolved], f: f32) {
             Resolved::Dof {
                 near_aperture,
                 far_aperture,
+                focus_point,
                 ..
             } => {
                 *near_aperture *= f;
                 *far_aperture *= f;
+                // The focus point is px@comp too (K-260), so it travels with
+                // the radii: a stack resolved against the comp raster and run
+                // on a smaller preview target must read its focus depth from
+                // the same *place* in the picture, not the same pixel index.
+                focus_point[0] *= f;
+                focus_point[1] *= f;
             }
             Resolved::LensFlare(p) => {
                 p.light[0] *= f;
@@ -1583,11 +1672,150 @@ fn resolve_one(
             // Depth invert (a plain Bool; absent on pre-feature projects,
             // where it reads false — the historical, unchanged behaviour).
             let depth_invert = matches!(e.param("depth_invert"), Some(EffectValue::Bool(true)));
-            // Diagnostic view (clamped to the shipped modes; absent on
-            // pre-feature projects → 0 Rendered, the normal output).
-            let display = match e.param("display") {
-                Some(EffectValue::Choice(c)) => (*c).min(2),
+
+            // ---- The aperture (K-290) ----
+            //
+            // The blade count floors to an integer, so a keyframe sweeping
+            // 5 → 6 steps rather than growing half a blade — a pentagon does
+            // not interpolate into a hexagon, and the difference is only where
+            // that truth is enforced.
+            let blade_count = (e
+                .float_at_with_context("blades", lt, expression_context.clone())
+                .unwrap_or(6.0) as f32)
+                .floor()
+                .clamp(3.0, MAX_BLADES as f32) as u32;
+            let rotation_deg = e
+                .float_at_with_context("rotation", lt, expression_context.clone())
+                .unwrap_or(0.0) as f32;
+            let (blade_normals, apothem2) = super::aperture_blades(blade_count, rotation_deg);
+            // 1 is the circle, and the circle is what this effect has always
+            // gathered — so it is the default and the kernel's fast path.
+            let roundness = (e
+                .float_at_with_context("roundness", lt, expression_context.clone())
+                .unwrap_or(1.0) as f32)
+                .clamp(-1.0, 1.0);
+            let concentration = (e
+                .float_at_with_context("concentration", lt, expression_context.clone())
+                .unwrap_or(0.0) as f32)
+                .clamp(-1.0, 1.0);
+
+            // Deform squeezes one axis and leaves the other alone, so the
+            // aperture only ever shrinks inside the circle and the kernel's
+            // scan box stays a correct bound. The reciprocal is taken here, not
+            // per tap (K-137's host-side single division), and the magnitude is
+            // held below 1 so it cannot divide by zero at the range's ends.
+            let deform = (e
+                .float_at_with_context("deform", lt, expression_context.clone())
+                .unwrap_or(0.0) as f32)
+                .clamp(-1.0, 1.0);
+            let squeeze = 1.0 / (1.0 - deform.abs().min(0.95));
+            let deform_scale = if deform > 0.0 {
+                [1.0, squeeze] // a wide oval: pull y in
+            } else if deform < 0.0 {
+                [squeeze, 1.0]
+            } else {
+                [1.0, 1.0]
+            };
+
+            // ---- The highlights ----
+            //
+            // Exposure 0 gives a power of exactly 1, which the kernel reads as
+            // "do not split at all" and takes the plain sum — the arithmetic
+            // this effect has always done. That exactness is the reason the
+            // power is computed here rather than in the kernel: neither path
+            // then evaluates its own `exp2` (§1.6).
+            //
+            // **The constant is fitted, not measured.** 6 (the stops-per-stop
+            // reading) puts the top of the slider at a power of 32, which is a
+            // maximum filter rather than a mean: it renders hard-edged flat
+            // polygons instead of bokeh discs and erases everything below the
+            // local peak. 12 puts the top at about 5.7 and the point where
+            // balls begin at about 2 — strong, but still an average. docs/08
+            // §3.22 records it as open; turn it if the onset feels early or
+            // late.
+            const EXPOSURE_STOPS_PER_DOUBLING: f32 = 12.0;
+            let exposure = (e
+                .float_at_with_context("exposure", lt, expression_context.clone())
+                .unwrap_or(0.0) as f32)
+                .clamp(-30.0, 30.0);
+            let bokeh_power = (exposure / EXPOSURE_STOPS_PER_DOUBLING).exp2();
+            let threshold = (e
+                .float_at_with_context("threshold", lt, expression_context.clone())
+                .unwrap_or(1.0) as f32)
+                .max(0.0);
+
+            let repeat_edge = !matches!(
+                e.param("repeat_edge_pixels"),
+                Some(EffectValue::Bool(false))
+            );
+
+            // ---- The depth model ----
+            //
+            // An unset, missing or cyclic reference defocuses the frame
+            // uniformly at the far-side radius, so the rest of the depth group
+            // has nothing to describe and resolve neutralises it rather than
+            // letting the kernel read a garbage sample.
+            let depth_bound = matches!(e.param("depth"), Some(EffectValue::Layer(Some(_))));
+            let depth_channel = match e.param("depth_channel") {
+                Some(EffectValue::Choice(c)) => (*c).min(CHANNEL_OPTIONS.len() as u32 - 1),
+                _ => 0, // Red — the channel this effect has always read
+            };
+            let use_focus_point = depth_bound
+                && matches!(e.param("use_focus_point"), Some(EffectValue::Bool(true)));
+            // The point is authored in the consuming layer's pixels — the frame
+            // the stack runs in — so it scales by the preview factor exactly as
+            // a px@comp radius does (§2.3). An `_x`/`_y` Float pair, which is
+            // the panel's point row (docs/07 §6.1); there is no Point schema
+            // kind and this is why one is not needed.
+            let focus_point = [
+                e.float_at_with_context("focus_point_x", lt, expression_context.clone())
+                    .unwrap_or(0.0) as f32
+                    * px_scale,
+                e.float_at_with_context("focus_point_y", lt, expression_context.clone())
+                    .unwrap_or(0.0) as f32
+                    * px_scale,
+            ];
+            // Profile shapes the focus falloff. Host-side `exp2` for the same
+            // reason the tonal power is host-side: neither path then evaluates
+            // its own (§1.6). 0 is the neutral multiplier of exactly 1, and
+            // multiplying by exactly 1 is exact, so this one needs no branch.
+            // One doubling per unit, so the slider's useful zone sits in its
+            // middle rather than its first third (see the schema's note).
+            let profile = (e
+                .float_at_with_context("profile", lt, expression_context.clone())
+                .unwrap_or(0.0) as f32)
+                .clamp(-10.0, 10.0);
+            let focus_falloff = profile.exp2();
+            let composite_mode = match e.param("composite_mode") {
+                Some(EffectValue::Choice(c)) => (*c).min(4),
                 _ => 0,
+            };
+            // Edge-leak suppression reads two depths per tap, so it is dead
+            // weight without a depth pass — and its neutral is what keeps the
+            // gather bit-identical to the historical one.
+            let remove_edge_leak = if depth_bound {
+                (e.float_at_with_context("remove_edge_leak", lt, expression_context.clone())
+                    .unwrap_or(0.0) as f32)
+                    .clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let detect_edge_threshold = (e
+                .float_at_with_context("detect_edge_threshold", lt, expression_context.clone())
+                .unwrap_or(0.10) as f32)
+                .clamp(0.0, 1.0);
+            // Diagnostic view (clamped to the shipped modes; absent on
+            // pre-feature projects → 0 Rendered, the normal output). With no
+            // depth bound there is nothing for the depth or focus views to
+            // draw, so resolve forces Rendered rather than letting the kernel
+            // display the stand-in texture that occupies the depth slot.
+            let display = if depth_bound {
+                match e.param("display") {
+                    Some(EffectValue::Choice(c)) => (*c).min(2),
+                    _ => 0,
+                }
+            } else {
+                0
             };
             let mix = (e
                 .float_at_with_context("mix", lt, expression_context.clone())
@@ -1600,149 +1828,6 @@ fn resolve_one(
                 near_aperture,
                 far_aperture,
                 depth_invert,
-                display,
-                mix,
-            })
-        }
-        "bokeh" => {
-            // The advanced lens blur (docs/08 §3.27). Scalars only; the depth
-            // pass is threaded beside the op, and a `bokeh` instance always
-            // resolves to exactly one Resolved::Bokeh so the 1:1 op-to-slot
-            // ordering holds (docs/impl/layer-input.md §2).
-            //
-            // The same budget cap Lens blur carries, and for the same reason:
-            // the gather is O(r²) taps per pixel and an uncapped radius submits
-            // enough work to hang the GPU, freezing the preview that renders on
-            // the UI thread (docs/13, docs/14). The cap is the honest bound the
-            // ROI declaration has to cover.
-            const MAX_RADIUS_PX: f32 = 128.0;
-            let blur_radius = (e.float_at("blur_radius", lt).unwrap_or(10.0) as f32 * px_scale)
-                .clamp(0.0, MAX_RADIUS_PX);
-
-            // Vertices is a *number* here, not Lens blur's Choice, because the
-            // reference panel animates it. It floors to an integer, so a
-            // keyframe sweeping 5 → 6 steps rather than growing half a blade —
-            // a pentagon still does not interpolate into a hexagon, the
-            // difference is only where that truth is enforced.
-            let blade_count = (e.float_at("vertices", lt).unwrap_or(6.0) as f32)
-                .floor()
-                .clamp(3.0, MAX_BLADES as f32) as u32;
-            let rotation_deg = e.float_at("rotation", lt).unwrap_or(90.0) as f32;
-            let (blade_normals, apothem2) = super::aperture_blades(blade_count, rotation_deg);
-            let roundness = (e.float_at("roundness", lt).unwrap_or(0.0) as f32).clamp(-1.0, 1.0);
-            let concentration =
-                (e.float_at("concentration", lt).unwrap_or(0.0) as f32).clamp(-1.0, 1.0);
-
-            // Deform squeezes one axis and leaves the other alone, so the
-            // aperture only ever shrinks inside the circle and the kernel's
-            // scan box stays a correct bound. The reciprocal is taken here, not
-            // per tap (K-137's host-side single division), and the magnitude is
-            // held below 1 so it cannot divide by zero at the range's ends.
-            let deform = (e.float_at("deform", lt).unwrap_or(0.0) as f32).clamp(-1.0, 1.0);
-            let squeeze = 1.0 / (1.0 - deform.abs().min(0.95));
-            let deform_scale = if deform > 0.0 {
-                [1.0, squeeze] // stretch horizontally: pull y in
-            } else if deform < 0.0 {
-                [squeeze, 1.0]
-            } else {
-                [1.0, 1.0]
-            };
-
-            let threshold = (e.float_at("threshold", lt).unwrap_or(0.0) as f32).max(0.0);
-            // The same fitted constant Lens blur uses, and the same reason for
-            // computing the power host-side: neither path then evaluates its
-            // own `exp2`. Clamped to the schema's hard range so neither the
-            // power nor its reciprocal can overflow.
-            // **Re-fitted, and still the only fitted constant in the effect.**
-            // It was 6, inherited from Lens blur, where Exposure defaults to 0
-            // and the constant therefore never mattered. Here Exposure defaults
-            // to the top of the range, and 6 put the power at 32 — measured, a
-            // gather that returns 96 % of the brightest tap in the aperture.
-            // That is a maximum filter, not a mean: it renders hard-edged flat
-            // polygons instead of bokeh discs, and erases everything below the
-            // local peak. 12 puts the top of the slider at a power of about 5.7
-            // and the point where the owner's sweep shows balls beginning
-            // (Exposure ≈ 12.6) at about 2 — strong, but still an average.
-            //
-            // Fitted from screenshots of the reference plugin, not measured
-            // against it; docs/08 §3.27 records it as open. Turn this if the
-            // onset feels early or late.
-            const EXPOSURE_STOPS_PER_DOUBLING: f32 = 12.0;
-            let exposure = (e.float_at("exposure", lt).unwrap_or(30.0) as f32).clamp(-30.0, 30.0);
-            let bokeh_power = (exposure / EXPOSURE_STOPS_PER_DOUBLING).exp2();
-
-            let repeat_edge = !matches!(
-                e.param("repeat_edge_pixels"),
-                Some(EffectValue::Bool(false))
-            );
-
-            // The depth model. An unset, missing or cyclic reference defocuses
-            // the frame uniformly at Blur radius, so the rest
-            // of the depth group has nothing to describe and resolve neutralises
-            // it rather than letting the kernel read a garbage sample.
-            let depth_bound = matches!(e.param("depth"), Some(EffectValue::Layer(Some(_))));
-            let depth_channel = match e.param("depth_channel") {
-                Some(EffectValue::Choice(c)) => (*c).min(CHANNEL_OPTIONS.len() as u32 - 1),
-                _ => 5, // (R+G+B)/3
-            };
-            let depth_invert = matches!(e.param("depth_invert"), Some(EffectValue::Bool(true)));
-            // Resolution quantises the defocus ramp into bands. One band is
-            // "every out-of-focus depth gets the same radius", which is what
-            // the cheapest setting should mean.
-            let depth_bands = (e.float_at("depth_resolution", lt).unwrap_or(6.0) as f32)
-                .floor()
-                .clamp(1.0, 64.0);
-            let focal_distance =
-                (e.float_at("focal_distance", lt).unwrap_or(1.0) as f32).clamp(0.0, 1.0);
-            let use_focus_point = depth_bound
-                && !matches!(e.param("use_focus_point"), Some(EffectValue::Bool(false)));
-            // The point is authored in the consuming layer's pixels — the frame
-            // the stack runs in — so it scales by the preview factor exactly as
-            // a px@comp radius does (§2.3).
-            let focus_point = match e.param("focus_point") {
-                Some(EffectValue::Point(x, y)) => [
-                    x.value_at(lt) as f32 * px_scale,
-                    y.value_at(lt) as f32 * px_scale,
-                ],
-                _ => [0.0, 0.0],
-            };
-            // Profile shapes the focus falloff. Host-side `exp2` for the same
-            // reason the tonal power is host-side: neither path then evaluates
-            // its own (§1.6). 0 is the neutral multiplier of exactly 1.
-            // One doubling per unit, so the slider's useful zone sits in its
-            // middle rather than its first third (see the schema's note).
-            let profile = (e.float_at("profile", lt).unwrap_or(0.0) as f32).clamp(-10.0, 10.0);
-            let focus_falloff = profile.exp2();
-            let composite_mode = match e.param("composite_mode") {
-                Some(EffectValue::Choice(c)) => (*c).min(4),
-                _ => 0,
-            };
-            // Edge-leak suppression reads two depths per tap, so it is dead
-            // weight without a depth pass — and its neutral is what keeps the
-            // gather bit-identical to Lens blur's.
-            let remove_edge_leak = if depth_bound {
-                (e.float_at("remove_edge_leak", lt).unwrap_or(0.0) as f32).clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-            let detect_edge_threshold =
-                (e.float_at("detect_edge_threshold", lt).unwrap_or(0.10) as f32).clamp(0.0, 1.0);
-            // The diagnostic view, clamped to the shipped modes. With no depth
-            // bound there is nothing for the depth or focus views to draw, so
-            // resolve forces Rendered rather than letting the kernel display the
-            // stand-in texture that occupies the depth slot.
-            let display = if depth_bound {
-                match e.param("display") {
-                    Some(EffectValue::Choice(c)) => (*c).min(2),
-                    _ => 0,
-                }
-            } else {
-                0
-            };
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
-
-            Some(Resolved::Bokeh {
-                blur_radius,
                 blade_normals,
                 blade_count,
                 apothem2,
@@ -1754,9 +1839,6 @@ fn resolve_one(
                 repeat_edge,
                 depth_bound,
                 depth_channel,
-                depth_invert,
-                depth_bands,
-                focal_distance,
                 use_focus_point,
                 focus_point,
                 focus_falloff,

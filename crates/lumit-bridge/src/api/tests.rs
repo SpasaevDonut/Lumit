@@ -799,17 +799,17 @@ fn every_effect_value_kind_round_trips_through_the_document() {
 /// that draws the row and the write behind it both looked only at what the
 /// instance already carried. The row came out blank and the write was refused.
 ///
-/// Bokeh is the case that forced this: an instance saved before its aperture and
-/// tonal controls existed could not reach Vertices, Roundness, Rotation or
+/// Depth of field is the case that forced this: an instance saved before the
+/// aperture folded in (K-290) could not reach Blades, Roundness, Rotation or
 /// Exposure — which is the entire feature.
 #[test]
 fn an_old_instance_reaches_a_parameter_its_schema_grew_later() {
     let (project, layer) = project_with_layer();
-    // A Bokeh as it would have been saved before its aperture controls existed:
-    // the schema's instance with those parameters taken back out.
-    let mut old = lumit_core::fx::instantiate("bokeh").expect("bokeh");
+    // A Depth of field as it would have been saved before its aperture controls
+    // existed: the schema's instance with those parameters taken back out.
+    let mut old = lumit_core::fx::instantiate("dof").expect("dof");
     let grown = [
-        "vertices",
+        "blades",
         "roundness",
         "rotation",
         "exposure",
@@ -820,8 +820,8 @@ fn an_old_instance_reaches_a_parameter_its_schema_grew_later() {
     let radius_before = old
         .params
         .iter()
-        .find(|p| p.id == "blur_radius")
-        .expect("blur_radius")
+        .find(|p| p.id == "aperture")
+        .expect("aperture")
         .value
         .clone();
     seed_stack(&project, &layer, vec![old]);
@@ -838,9 +838,9 @@ fn an_old_instance_reaches_a_parameter_its_schema_grew_later() {
     assert!(
         matches!(
             staged[0].get_value("depth_channel".into()),
-            Ok(BridgeEffectValue::Choice(5))
+            Ok(BridgeEffectValue::Choice(0))
         ),
-        "a grown parameter reads at its declared default ((R+G+B)/3)"
+        "a grown parameter reads at its declared default (Red)"
     );
 
     // And the write lands: the parameter is added to the instance rather than
@@ -868,8 +868,8 @@ fn an_old_instance_reaches_a_parameter_its_schema_grew_later() {
         after[0]
             .params
             .iter()
-            .find(|p| p.id == "blur_radius")
-            .expect("blur_radius")
+            .find(|p| p.id == "aperture")
+            .expect("aperture")
             .value,
         radius_before,
         "filling absences must never rewrite a value the instance already held"
@@ -1351,7 +1351,8 @@ fn every_builtin_lists_its_parameters() {
 #[test]
 fn every_builtin_lists_its_layout() {
     for info in crate::api::effect::list_effects() {
-        let layout = crate::api::effect::list_param_layout(info.name.clone());
+        let groups = crate::api::effect::list_parameter_groups(info.name.clone());
+        let enabled_when = crate::api::effect::list_enabled_when(info.name.clone());
         let ids: Vec<String> = crate::api::effect::list_parameters(info.name.clone())
             .into_iter()
             .map(|p| p.id)
@@ -1361,8 +1362,8 @@ fn every_builtin_lists_its_layout() {
             .find(|s| s.match_name == info.name)
             .expect("listed effects are built in");
 
-        assert_eq!(layout.groups.len(), declared.groups.len());
-        for g in &layout.groups {
+        assert_eq!(groups.len(), declared.groups.len());
+        for g in &groups {
             for member in &g.params {
                 assert!(
                     ids.contains(member),
@@ -1372,43 +1373,47 @@ fn every_builtin_lists_its_layout() {
                 );
             }
         }
-        assert_eq!(layout.enabled_when.len(), declared.enabled_when.len());
-        for rule in &layout.enabled_when {
+        assert_eq!(enabled_when.len(), declared.enabled_when.len());
+        for rule in &enabled_when {
             assert!(ids.contains(&rule.param) && ids.contains(&rule.on));
         }
     }
 }
 
-/// Bokeh is what the layout crossing exists for, so it is what pins it: the
-/// Depth map twirl and the two greyed rows arrive on the far side intact.
+/// Depth of field is what the greying crossing exists for, so it is what pins
+/// it: the folded twirls and the rules that grey a row arrive on the far side
+/// intact (K-290).
 #[test]
-fn bokehs_twirl_and_greying_rules_cross_the_bridge() {
+fn dofs_twirls_and_greying_rules_cross_the_bridge() {
     use crate::api::effect::{BridgeEnabledCond, BridgeParamKind};
 
-    let layout = crate::api::effect::list_param_layout("bokeh".into());
-    assert_eq!(layout.groups.len(), 1);
-    assert_eq!(layout.groups[0].label, "Depth map");
-    assert!(layout.groups[0].collapsed);
-    assert_eq!(layout.groups[0].params.len(), 12);
+    let groups = crate::api::effect::list_parameter_groups("dof".into());
+    let labels: Vec<&str> = groups.iter().map(|g| g.label.as_str()).collect();
+    assert_eq!(labels, vec!["Iris", "Highlights", "Depth map"]);
+    assert!(groups.iter().all(|g| g.collapsed));
 
-    assert_eq!(layout.enabled_when.len(), 2);
+    let enabled_when = crate::api::effect::list_enabled_when("dof".into());
     let rule = |param: &str| {
-        layout
-            .enabled_when
+        enabled_when
             .iter()
             .find(|r| r.param == param)
             .unwrap_or_else(|| panic!("no rule for {param}"))
             .clone()
     };
-    let channel = rule("custom_channel");
-    assert_eq!(channel.on, "custom_shape");
-    assert_eq!(channel.cond, BridgeEnabledCond::LayerSet);
-    let distance = rule("focal_distance");
+    // Focus distance and the focus point take each other over.
+    let distance = rule("focus");
     assert_eq!(distance.on, "use_focus_point");
     assert_eq!(distance.cond, BridgeEnabledCond::BoolIs(false));
+    let point = rule("focus_point_x");
+    assert_eq!(point.on, "use_focus_point");
+    assert_eq!(point.cond, BridgeEnabledCond::BoolIs(true));
+    // And everything that reads the depth pass greys without one.
+    let channel = rule("depth_channel");
+    assert_eq!(channel.on, "depth");
+    assert_eq!(channel.cond, BridgeEnabledCond::LayerSet);
 
-    // The two new control kinds cross as themselves, not flattened into Float.
-    let params = crate::api::effect::list_parameters("bokeh".into());
+    // The dial crosses as itself, not flattened into a Float row.
+    let params = crate::api::effect::list_parameters("dof".into());
     let kind = |id: &str| {
         params
             .iter()
@@ -1419,9 +1424,11 @@ fn bokehs_twirl_and_greying_rules_cross_the_bridge() {
     };
     assert!(matches!(
         kind("rotation"),
-        BridgeParamKind::Angle { default, .. } if default == 90.0
+        BridgeParamKind::Angle { default, .. } if default == 0.0
     ));
-    assert!(matches!(kind("focus_point"), BridgeParamKind::Point { .. }));
+    // The focus point is an `_x`/`_y` Float pair the panel folds into one row
+    // (docs/07 §6.1), not a kind of its own.
+    assert!(matches!(kind("focus_point_x"), BridgeParamKind::Float { .. }));
 }
 
 /// An unknown effect gets an empty layout rather than an error, for the same
@@ -1429,9 +1436,8 @@ fn bokehs_twirl_and_greying_rules_cross_the_bridge() {
 /// does not know still opens.
 #[test]
 fn the_layout_of_an_unknown_effect_is_empty() {
-    let layout = crate::api::effect::list_param_layout("not-an-effect".into());
-    assert!(layout.groups.is_empty());
-    assert!(layout.enabled_when.is_empty());
+    assert!(crate::api::effect::list_parameter_groups("not-an-effect".into()).is_empty());
+    assert!(crate::api::effect::list_enabled_when("not-an-effect".into()).is_empty());
 }
 
 // --- Transform ------------------------------------------------------------

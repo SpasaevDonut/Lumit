@@ -6,7 +6,7 @@ use crate::GpuContext;
 
 use super::{work_texture, FxEngine};
 
-/// The most aperture blades Bokeh's polygon test carries. Bounds the
+/// The most aperture blades the depth-of-field polygon test carries. Bounds the
 /// kernel's per-tap loop and the uniform's normal array.
 ///
 /// Declared here rather than imported: `lumit-core` is only a dev-dependency of
@@ -16,73 +16,53 @@ use super::{work_texture, FxEngine};
 /// available — pins the two together so they cannot drift.
 pub const MAX_BLADES: usize = 8;
 
-/// One resolved depth-of-field pass (foundation for the planned DoF effects).
-/// The per-pixel depth arrives as its own single-channel texture (see
-/// [`upload_depth_map`] and [`FxEngine::dof`]); this uniform carries only the
-/// scalars the kernel turns a depth into a circle-of-confusion radius with,
-/// plus the host Mix. The near side (`d < focus`) uses `near_aperture`, the far
-/// side `far_aperture`; both zero (or every pixel inside the sharp band) is a
-/// bit-exact passthrough. `depth_invert` and `display` are u32 flags (to match
-/// the WGSL uniform's scalar packing). 32 bytes: seven scalars plus one word of
-/// tail padding to the 16-byte uniform stride.
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct DofParams {
-    focus: f32,
-    range: f32,
-    /// Near-side max CoC radius (depths in front of focus), raster px.
-    near_aperture: f32,
-    /// Far-side max CoC radius (depths behind focus), raster px.
-    far_aperture: f32,
-    mix_amt: f32,
-    /// 0 = read the depth as-is, 1 = invert it (`d' = 1 - d`) before the CoC.
-    depth_invert: u32,
-    /// Diagnostic view: 0 = Rendered, 1 = Depth map, 2 = Focus map.
-    display: u32,
-    _pad: f32,
-}
-
-/// One resolved Bokeh (docs/08 §3.27) — the advanced lens blur. The depth pass
-/// arrives as its own texture exactly as [`FxEngine::dof`]'s does; everything
+/// One resolved depth-of-field pass (docs/08 §3.22). The depth pass arrives as
+/// its own texture (see [`upload_depth_map`] and [`FxEngine::dof`]); everything
 /// else the kernel needs is here.
 ///
-/// Field for field this is `lumit_core::fx::cpu::BokehParams`, which is what
-/// lets the §1.6 oracle set both paths up from one value, and makes a field
-/// added to one side an obvious omission on the other.
+/// Field for field this is `lumit_core::fx::cpu::DofParams`, which is what lets
+/// the §1.6 oracle set both paths up from one value, and makes a field added to
+/// one side an obvious omission on the other.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct BokehOp {
-    /// Maximum circle-of-confusion radius, raster px.
-    pub blur_radius: f32,
+pub struct DofOp {
+    /// The in-focus depth, 0..1, when `use_focus_point` is clear.
+    pub focus: f32,
+    /// Half-width of the sharp band around focus, 0..1.
+    pub range: f32,
+    /// Near-side max CoC radius (depths in front of focus), raster px.
+    pub near_aperture: f32,
+    /// Far-side max CoC radius (depths behind focus), raster px — and the one
+    /// uniform radius when no depth is bound.
+    pub far_aperture: f32,
     /// Outward unit edge normals, the first `blade_count` live. Computed by the
     /// caller — the kernel calls no trig, so the oracle reproduces it exactly.
     pub blade_normals: [[f32; 2]; MAX_BLADES],
-    /// 3..=[`MAX_BLADES`]. Never 0: Roundness 1 *is* the circle.
+    /// 3..=[`MAX_BLADES`]. Inert while `roundness` is 1: a circle has no blades.
     pub blade_count: u32,
     /// `cos²(π/N)`.
     pub apothem2: f32,
-    /// −1 star … 0 polygon … 1 circle.
+    /// −1 star … 0 polygon … 1 circle. 1 is the default and takes the plain
+    /// `r² ≤ coc²` test — the aperture this effect has always gathered.
     pub roundness: f32,
     /// −1 centre-weighted … 0 flat disc … 1 rim-weighted.
     pub concentration: f32,
     /// Tap-offset multipliers, both ≥ 1 and exactly one > 1, so the aperture can
     /// only shrink on one axis and never reaches outside the circle.
     pub deform_scale: [f32; 2],
-    /// The tonal split level and the power its excess is raised to.
+    /// The tonal split level and the power its excess is raised to. A power of
+    /// exactly 1 is the plain arithmetic mean and skips the split.
     pub threshold: f32,
     pub bokeh_power: f32,
     /// Clamp the gather to the frame edge instead of pulling in transparency.
     pub repeat_edge: bool,
-    /// False = no depth layer: the whole frame defocuses at `blur_radius` and
+    /// False = no depth layer: the whole frame defocuses at `far_aperture` and
     /// `depth` is never sampled, so the caller may bind any same-size texture.
     pub depth_bound: bool,
     /// Which channel of `depth` is read, by `lumit_core::fx::CHANNEL_OPTIONS`.
     pub depth_channel: u32,
     pub depth_invert: bool,
-    /// How many bands the defocus ramp quantises into (Resolution).
-    pub depth_bands: f32,
-    pub focal_distance: f32,
-    /// When set, focus is the depth under `focus_point` and `focal_distance` is
-    /// ignored — the greyed row in the panel.
+    /// When set, focus is the depth under `focus_point` and `focus` is ignored —
+    /// the greyed row in the panel.
     pub use_focus_point: bool,
     /// Raster px.
     pub focus_point: [f32; 2],
@@ -99,14 +79,25 @@ pub struct BokehOp {
     pub mix: f32,
 }
 
-/// The `bokeh` kernel's uniform. Layout mirrors `fx_bokeh.wgsl`'s `Params` field
-/// for field: sixteen floats, nine `u32`s and three words of padding — 28 words,
-/// a whole number of 16-byte rows — then the normals as an
-/// `array<vec4<f32>, 8>`. 240 bytes. The padding is not tidiness; see `_pad`.
+/// The `dof` kernel's uniform. Layout mirrors `fx_dof.wgsl`'s `Params` field for
+/// field: seventeen floats then eleven `u32`s — 28 words, seven whole 16-byte
+/// rows — then the normals as an `array<vec4<f32>, 8>`. 240 bytes.
+///
+/// **That word count is load-bearing.** An `array<vec4<f32>, N>` is 16-byte
+/// aligned in WGSL, so if the scalars above stop being a multiple of four the
+/// shader moves `blade_normals` to the next multiple of 16 while `repr(C)` moves
+/// it to the next multiple of 4, and every normal is then read from the wrong
+/// offset. Adding one scalar above without restoring the count is exactly how
+/// that happens; it costs no arithmetic and fails loudly in the §1.6 oracle
+/// (measured at 17 920 fp16 ULP when it did).
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct BokehParams {
-    blur_radius: f32,
+struct DofParams {
+    focus: f32,
+    range: f32,
+    near_aperture: f32,
+    far_aperture: f32,
+    mix_amt: f32,
     apothem2: f32,
     roundness: f32,
     concentration: f32,
@@ -114,36 +105,31 @@ struct BokehParams {
     deform_y: f32,
     threshold: f32,
     bokeh_power: f32,
-    focal_distance: f32,
     focus_x: f32,
     focus_y: f32,
     focus_falloff: f32,
-    depth_bands: f32,
     remove_edge_leak: f32,
     detect_edge_threshold: f32,
-    mix_amt: f32,
+    /// 0 = read the depth as-is, 1 = invert it (`d' = 1 - d`) before the CoC.
+    depth_invert: u32,
+    /// Diagnostic view: 0 = Rendered, 1 = Depth map, 2 = Focus map.
+    display: u32,
     blade_count: u32,
     depth_bound: u32,
     depth_channel: u32,
-    depth_invert: u32,
     use_focus_point: u32,
     repeat_edge: u32,
     composite_mode: u32,
-    /// Diagnostic view: 0 Rendered, 1 Depth map, 2 Focus map.
-    display: u32,
-    /// Whether the gather weights its taps at all. Decided host-side and once,
-    /// because a weighted gather computes `Σ(c·w)/Σw`, which is not an IEEE
-    /// identity even when every `w` is 1 — so the neutral settings must take a
-    /// genuinely different path, not multiply by one.
+    /// Whether the gather weights its taps at all, whether it splits them at the
+    /// threshold, and whether the aperture is the plain circle. All three are
+    /// decided host-side and once, because none of the neutral settings is an
+    /// IEEE identity: `Σ(c·w)/Σw` is not `Σc/n` when every `w` is 1,
+    /// `min(c,t) + max(c−t,0)` is not reliably `c`, and scaling both sides of a
+    /// comparison by `apothem2` can flip a boundary tap. The neutral settings
+    /// must take a genuinely different path, not multiply by one.
     weighted: u32,
-    /// Padding to a 16-byte boundary, and **load-bearing**: an
-    /// `array<vec4<f32>, N>` is 16-byte aligned in WGSL, so without this the
-    /// shader places `blade_normals` at the next multiple of 16 while `repr(C)`
-    /// places it at the next multiple of 4, and every normal is read from the
-    /// wrong offset. Adding one scalar above without adjusting this is how that
-    /// happens — it costs no arithmetic and fails loudly in the §1.6 oracle
-    /// (measured at 17 920 fp16 ULP when it did).
-    _pad: [u32; 3],
+    tonal: u32,
+    circle: u32,
     /// Only `.xy` of each element is read.
     blade_normals: [[f32; 4]; MAX_BLADES],
 }
@@ -178,7 +164,51 @@ struct LutParams {
 }
 
 impl FxEngine {
-    #[allow(clippy::too_many_arguments)]
+    /// Apply one depth-of-field lens blur to a linear working texture,
+    /// returning a new texture of the same size. Backs the `dof` effect
+    /// (docs/08 §3.22, docs/impl/layer-input.md).
+    ///
+    /// One pass. Per output pixel it reads the depth from the channel `op` names
+    /// (Red by convention and by default; `textureLoad`, not a sampler),
+    /// optionally inverts it (`d' = 1 - d`, swapping near and far), turns it
+    /// into a circle-of-confusion radius — zero inside `range` of the focus
+    /// depth, ramping smoothstep (scaled first by `focus_falloff`, the Profile
+    /// control) to `near_aperture` raster pixels on the near side or
+    /// `far_aperture` on the far side — then averages an aperture of that radius
+    /// from `src` and blends against the input by the host Mix.
+    ///
+    /// The focus depth is `op.focus`, or the depth under `op.focus_point` when
+    /// `use_focus_point` is set. With `depth_bound` clear the depth is never
+    /// sampled and the whole frame defocuses at `far_aperture`, so the caller may
+    /// bind any same-size float texture in that slot.
+    ///
+    /// **The aperture and the average are both shapeable, and every shaping
+    /// control is branched around at its neutral** (K-290): the aperture's
+    /// **Roundness** reaches below zero into star shapes and **Deform** squeezes
+    /// it on one axis — both leave it inscribed in the circle of the CoC radius,
+    /// so `ceil(radius)` stays a correct bound on the taps and the effect's ROI
+    /// stays honest — while **Concentration** weights the taps radially and
+    /// **Remove edge leak** pulls back taps sitting across a depth
+    /// discontinuity. At Roundness 1, Concentration 0, edge leak 0 and Exposure
+    /// 0 the kernel takes the plain circle test and the plain unweighted,
+    /// unsplit sum, which is the box-weighted disc average this pass has always
+    /// computed — bit for bit, which is what the passthrough tests pin.
+    ///
+    /// `display` selects the output view: 0 = Rendered (the blur above),
+    /// 1 = Depth map (the post-invert, post-channel-pick depth as greyscale),
+    /// 2 = Focus map (the smooth `1 - s` in-focus mask); the diagnostic views
+    /// ignore the blur and Mix and are continuous, so the oracle covers them.
+    ///
+    /// `depth` must be the same size as `src`; because it is read through
+    /// `textureLoad` rather than a sampler, it may be **any float texture** —
+    /// the referenced depth layer rendered in the working `rgba16float` format
+    /// (the effect's real depth input), or the exact R32Float map the §1.6
+    /// oracle uploads. `depth` is consumed exactly as `lumit_core::fx::cpu::dof`
+    /// (the CPU oracle) reads it and the tap set is identical, so the two agree.
+    /// Shares [`Self::mb_layout`] with Motion blur — the depth field is the one
+    /// extra sampled input over the two-input convention. Both apertures zero,
+    /// a depth everywhere inside the sharp band, or a Mix of 0 are bit-exact
+    /// passthroughs.
     pub fn dof(
         &self,
         ctx: &GpuContext,
@@ -186,29 +216,53 @@ impl FxEngine {
         w: u32,
         h: u32,
         depth: &wgpu::Texture,
-        focus: f32,
-        range: f32,
-        near_aperture: f32,
-        far_aperture: f32,
-        depth_invert: bool,
-        display: u32,
-        mix: f32,
+        op: &DofOp,
     ) -> wgpu::Texture {
         use wgpu::util::DeviceExt;
         let out = work_texture(ctx, w, h, "fx-dof-out");
+        let mut blade_normals = [[0.0f32; 4]; MAX_BLADES];
+        for (dst, n) in blade_normals.iter_mut().zip(op.blade_normals.iter()) {
+            dst[0] = n[0];
+            dst[1] = n[1];
+        }
+        // Decided here, once, rather than per tap: see `DofParams::weighted`.
+        let weighted = op.concentration != 0.0 || (op.remove_edge_leak > 0.0 && op.depth_bound);
+        let tonal = op.bokeh_power != 1.0;
+        let circle = op.roundness >= 1.0 && op.deform_scale == [1.0, 1.0];
         let ubuf = ctx
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("fx-dof-params"),
                 contents: bytemuck::bytes_of(&DofParams {
-                    focus,
-                    range,
-                    near_aperture,
-                    far_aperture,
-                    mix_amt: mix,
-                    depth_invert: u32::from(depth_invert),
-                    display,
-                    _pad: 0.0,
+                    focus: op.focus,
+                    range: op.range,
+                    near_aperture: op.near_aperture,
+                    far_aperture: op.far_aperture,
+                    mix_amt: op.mix,
+                    apothem2: op.apothem2,
+                    roundness: op.roundness,
+                    concentration: op.concentration,
+                    deform_x: op.deform_scale[0],
+                    deform_y: op.deform_scale[1],
+                    threshold: op.threshold,
+                    bokeh_power: op.bokeh_power,
+                    focus_x: op.focus_point[0],
+                    focus_y: op.focus_point[1],
+                    focus_falloff: op.focus_falloff,
+                    remove_edge_leak: op.remove_edge_leak,
+                    detect_edge_threshold: op.detect_edge_threshold,
+                    depth_invert: u32::from(op.depth_invert),
+                    display: op.display,
+                    blade_count: op.blade_count,
+                    depth_bound: u32::from(op.depth_bound),
+                    depth_channel: op.depth_channel,
+                    use_focus_point: u32::from(op.use_focus_point),
+                    repeat_edge: u32::from(op.repeat_edge),
+                    composite_mode: op.composite_mode,
+                    weighted: u32::from(weighted),
+                    tonal: u32::from(tonal),
+                    circle: u32::from(circle),
+                    blade_normals,
                 }),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
@@ -252,129 +306,6 @@ impl FxEngine {
             cpass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
         }
         drop(enc);
-        out
-    }
-
-    /// Apply one Bokeh (docs/08 §3.27) to a linear working texture, returning a
-    /// new texture of the same size — the advanced lens blur beside
-    /// [`Self::dof`], sharing its gather, its aperture and its tonal maths.
-    ///
-    /// What it adds over Lens blur, and the invariant each one keeps: the
-    /// aperture's **Roundness reaches below zero** into star shapes, and
-    /// **Deform** squeezes it on one axis — both leave it inscribed in the
-    /// circle of radius `blur_radius`, so `ceil(radius)` stays a correct bound
-    /// on the taps. **Concentration** weights the taps radially and **Remove
-    /// edge leak** pulls back taps sitting across a depth discontinuity — both
-    /// are branched around at their neutral values, so a Bokeh with neither asked
-    /// for gathers exactly as Lens blur does. **Profile** biases the defocus ramp
-    /// with a polynomial and **Resolution** quantises it into bands, both
-    /// identically on the CPU path. **Focus point** reads the focus depth from
-    /// one texel of `depth` rather than taking a number, and **Channel** chooses
-    /// which channel of `depth` is depth at all.
-    ///
-    /// `depth` must be the same size as `src`. With `op.depth_bound` clear it is
-    /// never sampled and the whole frame defocuses at `blur_radius`, so the
-    /// caller may bind any same-size float texture in that slot. Shares
-    /// [`Self::mb_layout`] with Motion blur and Lens blur — the depth field is
-    /// the one extra sampled input over the two-input convention. A zero radius,
-    /// a depth everywhere in focus, or a Mix of 0 are bit-exact passthroughs.
-    pub fn bokeh(
-        &self,
-        ctx: &GpuContext,
-        src: &wgpu::Texture,
-        w: u32,
-        h: u32,
-        depth: &wgpu::Texture,
-        op: &BokehOp,
-    ) -> wgpu::Texture {
-        use wgpu::util::DeviceExt;
-        let out = work_texture(ctx, w, h, "fx-bokeh-out");
-        let mut blade_normals = [[0.0f32; 4]; MAX_BLADES];
-        for (dst, n) in blade_normals.iter_mut().zip(op.blade_normals.iter()) {
-            dst[0] = n[0];
-            dst[1] = n[1];
-        }
-        // Decided here, once, rather than per tap: see `BokehParams::weighted`.
-        let weighted = op.concentration != 0.0 || (op.remove_edge_leak > 0.0 && op.depth_bound);
-        let ubuf = ctx
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("fx-bokeh-params"),
-                contents: bytemuck::bytes_of(&BokehParams {
-                    blur_radius: op.blur_radius,
-                    apothem2: op.apothem2,
-                    roundness: op.roundness,
-                    concentration: op.concentration,
-                    deform_x: op.deform_scale[0],
-                    deform_y: op.deform_scale[1],
-                    threshold: op.threshold,
-                    bokeh_power: op.bokeh_power,
-                    focal_distance: op.focal_distance,
-                    focus_x: op.focus_point[0],
-                    focus_y: op.focus_point[1],
-                    focus_falloff: op.focus_falloff,
-                    depth_bands: op.depth_bands,
-                    remove_edge_leak: op.remove_edge_leak,
-                    detect_edge_threshold: op.detect_edge_threshold,
-                    mix_amt: op.mix,
-                    blade_count: op.blade_count,
-                    depth_bound: u32::from(op.depth_bound),
-                    depth_channel: op.depth_channel,
-                    depth_invert: u32::from(op.depth_invert),
-                    use_focus_point: u32::from(op.use_focus_point),
-                    repeat_edge: u32::from(op.repeat_edge),
-                    composite_mode: op.composite_mode,
-                    display: op.display,
-                    weighted: u32::from(weighted),
-                    _pad: [0; 3],
-                    blade_normals,
-                }),
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
-        let view = |t: &wgpu::Texture| t.create_view(&Default::default());
-        let bind = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("fx-bokeh-bind"),
-            layout: &self.mb_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view(src)),
-                },
-                // orig-for-mix: a single pass, so the unprocessed original is
-                // the source itself.
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&view(src)),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&view(depth)),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&view(&out)),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: ubuf.as_entire_binding(),
-                },
-            ],
-        });
-        let mut enc = ctx
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("fx-bokeh-enc"),
-            });
-        {
-            let mut cpass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("fx-bokeh-pass"),
-                timestamp_writes: None,
-            });
-            cpass.set_pipeline(&self.bokeh);
-            cpass.set_bind_group(0, &bind, &[]);
-            cpass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
-        }
-        ctx.queue.submit([enc.finish()]);
         out
     }
 

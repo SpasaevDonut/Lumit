@@ -153,26 +153,19 @@ class EffectParamRowFrb extends StatelessWidget {
   Widget _build(BuildContext context, int frame) {
     final t = ThemeScope.of(context).theme;
     final id = effectId;
-    final scalars = _animatableScalarsOf(value);
-    // Only the number-shaped kinds animate; a choice, a layer or a file has
-    // nothing to interpolate, so those rows carry no stopwatch at all. A point
-    // carries one stopwatch over both its axes: they are separate properties,
-    // which is what makes a per-axis curve possible, but one stopwatch covering
-    // them has to act on both or it is lying about what it controls.
-    final keyframes = scalars == null
+    final scalar = _animatableScalarOf(value);
+    // Only the number-shaped kinds animate; a choice or a file has nothing to
+    // interpolate, so those rows carry no stopwatch at all.
+    final keyframes = scalar == null
         ? null
         : KeyframeControlsFrb(
-            scalars: scalars,
+            // An effect parameter is one value, so one channel.
+            scalars: [scalar],
             comp: comp,
             playheadFrame: playheadFrame,
             onSeek: onSeek,
             rowKey: '$id-${param.id}',
-            onWrite: (next) => _set(
-              next.length == 2
-                  ? BridgeEffectValue.point(
-                      BridgePoint(x: next[0], y: next[1]))
-                  : BridgeEffectValue.float(next.single),
-            ),
+            onWrite: (next) => _set(BridgeEffectValue.float(next.single)),
           );
 
     // The name is the row's handle for the graph editor, so it is built once
@@ -187,8 +180,7 @@ class EffectParamRowFrb extends StatelessWidget {
       onTap: onLabelTap,
       child: Text(
         engineLabel(param.label),
-        style:
-            graphColour == null ? t.body : t.body.copyWith(color: graphColour),
+        style: labelStyle,
         overflow: TextOverflow.ellipsis,
       ),
     );
@@ -235,6 +227,17 @@ class EffectParamRowFrb extends StatelessWidget {
   /// The scalar behind this row when the kind is one that can animate, else
   /// null. Float is the only single-scalar animatable kind the schema declares;
   /// a colour animates per channel, which the swatch has no room to key.
+  /// Draw `child` as a greyed row when another parameter has taken it over.
+  ///
+  /// Faded **and** deaf: [IgnorePointer] is what makes the greying honest, since
+  /// a control that still answers a drag while looking disabled is worse than
+  /// one that never dimmed. The value stays legible — you can read what Focus
+  /// distance *would* be — because greying says "this is not the one in charge",
+  /// not "this is gone".
+  Widget _greyed(Widget child) => enabled
+      ? child
+      : IgnorePointer(child: Opacity(opacity: 0.4, child: child));
+
   BridgeScalar? _animatableScalarOf(BridgeEffectValue? value) {
     // Int is a Float value with integer display (docs/08 §1.2), so it
     // animates exactly like Float.
@@ -333,6 +336,18 @@ class EffectParamRowFrb extends StatelessWidget {
             keyName: '$id-${param.id}',
             integer: true,
             write: (s) => _set(BridgeEffectValue.float(s)),
+          );
+        }
+        return Text('—', style: t.small);
+
+      case BridgeParamKind_Angle(:final dialStep):
+        if (value case BridgeEffectValue_Float(:final field0)) {
+          return _angleControl(
+            context,
+            scalar: field0,
+            frame: frame,
+            step: dialStep,
+            keyName: '$id-${param.id}',
           );
         }
         return Text('—', style: t.small);
@@ -660,136 +675,6 @@ class EffectParamRowFrb extends StatelessWidget {
     );
   }
 
-  /// Two number fields and the crosshair that fills them in from the picture.
-  ///
-  /// **The crosshair is the point of this control.** Setting a focus point by
-  /// typing two numbers means reading coordinates off the Viewer and copying
-  /// them across; arming this and clicking the thing you want sharp is the same
-  /// edit without the arithmetic, which is why docs/07 §6 asks for it and why
-  /// the Focus point row exists at all rather than being a distance slider.
-  Widget _pointControl(BuildContext context, LumitTheme t, UuidValue id,
-      BridgePoint point, int frame) {
-    final ui = Provider.of<LumitUiState>(context, listen: false);
-    final owner = '$id-${param.id}';
-
-    double shown(BridgeScalar s) => s is BridgeScalar_Static
-        ? s.field0
-        : sampleScalar(scalar: s, time: timeOfFrame(comp, frame));
-
-    // The Viewer reports where the click landed in **composition** pixels, but
-    // a point parameter is authored in the **layer's own** pixels — the frame
-    // the effect stack runs in, and the frame its auxiliary inputs (a depth
-    // pass) are resampled to. On an untransformed full-frame layer the two are
-    // the same, which is exactly why getting it wrong stays invisible until
-    // someone scales or moves the layer and the focus lands somewhere else.
-    //
-    // The conversion is the Viewer's own [ViewerLayerMap.layerOf] with the
-    // screen mapping taken out (origin zero, view scale 1), so a picked point
-    // and a dragged move handle cannot disagree about where a layer is. A layer
-    // whose transform is animated has no single position to invert, so the
-    // point is taken as given rather than guessed at.
-    Offset toLayerSpace(double x, double y) {
-      final owner = ownerLayers
-          .where((l) => l.layer.internallayerId == ownerLayerId)
-          .firstOrNull;
-      if (owner == null) return Offset(x, y);
-      final tf = owner.layer.getTransform();
-      double? still(BridgeScalar s) =>
-          s is BridgeScalar_Static ? s.field0 : null;
-      final px = still(tf.positionX);
-      final py = still(tf.positionY);
-      if (px == null || py == null) return Offset(x, y);
-      return ViewerLayerMap.of(
-        positionX: px,
-        positionY: py,
-        anchorX: still(tf.anchorX) ?? 0,
-        anchorY: still(tf.anchorY) ?? 0,
-        scaleXPercent: still(tf.scaleX) ?? 100,
-        scaleYPercent: still(tf.scaleY) ?? 100,
-        rotationDegrees: still(tf.rotation) ?? 0,
-        origin: Offset.zero,
-        viewScale: 1,
-      ).layerOf(Offset(x, y));
-    }
-
-    // One write for both axes: they are two properties, but they are one point,
-    // and two ops for one click is what the whole-value shape exists to avoid.
-    void writeBoth(double x, double y) {
-      BridgeScalar axis(BridgeScalar was, double v) => was is BridgeScalar_Static
-          ? BridgeScalar.static_(v)
-          : scalarWithValueAt(was, v, comp, frame);
-      _set(BridgeEffectValue.point(BridgePoint(
-        x: axis(point.x, x),
-        y: axis(point.y, y),
-      )));
-    }
-
-    Widget axisField(String axis, BridgeScalar scalar, bool isX) => SizedBox(
-          width: effectCellWidth - 12,
-          child: DragValueField(
-            key: ValueKey<String>('fx-point-$axis-$owner'),
-            value: shown(scalar),
-            min: -1000000,
-            max: 1000000,
-            speed: 1,
-            decimals: 1,
-            onChanged: (v) => isX
-                ? writeBoth(v.toDouble(), shown(point.y))
-                : writeBoth(shown(point.x), v.toDouble()),
-          ),
-        );
-
-    return ValueListenableBuilder<ViewerPickRequest?>(
-      valueListenable: ui.viewerPick,
-      builder: (context, armed, _) {
-        final mine = armed?.owner == owner;
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            axisField('x', point.x, true),
-            const SizedBox(width: 4),
-            axisField('y', point.y, false),
-            const SizedBox(width: 4),
-            LumitTooltip(
-              message: mine
-                  ? 'Click in the Viewer to place the point, or press Escape'
-                  : 'Pick this point in the Viewer',
-              child: GestureDetector(
-                key: ValueKey<String>('fx-pick-$owner'),
-                behavior: HitTestBehavior.opaque,
-                // Armed again while already armed means "never mind", which is
-                // the only way out that does not need the keyboard.
-                onTap: () => mine
-                    ? ui.cancelViewerPick()
-                    : ui.armViewerPick(ViewerPickRequest(
-                        owner: owner,
-                        onPicked: (x, y) {
-                          final p = toLayerSpace(x, y);
-                          writeBoth(p.dx, p.dy);
-                        },
-                      )),
-                child: MouseRegion(
-                  cursor: SystemMouseCursors.click,
-                  child: SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CustomPaint(
-                      painter: _CrosshairPainter(
-                        // Lit while it is this row's pick that is armed, so a
-                        // panel full of points says which one is waiting.
-                        colour: mine ? t.accent : t.textSecondary,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
   /// A colour swatch. The four channels animate independently in the model, so a
   /// swatch edit writes all four statics at once; an animated channel is left
   /// alone for the same reason a scalar is.
@@ -974,6 +859,11 @@ class EffectPointRowFrb extends StatelessWidget {
   /// the K-260 convention every new point pair uses).
   final bool? pickPixels;
 
+  /// Whether the pair is editable, per the effect's greying rules — the same
+  /// affordance [EffectParamRowFrb.enabled] draws, over a row that happens to
+  /// carry two parameters.
+  final bool enabled;
+
   const EffectPointRowFrb({
     super.key,
     required this.effectId,
@@ -988,6 +878,7 @@ class EffectPointRowFrb extends StatelessWidget {
     required this.onLive,
     this.twoColumn = false,
     this.pickPixels,
+    this.enabled = true,
   });
 
   BridgeScalar? _scalar(BridgeEffectValue? v) => switch (v) {
@@ -1034,7 +925,17 @@ class EffectPointRowFrb extends StatelessWidget {
             },
           );
 
-    final label = Text(stem, style: t.body, overflow: TextOverflow.ellipsis);
+    final label = Text(
+      stem,
+      style: enabled ? t.body : t.body.copyWith(color: t.textDisabled),
+      overflow: TextOverflow.ellipsis,
+    );
+
+    // Faded and deaf together: a control that still answers a drag while
+    // looking disabled is worse than one that never dimmed.
+    Widget greyed(Widget child) => enabled
+        ? child
+        : IgnorePointer(child: Opacity(opacity: 0.4, child: child));
 
     Widget field(BridgeParamInfo param, BridgeScalar? scalar) {
       if (scalar == null) return Text('—', style: t.small);
@@ -1128,8 +1029,8 @@ class EffectPointRowFrb extends StatelessWidget {
         child: fxTwoColumnRow(
           context: context,
           name: label,
-          keyframeControls: keyframes,
-          control: control,
+          keyframeControls: keyframes == null ? null : greyed(keyframes),
+          control: greyed(control),
         ),
       );
     }
@@ -1137,11 +1038,11 @@ class EffectPointRowFrb extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
         children: [
-          if (keyframes != null) keyframes,
+          if (keyframes != null) greyed(keyframes),
           const SizedBox(width: 4),
           Expanded(child: label),
           const SizedBox(width: 10),
-          control,
+          greyed(control),
         ],
       ),
     );
@@ -1154,6 +1055,10 @@ class EffectPointRowFrb extends StatelessWidget {
 const Map<String, bool> pickablePointParams = {
   'light_x': true,
   'centre_x': false,
+  // Depth of field's Focus point (K-290): px@comp, and the reason the control
+  // exists at all — clicking the thing you want sharp beats reading a depth
+  // value off the Depth map view and typing it in.
+  'focus_point_x': true,
 };
 
 /// The effect schema, fetched once per session and then answered from here.
@@ -1177,6 +1082,49 @@ final Map<String, List<BridgeParamGroup>> _groupSchema = {};
 List<BridgeParamGroup> cachedListParameterGroups(String effect) =>
     _groupSchema[effect] ??= listParameterGroups(effect: effect);
 
+final Map<String, List<BridgeEnabledWhen>> _enabledWhenSchema = {};
+
+/// An effect's greying rules (`EnabledWhen` in the schema), memoised like the
+/// groups: which rows go quiet while another control has taken them over.
+List<BridgeEnabledWhen> cachedListEnabledWhen(String effect) =>
+    _enabledWhenSchema[effect] ??= listEnabledWhen(effect: effect);
+
+/// Which of `effect`'s parameters are currently NOT editable, given the values
+/// the panel is showing.
+///
+/// Mirrors `lumit_core::fx::param_enabled`, which is the authority: the rules
+/// are evaluated here rather than asked for across the bridge because the panel
+/// already holds every value they read, and a round trip per row per rebuild for
+/// an answer it can compute is exactly the hover-hot bridge traffic the budget
+/// test forbids. Several rules may name the same parameter; every one of them
+/// has to be satisfied, so one unsatisfied rule greys the row.
+///
+/// A rule naming a parameter the instance does not carry cannot be judged, so it
+/// greys nothing — an older instance that predates the deciding control stays
+/// fully editable rather than locking a row it can never unlock.
+Set<String> disabledParams(
+  String effect,
+  Map<String, BridgeEffectValue> values,
+) {
+  final out = <String>{};
+  for (final rule in cachedListEnabledWhen(effect)) {
+    final on = values[rule.on_];
+    if (on == null) continue;
+    final ok = switch ((rule.cond, on)) {
+      (BridgeEnabledCond_BoolIs(:final field0), BridgeEffectValue_Bool(field0: final v)) => v == field0,
+      (BridgeEnabledCond_ChoiceIs(:final field0), BridgeEffectValue_Choice(field0: final v)) => v == field0,
+      (BridgeEnabledCond_ChoiceIsNot(:final field0), BridgeEffectValue_Choice(field0: final v)) => v != field0,
+      (BridgeEnabledCond_LayerSet(), BridgeEffectValue_Layer(field0: final v)) => v != null,
+      // A rule pointed at the wrong kind of parameter is a schema mistake the
+      // Rust-side test fails the build for; here it leaves the row live rather
+      // than locking one the owner can never reach.
+      _ => true,
+    };
+    if (!ok) out.add(rule.param);
+  }
+  return out;
+}
+
 /// An effect's display label from the schema, falling back to its match name
 /// for an effect this build does not know.
 String effectLabelOf(String name) {
@@ -1198,6 +1146,9 @@ BridgeEffectValue defaultEffectValue(BridgeParamKind kind) => switch (kind) {
         BridgeEffectValue.float(BridgeScalar.static_(default_)),
       BridgeParamKind_Int(:final default_) =>
         BridgeEffectValue.float(BridgeScalar.static_(default_.toDouble())),
+      // An angle is a number of degrees, so it resets like any other scalar.
+      BridgeParamKind_Angle(:final default_) =>
+        BridgeEffectValue.float(BridgeScalar.static_(default_)),
       BridgeParamKind_Choice(:final default_) =>
         BridgeEffectValue.choice(default_),
       BridgeParamKind_Bool(:final default_) => BridgeEffectValue.bool(default_),

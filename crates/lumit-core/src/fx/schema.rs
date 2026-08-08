@@ -75,25 +75,16 @@ pub enum ParamKind {
     /// why the existing degree parameters (Shake's rotation, the aperture's
     /// blade rotation) declare `hard: (None, None)`. `dial_step` is the
     /// snapping increment while a modifier is held, in degrees.
+    ///
+    /// There is deliberately **no `Point` kind beside this one**. A 2-D point
+    /// is already a pair of adjacent `_x`/`_y` Floats that the panel folds into
+    /// one row with a crosshair pick (docs/07 §6.1) — the Lens flare's Light
+    /// and Radial blur's Centre both ride it — so a point needs no schema kind
+    /// of its own, only the naming convention. An angle has no such fallback:
+    /// there is no arrangement of existing rows that draws a dial.
     Angle {
         default: f64,
         dial_step: f64,
-    },
-    /// A 2D point in composition space — docs/08 §1.1's "2D point (comp
-    /// space)", drawn as an x and a y field plus the **crosshair** button
-    /// docs/07-UI-SPEC.md §6 describes: arm it, click in the Viewer, and the
-    /// point lands where you clicked.
-    ///
-    /// The value side of this has been built all along —
-    /// [`EffectValue::Point`](crate::model::EffectValue::Point) carries two
-    /// independently animating [`Property`](crate::model::Property)s, the
-    /// bridge reads and writes it, expressions address it — and only the
-    /// *schema* kind was missing, so no effect could declare one. Radial
-    /// blur's Centre is split into `centre_x`/`centre_y` Floats for exactly
-    /// that reason; it is a candidate to fold back into one point later, but
-    /// that is a saved-project change and not this parameter's business.
-    Point {
-        default: (f64, f64),
     },
     Choice {
         options: &'static [&'static str],
