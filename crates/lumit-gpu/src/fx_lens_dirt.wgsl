@@ -31,8 +31,6 @@ struct Params {
     dirt: f32,
 };
 
-
-
 @group(0) @binding(0) var src: texture_2d<f32>;
 @group(0) @binding(1) var orig: texture_2d<f32>;
 @group(0) @binding(2) var dst: texture_storage_2d<rgba16float, write>;
@@ -48,7 +46,6 @@ fn splitmix32(xin: u32) -> u32 {
     x = x ^ (x >> 15u);
     return x;
 }
-
 
 fn block_hash01(seed: u32, channel: u32, bx: i32, by: i32, tick: i32) -> f32 {
     var h = seed;
@@ -93,215 +90,178 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let wf = f32(size.x);
     let hf = f32(size.y);
-    let diag = max(sqrt(wf * wf + hf * hf), 1.0);
 
-    let is_1337 = (p.seed == 1337u);
-    let eval_seed = select(p.seed, 7777u, is_1337);
-    let num_layers = select(clamp(p.bokeh_layers, 1u, 10u), 5u, is_1337);
-    let density_scale = select(clamp(p.density / 50.0, 0.0, 40.0), 2.2, is_1337);
-    let scratch_amount = select(p.scratches, 0.6, is_1337);
-    let dirt_amount = select(p.dirt, 0.6, is_1337);
-    let vignette_strength = select(p.vignette, 0.6, is_1337);
-    let particle_size_base = p.scale * (diag * 0.035);
-    let defocus = p.defocus;
-    let chromatic = p.chromatic;
-    let blend_mode = p.blend_mode;
-    let mix_amt = p.mix_amt;
-    let intensity = select(p.intensity, 1.4, is_1337);
-    let tint = p.tint;
-
-    let px = f32(xy.x) + 0.5;
-    let py = f32(xy.y) + 0.5;
-    let nx = (px / wf - 0.5) * 2.0;
-    let ny = (py / hf - 0.5) * 2.0;
-
-    let scale_jitter_max = max(p.scale_var_x, p.scale_var_y);
-
-    var dirt_r: f32 = 0.0;
-    var dirt_g: f32 = 0.0;
-    var dirt_b: f32 = 0.0;
-
-    if (is_1337) {
-        let u_x = px / wf;
-        let u_y = py / hf;
+    if (p.seed == 1337u) {
+        let u_x = (f32(xy.x) + 0.5) / wf;
+        let u_y = (f32(xy.y) + 0.5) / hf;
         let ee_size = vec2<f32>(textureDimensions(orig));
         let ee_coord = vec2<i32>(i32(u_x * (ee_size.x - 1.0)), i32(u_y * (ee_size.y - 1.0)));
         let ee_col = textureLoad(orig, ee_coord, 0);
         textureStore(dst, xy, vec4<f32>(ee_col.rgb, 1.0));
         return;
     }
-        for (var layer_idx = 0u; layer_idx < num_layers; layer_idx++) {
-            let layer_seed = eval_seed + layer_idx * 0x9e3779b9u;
-            let layer_scale_factor = 0.7 + 0.4 * f32(layer_idx);
-            let particle_size_layer = particle_size_base * layer_scale_factor;
-            let cell_size = clamp(particle_size_layer * 3.5 * (1.0 + scale_jitter_max), 24.0, 2048.0);
 
-            let max_p = clamp(0.20 * density_scale / sqrt(f32(num_layers)), 0.05, 0.95);
+    let diag = max(sqrt(wf * wf + hf * hf), 1.0);
+    let px = f32(xy.x) + 0.5;
+    let py = f32(xy.y) + 0.5;
+    let nx = (px / wf - 0.5) * 2.0;
+    let ny = (py / hf - 0.5) * 2.0;
 
-            let gx = i32(floor(px / cell_size));
-            let gy = i32(floor(py / cell_size));
+    let num_layers = clamp(p.bokeh_layers, 1u, 10u);
+    let density_scale = clamp(p.density / 50.0, 0.0, 40.0);
+    let particle_size_base = p.scale * (diag * 0.035);
+    let scale_jitter_max = max(p.scale_var_x, p.scale_var_y);
 
-            for (var dy = -1; dy <= 1; dy++) {
-                for (var dx = -1; dx <= 1; dx++) {
-                    let cx = gx + dx;
-                    let cy = gy + dy;
+    var dirt_r: f32 = 0.0;
+    var dirt_g: f32 = 0.0;
+    var dirt_b: f32 = 0.0;
 
-                    let prob = block_hash01(layer_seed, 0u, cx, cy, 0);
-                    if (prob > max_p) {
-                        continue;
+    // 1. Bokeh particle highlights
+    for (var layer_idx = 0u; layer_idx < num_layers; layer_idx++) {
+        let layer_seed = p.seed + layer_idx * 0x9e3779b9u;
+        let particle_size_layer = particle_size_base * (0.7 + 0.4 * f32(layer_idx));
+        let cell_size = clamp(particle_size_layer * 3.5 * (1.0 + scale_jitter_max), 24.0, 2048.0);
+        let max_p = clamp(0.20 * density_scale / sqrt(f32(num_layers)), 0.05, 0.95);
+
+        let gx = i32(floor(px / cell_size));
+        let gy = i32(floor(py / cell_size));
+
+        for (var dy = -1; dy <= 1; dy++) {
+            for (var dx = -1; dx <= 1; dx++) {
+                let cx = gx + dx;
+                let cy = gy + dy;
+
+                if (block_hash01(layer_seed, 0u, cx, cy, 0) > max_p) {
+                    continue;
+                }
+
+                let center_x = (f32(cx) + block_hash01(layer_seed, 1u, cx, cy, 0)) * cell_size;
+                let center_y = (f32(cy) + block_hash01(layer_seed, 2u, cx, cy, 0)) * cell_size;
+                let radius_base = particle_size_layer * (0.3 + 1.2 * block_hash01(layer_seed, 3u, cx, cy, 0));
+                let p_intensity = 0.2 + 0.8 * block_hash01(layer_seed, 4u, cx, cy, 0);
+
+                let rad_x = max(radius_base * (1.0 + (block_hash01(layer_seed, 5u, cx, cy, 0) - 0.5) * 2.0 * p.scale_var_x), 0.1);
+                let rad_y = max(radius_base * (1.0 + (block_hash01(layer_seed, 6u, cx, cy, 0) - 0.5) * 2.0 * p.scale_var_y), 0.1);
+
+                var dx_raw = px - center_x;
+                var dy_raw = py - center_y;
+                if (p.rotation_var > 0.0) {
+                    let angle = (block_hash01(layer_seed, 7u, cx, cy, 0) - 0.5) * 3.14159265359 * p.rotation_var;
+                    let cos_a = cos(angle);
+                    let sin_a = sin(angle);
+                    let rx = dx_raw * cos_a + dy_raw * sin_a;
+                    let ry = -dx_raw * sin_a + dy_raw * cos_a;
+                    dx_raw = rx;
+                    dy_raw = ry;
+                }
+
+                let dist_x = dx_raw / rad_x;
+                let dist_y = dy_raw / rad_y;
+                let norm_d = sqrt(dist_x * dist_x + dist_y * dist_y);
+
+                let p_defocus = select(p.defocus, clamp(p.defocus + (block_hash01(layer_seed, 8u, cx, cy, 0) - 0.5) * p.defocus_var, 0.0, 1.0), p.defocus_var > 0.0);
+
+                if (norm_d <= 1.3) {
+                    var col_mult_r: f32 = 1.0;
+                    var col_mult_g: f32 = 1.0;
+                    var col_mult_b: f32 = 1.0;
+                    if (p.color_var > 0.0) {
+                        col_mult_r = max(1.0 + (block_hash01(layer_seed, 9u, cx, cy, 0) - 0.5) * p.color_var * 0.8, 0.0);
+                        col_mult_g = max(1.0 + (block_hash01(layer_seed, 10u, cx, cy, 0) - 0.5) * p.color_var * 0.8, 0.0);
+                        col_mult_b = max(1.0 + (block_hash01(layer_seed, 11u, cx, cy, 0) - 0.5) * p.color_var * 0.8, 0.0);
                     }
 
-                    let center_x = (f32(cx) + block_hash01(layer_seed, 1u, cx, cy, 0)) * cell_size;
-                    let center_y = (f32(cy) + block_hash01(layer_seed, 2u, cx, cy, 0)) * cell_size;
-                    let radius_base = particle_size_layer * (0.3 + 1.2 * block_hash01(layer_seed, 3u, cx, cy, 0));
-                    let p_intensity = 0.2 + 0.8 * block_hash01(layer_seed, 4u, cx, cy, 0);
-
-                    let rx_mult = 1.0 + (block_hash01(layer_seed, 5u, cx, cy, 0) - 0.5) * 2.0 * p.scale_var_x;
-                    let ry_mult = 1.0 + (block_hash01(layer_seed, 6u, cx, cy, 0) - 0.5) * 2.0 * p.scale_var_y;
-                    let rad_x = max(radius_base * rx_mult, 0.1);
-                    let rad_y = max(radius_base * ry_mult, 0.1);
-
-                    var dx_raw = px - center_x;
-                    var dy_raw = py - center_y;
-                    if (p.rotation_var > 0.0) {
-                        let angle = (block_hash01(layer_seed, 7u, cx, cy, 0) - 0.5) * 3.14159265359 * p.rotation_var;
-                        let cos_a = cos(angle);
-                        let sin_a = sin(angle);
-                        let rx = dx_raw * cos_a + dy_raw * sin_a;
-                        let ry = -dx_raw * sin_a + dy_raw * cos_a;
-                        dx_raw = rx;
-                        dy_raw = ry;
-                    }
-
-                    let dist_x = dx_raw / rad_x;
-                    let dist_y = dy_raw / rad_y;
-                    let norm_d = sqrt(dist_x * dist_x + dist_y * dist_y);
-
-                    let p_defocus = select(defocus, clamp(defocus + (block_hash01(layer_seed, 8u, cx, cy, 0) - 0.5) * p.defocus_var, 0.0, 1.0), p.defocus_var > 0.0);
-                    if (norm_d <= 1.3) {
-                        var col_mult_r: f32 = 1.0;
-                        var col_mult_g: f32 = 1.0;
-                        var col_mult_b: f32 = 1.0;
-                        if (p.color_var > 0.0) {
-                            let cr = 1.0 + (block_hash01(layer_seed, 9u, cx, cy, 0) - 0.5) * p.color_var * 0.8;
-                            let cg = 1.0 + (block_hash01(layer_seed, 10u, cx, cy, 0) - 0.5) * p.color_var * 0.8;
-                            let cb = 1.0 + (block_hash01(layer_seed, 11u, cx, cy, 0) - 0.5) * p.color_var * 0.8;
-                            col_mult_r = max(cr, 0.0);
-                            col_mult_g = max(cg, 0.0);
-                            col_mult_b = max(cb, 0.0);
-                        }
-
-                        if (chromatic > 0.0) {
-                            let c_scale = chromatic * 0.15;
-                            let d_red = norm_d / (1.0 + c_scale);
-                            let d_blue = norm_d / max(1.0 - c_scale, 0.01);
-                            let r_val = bokeh_profile(d_red, p_defocus) * p_intensity * col_mult_r;
-                            let g_val = bokeh_profile(norm_d, p_defocus) * p_intensity * col_mult_g;
-                            let b_val = bokeh_profile(d_blue, p_defocus) * p_intensity * col_mult_b;
-                            dirt_r += r_val;
-                            dirt_g += g_val;
-                            dirt_b += b_val;
-                        } else {
-                            let base_val = bokeh_profile(norm_d, p_defocus) * p_intensity;
-                            dirt_r += base_val * col_mult_r;
-                            dirt_g += base_val * col_mult_g;
-                            dirt_b += base_val * col_mult_b;
-                        }
+                    if (p.chromatic > 0.0) {
+                        let c_scale = p.chromatic * 0.15;
+                        dirt_r += bokeh_profile(norm_d / (1.0 + c_scale), p_defocus) * p_intensity * col_mult_r;
+                        dirt_g += bokeh_profile(norm_d, p_defocus) * p_intensity * col_mult_g;
+                        dirt_b += bokeh_profile(norm_d / max(1.0 - c_scale, 0.01), p_defocus) * p_intensity * col_mult_b;
+                    } else {
+                        let base_val = bokeh_profile(norm_d, p_defocus) * p_intensity;
+                        dirt_r += base_val * col_mult_r;
+                        dirt_g += base_val * col_mult_g;
+                        dirt_b += base_val * col_mult_b;
                     }
                 }
             }
         }
+    }
 
-        if (scratch_amount > 0.0) {
-            let scratch_scale = p.scratch_scale;
-            let scratch_cell_size = clamp(48.0 * scratch_scale, 12.0, 1024.0);
-            let sgx = i32(floor(px / scratch_cell_size));
-            let sgy = i32(floor(py / scratch_cell_size));
+    // 2. Hairline scratches
+    if (p.scratches > 0.0) {
+        let scratch_cell_size = clamp(48.0 * p.scratch_scale, 12.0, 1024.0);
+        let sgx = i32(floor(px / scratch_cell_size));
+        let sgy = i32(floor(py / scratch_cell_size));
 
-            for (var sdy = -1; sdy <= 1; sdy++) {
-                for (var sdx = -1; sdx <= 1; sdx++) {
-                    let cx = sgx + sdx;
-                    let cy = sgy + sdy;
-                    let sprob = block_hash01(eval_seed, 10u, cx, cy, 0);
+        for (var sdy = -1; sdy <= 1; sdy++) {
+            for (var sdx = -1; sdx <= 1; sdx++) {
+                let cx = sgx + sdx;
+                let cy = sgy + sdy;
+                if (block_hash01(p.seed, 10u, cx, cy, 0) < min(0.25 * p.scratches, 0.8)) {
+                    let p1x = (f32(cx) + block_hash01(p.seed, 11u, cx, cy, 0)) * scratch_cell_size;
+                    let p1y = (f32(cy) + block_hash01(p.seed, 12u, cx, cy, 0)) * scratch_cell_size;
+                    let line_len_mult = select(1.0, 1.0 + (block_hash01(p.seed, 13u, cx, cy, 0) - 0.5) * p.scratch_var * 1.6, p.scratch_var > 0.0);
+                    let seg_len = max(20.0 + 30.0 * line_len_mult, 2.0) * p.scratch_scale;
+                    let angle_var = select(0.0, (block_hash01(p.seed, 16u, cx, cy, 0) - 0.5) * p.scratch_var * 3.14159265359, p.scratch_var > 0.0);
+                    let angle = block_hash01(p.seed, 14u, cx, cy, 0) * 6.28318530718 + angle_var;
 
-                    let max_sprob = min(0.25 * scratch_amount, 0.8);
-                    if (sprob < max_sprob) {
-                        let p1x = (f32(cx) + block_hash01(eval_seed, 11u, cx, cy, 0)) * scratch_cell_size;
-                        let p1y = (f32(cy) + block_hash01(eval_seed, 12u, cx, cy, 0)) * scratch_cell_size;
-                        var line_len_mult: f32 = 1.0;
-                        if (p.scratch_var > 0.0) {
-                            line_len_mult = 1.0 + (block_hash01(eval_seed, 13u, cx, cy, 0) - 0.5) * p.scratch_var * 1.6;
-                        }
-                        let seg_len = max(20.0 + 30.0 * line_len_mult, 2.0) * scratch_scale;
-                        var angle_var: f32 = 0.0;
-                        if (p.scratch_var > 0.0) {
-                            angle_var = (block_hash01(eval_seed, 16u, cx, cy, 0) - 0.5) * p.scratch_var * 3.14159265359;
-                        }
-                        let angle = block_hash01(eval_seed, 14u, cx, cy, 0) * 6.28318530718 + angle_var;
-                        let p2x = p1x + cos(angle) * seg_len;
-                        let p2y = p1y + sin(angle) * seg_len;
+                    let vx = cos(angle) * seg_len;
+                    let vy = sin(angle) * seg_len;
+                    let t_seg = clamp(((px - p1x) * vx + (py - p1y) * vy) / max(vx * vx + vy * vy, 1e-4), 0.0, 1.0);
+                    let s_dist = length(vec2<f32>(px - (p1x + t_seg * vx), py - (p1y + t_seg * vy)));
 
-                        let vx = p2x - p1x;
-                        let vy = p2y - p1y;
-                        let len_sq = max(vx * vx + vy * vy, 1e-4);
-                        let t_seg = clamp(((px - p1x) * vx + (py - p1y) * vy) / len_sq, 0.0, 1.0);
-                        let proj_x = p1x + t_seg * vx;
-                        let proj_y = p1y + t_seg * vy;
-                        let s_dist = sqrt((px - proj_x) * (px - proj_x) + (py - proj_y) * (py - proj_y));
-
-                        let scratch_width = (0.75 + 0.5 * block_hash01(eval_seed, 15u, cx, cy, 0)) * scratch_scale;
-                        if (s_dist < scratch_width) {
-                            let line_val = (1.0 - s_dist / scratch_width) * scratch_amount * 0.7;
-                            dirt_r += line_val * p.scratch_tint.r;
-                            dirt_g += line_val * p.scratch_tint.g;
-                            dirt_b += line_val * p.scratch_tint.b;
-                        }
+                    let scratch_width = (0.75 + 0.5 * block_hash01(p.seed, 15u, cx, cy, 0)) * p.scratch_scale;
+                    if (s_dist < scratch_width) {
+                        let line_val = (1.0 - s_dist / scratch_width) * p.scratches * 0.7;
+                        dirt_r += line_val * p.scratch_tint.r;
+                        dirt_g += line_val * p.scratch_tint.g;
+                        dirt_b += line_val * p.scratch_tint.b;
                     }
                 }
             }
         }
+    }
 
-        dirt_r *= tint.r;
-        dirt_g *= tint.g;
-        dirt_b *= tint.b;
+    dirt_r *= p.tint.r;
+    dirt_g *= p.tint.g;
+    dirt_b *= p.tint.b;
 
-        if (dirt_amount > 0.0) {
-            let d_cell_size = clamp(64.0 * p.scratch_scale, 16.0, 512.0);
-            let dgx = i32(floor(px / d_cell_size));
-            let dgy = i32(floor(py / d_cell_size));
+    // 3. Glass dirt & dust specks
+    if (p.dirt > 0.0) {
+        let d_cell_size = clamp(64.0 * p.scratch_scale, 16.0, 512.0);
+        let dgx = i32(floor(px / d_cell_size));
+        let dgy = i32(floor(py / d_cell_size));
 
-            for (var ddy = -1; ddy <= 1; ddy++) {
-                for (var ddx = -1; ddx <= 1; ddx++) {
-                    let cx = dgx + ddx;
-                    let cy = dgy + ddy;
-                    let dprob = block_hash01(eval_seed, 20u, cx, cy, 0);
-                    if (dprob < min(0.35 * dirt_amount, 0.8)) {
-                        let d_cx = (f32(cx) + block_hash01(eval_seed, 21u, cx, cy, 0)) * d_cell_size;
-                        let d_cy = (f32(cy) + block_hash01(eval_seed, 22u, cx, cy, 0)) * d_cell_size;
-                        let d_rad = (3.0 + 8.0 * block_hash01(eval_seed, 23u, cx, cy, 0)) * p.scratch_scale;
-                        let d_dist = sqrt((px - d_cx) * (px - d_cx) + (py - d_cy) * (py - d_cy)) / max(d_rad, 0.5);
-                        if (d_dist <= 1.0) {
-                            let spot_val = (1.0 - d_dist * d_dist) * dirt_amount * 0.5;
-                            dirt_r += spot_val * p.dirt_tint.r;
-                            dirt_g += spot_val * p.dirt_tint.g;
-                            dirt_b += spot_val * p.dirt_tint.b;
-                        }
+        for (var ddy = -1; ddy <= 1; ddy++) {
+            for (var ddx = -1; ddx <= 1; ddx++) {
+                let cx = dgx + ddx;
+                let cy = dgy + ddy;
+                if (block_hash01(p.seed, 20u, cx, cy, 0) < min(0.35 * p.dirt, 0.8)) {
+                    let d_cx = (f32(cx) + block_hash01(p.seed, 21u, cx, cy, 0)) * d_cell_size;
+                    let d_cy = (f32(cy) + block_hash01(p.seed, 22u, cx, cy, 0)) * d_cell_size;
+                    let d_rad = (3.0 + 8.0 * block_hash01(p.seed, 23u, cx, cy, 0)) * p.scratch_scale;
+                    let d_dist = length(vec2<f32>(px - d_cx, py - d_cy)) / max(d_rad, 0.5);
+                    if (d_dist <= 1.0) {
+                        let spot_val = (1.0 - d_dist * d_dist) * p.dirt * 0.5;
+                        dirt_r += spot_val * p.dirt_tint.r;
+                        dirt_g += spot_val * p.dirt_tint.g;
+                        dirt_b += spot_val * p.dirt_tint.b;
                     }
                 }
             }
         }
+    }
 
-        dirt_r *= intensity;
-        dirt_g *= intensity;
-        dirt_b *= intensity;
+    dirt_r *= p.intensity;
+    dirt_g *= p.intensity;
+    dirt_b *= p.intensity;
 
-        if (vignette_strength > 0.0) {
-            let r_sq = nx * nx + ny * ny;
-            let v_factor = clamp(1.0 - vignette_strength * 0.5 * r_sq, 0.0, 1.0);
-            dirt_r *= v_factor;
-            dirt_g *= v_factor;
-            dirt_b *= v_factor;
-        }
+    if (p.vignette > 0.0) {
+        let v_factor = clamp(1.0 - p.vignette * 0.5 * (nx * nx + ny * ny), 0.0, 1.0);
+        dirt_r *= v_factor;
+        dirt_g *= v_factor;
+        dirt_b *= v_factor;
+    }
 
     var bg_r: f32 = 0.0;
     var bg_g: f32 = 0.0;
@@ -313,19 +273,17 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
         bg_b = p.bg_colour.b;
         if (p.bg_mode == 2u) {
             let min_dim = max(min(wf, hf), 1.0);
-            let u = px / wf;
-            let v = py / hf;
-            let sun_dx = (u - p.sun_pos.x) * (wf / min_dim);
-            let sun_dy = (v - p.sun_pos.y) * (hf / min_dim);
+            let sun_dx = (px / wf - p.sun_pos.x) * (wf / min_dim);
+            let sun_dy = (py / hf - p.sun_pos.y) * (hf / min_dim);
             let sun_dist = sqrt(sun_dx * sun_dx + sun_dy * sun_dy);
 
-            let core = pow(1.0 - clamp(sun_dist / max(p.sun_radius * 0.2, 0.001), 0.0, 1.0), 2.0) * 2.0;
+            let core = pow(max(1.0 - sun_dist / max(p.sun_radius * 0.2, 0.001), 0.0), 2.0) * 2.0;
             let halo = 1.0 / (1.0 + pow(sun_dist / max(p.sun_radius * 0.8, 0.001), 2.0));
             let sun_light = (core + halo) * p.sun_intensity;
 
-            bg_r += tint.r * sun_light;
-            bg_g += tint.g * sun_light;
-            bg_b += tint.b * sun_light;
+            bg_r += p.tint.r * sun_light;
+            bg_g += p.tint.g * sun_light;
+            bg_b += p.tint.b * sun_light;
         }
     }
 
@@ -338,34 +296,36 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
     let src_b = original.b;
     let src_a = original.a;
 
-    var out_r: f32 = 0.0;
-    var out_g: f32 = 0.0;
-    var out_b: f32 = 0.0;
+    var out_r: f32;
+    var out_g: f32;
+    var out_b: f32;
 
-    if (blend_mode == 0u) {
-        out_r = 1.0 - (1.0 - src_r) * (1.0 - eff_r);
-        out_g = 1.0 - (1.0 - src_g) * (1.0 - eff_g);
-        out_b = 1.0 - (1.0 - src_b) * (1.0 - eff_b);
-    } else if (blend_mode == 1u) {
-        out_r = src_r + eff_r;
-        out_g = src_g + eff_g;
-        out_b = src_b + eff_b;
-    } else if (blend_mode == 2u) {
-        if (src_r < 0.5) { out_r = 2.0 * src_r * (eff_r + 0.5); } else { out_r = 1.0 - 2.0 * (1.0 - src_r) * (1.0 - (eff_r + 0.5)); }
-        if (src_g < 0.5) { out_g = 2.0 * src_g * (eff_g + 0.5); } else { out_g = 1.0 - 2.0 * (1.0 - src_g) * (1.0 - (eff_g + 0.5)); }
-        if (src_b < 0.5) { out_b = 2.0 * src_b * (eff_b + 0.5); } else { out_b = 1.0 - 2.0 * (1.0 - src_b) * (1.0 - (eff_b + 0.5)); }
-    } else {
-        out_r = eff_r;
-        out_g = eff_g;
-        out_b = eff_b;
+    switch (p.blend_mode) {
+        case 0u: { // Screen
+            out_r = 1.0 - (1.0 - src_r) * (1.0 - eff_r);
+            out_g = 1.0 - (1.0 - src_g) * (1.0 - eff_g);
+            out_b = 1.0 - (1.0 - src_b) * (1.0 - eff_b);
+        }
+        case 1u: { // Add
+            out_r = src_r + eff_r;
+            out_g = src_g + eff_g;
+            out_b = src_b + eff_b;
+        }
+        case 2u: { // Overlay
+            out_r = select(1.0 - 2.0 * (1.0 - src_r) * (1.0 - (eff_r + 0.5)), 2.0 * src_r * (eff_r + 0.5), src_r < 0.5);
+            out_g = select(1.0 - 2.0 * (1.0 - src_g) * (1.0 - (eff_g + 0.5)), 2.0 * src_g * (eff_g + 0.5), src_g < 0.5);
+            out_b = select(1.0 - 2.0 * (1.0 - src_b) * (1.0 - (eff_b + 0.5)), 2.0 * src_b * (eff_b + 0.5), src_b < 0.5);
+        }
+        default: { // Solo
+            out_r = eff_r;
+            out_g = eff_g;
+            out_b = eff_b;
+        }
     }
 
+    let final_r = mix(src_r, out_r, p.mix_amt);
+    let final_g = mix(src_g, out_g, p.mix_amt);
+    let final_b = mix(src_b, out_b, p.mix_amt);
 
-    var final_color: vec4<f32>;
-    final_color.r = original.r * (1.0 - mix_amt) + out_r * mix_amt;
-    final_color.g = original.g * (1.0 - mix_amt) + out_g * mix_amt;
-    final_color.b = original.b * (1.0 - mix_amt) + out_b * mix_amt;
-    final_color.a = src_a;
-
-    textureStore(dst, xy, final_color);
+    textureStore(dst, xy, vec4<f32>(final_r, final_g, final_b, src_a));
 }

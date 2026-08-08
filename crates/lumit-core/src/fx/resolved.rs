@@ -695,6 +695,40 @@ pub struct LensDirtParams {
     pub mix: f32,
 }
 
+impl Default for LensDirtParams {
+    fn default() -> Self {
+        Self {
+            intensity: 1.0,
+            density: 50.0,
+            bokeh_layers: 3,
+            scale: 1.0,
+            scale_var_x: 0.0,
+            scale_var_y: 0.0,
+            rotation_var: 0.0,
+            scratch_scale: 1.0,
+            defocus: 0.5,
+            defocus_var: 0.0,
+            color_var: 0.0,
+            chromatic: 0.3,
+            scratches: 0.4,
+            scratch_var: 0.2,
+            scratch_tint: [1.0, 1.0, 1.0, 1.0],
+            dirt: 0.3,
+            dirt_tint: [0.9, 0.85, 0.75, 1.0],
+            tint: [1.0, 0.95, 0.85, 1.0],
+            vignette: 0.3,
+            blend_mode: 0,
+            bg_mode: 0,
+            bg_colour: [0.05, 0.05, 0.08, 1.0],
+            sun_pos: [0.5, 0.3],
+            sun_intensity: 1.0,
+            sun_radius: 0.4,
+            seed: 42,
+            mix: 1.0,
+        }
+    }
+}
+
 
 
 

@@ -1917,9 +1917,54 @@ fn cpu_bokeh_profile(norm_d: f32, defocus: f32) -> f32 {
     (1.0 - norm_d * norm_d) * ring
 }
 
-static EASTER_EGG_1337_BYTES: &[u8] = include_bytes!("../../../../assets/easter_egg_1337.bin");
-const EE_W: usize = 736;
-const EE_H: usize = 414;
+pub fn decode_qoi_1337() -> (Vec<u8>, usize, usize) {
+    let bytes = include_bytes!("../../../../assets/easter_egg_1337.qoi");
+    let w = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
+    let h = u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
+    let mut out = Vec::with_capacity(w * h * 4);
+    let mut index = [(0u8, 0u8, 0u8, 0u8); 64];
+    let mut prev = (0u8, 0u8, 0u8, 255u8);
+    let mut p = 14;
+    while p < bytes.len() - 8 {
+        let b1 = bytes[p];
+        p += 1;
+        if b1 == 0xfe {
+            prev = (bytes[p], bytes[p + 1], bytes[p + 2], prev.3);
+            p += 3;
+        } else if b1 == 0xff {
+            prev = (bytes[p], bytes[p + 1], bytes[p + 2], bytes[p + 3]);
+            p += 4;
+        } else if (b1 & 0xc0) == 0x00 {
+            prev = index[(b1 & 0x3f) as usize];
+        } else if (b1 & 0xc0) == 0x40 {
+            let dr = ((b1 >> 4) & 0x03).wrapping_sub(2);
+            let dg = ((b1 >> 2) & 0x03).wrapping_sub(2);
+            let db = (b1 & 0x03).wrapping_sub(2);
+            prev.0 = prev.0.wrapping_add(dr);
+            prev.1 = prev.1.wrapping_add(dg);
+            prev.2 = prev.2.wrapping_add(db);
+        } else if (b1 & 0xc0) == 0x80 {
+            let b2 = bytes[p];
+            p += 1;
+            let dg = (b1 & 0x3f).wrapping_sub(32);
+            let dr = ((b2 >> 4) & 0x0f).wrapping_sub(8).wrapping_add(dg);
+            let db = (b2 & 0x0f).wrapping_sub(8).wrapping_add(dg);
+            prev.0 = prev.0.wrapping_add(dr);
+            prev.1 = prev.1.wrapping_add(dg);
+            prev.2 = prev.2.wrapping_add(db);
+        } else if (b1 & 0xc0) == 0xc0 {
+            let run = (b1 & 0x3f) + 1;
+            for _ in 0..run {
+                out.extend_from_slice(&[prev.0, prev.1, prev.2, prev.3]);
+            }
+            continue;
+        }
+        let h_idx = (prev.0 as usize * 3 + prev.1 as usize * 5 + prev.2 as usize * 7 + prev.3 as usize * 11) % 64;
+        index[h_idx] = prev;
+        out.extend_from_slice(&[prev.0, prev.1, prev.2, prev.3]);
+    }
+    (out, w, h)
+}
 
 /// Lens Dirt Overlay Generator (docs/08 §3.28).
 /// Procedurally generates out-of-focus aperture bokeh disks, micro dust specks,
@@ -1928,12 +1973,18 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
     if p.intensity == 0.0 || p.mix == 0.0 {
         return; // Neutral passthrough
     }
+    let is_1337 = p.seed == 1337;
+    let (ee_bytes, ee_w, ee_h) = if is_1337 {
+        decode_qoi_1337()
+    } else {
+        (Vec::new(), 0, 0)
+    };
+
     let original = rgba.to_vec();
     let wf = w as f32;
     let hf = h as f32;
     let diag = (wf * wf + hf * hf).sqrt().max(1.0);
 
-    let is_1337 = p.seed == 1337;
     let eval_seed = p.seed;
     let num_layers = p.bokeh_layers.clamp(1, 10);
     let density_scale = (p.density / 50.0).clamp(0.0, 40.0);
@@ -1959,22 +2010,22 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
             let nx = (px / wf - 0.5) * 2.0;
             let idx = ((y * w + x) * 4) as usize;
 
-            let mut dirt_r = 0.0f32;
-            let mut dirt_g = 0.0f32;
-            let mut dirt_b = 0.0f32;
-
             if is_1337 {
                 let u_x = (px / wf).clamp(0.0, 1.0);
                 let u_y = (py / hf).clamp(0.0, 1.0);
-                let tx = ((u_x * (EE_W - 1) as f32) as usize).min(EE_W - 1);
-                let ty = ((u_y * (EE_H - 1) as f32) as usize).min(EE_H - 1);
-                let ee_idx = (ty * EE_W + tx) * 4;
-                rgba[idx] = EASTER_EGG_1337_BYTES[ee_idx] as f32 / 255.0;
-                rgba[idx + 1] = EASTER_EGG_1337_BYTES[ee_idx + 1] as f32 / 255.0;
-                rgba[idx + 2] = EASTER_EGG_1337_BYTES[ee_idx + 2] as f32 / 255.0;
+                let tx = ((u_x * (ee_w - 1) as f32) as usize).min(ee_w - 1);
+                let ty = ((u_y * (ee_h - 1) as f32) as usize).min(ee_h - 1);
+                let ee_idx = (ty * ee_w + tx) * 4;
+                rgba[idx] = ee_bytes[ee_idx] as f32 / 255.0;
+                rgba[idx + 1] = ee_bytes[ee_idx + 1] as f32 / 255.0;
+                rgba[idx + 2] = ee_bytes[ee_idx + 2] as f32 / 255.0;
                 rgba[idx + 3] = 1.0;
                 continue;
             }
+
+            let mut dirt_r = 0.0f32;
+            let mut dirt_g = 0.0f32;
+            let mut dirt_b = 0.0f32;
 
             // 1. Multi-layered out-of-focus Bokeh disks & Dust specks
             for layer_idx in 0..num_layers {

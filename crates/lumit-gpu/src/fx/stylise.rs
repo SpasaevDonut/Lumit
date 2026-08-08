@@ -5,10 +5,6 @@ use crate::GpuContext;
 
 use super::{upload_linear_f32, work_texture, FxEngine};
 
-static EASTER_EGG_1337_BYTES: &[u8] = include_bytes!("../../../../assets/easter_egg_1337.bin");
-const EE_W: u32 = 736;
-const EE_H: u32 = 414;
-
 /// One resolved matte key (docs/08 §3.21, K-121/K-154): a Keylight-style
 /// colour-difference keyer on straight (unpremultiplied) colour. Mirrors
 /// `lumit_core::fx::MatteKeyParams` field-for-field so the kernel and the CPU
@@ -486,6 +482,55 @@ impl FxEngine {
         out
     }
 
+  fn decode_qoi_1337() -> (Vec<u8>, usize, usize) {
+    let bytes = include_bytes!("../../../../assets/easter_egg_1337.qoi");
+    let w = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
+    let h = u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
+    let mut out = Vec::with_capacity(w * h * 4);
+    let mut index = [(0u8, 0u8, 0u8, 0u8); 64];
+    let mut prev = (0u8, 0u8, 0u8, 255u8);
+    let mut p = 14;
+    while p < bytes.len() - 8 {
+        let b1 = bytes[p];
+        p += 1;
+        if b1 == 0xfe {
+            prev = (bytes[p], bytes[p + 1], bytes[p + 2], prev.3);
+            p += 3;
+        } else if b1 == 0xff {
+            prev = (bytes[p], bytes[p + 1], bytes[p + 2], bytes[p + 3]);
+            p += 4;
+        } else if (b1 & 0xc0) == 0x00 {
+            prev = index[(b1 & 0x3f) as usize];
+        } else if (b1 & 0xc0) == 0x40 {
+            let dr = ((b1 >> 4) & 0x03).wrapping_sub(2);
+            let dg = ((b1 >> 2) & 0x03).wrapping_sub(2);
+            let db = (b1 & 0x03).wrapping_sub(2);
+            prev.0 = prev.0.wrapping_add(dr);
+            prev.1 = prev.1.wrapping_add(dg);
+            prev.2 = prev.2.wrapping_add(db);
+        } else if (b1 & 0xc0) == 0x80 {
+            let b2 = bytes[p];
+            p += 1;
+            let dg = (b1 & 0x3f).wrapping_sub(32);
+            let dr = ((b2 >> 4) & 0x0f).wrapping_sub(8).wrapping_add(dg);
+            let db = (b2 & 0x0f).wrapping_sub(8).wrapping_add(dg);
+            prev.0 = prev.0.wrapping_add(dr);
+            prev.1 = prev.1.wrapping_add(dg);
+            prev.2 = prev.2.wrapping_add(db);
+        } else if (b1 & 0xc0) == 0xc0 {
+            let run = (b1 & 0x3f) + 1;
+            for _ in 0..run {
+                out.extend_from_slice(&[prev.0, prev.1, prev.2, prev.3]);
+            }
+            continue;
+        }
+        let h_idx = (prev.0 as usize * 3 + prev.1 as usize * 5 + prev.2 as usize * 7 + prev.3 as usize * 11) % 64;
+        index[h_idx] = prev;
+        out.extend_from_slice(&[prev.0, prev.1, prev.2, prev.3]);
+    }
+    (out, w, h)
+}
+
     /// Render the procedural Lens Dirt overlay (docs/08 §3.28).
     pub fn lens_dirt(
         &self,
@@ -498,11 +543,12 @@ impl FxEngine {
         let out = work_texture(ctx, w, h, "fx-lens-dirt-out");
         let ee_tex;
         let (src_tex, orig_tex) = if op.seed == 1337 {
-            let mut ee_f32 = Vec::with_capacity((EE_W * EE_H * 4) as usize);
-            for b in EASTER_EGG_1337_BYTES.iter() {
-                ee_f32.push(*b as f32 / 255.0);
+            let (ee_bytes, ee_w, ee_h) = Self::decode_qoi_1337();
+            let mut ee_f32 = Vec::with_capacity(ee_bytes.len());
+            for b in ee_bytes {
+                ee_f32.push(b as f32 / 255.0);
             }
-            ee_tex = upload_linear_f32(ctx, &ee_f32, EE_W, EE_H);
+            ee_tex = upload_linear_f32(ctx, &ee_f32, ee_w as u32, ee_h as u32);
             (src, &ee_tex)
         } else {
             (src, src)
@@ -580,6 +626,76 @@ pub struct LensDirtOp {
     pub seed: u32,
     pub mix: f32,
 }
+
+impl Default for LensDirtOp {
+    fn default() -> Self {
+        Self {
+            intensity: 1.0,
+            density: 50.0,
+            bokeh_layers: 3,
+            scale: 1.0,
+            scale_var_x: 0.0,
+            scale_var_y: 0.0,
+            rotation_var: 0.0,
+            scratch_scale: 1.0,
+            defocus: 0.5,
+            defocus_var: 0.0,
+            color_var: 0.0,
+            chromatic: 0.3,
+            scratches: 0.4,
+            scratch_var: 0.2,
+            scratch_tint: [1.0, 1.0, 1.0, 1.0],
+            dirt: 0.3,
+            dirt_tint: [0.9, 0.85, 0.75, 1.0],
+            tint: [1.0, 0.95, 0.85, 1.0],
+            vignette: 0.3,
+            blend_mode: 0,
+            bg_mode: 0,
+            bg_colour: [0.05, 0.05, 0.08, 1.0],
+            sun_pos: [0.5, 0.3],
+            sun_intensity: 1.0,
+            sun_radius: 0.4,
+            seed: 42,
+            mix: 1.0,
+        }
+    }
+}
+
+#[cfg(test)]
+impl From<&LensDirtOp> for lumit_core::fx::LensDirtParams {
+    fn from(op: &LensDirtOp) -> Self {
+        Self {
+            intensity: op.intensity,
+            density: op.density,
+            bokeh_layers: op.bokeh_layers,
+            scale: op.scale,
+            scale_var_x: op.scale_var_x,
+            scale_var_y: op.scale_var_y,
+            rotation_var: op.rotation_var,
+            scratch_scale: op.scratch_scale,
+            defocus: op.defocus,
+            defocus_var: op.defocus_var,
+            color_var: op.color_var,
+            chromatic: op.chromatic,
+            scratches: op.scratches,
+            scratch_var: op.scratch_var,
+            scratch_tint: op.scratch_tint,
+            dirt: op.dirt,
+            dirt_tint: op.dirt_tint,
+            tint: op.tint,
+            vignette: op.vignette,
+            blend_mode: op.blend_mode,
+            bg_mode: op.bg_mode,
+            bg_colour: op.bg_colour,
+            sun_pos: op.sun_pos,
+            sun_intensity: op.sun_intensity,
+            sun_radius: op.sun_radius,
+            seed: op.seed,
+            mix: op.mix,
+        }
+    }
+}
+
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
