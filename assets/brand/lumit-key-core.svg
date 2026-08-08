@@ -3,11 +3,11 @@
        brand; K-251). The whole mark is lumit-mark.svg; this is one of its three
        shapes, on the same 512 canvas so the layers stack in register.
 
-       The self-coloured stroke is deliberate: it rounds the corners and grows
-       the diamond by 4px, which tucks it a hair under the two chevrons that
-       were cut to its unstroked outline. Without it they meet on an exact edge
-       and a hairline of background can show through the seam. Leave this layer
-       out entirely for a transparent core - the chevrons need no adjusting. -->
+       The stroke is self-coloured rather than an outline: it rounds the
+       corners and grows the diamond by 8px, which is what the mark has always
+       drawn and what laps it over the two chevrons cut to its unstroked
+       outline. Leave this layer out entirely for a transparent core - the
+       chevrons need no adjusting, and the hole is the unstroked diamond. -->
   <defs>
     <radialGradient id="key-core" cx="0.5" cy="0.5" r="0.5">
       <stop offset="0" stop-color="#ffffff"/><stop offset="0.75" stop-color="#ffffff"/>
@@ -15,5 +15,5 @@
     </radialGradient>
   </defs>
   <path d="M256 181 L331 256 L256 331 L181 256 Z" fill="url(#key-core)"
-        stroke="url(#key-core)" stroke-width="8" stroke-linejoin="round"/>
+        stroke="url(#key-core)" stroke-width="16" stroke-linejoin="round"/>
 </svg>
