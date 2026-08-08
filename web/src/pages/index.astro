@@ -16,7 +16,7 @@ const features = [
     clip: "/clips/retime.webm",
   },
   {
-    h: "Cut like an NLE, inside a comp",
+    h: "Cut like an NLE, inside a layer",
     p: "Sequence layers hold a run of clips cut back-to-back on one row - cutting and per-clip retiming, living inside the composition's layer stack.",
     clip: "/clips/sequence.webm",
   },
@@ -111,7 +111,7 @@ const roadmap = [
       <h1
         class="mt-6 max-w-[15ch] text-[clamp(38px,6.4vw,72px)] leading-[1.02] tracking-[-0.042em]"
       >
-        Composite at the speed you set.
+        Compositing at your speed.
       </h1>
       <p class="mt-6 max-w-[56ch] text-[clamp(16px,2vw,18.5px)] leading-relaxed">
         A native compositing and motion-graphics editor, built for editors.
@@ -327,11 +327,6 @@ const roadmap = [
 
   if (os) {
     if (btn) btn.textContent = `Download for ${os}`;
-    if (os === "macOS") {
-      const note = document.querySelector("[data-platnote]");
-      if (note)
-        note.textContent = "macOS build is unsigned - see the download page. GPLv3 · free forever";
-    }
 
     type Asset = { name: string; browser_download_url: string };
     fetch("https://api.github.com/repos/luminalmvm/Lumit/releases/latest")

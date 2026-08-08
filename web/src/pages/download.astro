@@ -6,7 +6,7 @@ const RELEASES = "https://github.com/luminalmvm/Lumit/releases";
 const platforms = [
   { key: "win", name: "Windows", meta: "10 / 11, 64-bit · installer", cta: "Download .exe", soft: false },
   { key: "lin", name: "Linux", meta: "x86-64 · Flatpak", cta: "Download .flatpak", soft: false },
-  { key: "mac", name: "macOS", meta: "Apple silicon · unsigned", cta: "Download .dmg", soft: true },
+  { key: "mac", name: "macOS", meta: "Apple silicon · signed dmg", cta: "Download .dmg", soft: false },
 ];
 
 const notes = [
@@ -16,15 +16,15 @@ const notes = [
   },
   {
     th: "Windows",
-    td: "Run the installer. It registers .lum and .lumfx so projects open on double-click. SmartScreen will warn on first run - the build is not code-signed yet.",
+    td: "Run the installer. SmartScreen will warn on first run - the build is not code-signed.",
   },
   {
     th: "Linux",
-    td: "Install with flatpak install lumit-*.flatpak, then launch it from your applications menu. FFmpeg ships inside the bundle. Any distribution with Flatpak works; the GNOME runtime is fetched on first install.",
+    td: "Distributions with Flatpak supported. Install via "install lumit-*.flatpak", then launch from your applications menu. FFmpeg ships inside the bundle.",
   },
   {
     th: "macOS",
-    td: "macOS is experimental and supports Apple silicon only. The build is not notarised yet, so Gatekeeper blocks the first launch. Right-click the app, choose Open, then approve the prompt.",
+    td: "macOS supports Apple silicon only.",
   },
   {
     th: "Building it yourself",
@@ -40,7 +40,7 @@ const notes = [
   <section class="py-16 sm:py-24">
     <div class="wrap">
       <p class="kicker">Download</p>
-      <h2 class="mt-4 text-[clamp(26px,3.6vw,40px)] leading-[1.1]">Get Lumit.</h2>
+      <h2 class="mt-4 text-[clamp(26px,3.6vw,40px)] leading-[1.1]">Install Lumit.</h2>
       <p class="mt-4 max-w-[620px]">
         Free and open source under GPLv3. No account, no licence key. Latest release
         <span class="font-mono tabular-nums text-fg" data-tag>-</span>, published
@@ -68,10 +68,10 @@ const notes = [
       </div>
 
       <p class="mt-6 text-[13.5px] text-fg-3">
-        All builds come from the
+        All builds can be found on the
         <a href={RELEASES} class="text-fg-2 underline underline-offset-2 hover:text-fg">
           GitHub releases page</a
-        >, where you will also find checksums and release notes.
+        >, where you can also find checksums, release notes, and older builds.
       </p>
     </div>
   </section>
