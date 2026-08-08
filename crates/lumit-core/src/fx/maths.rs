@@ -318,13 +318,14 @@ pub fn rgb_split_offset(amount_px: f32, angle_deg: f32) -> (f32, f32) {
     (amount_px * rad.cos(), amount_px * rad.sin())
 }
 
-/// The most aperture blades Bokeh's polygon test carries (docs/08 §3.27).
-/// Bounds the per-tap loop and the kernel uniform's normal array; the schema's
-/// Blades choice tops out at Octagon. `lumit_gpu::fx::MAX_BLADES` mirrors it,
-/// pinned by a test there (lumit-core is only a dev-dependency of that crate).
+/// The most aperture blades the depth-of-field polygon test carries (docs/08
+/// §3.22). Bounds the per-tap loop and the kernel uniform's normal array, and is
+/// the hard ceiling on the effect's Blades parameter.
+/// `lumit_gpu::fx::MAX_BLADES` mirrors it, pinned by a test there (lumit-core is
+/// only a dev-dependency of that crate).
 pub const MAX_BLADES: usize = 8;
 
-/// Bokeh's aperture geometry (docs/08 §3.27): the outward unit
+/// The depth-of-field aperture's geometry (docs/08 §3.22): the outward unit
 /// edge normals of a regular `blade_count`-gon turned by `rotation_deg`, and
 /// `cos²(π/N)` — the squared ratio of the polygon's apothem to its
 /// circumradius, which the inside test scales by.

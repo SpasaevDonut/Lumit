@@ -694,7 +694,7 @@ void main() {
           reason: 'a user .lens file covers everything the palette leaves out');
     });
 
-    // Depth of field's folded aperture (K-290): the twirls, the greyed rows and
+    // Depth of field's folded aperture (K-313): the twirls, the greyed rows and
     // the angle dial all arrive on the panel. This is the front half of the
     // fold — the back half (that the shipped defaults render the historical
     // disc bit for bit) is pinned in the engine tests.

@@ -2877,34 +2877,198 @@ fn wgsl_dof_matches_the_cpu_oracle() {
     let star = lumit_core::fx::aperture_blades(5, 30.0);
     let cases: Vec<(&str, lumit_core::fx::cpu::DofParams)> = vec![
         ("centre-focus", dof_defaults()),
-        ("near-focus", lumit_core::fx::cpu::DofParams { focus: 0.0, range: 0.05, near_aperture: 8.0, far_aperture: 8.0, ..dof_defaults() }),
-        ("partial mix", lumit_core::fx::cpu::DofParams { mix: 0.5, ..dof_defaults() }),
-        ("wide aperture", lumit_core::fx::cpu::DofParams { range: 0.2, near_aperture: 10.0, far_aperture: 10.0, ..dof_defaults() }),
-        ("inverted near-focus", lumit_core::fx::cpu::DofParams { focus: 0.2, depth_invert: true, near_aperture: 8.0, far_aperture: 8.0, ..dof_defaults() }),
-        ("asymmetric near>far", lumit_core::fx::cpu::DofParams { range: 0.05, near_aperture: 12.0, far_aperture: 3.0, ..dof_defaults() }),
-        ("asymmetric far>near", lumit_core::fx::cpu::DofParams { range: 0.05, near_aperture: 3.0, far_aperture: 12.0, ..dof_defaults() }),
-        ("depth map", lumit_core::fx::cpu::DofParams { display: 1, ..dof_defaults() }),
-        ("depth map inverted", lumit_core::fx::cpu::DofParams { display: 1, depth_invert: true, ..dof_defaults() }),
-        ("focus map", lumit_core::fx::cpu::DofParams { display: 2, ..dof_defaults() }),
-        ("focus map asymmetric", lumit_core::fx::cpu::DofParams { focus: 0.3, range: 0.15, near_aperture: 12.0, far_aperture: 4.0, display: 2, ..dof_defaults() }),
+        (
+            "near-focus",
+            lumit_core::fx::cpu::DofParams {
+                focus: 0.0,
+                range: 0.05,
+                near_aperture: 8.0,
+                far_aperture: 8.0,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "partial mix",
+            lumit_core::fx::cpu::DofParams {
+                mix: 0.5,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "wide aperture",
+            lumit_core::fx::cpu::DofParams {
+                range: 0.2,
+                near_aperture: 10.0,
+                far_aperture: 10.0,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "inverted near-focus",
+            lumit_core::fx::cpu::DofParams {
+                focus: 0.2,
+                depth_invert: true,
+                near_aperture: 8.0,
+                far_aperture: 8.0,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "asymmetric near>far",
+            lumit_core::fx::cpu::DofParams {
+                range: 0.05,
+                near_aperture: 12.0,
+                far_aperture: 3.0,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "asymmetric far>near",
+            lumit_core::fx::cpu::DofParams {
+                range: 0.05,
+                near_aperture: 3.0,
+                far_aperture: 12.0,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "depth map",
+            lumit_core::fx::cpu::DofParams {
+                display: 1,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "depth map inverted",
+            lumit_core::fx::cpu::DofParams {
+                display: 1,
+                depth_invert: true,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "focus map",
+            lumit_core::fx::cpu::DofParams {
+                display: 2,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "focus map asymmetric",
+            lumit_core::fx::cpu::DofParams {
+                focus: 0.3,
+                range: 0.15,
+                near_aperture: 12.0,
+                far_aperture: 4.0,
+                display: 2,
+                ..dof_defaults()
+            },
+        ),
         // The aperture: a hexagon, a star (Roundness below zero), a squeezed
         // oval, and rim/centre weighting.
-        ("hexagonal iris", lumit_core::fx::cpu::DofParams { roundness: 0.0, ..dof_defaults() }),
-        ("five-point star", lumit_core::fx::cpu::DofParams { roundness: -1.0, blade_count: 5, blade_normals: star.0, apothem2: star.1, ..dof_defaults() }),
-        ("anamorphic squeeze", lumit_core::fx::cpu::DofParams { roundness: 0.0, deform_scale: [1.0, 2.0], ..dof_defaults() }),
-        ("rim-weighted", lumit_core::fx::cpu::DofParams { concentration: 0.8, ..dof_defaults() }),
-        ("centre-weighted", lumit_core::fx::cpu::DofParams { concentration: -0.8, ..dof_defaults() }),
+        (
+            "hexagonal iris",
+            lumit_core::fx::cpu::DofParams {
+                roundness: 0.0,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "five-point star",
+            lumit_core::fx::cpu::DofParams {
+                roundness: -1.0,
+                blade_count: 5,
+                blade_normals: star.0,
+                apothem2: star.1,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "anamorphic squeeze",
+            lumit_core::fx::cpu::DofParams {
+                roundness: 0.0,
+                deform_scale: [1.0, 2.0],
+                ..dof_defaults()
+            },
+        ),
+        (
+            "rim-weighted",
+            lumit_core::fx::cpu::DofParams {
+                concentration: 0.8,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "centre-weighted",
+            lumit_core::fx::cpu::DofParams {
+                concentration: -0.8,
+                ..dof_defaults()
+            },
+        ),
         // The highlights: the split-at-threshold power mean, at a threshold the
         // corpus actually crosses.
-        ("bloomed highlights", lumit_core::fx::cpu::DofParams { threshold: 0.2, bokeh_power: 4.0, ..dof_defaults() }),
-        ("bloomed hexagons", lumit_core::fx::cpu::DofParams { threshold: 0.2, bokeh_power: 4.0, roundness: 0.0, ..dof_defaults() }),
+        (
+            "bloomed highlights",
+            lumit_core::fx::cpu::DofParams {
+                threshold: 0.2,
+                bokeh_power: 4.0,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "bloomed hexagons",
+            lumit_core::fx::cpu::DofParams {
+                threshold: 0.2,
+                bokeh_power: 4.0,
+                roundness: 0.0,
+                ..dof_defaults()
+            },
+        ),
         // The depth model's own controls.
-        ("focus point", lumit_core::fx::cpu::DofParams { use_focus_point: true, focus_point: [24.0, 12.0], ..dof_defaults() }),
-        ("profile squeezed", lumit_core::fx::cpu::DofParams { focus_falloff: 4.0, ..dof_defaults() }),
-        ("edge leak removed", lumit_core::fx::cpu::DofParams { remove_edge_leak: 0.7, detect_edge_threshold: 0.05, ..dof_defaults() }),
-        ("green channel", lumit_core::fx::cpu::DofParams { depth_channel: 1, ..dof_defaults() }),
-        ("transparent edges", lumit_core::fx::cpu::DofParams { repeat_edge: false, ..dof_defaults() }),
-        ("screen composite", lumit_core::fx::cpu::DofParams { composite_mode: 2, ..dof_defaults() }),
+        (
+            "focus point",
+            lumit_core::fx::cpu::DofParams {
+                use_focus_point: true,
+                focus_point: [24.0, 12.0],
+                ..dof_defaults()
+            },
+        ),
+        (
+            "profile squeezed",
+            lumit_core::fx::cpu::DofParams {
+                focus_falloff: 4.0,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "edge leak removed",
+            lumit_core::fx::cpu::DofParams {
+                remove_edge_leak: 0.7,
+                detect_edge_threshold: 0.05,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "green channel",
+            lumit_core::fx::cpu::DofParams {
+                depth_channel: 1,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "transparent edges",
+            lumit_core::fx::cpu::DofParams {
+                repeat_edge: false,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "screen composite",
+            lumit_core::fx::cpu::DofParams {
+                composite_mode: 2,
+                ..dof_defaults()
+            },
+        ),
     ];
     for (name, p) in &cases {
         let mut cpu = img.clone();

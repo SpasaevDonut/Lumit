@@ -1055,7 +1055,7 @@ class EffectPointRowFrb extends StatelessWidget {
 const Map<String, bool> pickablePointParams = {
   'light_x': true,
   'centre_x': false,
-  // Depth of field's Focus point (K-290): px@comp, and the reason the control
+  // Depth of field's Focus point (K-313): px@comp, and the reason the control
   // exists at all — clicking the thing you want sharp beats reading a depth
   // value off the Depth map view and typing it in.
   'focus_point_x': true,

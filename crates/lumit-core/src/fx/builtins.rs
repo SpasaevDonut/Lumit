@@ -16,10 +16,10 @@ pub const CHOICE_UNGROUPED: &[u32] = &[];
 /// Which channel of an auxiliary picture an effect reads as a single number —
 /// the depth out of a depth pass, the weight out of a custom aperture image.
 ///
-/// One list, shared, because an effect that reads two auxiliary layers (Bokeh
-/// reads a depth map and an aperture image) would otherwise declare the same
-/// nine entries twice and let them drift. The index order is the wire form the
-/// resolved ops carry, so entries are appended, never reordered.
+/// One list, shared, so that every effect naming a channel of an auxiliary
+/// picture names it from the same nine entries rather than declaring its own and
+/// letting them drift. The index order is the wire form the resolved ops carry,
+/// so entries are appended, never reordered.
 ///
 /// `(R+G+B)/3` is the plain mean of the colour channels and the usual default:
 /// a depth pass written to all three channels reads the same whichever one you
@@ -1217,7 +1217,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // tap at a threshold and putting it back together. So a project saved
     // before any of this existed renders the same pixels it always did, which
     // is what let this fold into the shipped effect instead of arriving as a
-    // second one beside it (K-290).
+    // second one beside it (K-313).
     //
     // The heavy lifting is `lumit_gpu::fx::dof` / `fx_dof.wgsl`; resolution
     // carries only the scalars — the depth layer is not `Copy`, so (like the
@@ -1237,13 +1237,7 @@ pub const BUILTINS: &[EffectSchema] = &[
         groups: &[
             ParamGroup {
                 label: "Iris",
-                params: &[
-                    "blades",
-                    "roundness",
-                    "rotation",
-                    "deform",
-                    "concentration",
-                ],
+                params: &["blades", "roundness", "rotation", "deform", "concentration"],
                 collapsed: true,
                 visible_when: None,
             },

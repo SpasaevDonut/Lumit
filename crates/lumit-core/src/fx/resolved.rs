@@ -618,7 +618,7 @@ pub enum Resolved {
     ///
     /// **Every control the aperture and highlight groups added is neutral at
     /// its default, and the kernel reaches that by *branching* rather than by
-    /// multiplying by one** (K-290): Roundness 1 takes the plain `r² ≤ coc²`
+    /// multiplying by one** (K-313): Roundness 1 takes the plain `r² ≤ coc²`
     /// circle test, Concentration 0 and Remove edge leak 0 take the unweighted
     /// accumulation, and Exposure 0 takes the unsplit sum — because
     /// `Σ(c·w)/Σw` is not an identity in IEEE 754 even when every `w` is one,
@@ -1673,7 +1673,7 @@ fn resolve_one(
             // where it reads false — the historical, unchanged behaviour).
             let depth_invert = matches!(e.param("depth_invert"), Some(EffectValue::Bool(true)));
 
-            // ---- The aperture (K-290) ----
+            // ---- The aperture (K-313) ----
             //
             // The blade count floors to an integer, so a keyframe sweeping
             // 5 → 6 steps rather than growing half a blade — a pentagon does
@@ -1760,8 +1760,8 @@ fn resolve_one(
                 Some(EffectValue::Choice(c)) => (*c).min(CHANNEL_OPTIONS.len() as u32 - 1),
                 _ => 0, // Red — the channel this effect has always read
             };
-            let use_focus_point = depth_bound
-                && matches!(e.param("use_focus_point"), Some(EffectValue::Bool(true)));
+            let use_focus_point =
+                depth_bound && matches!(e.param("use_focus_point"), Some(EffectValue::Bool(true)));
             // The point is authored in the consuming layer's pixels — the frame
             // the stack runs in — so it scales by the preview factor exactly as
             // a px@comp radius does (§2.3). An `_x`/`_y` Float pair, which is

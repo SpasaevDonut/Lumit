@@ -17,7 +17,7 @@
 //     thing into its dark surroundings, and raising each tap to a power first is
 //     what lets it survive and bloom into a ball instead.
 //
-// **Neutral means bit-identical, and that is done by branching** (K-290).
+// **Neutral means bit-identical, and that is done by branching** (K-313).
 // Roundness 1 takes the plain `r² ≤ coc²` circle test, Concentration 0 and
 // Remove edge leak 0 take the unweighted accumulation, Exposure 0 takes the
 // unsplit one. None of these multiplies by one and hopes: `Σ(c·w)/Σw` is not an

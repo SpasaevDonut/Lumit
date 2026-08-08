@@ -1652,7 +1652,7 @@ pub fn channel_of(rgba: &[f32], channel: u32) -> f32 {
 /// needs the depth texture and reaches the oracle through `lumit_gpu::fx::dof`.
 ///
 /// **Every added control contributes nothing at its neutral value, and the
-/// branches below are why** (K-290). Roundness 1 takes the plain circle test,
+/// branches below are why** (K-313). Roundness 1 takes the plain circle test,
 /// Concentration 0 and Remove edge leak 0 take the *unweighted* accumulation,
 /// and Exposure 0 (power 1) takes the *unsplit* one — rather than multiplying
 /// every tap by one and splitting it at a threshold it never crosses. A

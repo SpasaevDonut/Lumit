@@ -453,7 +453,7 @@ fn resolve_stack_temporal_pins_non_sampling_effects_to_the_frame_time() {
 
 /// A neutral resolved Depth of field with the given per-side radii: every
 /// control the aperture and highlight groups added at the value that makes the
-/// kernel take its historical path (K-290). Spelled once here because
+/// kernel take its historical path (K-313). Spelled once here because
 /// functional-update syntax does not reach inside an enum variant.
 fn resolved_dof(near_aperture: f32, far_aperture: f32, focus_point: [f32; 2]) -> Resolved {
     let (blade_normals, apothem2) = crate::fx::aperture_blades(6, 0.0);
@@ -516,10 +516,7 @@ fn dof_instantiates_unset_and_resolves_its_floats() {
     // Resolved::Dof, so it stays 1:1 and in order with the depth-input list
     // even when the depth reference is unset.
     let r = resolve_stack(&[e], 0.0, 1000.0, 0.5, &MarkerContext::NONE);
-    assert_eq!(
-        r,
-        vec![resolved_dof(4.0, 4.0, [480.0, 270.0])]
-    );
+    assert_eq!(r, vec![resolved_dof(4.0, 4.0, [480.0, 270.0])]);
 }
 
 #[test]
@@ -542,10 +539,7 @@ fn dof_near_far_override_and_fall_back_to_the_aperture_master() {
         1.0,
         &MarkerContext::NONE,
     );
-    assert_eq!(
-        r,
-        vec![resolved_dof(20.0, 8.0, [960.0, 540.0])]
-    );
+    assert_eq!(r, vec![resolved_dof(20.0, 8.0, [960.0, 540.0])]);
 
     // A legacy instance saved before the Near/Far pair existed has only
     // `aperture`; both sides then fall back to it, reproducing the old
@@ -566,10 +560,7 @@ fn dof_near_far_override_and_fall_back_to_the_aperture_master() {
         1.0,
         &MarkerContext::NONE,
     );
-    assert_eq!(
-        r,
-        vec![resolved_dof(12.0, 12.0, [960.0, 540.0])]
-    );
+    assert_eq!(r, vec![resolved_dof(12.0, 12.0, [960.0, 540.0])]);
 }
 
 #[test]
@@ -6087,7 +6078,7 @@ fn every_enablement_rule_names_a_parameter_of_its_kind() {
     }
 }
 
-// Depth of field's folded parameter surface (K-290): the aperture, highlight
+// Depth of field's folded parameter surface (K-313): the aperture, highlight
 // and depth-map controls landed *inside* the shipped effect rather than beside
 // it as a second one, so the surface itself is the thing under test — the order
 // rows appear in, which twirl each sits behind, and above all the factory
@@ -6270,7 +6261,10 @@ fn dof_greys_the_rows_its_switches_take_over() {
         "remove_edge_leak",
         "detect_edge_threshold",
     ] {
-        assert!(!param_enabled(&e, id), "{id} needs a depth pass to mean anything");
+        assert!(
+            !param_enabled(&e, id),
+            "{id} needs a depth pass to mean anything"
+        );
     }
     assert!(!param_enabled(&e, "focus_point_x"));
     assert!(!param_enabled(&e, "focus_point_y"));
@@ -6369,7 +6363,7 @@ fn a_legacy_dof_resolves_to_the_neutral_aperture() {
     assert_eq!(r, vec![resolved_dof(8.0, 8.0, [0.0, 0.0])]);
 }
 
-// **The fold's load-bearing promise** (K-290): at the shipped defaults the
+// **The fold's load-bearing promise** (K-313): at the shipped defaults the
 // gather computes exactly the box-weighted disc average this effect computed
 // before it grew an aperture, a tonal mean or a weighting — to the bit, not to a
 // tolerance.
@@ -6482,8 +6476,14 @@ fn the_default_aperture_is_the_historical_disc_bit_for_bit() {
     // equality above is a property of the neutrals rather than of a gather that
     // ignores them.
     for changed in [
-        cpu::DofParams { roundness: 0.0, ..p },
-        cpu::DofParams { concentration: 0.7, ..p },
+        cpu::DofParams {
+            roundness: 0.0,
+            ..p
+        },
+        cpu::DofParams {
+            concentration: 0.7,
+            ..p
+        },
         cpu::DofParams {
             threshold: 0.5,
             bokeh_power: 4.0,
@@ -6735,10 +6735,7 @@ fn profile_moves_the_focus_transition_where_the_content_is() {
 
     // At the neutral falloff the scene is essentially untouched and the near
     // object is essentially gone: the two ends, nothing between them.
-    let plain_scene: Vec<f32> = scene
-        .iter()
-        .map(|d| ramp_at(*d, focus, 1.0))
-        .collect();
+    let plain_scene: Vec<f32> = scene.iter().map(|d| ramp_at(*d, focus, 1.0)).collect();
     let plain_near = ramp_at(near, focus, 1.0);
     assert!(
         plain_scene.iter().all(|s| *s < 0.05),
@@ -6753,10 +6750,7 @@ fn profile_moves_the_focus_transition_where_the_content_is() {
     // band itself, so the scene now separates front-to-back instead of moving
     // as one.
     let tight = (2.0f32 * 0.8).exp2();
-    let tight_scene: Vec<f32> = scene
-        .iter()
-        .map(|d| ramp_at(*d, focus, tight))
-        .collect();
+    let tight_scene: Vec<f32> = scene.iter().map(|d| ramp_at(*d, focus, tight)).collect();
     let spread = tight_scene.iter().cloned().fold(0.0f32, f32::max)
         - tight_scene.iter().cloned().fold(1.0f32, f32::min);
     let plain_spread = plain_scene.iter().cloned().fold(0.0f32, f32::max)

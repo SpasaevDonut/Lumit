@@ -800,7 +800,7 @@ fn every_effect_value_kind_round_trips_through_the_document() {
 /// instance already carried. The row came out blank and the write was refused.
 ///
 /// Depth of field is the case that forced this: an instance saved before the
-/// aperture folded in (K-290) could not reach Blades, Roundness, Rotation or
+/// aperture folded in (K-313) could not reach Blades, Roundness, Rotation or
 /// Exposure — which is the entire feature.
 #[test]
 fn an_old_instance_reaches_a_parameter_its_schema_grew_later() {
@@ -1382,7 +1382,7 @@ fn every_builtin_lists_its_layout() {
 
 /// Depth of field is what the greying crossing exists for, so it is what pins
 /// it: the folded twirls and the rules that grey a row arrive on the far side
-/// intact (K-290).
+/// intact (K-313).
 #[test]
 fn dofs_twirls_and_greying_rules_cross_the_bridge() {
     use crate::api::effect::{BridgeEnabledCond, BridgeParamKind};
@@ -1428,7 +1428,10 @@ fn dofs_twirls_and_greying_rules_cross_the_bridge() {
     ));
     // The focus point is an `_x`/`_y` Float pair the panel folds into one row
     // (docs/07 §6.1), not a kind of its own.
-    assert!(matches!(kind("focus_point_x"), BridgeParamKind::Float { .. }));
+    assert!(matches!(
+        kind("focus_point_x"),
+        BridgeParamKind::Float { .. }
+    ));
 }
 
 /// An unknown effect gets an empty layout rather than an error, for the same

@@ -183,7 +183,7 @@ impl FxEngine {
     /// bind any same-size float texture in that slot.
     ///
     /// **The aperture and the average are both shapeable, and every shaping
-    /// control is branched around at its neutral** (K-290): the aperture's
+    /// control is branched around at its neutral** (K-313): the aperture's
     /// **Roundness** reaches below zero into star shapes and **Deform** squeezes
     /// it on one axis — both leave it inscribed in the circle of the CoC radius,
     /// so `ceil(radius)` stays a correct bound on the taps and the effect's ROI

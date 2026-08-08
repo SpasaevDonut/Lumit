@@ -622,7 +622,7 @@ class _EffectSection extends StatelessWidget {
       };
     }
 
-    // Which rows another parameter has taken over (`EnabledWhen`, K-290).
+    // Which rows another parameter has taken over (`EnabledWhen`, K-313).
     // Judged on what the panel is SHOWING, staged drag included, so ticking a
     // checkbox greys its dependent row on the spot rather than after the commit
     // round-trips.
