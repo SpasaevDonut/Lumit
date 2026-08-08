@@ -13,7 +13,7 @@
   "@addEffect": {
     "description": "Button that opens the list of built-in effects."
   },
-  "animated": "animated",
+  "animated": "已动画",
   "@animated": {
     "description": "Shown in place of a number when the value is animated rather than fixed. Lower case on purpose — it sits where a value would."
   },
@@ -21,39 +21,39 @@
   "@apply": {
     "description": "Button that commits a picked value."
   },
-  "armRazor": "Arm razor",
+  "armRazor": "启用剃刀",
   "@armRazor": {
     "description": "Menu item: pick up the blade that cuts a layer where you click."
   },
-  "bringForward": "Bring forward",
+  "bringForward": "上移一层",
   "@bringForward": {
     "description": "Context-menu item: move a layer one place up the stack."
   },
-  "cache": "Cache",
+  "cache": "缓存",
   "@cache": {
     "description": "Bottom strip: heading over the three cache meters."
   },
-  "cacheDeleteTitle": "Delete the frames parked on disk?",
+  "cacheDeleteTitle": "删除磁盘上留存的帧？",
   "@cacheDeleteTitle": {
     "description": "Asked before emptying the disk cache, which deletes real files."
   },
-  "cacheKeepThem": "Keep them",
+  "cacheKeepThem": "保留",
   "@cacheKeepThem": {
     "description": "Button that declines to delete the parked frames."
   },
-  "cacheLocationBesideProject": "Beside the project",
+  "cacheLocationBesideProject": "与项目文件放在一起",
   "@cacheLocationBesideProject": {
     "description": "Choice of where parked frames live: in a folder next to the project file."
   },
-  "cacheLocationChosenFolder": "A folder I choose",
+  "cacheLocationChosenFolder": "我指定的文件夹",
   "@cacheLocationChosenFolder": {
     "description": "Choice of where parked frames live: a folder the user picks."
   },
-  "cacheLocationWithLumit": "With Lumit",
+  "cacheLocationWithLumit": "与Lumit放在一起",
   "@cacheLocationWithLumit": {
     "description": "Choice of where parked frames live: in Lumit's own application data folder."
   },
-  "cancel": "Cancel",
+  "cancel": "取消",
   "@cancel": {
     "description": "Button that abandons a dialogue or a running job."
   },
@@ -61,7 +61,7 @@
   "@channelAlpha": {
     "description": "A viewing channel: transparency on its own. A technical term — keep it recognisable."
   },
-  "chooseA": "Choose a {kind}",
+  "chooseA": "选择{kind}",
   "@chooseA": {
     "description": "Tooltip on a button that opens a file dialogue. {kind} is the sort of file wanted, e.g. 'LUT'.",
     "placeholders": {
@@ -70,15 +70,15 @@
       }
     }
   },
-  "chooseConfirm": "Choose",
+  "chooseConfirm": "选择",
   "@chooseConfirm": {
     "description": "The confirm button in the system's folder-picking dialogue."
   },
-  "chooseEllipsis": "Choose…",
+  "chooseEllipsis": "选择…",
   "@chooseEllipsis": {
     "description": "Button that opens a file dialogue when nothing has been chosen yet."
   },
-  "clear": "Clear",
+  "clear": "清除",
   "@clear": {
     "description": "Tooltip on the button that empties a value."
   },
