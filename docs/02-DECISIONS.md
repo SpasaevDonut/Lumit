@@ -7110,3 +7110,91 @@ on a runner with Xcode 26 — and reopening the icon in Icon Composer and saving
 to put both keys back, so this is a mistake with a standing invitation to recur. The
 script is the regression test K-007 asks for: it fails on the `icon.json` as it was, and
 passes on the one that compiles.
+
+**K-313 · DECIDED · Masks gain modes, feather and expansion, and the first mask in the
+list decides what the fold starts from.** 03-DATA-MODEL §7 always described a v1 mask as
+"static, Add-mode" with the rest listed as future. The future is now partly here:
+`MaskMode` is `None | Add | Subtract | Intersect | Difference`, and every mask carries a
+`feather` and an `expansion` in layer pixels. Lighten and Darken are deliberately not
+built — they are max and min over overlapping opacities, and nobody has asked.
+
+**Combination is now sequential, and it had to become so.** `combined_coverage` summed
+every mask's coverage and clamped, which is order-independent and correct precisely
+because everything was Add. Subtract and Intersect are not commutative, so masks now fold
+top to bottom in list order, which is what 06-RENDER-PIPELINE §3 always said they should.
+Add's expression is unchanged, so an all-Add project is bit-identical to before.
+
+**The first mask needs a starting value, and the honest one depends on its mode.** With
+the accumulator starting at zero, a lone Subtract subtracts from nothing and a lone
+Intersect intersects with nothing — both give an empty frame, which is not what anyone
+drawing a single subtract mask means. So the fold starts from zero when the topmost
+non-`None` mask is Add, and from full coverage otherwise: a lone Subtract cuts a hole, a
+lone Intersect shows just its own shape, a lone Difference shows its inverse. This is
+After Effects' behaviour and it is the only reading under which the first mask does
+something rather than nothing.
+
+**Feather and expansion are one mechanism, not two.** The obvious build is a blur for
+feather and a morphological grow/shrink for expansion. Instead the rasterised coverage
+becomes a signed distance field once — an exact Euclidean transform, Felzenszwalb and
+Huttenlocher, seeded from the antialiased edge so it keeps sub-pixel placement — and both
+controls read off it: expansion shifts the zero crossing, feather sets the width of the
+ramp across it. One pass, and it is what "feather in pixels" actually means, measured
+along the surface normal rather than approximated by a blur radius. The cost is that an
+expanded or eroded shape rounds its corners, because distance is measured to the nearest
+point on the path; that is also what After Effects does.
+
+**With both at zero the rasteriser's bytes are returned untouched** — no distance field,
+no allocation. That is what keeps every existing project bit-identical, and it is why the
+new fields also serialise only when they differ from their defaults: the frame cache key
+hashes the serialised masks, and always emitting them would have retired every frame
+every existing project has banked.
+
+**Variable-width (per-point) feather is not built.** It is a second point set on the path
+with its own tool, and `ToolMode.penMaskFeather` already exists in the toolbar as a stub
+with nothing behind it. It stays in TODO.
+
+**K-315 · DECIDED · A mask path animates through its own keyframe list, and mismatched point
+counts resample upward.** From the owner (2026-08-08): the deferral K-224 recorded ("neither
+can a mask path be keyframed") is closed for the engine half.
+
+**A separate carrier, not a generic `Property`.** Every animatable value in Lumit is a scalar:
+`Animation::{Static, Keyframed, Expression}` behind a `Property` whose `value_at` returns one
+`f64` at roughly two hundred call sites. A shape is not a scalar, and making `Property` generic
+to hold one would churn all two hundred to buy nothing. So `Mask` carries `path_keys:
+Vec<PathKeyframe>` beside its `path`, in `lumit-core::mask` where the path type already lives.
+Empty means unanimated, and empty is omitted from the file — an untouched mask writes the exact
+bytes it always did, which is what keeps every frame every existing project has banked
+(`lumit-eval` hashes the serialised masks into the frame key).
+
+**Timing eases, no value graph.** Path keys carry the same `SideInterp` pair a scalar keyframe
+does, and it shapes the **interpolation parameter** — 0 at this key, 1 at the next — evaluated
+by the scalar evaluator itself rather than a second copy of the same maths. A shape has no
+value to plot, so the lane shows diamonds only; the graph editor's speed lens is the TODO item
+that pairs with this.
+
+**Mismatched vertex counts resample to the higher count, never refuse.** Adding a point to a
+mask halfway through an animation is an ordinary act, so interpolation between a four-point key
+and a seven-point key must simply work. The sparser path is redrawn at the higher count by
+**splitting its own segments** — de Casteljau at a parameter, the same exact split K-221 relies
+on, so the two halves *are* the original cubic and the reconciled path is geometrically the
+path it was. Distribution is fixed arithmetic (evenly, remainder to the earliest segments), so
+the reconciliation is deterministic and playback repeats frame for frame. Then the two run
+vertex for vertex, position and both handles blended straight. This is what After Effects does,
+so an imported comp and a hand-built one behave alike.
+
+**Open against closed is held, not blended.** Whether a path is joined up is not a quantity and
+has no halfway. Across a span it takes the outgoing key's flag and flips at the next key — a
+Hold in all but name. The geometry still interpolates; only the closing segment appears or
+disappears, on a frame boundary rather than smearing.
+
+**The frame cache needs the evaluated path, not the stored keys.** The key carries no timeline
+position by design (K-214), and a keyframed mask serialises identically at every frame — so the
+stored keys alone would name every frame of a moving mask the same, and playback would hand
+back the first frame drawn while the mask sat still. The evaluated shape at the layer's local
+time therefore joins the hash, **and only for masks that are actually animated**, so no
+existing key moves and `ALGO_VERSION` does not need bumping. Masks evaluate at the layer's own
+clock, the one every other property on the layer reads (K-213).
+
+**Still whole-list ops.** `SetLayerMasks` carries the entire mask list, so a keyframe drag
+rewrites all of it as one undo entry. That is correct but coarse; a per-key op is noted in
+TODO.md for when the interface can make one.

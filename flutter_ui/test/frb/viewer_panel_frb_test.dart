@@ -1407,6 +1407,9 @@ void main() {
           closed: true,
           inverted: false,
           opacity: 100,
+          mode: BridgeMaskMode.add,
+          feather: 0,
+          expansion: 0,
         ),
       );
       p.uiState.model.refresh();
@@ -1583,6 +1586,9 @@ void main() {
           closed: true,
           inverted: false,
           opacity: 100,
+          mode: BridgeMaskMode.add,
+          feather: 0,
+          expansion: 0,
         ),
       );
       p.uiState.setSelection([shape]);

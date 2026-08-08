@@ -250,6 +250,51 @@ pub struct BridgeMask {
     pub inverted: bool,
     /// 0..100.
     pub opacity: f64,
+    /// How this mask combines with the ones above it.
+    pub mode: BridgeMaskMode,
+    /// Width of the soft edge in layer pixels; 0 is the hard antialiased edge.
+    pub feather: f64,
+    /// Grow (+) or shrink (−) the shape, in layer pixels.
+    pub expansion: f64,
+}
+
+/// [`lumit_core::mask::MaskMode`] across the bridge. Its own enum because the
+/// engine's types do not cross (docs/17 §Types), and named the same so the two
+/// cannot drift apart unnoticed.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BridgeMaskMode {
+    /// Geometry only: the path is editable and gates nothing.
+    None,
+    #[default]
+    Add,
+    Subtract,
+    Intersect,
+    Difference,
+}
+
+impl BridgeMaskMode {
+    #[frb(ignore)]
+    fn read(mode: lumit_core::mask::MaskMode) -> Self {
+        match mode {
+            lumit_core::mask::MaskMode::None => Self::None,
+            lumit_core::mask::MaskMode::Add => Self::Add,
+            lumit_core::mask::MaskMode::Subtract => Self::Subtract,
+            lumit_core::mask::MaskMode::Intersect => Self::Intersect,
+            lumit_core::mask::MaskMode::Difference => Self::Difference,
+        }
+    }
+
+    #[frb(ignore)]
+    fn write(self) -> lumit_core::mask::MaskMode {
+        match self {
+            Self::None => lumit_core::mask::MaskMode::None,
+            Self::Add => lumit_core::mask::MaskMode::Add,
+            Self::Subtract => lumit_core::mask::MaskMode::Subtract,
+            Self::Intersect => lumit_core::mask::MaskMode::Intersect,
+            Self::Difference => lumit_core::mask::MaskMode::Difference,
+        }
+    }
 }
 
 impl BridgeMask {
@@ -274,6 +319,9 @@ impl BridgeMask {
             closed: mask.path.closed,
             inverted: mask.inverted,
             opacity: mask.opacity,
+            mode: BridgeMaskMode::read(mask.mode),
+            feather: mask.feather,
+            expansion: mask.expansion,
         }
     }
 
@@ -300,7 +348,38 @@ impl BridgeMask {
             // A mask with an absurd opacity is a mask that renders wrongly for
             // ever after; clamped here rather than trusted.
             opacity: self.opacity.clamp(0.0, 100.0),
+            // What this type does not carry yet. A mask edited from the frontend
+            // must not LOSE these, so `set_mask` patches them back from the mask
+            // it is replacing (see `write_over`); this bare form is only for a
+            // mask that did not exist a moment ago, which has neither.
+            path_keys: Vec::new(),
             extra: serde_json::Map::new(),
+            mode: self.mode.write(),
+            // Same reasoning as opacity. A negative feather is not a thing, and
+            // both are bounded so a typo cannot ask for a distance field the
+            // size of a continent. The ceiling is generous: 5000 layer pixels
+            // is wider than any comp anyone is masking.
+            feather: self.feather.clamp(0.0, 5000.0),
+            expansion: self.expansion.clamp(-5000.0, 5000.0),
+        }
+    }
+
+    /// [`Self::write`], but keeping what `previous` carries and this type does
+    /// not describe: the path keyframes, and the forward-compatibility `extra`
+    /// a newer Lumit may have written (docs/10 §1.1 makes preserving it
+    /// mandatory).
+    ///
+    /// **Why this exists.** `BridgeMask` is the only bridge type that rebuilds
+    /// its engine value field by field rather than patching the one it read, so
+    /// every field the engine grows and the bridge does not is silently dropped
+    /// the moment the frontend edits that mask. Dragging a mask's opacity would
+    /// otherwise delete its animation.
+    #[frb(ignore)]
+    fn write_over(&self, previous: &lumit_core::mask::Mask) -> lumit_core::mask::Mask {
+        lumit_core::mask::Mask {
+            path_keys: previous.path_keys.clone(),
+            extra: previous.extra.clone(),
+            ..self.write()
         }
     }
 }
@@ -1134,7 +1213,9 @@ impl LayerReference {
             .iter()
             .position(|m| m.id == mask.id)
             .ok_or(BridgeError::NoSuchMask)?;
-        masks[at] = mask.write();
+        // Patched over the mask it replaces, not built fresh: an edit to a
+        // mask's opacity must not throw away its keyframes.
+        masks[at] = mask.write_over(&masks[at]);
         self.commit_masks(masks)
     }
 

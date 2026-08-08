@@ -1819,9 +1819,37 @@
   "@markerHint": {
     "description": "Placeholder in the marker's text field."
   },
+  "maskExpansion": "Expansion",
+  "@maskExpansion": {
+    "description": "Row label under a mask: how far its shape is grown or shrunk, in layer pixels."
+  },
+  "maskFeather": "Feather",
+  "@maskFeather": {
+    "description": "Row label under a mask: the width of its soft edge, in layer pixels."
+  },
   "maskInvertMark": "Inv",
   "@maskInvertMark": {
     "description": "Very short marker on a mask row meaning it is inverted. Abbreviate in your language too — the cell is about three characters wide."
+  },
+  "maskModeAdd": "Add",
+  "@maskModeAdd": {
+    "description": "Mask mode: this mask adds its shape to what the masks above it let through."
+  },
+  "maskModeDifference": "Difference",
+  "@maskModeDifference": {
+    "description": "Mask mode: what one of this mask and the masks above it cover, but not both."
+  },
+  "maskModeIntersect": "Intersect",
+  "@maskModeIntersect": {
+    "description": "Mask mode: only where this mask and the masks above it overlap."
+  },
+  "maskModeNone": "None",
+  "@maskModeNone": {
+    "description": "Mask mode: the shape is editable but gates nothing."
+  },
+  "maskModeSubtract": "Subtract",
+  "@maskModeSubtract": {
+    "description": "Mask mode: this mask takes its shape away from what the masks above it let through."
   },
   "menu3dLayer": "3D layer",
   "@menu3dLayer": {

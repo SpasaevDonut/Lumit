@@ -380,20 +380,87 @@ is never serialised as authority.
 ## 7. Masks
 
 ```rust
-// v1: a static, Add-mode mask.
+// A mask with an animatable path, a mode, a uniform feather and a uniform expansion.
 struct Mask {
     id: Uuid,
     name: String,
-    path: BezierPath,                 // closed; static (not yet animatable)
+    path: BezierPath,                 // the shape when path_keys is empty
+    path_keys: Vec<PathKeyframe>,     // empty = not animated (absent from the file)
     inverted: bool,
     opacity: f64,                     // 0..100, static
+    mode: MaskMode,                   // None | Add | Subtract | Intersect | Difference
+    feather: f64,                     // layer px, total ramp width (0 = hard edge)
+    expansion: f64,                   // layer px, + grows the shape, − shrinks it
+}
+
+struct PathKeyframe {
+    time: Rational,                   // the owner's timebase — layer time for a layer's masks
+    path: BezierPath,
+    interp_in: SideInterp,            // Hold | Linear | Bezier { speed, influence }
+    interp_out: SideInterp,
 }
 ```
 
 Masks apply in order before the effect stack ([06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md)).
-**Future:** an animatable `path`/`opacity` (`Property<…>`), the full `mode` set
-(`None|Add|Subtract|Intersect|Lighten|Darken|Difference` — v1 is **Add only**), and `feather` /
-`expansion`. Variable-width feather is post-v1; the model will reserve per-vertex feather data.
+Each mask's own coverage is feathered and expanded first, then inverted, then faded by its
+opacity, and only then folded into the running total by its `mode` — so inverting a feathered
+mask gives the complement of the soft edge, not a soft edge on the complement. The fold runs
+top to bottom and **order matters**. It starts from an empty frame when the topmost mask that
+does anything is `Add`, and from a full frame otherwise, so that a lone `Subtract` mask cuts a
+hole in the picture (the After Effects behaviour) rather than subtracting from nothing.
+
+Feather and expansion are two readings of one signed distance field built from the mask's own
+raster: expansion moves the edge, feather sets the width of the ramp across it. Both are in
+layer pixels and scale with preview resolution, so a soft edge keeps its real width at half
+resolution. A mask with neither takes a fast path and is used exactly as rasterised.
+
+`mode`, `feather`, `expansion` and `path_keys` are omitted from the file when they hold their
+defaults (`Add`, 0, 0, empty), so a project that predates them reads and writes
+byte-identically and keeps the frames its cache has already banked.
+
+### 7.0 The animated path
+
+The path is the one part of a mask that animates, and it carries its **own** keyframe list
+rather than going through `Property` — a `Property` holds one `f64`, and generifying it over a
+whole shape would churn every scalar call site in the engine to buy nothing. `path_keys` is
+that carrier: sorted, unique times, empty for a mask nobody has keyed. While it holds any key,
+`path` is ignored; `Mask::path_at(t)` is the single reader, and it hands back the stored path
+by reference in the ordinary unanimated case.
+
+**Timing eases, no value graph.** A shape has no scalar to plot, so path keys draw as diamonds
+only (as they do in After Effects). Each key still carries the ordinary `SideInterp` pair, and
+it shapes the **interpolation parameter** — 0 at this key, 1 at the next — through exactly the
+scalar evaluator, so `Hold`, `Linear` and AE speed/influence all behave as they do everywhere
+else, and a key's own time always lands exactly on its own shape.
+
+**Mismatched vertex counts resample upward.** Two keys need not have the same number of
+points — "add a point halfway through" is a thing people do constantly, and refusing is not an
+option. The sparser path is redrawn with as many vertices as the denser one by **splitting its
+own segments** (de Casteljau at a parameter: the two halves *are* the original cubic, not an
+approximation of it), so the reconciled path is geometrically the path it was — nothing bulges
+or flattens. Which segments receive the extra points is fixed arithmetic — spread as evenly as
+the count allows, remainder to the earliest segments — so the reconciliation is deterministic
+and playback is repeatable. Then the two run vertex for vertex: position and both tangent
+handles are straight-line blended. This is After Effects' behaviour, so an imported comp and a
+hand-built one move alike.
+
+**Closedness is held, not blended.** Whether a path is closed is not a quantity. Across a span
+it takes the outgoing key's flag and flips at the next key — a `Hold` in all but name. The
+geometry interpolates normally; only the closing segment appears or disappears, and it does so
+on a frame boundary rather than smearing.
+
+**Evaluation and the cache.** Masks are applied at the layer's own local time, the same clock
+its transform and effects read (K-213), so a keyframed mask travels with a layer dragged along
+the timeline. The frame-cache key (06 §5.2) carries no time of its own by design, and a
+keyframed mask serialises identically at every frame — so the **evaluated** path joins the hash
+whenever `path_keys` is non-empty, and only then, leaving every unanimated mask's key exactly
+as it was.
+
+The op is still `SetLayerMasks`, the whole list, exactly invertible.
+
+**Future:** an animatable `opacity`/`feather`/`expansion`, and the `Lighten` / `Darken` modes,
+deliberately left out of the first mode set. Variable-width feather is later still; the model
+will reserve per-vertex feather data.
 
 ### 7.1 Paint strokes (K-227)
 

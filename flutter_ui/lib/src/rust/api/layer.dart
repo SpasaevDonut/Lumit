@@ -17,8 +17,8 @@ import 'retime.dart';
 import 'solid.dart';
 import 'state.dart';
 
-// These functions are ignored because they are not marked as `pub`: `bands_of`, `clip_under`, `clips_and_index`, `commit_clips_with_offset`, `commit_clips`, `commit_masks`, `commit_paint`, `commit`, `comp_time`, `composition`, `core`, `empty`, `item`, `map_end_value`, `project`, `rational_of`, `read_at`, `read_layer_info`, `read`, `read`, `read`, `reanchored_span`, `source_length`, `unretime_op`, `with_effects`, `write_at`, `write_item`, `write`, `write`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These functions are ignored because they are not marked as `pub`: `bands_of`, `clip_under`, `clips_and_index`, `commit_clips_with_offset`, `commit_clips`, `commit_masks`, `commit_paint`, `commit`, `comp_time`, `composition`, `core`, `empty`, `item`, `map_end_value`, `project`, `rational_of`, `read_at`, `read_layer_info`, `read`, `read`, `read`, `read`, `reanchored_span`, `source_length`, `unretime_op`, `with_effects`, `write_at`, `write_item`, `write_over`, `write`, `write`, `write`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `comp_id`, `id`, `new`, `project_id`
 
 /// One window of a source's waveform, summarised to exactly the buckets the
@@ -460,6 +460,15 @@ class BridgeMask {
   /// 0..100.
   final double opacity;
 
+  /// How this mask combines with the ones above it.
+  final BridgeMaskMode mode;
+
+  /// Width of the soft edge in layer pixels; 0 is the hard antialiased edge.
+  final double feather;
+
+  /// Grow (+) or shrink (−) the shape, in layer pixels.
+  final double expansion;
+
   const BridgeMask({
     required this.id,
     required this.name,
@@ -467,6 +476,9 @@ class BridgeMask {
     required this.closed,
     required this.inverted,
     required this.opacity,
+    required this.mode,
+    required this.feather,
+    required this.expansion,
   });
 
   @override
@@ -476,7 +488,10 @@ class BridgeMask {
       vertices.hashCode ^
       closed.hashCode ^
       inverted.hashCode ^
-      opacity.hashCode;
+      opacity.hashCode ^
+      mode.hashCode ^
+      feather.hashCode ^
+      expansion.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -488,7 +503,26 @@ class BridgeMask {
           vertices == other.vertices &&
           closed == other.closed &&
           inverted == other.inverted &&
-          opacity == other.opacity;
+          opacity == other.opacity &&
+          mode == other.mode &&
+          feather == other.feather &&
+          expansion == other.expansion;
+}
+
+/// [`lumit_core::mask::MaskMode`] across the bridge. Its own enum because the
+/// engine's types do not cross (docs/17 §Types), and named the same so the two
+/// cannot drift apart unnoticed.
+enum BridgeMaskMode {
+  /// Geometry only: the path is editable and gates nothing.
+  none,
+  add,
+  subtract,
+  intersect,
+  difference,
+  ;
+
+  static Future<BridgeMaskMode> default_() =>
+      BridgeLib.instance.api.crateApiLayerBridgeMaskModeDefault();
 }
 
 /// A layer used as another layer's matte (docs/03 §5.1).

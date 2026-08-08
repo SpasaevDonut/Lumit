@@ -457,6 +457,9 @@ BridgeMask? maskWithPointsMoved(
     closed: mask.closed,
     inverted: mask.inverted,
     opacity: mask.opacity,
+    mode: mask.mode,
+    feather: mask.feather,
+    expansion: mask.expansion,
   );
 }
 

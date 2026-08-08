@@ -379,6 +379,9 @@ void main() {
           closed: true,
           inverted: false,
           opacity: 100,
+          mode: BridgeMaskMode.add,
+          feather: 0,
+          expansion: 0,
         ),
       );
       p.uiState.model.refresh();
@@ -417,6 +420,9 @@ void main() {
           closed: true,
           inverted: false,
           opacity: 100,
+          mode: BridgeMaskMode.add,
+          feather: 0,
+          expansion: 0,
         ),
       );
       (p.uiState as LumitUiState).model.refresh();
@@ -491,6 +497,122 @@ void main() {
           reason: 'the release is what commits');
     });
 
+    /// Drag [field] left by [ticks] steps, releasing unless told otherwise —
+    /// the same gesture the opacity tests above make by hand.
+    Future<TestGesture> dragLeft(WidgetTester tester, Finder field, int ticks,
+        {bool release = true}) async {
+      final gesture = await tester.startGesture(tester.getCenter(field));
+      await tester.pump();
+      for (var i = 0; i < ticks; i++) {
+        await gesture.moveBy(const Offset(-3, 0));
+        await tester.pump();
+      }
+      if (release) {
+        await gesture.up();
+        await tester.pumpAndSettle();
+      }
+      return gesture;
+    }
+
+    /// **A mask's mode is on its row (K-222).** How a mask combines with the
+    /// ones above it is a document edit like any other: one pick, one op, one
+    /// undo step.
+    testWidgets('the mask mode dropdown writes through to the document',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await openMaskRow(tester, p, layer, 'Ellipse');
+
+      final id = layer.getMasks().single.id;
+      expect(layer.getMasks().single.mode, BridgeMaskMode.add,
+          reason: 'a new mask adds to what is already let through');
+
+      await tester.tap(find.byKey(ValueKey<String>('tl-mask-mode-$id')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Subtract'));
+      await tester.pumpAndSettle();
+
+      expect(layer.getMasks().single.mode, BridgeMaskMode.subtract);
+
+      p.state.project!.undo();
+      expect(layer.getMasks().single.mode, BridgeMaskMode.add,
+          reason: 'ONE undo puts the mode back');
+    });
+
+    /// **Feather is a row under the mask, in layer pixels.** Staged and
+    /// previewed exactly as the opacity is, so the drag is one op and one undo
+    /// step (K-234, K-240).
+    testWidgets('dragging a mask feather is ONE undo step and previews first',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await openMaskRow(tester, p, layer, 'Ellipse');
+      layer.setMask(
+          mask: maskWith(layer.getMasks().single, feather: 20, expansion: 5));
+      p.uiState.model.refresh();
+      await tester.pumpAndSettle();
+
+      final id = layer.getMasks().single.id;
+      final field = find.byKey(ValueKey<String>('tl-mask-feather-$id'));
+      expect(find.text('Feather'), findsOneWidget);
+
+      final gesture = await dragLeft(tester, field, 20, release: false);
+      expect(layer.getMasks().single.feather, 20,
+          reason: 'a drag in flight writes nothing');
+      expect(tester.takeException(), isNull,
+          reason: 'the preview request is a courtesy and never a crash');
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(layer.getMasks().single.feather, lessThan(20),
+          reason: 'the release is what commits');
+
+      p.state.project!.undo();
+      expect(layer.getMasks().single.feather, 20,
+          reason: 'ONE undo returns the feather it had before the drag');
+    });
+
+    /// **A feather cannot go negative** — it is the width of a soft edge, so
+    /// the field simply has no negative side to drag into.
+    testWidgets('a mask feather stops at zero', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await openMaskRow(tester, p, layer, 'Ellipse');
+
+      final id = layer.getMasks().single.id;
+      await dragLeft(
+          tester, find.byKey(ValueKey<String>('tl-mask-feather-$id')), 40);
+
+      expect(layer.getMasks().single.feather, 0,
+          reason: 'dragging past zero offers nothing below it');
+    });
+
+    /// **Expansion grows and shrinks the shape**, so unlike feather it is free
+    /// to go negative — and it is the same one-op, previewed drag.
+    testWidgets('dragging a mask expansion is ONE undo step and goes negative',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await openMaskRow(tester, p, layer, 'Ellipse');
+
+      final id = layer.getMasks().single.id;
+      final field = find.byKey(ValueKey<String>('tl-mask-expansion-$id'));
+      expect(find.text('Expansion'), findsOneWidget);
+
+      final gesture = await dragLeft(tester, field, 20, release: false);
+      expect(layer.getMasks().single.expansion, 0,
+          reason: 'a drag in flight writes nothing');
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(layer.getMasks().single.expansion, lessThan(0),
+          reason: 'a mask can be shrunk as well as grown');
+
+      p.state.project!.undo();
+      expect(layer.getMasks().single.expansion, 0,
+          reason: 'ONE undo returns the expansion it had before the drag');
+    });
+
     /// **A mask row is a property row (K-234).** It joins the same selection
     /// every other row is in, so it lights up, the heading holding it marks
     /// itself, and Delete has something to act on.
@@ -547,6 +669,134 @@ void main() {
           reason: 'and its layer is still there');
       expect(find.text('Masks'), findsNothing,
           reason: 'the heading goes with the last mask under it');
+    });
+
+    /// Two clicks inside the double-tap window, the way a person double-clicks
+    /// a name. The rows count their own timestamps rather than taking an
+    /// `onDoubleTap`, so nothing here waits for a recogniser.
+    Future<void> doubleClick(WidgetTester tester, Finder target) async {
+      await tester.tap(target);
+      await tester.pump();
+      await tester.tap(target);
+      await tester.pump();
+    }
+
+    /// **A shape is named after the tool that drew it, and renamed by hand.**
+    /// The default naming already worked; nothing could change it afterwards,
+    /// so an ellipse and a second ellipse were both just "Ellipse". A
+    /// double-click on the name opens the editor, and the commit is one write
+    /// through `setMask` — one op, one undo step, like every other mask edit
+    /// (K-234).
+    testWidgets('double-clicking a mask name renames it in ONE undo step',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await openMaskRow(tester, p, layer, 'Ellipse');
+      final id = layer.getMasks().single.id;
+
+      await doubleClick(
+          tester, find.byKey(ValueKey<String>('tl-mask-name-$id')));
+      final editor = find.byKey(ValueKey<String>('tl-mask-rename-$id'));
+      expect(editor, findsOneWidget, reason: 'the name became a field');
+
+      await tester.enterText(editor, '  Left eye  ');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      expect(layer.getMasks().single.name, 'Left eye',
+          reason: 'the surrounding whitespace is not part of the name');
+      expect(find.byKey(ValueKey<String>('tl-mask-rename-$id')), findsNothing,
+          reason: 'submitting leaves the editor');
+
+      p.state.project!.undo();
+      expect(layer.getMasks().single.name, 'Ellipse',
+          reason: 'ONE undo puts the tool default back');
+    });
+
+    /// Escape abandons the edit: the mask keeps the name it had, and nothing
+    /// reaches the document.
+    testWidgets('Escape cancels a mask rename', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await openMaskRow(tester, p, layer, 'Ellipse');
+      final id = layer.getMasks().single.id;
+
+      await doubleClick(
+          tester, find.byKey(ValueKey<String>('tl-mask-name-$id')));
+      final editor = find.byKey(ValueKey<String>('tl-mask-rename-$id'));
+      await tester.enterText(editor, 'Never typed this');
+      await tester.pump();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+
+      expect(layer.getMasks().single.name, 'Ellipse',
+          reason: 'the abandoned edit was never written');
+      expect(find.byKey(ValueKey<String>('tl-mask-rename-$id')), findsNothing,
+          reason: 'Escape closes the editor');
+    });
+
+    /// A nameless mask is worse than one named after its tool, so an empty (or
+    /// all-space) name is refused and the old name stands.
+    testWidgets('an empty mask name is refused', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await openMaskRow(tester, p, layer, 'Ellipse');
+      final id = layer.getMasks().single.id;
+
+      await doubleClick(
+          tester, find.byKey(ValueKey<String>('tl-mask-name-$id')));
+      await tester.enterText(
+          find.byKey(ValueKey<String>('tl-mask-rename-$id')), '   ');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      expect(layer.getMasks().single.name, 'Ellipse',
+          reason: 'the mask keeps the name it had');
+      expect(find.text('Ellipse'), findsOneWidget);
+    });
+
+    /// **The regression that matters.** A single tap on the name still selects
+    /// the row and nothing else — selection is what `Delete` acts on (K-234),
+    /// so a rename that opened on one click would take the key away from it.
+    testWidgets('a single tap on a mask name selects and does not rename',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await openMaskRow(tester, p, layer, 'Ellipse');
+      final id = layer.getMasks().single.id;
+
+      await tester.tap(find.byKey(ValueKey<String>('tl-mask-name-$id')));
+      await tester.pump();
+
+      expect(find.byKey(ValueKey<String>('tl-mask-rename-$id')), findsNothing,
+          reason: 'one click is not a rename');
+      expect(p.uiState.deleteClaim!(), isTrue,
+          reason: 'the one click selected the mask, so Delete acts on it');
+    });
+
+    /// The rename is also on the row's own menu, beside Delete — a double-click
+    /// is not discoverable on its own.
+    testWidgets('the mask menu renames', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await openMaskRow(tester, p, layer, 'Ellipse');
+      final id = layer.getMasks().single.id;
+
+      await tester.tapAt(
+          tester.getCenter(find.byKey(ValueKey<String>('tl-mask-name-$id'))),
+          buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+      await tester
+          .tap(find.byKey(ValueKey<String>('tl-mask-rename-menu-$id')));
+      await tester.pumpAndSettle();
+
+      final editor = find.byKey(ValueKey<String>('tl-mask-rename-$id'));
+      expect(editor, findsOneWidget, reason: 'the menu opened the editor');
+      await tester.enterText(editor, 'Vignette');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(layer.getMasks().single.name, 'Vignette');
     });
 
     /// Paint strokes list under their own heading, between Masks and Effects —
@@ -767,6 +1017,72 @@ void main() {
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pumpAndSettle();
       expect(layer.getShapeContents().single.opacity, 30);
+    });
+
+    /// A shape layer's art gets the same rename as a mask: it too arrives named
+    /// after the tool that drew it, and one write through `setShapeContents`
+    /// makes the change one op and one undo step.
+    testWidgets('a shape item renames from its name and its menu',
+        (tester) async {
+      final p = withComp();
+      BridgeVertex corner(double x, double y) => BridgeVertex(
+          x: x, y: y, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0);
+      final layer = p.comp.addShapeLayer(
+        name: 'Ellipse',
+        contents: [
+          BridgeShapeItem(
+            id: UuidValue.fromString(const Uuid().v4()),
+            name: 'Ellipse',
+            vertices: [corner(0, 0), corner(60, 0), corner(60, 40)],
+            closed: true,
+            fill: const BridgeColourRgba(r: 1, g: 0, b: 0, a: 1),
+            stroke: null,
+            strokeWidth: 0,
+            opacity: 100,
+          ),
+        ],
+      );
+      p.uiState.model.refresh();
+      await mount(tester, p);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(
+          ValueKey<String>('tl-group-${layer.internallayerId}/contents')));
+      await tester.pumpAndSettle();
+
+      final id = layer.getShapeContents().single.id;
+      final name = find.byKey(ValueKey<String>('tl-shape-name-$id'));
+      final editorKey = ValueKey<String>('tl-shape-rename-$id');
+
+      // (That one click is not a rename is asserted on the mask row, which
+      // shares this editor; a single tap here would sit inside the double-click
+      // window of the next one and open it.)
+      await doubleClick(tester, name);
+      expect(find.byKey(editorKey), findsOneWidget,
+          reason: 'the name became a field');
+      await tester.enterText(find.byKey(editorKey), '  Iris  ');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(layer.getShapeContents().single.name, 'Iris');
+
+      p.state.project!.undo();
+      expect(layer.getShapeContents().single.name, 'Ellipse',
+          reason: 'ONE undo puts the tool default back');
+      p.uiState.model.refresh();
+      await tester.pumpAndSettle();
+
+      // Escape leaves the name alone, and the menu opens the same editor.
+      await tester.tapAt(tester.getCenter(name), buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+      await tester
+          .tap(find.byKey(ValueKey<String>('tl-shape-rename-menu-$id')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(editorKey), 'Discarded');
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(layer.getShapeContents().single.name, 'Ellipse',
+          reason: 'Escape abandons the edit');
     });
 
     testWidgets('without a composition it says so', (tester) async {

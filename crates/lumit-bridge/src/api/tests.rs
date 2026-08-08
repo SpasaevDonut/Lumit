@@ -5046,3 +5046,116 @@ fn enabling_retime_keys_the_layer_where_it_sits() {
     assert!((keys[0].value - 1.0).abs() < 1e-9);
     assert!((keys[1].value - 6.0).abs() < 1e-9);
 }
+
+/// A mask carries two things `BridgeMask` does not describe — its path
+/// keyframes and the forward-compatibility `extra` a newer Lumit may have
+/// written — and an ordinary edit from the frontend must keep both.
+///
+/// The regression this pins: `BridgeMask::write` rebuilds the engine's mask
+/// field by field, so `set_mask` used to replace the stored mask outright.
+/// Dragging a mask's opacity therefore deleted its animation, and dropped
+/// exactly the unknown fields docs/10 §1.1 makes it mandatory to round-trip.
+#[test]
+fn editing_a_mask_keeps_what_the_bridge_cannot_describe() {
+    use crate::api::layer::{BridgeMask, BridgeMaskMode, BridgeVertex};
+
+    let (project, layer) = project_with_layer();
+    let vertices = vec![
+        BridgeVertex {
+            x: 0.0,
+            y: 0.0,
+            tan_in_x: 0.0,
+            tan_in_y: 0.0,
+            tan_out_x: 0.0,
+            tan_out_y: 0.0,
+        },
+        BridgeVertex {
+            x: 10.0,
+            y: 0.0,
+            tan_in_x: 0.0,
+            tan_in_y: 0.0,
+            tan_out_x: 0.0,
+            tan_out_y: 0.0,
+        },
+        BridgeVertex {
+            x: 10.0,
+            y: 10.0,
+            tan_in_x: 0.0,
+            tan_in_y: 0.0,
+            tan_out_x: 0.0,
+            tan_out_y: 0.0,
+        },
+    ];
+    let mask = BridgeMask {
+        id: uuid::Uuid::now_v7(),
+        name: "Rectangle".into(),
+        vertices: vertices.clone(),
+        closed: true,
+        inverted: false,
+        opacity: 100.0,
+        mode: BridgeMaskMode::Add,
+        feather: 0.0,
+        expansion: 0.0,
+    };
+    layer.add_mask(mask.clone()).expect("added");
+
+    // Give the stored mask both of the things the bridge cannot carry, as a
+    // newer version of Lumit (or the keyframe UI, once it exists) would.
+    let key_time = lumit_core::time::Rational::new(1, 1).expect("1 s");
+    {
+        let state = project.state().expect("state");
+        let state = state.write().expect("write");
+        let mut doc = lumit_core::Document::clone(&state.store.snapshot());
+        let stored = doc
+            .comp_mut(layer.comp_id)
+            .expect("the comp")
+            .layers
+            .iter_mut()
+            .flat_map(|l| l.masks.iter_mut())
+            .find(|m| m.id == mask.id)
+            .expect("the mask we just added");
+        stored.path_keys = vec![lumit_core::mask::PathKeyframe {
+            time: key_time,
+            path: stored.path.clone(),
+            interp_in: lumit_core::anim::SideInterp::Linear,
+            interp_out: lumit_core::anim::SideInterp::Linear,
+        }];
+        stored
+            .extra
+            .insert("fromTheFuture".into(), serde_json::json!(7));
+        state.store.replace_document(doc);
+    }
+
+    // An ordinary edit: the same thing dragging the opacity slider does.
+    layer
+        .set_mask(BridgeMask {
+            opacity: 40.0,
+            ..mask
+        })
+        .expect("edited");
+
+    let state = project.state().expect("state");
+    let state = state.read().expect("read");
+    let doc = state.store.snapshot();
+    let stored = doc
+        .comp(layer.comp_id)
+        .expect("the comp")
+        .layers
+        .iter()
+        .flat_map(|l| l.masks.iter())
+        .find(|m| m.id == mask.id)
+        .expect("the mask survives its own edit");
+
+    assert!((stored.opacity - 40.0).abs() < 1e-9, "the edit landed");
+    assert_eq!(
+        stored.path_keys.len(),
+        1,
+        "an opacity edit must not delete the mask's animation"
+    );
+    assert_eq!(stored.path_keys[0].time, key_time);
+    assert_eq!(
+        stored.extra.get("fromTheFuture"),
+        Some(&serde_json::json!(7)),
+        "a field a newer Lumit wrote must survive an edit from this one"
+    );
+}

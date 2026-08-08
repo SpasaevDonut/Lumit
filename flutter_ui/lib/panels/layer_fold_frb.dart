@@ -94,6 +94,22 @@ final class FoldMaskRow extends LayerFoldRow {
   const FoldMaskRow(this.mask, {required int depth}) : super(depth);
 }
 
+/// Which of a mask's two pixel values a [FoldMaskValueRow] carries.
+enum MaskValue { feather, expansion }
+
+/// One of a mask's pixel values — its feather, or its expansion — on a row of
+/// its own under the mask (K-222).
+///
+/// A row rather than another control squeezed onto the mask's own row: the
+/// value column holds one field, and every other number in the fold-out has a
+/// row with its name on it.
+final class FoldMaskValueRow extends LayerFoldRow {
+  final BridgeMask mask;
+  final MaskValue value;
+  const FoldMaskValueRow(this.mask, this.value, {required int depth})
+      : super(depth);
+}
+
 /// One piece of a shape layer's art (K-237): its name, its fill and its
 /// outline — the row that makes a drawn shape editable after the fact.
 final class FoldShapeRow extends LayerFoldRow {
@@ -264,6 +280,8 @@ String foldRowPath(String layerId, LayerFoldRow row) => switch (row) {
       FoldRetimeRow() => retimePath(layerId),
       FoldWaveformRow() => waveformPath(layerId),
       FoldMaskRow(:final mask) => '${masksPath(layerId)}/${mask.id}',
+      FoldMaskValueRow(:final mask, :final value) =>
+        '${masksPath(layerId)}/${mask.id}/${value.name}',
       FoldStrokeRow(:final stroke) => '${paintPath(layerId)}/${stroke.id}',
       FoldShapeRow(:final item) => '${contentsPath(layerId)}/${item.id}',
     };
@@ -407,6 +425,12 @@ List<LayerFoldRow> layerFoldRows({
     if (masksOpen) {
       for (final mask in info.masks) {
         rows.add(FoldMaskRow(mask, depth: 2));
+        // Its two pixel values sit under it, the way an effect's parameters sit
+        // under the effect: the mask row's value column already holds the
+        // invert switch and the opacity, and a number without its name on the
+        // row is a number nobody can identify.
+        rows.add(FoldMaskValueRow(mask, MaskValue.feather, depth: 3));
+        rows.add(FoldMaskValueRow(mask, MaskValue.expansion, depth: 3));
       }
     }
   }

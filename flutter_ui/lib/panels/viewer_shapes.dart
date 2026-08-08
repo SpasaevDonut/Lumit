@@ -250,6 +250,9 @@ BridgeMask shapeMask({
       closed: closed,
       inverted: false,
       opacity: 100,
+      mode: BridgeMaskMode.add,
+      feather: 0,
+      expansion: 0,
     );
 
 /// What a mask made by [tool] is called. Named for the shape rather than

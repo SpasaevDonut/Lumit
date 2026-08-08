@@ -78,6 +78,9 @@ void main() {
         closed: true,
         inverted: false,
         opacity: 100,
+        mode: BridgeMaskMode.add,
+        feather: 0,
+        expansion: 0,
       );
 
   /// The same square, as a shape layer's own art rather than a mask. The two

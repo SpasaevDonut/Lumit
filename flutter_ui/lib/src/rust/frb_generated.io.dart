@@ -354,6 +354,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeMask dco_decode_bridge_mask(dynamic raw);
 
   @protected
+  BridgeMaskMode dco_decode_bridge_mask_mode(dynamic raw);
+
+  @protected
   BridgeMatte dco_decode_bridge_matte(dynamic raw);
 
   @protected
@@ -1035,6 +1038,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeMask sse_decode_bridge_mask(SseDeserializer deserializer);
+
+  @protected
+  BridgeMaskMode sse_decode_bridge_mask_mode(SseDeserializer deserializer);
 
   @protected
   BridgeMatte sse_decode_bridge_matte(SseDeserializer deserializer);
@@ -1790,6 +1796,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   void sse_encode_bridge_mask(BridgeMask self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_mask_mode(
+      BridgeMaskMode self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_matte(BridgeMatte self, SseSerializer serializer);

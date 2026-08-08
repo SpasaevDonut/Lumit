@@ -2336,6 +2336,45 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   folder (Lumit remembers the folder itself, not its name). Compositions do the same
   with a Compositions folder. Multi-step creations like that land as a single undo
   step — a batch operation whose inverse is just the reversed inverses of its members.
+- **A mask shape that moves (`lumit-core::mask`)** — everything else Lumit animates is a
+  single number: a position, an opacity, a blur radius. A keyframe on one of those says "be
+  40 here and 90 there", and asking for a moment in between is arithmetic. A mask path is not
+  a number — it is a whole drawn shape, a ring of points each with two handles — so
+  animating it needed its own small machine sitting beside the one that does numbers, rather
+  than a rebuild of that one. A mask now carries a list of **shape keyframes**: at this
+  moment the shape looks like *this*, at that moment like *that*. If the list is empty (which
+  it is for every mask you have not keyed) nothing changes anywhere, including in the saved
+  file, so old projects load and re-save byte for byte and their cached frames stay good.
+  - **In between two keys, the shape is blended point by point** — each point walks from
+    where it was towards where it is going, and its two handles walk with it, so the curve
+    bends smoothly rather than snapping. The **timing** is the ordinary keyframe timing:
+    hold, linear, or an eased handle, all borrowed from the number machine rather than
+    written again. What the ease shapes here is *how far along the crossing you are* — 0 at
+    one key, 1 at the next. There is no value graph for a shape, because there is no value
+    to plot; the timeline shows shape keys as diamonds, exactly as After Effects does.
+  - **The awkward bit: the two shapes need not have the same number of points.** Adding a
+    point halfway through an animation is one of the most ordinary things anyone does, and
+    refusing it is not an option. So before blending, the sparser shape is redrawn with as
+    many points as the denser one — and this has to happen *without changing the shape*, or
+    adding a point would visibly dent the mask. The trick is that a curve segment can be
+    **cut in two** and the two halves, taken together, are the exact same curve; nothing is
+    approximated. Cut a four-point ellipse in the right places and you have a seven-point
+    ellipse that is still, pixel for pixel, the same ellipse — it just has more handles to
+    grab. Which segments get the extra points is fixed arithmetic (spread evenly, earliest
+    first) rather than anything clever, so the same two shapes always reconcile the same way
+    and a playback is repeatable frame for frame.
+  - **Open or closed is not something you can be halfway.** A shape is either joined up at
+    the ends or it is not, so that setting *holds* across the crossing and flips at the next
+    key, like a hold keyframe. The points still travel smoothly; only the closing segment
+    appears or disappears, on a frame boundary, rather than smearing into existence.
+  - One thing worth knowing about the cache: the name a rendered frame is filed under is
+    made from *what is in the picture*, never from which frame it is (that is the whole
+    reason a duplicated composition shares its original's cached frames). A keyframed mask
+    is written to the file identically at every moment, so the list of keys alone would give
+    every frame of a moving mask the same name — and playback would show the mask stuck at
+    whichever frame drew first. The *worked-out* shape at that moment goes into the name as
+    well, and only for masks that are actually animated, so nothing that already exists is
+    disturbed.
 - **The evaluation graph (`lumit-eval::graph`)** — before rendering, Lumit lowers a
   composition into a wiring diagram: for each layer a short chain of typed steps — fetch the
   source, retime it, mask it, place it (transform), then blend it over everything beneath —
@@ -2517,6 +2556,37 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   — right-click the Shape button to choose rectangle, ellipse or star; Pen (G) is the
   click-to-place mask drawing above. The mode is one value (`ToolMode`) the Viewer reads
   each frame, so the whole app agrees on what the mouse is doing.
+- **Mask modes, feather and expansion — and the distance field underneath them.** A mask has
+  a **mode** that says how it joins the masks above it: **Add** widens what shows, **Subtract**
+  cuts a hole in it, **Intersect** keeps only where both agree, **Difference** keeps where
+  exactly one of them covers, and **None** parks the shape as geometry that gates nothing (handy
+  while you draw). They apply top to bottom in the list, so the order is part of the result:
+  A with B subtracted from it is a different picture from B with A subtracted from it. The one
+  question with no obvious answer is what the *first* mask combines with, since there is nothing
+  above it. Lumit does what After Effects does: if the top mask is Add the stack starts empty, and
+  otherwise it starts as the whole frame — which is what makes a single Subtract mask punch a hole
+  in the layer instead of leaving you with nothing at all.
+
+  **Feather** softens a mask's edge and **expansion** grows or shrinks the shape (in layer
+  pixels, positive out, negative in). They sound like two jobs — a blur and a choke — but they
+  are one, and building them as one is why they behave. The trick is a **signed distance
+  field**: for every pixel, work out how far it is from the mask's outline, counting distances
+  inside the shape as positive and outside as negative. Zero is exactly on the line. Once you
+  have that map, both controls are just ways of reading it. Expansion adds a constant to every
+  distance, which slides where "zero" falls and so moves the whole outline outward or inward,
+  keeping its shape and rounding its corners the way an offset outline should. Feather says how
+  many pixels the fade takes to cross that zero: a feather of 12 goes from fully on to fully
+  off over twelve pixels, six either side of the line. A blur would have smeared corners and
+  thin necks differently from long straight edges; distances don't care about any of that.
+
+  Two details worth knowing. The distances are measured from the *antialiased* raster, not from
+  a hard on/off version of it, so the softness starts out as smooth as the edge Lumit drew —
+  a partly-covered pixel tells you, by how covered it is, roughly how far past its centre the
+  edge ran. And feather and expansion are in **layer** pixels, so they are scaled along with
+  everything else when the Viewer drops to half or quarter resolution: a soft edge looks the
+  same width at every preview setting, and the same again on export. A mask with feather and
+  expansion both at zero skips all of this entirely and uses the raster untouched — which is
+  nearly every mask, and it costs nothing.
 - **Masks on Precomp layers** — a masked transition can now wipe a whole nested comp,
   the flow staple. Pixel layers (footage, solids, text) get their masks applied on the
   CPU before upload; a Precomp's pixels only ever exist on the GPU, so its mask stack
