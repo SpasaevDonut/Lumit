@@ -191,14 +191,43 @@ fi
 
 # create-dmg copies the CONTENTS of its source folder, so the app goes into a
 # staging folder first. The icon coordinates are centres in a 660x400 window,
-# matching the arrow baked into dmg-background.png; --hide-extension keeps the
-# app labelled "Lumit" even for people who show all filename extensions.
+# matching the arrow baked into dmg-background.png.
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 # ditto rather than cp -R: the stapled ticket and the signature travel as
 # metadata cp is not obliged to carry, and a DMG built from a copy that lost
 # them ships an app Gatekeeper treats as unnotarised.
 ditto "$app" "$stage/Lumit.app"
+
+# create-dmg's --hide-extension asks Finder to hide ".app" once the image is
+# mounted, and on a headless runner that request does not stick — the shipped
+# image showed "Lumit.app" while every other app on the machine showed a bare
+# name. Setting the flag on the staged copy first does stick, because it is
+# file metadata that travels into the image rather than an instruction to a
+# Finder that is not really there. Only the staged copy is touched, so the
+# .app the updater downloads is untouched.
+#
+# This does not override a user who has ticked "Show all filename extensions"
+# in Finder settings; nothing can, and for them every app shows its extension.
+#
+# SetFile comes with the Xcode command line tools and is deprecated, so its
+# absence is a warning rather than a failure: a visible extension is cosmetic
+# and not worth failing a release over.
+if command -v SetFile >/dev/null; then
+    SetFile -a E "$stage/Lumit.app"
+else
+    echo "warning: SetFile not found - the DMG will show the .app extension" >&2
+fi
+
+# Writing Finder metadata onto a signed bundle is the kind of thing that
+# silently breaks a signature, so prove it did not: --strict verifies the seal,
+# and spctl asks Gatekeeper the same question a user's Mac will ask on first
+# launch. spctl only has an answer once the app is notarised, so it is gated;
+# codesign is checked either way, ad-hoc included.
+codesign --verify --strict "$stage/Lumit.app"
+if [ -n "${APPLE_API_KEY_PATH:-}" ]; then
+    spctl --assess --type exec -vv "$stage/Lumit.app"
+fi
 
 mkdir -p "$here/dist"
 out="$here/dist/lumit-$version-macos-$arch.dmg"
