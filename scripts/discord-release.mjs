@@ -7,6 +7,11 @@
 //
 //   node scripts/discord-release.mjs 0.2.0 --dry-run   print it, send nothing
 //   node scripts/discord-release.mjs 0.2.0             post it
+//   node scripts/discord-release.mjs 0.2.0 --no-ping   post it quietly
+//
+// A release pings @everyone, as its own short message ahead of the notes. That
+// needs MENTION_EVERYONE granted to @everyone in the channel, which
+// bootstrap.mjs does for #announcements only — see `pingable` in its config.
 //
 // The webhook address comes from DISCORD_RELEASE_WEBHOOK. It is a secret in its
 // own right — anyone holding it can post into the channel — so it is never
@@ -27,6 +32,7 @@ const LIMIT = 1900; // Discord's cap is 2000; leave room for a stray wide glyph
 
 const args = process.argv.slice(2);
 const DRY = args.includes('--dry-run');
+const PING = !args.includes('--no-ping');
 const version = args.find((a) => !a.startsWith('--'))?.replace(/^v/, '');
 
 const die = (message) => {
@@ -149,20 +155,22 @@ function chunk(text) {
   return messages;
 }
 
-async function post(url, content) {
+async function post(url, content, mentionEveryone = false) {
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       content,
-      // Nothing in a release note should ever ping anybody.
-      allowed_mentions: { parse: [] },
+      // Only the lone @everyone message is allowed to mention anybody. The
+      // notes that follow carry no permission at all, so a stray "@everyone"
+      // written in a release note cannot ping the server a second time.
+      allowed_mentions: { parse: mentionEveryone ? ['everyone'] : [] },
     }),
   });
   if (res.status === 429) {
     const wait = Number(res.headers.get('retry-after') ?? 1) * 1000 + 250;
     await new Promise((r) => setTimeout(r, wait));
-    return post(url, content);
+    return post(url, content, mentionEveryone);
   }
   if (!res.ok) {
     // The body can echo the address back, so only the status is shown.
@@ -200,12 +208,19 @@ async function main() {
     unwrap(body),
   ].join('\n');
 
-  const messages = chunk(document);
+  // The ping stands alone, ahead of the notes. Discord only notifies on the
+  // message that carries the mention, so one short message pings once and the
+  // notes arrive underneath it unencumbered — rather than an @everyone buried
+  // in the first paragraph, or worse, one per chunk.
+  const messages = [...(PING ? ['@everyone'] : []), ...chunk(document)];
 
   if (DRY) {
     console.log(`\n  ${version} — ${messages.length} message(s), nothing sent.\n`);
     messages.forEach((m, i) => {
-      console.log(`  ---- message ${i + 1} of ${messages.length} (${m.length} chars) ----`);
+      const pings = PING && i === 0 ? ', pings @everyone' : '';
+      console.log(
+        `  ---- message ${i + 1} of ${messages.length} (${m.length} chars${pings}) ----`,
+      );
       console.log(m.replace(/^/gm, '  '));
       console.log('');
     });
@@ -214,15 +229,20 @@ async function main() {
 
   const webhook = process.env.DISCORD_RELEASE_WEBHOOK;
   if (!webhook) {
+    // GitHub will not hand a secret back once it is set, so there is nothing
+    // to copy from the repository — the address has to come from Discord.
     die(
       'DISCORD_RELEASE_WEBHOOK is not set.\n' +
-        '  In CI it comes from the repository secret of the same name.\n' +
-        '  Locally, use --dry-run, or export it for one command.',
+        '  In CI it comes from the repository secret of the same name; GitHub\n' +
+        '  will not give that back, so to post one by hand use the bootstrap\n' +
+        '  tooling, which looks the webhook up from Discord:\n\n' +
+        `    node announce.mjs --post ${version}\n\n` +
+        '  Or --dry-run here to see the messages without sending them.',
     );
   }
 
   for (const [i, message] of messages.entries()) {
-    await post(webhook, message);
+    await post(webhook, message, PING && i === 0);
     console.log(`  posted ${i + 1} of ${messages.length}`);
     // Webhooks are rate-limited per channel; a short gap keeps order and
     // stays well clear of it.
