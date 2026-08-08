@@ -52,14 +52,14 @@ struct Params {
     mix_amt: f32,        // 0..1, blended against the unprocessed input
     apothem2: f32,       // cos²(π/N)
     roundness: f32,      // -1 star … 0 polygon … 1 circle (the default)
-    concentration: f32,  // -1 centre-weighted … 0 flat … 1 rim-weighted
-    deform_x: f32,       // tap-offset multipliers, both >= 1, one == 1
-    deform_y: f32,
+    rim: f32,  // -1 centre-weighted … 0 flat … 1 rim-weighted
+    aspect_x: f32,       // tap-offset multipliers, both >= 1, one == 1
+    aspect_y: f32,
     threshold: f32,      // linear level each tap is split at
     bokeh_power: f32,    // 2^(Exposure/12); 1 = the plain arithmetic mean
     focus_x: f32,        // where to read focus depth, raster px
     focus_y: f32,
-    focus_falloff: f32,  // multiplier on the depth distance before the ramp
+    depth_sensitivity: f32,  // multiplier on the depth distance before the ramp
     remove_edge_leak: f32,
     detect_edge_threshold: f32,
     depth_invert: u32,   // 1 = d' = 1 - d before the CoC
@@ -69,12 +69,13 @@ struct Params {
     depth_channel: u32,  // index into lumit_core::fx::CHANNEL_OPTIONS
     use_focus_point: u32,// 1 = focus is the depth under (focus_x, focus_y)
     repeat_edge: u32,    // 1 = clamp the gather to the frame edge
-    composite_mode: u32, // 0 Normal, 1 Add, 2 Screen, 3 Lighten, 4 Darken
     weighted: u32,       // 1 = the tap-weighted path (host decides once)
     tonal: u32,          // 1 = the split-at-threshold power mean
-    circle: u32,         // 1 = the plain r² <= coc² test (Roundness 1, no Deform)
-    // The seventeen floats and eleven u32s above come to 28 words — 112 bytes,
-    // exactly seven 16-byte rows — so the array below lands 16-byte aligned
+    circle: u32,         // 1 = the plain r² <= coc² test (Roundness 1, no squeeze)
+    _pad0: u32,
+    // The seventeen floats and ten u32s above come to 27 words, which is not a
+    // whole number of 16-byte rows — so one pad word takes it to 28, and the
+    // array below lands 16-byte aligned
     // under both WGSL's rules and `repr(C)`'s. That is **load-bearing**: an
     // `array<vec4<f32>, N>` is 16-byte aligned in WGSL, so adding one scalar
     // above without restoring the count to a multiple of four moves the shader's
@@ -92,49 +93,15 @@ struct Params {
 @group(0) @binding(4) var<uniform> p: Params;
 
 // One channel of the depth picture, by the shared CHANNEL_OPTIONS index.
-// Mirrors `lumit_core::fx::cpu::channel_of` operation for operation. Every
-// branch is arithmetic — no atan2 for hue, no pow — and every divide is
-// guarded: a grey pixel has no hue, and zero chroma must not become a NaN in
-// the middle of a depth read.
+// Mirrors `lumit_core::fx::cpu::channel_of` operation for operation.
 fn channel_of(c: vec4<f32>) -> f32 {
-    let mx = max(c.r, max(c.g, c.b));
-    let mn = min(c.r, min(c.g, c.b));
-    let chroma = mx - mn;
     switch (p.depth_channel) {
-        case 0u: { return c.r; }
-        case 1u: { return c.g; }
-        case 2u: { return c.b; }
-        case 3u: { return c.a; }
-        case 4u: { return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b; }
-        case 6u: {
-            // Hue, 0..1. A grey pixel has no hue; zero is the conventional
-            // answer and the only one that cannot divide by nothing.
-            if (chroma <= 0.0) {
-                return 0.0;
-            }
-            let sixth = 1.0 / 6.0;
-            var hue: f32;
-            if (mx == c.r) {
-                hue = sixth * (((c.g - c.b) / chroma) % 6.0);
-            } else if (mx == c.g) {
-                hue = sixth * (((c.b - c.r) / chroma) + 2.0);
-            } else {
-                hue = sixth * (((c.r - c.g) / chroma) + 4.0);
-            }
-            return select(hue, hue + 1.0, hue < 0.0);
-        }
-        case 7u: {
-            // Saturation (HSL): zero on grey and at either extreme of
-            // lightness, where the denominator collapses.
-            if (chroma <= 0.0) {
-                return 0.0;
-            }
-            let l = 0.5 * (mx + mn);
-            let denom = 1.0 - abs(2.0 * l - 1.0);
-            return select(chroma / denom, 0.0, denom <= 0.0);
-        }
-        case 8u: { return 0.5 * (mx + mn); }
-        default: { return (c.r + c.g + c.b) / 3.0; }
+        case 1u: { return c.a; }
+        case 2u: { return c.r; }
+        case 3u: { return c.g; }
+        case 4u: { return c.b; }
+        // 0 and anything unknown: Rec.709 luminance.
+        default: { return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b; }
     }
 }
 
@@ -160,7 +127,7 @@ fn depth_at(xy: vec2<i32>) -> f32 {
 fn coc_falloff(d: f32, focus: f32) -> f32 {
     let dist = abs(d - focus);
     let denom = max(1.0 - p.range, 1e-4);
-    let e = min(max(((dist - p.range) / denom) * p.focus_falloff, 0.0), 1.0);
+    let e = min(max(((dist - p.range) / denom) * p.depth_sensitivity, 0.0), 1.0);
     return e * e * (3.0 - 2.0 * e); // smoothstep ramp
 }
 
@@ -211,8 +178,8 @@ fn aperture_r2(dxi: i32, dyi: i32, coc2: f32) -> f32 {
         let r2 = f32(dxi * dxi + dyi * dyi);
         return select(-1.0, r2, r2 <= coc2);
     }
-    let ax = f32(dxi) * p.deform_x;
-    let ay = f32(dyi) * p.deform_y;
+    let ax = f32(dxi) * p.aspect_x;
+    let ay = f32(dyi) * p.aspect_y;
     let r2 = ax * ax + ay * ay;
     var m = 0.0;
     for (var k = 0u; k < MAX_BLADES; k++) {
@@ -231,7 +198,7 @@ fn aperture_r2(dxi: i32, dyi: i32, coc2: f32) -> f32 {
 // division and no guard at coc = 0; the weights are only used as a ratio, so the
 // common factor cancels in the mean.
 fn tap_weight(r2: f32, coc2: f32) -> f32 {
-    return max(coc2 + p.concentration * (2.0 * r2 - coc2), 0.0);
+    return max(coc2 + p.rim * (2.0 * r2 - coc2), 0.0);
 }
 
 @compute @workgroup_size(8, 8)
@@ -408,15 +375,8 @@ fn dof(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     let v = acc_lo / n + rooted;
 
-    // Composite mode: how the defocused result returns over the original.
-    // Normal is the plain replace, which is the historical behaviour.
-    var composited = v;
-    switch (p.composite_mode) {
-        case 1u: { composited = o + v; }
-        case 2u: { composited = o + v - o * v; }
-        case 3u: { composited = max(o, v); }
-        case 4u: { composited = min(o, v); }
-        default: {}
-    }
-    textureStore(dst, xy, mix(o, composited, p.mix_amt));
+    // The defocused result replaces the original, blended by Mix. There is no
+    // composite menu: an effect that wants its balls added over a sharp plate is
+    // an adjustment layer with a blend mode, which already exists.
+    textureStore(dst, xy, mix(o, v, p.mix_amt));
 }

@@ -75,6 +75,17 @@ pub struct FxEngine {
     block_glitch: wgpu::ComputePipeline,
     scanlines: wgpu::ComputePipeline,
     lens_dirt: wgpu::ComputePipeline,
+    /// The Lens dirt easter egg's plate, decoded and uploaded **once**
+    /// (docs/08 §3.28, K-314).
+    ///
+    /// **This is a cache because the alternative was pathological.** The plate
+    /// is a 1920×1080 photograph: decoding it, linearising it and uploading a
+    /// fresh texture on every dispatch is ~3 MB of decode and ~16 MB of upload
+    /// *per frame*, which starves the device of memory until unrelated bind
+    /// groups start failing to create — a preview that dies with a validation
+    /// error naming some other pass entirely. The same shape as the flare's bake
+    /// cache, and for the same reason.
+    lens_dirt_plate: std::sync::Mutex<Option<wgpu::Texture>>,
 
     echo_accumulate: wgpu::ComputePipeline,
     echo_mix: wgpu::ComputePipeline,

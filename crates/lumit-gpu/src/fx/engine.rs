@@ -360,6 +360,7 @@ impl FxEngine {
             block_glitch,
             scanlines,
             lens_dirt,
+            lens_dirt_plate: std::sync::Mutex::new(None),
 
             echo_accumulate,
             echo_mix,

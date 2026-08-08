@@ -386,8 +386,12 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   out-of-focus street lights are hexagons on some lenses and circles on others. Depth of
   field's **Iris** twirl is that hole. **Blades** is how many, **Roundness** is how bowed they
   are (1 is a perfect circle, 0 a straight-edged polygon, and *below* zero the edges cave
-  inward and you get a star), **Rotation** turns it, and **Deform** squashes it on one axis
-  the way an anamorphic scope lens does.
+  inward and you get a star), **Rotation** turns it (a number with a dial beside it — drag
+  either), and **Aspect ratio** squashes it on one axis the way an anamorphic scope lens
+  does. **Rim brightness** is the odd one worth knowing: a real lens does not throw a *flat*
+  disc — some ring the edge bright (the "soap bubble" look), some pool the light in the
+  middle (creamy and smooth). That is an optical defect called spherical aberration, and this
+  is the dial for it.
 
   The other half is subtler and matters more. Averaging is what makes a blur, and averaging is
   also what *destroys* a highlight: one very bright pixel among a hundred dark ones comes out

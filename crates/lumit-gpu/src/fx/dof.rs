@@ -45,10 +45,10 @@ pub struct DofOp {
     /// `r² ≤ coc²` test — the aperture this effect has always gathered.
     pub roundness: f32,
     /// −1 centre-weighted … 0 flat disc … 1 rim-weighted.
-    pub concentration: f32,
+    pub rim: f32,
     /// Tap-offset multipliers, both ≥ 1 and exactly one > 1, so the aperture can
     /// only shrink on one axis and never reaches outside the circle.
-    pub deform_scale: [f32; 2],
+    pub aspect_scale: [f32; 2],
     /// The tonal split level and the power its excess is raised to. A power of
     /// exactly 1 is the plain arithmetic mean and skips the split.
     pub threshold: f32,
@@ -68,9 +68,7 @@ pub struct DofOp {
     pub focus_point: [f32; 2],
     /// Multiplier on the depth distance before the ramp (the Profile control,
     /// resolved). 1 is the plain full-range falloff.
-    pub focus_falloff: f32,
-    /// 0 Normal, 1 Add, 2 Screen, 3 Lighten, 4 Darken.
-    pub composite_mode: u32,
+    pub depth_sensitivity: f32,
     pub remove_edge_leak: f32,
     pub detect_edge_threshold: f32,
     /// Diagnostic view: 0 = Rendered, 1 = Depth map, 2 = Focus map.
@@ -80,8 +78,8 @@ pub struct DofOp {
 }
 
 /// The `dof` kernel's uniform. Layout mirrors `fx_dof.wgsl`'s `Params` field for
-/// field: seventeen floats then eleven `u32`s — 28 words, seven whole 16-byte
-/// rows — then the normals as an `array<vec4<f32>, 8>`. 240 bytes.
+/// field: seventeen floats, ten `u32`s and one pad word — 28 words, seven whole
+/// 16-byte rows — then the normals as an `array<vec4<f32>, 8>`. 240 bytes.
 ///
 /// **That word count is load-bearing.** An `array<vec4<f32>, N>` is 16-byte
 /// aligned in WGSL, so if the scalars above stop being a multiple of four the
@@ -100,14 +98,14 @@ struct DofParams {
     mix_amt: f32,
     apothem2: f32,
     roundness: f32,
-    concentration: f32,
-    deform_x: f32,
-    deform_y: f32,
+    rim: f32,
+    aspect_x: f32,
+    aspect_y: f32,
     threshold: f32,
     bokeh_power: f32,
     focus_x: f32,
     focus_y: f32,
-    focus_falloff: f32,
+    depth_sensitivity: f32,
     remove_edge_leak: f32,
     detect_edge_threshold: f32,
     /// 0 = read the depth as-is, 1 = invert it (`d' = 1 - d`) before the CoC.
@@ -119,7 +117,6 @@ struct DofParams {
     depth_channel: u32,
     use_focus_point: u32,
     repeat_edge: u32,
-    composite_mode: u32,
     /// Whether the gather weights its taps at all, whether it splits them at the
     /// threshold, and whether the aperture is the plain circle. All three are
     /// decided host-side and once, because none of the neutral settings is an
@@ -130,6 +127,9 @@ struct DofParams {
     weighted: u32,
     tonal: u32,
     circle: u32,
+    /// Padding to a whole 16-byte row — see the type docs; the array below is
+    /// 16-byte aligned in WGSL and only 4-byte aligned under `repr(C)`.
+    _pad0: u32,
     /// Only `.xy` of each element is read.
     blade_normals: [[f32; 4]; MAX_BLADES],
 }
@@ -172,7 +172,7 @@ impl FxEngine {
     /// (Red by convention and by default; `textureLoad`, not a sampler),
     /// optionally inverts it (`d' = 1 - d`, swapping near and far), turns it
     /// into a circle-of-confusion radius — zero inside `range` of the focus
-    /// depth, ramping smoothstep (scaled first by `focus_falloff`, the Profile
+    /// depth, ramping smoothstep (scaled first by `depth_sensitivity`, the Profile
     /// control) to `near_aperture` raster pixels on the near side or
     /// `far_aperture` on the far side — then averages an aperture of that radius
     /// from `src` and blends against the input by the host Mix.
@@ -226,9 +226,9 @@ impl FxEngine {
             dst[1] = n[1];
         }
         // Decided here, once, rather than per tap: see `DofParams::weighted`.
-        let weighted = op.concentration != 0.0 || (op.remove_edge_leak > 0.0 && op.depth_bound);
+        let weighted = op.rim != 0.0 || (op.remove_edge_leak > 0.0 && op.depth_bound);
         let tonal = op.bokeh_power != 1.0;
-        let circle = op.roundness >= 1.0 && op.deform_scale == [1.0, 1.0];
+        let circle = op.roundness >= 1.0 && op.aspect_scale == [1.0, 1.0];
         let ubuf = ctx
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -241,14 +241,14 @@ impl FxEngine {
                     mix_amt: op.mix,
                     apothem2: op.apothem2,
                     roundness: op.roundness,
-                    concentration: op.concentration,
-                    deform_x: op.deform_scale[0],
-                    deform_y: op.deform_scale[1],
+                    rim: op.rim,
+                    aspect_x: op.aspect_scale[0],
+                    aspect_y: op.aspect_scale[1],
                     threshold: op.threshold,
                     bokeh_power: op.bokeh_power,
                     focus_x: op.focus_point[0],
                     focus_y: op.focus_point[1],
-                    focus_falloff: op.focus_falloff,
+                    depth_sensitivity: op.depth_sensitivity,
                     remove_edge_leak: op.remove_edge_leak,
                     detect_edge_threshold: op.detect_edge_threshold,
                     depth_invert: u32::from(op.depth_invert),
@@ -258,10 +258,10 @@ impl FxEngine {
                     depth_channel: op.depth_channel,
                     use_focus_point: u32::from(op.use_focus_point),
                     repeat_edge: u32::from(op.repeat_edge),
-                    composite_mode: op.composite_mode,
                     weighted: u32::from(weighted),
                     tonal: u32::from(tonal),
                     circle: u32::from(circle),
+                    _pad0: 0,
                     blade_normals,
                 }),
                 usage: wgpu::BufferUsages::UNIFORM,

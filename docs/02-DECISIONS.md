@@ -7227,3 +7227,46 @@ picking a layer *replaces* what it does) and `FloatAbove` (its only numeric
 condition, for "these rows describe how a thing is measured and nothing is
 measuring it"). The effect's ROI becomes full-frame, because the light spread
 means a pixel depends on light well outside its own tile.
+
+
+**K-315 · DECIDED · Depth of field's control surface, after the owner's first pass on
+it — and the plate the easter egg draws is cached, not decoded per frame.** Six changes,
+each from testing K-313 in the app rather than from a spec.
+
+**Composite mode is gone.** Five blend modes on one effect is a menu nobody has a reason to
+open: an effect whose result wants adding over a sharp plate is an adjustment layer with a
+blend mode, which already exists, does it in one obvious place, and does it for *every*
+effect rather than for whichever ones happened to grow a dropdown.
+
+**The depth channel list is five entries, and every one can explain itself.** Luminance (the
+default — right for the grey map a depth pass usually is, whatever channels it was written
+to), Alpha (some renderers put depth there), Red/Green/Blue (a packed pass, several AOVs
+flattened into one image). Hue, saturation, lightness and the plain channel mean are gone:
+nothing encodes a depth or a density as a hue, and offering the option only invites someone
+to find out. **Depth invert moves into that group** — it is part of how the pass is *read*,
+not part of where focus is. Changing the default from Red to Luminance is a look change on a
+non-grey depth pass; it is recorded here rather than hidden, and K-313 has not shipped.
+
+**Focus distance, Use focus point and Focus point are now adjacent.** A switch that hands one
+control's job to another is an affordance only if both are visible at once; with the toggle
+three twirls below the number it governed, neither row explained the other.
+
+**Three renames, because the names were the problem.** *Profile* → **Depth sensitivity**: it
+rescales the depth axis, so it decides how hard the blur answers to a small change in depth.
+*Concentration* → **Rim brightness**: it decides where the light sits inside each ball, which
+is spherical aberration. *Deform* → **Aspect ratio**. None of the three could be guessed from
+its old label, and a control nobody can name is a control nobody uses.
+
+**The angle dial sits beside its number, not under it**, and the same control now serves every
+*unbounded* rotation in the catalogue: the Transform effect's Rotation, Hue shift's Angle (a
+hue shift is a rotation about the colour wheel — the most dial-shaped control there is) and
+the Lens flare's aperture Rotation. The two blur-direction angles keep their `±3600` hard
+bound and stay plain numbers, because `Angle` is deliberately unbounded and swapping them
+would quietly drop a clamp.
+
+**And the easter-egg plate is uploaded once.** It was decoded, linearised and uploaded on
+*every dispatch* — with the full-resolution plate that is ~3 MB of decode and ~16 MB of
+upload per frame, which starves the device until unrelated bind groups fail to create. The
+symptom is a preview that stops rendering and repeats a validation error naming some other
+pass entirely, which is a miserable thing to debug from. It is held in a `Mutex` on the
+`FxEngine`, the same shape as the Lens flare's bake cache and for the same reason.

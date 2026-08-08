@@ -78,40 +78,13 @@ fn block_hash01(seed: u32, channel: u32, bx: i32, by: i32, tick: i32) -> f32 {
 // One channel of an auxiliary picture, by the shared CHANNEL_OPTIONS index.
 // Mirrors `lumit_core::fx::cpu::channel_of`.
 fn channel_of(c: vec4<f32>) -> f32 {
-    let mx = max(c.r, max(c.g, c.b));
-    let mn = min(c.r, min(c.g, c.b));
-    let chroma = mx - mn;
     switch (p.plate_channel) {
-        case 0u: { return c.r; }
-        case 1u: { return c.g; }
-        case 2u: { return c.b; }
-        case 3u: { return c.a; }
-        case 4u: { return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b; }
-        case 6u: {
-            if (chroma <= 0.0) {
-                return 0.0;
-            }
-            let sixth = 1.0 / 6.0;
-            var hue: f32;
-            if (mx == c.r) {
-                hue = sixth * (((c.g - c.b) / chroma) % 6.0);
-            } else if (mx == c.g) {
-                hue = sixth * (((c.b - c.r) / chroma) + 2.0);
-            } else {
-                hue = sixth * (((c.r - c.g) / chroma) + 4.0);
-            }
-            return select(hue, hue + 1.0, hue < 0.0);
-        }
-        case 7u: {
-            if (chroma <= 0.0) {
-                return 0.0;
-            }
-            let l = 0.5 * (mx + mn);
-            let denom = 1.0 - abs(2.0 * l - 1.0);
-            return select(chroma / denom, 0.0, denom <= 0.0);
-        }
-        case 8u: { return 0.5 * (mx + mn); }
-        default: { return (c.r + c.g + c.b) / 3.0; }
+        case 1u: { return c.a; }
+        case 2u: { return c.r; }
+        case 3u: { return c.g; }
+        case 4u: { return c.b; }
+        // 0 and anything unknown: Rec.709 luminance.
+        default: { return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b; }
     }
 }
 

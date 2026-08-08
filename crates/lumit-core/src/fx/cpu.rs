@@ -1573,8 +1573,8 @@ pub struct DofParams {
     pub apothem2: f32,
     /// 1 is the circle and takes the plain `r² ≤ coc²` test.
     pub roundness: f32,
-    pub concentration: f32,
-    pub deform_scale: [f32; 2],
+    pub rim: f32,
+    pub aspect_scale: [f32; 2],
     pub threshold: f32,
     /// `2^(Exposure/12)`; **1 is the plain arithmetic mean** and skips the
     /// tonal split entirely.
@@ -1587,8 +1587,7 @@ pub struct DofParams {
     /// The Profile control, resolved: a multiplier on the depth distance before
     /// the ramp. 1 is the plain full-range falloff; above 1 the transition
     /// bites sooner, below 1 it stretches past the range.
-    pub focus_falloff: f32,
-    pub composite_mode: u32,
+    pub depth_sensitivity: f32,
     pub remove_edge_leak: f32,
     pub detect_edge_threshold: f32,
     /// 0 Rendered, 1 Depth map, 2 Focus map.
@@ -1607,55 +1606,15 @@ pub struct DofParams {
 /// a NaN in the middle of a depth read.
 pub fn channel_of(rgba: &[f32], channel: u32) -> f32 {
     let (r, g, b, a) = (rgba[0], rgba[1], rgba[2], rgba[3]);
-    let max = r.max(g).max(b);
-    let min = r.min(g).min(b);
-    let chroma = max - min;
     match channel {
-        0 => r,
-        1 => g,
-        2 => b,
-        3 => a,
-        // Rec.709, the same weights every other effect in the suite uses.
-        4 => 0.2126 * r + 0.7152 * g + 0.0722 * b,
-        6 => {
-            // Hue, normalised to 0..1. A grey pixel (zero chroma) has no hue;
-            // zero is the conventional answer and the only one that cannot
-            // divide by nothing.
-            if chroma <= 0.0 {
-                return 0.0;
-            }
-            let sixth = 1.0 / 6.0;
-            let hue = if max == r {
-                sixth * (((g - b) / chroma) % 6.0)
-            } else if max == g {
-                sixth * (((b - r) / chroma) + 2.0)
-            } else {
-                sixth * (((r - g) / chroma) + 4.0)
-            };
-            if hue < 0.0 {
-                hue + 1.0
-            } else {
-                hue
-            }
-        }
-        7 => {
-            // Saturation (HSL): zero on grey and at either extreme of
-            // lightness, where the denominator collapses.
-            let l = 0.5 * (max + min);
-            if chroma <= 0.0 {
-                return 0.0;
-            }
-            let denom = 1.0 - (2.0 * l - 1.0).abs();
-            if denom <= 0.0 {
-                0.0
-            } else {
-                chroma / denom
-            }
-        }
-        8 => 0.5 * (max + min), // Lightness (HSL)
-        // 5 and anything unknown: the plain mean of the colour channels, which
-        // reads the same whichever channel a grey depth pass was written to.
-        _ => (r + g + b) / 3.0,
+        1 => a,
+        2 => r,
+        3 => g,
+        4 => b,
+        // 0 and anything unknown: Rec.709 luminance, the same weights every
+        // other effect in the suite uses. Right for a grey map whatever
+        // combination of channels it was written to.
+        _ => 0.2126 * r + 0.7152 * g + 0.0722 * b,
     }
 }
 
@@ -1716,11 +1675,11 @@ pub fn dof(rgba: &mut [f32], depth: Option<&[f32]>, w: u32, h: u32, p: &DofParam
         _ => p.focus,
     };
 
-    let falloff = |d: f32| dof_falloff(d, focus, p.range, p.focus_falloff);
+    let falloff = |d: f32| dof_falloff(d, focus, p.range, p.depth_sensitivity);
 
     // The gather is unweighted unless something actually asks for weights, and
     // then it is weighted for every tap. Two paths, not one path with a factor.
-    let weighted = p.concentration != 0.0 || (p.remove_edge_leak > 0.0 && bound);
+    let weighted = p.rim != 0.0 || (p.remove_edge_leak > 0.0 && bound);
     // Likewise the tonal split: at power 1 the mean is the plain arithmetic one
     // and the split is skipped rather than performed and undone.
     let tonal = p.bokeh_power != 1.0;
@@ -1913,18 +1872,12 @@ pub fn dof(rgba: &mut [f32], depth: Option<&[f32]>, w: u32, h: u32, p: &DofParam
                     0.0
                 };
                 let v = acc_lo[c] / n + rooted;
+                // The defocused result replaces the original, blended by Mix.
+                // There is no composite menu: an effect that wants its balls
+                // added over a sharp plate is an adjustment layer with a blend
+                // mode, which is the mechanism that already exists for it.
                 let o = original[oi + c];
-                // Composite mode: how the defocused result returns over the
-                // original. Normal is the plain replace, which is the historical
-                // behaviour and the default.
-                let composited = match p.composite_mode {
-                    1 => o + v,
-                    2 => o + v - o * v,
-                    3 => o.max(v),
-                    4 => o.min(v),
-                    _ => v,
-                };
-                rgba[oi + c] = o * (1.0 - p.mix) + composited * p.mix;
+                rgba[oi + c] = o * (1.0 - p.mix) + v * p.mix;
             }
         }
     }
@@ -1974,7 +1927,7 @@ pub fn dof_tap_inside(dx: f32, dy: f32, coc2: f32, p: &DofParams) -> bool {
 /// rather than trusting `w = coc2` to cancel exactly, because it does not: a
 /// constant factor through a sum is not an IEEE identity.
 fn tap_weight(r2: f32, coc2: f32, p: &DofParams) -> f32 {
-    (coc2 + p.concentration * (2.0 * r2 - coc2)).max(0.0)
+    (coc2 + p.rim * (2.0 * r2 - coc2)).max(0.0)
 }
 
 /// The tap's deformed `r²` when it is inside the aperture, else `None`.
@@ -1996,12 +1949,12 @@ fn tap_weight(r2: f32, coc2: f32, p: &DofParams) -> f32 {
 /// inscribed in the circle of confusion at every setting, so the `ceil(coc)`
 /// scan box — and the effect's declared ROI — remain correct bounds.
 fn in_aperture_shape(dx: f32, dy: f32, coc2: f32, p: &DofParams) -> Option<f32> {
-    if p.roundness >= 1.0 && p.deform_scale[0] == 1.0 && p.deform_scale[1] == 1.0 {
+    if p.roundness >= 1.0 && p.aspect_scale[0] == 1.0 && p.aspect_scale[1] == 1.0 {
         let r2 = dx * dx + dy * dy;
         return (r2 <= coc2).then_some(r2);
     }
-    let ax = dx * p.deform_scale[0];
-    let ay = dy * p.deform_scale[1];
+    let ax = dx * p.aspect_scale[0];
+    let ay = dy * p.aspect_scale[1];
     let r2 = ax * ax + ay * ay;
     let mut m = 0.0f32;
     for n in p.blade_normals.iter().take(p.blade_count as usize) {

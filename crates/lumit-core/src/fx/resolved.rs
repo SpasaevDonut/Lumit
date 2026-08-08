@@ -663,13 +663,13 @@ pub enum Resolved {
         roundness: f32,
         /// Radial weighting inside the aperture, −1..1. 0 is the flat disc and
         /// takes the unweighted branch.
-        concentration: f32,
+        rim: f32,
         /// Anamorphic squeeze as a pair of multipliers on the tap offset before
         /// the inside test, computed host-side (K-137's precedent for a
         /// host-side single division). Both are ≥ 1 and exactly one is > 1, so
         /// the aperture only ever *shrinks* on one axis — it can never exceed
         /// the circle, and the scan box is untouched. `[1.0, 1.0]` at Deform 0.
-        deform_scale: [f32; 2],
+        aspect_scale: [f32; 2],
         /// The tonal split level, and the power the excess is raised to — the
         /// split-at-threshold power mean. `bokeh_power` is
         /// `2^(Exposure/EXPOSURE_STOPS_PER_DOUBLING)`, host-computed; **1 is
@@ -704,10 +704,7 @@ pub enum Resolved {
         /// even the far extreme is softened rather than obliterated. This is
         /// what stops focus being all-or-nothing on a real depth pass, whose
         /// content sits in a narrow band with one near object well outside it.
-        focus_falloff: f32,
-        /// How the defocused result returns over the original: 0 Normal,
-        /// 1 Add, 2 Screen, 3 Lighten, 4 Darken.
-        composite_mode: u32,
+        depth_sensitivity: f32,
         /// How hard a tap across a depth discontinuity **and in front of** this
         /// pixel is pulled back, and how big a depth jump counts as one. 0 leak
         /// takes the unweighted branch.
@@ -1793,8 +1790,8 @@ fn resolve_one(
                 .float_at_with_context("roundness", lt, expression_context.clone())
                 .unwrap_or(1.0) as f32)
                 .clamp(-1.0, 1.0);
-            let concentration = (e
-                .float_at_with_context("concentration", lt, expression_context.clone())
+            let rim = (e
+                .float_at_with_context("rim", lt, expression_context.clone())
                 .unwrap_or(0.0) as f32)
                 .clamp(-1.0, 1.0);
 
@@ -1804,11 +1801,11 @@ fn resolve_one(
             // per tap (K-137's host-side single division), and the magnitude is
             // held below 1 so it cannot divide by zero at the range's ends.
             let deform = (e
-                .float_at_with_context("deform", lt, expression_context.clone())
+                .float_at_with_context("aspect", lt, expression_context.clone())
                 .unwrap_or(0.0) as f32)
                 .clamp(-1.0, 1.0);
             let squeeze = 1.0 / (1.0 - deform.abs().min(0.95));
-            let deform_scale = if deform > 0.0 {
+            let aspect_scale = if deform > 0.0 {
                 [1.0, squeeze] // a wide oval: pull y in
             } else if deform < 0.0 {
                 [squeeze, 1.0]
@@ -1881,14 +1878,10 @@ fn resolve_one(
             // One doubling per unit, so the slider's useful zone sits in its
             // middle rather than its first third (see the schema's note).
             let profile = (e
-                .float_at_with_context("profile", lt, expression_context.clone())
+                .float_at_with_context("depth_sensitivity", lt, expression_context.clone())
                 .unwrap_or(0.0) as f32)
                 .clamp(-10.0, 10.0);
-            let focus_falloff = profile.exp2();
-            let composite_mode = match e.param("composite_mode") {
-                Some(EffectValue::Choice(c)) => (*c).min(4),
-                _ => 0,
-            };
+            let depth_sensitivity = profile.exp2();
             // Edge-leak suppression reads two depths per tap, so it is dead
             // weight without a depth pass — and its neutral is what keeps the
             // gather bit-identical to the historical one.
@@ -1931,8 +1924,8 @@ fn resolve_one(
                 blade_count,
                 apothem2,
                 roundness,
-                concentration,
-                deform_scale,
+                rim,
+                aspect_scale,
                 threshold,
                 bokeh_power,
                 repeat_edge,
@@ -1940,8 +1933,7 @@ fn resolve_one(
                 depth_channel,
                 use_focus_point,
                 focus_point,
-                focus_falloff,
-                composite_mode,
+                depth_sensitivity,
                 remove_edge_leak,
                 detect_edge_threshold,
                 display,

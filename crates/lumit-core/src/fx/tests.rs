@@ -467,8 +467,8 @@ fn resolved_dof(near_aperture: f32, far_aperture: f32, focus_point: [f32; 2]) ->
         blade_count: 6,
         apothem2,
         roundness: 1.0,
-        concentration: 0.0,
-        deform_scale: [1.0, 1.0],
+        rim: 0.0,
+        aspect_scale: [1.0, 1.0],
         threshold: 1.0,
         bokeh_power: 1.0,
         repeat_edge: true,
@@ -476,8 +476,7 @@ fn resolved_dof(near_aperture: f32, far_aperture: f32, focus_point: [f32; 2]) ->
         depth_channel: 0,
         use_focus_point: false,
         focus_point,
-        focus_falloff: 1.0,
-        composite_mode: 0,
+        depth_sensitivity: 1.0,
         remove_edge_leak: 0.0,
         detect_edge_threshold: 0.1,
         display: 0,
@@ -6104,10 +6103,15 @@ fn dof_declares_the_folded_aperture_surface() {
     assert_eq!(
         ids,
         vec![
-            // The rows that were always here, in the order they were always in.
+            // Where focus IS: the layer, the number, the switch that takes it
+            // over, and the point that takes over from it — adjacent, because a
+            // toggle three twirls away from the row it governs reads as
+            // unrelated to it.
             "depth",
-            "depth_invert",
             "focus",
+            "use_focus_point",
+            "focus_point_x",
+            "focus_point_y",
             "range",
             "aperture",
             "near_aperture",
@@ -6116,22 +6120,19 @@ fn dof_declares_the_folded_aperture_surface() {
             "blades",
             "roundness",
             "rotation",
-            "deform",
-            "concentration",
+            "aspect",
+            "rim",
             // Highlights.
             "threshold",
             "exposure",
-            // Depth map.
+            // Depth map: how the pass is READ.
             "depth_channel",
-            "use_focus_point",
-            "focus_point_x",
-            "focus_point_y",
-            "profile",
+            "depth_invert",
+            "depth_sensitivity",
             "remove_edge_leak",
             "detect_edge_threshold",
             // Back out of the twirls.
             "repeat_edge_pixels",
-            "composite_mode",
             "display",
             "mix",
         ],
@@ -6151,10 +6152,14 @@ fn dof_declares_the_folded_aperture_surface() {
     // default drifting fails the build rather than silently re-rendering
     // everyone's work.
     assert_eq!(float_default("roundness"), 1.0, "1 is the circle");
-    assert_eq!(float_default("deform"), 0.0);
-    assert_eq!(float_default("concentration"), 0.0);
+    assert_eq!(float_default("aspect"), 0.0);
+    assert_eq!(float_default("rim"), 0.0);
     assert_eq!(float_default("exposure"), 0.0, "0 is the plain mean");
-    assert_eq!(float_default("profile"), 0.0, "0 is a multiplier of 1");
+    assert_eq!(
+        float_default("depth_sensitivity"),
+        0.0,
+        "0 is a multiplier of 1"
+    );
     assert_eq!(float_default("remove_edge_leak"), 0.0);
     assert_eq!(float_default("detect_edge_threshold"), 0.10);
     assert_eq!(float_default("threshold"), 1.0, "scene white");
@@ -6174,7 +6179,8 @@ fn dof_declares_the_folded_aperture_surface() {
         kind("rotation"),
         ParamKind::Angle { default: 0.0, .. }
     ));
-    // Red is the channel this effect has always read.
+    // Luminance: right for a grey depth map whatever channels it was written
+    // to, and the shortlist has no entry that cannot explain itself.
     assert!(matches!(
         kind("depth_channel"),
         ParamKind::Choice {
@@ -6183,11 +6189,7 @@ fn dof_declares_the_folded_aperture_surface() {
             ..
         }
     ));
-    assert_eq!(CHANNEL_OPTIONS[0], "Red");
-    assert!(matches!(
-        kind("composite_mode"),
-        ParamKind::Choice { default: 0, .. }
-    ));
+    assert_eq!(CHANNEL_OPTIONS[0], "Luminance");
 
     // Roundness reaches concave — five blades at −1 is a star — which is why it
     // is not a 0..1 curvature.
@@ -6344,19 +6346,18 @@ fn a_legacy_dof_resolves_to_the_neutral_aperture() {
             "blades"
                 | "roundness"
                 | "rotation"
-                | "deform"
-                | "concentration"
+                | "aspect"
+                | "rim"
                 | "threshold"
                 | "exposure"
                 | "depth_channel"
                 | "use_focus_point"
                 | "focus_point_x"
                 | "focus_point_y"
-                | "profile"
+                | "depth_sensitivity"
                 | "remove_edge_leak"
                 | "detect_edge_threshold"
                 | "repeat_edge_pixels"
-                | "composite_mode"
         )
     });
     let r = resolve_stack(
@@ -6416,17 +6417,19 @@ fn the_default_aperture_is_the_historical_disc_bit_for_bit() {
         blade_count: 6,
         apothem2,
         roundness: 1.0,
-        concentration: 0.0,
-        deform_scale: [1.0, 1.0],
+        rim: 0.0,
+        aspect_scale: [1.0, 1.0],
         threshold: 1.0,
         bokeh_power: 1.0,
         repeat_edge: true,
-        depth_channel: 0,
+        // Red explicitly: this test pins the GATHER, and the depth below is
+        // written to red alone. Which channel is read by default is a different
+        // question, asked in `dof_declares_the_folded_aperture_surface`.
+        depth_channel: 2,
         depth_invert: false,
         use_focus_point: false,
         focus_point: [0.0, 0.0],
-        focus_falloff: 1.0,
-        composite_mode: 0,
+        depth_sensitivity: 1.0,
         remove_edge_leak: 0.0,
         detect_edge_threshold: 0.1,
         display: 0,
@@ -6486,17 +6489,14 @@ fn the_default_aperture_is_the_historical_disc_bit_for_bit() {
             roundness: 0.0,
             ..p
         },
-        cpu::DofParams {
-            concentration: 0.7,
-            ..p
-        },
+        cpu::DofParams { rim: 0.7, ..p },
         cpu::DofParams {
             threshold: 0.5,
             bokeh_power: 4.0,
             ..p
         },
         cpu::DofParams {
-            deform_scale: [1.0, 2.0],
+            aspect_scale: [1.0, 2.0],
             roundness: 0.0,
             ..p
         },
@@ -6555,8 +6555,8 @@ fn the_dof_aperture_stays_inside_its_circle() {
                     blade_count: sides,
                     apothem2,
                     roundness,
-                    concentration: 0.0,
-                    deform_scale: deform,
+                    rim: 0.0,
+                    aspect_scale: deform,
                     threshold: 0.0,
                     bokeh_power: 1.0,
                     repeat_edge: true,
@@ -6564,8 +6564,7 @@ fn the_dof_aperture_stays_inside_its_circle() {
                     depth_invert: false,
                     use_focus_point: false,
                     focus_point: [0.0, 0.0],
-                    focus_falloff: 1.0,
-                    composite_mode: 0,
+                    depth_sensitivity: 1.0,
                     remove_edge_leak: 0.0,
                     detect_edge_threshold: 0.1,
                     display: 0,
@@ -6608,8 +6607,8 @@ fn the_dof_aperture_stays_inside_its_circle() {
         blade_count: 6,
         apothem2,
         roundness,
-        concentration: 0.0,
-        deform_scale: [1.0, 1.0],
+        rim: 0.0,
+        aspect_scale: [1.0, 1.0],
         threshold: 0.0,
         bokeh_power: 1.0,
         repeat_edge: true,
@@ -6617,8 +6616,7 @@ fn the_dof_aperture_stays_inside_its_circle() {
         depth_invert: false,
         use_focus_point: false,
         focus_point: [0.0, 0.0],
-        focus_falloff: 1.0,
-        composite_mode: 0,
+        depth_sensitivity: 1.0,
         remove_edge_leak: 0.0,
         detect_edge_threshold: 0.1,
         display: 0,
@@ -6856,7 +6854,11 @@ fn profile_reaches_a_depth_pass_squeezed_into_a_fifth_of_its_range() {
 
     // The schema must actually offer the range the maths needs.
     let s = schema("dof").unwrap();
-    let profile = s.params.iter().find(|p| p.id == "profile").unwrap();
+    let profile = s
+        .params
+        .iter()
+        .find(|p| p.id == "depth_sensitivity")
+        .unwrap();
     assert!(matches!(
         profile.kind,
         ParamKind::Float {

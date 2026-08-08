@@ -17,25 +17,27 @@ pub const CHOICE_UNGROUPED: &[u32] = &[];
 /// the depth out of a depth pass, the weight out of a custom aperture image.
 ///
 /// One list, shared, so that every effect naming a channel of an auxiliary
-/// picture names it from the same nine entries rather than declaring its own and
+/// picture names it from the same short list rather than declaring its own and
 /// letting them drift. The index order is the wire form the resolved ops carry,
 /// so entries are appended, never reordered.
 ///
-/// `(R+G+B)/3` is the plain mean of the colour channels and the usual default:
-/// a depth pass written to all three channels reads the same whichever one you
-/// pick, and averaging is robust to a pass that is only *nearly* grey.
-/// Luminance is the weighted (perceptual) version of the same idea.
-pub const CHANNEL_OPTIONS: &[&str] = &[
-    "Red",
-    "Green",
-    "Blue",
-    "Alpha",
-    "Luminance",
-    "(R+G+B)/3",
-    "Hue",
-    "Saturation",
-    "Lightness",
-];
+/// **Every entry has to be able to explain itself.** A depth pass or a dirt
+/// plate arrives as a picture, and the question is only which number in it is
+/// the one the effect wants:
+///
+/// - **Luminance** — the default, and right for the overwhelmingly common case:
+///   a grey map, whatever combination of channels it was written to. Weighted
+///   (Rec.709) rather than a plain mean, so a pass that is only *nearly* grey
+///   still reads sensibly.
+/// - **Alpha** — some renderers put depth in the alpha of the beauty pass.
+/// - **Red / Green / Blue** — a packed pass, where several AOVs were flattened
+///   into one image and this one landed in a particular channel. Red is also the
+///   historical convention for a depth pass on its own.
+///
+/// Hue, saturation and lightness are deliberately **not** here. Nothing encodes
+/// a depth or a density as a hue, and offering the option only invites someone
+/// to find out.
+pub const CHANNEL_OPTIONS: &[&str] = &["Luminance", "Alpha", "Red", "Green", "Blue"];
 
 /// Shake's twirls (P4): the per-axis wobble (FX-11, K-146) — the master
 /// Amplitude/Frequency drive x and y together while this group biases each axis
@@ -1010,11 +1012,13 @@ pub const BUILTINS: &[EffectSchema] = &[
             ParamSchema {
                 id: "angle",
                 label: "Angle",
-                // Degrees; wraps every 360. 0 is neutral.
-                kind: ParamKind::Float {
+                // Degrees on a dial (docs/07 §6): a hue shift is a rotation
+                // about the colour wheel, so the control is that wheel. Wraps
+                // every 360, and unbounded so an animated hue winds through
+                // whole turns rather than stopping.
+                kind: ParamKind::Angle {
                     default: 0.0,
-                    slider: (-180.0, 180.0),
-                    hard: (None, None),
+                    dial_step: 15.0,
                 },
             },
             ParamSchema {
@@ -1237,7 +1241,7 @@ pub const BUILTINS: &[EffectSchema] = &[
         groups: &[
             ParamGroup {
                 label: "Iris",
-                params: &["blades", "roundness", "rotation", "deform", "concentration"],
+                params: &["blades", "roundness", "rotation", "aspect", "rim"],
                 collapsed: true,
                 visible_when: None,
             },
@@ -1248,13 +1252,14 @@ pub const BUILTINS: &[EffectSchema] = &[
                 visible_when: None,
             },
             ParamGroup {
+                // How the depth pass is READ — which number in it is depth,
+                // which way round it runs, and how hard the blur answers to it.
+                // Where focus *is* lives above, beside the rows that set it.
                 label: "Depth map",
                 params: &[
                     "depth_channel",
-                    "use_focus_point",
-                    "focus_point_x",
-                    "focus_point_y",
-                    "profile",
+                    "depth_invert",
+                    "depth_sensitivity",
                     "remove_edge_leak",
                     "detect_edge_threshold",
                 ],
@@ -1348,16 +1353,6 @@ pub const BUILTINS: &[EffectSchema] = &[
             // K-125's `depth_after_effects` bool still loads — `layer_source`
             // falls back to it. Replaces the old "Depth after effects" checkbox.
             ParamSchema {
-                // Invert the depth pass (d' = 1 - d) before the circle-of-
-                // confusion, swapping near and far — the owner's "tick to
-                // invert the depth" box (Frischluft / DOF PRO both offer it).
-                // Off (default) keeps the historical reading, so old projects
-                // are unchanged. Continuous, so the §1.6 ULP oracle still holds.
-                id: "depth_invert",
-                label: "Depth invert",
-                kind: ParamKind::Bool { default: false },
-            },
-            ParamSchema {
                 id: "focus",
                 label: "Focus distance",
                 // The in-focus depth, 0..1. Mid-depth by default so a typical
@@ -1367,6 +1362,41 @@ pub const BUILTINS: &[EffectSchema] = &[
                     default: 0.5,
                     slider: (0.0, 1.0),
                     hard: (Some(0.0), Some(1.0)),
+                },
+            },
+            ParamSchema {
+                // Focus by clicking the thing you want sharp rather than by
+                // hunting for a number. Off by default: it changes what Focus
+                // distance means, and a saved project must keep meaning what it
+                // meant.
+                id: "use_focus_point",
+                label: "Use focus point",
+                kind: ParamKind::Bool { default: false },
+            },
+            ParamSchema {
+                // Where to read the focus depth, px@comp (K-260: point
+                // parameters are PIXELS, never % of frame). Pairs with
+                // `focus_point_y` into one point row with a crosshair pick
+                // (docs/07 §6.1) — the same row the Lens flare's Light uses,
+                // which is why this is a Float pair and not a schema kind of
+                // its own. The schema default is nominal 1080p centre;
+                // `instantiate_for_raster` centres a fresh instance on the
+                // actual comp.
+                id: "focus_point_x",
+                label: "Focus point x",
+                kind: ParamKind::Float {
+                    default: 960.0,
+                    slider: (0.0, 3840.0),
+                    hard: (None, None),
+                },
+            },
+            ParamSchema {
+                id: "focus_point_y",
+                label: "Focus point y",
+                kind: ParamKind::Float {
+                    default: 540.0,
+                    slider: (0.0, 2160.0),
+                    hard: (None, None),
                 },
             },
             ParamSchema {
@@ -1465,13 +1495,13 @@ pub const BUILTINS: &[EffectSchema] = &[
                 },
             },
             ParamSchema {
-                // Anamorphic squeeze: shrinks the aperture on one axis so the
-                // balls go oval, the look a scope lens gives. 0 is unsqueezed,
-                // positive squeezes vertically (a wide oval), negative
-                // horizontally. **Our reading of the control, not measured
-                // against a reference plugin** — docs/08 §3.22 records that.
-                id: "deform",
-                label: "Deform",
+                // The aperture's aspect: 0 is round, positive stretches the
+                // highlights wide and negative stretches them tall — the oval
+                // an anamorphic scope lens throws. Not a ratio in the
+                // 1.33-or-2.0 sense; it is a squeeze either side of round,
+                // which is why it runs −1…1 rather than upward from 1.
+                id: "aspect",
+                label: "Aspect ratio",
                 kind: ParamKind::Float {
                     default: 0.0,
                     slider: (-1.0, 1.0),
@@ -1479,13 +1509,16 @@ pub const BUILTINS: &[EffectSchema] = &[
                 },
             },
             ParamSchema {
-                // Radial weighting inside the aperture: 0 is the flat disc a
-                // plain gather produces, positive pushes the light out to the
-                // rim (the bright-edged ring a mirror lens or an over-corrected
-                // fast lens throws), negative pulls it to the centre for a soft
-                // core. **Our reading, not measured** — same caveat as Deform.
-                id: "concentration",
-                label: "Concentration",
+                // **Where the light sits inside each ball.** A real lens does
+                // not throw a flat disc: an under-corrected one rings the edge
+                // bright (the "soap bubble" bokeh), an over-corrected one pools
+                // the light in the middle (creamy, smooth). That is spherical
+                // aberration, and this is the dial for it — negative a soft
+                // centre, 0 the flat disc a plain gather produces, positive a
+                // bright rim. **Our reading of the curve, not measured against a
+                // reference plugin** — docs/08 §3.22 records that.
+                id: "rim",
+                label: "Rim brightness",
                 kind: ParamKind::Float {
                     default: 0.0,
                     slider: (-1.0, 1.0),
@@ -1546,43 +1579,19 @@ pub const BUILTINS: &[EffectSchema] = &[
                 },
             },
             ParamSchema {
-                // Focus by clicking the thing you want sharp rather than by
-                // hunting for a number. Off by default: it changes what Focus
-                // distance means, and a saved project must keep meaning what it
-                // meant.
-                id: "use_focus_point",
-                label: "Use focus point",
+                // Invert the depth pass (d' = 1 - d) before the circle-of-
+                // confusion, swapping near and far — the owner's "tick to
+                // invert the depth" box (Frischluft / DOF PRO both offer it).
+                // Off (default) keeps the historical reading, so old projects
+                // are unchanged. Continuous, so the §1.6 ULP oracle still holds.
+                id: "depth_invert",
+                label: "Depth invert",
                 kind: ParamKind::Bool { default: false },
             },
             ParamSchema {
-                // Where to read the focus depth, px@comp (K-260: point
-                // parameters are PIXELS, never % of frame). Pairs with
-                // `focus_point_y` into one point row with a crosshair pick
-                // (docs/07 §6.1) — the same row the Lens flare's Light uses,
-                // which is why this is a Float pair and not a schema kind of
-                // its own. The schema default is nominal 1080p centre;
-                // `instantiate_for_raster` centres a fresh instance on the
-                // actual comp.
-                id: "focus_point_x",
-                label: "Focus point x",
-                kind: ParamKind::Float {
-                    default: 960.0,
-                    slider: (0.0, 3840.0),
-                    hard: (None, None),
-                },
-            },
-            ParamSchema {
-                id: "focus_point_y",
-                label: "Focus point y",
-                kind: ParamKind::Float {
-                    default: 540.0,
-                    slider: (0.0, 2160.0),
-                    hard: (None, None),
-                },
-            },
-            ParamSchema {
-                // Scales the depth distance before the ramp, which is what stops
-                // focus being all-or-nothing on a real depth pass.
+                // **How hard the blur answers to a small change in depth** —
+                // the depth axis rescaled before the ramp, and what stops focus
+                // being all-or-nothing on a real depth pass.
                 //
                 // **The range is wide on purpose, and ±1 was not enough.** A
                 // real depth pass rarely spreads its content over 0..1: a linear
@@ -1600,8 +1609,8 @@ pub const BUILTINS: &[EffectSchema] = &[
                 // magnification), which is the middle rather than the end, and
                 // ±10 reaches 1024× for a pass squeezed harder still. 0 is the
                 // neutral multiplier of exactly 1.
-                id: "profile",
-                label: "Profile",
+                id: "depth_sensitivity",
+                label: "Depth sensitivity",
                 kind: ParamKind::Float {
                     default: 0.0,
                     slider: (-10.0, 10.0),
@@ -1647,20 +1656,6 @@ pub const BUILTINS: &[EffectSchema] = &[
                 id: "repeat_edge_pixels",
                 label: "Repeat edge pixels",
                 kind: ParamKind::Bool { default: true },
-            },
-            ParamSchema {
-                // How the defocused result returns over the original. Normal is
-                // the ordinary replace and the historical behaviour; the
-                // lighten-family modes let the balls add on top of a sharp
-                // plate, which is the compositing trick this control exists for.
-                // **Our reading of the option list.**
-                id: "composite_mode",
-                label: "Composite mode",
-                kind: ParamKind::Choice {
-                    options: &["Normal", "Add", "Screen", "Lighten", "Darken"],
-                    default: 0,
-                    dividers_after: CHOICE_UNGROUPED,
-                },
             },
             ParamSchema {
                 // Diagnostic views (the realistic subset the reference plugins
@@ -1770,12 +1765,12 @@ pub const BUILTINS: &[EffectSchema] = &[
             },
             ParamSchema {
                 id: "rotation",
-                label: "Rotation °",
-                // Degrees, unbounded — whip transitions spin whole turns.
-                kind: ParamKind::Float {
+                label: "Rotation",
+                // Degrees on a dial (docs/07 §6), unbounded — whip transitions
+                // spin whole turns, and a dial that stopped at 360 could not.
+                kind: ParamKind::Angle {
                     default: 0.0,
-                    slider: (-180.0, 180.0),
-                    hard: (None, None),
+                    dial_step: 15.0,
                 },
             },
             ParamSchema {
@@ -3121,10 +3116,11 @@ pub const BUILTINS: &[EffectSchema] = &[
             ParamSchema {
                 id: "aperture_rotation",
                 label: "Rotation",
-                kind: ParamKind::Float {
+                // Degrees on a dial: turning an iris is the gesture, not typing
+                // a number at it.
+                kind: ParamKind::Angle {
                     default: 0.0,
-                    slider: (-180.0, 180.0),
-                    hard: (None, None),
+                    dial_step: 15.0,
                 },
             },
             ParamSchema {

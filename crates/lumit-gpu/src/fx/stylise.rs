@@ -564,31 +564,40 @@ impl FxEngine {
 
         // The easter egg substitutes its own plate (K-314) and is a photograph
         // rather than a density map, so the kernel takes its colour whole.
-        let egg_tex;
-        let plate_tex = if op.seed == EASTER_EGG_SEED {
-            let (bytes, ew, eh) = decode_qoi_1337();
-            // The plate is 8-bit sRGB; the working format is linear, so it is
-            // linearised here rather than bound raw — a photograph bound as if
-            // it were already linear reads far too dark.
-            let linear: Vec<f32> = bytes
-                .iter()
-                .enumerate()
-                .map(|(i, b)| {
-                    let v = f32::from(*b) / 255.0;
-                    if i % 4 == 3 {
-                        v // alpha is not gamma-encoded
-                    } else if v <= 0.04045 {
-                        v / 12.92
-                    } else {
-                        ((v + 0.055) / 1.055).powf(2.4)
-                    }
+        // Decoded and uploaded ONCE and then held — see `lens_dirt_plate` for
+        // why doing it per dispatch is not merely wasteful.
+        let egg_tex = if op.seed == EASTER_EGG_SEED {
+            self.lens_dirt_plate.lock().ok().map(|mut held| {
+                held.get_or_insert_with(|| {
+                    let (bytes, ew, eh) = decode_qoi_1337();
+                    // The plate is 8-bit sRGB and the working format is
+                    // linear, so it is linearised here rather than bound
+                    // raw — a photograph bound as if it were already linear
+                    // reads far too dark.
+                    let linear: Vec<f32> = bytes
+                        .iter()
+                        .enumerate()
+                        .map(|(i, b)| {
+                            let v = f32::from(*b) / 255.0;
+                            if i % 4 == 3 {
+                                v // alpha is not gamma-encoded
+                            } else if v <= 0.04045 {
+                                v / 12.92
+                            } else {
+                                ((v + 0.055) / 1.055).powf(2.4)
+                            }
+                        })
+                        .collect();
+                    upload_linear_f32(ctx, &linear, ew as u32, eh as u32)
                 })
-                .collect();
-            egg_tex = upload_linear_f32(ctx, &linear, ew as u32, eh as u32);
-            &egg_tex
+                .clone()
+            })
         } else {
-            plate.unwrap_or(src)
+            None
         };
+        // A poisoned lock (another thread panicked mid-upload) reads as "no
+        // plate" rather than becoming a second panic — docs/14 §4.
+        let plate_tex = egg_tex.as_ref().or(plate).unwrap_or(src);
 
         let ubuf = ctx
             .device

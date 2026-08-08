@@ -1192,7 +1192,13 @@ masks** runs the depth layer's own effect stack into the depth pass first, a gra
 map — same v1 temporal boundary as the effects-and-masks matte; replaces K-125's "Depth after
 effects" checkbox), Depth invert (bool, default off — when on
 the depth is inverted, `d' = 1 − d`, before the circle-of-confusion, swapping near and far),
-Focus distance (0–1, default 0.5, the in-focus depth; greys out while Use focus point is on),
+Focus distance (0–1, default 0.5, the in-focus depth; greys out while Use focus
+point is on), Use focus point (bool, default off) and Focus point (an `_x`/`_y`
+px@comp pair drawn as one row with a **crosshair pick**, §6.1 of
+[07-UI-SPEC.md](07-UI-SPEC.md) — click the thing you want sharp instead of
+hunting for a number; centred on the raster by `instantiate_for_raster`). Those
+three sit together deliberately: a switch that hands one control's job to
+another belongs beside both, not three twirls away. Then
 Focus range (0–1, default 0.1, the
 half-width of the sharp band around focus), Aperture (px@comp, default 8, slider 0–40, the
 **master** maximum circle-of-confusion radius, scaling both per-side radii about its default 8),
@@ -1203,22 +1209,24 @@ owner's "adjust close/far blur separately"; then three collapsed twirls:
 - **Iris** — Blades (int, 3–8, default 6: the aperture's blade count, inert while Roundness
   is 1 because a circle has no blades), Roundness (−1…1, **default 1**: 1 is the circle, 0
   the straight-edged polygon, and **negative is concave** — five blades at −1 is a star),
-  Rotation (degrees on a **dial**, default 0, unbounded so it winds through full turns),
-  Deform (−1…1, default 0: an anamorphic squeeze on one axis, the oval a scope lens gives),
-  Concentration (−1…1, default 0: radial weighting inside the aperture — positive pushes the
-  light out to a bright rim, negative pulls it into a soft core).
+  Rotation (degrees on a **dial** sitting beside its number, default 0, unbounded so it winds
+  through full turns), Aspect ratio (−1…1, default 0: 0 is round, positive stretches the
+  highlights wide and negative tall — the oval an anamorphic scope lens throws; a squeeze
+  either side of round rather than a 1.33-or-2.0 ratio, which is why it runs −1…1),
+  Rim brightness (−1…1, default 0: **where the light sits inside each ball**. A real lens does
+  not throw a flat disc — an under-corrected one rings the edge bright, the "soap bubble"
+  look, an over-corrected one pools light in the middle for creamy bokeh. That is spherical
+  aberration; negative is the soft centre, 0 the flat disc, positive the bright rim).
 - **Highlights** — Highlight threshold (default 1.0, scene white: the linear level each tap
   is split at) and Highlight exposure (stops, **default 0**: how hard the over-threshold part
   blooms). Exposure 0 is the plain arithmetic mean and the whole split is skipped.
-- **Depth map** — Depth channel (which channel of the depth layer carries depth; **Red** by
-  default, the channel this effect has always read), Use focus point (bool, default off) and
-  Focus point (an `_x`/`_y` px@comp pair drawn as one row with a **crosshair pick**, §6.1 of
-  [07-UI-SPEC.md](07-UI-SPEC.md) — click the thing you want sharp instead of hunting for a
-  number; centred on the raster by `instantiate_for_raster`), Profile (−10…10, default 0),
+- **Depth map** — how the pass is *read*, as against where focus is: Depth channel
+  (**Luminance** by default, right for the grey map a depth pass usually is; the shortlist is
+  Luminance / Alpha / Red / Green / Blue, and every entry has to be able to explain itself —
+  nothing encodes a depth as a hue), Depth invert, Depth sensitivity (−10…10, default 0),
   Remove edge leak (0–1, default 0) and Detect edge threshold (0–1, default 0.1).
 
-Then Repeat edge pixels (bool, default on), Composite mode (Normal / Add / Screen / Lighten /
-Darken, default Normal), Display (choice, default Rendered — a diagnostic
+Then Repeat edge pixels (bool, default on), Display (choice, default Rendered — a diagnostic
 view: **Rendered** the normal blurred output, **Depth map** the post-invert, post-channel-pick
 depth as greyscale, **Focus map** the smooth in-focus mask, white where sharp), Mix.
 
@@ -1226,19 +1234,25 @@ depth as greyscale, **Focus map** the smooth in-focus mask, white where sharp), 
 referenced layer (0..1; by convention 0 = near, 1 = far, though the effect is symmetric about
 Focus), and — when **Depth invert** is on — replace it with `1 − d`. Focus is **Focus
 distance**, or the depth under **Focus point** when that is ticked. The depth's distance from
-focus, beyond the sharp band `range`, is **scaled by Profile** (`2^profile`, host-computed)
+focus, beyond the sharp band `range`, is **scaled by Depth sensitivity**
+(`2^sensitivity`, host-computed)
 and then ramps by a smoothstep `s` to a circle-of-confusion radius: `s ·` (**Near blur** where
 `d < focus`, else **Far blur**), each per-side radius already scaled by the **Aperture** master
 (`radius · Aperture / 8`). Because the near/far select flips only at `d = focus`, where
 `s = 0`, the radius is continuous, so the §1.6 ULP oracle still holds.
 
 An aperture of that radius is then gathered from the source, edges repeated or transparent per
-**Repeat edge pixels**, and blended back by **Composite mode** and Mix. The aperture is the
-inscribed **Roundness/Blades/Rotation/Deform** polygon, its taps optionally weighted by
-**Concentration** and pulled back across depth discontinuities by **Remove edge leak**, and the
+**Repeat edge pixels**, and blended back by Mix. The aperture is the
+inscribed **Roundness/Blades/Rotation/Aspect ratio** polygon, its taps optionally weighted by
+**Rim brightness** and pulled back across depth discontinuities by **Remove edge leak**, and the
 average is the split-at-threshold power mean when **Highlight exposure** is non-zero.
 
-**Why Profile exists.** A real depth pass rarely spreads its content over 0..1: a linear depth
+**There is no composite menu.** The defocused result replaces the original, blended by Mix.
+An effect that wants its balls added over a sharp plate is an adjustment layer with a blend
+mode — the mechanism that already exists for exactly that, and does it in one obvious place
+rather than in a dropdown on every effect that could plausibly want one.
+
+**Why Depth sensitivity exists.** A real depth pass rarely spreads its content over 0..1: a linear depth
 channel puts the sky or a distant ceiling at 1.0 and compresses an entire room into the bottom
 fifth, so the depth *differences* that matter are a tenth of the range. Without scaling the
 distance first, focus is all-or-nothing — the scene stays almost sharp and the one near object
@@ -1259,13 +1273,13 @@ why the gather is two loops when the split is on.
 a `ceil(coc)` box and tests each integer offset, which only bounds it if no accepted tap lies
 outside that circle. Negative Roundness keeps the *vertices* on the circle while pulling the
 edge midpoints in (at a vertex both terms of the inside test carry the same `k²r²`, so it
-collapses to `r ≤ coc` whatever the coefficient), and Deform's multipliers are always ≥ 1 with
-exactly one > 1, so it can only shrink one axis. That is what keeps the ROI declaration honest,
+collapses to `r ≤ coc` whatever the coefficient), and Aspect ratio's multipliers are always
+≥ 1 with exactly one > 1, so it can only shrink one axis. That is what keeps the ROI declaration honest,
 and it is pinned by `the_dof_aperture_stays_inside_its_circle` rather than left to the oracle,
 which would miss the same taps on both paths.
 
 **Neutral means bit-identical, and it is reached by branching** (K-313). Roundness 1 takes the
-plain `r² ≤ coc²` circle test, Concentration 0 and Remove edge leak 0 take the unweighted
+plain `r² ≤ coc²` circle test, Rim brightness 0 and Remove edge leak 0 take the unweighted
 accumulation, and Exposure 0 takes the unsplit sum — rather than multiplying every tap by one
 and splitting it at a threshold it never crosses. None of those is an IEEE 754 identity:
 `Σ(c·w)/Σw` is not `Σc/n` when every `w` is 1, `min(c,t) + max(c−t,0)` is not reliably `c`, and
@@ -1273,8 +1287,8 @@ scaling both sides of a comparison by `apothem2` can flip a boundary tap. At the
 three branches leave exactly the box-weighted disc average this effect computed before the
 iris existed, which is why the aperture could fold into the shipped effect rather than arrive
 beside it as a second one. `the_default_aperture_is_the_historical_disc_bit_for_bit` pins it.
-Profile is the exception that proves the rule: its neutral is a multiply by exactly 1, which
-*is* exact, so it needs no branch.
+Depth sensitivity is the exception that proves the rule: its neutral is a multiply by exactly
+1, which *is* exact, so it needs no branch.
 
 Operates on **premultiplied** colour (the aperture gathers the working premultiplied image, so
 coverage and colour blur together). The **Display** diagnostic modes short-circuit before the
@@ -1296,8 +1310,8 @@ editing the depth pass retires stale frames.
 **Status (v1, shipped, K-124; extended K-128, K-313):** the depth-driven aperture blur above.
 K-128 added Depth invert, separate Near/Far blur under the Aperture master, and the
 Rendered/Depth map/Focus map Display views. K-313 folded in the iris, the split-at-threshold
-power mean and the fuller depth model (channel pick, focus point, Profile, edge-leak
-suppression), all neutral at their defaults.
+power mean and the fuller depth model (channel pick, focus point, Depth sensitivity,
+edge-leak suppression), all neutral at their defaults.
 
 Deliberate v1 limitations (documented, follow-ups tracked): the depth layer is sampled per its
 **Depth source** mode (K-142) — None (raw), Masks, or Effects and masks (which runs its own
@@ -1312,8 +1326,8 @@ own input), with the Depth source combobox beside it; an unset or dangling refer
 no-op.
 
 **Open (K-313).** Three things here are *our reading* of controls rather than measurements
-against a reference plugin, and are the honest places to correct later: Concentration's curve,
-Deform's mapping, and the Composite mode option list. So is the stops-to-power constant
+against a reference plugin, and are the honest places to correct later: Rim brightness's curve and
+Aspect ratio's mapping. So is the stops-to-power constant
 (`EXPOSURE_STOPS_PER_DOUBLING = 12` in `resolve_one`): 6 put the top of the Exposure slider at
 a power of 32, which is a maximum filter rather than a mean — flat hard-edged polygons instead
 of bokeh discs — and 12 puts the top at about 5.7, which is strong but still an average. Turn
@@ -1711,7 +1725,7 @@ honest way is a size distribution within one field.
 **Parameters:** Intensity (0–4, default 1; 0 is a bit-exact passthrough), Dirt
 plate (a layer reference; unset uses the procedural field), Plate channel
 (default Luminance — a plate is a photograph, and how bright a spot is is how
-much muck is there), Blend mode (Screen / Add, default Screen); then:
+much muck is there; the same shortlist the depth pass reads from), Blend mode (Screen / Add, default Screen); then:
 
 - **Light response** (open, not collapsed — this group decides whether the effect
   reads as a lens or as an overlay): Light response (0–1, default 1: 1 is the

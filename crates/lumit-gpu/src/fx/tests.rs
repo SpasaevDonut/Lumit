@@ -2778,8 +2778,8 @@ fn dof_op(p: &lumit_core::fx::cpu::DofParams) -> crate::fx::DofOp {
         blade_count: p.blade_count,
         apothem2: p.apothem2,
         roundness: p.roundness,
-        concentration: p.concentration,
-        deform_scale: p.deform_scale,
+        rim: p.rim,
+        aspect_scale: p.aspect_scale,
         threshold: p.threshold,
         bokeh_power: p.bokeh_power,
         repeat_edge: p.repeat_edge,
@@ -2788,8 +2788,7 @@ fn dof_op(p: &lumit_core::fx::cpu::DofParams) -> crate::fx::DofOp {
         depth_invert: p.depth_invert,
         use_focus_point: p.use_focus_point,
         focus_point: p.focus_point,
-        focus_falloff: p.focus_falloff,
-        composite_mode: p.composite_mode,
+        depth_sensitivity: p.depth_sensitivity,
         remove_edge_leak: p.remove_edge_leak,
         detect_edge_threshold: p.detect_edge_threshold,
         display: p.display,
@@ -2810,17 +2809,16 @@ fn dof_defaults() -> lumit_core::fx::cpu::DofParams {
         blade_count: 6,
         apothem2,
         roundness: 1.0,
-        concentration: 0.0,
-        deform_scale: [1.0, 1.0],
+        rim: 0.0,
+        aspect_scale: [1.0, 1.0],
         threshold: 1.0,
         bokeh_power: 1.0,
         repeat_edge: true,
-        depth_channel: 0,
+        depth_channel: 2, // Red: the oracle writes its ramp to red alone
         depth_invert: false,
         use_focus_point: false,
         focus_point: [0.0, 0.0],
-        focus_falloff: 1.0,
-        composite_mode: 0,
+        depth_sensitivity: 1.0,
         remove_edge_leak: 0.0,
         detect_edge_threshold: 0.1,
         display: 0,
@@ -2987,21 +2985,21 @@ fn wgsl_dof_matches_the_cpu_oracle() {
             "anamorphic squeeze",
             lumit_core::fx::cpu::DofParams {
                 roundness: 0.0,
-                deform_scale: [1.0, 2.0],
+                aspect_scale: [1.0, 2.0],
                 ..dof_defaults()
             },
         ),
         (
             "rim-weighted",
             lumit_core::fx::cpu::DofParams {
-                concentration: 0.8,
+                rim: 0.8,
                 ..dof_defaults()
             },
         ),
         (
             "centre-weighted",
             lumit_core::fx::cpu::DofParams {
-                concentration: -0.8,
+                rim: -0.8,
                 ..dof_defaults()
             },
         ),
@@ -3036,7 +3034,7 @@ fn wgsl_dof_matches_the_cpu_oracle() {
         (
             "profile squeezed",
             lumit_core::fx::cpu::DofParams {
-                focus_falloff: 4.0,
+                depth_sensitivity: 4.0,
                 ..dof_defaults()
             },
         ),
@@ -3059,13 +3057,6 @@ fn wgsl_dof_matches_the_cpu_oracle() {
             "transparent edges",
             lumit_core::fx::cpu::DofParams {
                 repeat_edge: false,
-                ..dof_defaults()
-            },
-        ),
-        (
-            "screen composite",
-            lumit_core::fx::cpu::DofParams {
-                composite_mode: 2,
                 ..dof_defaults()
             },
         ),
