@@ -303,3 +303,25 @@ jobs:
           gh release create "$GITHUB_REF_NAME" dist/* \
             --title "Lumit $GITHUB_REF_NAME" \
             --generate-notes $prerelease
+
+  announce:
+    name: Discord announcement
+    needs: publish
+    # Only a plain vX.Y.Z tag is announced. A suffixed one (v0.2.0-rc1) is a
+    # pre-release, and a dry run of the pipeline should not tell the community
+    # a release has happened.
+    if: ${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    env:
+      # A step's `if` cannot read the `secrets` context, only `env`. Without the
+      # secret — on a fork, or before it is set — the release still succeeds and
+      # simply goes unannounced.
+      DISCORD_RELEASE_WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Post the release notes to Discord
+        if: env.DISCORD_RELEASE_WEBHOOK != ''
+        run: node scripts/discord-release.mjs "${GITHUB_REF_NAME#v}"
+      - name: Say why nothing was posted
+        if: env.DISCORD_RELEASE_WEBHOOK == ''
+        run: echo "::warning::DISCORD_RELEASE_WEBHOOK is not set, so this release was not announced in Discord."
