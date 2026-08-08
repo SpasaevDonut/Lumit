@@ -7251,8 +7251,8 @@ non-grey depth pass; it is recorded here rather than hidden, and K-313 has not s
 control's job to another is an affordance only if both are visible at once; with the toggle
 three twirls below the number it governed, neither row explained the other.
 
-**Three renames, because the names were the problem.** *Profile* → **Depth sensitivity**: it
-rescales the depth axis, so it decides how hard the blur answers to a small change in depth.
+**Three renames, because the names were the problem.** *Profile* → **Gamma**: it is a
+gamma on the depth axis, deciding how hard the blur answers to a small change in depth.
 *Concentration* → **Rim brightness**: it decides where the light sits inside each ball, which
 is spherical aberration. *Deform* → **Aspect ratio**. None of the three could be guessed from
 its old label, and a control nobody can name is a control nobody uses.

@@ -59,7 +59,7 @@ struct Params {
     bokeh_power: f32,    // 2^(Exposure/12); 1 = the plain arithmetic mean
     focus_x: f32,        // where to read focus depth, raster px
     focus_y: f32,
-    depth_sensitivity: f32,  // multiplier on the depth distance before the ramp
+    gamma: f32,  // multiplier on the depth distance before the ramp
     remove_edge_leak: f32,
     detect_edge_threshold: f32,
     depth_invert: u32,   // 1 = d' = 1 - d before the CoC
@@ -127,7 +127,7 @@ fn depth_at(xy: vec2<i32>) -> f32 {
 fn coc_falloff(d: f32, focus: f32) -> f32 {
     let dist = abs(d - focus);
     let denom = max(1.0 - p.range, 1e-4);
-    let e = min(max(((dist - p.range) / denom) * p.depth_sensitivity, 0.0), 1.0);
+    let e = min(max(((dist - p.range) / denom) * p.gamma, 0.0), 1.0);
     return e * e * (3.0 - 2.0 * e); // smoothstep ramp
 }
 

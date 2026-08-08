@@ -35,7 +35,6 @@ struct Params {
     vignette: f32,
     mix_amt: f32,
     blend_mode: u32,
-    background: u32,
     plate_bound: u32,
     plate_channel: u32,
     seed: u32,
@@ -46,6 +45,7 @@ struct Params {
     _pad0: u32,
     _pad1: u32,
     _pad2: u32,
+    _pad3: u32,
 };
 
 @group(0) @binding(0) var src: texture_2d<f32>;
@@ -142,8 +142,14 @@ fn speck_profile(norm_d: f32, defocus: f32) -> f32 {
 // short: the veil does more work than the specks, the specks follow a power law
 // within ONE plane of glass with noise-warped outlines, and the scratches fade
 // along their own length.
-fn dirt_field(px: f32, py: f32, diag: f32) -> vec3<f32> {
+fn dirt_field(cx_px: f32, cy_px: f32, diag: f32) -> vec3<f32> {
     var out = vec3<f32>(0.0);
+    // **Everything below is measured from the frame's centre.** Gridded from the
+    // top-left corner instead, Size scales the whole lattice about (0, 0) rather
+    // than growing the specks, so the field slides off toward the corner as you
+    // turn it up. The centre is the fixed point a lens actually has.
+    let px = cx_px;
+    let py = cy_px;
 
     if (p.smudge > 0.0) {
         let n = dirt_fbm(px / (diag * 0.35), py / (diag * 0.35), 40u);
@@ -296,7 +302,7 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
         eff = select(vec3<f32>(channel_of(c)), c.rgb, p.easter_egg != 0u);
     } else {
         let diag = max(sqrt(wf * wf + hf * hf), 1.0);
-        eff = dirt_field(px, py, diag);
+        eff = dirt_field(px - wf * 0.5, py - hf * 0.5, diag);
     }
 
     // **The light response.** 1 is the physical reading — muck is visible only
@@ -318,17 +324,17 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     eff = max(eff * p.intensity * p.tint.rgb, vec3<f32>(0.0));
 
-    // What the dirt sits over. Black makes the layer opaque black first — the
-    // dirt element on its own, and the only way this effect produces anything on
-    // an empty layer.
-    let base = select(original, vec4<f32>(0.0, 0.0, 0.0, 1.0), p.background == 1u);
+    // What the dirt sits over. Normal puts it on opaque black, replacing the
+    // picture — the dirt element on its own, and the only mode that produces
+    // anything on an empty layer.
+    let base = select(original, vec4<f32>(0.0, 0.0, 0.0, 1.0), p.blend_mode == 2u);
 
     // **The dirt carries its own coverage.** Adding light to RGB while leaving
     // alpha alone breaks the premultiplied invariant and, on a transparent
     // layer, produces colour nothing can ever see.
     let eff_a = clamp(max(eff.r, max(eff.g, eff.b)), 0.0, 1.0);
     var out: vec4<f32>;
-    if (p.blend_mode == 1u) {
+    if (p.blend_mode >= 1u) {
         out = vec4<f32>(base.rgb + eff, min(base.a + eff_a, 1.0));
     } else {
         out = vec4<f32>(

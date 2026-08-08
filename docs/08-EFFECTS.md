@@ -1223,7 +1223,7 @@ owner's "adjust close/far blur separately"; then three collapsed twirls:
 - **Depth map** — how the pass is *read*, as against where focus is: Depth channel
   (**Luminance** by default, right for the grey map a depth pass usually is; the shortlist is
   Luminance / Alpha / Red / Green / Blue, and every entry has to be able to explain itself —
-  nothing encodes a depth as a hue), Depth invert, Depth sensitivity (−10…10, default 0),
+  nothing encodes a depth as a hue), Depth invert, Gamma (−10…10, default 0 — the gamma on the depth axis),
   Remove edge leak (0–1, default 0) and Detect edge threshold (0–1, default 0.1).
 
 Then Repeat edge pixels (bool, default on), Display (choice, default Rendered — a diagnostic
@@ -1234,8 +1234,8 @@ depth as greyscale, **Focus map** the smooth in-focus mask, white where sharp), 
 referenced layer (0..1; by convention 0 = near, 1 = far, though the effect is symmetric about
 Focus), and — when **Depth invert** is on — replace it with `1 − d`. Focus is **Focus
 distance**, or the depth under **Focus point** when that is ticked. The depth's distance from
-focus, beyond the sharp band `range`, is **scaled by Depth sensitivity**
-(`2^sensitivity`, host-computed)
+focus, beyond the sharp band `range`, is **scaled by Gamma** (`2^gamma`,
+host-computed)
 and then ramps by a smoothstep `s` to a circle-of-confusion radius: `s ·` (**Near blur** where
 `d < focus`, else **Far blur**), each per-side radius already scaled by the **Aperture** master
 (`radius · Aperture / 8`). Because the near/far select flips only at `d = focus`, where
@@ -1252,7 +1252,7 @@ An effect that wants its balls added over a sharp plate is an adjustment layer w
 mode — the mechanism that already exists for exactly that, and does it in one obvious place
 rather than in a dropdown on every effect that could plausibly want one.
 
-**Why Depth sensitivity exists.** A real depth pass rarely spreads its content over 0..1: a linear depth
+**Why Gamma exists.** A real depth pass rarely spreads its content over 0..1: a linear depth
 channel puts the sky or a distant ceiling at 1.0 and compresses an entire room into the bottom
 fifth, so the depth *differences* that matter are a tenth of the range. Without scaling the
 distance first, focus is all-or-nothing — the scene stays almost sharp and the one near object
@@ -1287,7 +1287,7 @@ scaling both sides of a comparison by `apothem2` can flip a boundary tap. At the
 three branches leave exactly the box-weighted disc average this effect computed before the
 iris existed, which is why the aperture could fold into the shipped effect rather than arrive
 beside it as a second one. `the_default_aperture_is_the_historical_disc_bit_for_bit` pins it.
-Depth sensitivity is the exception that proves the rule: its neutral is a multiply by exactly
+Gamma is the exception that proves the rule: its neutral is a multiply by exactly
 1, which *is* exact, so it needs no branch.
 
 Operates on **premultiplied** colour (the aperture gathers the working premultiplied image, so
@@ -1310,7 +1310,7 @@ editing the depth pass retires stale frames.
 **Status (v1, shipped, K-124; extended K-128, K-313):** the depth-driven aperture blur above.
 K-128 added Depth invert, separate Near/Far blur under the Aperture master, and the
 Rendered/Depth map/Focus map Display views. K-313 folded in the iris, the split-at-threshold
-power mean and the fuller depth model (channel pick, focus point, Depth sensitivity,
+power mean and the fuller depth model (channel pick, focus point, Gamma,
 edge-leak suppression), all neutral at their defaults.
 
 Deliberate v1 limitations (documented, follow-ups tracked): the depth layer is sampled per its
@@ -1722,14 +1722,16 @@ actually looks real. The procedural field is the fallback, not the headline.
 stacking depth layers of particles is a way of getting size variety, and the
 honest way is a size distribution within one field.
 
-**Parameters:** Intensity (0–4, default 1; 0 is a bit-exact passthrough), Dirt
-plate (a layer reference; unset uses the procedural field), Plate channel
+**Parameters:** Intensity (0–4, default 1; 0 is a bit-exact passthrough), Matte
+(a layer reference; unset uses the procedural field), Matte channel
 (default Luminance — a plate is a photograph, and how bright a spot is is how
-much muck is there; the same shortlist the depth pass reads from), Blend mode (Screen / Add, default Screen); then:
+much muck is there; the same shortlist the depth pass reads from); then:
 
 - **Light response** (open, not collapsed — this group decides whether the effect
-  reads as a lens or as an overlay): Light response (0–1, default 1: 1 is the
-  physical reading, **0 is the uniform generator** an empty layer needs),
+  reads as a lens or as an overlay): Light response (0–1, **default 0.5**: 1 is the
+  physical reading, 0 the uniform generator an empty layer needs. Fully physical is correct
+  and unusable as an arrival state — an ordinary graded shot with nothing above scene white
+  shows no dirt at all, which reads as a broken effect rather than an accurate one),
   Highlight threshold (default 1.0, scene white) and Light spread (px@comp,
   default 60 — how far a highlight's light travels across the glass before it
   reaches a speck; wide on purpose, because the scatter is a haze and a narrow
@@ -1752,6 +1754,11 @@ smudge, the specks and the scratches — multiplies it by
 `1 − response + response · light`, applies the vignette, the Intensity and the
 Tint, and composites the result over the picture (or over opaque black) by
 **Blend mode**.
+
+**The field is measured from the frame's centre.** Gridded from the top-left corner instead,
+Size does not make the specks bigger — it scales the whole lattice about (0, 0), so the field
+slides off toward the corner as the control goes up and reads as a zoom rather than a size. The
+centre is the fixed point a lens actually has.
 
 **What each part of the procedural field is for.** The **smudge** is two octaves
 of low-frequency value noise, squared: fingerprints, breath, a cloth wiped across
@@ -1776,10 +1783,8 @@ quarter of the falloff, where the two glass-air interfaces actually disperse.
 alone breaks the premultiplied invariant (RGB above alpha) and, on a transparent
 layer, produces colour nothing can ever see. The lit dirt is composited as a
 premultiplied source whose alpha is its own brightness, which is also what makes
-**Background** work at all: Transparent leaves the layer's picture underneath,
-Black makes the layer opaque black first — the dirt element on its own, ready to
-be screened over a grade elsewhere, and the only way this effect produces
-anything on an empty layer.
+the **Normal** blend work at all — without coverage there is nothing for the
+opaque black behind it to show through.
 
 Operates on **premultiplied** colour, `moderate` cost, `{0}` temporal, seeded,
 **full-frame ROI** (the light spread means a pixel depends on light well outside

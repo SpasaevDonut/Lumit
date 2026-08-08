@@ -2788,7 +2788,7 @@ fn dof_op(p: &lumit_core::fx::cpu::DofParams) -> crate::fx::DofOp {
         depth_invert: p.depth_invert,
         use_focus_point: p.use_focus_point,
         focus_point: p.focus_point,
-        depth_sensitivity: p.depth_sensitivity,
+        gamma: p.gamma,
         remove_edge_leak: p.remove_edge_leak,
         detect_edge_threshold: p.detect_edge_threshold,
         display: p.display,
@@ -2818,7 +2818,7 @@ fn dof_defaults() -> lumit_core::fx::cpu::DofParams {
         depth_invert: false,
         use_focus_point: false,
         focus_point: [0.0, 0.0],
-        depth_sensitivity: 1.0,
+        gamma: 1.0,
         remove_edge_leak: 0.0,
         detect_edge_threshold: 0.1,
         display: 0,
@@ -3034,7 +3034,7 @@ fn wgsl_dof_matches_the_cpu_oracle() {
         (
             "profile squeezed",
             lumit_core::fx::cpu::DofParams {
-                depth_sensitivity: 4.0,
+                gamma: 4.0,
                 ..dof_defaults()
             },
         ),
@@ -4372,9 +4372,9 @@ fn wgsl_lens_dirt_matches_the_cpu_oracle() {
             },
         ),
         (
-            "on black",
+            "normal blend, on black",
             crate::fx::LensDirtOp {
-                background: 1,
+                blend_mode: 2,
                 ..base
             },
         ),

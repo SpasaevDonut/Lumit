@@ -621,7 +621,6 @@ impl FxEngine {
                     vignette: op.vignette,
                     mix_amt: op.mix,
                     blend_mode: op.blend_mode,
-                    background: op.background,
                     plate_bound: u32::from(plate.is_some()),
                     plate_channel: op.plate_channel,
                     seed: op.seed,
@@ -629,6 +628,7 @@ impl FxEngine {
                     _pad0: 0,
                     _pad1: 0,
                     _pad2: 0,
+                    _pad3: 0,
                 }),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
@@ -713,10 +713,8 @@ pub struct LensDirtOp {
     pub colour_var: f32,
     pub chromatic: f32,
     pub vignette: f32,
-    /// 0 Screen, 1 Add.
+    /// 0 Screen, 1 Add, 2 Normal (the dirt on opaque black).
     pub blend_mode: u32,
-    /// 0 Transparent, 1 Black.
-    pub background: u32,
     pub seed: u32,
     pub mix: f32,
 }
@@ -725,25 +723,24 @@ impl Default for LensDirtOp {
     fn default() -> Self {
         Self {
             intensity: 1.0,
-            response: 1.0,
+            response: 0.5,
             threshold: 1.0,
             spread: 60.0,
-            plate_channel: 4,
-            density: 100.0,
+            plate_channel: 0,
+            density: 60.0,
             scale: 1.0,
             roughness: 0.7,
             defocus: 0.5,
-            smudge: 0.4,
-            specks: 0.3,
-            scratches: 0.4,
+            smudge: 0.25,
+            specks: 0.45,
+            scratches: 0.2,
             scratch_scale: 1.0,
             scratch_var: 0.2,
-            tint: [1.0, 0.97, 0.92, 1.0],
+            tint: [0.45, 0.42, 0.38, 1.0],
             colour_var: 0.15,
-            chromatic: 0.3,
+            chromatic: 0.2,
             vignette: 0.3,
             blend_mode: 0,
-            background: 0,
             seed: 42,
             mix: 1.0,
         }
@@ -774,7 +771,6 @@ impl From<&LensDirtOp> for lumit_core::fx::LensDirtParams {
             chromatic: op.chromatic,
             vignette: op.vignette,
             blend_mode: op.blend_mode,
-            background: op.background,
             seed: op.seed,
             mix: op.mix,
         }
@@ -804,7 +800,6 @@ struct LensDirtParams {
     vignette: f32,
     mix_amt: f32,
     blend_mode: u32,
-    background: u32,
     plate_bound: u32,
     plate_channel: u32,
     seed: u32,
@@ -816,6 +811,7 @@ struct LensDirtParams {
     _pad0: u32,
     _pad1: u32,
     _pad2: u32,
+    _pad3: u32,
 }
 
 /// The embedded plate, decoded (docs/08 §3.28).

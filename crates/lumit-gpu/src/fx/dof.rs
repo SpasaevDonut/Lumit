@@ -68,7 +68,7 @@ pub struct DofOp {
     pub focus_point: [f32; 2],
     /// Multiplier on the depth distance before the ramp (the Profile control,
     /// resolved). 1 is the plain full-range falloff.
-    pub depth_sensitivity: f32,
+    pub gamma: f32,
     pub remove_edge_leak: f32,
     pub detect_edge_threshold: f32,
     /// Diagnostic view: 0 = Rendered, 1 = Depth map, 2 = Focus map.
@@ -105,7 +105,7 @@ struct DofParams {
     bokeh_power: f32,
     focus_x: f32,
     focus_y: f32,
-    depth_sensitivity: f32,
+    gamma: f32,
     remove_edge_leak: f32,
     detect_edge_threshold: f32,
     /// 0 = read the depth as-is, 1 = invert it (`d' = 1 - d`) before the CoC.
@@ -172,7 +172,7 @@ impl FxEngine {
     /// (Red by convention and by default; `textureLoad`, not a sampler),
     /// optionally inverts it (`d' = 1 - d`, swapping near and far), turns it
     /// into a circle-of-confusion radius — zero inside `range` of the focus
-    /// depth, ramping smoothstep (scaled first by `depth_sensitivity`, the Profile
+    /// depth, ramping smoothstep (scaled first by `gamma`, the Profile
     /// control) to `near_aperture` raster pixels on the near side or
     /// `far_aperture` on the far side — then averages an aperture of that radius
     /// from `src` and blends against the input by the host Mix.
@@ -248,7 +248,7 @@ impl FxEngine {
                     bokeh_power: op.bokeh_power,
                     focus_x: op.focus_point[0],
                     focus_y: op.focus_point[1],
-                    depth_sensitivity: op.depth_sensitivity,
+                    gamma: op.gamma,
                     remove_edge_leak: op.remove_edge_leak,
                     detect_edge_threshold: op.detect_edge_threshold,
                     depth_invert: u32::from(op.depth_invert),

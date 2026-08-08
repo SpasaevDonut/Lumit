@@ -191,3 +191,100 @@ class _DialPainter extends CustomPainter {
       old.rim != rim ||
       old.face != face;
 }
+
+/// An angle as **turns and degrees** — the `2x +30°` pair every editor shows for
+/// a rotation, drawn as two fields side by side.
+///
+/// **Why a rotation needs two boxes.** 30° and 390° are the same picture but not
+/// the same *animation*: a key at 30 and a key at 390 travels a full turn
+/// between them, and one at 30 followed by one at 30 does not move at all. A
+/// single field showing "30" cannot tell you which you have, and typing 390 into
+/// a box labelled degrees reads as a mistake. Splitting the turns out makes the
+/// stored number legible without changing it.
+///
+/// **The value is still one number.** `turns · 360 + degrees` is what is written,
+/// which is exactly why the split is a display concern: the property animates,
+/// serialises and interpolates as the single angle it always was, and two
+/// independently keyed halves could disagree about where the rotation is.
+/// Typing 400 into the degrees box therefore rolls over of its own accord — the
+/// value becomes 400 and redraws as `1x +40°`.
+class TurnsAndDegreesField extends StatelessWidget {
+  /// The whole angle, turns included.
+  final double degrees;
+
+  /// Mid-drag preview, and the committed value. `onChanged` is null on an
+  /// animated property, where previewing a static value would lie about the
+  /// curve.
+  final ValueChanged<double>? onChanged;
+  final ValueChanged<double> onCommit;
+
+  final bool enabled;
+
+  /// Key stem for the two fields, so a rebuild keeps the caret.
+  final String keyName;
+
+  const TurnsAndDegreesField({
+    super.key,
+    required this.degrees,
+    required this.onCommit,
+    required this.keyName,
+    this.onChanged,
+    this.enabled = true,
+  });
+
+  /// The whole turns in an angle, toward zero — so −370° reads as −1 turn and
+  /// −10°, which is how it is spoken.
+  static double turnsOf(double value) => (value / 360).truncateToDouble();
+
+  /// What is left after the turns.
+  static double degreesOf(double value) => value - turnsOf(value) * 360;
+
+  @override
+  Widget build(BuildContext context) {
+    final turns = turnsOf(degrees);
+    final rest = degreesOf(degrees);
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          width: 30,
+          child: DragValueField(
+            key: ValueKey<String>('angle-turns-$keyName'),
+            value: turns,
+            min: -10000,
+            max: 10000,
+            speed: 1,
+            decimals: 0,
+            suffix: 'x',
+            onChanged: (v) => onCommit(v.toDouble() * 360 + rest),
+            onChangeLive: onChanged == null
+                ? null
+                : (v) => onChanged!(v.toDouble() * 360 + rest),
+            onChangeEnd: (v) => onCommit(v.toDouble() * 360 + rest),
+          ),
+        ),
+        const SizedBox(width: 3),
+        SizedBox(
+          width: 54,
+          child: DragValueField(
+            key: ValueKey<String>('angle-degrees-$keyName'),
+            value: rest,
+            // Open, not clamped to ±360: typing 400 here is a legitimate way to
+            // say "one turn and forty", and it redraws as that.
+            min: -1000000,
+            max: 1000000,
+            speed: 1,
+            decimals: 1,
+            suffix: '°',
+            onChanged: (v) => onCommit(turns * 360 + v.toDouble()),
+            onChangeLive: onChanged == null
+                ? null
+                : (v) => onChanged!(turns * 360 + v.toDouble()),
+            onChangeEnd: (v) => onCommit(turns * 360 + v.toDouble()),
+          ),
+        ),
+      ],
+    );
+  }
+}

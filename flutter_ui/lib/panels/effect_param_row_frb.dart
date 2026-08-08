@@ -637,30 +637,21 @@ class EffectParamRowFrb extends StatelessWidget {
       _set(BridgeEffectValue.float(next));
     }
 
-    // Number then dial, on ONE row. The dial is a second grip on the same
-    // value, not a second control, so it sits beside the number rather than
-    // under it — a two-storey row is taller than every other row in the panel
+    // Turns, degrees, dial — one row. The dial is a second grip on the same
+    // value, not a second control, so it sits beside the numbers rather than
+    // under them: a two-storey row is taller than every other row in the panel
     // and reads as two settings.
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        SizedBox(
-          width: effectCellWidth,
-          child: DragValueField(
-            key: ValueKey<String>('fx-angle-$keyName'),
-            value: shown,
-            min: -1000000,
-            max: 1000000,
-            speed: 1,
-            decimals: 1,
-            suffix: '°',
-            onChanged: (v) => write(v.toDouble()),
-            onChangeLive: animated
-                ? null
-                : (v) => _setLive(BridgeEffectValue.float(
-                    BridgeScalar.static_(v.toDouble()))),
-            onChangeEnd: (v) => write(v.toDouble()),
-          ),
+        TurnsAndDegreesField(
+          keyName: keyName,
+          degrees: shown,
+          enabled: enabled,
+          onChanged: animated
+              ? null
+              : (v) => _setLive(BridgeEffectValue.float(BridgeScalar.static_(v))),
+          onCommit: write,
         ),
         const SizedBox(width: 6),
         AngleDial(
@@ -672,12 +663,11 @@ class EffectParamRowFrb extends StatelessWidget {
           enabled: enabled,
           // A dial drag is a drag like any other: preview each tick, commit
           // the release. On a curve there is no live preview, for the same
-          // reason the number has none — the value being previewed is not
+          // reason the numbers have none — the value being previewed is not
           // the one that will be stored.
           onChanged: (v) => animated
               ? null
-              : _setLive(
-                  BridgeEffectValue.float(BridgeScalar.static_(v))),
+              : _setLive(BridgeEffectValue.float(BridgeScalar.static_(v))),
           onChangeEnd: write,
         ),
       ],

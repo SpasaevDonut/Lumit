@@ -1587,7 +1587,7 @@ pub struct DofParams {
     /// The Profile control, resolved: a multiplier on the depth distance before
     /// the ramp. 1 is the plain full-range falloff; above 1 the transition
     /// bites sooner, below 1 it stretches past the range.
-    pub depth_sensitivity: f32,
+    pub gamma: f32,
     pub remove_edge_leak: f32,
     pub detect_edge_threshold: f32,
     /// 0 Rendered, 1 Depth map, 2 Focus map.
@@ -1675,7 +1675,7 @@ pub fn dof(rgba: &mut [f32], depth: Option<&[f32]>, w: u32, h: u32, p: &DofParam
         _ => p.focus,
     };
 
-    let falloff = |d: f32| dof_falloff(d, focus, p.range, p.depth_sensitivity);
+    let falloff = |d: f32| dof_falloff(d, focus, p.range, p.gamma);
 
     // The gather is unweighted unless something actually asks for weights, and
     // then it is weighted for every tap. Two paths, not one path with a factor.
@@ -2416,8 +2416,15 @@ fn speck_profile(norm_d: f32, defocus: f32) -> f32 {
 /// The 3×3 neighbourhood walk is what stops a speck being clipped at its own
 /// cell boundary: a particle's radius can exceed its cell, so every pixel must
 /// consider the eight cells around it too.
-fn dirt_field(px: f32, py: f32, diag: f32, p: &LensDirtParams) -> [f32; 3] {
+fn dirt_field(cx_px: f32, cy_px: f32, diag: f32, p: &LensDirtParams) -> [f32; 3] {
     let mut out = [0.0f32; 3];
+    // **Everything below is measured from the frame's centre.** Gridded from the
+    // top-left corner instead, Size does not make the specks bigger — it scales
+    // the whole lattice about (0, 0), so the field slides off toward the corner
+    // as you turn it up and the control reads as a zoom rather than a size. The
+    // centre is the fixed point a lens actually has.
+    let px = cx_px;
+    let py = cy_px;
 
     // --- The greasy veil ---
     if p.smudge > 0.0 {
@@ -2619,6 +2626,9 @@ pub fn lens_dirt(
             let i = ((y * w + x) * 4) as usize;
             let px = x as f32 + 0.5;
             let py = y as f32 + 0.5;
+            // Centred coordinates for the generator (see `dirt_field`).
+            let gx = px - wf * 0.5;
+            let gy = py - hf * 0.5;
 
             // The dirt field: a plate if one is bound, else the procedural one.
             let mut eff = match plate {
@@ -2626,7 +2636,7 @@ pub fn lens_dirt(
                     let d = channel_of(&plate[i..i + 4], p.plate_channel);
                     [d, d, d]
                 }
-                None => dirt_field(px, py, diag, p),
+                None => dirt_field(gx, gy, diag, p),
             };
 
             // **The light response.** `response` 1 is the physical reading —
@@ -2658,11 +2668,11 @@ pub fn lens_dirt(
                 *slot = (*slot * p.intensity * p.tint[c]).max(0.0);
             }
 
-            // The picture the dirt sits over. **Black** makes the layer opaque
-            // black first — the dirt element on its own, ready to be screened
-            // over a grade elsewhere, and the only way this effect produces
-            // anything on an empty layer.
-            let base = if p.background == 1 {
+            // The picture the dirt sits over. **Normal** puts it on opaque
+            // black, replacing the picture — the dirt element on its own, ready
+            // to be screened over a grade elsewhere, and the only mode that
+            // produces anything on an empty layer.
+            let base = if p.blend_mode == 2 {
                 [0.0, 0.0, 0.0, 1.0]
             } else {
                 [
@@ -2682,8 +2692,9 @@ pub fn lens_dirt(
             let eff_a = eff[0].max(eff[1]).max(eff[2]).clamp(0.0, 1.0);
             let mut out = [0.0f32; 4];
             match p.blend_mode {
-                1 => {
-                    // Add: scattered light on top, coverage saturating at 1.
+                1 | 2 => {
+                    // Add, and Normal — which is Add over the black it just put
+                    // there, so the dirt IS the picture. Coverage saturates.
                     for c in 0..3 {
                         out[c] = base[c] + eff[c];
                     }

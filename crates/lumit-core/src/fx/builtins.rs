@@ -1259,7 +1259,7 @@ pub const BUILTINS: &[EffectSchema] = &[
                 params: &[
                     "depth_channel",
                     "depth_invert",
-                    "depth_sensitivity",
+                    "gamma",
                     "remove_edge_leak",
                     "detect_edge_threshold",
                 ],
@@ -1589,9 +1589,10 @@ pub const BUILTINS: &[EffectSchema] = &[
                 kind: ParamKind::Bool { default: false },
             },
             ParamSchema {
-                // **How hard the blur answers to a small change in depth** —
-                // the depth axis rescaled before the ramp, and what stops focus
-                // being all-or-nothing on a real depth pass.
+                // **The gamma on the depth axis** — the depth distance rescaled
+                // before the ramp, which decides how hard the blur answers to a
+                // small change in depth, and is what stops focus being
+                // all-or-nothing on a real depth pass.
                 //
                 // **The range is wide on purpose, and ±1 was not enough.** A
                 // real depth pass rarely spreads its content over 0..1: a linear
@@ -1609,8 +1610,8 @@ pub const BUILTINS: &[EffectSchema] = &[
                 // magnification), which is the middle rather than the end, and
                 // ±10 reaches 1024× for a pass squeezed harder still. 0 is the
                 // neutral multiplier of exactly 1.
-                id: "depth_sensitivity",
-                label: "Depth sensitivity",
+                id: "gamma",
+                label: "Gamma",
                 kind: ParamKind::Float {
                     default: 0.0,
                     slider: (-10.0, 10.0),
@@ -3502,7 +3503,7 @@ pub const BUILTINS: &[EffectSchema] = &[
                 // the effect's own input, which is a legitimate if odd thing to
                 // want.
                 id: "plate",
-                label: "Dirt plate",
+                label: "Matte",
                 kind: ParamKind::Layer {
                     self_default: false,
                 },
@@ -3512,25 +3513,10 @@ pub const BUILTINS: &[EffectSchema] = &[
                 // a plate is a photograph, and how bright a spot is is how much
                 // muck is there.
                 id: "plate_channel",
-                label: "Plate channel",
+                label: "Matte channel",
                 kind: ParamKind::Choice {
                     options: CHANNEL_OPTIONS,
-                    default: 4, // Luminance
-                    dividers_after: CHOICE_UNGROUPED,
-                },
-            },
-            ParamSchema {
-                // How the lit dirt returns over the picture. Screen is the
-                // default because scattered light adds without blowing past
-                // white; Add is the harder, brighter reading a flare element
-                // wants. Overlay and Solo are gone: Overlay's contrast pivot is
-                // meaningless on unbounded linear values, and Solo is what the
-                // Background choice does honestly.
-                id: "blend_mode",
-                label: "Blend mode",
-                kind: ParamKind::Choice {
-                    options: &["Screen", "Add"],
-                    default: 0,
+                    default: 0, // Luminance — index 0 of the shortlist
                     dividers_after: CHOICE_UNGROUPED,
                 },
             },
@@ -3538,16 +3524,22 @@ pub const BUILTINS: &[EffectSchema] = &[
             ParamSchema {
                 // How much the dirt answers to the picture's own light.
                 //
-                // **1 is the physical reading and the default**: dirt is only
-                // visible where light passes through it. **0 is the generator**:
-                // the dirt is uniform, which is what an empty layer with nothing
-                // bright in it needs, and what the contributed effect did
-                // always. In between is a lift — a little muck visible in the
-                // shadows, a lot around the lamps.
+                // **1 is the physical reading**: dirt is only visible where
+                // light passes through it. **0 is the generator**: uniform dirt,
+                // which is what an empty layer with nothing bright in it needs.
+                //
+                // **Half is the default, and 1 deliberately is not.** Fully
+                // physical is correct and unusable as an arrival state: an
+                // ordinary graded shot with nothing above scene white shows no
+                // dirt at all, which reads as an effect that does not work
+                // rather than as one being accurate. Half keeps a little muck
+                // visible in the shadows and lights it hard around the lamps —
+                // which is what §1.2's "drop it on and it already looks right"
+                // asks for.
                 id: "response",
                 label: "Light response",
                 kind: ParamKind::Float {
-                    default: 1.0,
+                    default: 0.5,
                     slider: (0.0, 1.0),
                     hard: (Some(0.0), Some(1.0)),
                 },
@@ -3583,7 +3575,7 @@ pub const BUILTINS: &[EffectSchema] = &[
                 id: "density",
                 label: "Density",
                 kind: ParamKind::Float {
-                    default: 100.0,
+                    default: 60.0,
                     slider: (0.0, 500.0),
                     hard: (Some(0.0), Some(2000.0)),
                 },
@@ -3637,7 +3629,7 @@ pub const BUILTINS: &[EffectSchema] = &[
                 id: "smudge",
                 label: "Smudge",
                 kind: ParamKind::Float {
-                    default: 0.4,
+                    default: 0.25,
                     slider: (0.0, 1.0),
                     hard: (Some(0.0), Some(1.0)),
                 },
@@ -3648,7 +3640,7 @@ pub const BUILTINS: &[EffectSchema] = &[
                 id: "specks",
                 label: "Dust specks",
                 kind: ParamKind::Float {
-                    default: 0.3,
+                    default: 0.45,
                     slider: (0.0, 1.0),
                     hard: (Some(0.0), Some(1.0)),
                 },
@@ -3657,7 +3649,7 @@ pub const BUILTINS: &[EffectSchema] = &[
                 id: "scratches",
                 label: "Scratches",
                 kind: ParamKind::Float {
-                    default: 0.4,
+                    default: 0.2,
                     slider: (0.0, 1.0),
                     hard: (Some(0.0), Some(1.0)),
                 },
@@ -3682,12 +3674,15 @@ pub const BUILTINS: &[EffectSchema] = &[
             },
             // ---- Colour ----
             ParamSchema {
-                // The overall cast. Near-white by default and deliberately so: a
-                // tint is a grade, and dirt lit by a white light is white.
+                // The overall cast — and a *dimming* one by default, not a
+                // white. What reaches the sensor through a speck of grease is a
+                // fraction of what hit it, so a plate at full white reads as a
+                // light source stuck to the glass rather than as muck on it.
+                // Slightly warm, because dust is.
                 id: "tint",
                 label: "Tint",
                 kind: ParamKind::Colour {
-                    default: [1.0, 0.97, 0.92, 1.0],
+                    default: [0.45, 0.42, 0.38, 1.0],
                     range: (0.0, 2.0),
                 },
             },
@@ -3709,7 +3704,7 @@ pub const BUILTINS: &[EffectSchema] = &[
                 id: "chromatic",
                 label: "Chromatic fringe",
                 kind: ParamKind::Float {
-                    default: 0.3,
+                    default: 0.2,
                     slider: (0.0, 1.0),
                     hard: (Some(0.0), Some(2.0)),
                 },
@@ -3727,16 +3722,26 @@ pub const BUILTINS: &[EffectSchema] = &[
                 },
             },
             ParamSchema {
-                // What the dirt is composited over. **Transparent** (the
-                // default) leaves the layer's own picture underneath, which is
-                // the ordinary use. **Black** makes the layer opaque black first
-                // — the dirt element on its own, ready to be screened over a
-                // grade in another application, and the only way this effect can
-                // produce something on an empty layer.
-                id: "background",
-                label: "Background",
+                // **One menu, not two.** How the dirt returns over the picture
+                // and what sits behind it were separate controls, and every
+                // useful combination of the two is one of these three:
+                //
+                // - **Screen** (default) — scattered light adds over the layer's
+                //   own picture without blowing past white, which is what
+                //   scattered light does.
+                // - **Add** — the same, harder and brighter; the reading a flare
+                //   element wants.
+                // - **Normal** — the dirt on opaque black, replacing the
+                //   picture. The dirt element on its own, ready to be screened
+                //   over a grade elsewhere, and the only mode that produces
+                //   anything on an empty layer.
+                //
+                // The old Transparent background is gone because it was never a
+                // choice: it is what Screen and Add already do.
+                id: "blend_mode",
+                label: "Blend mode",
                 kind: ParamKind::Choice {
-                    options: &["Transparent", "Black"],
+                    options: &["Screen", "Add", "Normal"],
                     default: 0,
                     dividers_after: CHOICE_UNGROUPED,
                 },

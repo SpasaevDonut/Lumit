@@ -476,7 +476,7 @@ fn resolved_dof(near_aperture: f32, far_aperture: f32, focus_point: [f32; 2]) ->
         depth_channel: 0,
         use_focus_point: false,
         focus_point,
-        depth_sensitivity: 1.0,
+        gamma: 1.0,
         remove_edge_leak: 0.0,
         detect_edge_threshold: 0.1,
         display: 0,
@@ -6128,7 +6128,7 @@ fn dof_declares_the_folded_aperture_surface() {
             // Depth map: how the pass is READ.
             "depth_channel",
             "depth_invert",
-            "depth_sensitivity",
+            "gamma",
             "remove_edge_leak",
             "detect_edge_threshold",
             // Back out of the twirls.
@@ -6155,11 +6155,7 @@ fn dof_declares_the_folded_aperture_surface() {
     assert_eq!(float_default("aspect"), 0.0);
     assert_eq!(float_default("rim"), 0.0);
     assert_eq!(float_default("exposure"), 0.0, "0 is the plain mean");
-    assert_eq!(
-        float_default("depth_sensitivity"),
-        0.0,
-        "0 is a multiplier of 1"
-    );
+    assert_eq!(float_default("gamma"), 0.0, "0 is a multiplier of 1");
     assert_eq!(float_default("remove_edge_leak"), 0.0);
     assert_eq!(float_default("detect_edge_threshold"), 0.10);
     assert_eq!(float_default("threshold"), 1.0, "scene white");
@@ -6354,7 +6350,7 @@ fn a_legacy_dof_resolves_to_the_neutral_aperture() {
                 | "use_focus_point"
                 | "focus_point_x"
                 | "focus_point_y"
-                | "depth_sensitivity"
+                | "gamma"
                 | "remove_edge_leak"
                 | "detect_edge_threshold"
                 | "repeat_edge_pixels"
@@ -6429,7 +6425,7 @@ fn the_default_aperture_is_the_historical_disc_bit_for_bit() {
         depth_invert: false,
         use_focus_point: false,
         focus_point: [0.0, 0.0],
-        depth_sensitivity: 1.0,
+        gamma: 1.0,
         remove_edge_leak: 0.0,
         detect_edge_threshold: 0.1,
         display: 0,
@@ -6564,7 +6560,7 @@ fn the_dof_aperture_stays_inside_its_circle() {
                     depth_invert: false,
                     use_focus_point: false,
                     focus_point: [0.0, 0.0],
-                    depth_sensitivity: 1.0,
+                    gamma: 1.0,
                     remove_edge_leak: 0.0,
                     detect_edge_threshold: 0.1,
                     display: 0,
@@ -6616,7 +6612,7 @@ fn the_dof_aperture_stays_inside_its_circle() {
         depth_invert: false,
         use_focus_point: false,
         focus_point: [0.0, 0.0],
-        depth_sensitivity: 1.0,
+        gamma: 1.0,
         remove_edge_leak: 0.0,
         detect_edge_threshold: 0.1,
         display: 0,
@@ -6854,11 +6850,7 @@ fn profile_reaches_a_depth_pass_squeezed_into_a_fifth_of_its_range() {
 
     // The schema must actually offer the range the maths needs.
     let s = schema("dof").unwrap();
-    let profile = s
-        .params
-        .iter()
-        .find(|p| p.id == "depth_sensitivity")
-        .unwrap();
+    let profile = s.params.iter().find(|p| p.id == "gamma").unwrap();
     assert!(matches!(
         profile.kind,
         ParamKind::Float {
@@ -7003,16 +6995,15 @@ fn lens_dirt_carries_its_own_coverage() {
     }
     assert!(lit_pixels > 0, "the generator must have drawn something");
 
-    // Background Black makes the layer opaque first — the dirt element on its
-    // own, which is the only way this effect produces anything on an empty
-    // layer.
-    let on_black = LensDirtParams { background: 1, ..p };
+    // The Normal blend puts the dirt on opaque black — the dirt element on its
+    // own, which is the only mode that produces anything on an empty layer.
+    let on_black = LensDirtParams { blend_mode: 2, ..p };
     let mut black = img.clone();
     cpu::lens_dirt(&mut black, None, None, w, h, &on_black);
     for i in (0..black.len()).step_by(4) {
         assert!(
             black[i + 3] >= 1.0 - 1e-6,
-            "a Black background is opaque everywhere"
+            "the Normal blend puts the dirt on opaque black everywhere"
         );
     }
 }
@@ -7037,6 +7028,9 @@ fn a_dirt_plate_replaces_the_procedural_field() {
     let p = LensDirtParams {
         response: 0.0,
         vignette: 0.0,
+        // A white tint, so what is measured is the plate rather than the
+        // shipped tint's dimming (which is a look default, tested elsewhere).
+        tint: [1.0, 1.0, 1.0, 1.0],
         ..LensDirtParams::default()
     };
     let mut out = img.clone();

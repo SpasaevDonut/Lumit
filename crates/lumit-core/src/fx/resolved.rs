@@ -704,7 +704,7 @@ pub enum Resolved {
         /// even the far extreme is softened rather than obliterated. This is
         /// what stops focus being all-or-nothing on a real depth pass, whose
         /// content sits in a narrow band with one near object well outside it.
-        depth_sensitivity: f32,
+        gamma: f32,
         /// How hard a tap across a depth discontinuity **and in front of** this
         /// pixel is pulled back, and how big a depth jump counts as one. 0 leak
         /// takes the unweighted branch.
@@ -787,11 +787,10 @@ pub struct LensDirtParams {
     /// Edge-only dispersion, not a per-channel radius scale.
     pub chromatic: f32,
     pub vignette: f32,
-    /// 0 = Screen, 1 = Add.
+    /// 0 = Screen, 1 = Add, 2 = Normal (the dirt on opaque black, replacing the
+    /// picture). One menu rather than a blend AND a background: every useful
+    /// combination of the two was one of these three.
     pub blend_mode: u32,
-    /// 0 = Transparent (over the layer's own picture), 1 = Black (the dirt
-    /// element on opaque black).
-    pub background: u32,
     pub seed: u32,
     pub mix: f32,
 }
@@ -800,26 +799,25 @@ impl Default for LensDirtParams {
     fn default() -> Self {
         Self {
             intensity: 1.0,
-            response: 1.0,
+            response: 0.5,
             threshold: 1.0,
             spread: 60.0,
             plate_bound: false,
-            plate_channel: 4,
-            density: 100.0,
+            plate_channel: 0,
+            density: 60.0,
             scale: 1.0,
             roughness: 0.7,
             defocus: 0.5,
-            smudge: 0.4,
-            specks: 0.3,
-            scratches: 0.4,
+            smudge: 0.25,
+            specks: 0.45,
+            scratches: 0.2,
             scratch_scale: 1.0,
             scratch_var: 0.2,
-            tint: [1.0, 0.97, 0.92, 1.0],
+            tint: [0.45, 0.42, 0.38, 1.0],
             colour_var: 0.15,
-            chromatic: 0.3,
+            chromatic: 0.2,
             vignette: 0.3,
             blend_mode: 0,
-            background: 0,
             seed: 42,
             mix: 1.0,
         }
@@ -1878,10 +1876,10 @@ fn resolve_one(
             // One doubling per unit, so the slider's useful zone sits in its
             // middle rather than its first third (see the schema's note).
             let profile = (e
-                .float_at_with_context("depth_sensitivity", lt, expression_context.clone())
+                .float_at_with_context("gamma", lt, expression_context.clone())
                 .unwrap_or(0.0) as f32)
                 .clamp(-10.0, 10.0);
-            let depth_sensitivity = profile.exp2();
+            let gamma = profile.exp2();
             // Edge-leak suppression reads two depths per tap, so it is dead
             // weight without a depth pass — and its neutral is what keeps the
             // gather bit-identical to the historical one.
@@ -1933,7 +1931,7 @@ fn resolve_one(
                 depth_channel,
                 use_focus_point,
                 focus_point,
-                depth_sensitivity,
+                gamma,
                 remove_edge_leak,
                 detect_edge_threshold,
                 display,
@@ -2389,11 +2387,7 @@ fn resolve_one(
             let vignette = f("vignette", 0.3).clamp(0.0, 1.0);
 
             let blend_mode = match e.param("blend_mode") {
-                Some(EffectValue::Choice(c)) => (*c).min(1),
-                _ => 0,
-            };
-            let background = match e.param("background") {
-                Some(EffectValue::Choice(c)) => (*c).min(1),
+                Some(EffectValue::Choice(c)) => (*c).min(2),
                 _ => 0,
             };
             let seed = match e.param("seed") {
@@ -2427,7 +2421,6 @@ fn resolve_one(
                 chromatic,
                 vignette,
                 blend_mode,
-                background,
                 seed,
                 mix,
             }))
