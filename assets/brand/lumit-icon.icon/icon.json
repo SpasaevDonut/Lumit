@@ -1,11 +1,15 @@
 {
+  "features" : [
+    "refractivity",
+    "specular-location"
+  ],
   "fill" : {
     "automatic-gradient" : "extended-srgb:0.00000,0.53333,1.00000,1.00000"
   },
   "groups" : [
     {
       "blend-mode" : "hard-light",
-      "blur-material" : 1,
+      "blur-material" : null,
       "layers" : [
         {
           "blend-mode" : "lighten",
@@ -46,16 +50,16 @@
       "name" : "Glows",
       "shadow" : {
         "kind" : "neutral",
-        "opacity" : 0.5
+        "opacity" : 0
       },
       "specular" : false,
       "translucency" : {
-        "enabled" : false,
-        "value" : 0
+        "enabled" : true,
+        "value" : 1
       }
     },
     {
-      "blur-material" : 0.4,
+      "blur-material" : 0.3,
       "layers" : [
         {
           "fill" : {
@@ -75,7 +79,7 @@
             }
           ],
           "position" : {
-            "scale" : 1,
+            "scale" : 1.15,
             "translation-in-points" : [
               0,
               0
@@ -84,13 +88,19 @@
         }
       ],
       "name" : "Centre Icon",
+      "refractivity" : {
+        "depth" : 0.25,
+        "enabled" : true,
+        "strength" : -0.4
+      },
       "shadow" : {
         "kind" : "layer-color",
         "opacity" : 0.5
       },
+      "specular" : "inside",
       "translucency" : {
-        "enabled" : true,
-        "value" : 1
+        "enabled" : false,
+        "value" : 0
       }
     },
     {
@@ -114,7 +124,7 @@
           "name" : "06-core",
           "opacity" : 1,
           "position" : {
-            "scale" : 0.85,
+            "scale" : 1,
             "translation-in-points" : [
               0,
               0
@@ -124,8 +134,8 @@
         {
           "glass" : true,
           "hidden" : false,
-          "image-name" : "04-key-magenta.svg",
-          "name" : "04-key-magenta",
+          "image-name" : "lumit-key-right.svg",
+          "name" : "lumit-key-right",
           "position" : {
             "scale" : 1,
             "translation-in-points" : [
@@ -137,8 +147,8 @@
         {
           "fill" : "none",
           "hidden" : false,
-          "image-name" : "03-key-blue.svg",
-          "name" : "03-key-blue",
+          "image-name" : "lumit-key-left.svg",
+          "name" : "lumit-key-left",
           "position" : {
             "scale" : 1,
             "translation-in-points" : [
@@ -148,11 +158,16 @@
           }
         }
       ],
-      "lighting" : "individual",
+      "lighting" : "combined",
       "name" : "Keyframes",
+      "refractivity" : {
+        "depth" : 0.25,
+        "enabled" : true,
+        "strength" : 0.5
+      },
       "shadow" : {
         "kind" : "layer-color",
-        "opacity" : 0.25
+        "opacity" : 0.5
       },
       "specular" : true,
       "translucency" : {
@@ -161,6 +176,7 @@
       }
     },
     {
+      "blur-material" : 0.5,
       "layers" : [
         {
           "hidden" : false,

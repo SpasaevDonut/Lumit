@@ -113,6 +113,12 @@
 	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>$(PRODUCT_NAME)</string>
+	<!-- Launchpad and Spotlight label an app with CFBundleDisplayName and fall
+	     back to its filename when there is none - which is why Lumit alone
+	     showed as "Lumit.app" there while every other app showed a bare name.
+	     CFBundleName does not cover this: that one names the menu bar. -->
+	<key>CFBundleDisplayName</key>
+	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
