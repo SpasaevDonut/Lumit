@@ -1,8 +1,4 @@
 {
-  "features" : [
-    "refractivity",
-    "specular-location"
-  ],
   "fill" : {
     "automatic-gradient" : "extended-srgb:0.00000,0.53333,1.00000,1.00000"
   },
@@ -97,7 +93,7 @@
         "kind" : "layer-color",
         "opacity" : 0.5
       },
-      "specular" : "inside",
+      "specular" : true,
       "translucency" : {
         "enabled" : false,
         "value" : 0

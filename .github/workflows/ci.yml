@@ -561,6 +561,13 @@ jobs:
             exit 1
           fi
 
+      # Two keys Icon Composer 26 writes into the .icon that actool then cannot
+      # compile — the script says which and why. Run here, on Linux, in about a
+      # second: without it the same mistake surfaces five minutes into the macOS
+      # build job and reads as a corrupt icon file (K-312).
+      - name: Icon Composer keys actool cannot compile
+        run: python3 scripts/check-icon.py
+
   # clippy cannot enforce the no-panic rule (docs/14 §4) on the bridge's frb
   # API. `#[frb(...)]` is a proc-macro attribute, and clippy's restriction lints
   # (unwrap_used, expect_used, panic, todo, unimplemented) skip code that comes

@@ -7082,3 +7082,31 @@ message instead of an opaque `pub get` error.
 copied under another name, from a target language enabled by mistake. K-303 said British
 English is the source and stays it; the file is deleted and the test above keeps it deleted,
 pointing at the Crowdin setting that produced it.
+
+**K-312 · DECIDED · Two of Icon Composer's settings are unusable, and a one-second
+Linux check keeps them out.** K-309 made the macOS icon a layer stack authored in Icon
+Composer and compiled by `actool`. Two things Icon Composer 26 writes into `icon.json`
+cannot then be compiled: a non-empty top-level `features` array, and a `specular` whose
+value is the string `"inside"` rather than `true` or `false`. Both arrived with the icon
+revision that landed alongside the signing work, and both were invisible until the
+localisation fix (K-311) unblocked the macOS build job they had been hiding behind.
+
+**The failure names the wrong thing.** `actool` does not report an unsupported setting;
+it dies part-way through with `attempt to insert nil object from objects[0]` and a
+twenty-frame backtrace through `AssetCatalogFoundation`, under the heading *Could not
+open "lumit-icon.icon"*. That reads as a corrupt file, and sends you looking at the SVGs
+— which are fine. Each key was found by bisecting `icon.json` against the last revision
+that compiled, one property at a time.
+
+**What the icon loses is a highlight's address, not the effect.** The `refractivity`
+blocks are untouched and still compile; `features` only *declares* which of them the
+document uses, and the icon renders the same without it. `specular: "inside"` becomes
+`specular: true`, which keeps the specular highlight on that group and gives up only the
+choice of where inside it sits. The rendered `.icns` was checked by eye after the change.
+
+**`scripts/check-icon.py` runs in the design-token lint job**, on Linux, in about a
+second. The macOS build already catches this, but it catches it five minutes in and only
+on a runner with Xcode 26 — and reopening the icon in Icon Composer and saving is enough
+to put both keys back, so this is a mistake with a standing invitation to recur. The
+script is the regression test K-007 asks for: it fails on the `icon.json` as it was, and
+passes on the one that compiles.

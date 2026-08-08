@@ -4006,6 +4006,18 @@ blue key, magenta key, core glow, core diamond) and an `icon.json` saying how
 they stack: which ones are glass, how opaque each is in dark mode, how deep
 the shadow goes. Open the folder in Icon Composer to change any of it.
 
+One catch, if you do (K-312). Icon Composer can save two settings that Apple's
+own compiler then refuses: a `features` list at the top of `icon.json`, and a
+`specular` written as the word `"inside"` rather than simply on or off. Neither
+is anything the icon needs — the first only lists features it uses elsewhere in
+the file, and the second just says whereabouts on a layer the shine sits — but
+either one stops the icon compiling, and the error you get says the file could
+not be opened, which sends you looking at the artwork instead. `flutter build
+macos` is where it bites. To save the wait, `scripts/check-icon.py` looks for
+both in a second and runs on every push; if it complains after you have edited
+the icon, delete the two settings it names and nothing about the picture
+changes.
+
 Those layers look slightly *unfinished* next to the flat icon, and that is the
 point. The flat drawing paints in its own lighting — a rounded corner on the
 tile, a shadow under the keys, a dark rim around each key standing in for an
