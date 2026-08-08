@@ -215,15 +215,30 @@ imported theme travels with the user rather than the machine's settings.
     in [04-RETIMING.md](04-RETIMING.md).
 - **The Flow column is reserved, not wired** - per-layer optical flow has no
     engine backing. Build the engine model first, then the fold-out's Flow group.
-- **The Timeline's two halves are built twice and kept in step by hand.**
-    `_Outline` and `_LayerArea` are separate widget trees walking the same layer
-    list, aligned only because both read the same numbers, with vertical scroll
-    mirrored behind a reentrancy flag. Building a layer **once** as a row holding
-    both halves inside one vertical scrollable (the lane side keeping its own
-    horizontal controller) gives alignment by construction. It deletes
-    `blockHeights`, both controllers' sync and the guard flag rather than adding
-    anything. A session's refactor, no behaviour change, alignment tests as the
-    net.
+- **The Timeline's two halves are still two widget trees, and one vertical
+    scrollable cannot hold both.** This was once written down here as a session's
+    refactor — build each layer as a row holding both halves inside a single
+    vertical scrollable, and alignment holds by construction. It does not work,
+    and the reason is worth keeping so it is not re-derived. The ruler and the
+    cache bar scroll sideways with the lanes but must not scroll with the rows,
+    which means the lanes' horizontal scroll view has to sit *above* the vertical
+    one; a single `Scrollable` has a single subtree, so everything inside that
+    vertical scroll view then scrolls sideways with the lanes — including the
+    outline, which must not move (`timeline_alignment_test.dart` says so, and the
+    outline has a horizontal scroll of its own for narrow panels). Putting the
+    horizontal scrolls underneath instead gives one per row, and `_hLane` asserts
+    the moment a second position attaches to it, which is what `_positionOf`
+    exists to survive. The only arrangement that satisfies both is to drop the
+    lanes' horizontal *viewport* and offset them by a transform, with `_hLane`
+    anchored on the ruler band — and that costs horizontal trackpad panning over
+    the lanes, the very fault the `dragDevices` comment in the panel records as
+    invisible to anyone using a mouse. Not worth it. `blockHeights` stays
+    whichever way it goes: `layerDropSlot`, `layerDragTarget` and `LayerDragSlide`
+    each want every block's height, not one row's. What the merge was really
+    reaching for has landed instead — each layer is now decided **once** into a
+    `LayerRow` (its fold rows, its open Sequence view, its height) and both halves
+    read that, so they can differ in what they draw but no longer in what a layer
+    is. The scroll mirror and its guard flag stay.
 - **The lane keyframe selection selects and eases, nothing more** - moving or
     deleting a *whole lane selection* is not built (the graph view has both), nor
     are `=`/`-`/`\` or edge-follow during playback.
