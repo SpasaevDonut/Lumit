@@ -294,17 +294,6 @@ sealed class BridgeEnabledCond with _$BridgeEnabledCond {
 
   /// Editable while the named layer reference actually names a layer.
   const factory BridgeEnabledCond.layerSet() = BridgeEnabledCond_LayerSet;
-
-  /// Editable while the named layer reference is unset — the shape a control
-  /// takes when picking a layer *replaces* what it does.
-  const factory BridgeEnabledCond.layerUnset() = BridgeEnabledCond_LayerUnset;
-
-  /// Editable while the named number is strictly above this value, sampled at
-  /// time zero (greying is an affordance, and a row flickering along an
-  /// animated curve would be worse than one that never greyed).
-  const factory BridgeEnabledCond.floatAbove(
-    double field0,
-  ) = BridgeEnabledCond_FloatAbove;
 }
 
 /// One greying rule: `param`'s row is editable only while `on` satisfies

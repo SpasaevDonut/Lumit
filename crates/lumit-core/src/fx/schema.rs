@@ -264,19 +264,6 @@ pub enum EnabledCond {
     /// Editable while the named [`ParamKind::Layer`] actually names a layer.
     /// An unset or dangling reference greys the dependent row.
     LayerSet,
-    /// The mirror: editable only while the named layer reference is **unset**.
-    /// The shape a control takes when picking a layer *replaces* what it does —
-    /// Lens dirt's procedural field, once a photographed plate is bound.
-    LayerUnset,
-    /// Editable while the named number is strictly above this value. The only
-    /// numeric condition, and it exists for the "these two rows describe how a
-    /// thing is measured, and nothing is measuring it" shape: Lens dirt's
-    /// highlight Threshold and Spread say nothing while Light response is 0.
-    ///
-    /// Judged on the parameter's value at time zero, because greying is a panel
-    /// affordance and a row that flickered in and out along an animated curve
-    /// would be worse than one that never greyed.
-    FloatAbove(f32),
 }
 
 /// The Add-effect menu's grouping (K-090): every schema declares one.

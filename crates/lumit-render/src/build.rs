@@ -465,7 +465,6 @@ pub fn build_comp_draws_at(
     fn layer_input_param(match_name: &str) -> Option<&'static str> {
         match match_name {
             "dof" => Some("depth"),
-            "lens_dirt" => Some("plate"),
             _ => None,
         }
     }

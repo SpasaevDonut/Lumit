@@ -7587,12 +7587,6 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         );
       case 3:
         return BridgeEnabledCond_LayerSet();
-      case 4:
-        return BridgeEnabledCond_LayerUnset();
-      case 5:
-        return BridgeEnabledCond_FloatAbove(
-          dco_decode_f_64(raw[1]),
-        );
       default:
         throw Exception("unreachable");
     }
@@ -9664,11 +9658,6 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         return BridgeEnabledCond_ChoiceIsNot(var_field0);
       case 3:
         return BridgeEnabledCond_LayerSet();
-      case 4:
-        return BridgeEnabledCond_LayerUnset();
-      case 5:
-        var var_field0 = sse_decode_f_64(deserializer);
-        return BridgeEnabledCond_FloatAbove(var_field0);
       default:
         throw UnimplementedError('');
     }
@@ -12025,11 +12014,6 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         sse_encode_u_32(field0, serializer);
       case BridgeEnabledCond_LayerSet():
         sse_encode_i_32(3, serializer);
-      case BridgeEnabledCond_LayerUnset():
-        sse_encode_i_32(4, serializer);
-      case BridgeEnabledCond_FloatAbove(field0: final field0):
-        sse_encode_i_32(5, serializer);
-        sse_encode_f_64(field0, serializer);
     }
   }
 

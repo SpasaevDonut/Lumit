@@ -1046,49 +1046,6 @@ pub fn run_ops(
                     &probe,
                 );
             }
-            Resolved::LensDirt(p) => {
-                // The k-th layer-input-consuming op binds the k-th slot, and
-                // Lens dirt takes one exactly as Depth of field does — same
-                // counter, same ordering, same 1:1 contract
-                // (docs/impl/layer-input.md §2, `build.rs`'s
-                // `layer_input_param`). An absent slot is not a fault: the
-                // effect generates its dirt procedurally instead.
-                let plate = layer_inputs.get(dof_i).and_then(|o| o.texture(&tex));
-                dof_i += 1;
-                // The plate is not `Copy` and the borrow below outlives the
-                // reassignment, so the new texture is bound to a local first.
-                let next = fx.lens_dirt(
-                    ctx,
-                    &tex,
-                    w,
-                    h,
-                    plate,
-                    &lumit_gpu::fx::LensDirtOp {
-                        intensity: p.intensity,
-                        response: p.response,
-                        threshold: p.threshold,
-                        spread: p.spread,
-                        plate_channel: p.plate_channel,
-                        density: p.density,
-                        scale: p.scale,
-                        roughness: p.roughness,
-                        defocus: p.defocus,
-                        smudge: p.smudge,
-                        specks: p.specks,
-                        scratches: p.scratches,
-                        scratch_scale: p.scratch_scale,
-                        scratch_var: p.scratch_var,
-                        tint: p.tint,
-                        colour_var: p.colour_var,
-                        chromatic: p.chromatic,
-                        vignette: p.vignette,
-                        blend_mode: p.blend_mode,
-                        seed: p.seed,
-                        mix: p.mix,
-                    },
-                );
-                tex = next;
-            }
         }
 
         if let (Some(started), Some(into)) = (started, timings.as_mut()) {

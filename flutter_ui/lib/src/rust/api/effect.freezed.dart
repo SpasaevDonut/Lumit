@@ -902,8 +902,6 @@ extension BridgeEnabledCondPatterns on BridgeEnabledCond {
     TResult Function(BridgeEnabledCond_ChoiceIs value)? choiceIs,
     TResult Function(BridgeEnabledCond_ChoiceIsNot value)? choiceIsNot,
     TResult Function(BridgeEnabledCond_LayerSet value)? layerSet,
-    TResult Function(BridgeEnabledCond_LayerUnset value)? layerUnset,
-    TResult Function(BridgeEnabledCond_FloatAbove value)? floatAbove,
     required TResult orElse(),
   }) {
     final _that = this;
@@ -916,10 +914,6 @@ extension BridgeEnabledCondPatterns on BridgeEnabledCond {
         return choiceIsNot(_that);
       case BridgeEnabledCond_LayerSet() when layerSet != null:
         return layerSet(_that);
-      case BridgeEnabledCond_LayerUnset() when layerUnset != null:
-        return layerUnset(_that);
-      case BridgeEnabledCond_FloatAbove() when floatAbove != null:
-        return floatAbove(_that);
       case _:
         return orElse();
     }
@@ -944,8 +938,6 @@ extension BridgeEnabledCondPatterns on BridgeEnabledCond {
     required TResult Function(BridgeEnabledCond_ChoiceIs value) choiceIs,
     required TResult Function(BridgeEnabledCond_ChoiceIsNot value) choiceIsNot,
     required TResult Function(BridgeEnabledCond_LayerSet value) layerSet,
-    required TResult Function(BridgeEnabledCond_LayerUnset value) layerUnset,
-    required TResult Function(BridgeEnabledCond_FloatAbove value) floatAbove,
   }) {
     final _that = this;
     switch (_that) {
@@ -957,10 +949,6 @@ extension BridgeEnabledCondPatterns on BridgeEnabledCond {
         return choiceIsNot(_that);
       case BridgeEnabledCond_LayerSet():
         return layerSet(_that);
-      case BridgeEnabledCond_LayerUnset():
-        return layerUnset(_that);
-      case BridgeEnabledCond_FloatAbove():
-        return floatAbove(_that);
     }
   }
 
@@ -982,8 +970,6 @@ extension BridgeEnabledCondPatterns on BridgeEnabledCond {
     TResult? Function(BridgeEnabledCond_ChoiceIs value)? choiceIs,
     TResult? Function(BridgeEnabledCond_ChoiceIsNot value)? choiceIsNot,
     TResult? Function(BridgeEnabledCond_LayerSet value)? layerSet,
-    TResult? Function(BridgeEnabledCond_LayerUnset value)? layerUnset,
-    TResult? Function(BridgeEnabledCond_FloatAbove value)? floatAbove,
   }) {
     final _that = this;
     switch (_that) {
@@ -995,10 +981,6 @@ extension BridgeEnabledCondPatterns on BridgeEnabledCond {
         return choiceIsNot(_that);
       case BridgeEnabledCond_LayerSet() when layerSet != null:
         return layerSet(_that);
-      case BridgeEnabledCond_LayerUnset() when layerUnset != null:
-        return layerUnset(_that);
-      case BridgeEnabledCond_FloatAbove() when floatAbove != null:
-        return floatAbove(_that);
       case _:
         return null;
     }
@@ -1022,8 +1004,6 @@ extension BridgeEnabledCondPatterns on BridgeEnabledCond {
     TResult Function(int field0)? choiceIs,
     TResult Function(int field0)? choiceIsNot,
     TResult Function()? layerSet,
-    TResult Function()? layerUnset,
-    TResult Function(double field0)? floatAbove,
     required TResult orElse(),
   }) {
     final _that = this;
@@ -1036,10 +1016,6 @@ extension BridgeEnabledCondPatterns on BridgeEnabledCond {
         return choiceIsNot(_that.field0);
       case BridgeEnabledCond_LayerSet() when layerSet != null:
         return layerSet();
-      case BridgeEnabledCond_LayerUnset() when layerUnset != null:
-        return layerUnset();
-      case BridgeEnabledCond_FloatAbove() when floatAbove != null:
-        return floatAbove(_that.field0);
       case _:
         return orElse();
     }
@@ -1064,8 +1040,6 @@ extension BridgeEnabledCondPatterns on BridgeEnabledCond {
     required TResult Function(int field0) choiceIs,
     required TResult Function(int field0) choiceIsNot,
     required TResult Function() layerSet,
-    required TResult Function() layerUnset,
-    required TResult Function(double field0) floatAbove,
   }) {
     final _that = this;
     switch (_that) {
@@ -1077,10 +1051,6 @@ extension BridgeEnabledCondPatterns on BridgeEnabledCond {
         return choiceIsNot(_that.field0);
       case BridgeEnabledCond_LayerSet():
         return layerSet();
-      case BridgeEnabledCond_LayerUnset():
-        return layerUnset();
-      case BridgeEnabledCond_FloatAbove():
-        return floatAbove(_that.field0);
     }
   }
 
@@ -1102,8 +1072,6 @@ extension BridgeEnabledCondPatterns on BridgeEnabledCond {
     TResult? Function(int field0)? choiceIs,
     TResult? Function(int field0)? choiceIsNot,
     TResult? Function()? layerSet,
-    TResult? Function()? layerUnset,
-    TResult? Function(double field0)? floatAbove,
   }) {
     final _that = this;
     switch (_that) {
@@ -1115,10 +1083,6 @@ extension BridgeEnabledCondPatterns on BridgeEnabledCond {
         return choiceIsNot(_that.field0);
       case BridgeEnabledCond_LayerSet() when layerSet != null:
         return layerSet();
-      case BridgeEnabledCond_LayerUnset() when layerUnset != null:
-        return layerUnset();
-      case BridgeEnabledCond_FloatAbove() when floatAbove != null:
-        return floatAbove(_that.field0);
       case _:
         return null;
     }
@@ -1340,93 +1304,6 @@ class BridgeEnabledCond_LayerSet extends BridgeEnabledCond {
   @override
   String toString() {
     return 'BridgeEnabledCond.layerSet()';
-  }
-}
-
-/// @nodoc
-
-class BridgeEnabledCond_LayerUnset extends BridgeEnabledCond {
-  const BridgeEnabledCond_LayerUnset() : super._();
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is BridgeEnabledCond_LayerUnset);
-  }
-
-  @override
-  int get hashCode => runtimeType.hashCode;
-
-  @override
-  String toString() {
-    return 'BridgeEnabledCond.layerUnset()';
-  }
-}
-
-/// @nodoc
-
-class BridgeEnabledCond_FloatAbove extends BridgeEnabledCond {
-  const BridgeEnabledCond_FloatAbove(this.field0) : super._();
-
-  final double field0;
-
-  /// Create a copy of BridgeEnabledCond
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $BridgeEnabledCond_FloatAboveCopyWith<BridgeEnabledCond_FloatAbove>
-      get copyWith => _$BridgeEnabledCond_FloatAboveCopyWithImpl<
-          BridgeEnabledCond_FloatAbove>(this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is BridgeEnabledCond_FloatAbove &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode => Object.hash(runtimeType, field0);
-
-  @override
-  String toString() {
-    return 'BridgeEnabledCond.floatAbove(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $BridgeEnabledCond_FloatAboveCopyWith<$Res>
-    implements $BridgeEnabledCondCopyWith<$Res> {
-  factory $BridgeEnabledCond_FloatAboveCopyWith(
-          BridgeEnabledCond_FloatAbove value,
-          $Res Function(BridgeEnabledCond_FloatAbove) _then) =
-      _$BridgeEnabledCond_FloatAboveCopyWithImpl;
-  @useResult
-  $Res call({double field0});
-}
-
-/// @nodoc
-class _$BridgeEnabledCond_FloatAboveCopyWithImpl<$Res>
-    implements $BridgeEnabledCond_FloatAboveCopyWith<$Res> {
-  _$BridgeEnabledCond_FloatAboveCopyWithImpl(this._self, this._then);
-
-  final BridgeEnabledCond_FloatAbove _self;
-  final $Res Function(BridgeEnabledCond_FloatAbove) _then;
-
-  /// Create a copy of BridgeEnabledCond
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(BridgeEnabledCond_FloatAbove(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as double,
-    ));
   }
 }
 

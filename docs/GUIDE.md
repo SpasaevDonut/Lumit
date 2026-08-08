@@ -349,36 +349,6 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   clean look. As always, the graphics-card program and its plain-Rust twin were checked to agree
   to the last bit across every one of these — invert on and off, lopsided near/far, and each
   display mode.
-- **Why lens dirt only shows when a light hits it.** This one is worth knowing
-  because it is the difference between an effect that looks real and one that
-  looks stuck on. A clean lens is invisible. A *dirty* one is also invisible —
-  right up until something bright shines through it, and then the muck lights up.
-  Dirt does not glow; it scatters light that is passing through it. So the Lens
-  dirt effect does not draw dirt onto your picture. It generates a field of
-  grease and specks, then **multiplies it by a blurred copy of your picture's own
-  bright bits**, so the muck appears around the street lamp and vanishes in the
-  dark corner. That is what the **Light response** slider is: turn it down to
-  zero and the dirt is just there everywhere, which is what you want when you are
-  using the effect as a generator on an empty layer and there is no light for it
-  to answer to.
-
-  The other half is that a *photograph* of a dirty filter beats anything drawn by
-  arithmetic, because real muck is irregular in ways a formula is not. So the
-  effect will take any layer as its **Dirt plate** and use that as the field
-  instead — point it at a piece of stock footage of a smeared lens and it is lit
-  by your shot exactly the same way. When a plate is picked, all the controls
-  that shape the generated dirt go grey, because they are no longer deciding
-  anything.
-
-  Two smaller things in the same effect are worth naming since they come up
-  elsewhere. **Premultiplied alpha**: in Lumit a pixel's colour is already
-  multiplied by how opaque it is, so adding brightness without also adding
-  opacity produces colour that nothing can ever display — the bug that stopped
-  this effect's background options working at all. And the reason its specks are
-  not circles: a perfect circle is the single loudest sign that something was
-  generated rather than photographed, so each speck's outline is pushed about by
-  noise before it is drawn.
-
 - **What an iris is, and why a blur is not a lens.** Blur a picture and bright points smear
   into soft grey nothing. Defocus a picture *through a lens* and every bright point becomes a
   little disc — and that disc is a **picture of the hole the light came through**. That hole

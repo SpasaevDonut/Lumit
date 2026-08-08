@@ -7960,13 +7960,6 @@ impl SseDecode for crate::api::effect::BridgeEnabledCond {
             3 => {
                 return crate::api::effect::BridgeEnabledCond::LayerSet;
             }
-            4 => {
-                return crate::api::effect::BridgeEnabledCond::LayerUnset;
-            }
-            5 => {
-                let mut var_field0 = <f64>::sse_decode(deserializer);
-                return crate::api::effect::BridgeEnabledCond::FloatAbove(var_field0);
-            }
             _ => {
                 unimplemented!("");
             }
@@ -10837,10 +10830,6 @@ impl flutter_rust_bridge::IntoDart for crate::api::effect::BridgeEnabledCond {
                 [2.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::effect::BridgeEnabledCond::LayerSet => [3.into_dart()].into_dart(),
-            crate::api::effect::BridgeEnabledCond::LayerUnset => [4.into_dart()].into_dart(),
-            crate::api::effect::BridgeEnabledCond::FloatAbove(field0) => {
-                [5.into_dart(), field0.into_into_dart().into_dart()].into_dart()
-            }
             _ => {
                 unimplemented!("");
             }
@@ -12961,13 +12950,6 @@ impl SseEncode for crate::api::effect::BridgeEnabledCond {
             }
             crate::api::effect::BridgeEnabledCond::LayerSet => {
                 <i32>::sse_encode(3, serializer);
-            }
-            crate::api::effect::BridgeEnabledCond::LayerUnset => {
-                <i32>::sse_encode(4, serializer);
-            }
-            crate::api::effect::BridgeEnabledCond::FloatAbove(field0) => {
-                <i32>::sse_encode(5, serializer);
-                <f64>::sse_encode(field0, serializer);
             }
             _ => {
                 unimplemented!("");

@@ -7160,78 +7160,8 @@ schema kind, a bridge kind, generated code and a Dart row were deleted rather th
 constant (`EXPOSURE_STOPS_PER_DOUBLING`, 12) is fitted from screenshots rather than measured
 against a reference plugin, and §3.22 records it as open.
 
-**K-314 · DECIDED · Lens dirt is a modulation, not an overlay: the dirt is
-multiplied by the picture's own highlights, and a photographed plate is a
-first-class input.** The contributed effect (PR #65) generated a field of
-procedural bokeh discs, specks and scratches and added it to the frame
-unconditionally. It looked painted on, and the reason is physical rather than
-cosmetic: **dirt does not emit, it forward-scatters.** A clean lens is invisible;
-a dirty one is also invisible until light passes through it. Every production
-renderer solves this the same way — Unreal's `BloomDirtMask`, Unity HDRP's Lens
-Dirt, Godot's glow map, and the Nuke workflow of a scanned plate keyed by a luma
-matte — a dirt texture *times* the bloom.
-
-**So the effect gained a Light response.** Three passes: threshold the
-highlights, blur them across the glass, multiply the dirt field by the result.
-Response 1 is the physical reading; **0 is the uniform generator**, which is what
-an empty layer needs, because with nothing bright in the picture there is nothing
-to respond to. That one control covers both uses and is why no procedural sun
-survived the rework — the effect answers to real light now.
-
-**And a Dirt plate layer reference.** Real dirt is irregular in ways procedural
-blobs are not, so any layer can be the field, modulated identically. It replaces
-the procedural field rather than adding to it, which is what the panel greys the
-generator's rows for. This also advances the owner's standing goal of *almost
-every effect being able to read a matte* — the depth-pass machinery (K-031,
-K-124) is now used by a second effect, and `build.rs`'s `layer_input_param` is
-the one list naming which built-in takes a layer and by which parameter, so the
-slots and the ops cannot drift.
-
-**The premultiplied bug was the reason its background modes could not work.** The
-kernel added light to RGB and wrote alpha through untouched, so on a transparent
-layer it produced colour nothing could ever see — and no background fill could
-show, because there was no coverage to show it with. The lit dirt is now
-composited as a premultiplied source whose alpha is its own brightness.
-
-**Look fixes, each with a reason rather than a taste.** Speck outlines are warped
-by noise and their interiors vary, because a perfect ellipse is the loudest
-single tell that a dirt pass was generated. Specks follow a power-law size
-distribution and cluster up to three per grid cell, because one per cell is a
-lattice however it is jittered. A low-frequency **smudge** veil was added and does
-more work than the specks do, because what a wiped filter mostly does is lift
-blacks and cut contrast near a light rather than add bright dots. Chromatic
-dispersion moved to the speck's **edge**: scaling a radius per channel draws clean
-concentric rings, which is a diffraction pattern and not what grease does.
-
-**Dropped:** the multi-layer particle stack (dirt is on ONE plane of glass; the
-variety it was reaching for is a size distribution, not a stack), the
-per-particle defocus and rotation variance that only meant anything across those
-layers, the procedural sun, and the Overlay and Solo blend modes — Overlay's
-contrast pivot is meaningless on unbounded linear values, and Solo is what the
-Background choice does honestly.
-
-**The 1337 easter egg stays, with its provenance recorded.** The embedded image
-is a Wikimedia Commons lens-dirt photograph, free to use, and the owner asked for
-the joke — it is a long-standing one among editors. Two changes make it safe
-rather than a trap: at that seed every dirt-*generation* control is ignored while
-Tint, Blend mode, Background, Intensity and Mix keep working (so it composites
-like any other picture rather than replacing the frame outright), and the
-**Background** choice — Transparent by default, or Black — is what decides whether
-it screens over the layer or arrives as an element on its own. The Russian
-caption the panel drew under the Seed field is gone: an easter egg that announces
-itself is a feature with a strange label, and a public panel is not the place for
-an aside in one language. `assets/README.md` records the source and the licence.
-
-**Consequence:** `EnabledCond` gains `LayerUnset` (the shape a control takes when
-picking a layer *replaces* what it does) and `FloatAbove` (its only numeric
-condition, for "these rows describe how a thing is measured and nothing is
-measuring it"). The effect's ROI becomes full-frame, because the light spread
-means a pixel depends on light well outside its own tile.
-
-
 **K-315 · DECIDED · Depth of field's control surface, after the owner's first pass on
-it — and the plate the easter egg draws is cached, not decoded per frame.** Six changes,
-each from testing K-313 in the app rather than from a spec.
+it.** Five changes, each from testing K-313 in the app rather than from a spec.
 
 **Composite mode is gone.** Five blend modes on one effect is a menu nobody has a reason to
 open: an effect whose result wants adding over a sharp plate is an adjustment layer with a
@@ -7263,10 +7193,3 @@ hue shift is a rotation about the colour wheel — the most dial-shaped control 
 the Lens flare's aperture Rotation. The two blur-direction angles keep their `±3600` hard
 bound and stay plain numbers, because `Angle` is deliberately unbounded and swapping them
 would quietly drop a clamp.
-
-**And the easter-egg plate is uploaded once.** It was decoded, linearised and uploaded on
-*every dispatch* — with the full-resolution plate that is ~3 MB of decode and ~16 MB of
-upload per frame, which starves the device until unrelated bind groups fail to create. The
-symptom is a preview that stops rendering and repeats a validation error naming some other
-pass entirely, which is a miserable thing to debug from. It is held in a `Mutex` on the
-`FxEngine`, the same shape as the Lens flare's bake cache and for the same reason.
