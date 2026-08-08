@@ -30,11 +30,25 @@
   <rect width="512" height="512" rx="115" fill="url(#tile-bg)"/>
   <circle cx="256" cy="256" r="250" fill="url(#tile-bloom)"/>
   <g transform="translate(256 256) scale(0.82) translate(-256 -256)">
+  <!-- Each keyframe is a chevron rather than a whole diamond: the diamond with
+       the core's near half cut out of it, so the two shapes meet the core edge
+       to edge and never overlap each other. That is what lets the core be made
+       transparent - with whole diamonds, key-b sat on top of key-a and a
+       transparent core exposed the square edge underneath.
+
+       The cut follows the core outline exactly, so the three shapes tile the
+       original silhouette with no seam and no double-covered pixel. Left
+       chevron: outer tip (35,256), diamond corners at (180,111)/(180,401),
+       notch apex on the core's left vertex (181,256), and the two notch
+       shoulders where the diamond's inner edges cross the core's - (253,184)
+       and (253,328). The right chevron is its mirror about x=256. -->
   <g filter="url(#key-shadow)">
-    <g transform="rotate(45 180 256)"><rect x="77.5" y="153.5" width="205" height="205" rx="36"
-       fill="url(#key-a)" stroke="#0c0e14" stroke-opacity="0.25" stroke-width="8"/></g>
-    <g transform="rotate(45 332 256)"><rect x="229.5" y="153.5" width="205" height="205" rx="36"
-       fill="url(#key-b)" stroke="#0c0e14" stroke-opacity="0.25" stroke-width="8"/></g>
+    <path d="M35 256 L180 111 L253 184 L181 256 L253 328 L180 401 Z"
+       fill="url(#key-a)" stroke="#0c0e14" stroke-opacity="0.25" stroke-width="8"
+       stroke-linejoin="round"/>
+    <path d="M477 256 L332 111 L259 184 L331 256 L259 328 L332 401 Z"
+       fill="url(#key-b)" stroke="#0c0e14" stroke-opacity="0.25" stroke-width="8"
+       stroke-linejoin="round"/>
   </g>
   <circle cx="256" cy="256" r="130" fill="url(#key-glow)"/>
   <path d="M256 181 L331 256 L256 331 L181 256 Z" fill="url(#key-core)"
