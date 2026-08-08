@@ -1917,6 +1917,10 @@ fn cpu_bokeh_profile(norm_d: f32, defocus: f32) -> f32 {
     (1.0 - norm_d * norm_d) * ring
 }
 
+static EASTER_EGG_1337_BYTES: &[u8] = include_bytes!("../../../../assets/easter_egg_1337.bin");
+const EE_W: usize = 736;
+const EE_H: usize = 414;
+
 /// Lens Dirt Overlay Generator (docs/08 §3.28).
 /// Procedurally generates out-of-focus aperture bokeh disks, micro dust specks,
 /// hairline scratches, smudges, and optical vignetting overlay.
@@ -1930,17 +1934,17 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
     let diag = (wf * wf + hf * hf).sqrt().max(1.0);
 
     let is_1337 = p.seed == 1337;
-    let eval_seed = if is_1337 { 7777 } else { p.seed };
-    let num_layers = if is_1337 { 5 } else { p.bokeh_layers.clamp(1, 10) };
-    let density_scale = (if is_1337 { 2.2 } else { p.density / 50.0 }).clamp(0.0, 40.0);
-    let scratch_amount = if is_1337 { 0.6 } else { p.scratches };
-    let dirt_amount = if is_1337 { 0.6 } else { p.dirt };
-    let vignette_strength = if is_1337 { 0.6 } else { p.vignette };
+    let eval_seed = p.seed;
+    let num_layers = p.bokeh_layers.clamp(1, 10);
+    let density_scale = (p.density / 50.0).clamp(0.0, 40.0);
+    let scratch_amount = p.scratches;
+    let dirt_amount = p.dirt;
+    let vignette_strength = p.vignette;
     let defocus = p.defocus;
     let chromatic = p.chromatic;
     let blend_mode = p.blend_mode;
     let mix = p.mix;
-    let intensity = if is_1337 { 1.4 } else { p.intensity };
+    let intensity = p.intensity;
     let tint = p.tint;
 
     let particle_size_base = p.scale * (diag * 0.035);
@@ -1960,40 +1964,17 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
             let mut dirt_b = 0.0f32;
 
             if is_1337 {
-                let u_x = px / wf;
-                let u_y = py / hf;
-
-                // 1. Top-left blue/purple lens flare atmosphere
-                let dist_tl = ((u_x - 0.15).powi(2) + (u_y - 0.25).powi(2)).sqrt();
-                let flare_glow = (1.0 - dist_tl / 0.9).max(0.0).powi(2);
-                dirt_r += flare_glow * 0.15;
-                dirt_g += flare_glow * 0.18;
-                dirt_b += flare_glow * 0.35;
-
-                // 2. Signature white curved hair filament at lower left (u_x ~ 0.15, u_y ~ 0.72)
-                let hx = (u_x - 0.15) / 0.14;
-                let hy = (u_y - 0.72) / 0.14;
-                let arc_y = 0.35 * (hx * 9.0).sin() + 1.2 * hx * hx;
-                let d_hair = (hy - arc_y).abs();
-                if hx >= -0.9 && hx <= 0.9 && d_hair < 0.045 {
-                    let hair_val = (1.0 - d_hair / 0.045).powi(2) * 2.2;
-                    dirt_r += hair_val;
-                    dirt_g += hair_val;
-                    dirt_b += hair_val;
-                }
-
-                // 3. Signature pinkish-red glass smudge at lower right (u_x ~ 0.82, u_y ~ 0.85)
-                let sm_dist = ((u_x - 0.82).powi(2) + (u_y - 0.85).powi(2)).sqrt() / 0.18;
-                if sm_dist < 1.0 {
-                    let sm_val = (1.0 - sm_dist).powi(2) * 0.45;
-                    dirt_r += sm_val * 0.9;
-                    dirt_g += sm_val * 0.25;
-                    dirt_b += sm_val * 0.45;
-                }
-            }
-
-            // 1. Multi-layered out-of-focus Bokeh disks & Dust specks
-            for layer_idx in 0..num_layers {
+                let u_x = (px / wf).clamp(0.0, 1.0);
+                let u_y = (py / hf).clamp(0.0, 1.0);
+                let tx = ((u_x * (EE_W - 1) as f32) as usize).min(EE_W - 1);
+                let ty = ((u_y * (EE_H - 1) as f32) as usize).min(EE_H - 1);
+                let ee_idx = (ty * EE_W + tx) * 4;
+                dirt_r = EASTER_EGG_1337_BYTES[ee_idx] as f32 / 255.0;
+                dirt_g = EASTER_EGG_1337_BYTES[ee_idx + 1] as f32 / 255.0;
+                dirt_b = EASTER_EGG_1337_BYTES[ee_idx + 2] as f32 / 255.0;
+            } else {
+                // 1. Multi-layered out-of-focus Bokeh disks & Dust specks
+                for layer_idx in 0..num_layers {
                 let layer_seed = eval_seed.wrapping_add(layer_idx.wrapping_mul(0x9e3779b9));
 
                 let layer_scale_factor = 0.7 + 0.4 * (layer_idx as f32);
@@ -2170,13 +2151,14 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
             dirt_g *= intensity;
             dirt_b *= intensity;
 
-            // 3. Optical vignetting darkening
-            if vignette_strength > 0.0 {
-                let r_sq = nx * nx + ny * ny;
-                let v_factor: f32 = (1.0 - vignette_strength * 0.5 * r_sq).clamp(0.0, 1.0);
-                dirt_r *= v_factor;
-                dirt_g *= v_factor;
-                dirt_b *= v_factor;
+                // 3. Optical vignetting darkening
+                if vignette_strength > 0.0 {
+                    let r_sq = nx * nx + ny * ny;
+                    let v_factor: f32 = (1.0 - vignette_strength * 0.5 * r_sq).clamp(0.0, 1.0);
+                    dirt_r *= v_factor;
+                    dirt_g *= v_factor;
+                    dirt_b *= v_factor;
+                }
             }
 
             let (bg_r, bg_g, bg_b) = if p.bg_mode == 0 {

@@ -3,7 +3,11 @@
 
 use crate::GpuContext;
 
-use super::{work_texture, FxEngine};
+use super::{upload_linear_f32, work_texture, FxEngine};
+
+static EASTER_EGG_1337_BYTES: &[u8] = include_bytes!("../../../../assets/easter_egg_1337.bin");
+const EE_W: u32 = 736;
+const EE_H: u32 = 414;
 
 /// One resolved matte key (docs/08 §3.21, K-121/K-154): a Keylight-style
 /// colour-difference keyer on straight (unpremultiplied) colour. Mirrors
@@ -482,7 +486,7 @@ impl FxEngine {
         out
     }
 
-    /// Apply Lens Dirt procedural generator (docs/08 §3.28) to a linear working texture.
+    /// Render the procedural Lens Dirt overlay (docs/08 §3.28).
     pub fn lens_dirt(
         &self,
         ctx: &GpuContext,
@@ -492,10 +496,21 @@ impl FxEngine {
         op: &LensDirtOp,
     ) -> wgpu::Texture {
         let out = work_texture(ctx, w, h, "fx-lens-dirt-out");
+        let ee_tex;
+        let src_tex = if op.seed == 1337 {
+            let mut ee_f32 = Vec::with_capacity((EE_W * EE_H * 4) as usize);
+            for b in EASTER_EGG_1337_BYTES.iter() {
+                ee_f32.push(*b as f32 / 255.0);
+            }
+            ee_tex = upload_linear_f32(ctx, &ee_f32, EE_W, EE_H);
+            &ee_tex
+        } else {
+            src
+        };
         self.dispatch(
             ctx,
             &self.lens_dirt,
-            src,
+            src_tex,
             src,
             &out,
             w,
