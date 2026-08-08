@@ -673,9 +673,12 @@ pub struct LensDirtParams {
     pub scratch_scale: f32,
     pub defocus: f32,
     pub defocus_var: f32,
+    pub color_var: f32,
     pub chromatic: f32,
 
     pub scratches: f32,
+    pub scratch_var: f32,
+    pub dirt: f32,
     pub tint: [f32; 4],
     pub vignette: f32,
     /// Blend mode wire code: 0 = Screen, 1 = Add, 2 = Overlay, 3 = Solo (dirt map only).
@@ -2069,8 +2072,11 @@ fn resolve_one(
             let scratch_scale = (e.float_at("scratch_scale", lt).unwrap_or(1.0) as f32).clamp(0.01, 20.0);
             let defocus = (e.float_at("defocus", lt).unwrap_or(0.5) as f32).clamp(0.0, 1.0);
             let defocus_var = (e.float_at("defocus_var", lt).unwrap_or(0.0) as f32).clamp(0.0, 1.0);
+            let color_var = (e.float_at("color_var", lt).unwrap_or(0.0) as f32).clamp(0.0, 1.0);
             let chromatic = (e.float_at("chromatic", lt).unwrap_or(0.3) as f32).clamp(0.0, 2.0);
             let scratches = (e.float_at("scratches", lt).unwrap_or(0.4) as f32).clamp(0.0, 1.0);
+            let scratch_var = (e.float_at("scratch_var", lt).unwrap_or(0.2) as f32).clamp(0.0, 1.0);
+            let dirt = (e.float_at("dirt", lt).unwrap_or(0.3) as f32).clamp(0.0, 1.0);
             let tint = match e.colour_at("tint", lt) {
                 Some(c) => [c[0] as f32, c[1] as f32, c[2] as f32, c[3] as f32],
                 None => [1.0, 0.95, 0.85, 1.0],
@@ -2113,8 +2119,11 @@ fn resolve_one(
                 scratch_scale,
                 defocus,
                 defocus_var,
+                color_var,
                 chromatic,
                 scratches,
+                scratch_var,
+                dirt,
                 tint,
                 vignette,
                 blend_mode,

@@ -2954,15 +2954,22 @@ pub const BUILTINS: &[EffectSchema] = &[
                     "rotation_var",
                     "defocus",
                     "defocus_var",
+                    "color_var",
                     "chromatic",
                 ],
-
                 collapsed: false,
                 visible_when: None,
             },
             ParamGroup {
                 label: "Scratches & Imperfections",
-                params: &["scratches", "scratch_scale", "vignette", "tint"],
+                params: &[
+                    "scratches",
+                    "scratch_scale",
+                    "scratch_var",
+                    "dirt",
+                    "vignette",
+                    "tint",
+                ],
                 collapsed: true,
                 visible_when: None,
             },
@@ -3089,6 +3096,15 @@ pub const BUILTINS: &[EffectSchema] = &[
                 },
             },
             ParamSchema {
+                id: "color_var",
+                label: "Color jitter",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(1.0)),
+                },
+            },
+            ParamSchema {
                 id: "chromatic",
                 label: "Chromatic dispersion",
                 kind: ParamKind::Float {
@@ -3113,6 +3129,24 @@ pub const BUILTINS: &[EffectSchema] = &[
                     default: 1.0,
                     slider: (0.1, 5.0),
                     hard: (Some(0.01), Some(20.0)),
+                },
+            },
+            ParamSchema {
+                id: "scratch_var",
+                label: "Scratch jitter",
+                kind: ParamKind::Float {
+                    default: 0.2,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(1.0)),
+                },
+            },
+            ParamSchema {
+                id: "dirt",
+                label: "Glass dirt specks",
+                kind: ParamKind::Float {
+                    default: 0.3,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(1.0)),
                 },
             },
             ParamSchema {

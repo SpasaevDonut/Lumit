@@ -25,9 +25,9 @@ struct Params {
     bokeh_layers: u32,
     seed: u32,
     mix_amt: f32,
-    _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
+    color_var: f32,
+    scratch_var: f32,
+    dirt: f32,
 };
 
 
@@ -168,28 +168,36 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
                 var p_defocus = defocus;
                 if (p.defocus_var > 0.0) {
                     p_defocus = clamp(defocus + (block_hash01(layer_seed, 8u, cx, cy, 0) - 0.5) * p.defocus_var, 0.0, 1.0);
-                }
+                }                if (norm_d <= 1.3) {
+                    var col_mult_r: f32 = 1.0;
+                    var col_mult_g: f32 = 1.0;
+                    var col_mult_b: f32 = 1.0;
+                    if (p.color_var > 0.0) {
+                        let cr = 1.0 + (block_hash01(layer_seed, 9u, cx, cy, 0) - 0.5) * p.color_var * 0.8;
+                        let cg = 1.0 + (block_hash01(layer_seed, 10u, cx, cy, 0) - 0.5) * p.color_var * 0.8;
+                        let cb = 1.0 + (block_hash01(layer_seed, 11u, cx, cy, 0) - 0.5) * p.color_var * 0.8;
+                        col_mult_r = max(cr, 0.0);
+                        col_mult_g = max(cg, 0.0);
+                        col_mult_b = max(cb, 0.0);
+                    }
 
-                if (norm_d <= 1.3) {
                     if (chromatic > 0.0) {
                         let c_scale = chromatic * 0.15;
                         let d_red = norm_d / (1.0 + c_scale);
                         let d_blue = norm_d / max(1.0 - c_scale, 0.01);
-                        let r_val = bokeh_profile(d_red, p_defocus) * p_intensity;
-                        let g_val = bokeh_profile(norm_d, p_defocus) * p_intensity;
-                        let b_val = bokeh_profile(d_blue, p_defocus) * p_intensity;
+                        let r_val = bokeh_profile(d_red, p_defocus) * p_intensity * col_mult_r;
+                        let g_val = bokeh_profile(norm_d, p_defocus) * p_intensity * col_mult_g;
+                        let b_val = bokeh_profile(d_blue, p_defocus) * p_intensity * col_mult_b;
                         dirt_r += r_val;
                         dirt_g += g_val;
                         dirt_b += b_val;
                     } else {
                         let base_val = bokeh_profile(norm_d, p_defocus) * p_intensity;
-                        dirt_r += base_val;
-                        dirt_g += base_val;
-                        dirt_b += base_val;
+                        dirt_r += base_val * col_mult_r;
+                        dirt_g += base_val * col_mult_g;
+                        dirt_b += base_val * col_mult_b;
                     }
                 }
-
-
             }
         }
     }
@@ -205,8 +213,16 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
         if (sprob < max_sprob) {
             let p1x = (f32(sgx) + block_hash01(seed, 11u, sgx, sgy, 0)) * scratch_cell_size;
             let p1y = (f32(sgy) + block_hash01(seed, 12u, sgx, sgy, 0)) * scratch_cell_size;
-            let seg_len = (20.0 + 30.0 * block_hash01(seed, 13u, sgx, sgy, 0)) * scratch_scale;
-            let angle = block_hash01(seed, 14u, sgx, sgy, 0) * 6.28318530718;
+            var line_len_mult: f32 = 1.0;
+            if (p.scratch_var > 0.0) {
+                line_len_mult = 1.0 + (block_hash01(seed, 13u, sgx, sgy, 0) - 0.5) * p.scratch_var * 1.6;
+            }
+            let seg_len = max(20.0 + 30.0 * line_len_mult, 2.0) * scratch_scale;
+            var angle_var: f32 = 0.0;
+            if (p.scratch_var > 0.0) {
+                angle_var = (block_hash01(seed, 16u, sgx, sgy, 0) - 0.5) * p.scratch_var * 3.14159265359;
+            }
+            let angle = block_hash01(seed, 14u, sgx, sgy, 0) * 6.28318530718 + angle_var;
             let p2x = p1x + cos(angle) * seg_len;
             let p2y = p1y + sin(angle) * seg_len;
 
@@ -224,6 +240,24 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
                 dirt_r += line_val;
                 dirt_g += line_val;
                 dirt_b += line_val;
+            }
+        }
+    }
+
+    if (p.dirt > 0.0) {
+        let d_cell_size = clamp(64.0 * p.scratch_scale, 16.0, 512.0);
+        let dgx = i32(floor(px / d_cell_size));
+        let dgy = i32(floor(py / d_cell_size));
+        let dprob = block_hash01(seed, 20u, dgx, dgy, 0);
+        if (dprob < min(0.35 * p.dirt, 0.8)) {
+            let d_cx = (f32(dgx) + block_hash01(seed, 21u, dgx, dgy, 0)) * d_cell_size;
+            let d_cy = (f32(dgy) + block_hash01(seed, 22u, dgx, dgy, 0)) * d_cell_size;
+            let d_rad = (3.0 + 8.0 * block_hash01(seed, 23u, dgx, dgy, 0)) * p.scratch_scale;
+            let d_dist = sqrt((px - d_cx) * (px - d_cx) + (py - d_cy) * (py - d_cy)) / max(d_rad, 0.5);
+            if (d_dist <= 1.0) {
+                let spot_val = (1.0 - d_dist * d_dist) * p.dirt * 0.5;
+                dirt_r += spot_val * 0.9;
+                dirt_g += spot_val * 0.85;
             }
         }
     }

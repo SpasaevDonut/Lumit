@@ -523,9 +523,9 @@ impl FxEngine {
                 bokeh_layers: op.bokeh_layers,
                 seed: op.seed,
                 mix_amt: op.mix,
-                _pad0: 0.0,
-                _pad1: 0.0,
-                _pad2: 0.0,
+                color_var: op.color_var,
+                scratch_var: op.scratch_var,
+                dirt: op.dirt,
             }),
         );
         out
@@ -545,8 +545,11 @@ pub struct LensDirtOp {
     pub scratch_scale: f32,
     pub defocus: f32,
     pub defocus_var: f32,
+    pub color_var: f32,
     pub chromatic: f32,
     pub scratches: f32,
+    pub scratch_var: f32,
+    pub dirt: f32,
     pub tint: [f32; 4],
     pub vignette: f32,
     pub blend_mode: u32,
@@ -584,9 +587,9 @@ struct LensDirtParams {
     bokeh_layers: u32,
     seed: u32,
     mix_amt: f32,
-    _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
+    color_var: f32,
+    scratch_var: f32,
+    dirt: f32,
 }
 
 

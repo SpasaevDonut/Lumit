@@ -1608,13 +1608,17 @@ stable when they land.
 - `rotation_var` (Float, default `0.0`, slider `0.0`..`1.0`, hard `0.0`..`1.0`): Per-particle rotation randomizer for oval/anamorphic bokeh disks.
 - `defocus` (Float, default `0.5`, slider `0.0`..`1.0`, hard `0.0`..`1.0`): Bokeh disc edge softness vs ring iris highlights.
 - `defocus_var` (Float, default `0.0`, slider `0.0`..`1.0`, hard `0.0`..`1.0`): Per-particle defocus randomizer for mixed sharp iris rings and soft halos.
+- `color_var` (Float, default `0.0`, slider `0.0`..`1.0`, hard `0.0`..`1.0`): Per-particle color jitter for subtle warm/cool highlight color variation across bokeh disks.
 - `chromatic` (Float, default `0.3`, slider `0.0`..`1.0`, hard `0.0`..`2.0`): Spectral color dispersion at bokeh edges and dust spots.
 
 **Group: Scratches & Imperfections** (Disclosure group)
 - `scratches` (Float, default `0.4`, slider `0.0`..`1.0`, hard `0.0`..`1.0`): Micro hairline scratches and glass smudge density.
 - `scratch_scale` (Float, default `1.0`, slider `0.1`..`5.0`, hard `0.01`..`20.0`): Size and length multiplier for micro hairline scratches and dust specks.
+- `scratch_var` (Float, default `0.2`, slider `0.0`..`1.0`, hard `0.0`..`1.0`): Per-hairline length, angle, and curvature variation randomizer.
+- `dirt` (Float, default `0.3`, slider `0.0`..`1.0`, hard `0.0`..`1.0`): Density of organic lens dirt specks and glass smudges.
 - `vignette` (Float, default `0.3`, slider `0.0`..`1.0`, hard `0.0`..`1.0`): Optical lens edge darkening / falloff.
 - `tint` (Colour, default `[1.0, 0.95, 0.85, 1.0]`, edit range `0.0`..`2.0`): Scene-linear RGBA highlight illumination tint.
+
 
 **Group: Background & Sun Light Source** (Disclosure group)
 - `bg_mode` (Choice `["Transparent", "Color", "Sun / Light source"]`, default `0` Transparent): Background rendering mode.

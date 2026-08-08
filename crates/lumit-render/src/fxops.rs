@@ -1027,9 +1027,12 @@ pub fn run_ops(
                         scratch_scale: p.scratch_scale,
                         defocus: p.defocus,
                         defocus_var: p.defocus_var,
+                        color_var: p.color_var,
                         chromatic: p.chromatic,
 
                         scratches: p.scratches,
+                        scratch_var: p.scratch_var,
+                        dirt: p.dirt,
                         tint: p.tint,
                         vignette: p.vignette,
                         blend_mode: p.blend_mode,

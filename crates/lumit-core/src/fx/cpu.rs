@@ -2016,32 +2016,37 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
                         };
 
                         if norm_d <= 1.3 {
+                            let (col_mult_r, col_mult_g, col_mult_b) = if p.color_var > 0.0 {
+                                let cr = 1.0 + (super::block_hash01(layer_seed, 9, cx, cy, 0) - 0.5) * p.color_var * 0.8;
+                                let cg = 1.0 + (super::block_hash01(layer_seed, 10, cx, cy, 0) - 0.5) * p.color_var * 0.8;
+                                let cb = 1.0 + (super::block_hash01(layer_seed, 11, cx, cy, 0) - 0.5) * p.color_var * 0.8;
+                                (cr.max(0.0), cg.max(0.0), cb.max(0.0))
+                            } else {
+                                (1.0, 1.0, 1.0)
+                            };
+
                             if chromatic > 0.0 {
                                 let c_scale = chromatic * 0.15;
                                 let d_red = norm_d / (1.0 + c_scale);
                                 let d_blue = norm_d / (1.0 - c_scale).max(0.01);
-                                let r_val = cpu_bokeh_profile(d_red, p_defocus) * p_intensity;
-                                let g_val = cpu_bokeh_profile(norm_d, p_defocus) * p_intensity;
-                                let b_val = cpu_bokeh_profile(d_blue, p_defocus) * p_intensity;
+                                let r_val = cpu_bokeh_profile(d_red, p_defocus) * p_intensity * col_mult_r;
+                                let g_val = cpu_bokeh_profile(norm_d, p_defocus) * p_intensity * col_mult_g;
+                                let b_val = cpu_bokeh_profile(d_blue, p_defocus) * p_intensity * col_mult_b;
                                 dirt_r += r_val;
                                 dirt_g += g_val;
                                 dirt_b += b_val;
                             } else {
                                 let base_val = cpu_bokeh_profile(norm_d, p_defocus) * p_intensity;
-                                dirt_r += base_val;
-                                dirt_g += base_val;
-                                dirt_b += base_val;
+                                dirt_r += base_val * col_mult_r;
+                                dirt_g += base_val * col_mult_g;
+                                dirt_b += base_val * col_mult_b;
                             }
                         }
-
-
                     }
                 }
             }
 
-
-
-            // 2. Micro hairline scratches & dust specks (controlled by scratch_scale)
+            // 2. Micro hairline scratches & dust specks (controlled by scratch_scale & scratch_var)
             if scratch_amount > 0.0 {
                 let h01 = |ch: u32, bx: i32, by: i32| super::block_hash01(seed, ch, bx, by, 0);
                 let scratch_scale = p.scratch_scale;
@@ -2050,13 +2055,22 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
                 let sgy = (py / scratch_cell_size).floor() as i32;
                 let sprob = h01(10, sgx, sgy);
 
-
                 let max_sprob: f32 = (0.25 * scratch_amount).min(0.8);
                 if sprob < max_sprob {
                     let p1x = (sgx as f32 + h01(11, sgx, sgy)) * scratch_cell_size;
                     let p1y = (sgy as f32 + h01(12, sgx, sgy)) * scratch_cell_size;
-                    let seg_len = (20.0 + 30.0 * h01(13, sgx, sgy)) * scratch_scale;
-                    let angle = h01(14, sgx, sgy) * std::f32::consts::TAU;
+                    let line_len_mult = if p.scratch_var > 0.0 {
+                        1.0 + (h01(13, sgx, sgy) - 0.5) * p.scratch_var * 1.6
+                    } else {
+                        1.0
+                    };
+                    let seg_len = (20.0 + 30.0 * line_len_mult).max(2.0) * scratch_scale;
+                    let angle_var = if p.scratch_var > 0.0 {
+                        (h01(16, sgx, sgy) - 0.5) * p.scratch_var * 3.14159
+                    } else {
+                        0.0
+                    };
+                    let angle = h01(14, sgx, sgy) * std::f32::consts::TAU + angle_var;
                     let p2x = p1x + angle.cos() * seg_len;
                     let p2y = p1y + angle.sin() * seg_len;
 
@@ -2074,6 +2088,27 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
                         dirt_r += line_val;
                         dirt_g += line_val;
                         dirt_b += line_val;
+                    }
+                }
+            }
+
+            // 3. Glass dirt & organic dust spots (controlled by p.dirt)
+            if p.dirt > 0.0 {
+                let h01 = |ch: u32, bx: i32, by: i32| super::block_hash01(seed, ch, bx, by, 0);
+                let d_cell_size = (64.0 * p.scratch_scale).clamp(16.0, 512.0);
+                let dgx = (px / d_cell_size).floor() as i32;
+                let dgy = (py / d_cell_size).floor() as i32;
+                let dprob = h01(20, dgx, dgy);
+                if dprob < (0.35 * p.dirt).min(0.8) {
+                    let d_cx = (dgx as f32 + h01(21, dgx, dgy)) * d_cell_size;
+                    let d_cy = (dgy as f32 + h01(22, dgx, dgy)) * d_cell_size;
+                    let d_rad = (3.0 + 8.0 * h01(23, dgx, dgy)) * p.scratch_scale;
+                    let d_dist = (px - d_cx).hypot(py - d_cy) / d_rad.max(0.5);
+                    if d_dist <= 1.0 {
+                        let spot_val = (1.0 - d_dist * d_dist) * p.dirt * 0.5;
+                        dirt_r += spot_val * 0.9;
+                        dirt_g += spot_val * 0.85;
+                        dirt_b += spot_val * 0.75;
                     }
                 }
             }
