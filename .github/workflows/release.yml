@@ -13,7 +13,7 @@
 # (same FFmpeg 7.1 shared build, same LLVM 18 pin, same Flutter 3.44.7); when
 # one changes, change the other.
 #
-# The macOS artefacts are Developer ID signed, notarised and stapled (K-309)
+# The macOS artefacts are Developer ID signed, notarised and stapled (K-310)
 # when the six signing secrets are present; without them make-dmg.sh falls back
 # to the ad-hoc signature it always used, so forks and a secretless repository
 # still build. The Windows installer is unsigned either way — that waits on a
@@ -198,7 +198,7 @@ jobs:
     env:
       # A step's `if` cannot read the `secrets` context, only `env`, so the
       # signing gate below tests these. Absent secrets leave them empty and
-      # make-dmg.sh signs ad hoc exactly as it did before K-309.
+      # make-dmg.sh signs ad hoc exactly as it did before K-310.
       MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
       APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
       APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
@@ -217,6 +217,18 @@ jobs:
           flutter-version: 3.44.7
           channel: stable
           cache: true
+      # The app icon is an Icon Composer document (K-309): actool needs Xcode 26
+      # or newer to compile it. Mirrors ci.yml's `flutter-macos` job.
+      - name: Select the newest Xcode (26+ for the .icon)
+        run: |
+          latest="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          sudo xcode-select -s "$latest"
+          ver="$(xcodebuild -version | head -1 | awk '{print $2}')"
+          echo "Using Xcode $ver ($latest)"
+          [ "${ver%%.*}" -ge 26 ] || {
+            echo "::error::Xcode $ver cannot compile assets/brand/lumit-icon.icon (needs 26+)"
+            exit 1
+          }
       - name: Import the Developer ID certificate
         if: env.MACOS_SIGN_IDENTITY != ''
         env:
@@ -246,7 +258,6 @@ jobs:
           security list-keychains -d user -s "$keychain" login.keychain-db
           echo "$API_KEY_P8_BASE64" | base64 -d > "$RUNNER_TEMP/apple-api-key.p8"
           echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/apple-api-key.p8" >> "$GITHUB_ENV"
-
       - name: Build the disk image
         run: |
           version="${GITHUB_REF_NAME#v}"

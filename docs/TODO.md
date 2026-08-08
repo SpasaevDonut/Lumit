@@ -500,13 +500,19 @@ list, not a re-statement of the roadmap.
     layers (§6.1 reserves the values; both kinds borrow today).
 - **Platform.** The macOS pass - native menu bar, VideoToolbox, ProRes
     (K-033); it also owes `application:openFile:` (a double-clicked
-    `.lum` opening, K-252) and adding `packaging/macos/*.icns` to the bundle's
-    resources. The Metal/IOSurface Viewer path is unverified on real hardware.
-    Developer ID signing and notarisation landed (K-309) but have never run —
+    `.lum` opening, K-252). The document `.icns` files now ship inside the
+    bundle, so the icons themselves are done.
+    The Metal/IOSurface Viewer path is unverified on real hardware.
+    Developer ID signing and notarisation landed (K-310) but have never run —
     the first tag after that entry is their first execution, and a pre-release
     tag is the way to rehearse it. Signing the Windows installer is still
     blocked on buying a certificate, so the installer ships unsigned and
     SmartScreen still warns.
+- **Website.** The release-notes page at `/releases` is built and empty: the notes
+    themselves are written by hand, one Markdown file per version under
+    `web/src/content/releases` (copy `_template.md`; see `web/README.md`). Until
+    the first one lands the page points at GitHub releases. Delete this line when
+    v0.1.0's notes are written.
 - **Phase 2 - Retime.** Flow interpolation policies; automatic beat snapping
     across edit/retime points ([04-RETIMING.md](04-RETIMING.md),
     [09-AUDIO.md](09-AUDIO.md)).

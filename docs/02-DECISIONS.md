@@ -6988,7 +6988,40 @@ and the commit would put it back. One layer at a time, as with a move: the engin
 one layer into its clone. A layer whose mask *and* art are dragged together previews the
 art; the mask catches up on release.
 
-**K-309 · DECIDED · The macOS artefacts are Developer ID signed and notarised in CI;
+**K-309 · DECIDED · The macOS application icon is a layer stack, not a rendered picture:
+`lumit-icon.icon`, compiled by Xcode.** Extends K-251's brand set (the artwork is
+unchanged) and takes the icon half of K-033's macOS pass. macOS 26 composites app icons
+itself — the squircle mask, the bevel, the shadow, the specular highlight that tracks the
+pointer, and the dark, tinted and clear appearances a user can put the whole Dock into.
+None of that is available to a flat image: the system needs the pieces separately, so the
+question was never whether to render better PNGs.
+
+- **The source is `assets/brand/lumit-icon.icon`**, an Icon Composer document holding the
+  mark's six pieces as SVG layers (tile, bloom, blue key, magenta key, core glow, core
+  diamond) and an `icon.json` recording the stack — which layers are glass, per-appearance
+  opacity, shadow depth. The flat `lumit-icon.svg` stays in the brand set as the reference
+  drawing and the single-image hand-out, but nothing ships from it any more.
+- **The layers omit their own lighting**: no corner radius on the tile, no drop shadow
+  under the keys, and no dark rim stroke around them — that stroke exists in the flat
+  icon to imply a lit edge, and Liquid Glass bevels and lights each layer for real. All
+  three are supplied by the system per appearance, and a painted-in copy doubles up in
+  all of them (docs/15-DESIGN.md, brand).
+- **Xcode compiles it, so there is nothing to regenerate.** The `.icon` is a resource of
+  the Runner target — referenced in place at `../../assets/brand/`, not copied into
+  `flutter_ui/`, so the brand folder stays the one home for artwork — and
+  `ASSETCATALOG_COMPILER_APPICON_NAME` names it. `actool` also emits a flat `.icns` from
+  the same layers for Macs before 26, verified against the project's 10.15 deployment
+  target, so one source covers every supported macOS.
+- **`Runner/Assets.xcassets` and its `AppIcon.appiconset` are deleted**, and
+  `scripts/gen-icons.py` no longer writes macOS PNGs. The catalog held nothing else, and
+  the appiconset was the same artwork by a second route: two sources of one drawing is how
+  they come to disagree. The script keeps the Windows `.ico` files and the document
+  `.icns` files, which are unaffected.
+
+This is the icon only. Signing and notarisation stay open under K-033: the disk image is
+still ad-hoc signed, which Gatekeeper reads as unsigned.
+
+**K-310 · DECIDED · The macOS artefacts are Developer ID signed and notarised in CI;
 the Windows installer stays unsigned.** Supersedes the fourth paragraph of **K-304**
 (2026-08-07), which recorded that neither artefact was signed and parked both behind a
 purchase. The Apple Developer Program membership has been bought, so half of that
