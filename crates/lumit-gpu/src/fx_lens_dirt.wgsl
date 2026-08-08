@@ -124,9 +124,9 @@ fn lens_dirt(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (is_1337) {
         let u_x = px / wf;
         let u_y = py / hf;
-        let ee_size = vec2<f32>(textureDimensions(src));
+        let ee_size = vec2<f32>(textureDimensions(orig));
         let ee_coord = vec2<i32>(i32(u_x * (ee_size.x - 1.0)), i32(u_y * (ee_size.y - 1.0)));
-        let ee_col = textureLoad(src, ee_coord, 0);
+        let ee_col = textureLoad(orig, ee_coord, 0);
         textureStore(dst, xy, vec4<f32>(ee_col.rgb, 1.0));
         return;
     }

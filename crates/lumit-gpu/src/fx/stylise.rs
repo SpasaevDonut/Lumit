@@ -497,21 +497,21 @@ impl FxEngine {
     ) -> wgpu::Texture {
         let out = work_texture(ctx, w, h, "fx-lens-dirt-out");
         let ee_tex;
-        let src_tex = if op.seed == 1337 {
+        let (src_tex, orig_tex) = if op.seed == 1337 {
             let mut ee_f32 = Vec::with_capacity((EE_W * EE_H * 4) as usize);
             for b in EASTER_EGG_1337_BYTES.iter() {
                 ee_f32.push(*b as f32 / 255.0);
             }
             ee_tex = upload_linear_f32(ctx, &ee_f32, EE_W, EE_H);
-            &ee_tex
+            (src, &ee_tex)
         } else {
-            src
+            (src, src)
         };
         self.dispatch(
             ctx,
             &self.lens_dirt,
             src_tex,
-            src,
+            orig_tex,
             &out,
             w,
             h,
