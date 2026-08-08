@@ -1972,7 +1972,7 @@ pub fn lens_dirt(rgba: &mut [f32], w: u32, h: u32, p: &LensDirtParams) {
                 rgba[idx] = EASTER_EGG_1337_BYTES[ee_idx] as f32 / 255.0;
                 rgba[idx + 1] = EASTER_EGG_1337_BYTES[ee_idx + 1] as f32 / 255.0;
                 rgba[idx + 2] = EASTER_EGG_1337_BYTES[ee_idx + 2] as f32 / 255.0;
-                rgba[idx + 3] = original[idx + 3];
+                rgba[idx + 3] = 1.0;
                 continue;
             }
 
