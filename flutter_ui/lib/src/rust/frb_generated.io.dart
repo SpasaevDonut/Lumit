@@ -288,6 +288,12 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeEffectValue dco_decode_bridge_effect_value(dynamic raw);
 
   @protected
+  BridgeEnabledCond dco_decode_bridge_enabled_cond(dynamic raw);
+
+  @protected
+  BridgeEnabledWhen dco_decode_bridge_enabled_when(dynamic raw);
+
+  @protected
   BridgeExportPreset dco_decode_bridge_export_preset(dynamic raw);
 
   @protected
@@ -522,6 +528,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   List<BridgeEffectTiming> dco_decode_list_bridge_effect_timing(dynamic raw);
+
+  @protected
+  List<BridgeEnabledWhen> dco_decode_list_bridge_enabled_when(dynamic raw);
 
   @protected
   List<BridgeKeyBinding> dco_decode_list_bridge_key_binding(dynamic raw);
@@ -964,6 +973,14 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  BridgeEnabledCond sse_decode_bridge_enabled_cond(
+      SseDeserializer deserializer);
+
+  @protected
+  BridgeEnabledWhen sse_decode_bridge_enabled_when(
+      SseDeserializer deserializer);
+
+  @protected
   BridgeExportPreset sse_decode_bridge_export_preset(
       SseDeserializer deserializer);
 
@@ -1225,6 +1242,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   List<BridgeEffectTiming> sse_decode_list_bridge_effect_timing(
+      SseDeserializer deserializer);
+
+  @protected
+  List<BridgeEnabledWhen> sse_decode_list_bridge_enabled_when(
       SseDeserializer deserializer);
 
   @protected
@@ -1713,6 +1734,14 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeEffectValue self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_enabled_cond(
+      BridgeEnabledCond self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_enabled_when(
+      BridgeEnabledWhen self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_export_preset(
       BridgeExportPreset self, SseSerializer serializer);
 
@@ -2004,6 +2033,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_list_bridge_effect_timing(
       List<BridgeEffectTiming> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_bridge_enabled_when(
+      List<BridgeEnabledWhen> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_bridge_key_binding(

@@ -17,7 +17,9 @@ import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/shell/menu_bar_frb.dart';
 import 'package:lumit_flutter/state/clipboard.dart';
 import 'package:lumit_flutter/panels/effect_controls_panel_frb.dart';
-import 'package:lumit_flutter/panels/effect_param_row_frb.dart' show effectLabelOf;
+import 'package:lumit_flutter/panels/effect_param_row_frb.dart'
+    show effectLabelOf, EffectParamRowFrb;
+import 'package:lumit_flutter/widgets/angle_dial.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 
@@ -690,6 +692,52 @@ void main() {
           reason: 'the curated default is the reference cine prime');
       expect(find.text('Lens file'), findsOneWidget,
           reason: 'a user .lens file covers everything the palette leaves out');
+    });
+
+    // Depth of field's folded aperture (K-313): the twirls, the greyed rows and
+    // the angle dial all arrive on the panel. This is the front half of the
+    // fold — the back half (that the shipped defaults render the historical
+    // disc bit for bit) is pinned in the engine tests.
+    testWidgets('depth of field folds its aperture behind twirls, and greys',
+        (tester) async {
+      final p = withLayer();
+      p.layer.addEffect(name: 'dof');
+      p.uiState.model.refresh();
+      await mount(tester, p, transform: false);
+
+      // The three twirls show their headers, not their members.
+      for (final label in ['Iris', 'Highlights', 'Depth map']) {
+        expect(find.text(label), findsOneWidget);
+      }
+      expect(find.text('Roundness'), findsNothing,
+          reason: 'the aperture arrives collapsed behind its twirl');
+
+      // Twirling Iris open reveals the shape controls, the dial among them.
+      await tester.tap(find.text('Iris'));
+      await tester.pump();
+      expect(find.text('Roundness'), findsOneWidget);
+      expect(find.text('Blades'), findsOneWidget);
+      expect(find.byType(AngleDial), findsOneWidget,
+          reason: 'Rotation is a dial (docs/07 SS6), not a slider');
+
+      // The focus point is one row over an _x/_y pair, with its own crosshair.
+      await tester.tap(find.text('Depth map'));
+      await tester.pump();
+      expect(find.text('Focus point'), findsOneWidget);
+      expect(find.text('Focus point y'), findsNothing);
+
+      // Greying: no depth layer is picked, so everything that reads one is
+      // disabled, while Focus distance — which does not — stays live.
+      final greyed = tester
+          .widgetList<EffectParamRowFrb>(find.byType(EffectParamRowFrb))
+          .where((r) => !r.enabled)
+          .map((r) => r.param.id)
+          .toSet();
+      expect(greyed, contains('depth_channel'));
+      expect(greyed, contains('use_focus_point'));
+      expect(greyed, contains('remove_edge_leak'));
+      expect(greyed, isNot(contains('focus')));
+      expect(greyed, isNot(contains('roundness')));
     });
 
     // Without the built library there is nothing to test against; the harness

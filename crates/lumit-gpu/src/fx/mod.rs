@@ -23,6 +23,10 @@ mod temporal;
 pub use blur::*;
 pub use colour::*;
 pub use common::*;
+// `dof` exposes its `impl FxEngine` methods, which are reachable without a
+// re-export — but it also houses the `DofOp` parameter struct that carries the
+// effect's two dozen scalars, and a public type does need naming.
+pub use dof::*;
 pub use lens_flare::*;
 pub use split::*;
 pub use stylise::*;

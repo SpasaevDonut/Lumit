@@ -1,4 +1,4 @@
-use super::{MatteKeyParams, MbView, Resolved};
+use super::{MatteKeyParams, MbView, Resolved, MAX_BLADES};
 
 /// Apply one resolved effect to an RGBA f32 image (premultiplied,
 /// linear light), in place.
@@ -211,12 +211,12 @@ pub fn apply(rgba: &mut [f32], w: u32, h: u32, fx: &Resolved) {
         // The §1.6 oracle reference is `lut::Lut3d::sample`, exercised
         // directly in the lumit-gpu test, not through cpu::apply.
         Resolved::Lut { .. } => {}
-        // Depth of field reads a depth texture (the referenced layer
-        // rendered alone) that never reaches this single-buffer dispatcher,
-        // so — like Echo, Motion blur and LUT — the CPU-degradation rung
-        // renders it as identity. The §1.6 oracle reference is
-        // `dof_reference` in the lumit-gpu test (the depth is a texture, not
-        // a number), not through cpu::apply.
+        // Depth of field. The depth is a texture (the referenced layer
+        // rendered alone) that never reaches this single-buffer dispatcher, so
+        // the effect is identity here — like Echo, Motion blur and LUT — and
+        // its §1.6 oracle runs through `dof` directly from the lumit-gpu test,
+        // which can upload one. An UNSET depth reference is the effect's
+        // labelled no-op on every path, so there is no second case to serve.
         Resolved::Dof { .. } => {}
         // Lens flare is GPU-only (K-256, the K-114 LUT precedent): its render
         // pass and baked textures never reach this single-buffer dispatcher,
@@ -1524,6 +1524,418 @@ pub fn gaussian_weights(radius_px: f32) -> Vec<f32> {
         *v /= sum;
     }
     w
+}
+
+/// Depth of field's resolved scalars, gathered into one struct.
+///
+/// Two dozen arguments is not a signature anyone can call correctly, and the
+/// WGSL kernel's uniform has the same fields in the same order — keeping them
+/// together is what lets the §1.6 oracle set up both paths from one value and
+/// makes a field added to one side an obvious omission on the other.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DofParams {
+    /// The in-focus depth, 0..1, when `use_focus_point` is false.
+    pub focus: f32,
+    /// Half-width of the sharp band around focus, 0..1.
+    pub range: f32,
+    /// Per-side maximum circle-of-confusion radius in raster pixels. With no
+    /// depth bound the far side is the one uniform radius.
+    pub near_aperture: f32,
+    pub far_aperture: f32,
+    pub blade_normals: [[f32; 2]; MAX_BLADES],
+    pub blade_count: u32,
+    pub apothem2: f32,
+    /// 1 is the circle and takes the plain `r² ≤ coc²` test.
+    pub roundness: f32,
+    pub rim: f32,
+    pub aspect_scale: [f32; 2],
+    pub threshold: f32,
+    /// `2^(Exposure/12)`; **1 is the plain arithmetic mean** and skips the
+    /// tonal split entirely.
+    pub bokeh_power: f32,
+    pub repeat_edge: bool,
+    pub depth_channel: u32,
+    pub depth_invert: bool,
+    pub use_focus_point: bool,
+    pub focus_point: [f32; 2],
+    /// The Profile control, resolved: a multiplier on the depth distance before
+    /// the ramp. 1 is the plain full-range falloff; above 1 the transition
+    /// bites sooner, below 1 it stretches past the range.
+    pub gamma: f32,
+    pub remove_edge_leak: f32,
+    pub detect_edge_threshold: f32,
+    /// 0 Rendered, 1 Depth map, 2 Focus map.
+    pub display: u32,
+    pub mix: f32,
+}
+
+/// One channel of an auxiliary picture, by the shared
+/// [`CHANNEL_OPTIONS`](super::CHANNEL_OPTIONS) index — how a depth pass is
+/// reduced to the single number an effect reads.
+///
+/// Arithmetic only, deliberately: no `atan2` for hue, no `pow`, nothing whose
+/// exact form differs between Rust and WGSL (§1.6). Hue is the standard
+/// piecewise-linear sixth-of-a-turn form rather than the polar one, and every
+/// divide is guarded — a grey pixel has no hue and zero chroma must not become
+/// a NaN in the middle of a depth read.
+pub fn channel_of(rgba: &[f32], channel: u32) -> f32 {
+    let (r, g, b, a) = (rgba[0], rgba[1], rgba[2], rgba[3]);
+    match channel {
+        1 => a,
+        2 => r,
+        3 => g,
+        4 => b,
+        // 0 and anything unknown: Rec.709 luminance, the same weights every
+        // other effect in the suite uses. Right for a grey map whatever
+        // combination of channels it was written to.
+        _ => 0.2126 * r + 0.7152 * g + 0.0722 * b,
+    }
+}
+
+/// Depth of field (docs/08 §3.22) — the CPU reference: the §1.6 oracle the WGSL
+/// kernel must agree with, and the degradation ladder's fallback rung (K-019).
+///
+/// **In plain terms.** For every pixel it works out how far out of focus that
+/// pixel is, opens an aperture of that size around it, and averages what it can
+/// see through it. The aperture is a polygon rather than a disc when you ask for
+/// one, and the average is a *power* mean rather than a flat one when you ask
+/// for that — which is what keeps a small bright thing from being averaged into
+/// nothing and lets it bloom into a ball instead.
+///
+/// `depth` is the referenced layer's picture at this raster, **RGBA** rather
+/// than a single channel, because which channel carries depth is one of this
+/// effect's controls. `None` is the unbound case: the whole frame defocuses
+/// uniformly at `far_aperture`, with every part of the depth model already
+/// neutralised by resolve. That case needs no texture, so this rung serves it
+/// properly rather than dropping the effect (K-019 as written); the bound case
+/// needs the depth texture and reaches the oracle through `lumit_gpu::fx::dof`.
+///
+/// **Every added control contributes nothing at its neutral value, and the
+/// branches below are why** (K-313). Roundness 1 takes the plain circle test,
+/// Concentration 0 and Remove edge leak 0 take the *unweighted* accumulation,
+/// and Exposure 0 (power 1) takes the *unsplit* one — rather than multiplying
+/// every tap by one and splitting it at a threshold it never crosses. A
+/// weighted gather computes `Σ(c·w)/Σw`, which is not an identity in IEEE 754
+/// even when every `w` is 1; nor is `min(c,t) + max(c−t,0)` reliably `c`. At
+/// their defaults these three branches leave exactly the box-weighted disc
+/// average this effect has always computed, to the bit — which is what let the
+/// aperture land inside the shipped effect instead of beside it.
+pub fn dof(rgba: &mut [f32], depth: Option<&[f32]>, w: u32, h: u32, p: &DofParams) {
+    let wi = w as i32;
+    let hi = h as i32;
+    let original = rgba.to_vec();
+    let bound = depth.is_some();
+
+    // The depth at one pixel, post-channel-pick and post-invert.
+    let depth_at = |dm: &[f32], i: usize| {
+        let d = channel_of(&dm[i * 4..i * 4 + 4], p.depth_channel);
+        if p.depth_invert {
+            1.0 - d
+        } else {
+            d
+        }
+    };
+
+    // Focus is either the number or whatever depth sits under the point — the
+    // reason Focus distance greys out in the panel. The point is in this
+    // raster's pixels already (resolve scaled it), and is clamped rather than
+    // wrapped: a point dragged off the frame focuses on the nearest edge.
+    let focus = match (depth, p.use_focus_point) {
+        (Some(dm), true) => {
+            let fx = (p.focus_point[0].floor() as i32).clamp(0, wi - 1);
+            let fy = (p.focus_point[1].floor() as i32).clamp(0, hi - 1);
+            depth_at(dm, (fy * wi + fx) as usize)
+        }
+        _ => p.focus,
+    };
+
+    let falloff = |d: f32| dof_falloff(d, focus, p.range, p.gamma);
+
+    // The gather is unweighted unless something actually asks for weights, and
+    // then it is weighted for every tap. Two paths, not one path with a factor.
+    let weighted = p.rim != 0.0 || (p.remove_edge_leak > 0.0 && bound);
+    // Likewise the tonal split: at power 1 the mean is the plain arithmetic one
+    // and the split is skipped rather than performed and undone.
+    let tonal = p.bokeh_power != 1.0;
+
+    for y in 0..hi {
+        for x in 0..wi {
+            let pi = (y * wi + x) as usize;
+            let oi = pi * 4;
+            let d_centre = depth.map_or(0.0, |dm| depth_at(dm, pi));
+            // The diagnostic views (mirror the kernel): write the view straight
+            // out, ignoring the gather, the composite and Mix alike. Resolve
+            // forces Rendered when no depth is bound, so these only ever run
+            // with a real depth pass behind them.
+            if p.display == 1 {
+                // Depth map: what the effect is actually reading, after the
+                // channel pick and the invert — the view that says whether the
+                // pass is aligned, upside down, or crushed to its two ends.
+                rgba[oi] = d_centre;
+                rgba[oi + 1] = d_centre;
+                rgba[oi + 2] = d_centre;
+                rgba[oi + 3] = 1.0;
+                continue;
+            }
+            if p.display == 2 {
+                // Focus map: white where sharp, darkening out of focus — where
+                // the effect thinks focus landed and how fast it falls away.
+                let m = 1.0 - falloff(d_centre);
+                rgba[oi] = m;
+                rgba[oi + 1] = m;
+                rgba[oi + 2] = m;
+                rgba[oi + 3] = 1.0;
+                continue;
+            }
+            // With no depth bound the frame defocuses uniformly; with one, the
+            // per-side aperture scales the ramp. The near/far select flips only
+            // at `d == focus`, where the falloff is 0, so the radius stays
+            // continuous and the §1.6 oracle holds across it.
+            let coc = match depth {
+                None => p.far_aperture,
+                Some(_) => {
+                    let ap = if d_centre < focus {
+                        p.near_aperture
+                    } else {
+                        p.far_aperture
+                    };
+                    ap * falloff(d_centre)
+                }
+            };
+            // In focus: the aperture is a point, so the pixel keeps itself,
+            // untouched by the gather, the composite and Mix alike — which is
+            // also the only way a sharp pixel stays bit-exact under a weighted
+            // gather (a single weighted tap computes `(c·w)/w`).
+            if coc <= 0.0 {
+                continue;
+            }
+            let coc2 = coc * coc;
+            let ri = coc.ceil() as i32;
+
+            // **Pass one: the brightest excess in the aperture, per channel** —
+            // and only when the tonal split is on at all.
+            //
+            // The power mean cannot be computed as `(Σ c^p / n)^(1/p)` in f32.
+            // At the top of the Exposure slider (`p ≈ 5.7`, and far worse under
+            // an earlier fit that put it at 32) a channel at scene-linear 0.08
+            // raises to 8e-36 and one at 0.05 to 2e-42, below the smallest
+            // normal. Averaging those and rooting them back yields zero, so
+            // **every channel below roughly 0.116 linear collapses to black**,
+            // per channel independently, which reads as black holes and
+            // saturated speckle rather than as a blur. A floor on the *mean*
+            // cannot save it: the underflow has already happened in the taps.
+            //
+            // Factoring the largest excess `M` out first is the standard fix and
+            // an exact identity:
+            //
+            //     (Σ w·c^p / Σw)^(1/p)  =  M · (Σ w·(c/M)^p / Σw)^(1/p)
+            //
+            // Every `c/M` is then in `[0, 1]`, the brightest tap contributes
+            // exactly 1, and the mean is bounded below by that tap's share of
+            // the weight — so nothing underflows and no floor is needed at all.
+            // It costs a second walk of the aperture, which is why this is two
+            // loops rather than one — and why an untonal gather skips it.
+            let mut peak = [0.0f32; 4];
+            if tonal {
+                for dy in -ri..=ri {
+                    for dx in -ri..=ri {
+                        if in_aperture_shape(dx as f32, dy as f32, coc2, p).is_none() {
+                            continue;
+                        }
+                        let (sx, sy) = if p.repeat_edge {
+                            ((x + dx).clamp(0, wi - 1), (y + dy).clamp(0, hi - 1))
+                        } else {
+                            let (ox, oy) = (x + dx, y + dy);
+                            if ox < 0 || oy < 0 || ox >= wi || oy >= hi {
+                                continue;
+                            }
+                            (ox, oy)
+                        };
+                        let si = ((sy * wi + sx) * 4) as usize;
+                        for c in 0..4 {
+                            peak[c] = peak[c].max((original[si + c] - p.threshold).max(0.0));
+                        }
+                    }
+                }
+            }
+
+            // Pass two: the gather proper.
+            let mut acc_lo = [0.0f32; 4];
+            let mut acc_hi = [0.0f32; 4];
+            let mut n = 0.0f32;
+            for dy in -ri..=ri {
+                for dx in -ri..=ri {
+                    let Some(r2) = in_aperture_shape(dx as f32, dy as f32, coc2, p) else {
+                        continue;
+                    };
+                    // Edge policy. Transparent contributes nothing *and keeps
+                    // its weight*, so a gather running off the frame darkens
+                    // toward the edge instead of brightening — the same reading
+                    // `edge_index` gives the blur family.
+                    let (sx, sy) = if p.repeat_edge {
+                        ((x + dx).clamp(0, wi - 1), (y + dy).clamp(0, hi - 1))
+                    } else {
+                        let ox = x + dx;
+                        let oy = y + dy;
+                        if ox < 0 || oy < 0 || ox >= wi || oy >= hi {
+                            n += if weighted {
+                                tap_weight(r2, coc2, p)
+                            } else {
+                                1.0
+                            };
+                            continue;
+                        }
+                        (ox, oy)
+                    };
+                    let si = ((sy * wi + sx) * 4) as usize;
+
+                    let mut wgt = if weighted {
+                        tap_weight(r2, coc2, p)
+                    } else {
+                        1.0
+                    };
+                    // Edge leak: a tap sitting across a depth discontinuity, in
+                    // *front* of this pixel, is sharp foreground colour bleeding
+                    // into a defocused background — the standard artefact of
+                    // gathering across an edge. Pull it back rather than drop
+                    // it, so the suppression is continuous in the slider.
+                    if weighted && p.remove_edge_leak > 0.0 {
+                        if let Some(dm) = depth {
+                            let dt = depth_at(dm, (sy * wi + sx) as usize);
+                            if (dt - d_centre).abs() > p.detect_edge_threshold && dt < d_centre {
+                                wgt *= 1.0 - p.remove_edge_leak;
+                            }
+                        }
+                    }
+
+                    for c in 0..4 {
+                        let v = original[si + c];
+                        if tonal {
+                            acc_lo[c] += v.min(p.threshold) * wgt;
+                            // Normalised by the brightest excess, so the ratio
+                            // is in [0, 1] and its power cannot underflow (see
+                            // pass one). A peak of zero means nothing in the
+                            // aperture is above the threshold at all; the excess
+                            // term is then zero and the plain average is the
+                            // whole answer.
+                            if peak[c] > 0.0 {
+                                let e = (v - p.threshold).max(0.0) / peak[c];
+                                acc_hi[c] += e.powf(p.bokeh_power) * wgt;
+                            }
+                        } else {
+                            // The historical accumulation, unchanged: one sum,
+                            // no split, and with `wgt` a literal 1 on the
+                            // unweighted path the multiply is exact.
+                            acc_lo[c] += v * wgt;
+                        }
+                    }
+                    n += wgt;
+                }
+            }
+            if n <= 0.0 {
+                continue;
+            }
+            for c in 0..4 {
+                // `M · (mean of the normalised powers)^(1/p)` — the identity
+                // pass one factored out, put back together. No floor: the
+                // brightest tap contributes exactly 1 to the sum, so the mean is
+                // at least its share of the weight and nothing underflows.
+                let rooted = if tonal && peak[c] > 0.0 {
+                    peak[c] * (acc_hi[c] / n).powf(1.0 / p.bokeh_power)
+                } else {
+                    0.0
+                };
+                let v = acc_lo[c] / n + rooted;
+                // The defocused result replaces the original, blended by Mix.
+                // There is no composite menu: an effect that wants its balls
+                // added over a sharp plate is an adjustment layer with a blend
+                // mode, which is the mechanism that already exists for it.
+                let o = original[oi + c];
+                rgba[oi + c] = o * (1.0 - p.mix) + v * p.mix;
+            }
+        }
+    }
+}
+
+/// The defocus falloff `s` in 0..1: 0 inside the sharp band
+/// `|depth − focus| ≤ range`, ramping smoothstep to 1 as the depth distance
+/// reaches the far extreme. Shared by the circle-of-confusion radius and the
+/// Focus-map view, and mirrors `fx_dof.wgsl`'s operation for operation.
+///
+/// **`falloff` is what the Profile control sets, and it is the difference
+/// between usable and all-or-nothing.** Without it the ramp reaches full blur
+/// only at a depth *distance of the whole range*, which sounds gentle and is the
+/// opposite. A real depth pass puts nearly all of its content in a narrow band
+/// with one near object well outside it, so focusing anywhere leaves the scene
+/// almost sharp and that one object almost fully blurred, with nothing in
+/// between. Scaling the distance first is what puts the transition where the
+/// content actually is: above 1 the ramp bites sooner (a hard, shallow depth of
+/// field), below 1 it stretches out past the range so even the far extreme is
+/// only softened. The host computes it, so the kernel sees a plain multiplier
+/// and no `exp2` — and its neutral is exactly 1, a multiply that is exact in
+/// IEEE 754, which is why this one control needs no branch around it.
+///
+/// The smoothstep is longhand rather than the built-in: its exact form is not
+/// guaranteed to match across the two languages, and §1.6 measures exactly that.
+pub fn dof_falloff(d: f32, focus: f32, range: f32, falloff: f32) -> f32 {
+    let dist = (d - focus).abs();
+    let denom = (1.0 - range).max(1e-4);
+    let e = (((dist - range) / denom) * falloff).clamp(0.0, 1.0);
+    e * e * (3.0 - 2.0 * e)
+}
+
+/// Whether a tap at offset `(dx, dy)` falls inside the aperture — the bool half
+/// of [`in_aperture_shape`], public so the aperture's geometry can be tested
+/// directly. The scan box's correctness rests on every accepted tap lying inside
+/// the circle of radius `√coc2`, and that is a property of the shape, not of any
+/// picture it is run over.
+pub fn dof_tap_inside(dx: f32, dy: f32, coc2: f32, p: &DofParams) -> bool {
+    in_aperture_shape(dx, dy, coc2, p).is_some()
+}
+
+/// One tap's radial weight (Concentration). Written multiplicatively in `coc2`
+/// so there is no division and no guard at `coc = 0`; the weights are only ever
+/// used as a ratio, so the common `coc2` factor cancels in the mean.
+///
+/// 0 is the flat disc — but the caller branches around this entirely at 0
+/// rather than trusting `w = coc2` to cancel exactly, because it does not: a
+/// constant factor through a sum is not an IEEE identity.
+fn tap_weight(r2: f32, coc2: f32, p: &DofParams) -> f32 {
+    (coc2 + p.rim * (2.0 * r2 - coc2)).max(0.0)
+}
+
+/// The tap's deformed `r²` when it is inside the aperture, else `None`.
+///
+/// **Roundness 1 with no Deform is the plain circle, and takes the plain test.**
+/// That is not an optimisation, it is the back-compatibility guarantee: the
+/// polygon form multiplies both sides of the comparison by `apothem2`, and
+/// scaling both sides of a floating-point comparison by the same positive
+/// constant can change its answer on a boundary tap. The circle path is the
+/// literal `dx² + dy² ≤ coc²` this effect has always used, so the default
+/// aperture gathers exactly the taps it always gathered.
+///
+/// Below that, two things shape the region. **Roundness reaches below zero**:
+/// the same test with a negative coefficient rewards distance from the centre,
+/// so the edge midpoints pull in while the vertices stay exactly on the circle —
+/// a star, with no new maths and no branch. **Deform** multiplies the tap offset
+/// before the test, and its multipliers are always ≥ 1, so the aperture only
+/// ever shrinks on one axis. Both matter for the same reason: the region stays
+/// inscribed in the circle of confusion at every setting, so the `ceil(coc)`
+/// scan box — and the effect's declared ROI — remain correct bounds.
+fn in_aperture_shape(dx: f32, dy: f32, coc2: f32, p: &DofParams) -> Option<f32> {
+    if p.roundness >= 1.0 && p.aspect_scale[0] == 1.0 && p.aspect_scale[1] == 1.0 {
+        let r2 = dx * dx + dy * dy;
+        return (r2 <= coc2).then_some(r2);
+    }
+    let ax = dx * p.aspect_scale[0];
+    let ay = dy * p.aspect_scale[1];
+    let r2 = ax * ax + ay * ay;
+    let mut m = 0.0f32;
+    for n in p.blade_normals.iter().take(p.blade_count as usize) {
+        m = m.max(ax * n[0] + ay * n[1]);
+    }
+    let inside = (1.0 - p.roundness) * m * m + p.roundness * p.apothem2 * r2 <= p.apothem2 * coc2;
+    inside.then_some(r2)
 }
 
 /// Resolve a sample index under an edge policy; None = transparent.

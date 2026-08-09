@@ -100,13 +100,13 @@ pub struct SharpenOp {
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct BlurParams {
-    dir: [f32; 2],
-    radius: f32,
-    sigma: f32,
-    edge: u32,
-    mix_amt: f32,
-    _pad: [f32; 2],
+pub(super) struct BlurParams {
+    pub(super) dir: [f32; 2],
+    pub(super) radius: f32,
+    pub(super) sigma: f32,
+    pub(super) edge: u32,
+    pub(super) mix_amt: f32,
+    pub(super) _pad: [f32; 2],
 }
 
 #[repr(C)]
@@ -162,12 +162,12 @@ pub struct GlowOp {
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct GlowParams {
-    tint: [f32; 4],
-    threshold: f32,
-    knee: f32,
-    intensity: f32,
-    mix_amt: f32,
+pub(super) struct GlowParams {
+    pub(super) tint: [f32; 4],
+    pub(super) threshold: f32,
+    pub(super) knee: f32,
+    pub(super) intensity: f32,
+    pub(super) mix_amt: f32,
 }
 
 impl FxEngine {

@@ -234,9 +234,11 @@ pub fn run_ops(
     let mut tex = tex;
     // The k-th Resolved::Lut op consumes the k-th `luts` slot (the whole
     // threading contract — see resolve_stack's `lut` arm and CompLayerDraw's
-    // lut_files); a slot is present only when its `.cube` file loaded. The
-    // k-th Resolved::Dof op consumes the k-th `layer_inputs` slot the same way
-    // (its depth-layer render).
+    // lut_files); a slot is present only when its `.cube` file loaded. The k-th
+    // layer-input-consuming op consumes the k-th
+    // `layer_inputs` slot the same way. Both share one counter because
+    // `build.rs`'s `layer_inputs_for` enumerates them with one predicate, in one
+    // order; two counters would let the two sides drift apart silently.
     let mut lut_i = 0usize;
     let mut dof_i = 0usize;
     let mut flare_i = 0usize;
@@ -863,6 +865,22 @@ pub fn run_ops(
                 near_aperture,
                 far_aperture,
                 depth_invert,
+                blade_normals,
+                blade_count,
+                apothem2,
+                roundness,
+                rim,
+                aspect_scale,
+                threshold,
+                bokeh_power,
+                repeat_edge,
+                depth_bound,
+                depth_channel,
+                use_focus_point,
+                focus_point,
+                gamma,
+                remove_edge_leak,
+                detect_edge_threshold,
                 display,
                 mix,
             } => {
@@ -882,13 +900,31 @@ pub fn run_ops(
                         w,
                         h,
                         depth,
-                        *focus,
-                        *range,
-                        *near_aperture,
-                        *far_aperture,
-                        *depth_invert,
-                        *display,
-                        *mix,
+                        &lumit_gpu::fx::DofOp {
+                            focus: *focus,
+                            range: *range,
+                            near_aperture: *near_aperture,
+                            far_aperture: *far_aperture,
+                            blade_normals: *blade_normals,
+                            blade_count: *blade_count,
+                            apothem2: *apothem2,
+                            roundness: *roundness,
+                            rim: *rim,
+                            aspect_scale: *aspect_scale,
+                            threshold: *threshold,
+                            bokeh_power: *bokeh_power,
+                            repeat_edge: *repeat_edge,
+                            depth_bound: *depth_bound,
+                            depth_channel: *depth_channel,
+                            depth_invert: *depth_invert,
+                            use_focus_point: *use_focus_point,
+                            focus_point: *focus_point,
+                            gamma: *gamma,
+                            remove_edge_leak: *remove_edge_leak,
+                            detect_edge_threshold: *detect_edge_threshold,
+                            display: *display,
+                            mix: *mix,
+                        },
                     );
                 }
             }
@@ -1011,6 +1047,7 @@ pub fn run_ops(
                 );
             }
         }
+
         if let (Some(started), Some(into)) = (started, timings.as_mut()) {
             // Same reason as the per-layer fence in `realise`: a frame's
             // commands are batched, and timing a queue that has not been
