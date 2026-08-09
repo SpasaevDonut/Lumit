@@ -714,6 +714,60 @@ void main() {
       );
     });
 
+    /// **Nor must fronting a composition, while nobody is looking through
+    /// anything (K-314).**
+    ///
+    /// The Viewer's exposure and tone map are per composition, so fronting one
+    /// is what puts its view on the renderer — but a view that is neutral onto
+    /// a renderer already neutral is nothing to say and nothing to undo, and
+    /// the ask for the frame that followed it was a second whole composite on
+    /// top of the one the fronting itself asks for. That is every tab click in
+    /// every session where neither control has been touched.
+    testWidgets('fronting a comp costs no extra frame while neutral',
+        (tester) async {
+      final p = freshProject();
+      final a = p.state.project!.newComposition(name: 'A');
+      a.addSolidLayer();
+      final b = p.state.project!.newComposition(name: 'B');
+      b.addSolidLayer();
+      p.uiState.setSelectedComp(a);
+      p.uiState.model.refresh();
+
+      await tester.pumpWidget(hostPanel(
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(900, 600),
+        child: const ViewerPanelFrb(),
+      ));
+      await settleFrb(tester, minRounds: 8);
+
+      counter
+        ..reset()
+        ..counting = true;
+      p.uiState.setSelectedComp(b);
+      await tester.pump();
+      p.uiState.setSelectedComp(a);
+      await tester.pump();
+      counter.counting = false;
+
+      // ignore: avoid_print
+      print('NEUTRAL FRONTING COST ${counter.total} calls\n'
+          '${counter.ranking()}');
+      expect(
+        counter.calls['composition_reference_set_display_view'] ?? 0,
+        0,
+        reason: 'a neutral view was pushed onto a neutral renderer:\n'
+            '${counter.ranking()}',
+      );
+      // One composite per fronting is the picture the user asked to see. Two
+      // is the frame plus the one the view push added behind it.
+      expect(
+        counter.calls['composition_reference_render_frame'] ?? 0,
+        lessThanOrEqualTo(2),
+        reason: 'fronting asked for the frame twice:\n${counter.ranking()}',
+      );
+    });
+
     /// **A path drag shows the picture it is making (K-308).**
     ///
     /// Dragging a point used to move the wireframe and leave the picture until
