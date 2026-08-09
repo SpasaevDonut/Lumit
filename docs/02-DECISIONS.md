@@ -7523,3 +7523,28 @@ exactly the five rows; a slice plants one key at the playhead and fires the reve
 frame never duplicates a key while a new frame inserts in order; an expressed row is dimmed;
 the Timeline opens exactly the asked row, consumes the request, and a second ask never
 closes it.
+
+**K-327 · DECIDED · A Project panel item's ring is "Add to comp" — one slice, dimmed when it
+cannot run, never the new-layer grab-bag.**
+From the owner (2026-08-09): "when you select an item in the project panel, why does it
+display the layer types…?? We don't want that, remove those… if it can be added to the
+current comp then have that as an option (otherwise have it there so people can get muscle
+memory but disable it)". The console had no project-item context at all, so a picked item
+fell through to the comp's new-layer ring — six slices with nothing to do with the
+selection. Now, **while the Project panel is the active panel** (the console follows where
+the user stands, as the keymap's contexts do) and an item is picked there, the ring is a
+single slice: **Add to comp**, doing exactly what dropping the item on the Timeline does —
+footage becomes a footage layer (honouring K-246's Vegas preference), a composition nests
+as a precomp. Per the owner's muscle-memory rule (and K-325's), the slice is **dimmed, never
+dropped**, when it cannot run: no comp open, a folder, a solid (no engine path from the
+panel yet), or a comp offered to itself, which the engine would refuse — said up front
+rather than after the flick.
+
+**The plumbing.** The Project panel's selection stays its own; it now publishes the anchor
+item to a `selectedProjectItem` notifier on the shell state on every click, which is also
+what puts the item's name in the middle of the ring. A stale handle (the item deleted, the
+project switched since publishing) dims the slice and falls through the title rather than
+throwing. Regression tests: the panel publishes on click and follows it
+(project_panel_frb_test.dart); footage places a layer, a comp nests but never into itself,
+the slice dims with no comp open, and the item counts only while the Project panel is the
+active one (fx_console_context_frb_test.dart).

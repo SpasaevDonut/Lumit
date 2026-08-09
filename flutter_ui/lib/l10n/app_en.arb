@@ -667,6 +667,10 @@
   "@fxConsoleAddEffect": {
     "description": "The FX console radial menu: opens the Effects & presets panel."
   },
+  "fxConsoleAddToComp": "Add to comp",
+  "@fxConsoleAddToComp": {
+    "description": "The FX console radial menu with a Project panel item picked: places the item in the open composition."
+  },
   "fxConsoleCompositions": "Compositions",
   "@fxConsoleCompositions": {
     "description": "The FX console search list: the heading over the composition results."

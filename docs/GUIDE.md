@@ -4126,7 +4126,12 @@ Two rules follow from that, and they are most of the code:
   opening the menu and letting go without moving cancels — rather than
   committing you to whatever happened to be nearest the cursor.
 
-What is *in* the ring depends on what you have selected. An effect picked out
+What is *in* the ring depends on what you have selected. An item picked in
+the Project panel (while you are standing in that panel) offers exactly one
+thing: **Add to comp**, which places it the way dropping it on the Timeline
+would — and when it cannot be placed (no comp open, a folder, a comp into
+itself) the slice sits there dimmed rather than vanishing, so the direction
+is learned before it is ever needed. An effect picked out
 in the stack offers the things you do to an effect; a selected layer the
 things you do to *that layer* — duplicate, add an effect, pre-compose, delete
 — and never a stray "new solid" beside them, because creating a layer is not

@@ -1769,11 +1769,13 @@ never saved — never the working directory. It MUST grey out with no compositio
 - A **dead zone** in the middle picks nothing, so opening the menu and releasing without
   moving cancels rather than committing to whatever was nearest.
 - The first slice is straight up, and they run clockwise.
-- Entries MUST follow the selection, in four contexts: a **picked effect** offers what you do
-  to an effect (bypass, copy, remove, add another); a **selected layer** what you do to
-  *that* layer — never new-layer commands beside it (K-325); a **composition with nothing
-  selected** the new-layer menu, which is what an empty timeline is asking for; **nothing
-  open at all** the two ways to get somewhere.
+- Entries MUST follow the selection: a **Project panel item**, while that panel is active,
+  offers one slice — **Add to comp**, dimmed when the item cannot be placed (no comp open, a
+  folder, a comp into itself) rather than dropped (K-327), and never the new-layer ring; a
+  **picked effect** offers what you do to an effect (bypass, copy, remove, add another); a
+  **selected layer** what you do to *that* layer — never new-layer commands beside it
+  (K-325); a **composition with nothing selected** the new-layer menu, which is what an
+  empty timeline is asking for; **nothing open at all** the two ways to get somewhere.
 - A slice MAY carry a **ring of its own** (K-325): choosing it expands the menu in place, a
   caret on the slice says it will, and the centre — or `Esc` — steps back out. This is how
   the selected-layer ring reaches creation: a **New ▸** slice opens Layer ▸ New's items, in

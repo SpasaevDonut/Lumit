@@ -11,6 +11,7 @@ import 'package:lumit_flutter/shell/fx_console_frb.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
+import 'package:lumit_flutter/src/rust/api/project_item.dart';
 import 'package:lumit_flutter/state/dock.dart';
 
 import 'frb_test_support.dart';
@@ -100,6 +101,90 @@ void main() {
           reason: 'writing keys over an expression would delete it');
       expect(ring.firstWhere((e) => e.label == 'Scale').enabled, isTrue,
           reason: 'only the expressed row dims');
+    });
+  });
+
+  group('a Project panel item in the ring (frb)', () {
+    // `fxConsoleRadial` takes a BuildContext for the closures other contexts
+    // capture; the project-item slice never touches it, so any mounted
+    // context serves.
+    Future<BuildContext> anyContext(WidgetTester tester) async {
+      late BuildContext ctx;
+      await tester.pumpWidget(Builder(builder: (c) {
+        ctx = c;
+        return const SizedBox();
+      }));
+      return ctx;
+    }
+
+    testWidgets('footage offers Add to comp, and choosing it places a layer',
+        (tester) async {
+      final p = withLayer();
+      final footage =
+          p.state.project!.importFootage(path: 'C:/clips/shot.mov');
+      p.uiState.selectedProjectItem.value = ItemReference.footage(footage);
+      p.uiState.activePanel.value = Panel.project;
+
+      final ring =
+          fxConsoleRadial(await anyContext(tester), p.state, p.uiState);
+      expect(ring.map((e) => e.label).toList(), ['Add to comp'],
+          reason: 'one slice — never the new-layer ring this fell through to');
+      expect(ring.single.enabled, isTrue);
+      final before = p.comp.getLayers().length;
+      ring.single.run!();
+      expect(p.comp.getLayers().length, before + 1,
+          reason: 'the footage landed in the open comp');
+    });
+
+    testWidgets('a comp nests, but never into itself', (tester) async {
+      final p = withLayer();
+      final other = p.state.project!.newComposition(name: 'Titles');
+      p.uiState.activePanel.value = Panel.project;
+      final ctx = await anyContext(tester);
+
+      p.uiState.selectedProjectItem.value = ItemReference.composition(other);
+      final nests = fxConsoleRadial(ctx, p.state, p.uiState).single;
+      expect(nests.enabled, isTrue);
+      final before = p.comp.getLayers().length;
+      nests.run!();
+      expect(p.comp.getLayers().length, before + 1,
+          reason: 'the comp nested as a precomp layer');
+
+      p.uiState.selectedProjectItem.value = ItemReference.composition(p.comp);
+      final self = fxConsoleRadial(ctx, p.state, p.uiState).single;
+      expect(self.enabled, isFalse,
+          reason: 'a comp cannot nest into itself — dimmed, not a no-op');
+    });
+
+    testWidgets('the slice keeps its place, dimmed, when it cannot run',
+        (tester) async {
+      final p = freshProject();
+      final footage =
+          p.state.project!.importFootage(path: 'C:/clips/shot.mov');
+      p.uiState.selectedProjectItem.value = ItemReference.footage(footage);
+      p.uiState.activePanel.value = Panel.project;
+
+      // No composition open: the slice is offered but dimmed, so the
+      // direction is learned before it is ever usable.
+      final ring =
+          fxConsoleRadial(await anyContext(tester), p.state, p.uiState);
+      expect(ring.map((e) => e.label).toList(), ['Add to comp']);
+      expect(ring.single.enabled, isFalse);
+    });
+
+    testWidgets('the item counts only while the Project panel is where you '
+        'stand', (tester) async {
+      final p = withLayer();
+      final footage =
+          p.state.project!.importFootage(path: 'C:/clips/shot.mov');
+      p.uiState.selectedProjectItem.value = ItemReference.footage(footage);
+      p.uiState.selectedLayer.value = p.layer;
+      p.uiState.activePanel.value = Panel.timeline;
+
+      final ring =
+          fxConsoleRadial(await anyContext(tester), p.state, p.uiState);
+      expect(ring.map((e) => e.label), isNot(contains('Add to comp')),
+          reason: 'in the Timeline, the layer is still the context');
     });
   });
 

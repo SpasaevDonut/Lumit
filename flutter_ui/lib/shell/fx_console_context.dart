@@ -34,6 +34,7 @@ import '../src/rust/api/composition.dart';
 import '../src/rust/api/effect.dart';
 import '../src/rust/api/export.dart';
 import '../src/rust/api/layer.dart';
+import '../src/rust/api/project_item.dart';
 import '../state/dock.dart';
 import 'fx_console_frb.dart';
 import 'menu_bar_frb.dart';
@@ -43,6 +44,16 @@ import 'precompose_dialog_frb.dart';
 /// guess: the picked effect's name, the selected layer's, the composition's,
 /// or a plain hint when there is nothing to act on.
 String fxConsoleContextTitle(LumitUiState ui) {
+  final item = fxConsoleProjectItem(ui);
+  if (item != null) {
+    // A stale handle (the item deleted, the project switched) degrades to the
+    // other contexts rather than taking the console down.
+    try {
+      return item.name();
+    } on Object {
+      // Fall through.
+    }
+  }
   final effect = _pickedEffectName(ui);
   if (effect != null) return effect;
   final layer = ui.selectedLayer.value;
@@ -54,6 +65,13 @@ String fxConsoleContextTitle(LumitUiState ui) {
   if (comp != null) return comp.getSettings().name;
   return l10n.fxConsoleNothingSelected;
 }
+
+/// The Project panel's picked item, counted only while the Project panel is
+/// the active one (K-327): the console follows where the user stands, the way
+/// the keymap's contexts do. A layer selected in the Timeline keeps meaning
+/// "the layer" everywhere else.
+ItemReference? fxConsoleProjectItem(LumitUiState ui) =>
+    ui.activePanel.value == Panel.project ? ui.selectedProjectItem.value : null;
 
 /// The picked effect's display name, or null when none is picked.
 String? _pickedEffectName(LumitUiState ui) {
@@ -81,6 +99,17 @@ List<RadialEntry> fxConsoleRadial(
   final effectsLayer = ui.selectedEffectsLayer;
 
   void done() => app.notifyDocumentChanged();
+
+  // 0. Standing in the Project panel with an item picked: the one thing you
+  //    do from there is put the item in the comp (K-327) — never the
+  //    new-layer ring this used to fall through to, whose slices had nothing
+  //    to do with the selection. The slice stays put when it cannot run —
+  //    no comp open, a folder, a comp that would nest into itself — dimmed,
+  //    so the direction is learned once and keeps meaning the same thing.
+  final item = fxConsoleProjectItem(ui);
+  if (item != null) {
+    return [_addToCompEntry(item, comp, ui, done)];
+  }
 
   // 1. An effect is picked: what you do to an effect.
   if (picked.isNotEmpty && effectsLayer != null) {
@@ -241,6 +270,63 @@ List<RadialEntry> fxConsoleRadial(
       run: () => importFootageFrb(app),
     ),
   ];
+}
+
+/// The Project item's one slice (K-327): put the picked item in the open
+/// comp, exactly as dropping it on the Timeline would — footage becomes a
+/// footage layer (honouring the Vegas preference, K-246), a composition
+/// nests as a precomp. A folder has nothing to place and a solid has no
+/// engine path from the panel yet, so those dim; so does a comp offered to
+/// itself, which the engine would refuse. Any engine refusal — a stale
+/// handle after a delete, above all — dims rather than throws.
+RadialEntry _addToCompEntry(
+  ItemReference item,
+  CompositionReference? comp,
+  LumitUiState ui,
+  VoidCallback done,
+) {
+  var enabled = false;
+  VoidCallback run = () {};
+  try {
+    switch (item) {
+      case ItemReference_Footage(:final field0):
+        enabled = comp != null;
+        run = () {
+          comp!.addFootageLayer(
+            footage: field0,
+            asSequence: ui.workspace.interface.videoAsSequenceLayer,
+          );
+          done();
+        };
+      case ItemReference_Composition(:final field0):
+        // A comp cannot nest into itself; the slice says so up front rather
+        // than no-opping after the flick.
+        enabled = comp != null &&
+            !item.equals(item: ItemReference.composition(comp));
+        run = () {
+          try {
+            comp!.addPrecompLayer(comp: field0);
+            done();
+          } on Object {
+            // The engine refused (a cycle deeper than self-nesting); the
+            // document is untouched and there is nothing to report beyond
+            // nothing happening.
+          }
+        };
+      case ItemReference_Solid():
+      case ItemReference_Folder():
+        enabled = false;
+    }
+  } on Object {
+    // A stale handle: the item was deleted, or the project was switched,
+    // since the panel published it. Dimmed, not thrown.
+    enabled = false;
+  }
+  return RadialEntry(
+    label: l10n.fxConsoleAddToComp,
+    enabled: enabled,
+    run: run,
+  );
 }
 
 /// The Keyframe ring (K-326): one slice per transform row, so "key this

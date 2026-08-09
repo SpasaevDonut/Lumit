@@ -558,6 +558,14 @@ class LumitUiState extends ChangeNotifier {
   void requestRevealProperty(UuidValue layer, String action) =>
       revealPropertyRequest.value = (layer, action);
 
+  /// The Project panel's picked item — its selection anchor, published by the
+  /// panel on every click (K-327). The full selection stays the panel's own;
+  /// this is the one item the FX console acts on, so a Ctrl+Space over the
+  /// Project panel offers "add this to the comp" rather than the new-layer
+  /// ring it used to fall through to. Null with nothing picked there.
+  final ValueNotifier<ItemReference?> selectedProjectItem =
+      ValueNotifier(null);
+
   /// Bumped each time a rendered frame reaches the Viewer, on any of the three
   /// transports. Watched by anything that redraws when the picture does — the
   /// Timeline's cache bar, the Scopes panel.
