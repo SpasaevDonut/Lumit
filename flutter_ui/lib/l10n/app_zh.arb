@@ -296,7 +296,7 @@
   "@editMarkerEllipsis": {
     "description": "Context-menu item; the ellipsis means a dialogue opens."
   },
-  "effectControls": "Effect controls",
+  "effectControls": "效果控件",
   "@effectControls": {
     "description": "Name of the panel that edits the effects on a layer."
   },
@@ -345,7 +345,7 @@
   "@exportFormat": {
     "description": "Export dialogue: the container and codec to write."
   },
-  "exportFrameOf": "Frame {frame} of {total} ({encoder})",
+  "exportFrameOf": "",
   "@exportFrameOf": {
     "description": "Export dialogue: progress. {encoder} is a codec name and is not translated.",
     "placeholders": {
