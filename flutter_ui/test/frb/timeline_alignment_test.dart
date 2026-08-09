@@ -1,0 +1,414 @@
+// The Timeline's two halves, as a user sees them: one table.
+//
+// **Why this file exists.** `timeline_panel_frb.dart` builds the outline and the
+// lane area as two separate trees inside two separate vertical scrollables, kept
+// in step by a shared `blockHeights` list and a scroll mirror. A refactor is
+// planned that merges them into one row-per-layer tree in a single scrollable.
+// Nothing currently fails if that merge quietly breaks the alignment, because no
+// test builds the panel and *measures* it.
+//
+// So every claim here is about geometry a user could point at — a name and its
+// bar sharing a top edge, both sides moving together when the table scrolls, the
+// playhead standing where the clock says — and never about which widget class or
+// which controller produces it. These must pass before the refactor and after
+// it; a test that names `_Outline`, `_vOutline`, or "the second scroll view"
+// would only be measuring today's implementation.
+
+import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:lumit_flutter/main.dart';
+import 'package:lumit_flutter/panels/timeline_extras_frb.dart';
+import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
+import 'package:lumit_flutter/src/rust/api/composition.dart';
+import 'package:lumit_flutter/src/rust/api/layer.dart';
+
+import 'frb_test_support.dart';
+
+void main() {
+  setUpAll(initEngineForTests);
+
+  group('Timeline alignment (frb)', () {
+    ({LumitState state, LumitUiState uiState, CompositionReference comp})
+        withComp() {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      p.uiState.setSelectedComp(comp);
+      return (state: p.state, uiState: p.uiState, comp: comp);
+    }
+
+    // The outline alone is 800 px of columns; the default 800×600 surface would
+    // push its right edge (and the lanes) off screen. Height is a parameter
+    // because the scrolling claims need a viewport shorter than the stack.
+    Future<void> mount(WidgetTester tester, dynamic p,
+        {double height = 600}) async {
+      tester.view.physicalSize = Size(1280, height);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(hostPanel(
+        child: const TimelinePanelFrb(),
+        state: p.state as LumitState,
+        uiState: p.uiState as LumitUiState,
+        size: Size(1280, height),
+      ));
+      await tester.pump();
+    }
+
+    String idOf(LayerReference l) => l.internallayerId.toString();
+
+    /// The layer's row in the outline — its name, number and switches.
+    Rect outlineRow(WidgetTester tester, LayerReference l) =>
+        tester.getRect(find.byKey(ValueKey<String>('tl-row-${idOf(l)}')));
+
+    /// The same layer's bar in the lane area.
+    Rect laneBar(WidgetTester tester, LayerReference l) =>
+        tester.getRect(find.byKey(ValueKey<String>('tl-bar-${idOf(l)}')));
+
+    /// Both halves of one layer's first row occupy the same band of the screen.
+    void expectLevel(WidgetTester tester, LayerReference l, {String? why}) {
+      final row = outlineRow(tester, l);
+      final bar = laneBar(tester, l);
+      expect(bar.top, closeTo(row.top, 0.5),
+          reason: why ?? 'the name and the bar share a top edge');
+      expect(bar.height, closeTo(row.height, 0.5),
+          reason: why ?? 'and are the same height');
+    }
+
+    /// A mouse wheel notch over [at]. The panel hands a plain wheel to the
+    /// scrollable — this is how the table is scrolled, on either side.
+    Future<void> wheel(WidgetTester tester, Offset at, double dy) async {
+      final pointer = TestPointer(1, PointerDeviceKind.mouse);
+      await tester.sendEventToBinding(pointer.hover(at));
+      await tester.sendEventToBinding(pointer.scroll(Offset(0, dy)));
+      await tester.pump();
+    }
+
+    /// The same wheel with a modifier held: Ctrl zooms time, Shift scrolls the
+    /// lanes sideways (docs/07 §4.6).
+    Future<void> modifiedWheel(WidgetTester tester, LogicalKeyboardKey key,
+        Offset at, double dy) async {
+      await tester.sendKeyDownEvent(key);
+      await wheel(tester, at, dy);
+      await tester.sendKeyUpEvent(key);
+      await tester.pump();
+    }
+
+    /// 1. **At rest, every layer's two halves are one row.** The cheapest thing
+    /// the merge can break, and the thing the whole table rests on.
+    testWidgets('a layer\'s outline row and its lane bar share a row',
+        (tester) async {
+      final p = withComp();
+      final layers = [
+        for (var i = 0; i < 4; i++) p.comp.addSolidLayer(),
+      ];
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      for (final l in layers) {
+        expectLevel(tester, l);
+      }
+      // And they stack in the same order on both sides: the outline's tops
+      // ascend exactly as the lanes' do.
+      final rowTops = [for (final l in layers) outlineRow(tester, l).top];
+      final barTops = [for (final l in layers) laneBar(tester, l).top];
+      expect(barTops, orderedEquals([for (final t in rowTops) closeTo(t, 0.5)]));
+      // Rows are stacked, not overlapping: consecutive tops differ by a row.
+      final sorted = [...rowTops]..sort();
+      for (var i = 1; i < sorted.length; i++) {
+        expect(sorted[i] - sorted[i - 1], greaterThan(1),
+            reason: 'four layers occupy four distinct bands');
+      }
+    });
+
+    /// 2. **A fold-out opens on both sides at once.** This is what
+    /// `blockHeights` exists to guarantee: the lane side must reserve exactly
+    /// the room the outline's property rows take, or every layer below the
+    /// opened one sits at a different height on the two sides.
+    testWidgets('opening a layer\'s properties moves both halves equally',
+        (tester) async {
+      final p = withComp();
+      // Bottom to top: [top, middle, bottom] as drawn.
+      final bottom = p.comp.addSolidLayer();
+      final middle = p.comp.addSolidLayer();
+      final top = p.comp.addSolidLayer();
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      final beforeRow = outlineRow(tester, bottom).top;
+      final beforeBar = laneBar(tester, bottom).top;
+      expect(find.text('Transform'), findsNothing);
+
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${idOf(middle)}')));
+      await tester.pumpAndSettle();
+
+      // The outline grew property rows.
+      expect(find.text('Transform'), findsOneWidget,
+          reason: 'the fold-out opened');
+      // The lanes grew the matching block of lane rows.
+      final lanes =
+          find.byKey(ValueKey<String>('tl-lanes-${idOf(middle)}'));
+      expect(lanes, findsOneWidget,
+          reason: 'the lane side has a block for the fold-out rows');
+
+      // Both sides pushed the layer below down, by the same distance.
+      final shiftRow = outlineRow(tester, bottom).top - beforeRow;
+      final shiftBar = laneBar(tester, bottom).top - beforeBar;
+      expect(shiftRow, greaterThan(0), reason: 'the layer below moved down');
+      expect(shiftBar, closeTo(shiftRow, 0.5),
+          reason: 'and moved down by exactly as much on the lane side');
+
+      // The lane block sits in the gap the outline opened, to the pixel.
+      final laneRect = tester.getRect(lanes);
+      expect(laneRect.top, closeTo(laneBar(tester, middle).bottom, 0.5),
+          reason: 'the lanes start where the layer\'s own bar ends');
+      expect(laneRect.height, closeTo(shiftRow, 0.5),
+          reason: 'the lanes are exactly as tall as the outline\'s new rows');
+
+      // And every layer is still level, opened one included.
+      for (final l in [top, middle, bottom]) {
+        expectLevel(tester, l, why: 'still level after the twirl');
+      }
+    });
+
+    /// 3. **A Sequence layer's open view keeps the stack level.** Its outline
+    /// side is a blank spacer (`sequenceExtra`) while its lane side draws real
+    /// clips: two different widgets that must agree on one height, which is
+    /// exactly the sort of pairing a merge is liable to drop.
+    testWidgets('an open Sequence view keeps the layers below it level',
+        (tester) async {
+      final p = withComp();
+      final below = p.comp.addSolidLayer();
+      final seq = p.comp.addSequenceLayer();
+      final above = p.comp.addSolidLayer();
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      final beforeRow = outlineRow(tester, below).top;
+
+      // Double-clicking a Sequence layer's bar opens its view.
+      final bar = find.byKey(ValueKey<String>('tl-bar-body-${idOf(seq)}'));
+      await tester.tap(bar);
+      await tester.pump(const Duration(milliseconds: 30));
+      await tester.tap(bar);
+      await tester.pumpAndSettle();
+
+      final room =
+          find.byKey(ValueKey<String>('tl-seq-room-${idOf(seq)}'));
+      final view = find.byKey(ValueKey<String>('tl-seq-${idOf(seq)}'));
+      expect(room, findsOneWidget,
+          reason: 'the outline leaves the view its room');
+      expect(view, findsOneWidget, reason: 'the lanes draw the view');
+      expect(tester.getRect(room).height,
+          closeTo(tester.getRect(view).height - _seqOwnRow, 0.5),
+          reason: 'the spacer holds everything the view added below the bar row');
+
+      // The layer under it moved down, and its two halves moved together.
+      expect(outlineRow(tester, below).top, greaterThan(beforeRow));
+      expectLevel(tester, below, why: 'below an open Sequence view');
+      expectLevel(tester, above, why: 'above an open Sequence view');
+    });
+
+    /// 4. **Scrolling moves both halves together, from either side.** Today two
+    /// controllers mirror each other; after the merge there is one scrollable.
+    /// The claim is the same either way: the row you were looking at stays one
+    /// row.
+    testWidgets('scrolling one side carries the other with it', (tester) async {
+      final p = withComp();
+      final layers = [
+        for (var i = 0; i < 20; i++) p.comp.addSolidLayer(),
+      ];
+      p.uiState.model.refresh();
+      // Short enough that twenty layers do not fit.
+      await mount(tester, p, height: 300);
+
+      final probe = layers.first; // the bottom-most row on screen
+      final laneAt = laneBar(tester, layers.last).center;
+      final outlineAt = outlineRow(tester, layers.last).center;
+
+      final startRow = outlineRow(tester, probe).top;
+      await wheel(tester, laneAt, 120);
+      final afterLaneRow = outlineRow(tester, probe).top;
+      expect(afterLaneRow, lessThan(startRow - 1),
+          reason: 'a wheel over the lanes scrolled the outline too');
+      expectLevel(tester, probe, why: 'after scrolling from the lane side');
+
+      await wheel(tester, outlineAt, 120);
+      final afterOutlineRow = outlineRow(tester, probe).top;
+      expect(afterOutlineRow, lessThan(afterLaneRow - 1),
+          reason: 'a wheel over the outline scrolled the lanes too');
+      expectLevel(tester, probe, why: 'after scrolling from the outline side');
+
+      // Everything still on screen is still level.
+      for (final l in layers) {
+        expectLevel(tester, l, why: 'after scrolling');
+      }
+    });
+
+    /// 5. **Horizontal scroll belongs to the lanes alone**, and the ruler and
+    /// cache bar ride with them because they share that viewport — while
+    /// neither follows the rows vertically.
+    testWidgets('scrolling sideways moves the lanes, the ruler and the cache'
+        ' bar, and never the outline', (tester) async {
+      final p = withComp();
+      final layers = [
+        for (var i = 0; i < 20; i++) p.comp.addSolidLayer(),
+      ];
+      p.uiState.model.refresh();
+      await mount(tester, p, height: 300);
+
+      final ruler = find.byKey(const ValueKey('tl-ruler'));
+      final cache = find.byKey(const ValueKey('tl-cache-bar'));
+      final probe = layers.last;
+
+      // Zoom in, or there is nothing to scroll sideways: at zoom 1 the whole
+      // comp fits the lane viewport.
+      final laneAt = laneBar(tester, probe).center;
+      for (var i = 0; i < 8; i++) {
+        await modifiedWheel(tester, LogicalKeyboardKey.controlLeft, laneAt, -1);
+      }
+      await tester.pumpAndSettle();
+
+      final rowBefore = outlineRow(tester, probe);
+      final barBefore = laneBar(tester, probe);
+      final rulerBefore = tester.getRect(ruler);
+      final cacheBefore = tester.getRect(cache);
+
+      await modifiedWheel(
+          tester, LogicalKeyboardKey.shiftLeft, laneAt, 120);
+      await tester.pumpAndSettle();
+
+      final barAfter = laneBar(tester, probe);
+      expect(barAfter.left, lessThan(barBefore.left - 1),
+          reason: 'the lanes scrolled sideways');
+      expect(outlineRow(tester, probe).left, closeTo(rowBefore.left, 0.5),
+          reason: 'the outline did not budge');
+      expect(outlineRow(tester, probe).top, closeTo(rowBefore.top, 0.5),
+          reason: 'and did not move vertically either');
+      expect(tester.getRect(ruler).left - rulerBefore.left,
+          closeTo(barAfter.left - barBefore.left, 0.5),
+          reason: 'the ruler shares the lanes\' horizontal viewport');
+      expect(tester.getRect(cache).left - cacheBefore.left,
+          closeTo(barAfter.left - barBefore.left, 0.5),
+          reason: 'so does the cache bar');
+      expectLevel(tester, probe, why: 'after a sideways scroll');
+
+      // Now scroll the rows: the ruler and cache bar are pinned above them.
+      await wheel(tester, laneAt, 120);
+      expect(tester.getRect(ruler).top, closeTo(rulerBefore.top, 0.5),
+          reason: 'the ruler does not scroll with the rows');
+      expect(tester.getRect(cache).top, closeTo(cacheBefore.top, 0.5),
+          reason: 'nor does the cache bar');
+    });
+
+    /// 6. **The cross-row overlays span the table.** The playhead and the
+    /// work-area wash are drawn over every row rather than inside any of them,
+    /// which is exactly the arrangement a row-per-layer tree has to be careful
+    /// to keep.
+    testWidgets('the playhead spans the lanes and stands at the current time',
+        (tester) async {
+      final p = withComp();
+      final layers = [
+        for (var i = 0; i < 3; i++) p.comp.addSolidLayer(),
+      ];
+      p.uiState.playheadFrame.value = 0;
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      final frames = p.comp.durationFrames();
+      final ruler = tester.getRect(find.byKey(const ValueKey('tl-ruler')));
+      Rect playhead() => tester.getRect(find.byType(PlayheadMarker));
+
+      // The marker is centred on its frame, and the axis is the ruler's own
+      // span — so the clock and the picture agree.
+      expect(playhead().center.dx, closeTo(ruler.left, 1.0),
+          reason: 'frame zero stands at the start of the axis');
+
+      p.uiState.playheadFrame.value = frames ~/ 2;
+      await tester.pump();
+      expect(playhead().center.dx,
+          closeTo(ruler.left + ruler.width * (frames ~/ 2) / frames, 1.0),
+          reason: 'half way along the comp is half way along the axis');
+
+      // And it runs the full height of the lane side: from the ruler down past
+      // the last layer's bar.
+      final marker = playhead();
+      expect(marker.top, lessThan(ruler.bottom),
+          reason: 'the playhead starts up in the ruler');
+      expect(marker.bottom, greaterThan(laneBar(tester, layers.first).bottom),
+          reason: 'and carries on past the last row');
+    });
+
+    testWidgets('the work-area wash spans every row', (tester) async {
+      final p = withComp();
+      final layers = [
+        for (var i = 0; i < 3; i++) p.comp.addSolidLayer(),
+      ];
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      final wash = find.byWidgetPredicate(
+          (w) => w is CustomPaint && w.painter is WorkAreaGroundPainter);
+      expect(wash, findsWidgets, reason: 'the lanes are washed by the work area');
+      final rect = tester.getRect(wash.first);
+      final ruler = tester.getRect(find.byKey(const ValueKey('tl-ruler')));
+
+      expect(rect.width, closeTo(ruler.width, 0.5),
+          reason: 'the wash covers the whole time axis, not one row');
+      // It starts at the top of the rows and reaches past the last of them:
+      // this is a cross-row overlay, not a decoration on any single row.
+      expect(rect.top, lessThan(laneBar(tester, layers.last).top + 0.5));
+      expect(rect.bottom,
+          greaterThan(laneBar(tester, layers.first).bottom - 0.5));
+    });
+
+    /// 7. **A reorder drag lands the layer where the drop said it would.** The
+    /// arithmetic has its own tests (`timeline_drag_test.dart`); what is
+    /// untested is that the widget honours it — and that the row lands level
+    /// afterwards rather than merely being renumbered.
+    testWidgets('dragging a layer\'s name down reorders the stack',
+        (tester) async {
+      final p = withComp();
+      final bottom = p.comp.addSolidLayer();
+      final middle = p.comp.addSolidLayer();
+      final top = p.comp.addSolidLayer();
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      expect([for (final l in p.comp.getLayers()) l.internallayerId],
+          [top.internallayerId, middle.internallayerId, bottom.internallayerId]);
+
+      // Two full rows down: past the midpoint of both blocks below it, which is
+      // the slot rule `layerDragTarget` uses. The first move only buys the
+      // touch slop — the drag has not begun until it is crossed, so the travel
+      // that decides the slot is what comes after it.
+      final rowHeight = outlineRow(tester, top).height;
+      final g = await tester.startGesture(tester
+          .getCenter(find.byKey(ValueKey<String>('tl-name-${idOf(top)}'))));
+      await g.moveBy(const Offset(0, kTouchSlop + 2));
+      await tester.pump();
+      await g.moveBy(Offset(0, rowHeight * 2));
+      await tester.pump();
+      await g.up();
+      await tester.pumpAndSettle();
+
+      expect([for (final l in p.comp.getLayers()) l.internallayerId],
+          [middle.internallayerId, bottom.internallayerId, top.internallayerId],
+          reason: 'the dragged layer landed at the bottom of the stack');
+
+      // And the moved row is a row again: both halves level, in its new place.
+      for (final l in [top, middle, bottom]) {
+        expectLevel(tester, l, why: 'after a reorder drag');
+      }
+      expect(outlineRow(tester, top).top,
+          greaterThan(outlineRow(tester, bottom).top),
+          reason: 'it is drawn where the document says it is');
+    });
+  });
+}
+
+/// The Sequence view takes the layer's own bar row as the top of its clip
+/// strip, so the outline's spacer holds everything *below* that row — one row
+/// less than the view is tall (K-248).
+const double _seqOwnRow = 22;
