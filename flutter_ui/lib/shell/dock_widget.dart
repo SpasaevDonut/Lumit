@@ -366,7 +366,8 @@ class _GhostPill extends StatelessWidget {
         border: Border.all(color: theme.accent, width: 1),
         boxShadow: theme.floatShadow,
       ),
-      child: Text(title, style: theme.body.copyWith(color: theme.textPrimary)),
+      child: Text(title,
+          style: theme.bodyStrong.copyWith(color: theme.textPrimary)),
     );
   }
 }
@@ -616,7 +617,7 @@ class _TabPillState extends State<_TabPill> {
         borderRadius: BorderRadius.circular(t.tokens.controlRadius),
         border: border,
       ),
-      child: Text(widget.title, style: t.body.copyWith(color: textColour)),
+      child: Text(widget.title, style: t.bodyStrong.copyWith(color: textColour)),
     );
     return _DragSource(
       panel: widget.panel,

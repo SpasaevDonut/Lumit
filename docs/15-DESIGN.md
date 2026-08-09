@@ -473,13 +473,16 @@ failure.
 
 ### 7.1 Scale
 
-Lumit is a pro tool; the household 16px body default gives way to an 11–13px UI scale:
+Lumit is a pro tool; the household 16px body default gives way to a 10–13px UI scale
+(tightened from 11–13px by K-317, after the owner found the interface a step large and
+soft beside the editors it sits among):
 
 | Size | Face | Use |
 |---|---|---|
-| 10px | Inter | Field captions only — the note under a control saying what format it takes. Never for anything the user has to act on |
+| 9px | Inter | Field captions only — the note under a control saying what format it takes. Never for anything the user has to act on |
+| 10px | Inter | Secondary notes and hints (`small`) |
 | 11px | JetBrains Mono, +0.08em, caps | Kickers, layer bar labels, axis numbers, attribution |
-| 12px | Inter | Panel body copy, property names, menus, buttons |
+| 11px | Inter | Panel body copy, property names, menus, buttons |
 | 13px | JetBrains Mono | Property values, timecode fields, frame numbers, speed percentages |
 | 14px | Inter Medium | Dialog body emphasis, panel tab labels |
 | 16px | Schibsted Grotesk | Dialog titles, workspace names |

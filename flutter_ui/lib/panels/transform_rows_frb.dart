@@ -147,7 +147,7 @@ class TransformRowsFrb extends StatelessWidget {
     required this.onChanged,
     this.keyPrefix = 'tf',
     this.rowHeight,
-    this.rowPadding = const EdgeInsets.symmetric(vertical: 3),
+    this.rowPadding = const EdgeInsets.symmetric(vertical: 2),
     this.twoColumn = false,
   });
 
@@ -224,7 +224,7 @@ class TransformRowFrb extends StatefulWidget {
     required this.onChanged,
     this.keyPrefix = 'tf',
     this.rowHeight,
-    this.rowPadding = const EdgeInsets.symmetric(vertical: 3),
+    this.rowPadding = const EdgeInsets.symmetric(vertical: 2),
     this.valueColumn,
     this.onLabelTap,
     this.graphColours,

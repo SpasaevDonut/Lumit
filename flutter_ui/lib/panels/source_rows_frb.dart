@@ -379,7 +379,7 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
   }
 
   Widget _row(LumitTheme t, String label, Widget control) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
+        padding: const EdgeInsets.symmetric(vertical: 2),
         child: fxTwoColumnRow(
           context: context,
           // A source row is not a keyable property, so its name is plain text —

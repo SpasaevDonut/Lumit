@@ -3859,6 +3859,27 @@ copy…** inside the colour editor, which branches a theme without first
 overwriting it. The picker also draws eight swatches of the selected theme beside
 its name, so you can recognise a theme without applying it.
 
+### Why the letters got lighter (K-316)
+
+Type comes in weights — how thick the strokes of each letter are. Regular is
+the weight books are printed in; Medium is a step thicker, meant for the odd
+word that has to stand out. The design spec (docs/15-DESIGN.md §7.1) always
+said Lumit's ordinary text — menus, buttons, property names, panel copy — is
+plain regular Inter, with Medium kept for the few things that earn emphasis:
+dialog headings and the panel tab labels.
+
+The app never actually did that, for a quiet packaging reason: only the Medium
+font file was bundled, so whatever weight the code asked for, Medium is what
+drew. Every word in the interface was a step bolder than designed, and when
+everything is emphasised the emphasis stops meaning anything — a wall of
+slightly-heavy text is *harder* to scan, not easier.
+
+The fix is two-part: the Regular file is now bundled beside Medium, and the
+theme's `body`, `small` and `caption` styles ask for regular weight while
+`heading` and a new `bodyStrong` (used by the dock's tab pills) keep Medium. A
+test in `theme_test.dart` pins the weights so nothing drifts back to
+all-Medium without saying so.
+
 ### The rules that bite
 
 These are the ones a plausible-looking change breaks. Each has tests standing

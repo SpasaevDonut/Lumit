@@ -7193,3 +7193,40 @@ hue shift is a rotation about the colour wheel — the most dial-shaped control 
 the Lens flare's aperture Rotation. The two blur-direction angles keep their `±3600` hard
 bound and stay plain numbers, because `Angle` is deliberately unbounded and swapping them
 would quietly drop a clamp.
+
+**K-316 · DECIDED · Body text renders at regular weight; Medium is rationed to emphasis.**
+From the owner (2026-08-09): "less text should be bold — a lot of it is too thick and can
+actually reduce readability." The cause was packaging, not the type scale: only
+`Inter-Medium.otf` was bundled, so every weight the code asked for drew as Medium and the
+whole interface sat a step bolder than docs/15-DESIGN §7.1 specifies (12px *plain* Inter
+for panel copy, menus and buttons; Medium reserved for dialog emphasis and tab labels).
+`Inter-Regular.otf` (same v3.019 build as the bundled Medium, so metrics match) is now
+bundled at weight 400; the theme's `body`/`small`/`caption` styles request w400 and
+`heading` keeps w500, joined by a `bodyStrong` getter (w500) that the dock tab pills and
+drag ghost titles use — the two "panel tab label" emphasis sites §7.1 names. The two spots
+that had hand-forced `FontWeight.w400` over the Medium default (timeline marker flags)
+drop their overrides. No spec change: this aligns the build with what 15-DESIGN already
+said. Regression test: `body text is regular weight; emphasis is medium and rationed`
+(theme_test.dart).
+
+**K-317 · DECIDED · The type scale drops a step, property rows tighten, and a selected
+bar brightens instead of growing an outline.** Three owner calls from testing K-316 in
+the app beside After Effects (2026-08-09).
+
+**Type drops one step.** Body Inter goes 12px → 11px (and with it every value field,
+menu and button, since they all read the theme's `body`/`bodyPrimary`); `small` 11 → 10;
+`caption` 10 → 9. docs/15-DESIGN §7.1's table moves with it in this commit. Beyond size,
+the owner's "words feel soft" reads as Flutter-on-Windows greyscale antialiasing (no
+ClearType subpixel rendering), which no theme value reaches; the smaller regular-weight
+face is the lever the theme has.
+
+**Property rows tighten.** The vertical breathing space on effect, transform and source
+rows goes 3px → 2px a side, bringing the Effect controls' row rhythm to AE's. One value
+in four files (`effect_param_row_frb`, `transform_rows_frb`, `source_rows_frb`, and the
+point row) — the Timeline's fold-out already passes zero and is untouched.
+
+**A selected bar brightens.** The lane bar used to mark selection with a 1px accent
+outline; on a 22px bar that is a whisper. It now lerps its label colour 35 % toward
+`textPrimary` — the hue still says which layer it is (K-188's rule survives), and the
+lit bar is what AE does and reads at any zoom. No spec pinned the outline, so nothing
+else moves.
