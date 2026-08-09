@@ -3913,6 +3913,14 @@ the "which row is hovered" bookkeeping live with the floating menu surface every
 popup already shares, so the menu bar, the Add effect browser and every
 right-click menu got this at the same moment, from one change.
 
+A guard like this is invisible when it works and invisible when it does not,
+which makes it miserable to test by feel. So the Debug panel has a switch —
+**Show safe hover triangles** — that draws the live triangle over the menus: the
+shape, and a small ring at the apex where the pointer left the owning row. It
+turns amber at the moment the guard is actually holding a row switch back, which
+is the moment worth watching. It only draws; the guard cannot see it and decides
+exactly what it would have decided with the switch off.
+
 ### Windows you can drive without the mouse (K-319)
 
 Three complaints turned out to be one missing thing.

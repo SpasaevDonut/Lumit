@@ -167,5 +167,39 @@ void main() {
       expect(find.byKey(const ValueKey('flyout-row')), findsNothing,
           reason: 'outside the triangle the switch is immediate');
     });
+
+    testWidgets('the debug overlay draws without changing what the guard does',
+        (tester) async {
+      // The Debug panel's switch (K-318) only draws. It must decide nothing —
+      // the same journey must end the same way — and it must take its overlay
+      // down again, since an OverlayEntry outlives the widget that inserted it.
+      debugShowSafeTriangles.value = true;
+      addTearDown(() => debugShowSafeTriangles.value = false);
+
+      await tester.pumpWidget(host(const SizedBox()));
+      final gesture = await hoverAt(
+          tester, tester.getCenter(find.byKey(const ValueKey('sub'))));
+      await tester.pump();
+      await tester.pump();
+      expect(find.byKey(const ValueKey('flyout-row')), findsOneWidget);
+
+      final sub = tester.getCenter(find.byKey(const ValueKey('sub')));
+      final flyout =
+          tester.getCenter(find.byKey(const ValueKey('flyout-row')));
+      await gesture.moveTo(Offset.lerp(sub, flyout, 0.35)!);
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.byKey(const ValueKey('flyout-row')), findsOneWidget,
+          reason: 'drawing the triangle must not change the guard');
+
+      // Straight down the rows: the flyout goes, and the drawing with it.
+      final sib = tester.getCenter(find.byKey(const ValueKey('sibling')));
+      await gesture.moveTo(Offset(12, sib.dy));
+      await tester.pump();
+      await tester.pump();
+      expect(find.byKey(const ValueKey('flyout-row')), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+      expect(tester.takeException(), isNull,
+          reason: 'the overlay comes down with the surface that raised it');
+    });
   });
 }

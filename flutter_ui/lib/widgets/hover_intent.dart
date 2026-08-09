@@ -16,10 +16,18 @@
 
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart';
+
 /// How long a pointer may sit inside the safe triangle over some other row
 /// before that row wins anyway. Long enough to cross a wide menu on the
 /// diagonal, short enough that resting on a row still switches promptly.
 const Duration menuHoverGrace = Duration(milliseconds: 300);
+
+/// Draw the live triangle over the menus — the Debug panel's switch, off in
+/// every ordinary session. The geometry is invisible by nature, so the only
+/// way to tell a working guard from a broken one is to look at it; this makes
+/// it visible without changing a single decision the guard takes.
+final ValueNotifier<bool> debugShowSafeTriangles = ValueNotifier<bool>(false);
 
 /// The triangle between the pointer ([apex]) and the near edge of the flyout
 /// it is presumed to be travelling to.

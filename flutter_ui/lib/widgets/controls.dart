@@ -354,12 +354,14 @@ class _FloatSurfaceState extends State<FloatSurface> {
     }
     _cancelPending();
     _hovered.value = row;
+    _syncDebugOverlay();
   }
 
   void _hoverMoved(Object row, Offset globalPos) {
     _lastPointer = globalPos;
     if (row == _guardOwner) {
       _guardApex = globalPos;
+      _syncDebugOverlay();
       return;
     }
     if (_pendingRow != row) return;
@@ -370,12 +372,61 @@ class _FloatSurfaceState extends State<FloatSurface> {
       _cancelPending();
       _hovered.value = row;
     }
+    _syncDebugOverlay();
   }
 
   void _cancelPending() {
     _pendingSwitch?.cancel();
     _pendingSwitch = null;
     _pendingRow = null;
+  }
+
+  // --- The debug overlay (the Debug panel's "Safe hover triangles") ------
+  //
+  // Reads the guard, never writes to it: the drawing must not be able to
+  // change what the guard decides, or it would be showing something other
+  // than the thing under test.
+
+  /// What the overlay draws, or null when there is nothing to draw. Held as a
+  /// notifier so the apex can follow the pointer without rebuilding the menu.
+  final ValueNotifier<(SafeTriangle, bool)?> _debugShape =
+      ValueNotifier<(SafeTriangle, bool)?>(null);
+  OverlayEntry? _debugEntry;
+
+  void _syncDebugOverlay() {
+    final wanted = debugShowSafeTriangles.value ? _triangle : null;
+    _debugShape.value = wanted == null ? null : (wanted, _pendingRow != null);
+    if (wanted != null && _debugEntry == null && mounted) {
+      final t = ThemeScope.of(context).theme;
+      _debugEntry = OverlayEntry(
+        builder: (_) => Positioned.fill(
+          child: IgnorePointer(
+            child: ValueListenableBuilder<(SafeTriangle, bool)?>(
+              valueListenable: _debugShape,
+              builder: (_, shape, __) => CustomPaint(
+                painter: shape == null
+                    ? null
+                    : _SafeTrianglePainter(
+                        shape.$1,
+                        // Amber while a row switch is actually being held
+                        // back: that is the guard doing its job, and it is
+                        // the moment worth seeing.
+                        shape.$2 ? t.warning : t.accent,
+                      ),
+              ),
+            ),
+          ),
+        ),
+      );
+      Overlay.of(context, rootOverlay: true).insert(_debugEntry!);
+    } else if (wanted == null) {
+      _removeDebugOverlay();
+    }
+  }
+
+  void _removeDebugOverlay() {
+    _debugEntry?.remove();
+    _debugEntry = null;
   }
 
   /// A [SubmenuRow]'s flyout opened: guard the diagonal to [flyout]. The
@@ -386,6 +437,7 @@ class _FloatSurfaceState extends State<FloatSurface> {
     _guardOwner = owner;
     _guardRect = flyout;
     _guardApex = _lastPointer ?? Offset(flyout.left, flyout.center.dy);
+    _syncDebugOverlay();
   }
 
   /// The pointer reached the flyout: whatever switch was pending on the way
@@ -403,11 +455,16 @@ class _FloatSurfaceState extends State<FloatSurface> {
     _guardRect = null;
     _guardApex = null;
     _cancelPending();
+    _syncDebugOverlay();
   }
 
   @override
   void dispose() {
     _pendingSwitch?.cancel();
+    // The overlay lives in the Overlay, not under this widget, so a surface
+    // disposed with it showing would leave the triangle on screen.
+    _removeDebugOverlay();
+    _debugShape.dispose();
     _hovered.dispose();
     super.dispose();
   }
@@ -431,6 +488,49 @@ class _FloatSurfaceState extends State<FloatSurface> {
       ),
     );
   }
+}
+
+/// The safe triangle, drawn: a translucent fill so the menu underneath stays
+/// readable, its edges, and a ring at the apex where the pointer left the
+/// owner row. The overlay fills the window, so global coordinates are the
+/// canvas's own.
+class _SafeTrianglePainter extends CustomPainter {
+  final SafeTriangle triangle;
+  final Color colour;
+
+  const _SafeTrianglePainter(this.triangle, this.colour);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = Path()
+      ..moveTo(triangle.apex.dx, triangle.apex.dy)
+      ..lineTo(triangle.cornerA.dx, triangle.cornerA.dy)
+      ..lineTo(triangle.cornerB.dx, triangle.cornerB.dy)
+      ..close();
+    canvas.drawPath(path, Paint()..color = colour.withValues(alpha: 0.18));
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = colour
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
+    );
+    canvas.drawCircle(
+      triangle.apex,
+      3,
+      Paint()
+        ..color = colour
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_SafeTrianglePainter old) =>
+      old.colour != colour ||
+      old.triangle.apex != triangle.apex ||
+      old.triangle.cornerA != triangle.cornerA ||
+      old.triangle.cornerB != triangle.cornerB;
 }
 
 class _MenuHoverScope extends InheritedWidget {
