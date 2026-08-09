@@ -349,6 +349,62 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   clean look. As always, the graphics-card program and its plain-Rust twin were checked to agree
   to the last bit across every one of these — invert on and off, lopsided near/far, and each
   display mode.
+- **What an iris is, and why a blur is not a lens.** Blur a picture and bright points smear
+  into soft grey nothing. Defocus a picture *through a lens* and every bright point becomes a
+  little disc — and that disc is a **picture of the hole the light came through**. That hole
+  is the iris: a ring of overlapping metal blades, so it is really a polygon, which is why
+  out-of-focus street lights are hexagons on some lenses and circles on others. Depth of
+  field's **Iris** twirl is that hole. **Blades** is how many, **Roundness** is how bowed they
+  are (1 is a perfect circle, 0 a straight-edged polygon, and *below* zero the edges cave
+  inward and you get a star), **Rotation** turns it (a number with a dial beside it — drag
+  either), and **Aspect ratio** squashes it on one axis the way an anamorphic scope lens
+  does. **Rim brightness** is the odd one worth knowing: a real lens does not throw a *flat*
+  disc — some ring the edge bright (the "soap bubble" look), some pool the light in the
+  middle (creamy and smooth). That is an optical defect called spherical aberration, and this
+  is the dial for it.
+
+  The other half is subtler and matters more. Averaging is what makes a blur, and averaging is
+  also what *destroys* a highlight: one very bright pixel among a hundred dark ones comes out
+  barely brighter than the dark ones. A real lens does not average — it spreads that bright
+  point's energy over the whole disc, and the disc stays bright. The **Highlights** twirl fakes
+  that honestly: **Highlight threshold** says which part of a pixel counts as a highlight
+  (everything above scene white, by default), and **Highlight exposure** says how hard that
+  part is allowed to survive the average. Turn exposure up and the bright points stop
+  dissolving and start blooming into balls. That one control is the difference between "the
+  background is blurry" and "the background is *bokeh*".
+
+  Both are **off when you drop the effect on**, which is not shyness — it is a promise. Every
+  project already made with Depth of field has to render the same pixels it always did, and
+  the way the code keeps that promise is worth knowing because it looks like paranoia: at
+  their neutral settings the kernel does not multiply by one, it takes a *different route
+  through the code entirely*. The reason is that computer arithmetic is not school arithmetic.
+  Adding a hundred numbers each multiplied by 1.0, then dividing by a hundred 1.0s, does not
+  always give the same last digit as adding a hundred numbers and dividing by a hundred —
+  each multiply rounds, and rounding accumulates. So "neutral" is a fork in the road, not a
+  factor of one, and there is a test that renders the whole frame both ways and demands the
+  results match to the last bit.
+
+- **Picking a point by clicking it.** Depth of field's **Focus point** is a small thing that
+  removes a genuinely annoying job. Focusing used to mean: switch the view to Depth map, look
+  at the grey value of the thing you want sharp, guess it is about 0.34, type 0.34, look
+  again, try 0.31. Now you arm the little crosshair beside the row and click the thing in the
+  Viewer; the effect reads the depth under your click and focuses there. Underneath, a "point"
+  in Lumit is not a special kind of value — it is just two ordinary number parameters named
+  `something_x` and `something_y`, and the panel notices the pair and draws them as one row
+  with a crosshair. That is why adding a point to an effect costs nothing: you name two
+  numbers correctly and the row appears.
+
+- **Greyed-out rows.** Some controls stop meaning anything once another control is set a
+  certain way. Tick "Use focus point" and the Focus distance *number* no longer decides
+  anything — the point does. Leaving the number live would invite you to drag something that
+  does nothing, so the row goes dim and stops taking the mouse. The effect declares these
+  rules in its own description ("this row is editable only while that switch is off"), the
+  panel reads them and draws accordingly, and — importantly — the *renderer never consults
+  them*. It works out for itself which control is in charge. That separation is deliberate:
+  the worst case is a forgotten rule leaving a live control that does nothing, which is a
+  panel bug you can see, rather than the panel and the renderer disagreeing about what your
+  picture should look like.
+
 - **Depth-of-field, the foundation** — the first piece of a "lens blur" that keeps one
   distance sharp and softens everything nearer and farther, the way a real camera lens does.
   A photographic lens can only focus at one distance at a time; things off that plane spread
@@ -3897,6 +3953,27 @@ and **Delete** (your own themes only — a built-in's name is Lumit's), and **Sa
 copy…** inside the colour editor, which branches a theme without first
 overwriting it. The picker also draws eight swatches of the selected theme beside
 its name, so you can recognise a theme without applying it.
+
+### Why the letters got lighter (K-316)
+
+Type comes in weights — how thick the strokes of each letter are. Regular is
+the weight books are printed in; Medium is a step thicker, meant for the odd
+word that has to stand out. The design spec (docs/15-DESIGN.md §7.1) always
+said Lumit's ordinary text — menus, buttons, property names, panel copy — is
+plain regular Inter, with Medium kept for the few things that earn emphasis:
+dialog headings and the panel tab labels.
+
+The app never actually did that, for a quiet packaging reason: only the Medium
+font file was bundled, so whatever weight the code asked for, Medium is what
+drew. Every word in the interface was a step bolder than designed, and when
+everything is emphasised the emphasis stops meaning anything — a wall of
+slightly-heavy text is *harder* to scan, not easier.
+
+The fix is two-part: the Regular file is now bundled beside Medium, and the
+theme's `body`, `small` and `caption` styles ask for regular weight while
+`heading` and a new `bodyStrong` (used by the dock's tab pills) keep Medium. A
+test in `theme_test.dart` pins the weights so nothing drifts back to
+all-Medium without saying so.
 
 ### The rules that bite
 

@@ -7111,7 +7111,127 @@ to put both keys back, so this is a mistake with a standing invitation to recur.
 script is the regression test K-007 asks for: it fails on the `icon.json` as it was, and
 passes on the one that compiles.
 
-**K-313 · DECIDED · Masks gain modes, feather and expansion, and the first mask in the
+**K-313 · DECIDED · Bokeh folds into Depth of field rather than shipping beside it; the
+"advanced" slot is reserved for a genuinely physical model.** The contributed Bokeh effect
+(PR #38) brought an aperture polygon (blades, roundness reaching below zero into stars, an
+anamorphic squeeze, a radial weighting), a split-at-threshold power mean so a small bright
+thing blooms into a ball instead of dissolving into its surroundings, and a fuller depth
+model (channel pick, click-to-focus point, a Profile that scales the depth distance before
+the ramp, edge-leak suppression). It shipped as a second effect standing next to `dof`.
+
+**Why it folds in.** §3.22 has recorded since K-124 that the flat disc was the *base* and
+that "shaped, bright-rimmed highlights are the planned DOF PRO second effect" — but none of
+the above is a second effect's worth of physics. There is no scene-referred aperture, no
+f-stop, no per-pixel scatter, no occlusion or inpainting behind foreground edges, no
+spectral response. It is the base lens blur finished properly. Shipped beside `dof` it
+would have left the *default* depth-of-field permanently the worse of the two, and left two
+90 %-identical gathers to maintain. Folded, the shipped effect gains the aperture and
+DOF PRO stays free for the physically-accurate, deliberately intensive model the owner
+wants it to be.
+
+**Every added control is neutral at its default, and neutral is reached by BRANCHING.**
+Roundness 1 takes the plain `r² ≤ coc²` circle test, Concentration 0 and Remove edge leak 0
+take the unweighted accumulation, Exposure 0 takes the unsplit sum. None of those is an
+IEEE 754 identity — `Σ(c·w)/Σw` is not `Σc/n` when every `w` is 1, `min(c,t) + max(c−t,0)`
+is not reliably `c`, and scaling both sides of a comparison by `apothem2` can flip a
+boundary tap — so multiplying by one would have re-rendered every saved project by an ULP
+or two. The branch is what makes the fold safe, and
+`the_default_aperture_is_the_historical_disc_bit_for_bit` pins it on the arithmetic rather
+than asserting it in a comment. Profile is the exception that proves the rule: its neutral
+is a multiply by exactly 1, which *is* exact, so it needs no branch.
+
+**Three of the contributed controls are dropped.** Placement and Resolution were declared
+but inert; Custom blur shape declared a layer reference the kernel never bound. Resolution
+was worse than inert — read as a band count quantising the defocus ramp, it put a real
+depth pass's whole content in one band and its near object in another, making focus
+all-or-nothing. A declared-but-dead control is a promise the panel cannot keep, so they go
+until someone can say what they do.
+
+**No `ParamKind::Point` was added.** The contributed branch introduced one; the panel had
+meanwhile learned to fold two adjacent `_x`/`_y` Float parameters into a single row with a
+crosshair pick (docs/07 §6.1), which the Lens flare's Light and Radial blur's Centre both
+ride. Focus point uses that instead — the naming convention is the whole mechanism, and a
+schema kind, a bridge kind, generated code and a Dart row were deleted rather than written.
+`ParamKind::Angle` *is* added: there is no arrangement of existing rows that draws a dial.
+
+**Consequence:** `EffectSchema` gains `enabled_when` (the greyed-row rule, evaluated by
+`lumit_core::fx::param_enabled` and mirrored on the panel), the schema gains `Angle`, and
+`dof` gains three collapsed twirls — Iris, Highlights, Depth map. The stops-to-power
+constant (`EXPOSURE_STOPS_PER_DOUBLING`, 12) is fitted from screenshots rather than measured
+against a reference plugin, and §3.22 records it as open.
+
+**K-315 · DECIDED · Depth of field's control surface, after the owner's first pass on
+it.** Five changes, each from testing K-313 in the app rather than from a spec.
+
+**Composite mode is gone.** Five blend modes on one effect is a menu nobody has a reason to
+open: an effect whose result wants adding over a sharp plate is an adjustment layer with a
+blend mode, which already exists, does it in one obvious place, and does it for *every*
+effect rather than for whichever ones happened to grow a dropdown.
+
+**The depth channel list is five entries, and every one can explain itself.** Luminance (the
+default — right for the grey map a depth pass usually is, whatever channels it was written
+to), Alpha (some renderers put depth there), Red/Green/Blue (a packed pass, several AOVs
+flattened into one image). Hue, saturation, lightness and the plain channel mean are gone:
+nothing encodes a depth or a density as a hue, and offering the option only invites someone
+to find out. **Depth invert moves into that group** — it is part of how the pass is *read*,
+not part of where focus is. Changing the default from Red to Luminance is a look change on a
+non-grey depth pass; it is recorded here rather than hidden, and K-313 has not shipped.
+
+**Focus distance, Use focus point and Focus point are now adjacent.** A switch that hands one
+control's job to another is an affordance only if both are visible at once; with the toggle
+three twirls below the number it governed, neither row explained the other.
+
+**Three renames, because the names were the problem.** *Profile* → **Gamma**: it is a
+gamma on the depth axis, deciding how hard the blur answers to a small change in depth.
+*Concentration* → **Rim brightness**: it decides where the light sits inside each ball, which
+is spherical aberration. *Deform* → **Aspect ratio**. None of the three could be guessed from
+its old label, and a control nobody can name is a control nobody uses.
+
+**The angle dial sits beside its number, not under it**, and the same control now serves every
+*unbounded* rotation in the catalogue: the Transform effect's Rotation, Hue shift's Angle (a
+hue shift is a rotation about the colour wheel — the most dial-shaped control there is) and
+the Lens flare's aperture Rotation. The two blur-direction angles keep their `±3600` hard
+bound and stay plain numbers, because `Angle` is deliberately unbounded and swapping them
+would quietly drop a clamp.
+
+**K-316 · DECIDED · Body text renders at regular weight; Medium is rationed to emphasis.**
+From the owner (2026-08-09): "less text should be bold — a lot of it is too thick and can
+actually reduce readability." The cause was packaging, not the type scale: only
+`Inter-Medium.otf` was bundled, so every weight the code asked for drew as Medium and the
+whole interface sat a step bolder than docs/15-DESIGN §7.1 specifies (12px *plain* Inter
+for panel copy, menus and buttons; Medium reserved for dialog emphasis and tab labels).
+`Inter-Regular.otf` (same v3.019 build as the bundled Medium, so metrics match) is now
+bundled at weight 400; the theme's `body`/`small`/`caption` styles request w400 and
+`heading` keeps w500, joined by a `bodyStrong` getter (w500) that the dock tab pills and
+drag ghost titles use — the two "panel tab label" emphasis sites §7.1 names. The two spots
+that had hand-forced `FontWeight.w400` over the Medium default (timeline marker flags)
+drop their overrides. No spec change: this aligns the build with what 15-DESIGN already
+said. Regression test: `body text is regular weight; emphasis is medium and rationed`
+(theme_test.dart).
+
+**K-317 · DECIDED · The type scale drops a step, property rows tighten, and a selected
+bar brightens instead of growing an outline.** Three owner calls from testing K-316 in
+the app beside After Effects (2026-08-09).
+
+**Type drops one step.** Body Inter goes 12px → 11px (and with it every value field,
+menu and button, since they all read the theme's `body`/`bodyPrimary`); `small` 11 → 10;
+`caption` 10 → 9. docs/15-DESIGN §7.1's table moves with it in this commit. Beyond size,
+the owner's "words feel soft" reads as Flutter-on-Windows greyscale antialiasing (no
+ClearType subpixel rendering), which no theme value reaches; the smaller regular-weight
+face is the lever the theme has.
+
+**Property rows tighten.** The vertical breathing space on effect, transform and source
+rows goes 3px → 2px a side, bringing the Effect controls' row rhythm to AE's. One value
+in four files (`effect_param_row_frb`, `transform_rows_frb`, `source_rows_frb`, and the
+point row) — the Timeline's fold-out already passes zero and is untouched.
+
+**A selected bar brightens.** The lane bar used to mark selection with a 1px accent
+outline; on a 22px bar that is a whisper. It now lerps its label colour 35 % toward
+`textPrimary` — the hue still says which layer it is (K-188's rule survives), and the
+lit bar is what AE does and reads at any zoom. No spec pinned the outline, so nothing
+else moves.
+
+**K-318 · DECIDED · Masks gain modes, feather and expansion, and the first mask in the
 list decides what the fold starts from.** 03-DATA-MODEL §7 always described a v1 mask as
 "static, Add-mode" with the rest listed as future. The future is now partly here:
 `MaskMode` is `None | Add | Subtract | Intersect | Difference`, and every mask carries a
@@ -7152,6 +7272,52 @@ every existing project has banked.
 **Variable-width (per-point) feather is not built.** It is a second point set on the path
 with its own tool, and `ToolMode.penMaskFeather` already exists in the toolbar as a stub
 with nothing behind it. It stays in TODO.
+
+**K-319 · DECIDED · A mask path animates through its own keyframe list, and mismatched point
+counts resample upward.** From the owner (2026-08-08): the deferral K-224 recorded ("neither
+can a mask path be keyframed") is closed for the engine half.
+
+**A separate carrier, not a generic `Property`.** Every animatable value in Lumit is a scalar:
+`Animation::{Static, Keyframed, Expression}` behind a `Property` whose `value_at` returns one
+`f64` at roughly two hundred call sites. A shape is not a scalar, and making `Property` generic
+to hold one would churn all two hundred to buy nothing. So `Mask` carries `path_keys:
+Vec<PathKeyframe>` beside its `path`, in `lumit-core::mask` where the path type already lives.
+Empty means unanimated, and empty is omitted from the file — an untouched mask writes the exact
+bytes it always did, which is what keeps every frame every existing project has banked
+(`lumit-eval` hashes the serialised masks into the frame key).
+
+**Timing eases, no value graph.** Path keys carry the same `SideInterp` pair a scalar keyframe
+does, and it shapes the **interpolation parameter** — 0 at this key, 1 at the next — evaluated
+by the scalar evaluator itself rather than a second copy of the same maths. A shape has no
+value to plot, so the lane shows diamonds only; the graph editor's speed lens is the TODO item
+that pairs with this.
+
+**Mismatched vertex counts resample to the higher count, never refuse.** Adding a point to a
+mask halfway through an animation is an ordinary act, so interpolation between a four-point key
+and a seven-point key must simply work. The sparser path is redrawn at the higher count by
+**splitting its own segments** — de Casteljau at a parameter, the same exact split K-221 relies
+on, so the two halves *are* the original cubic and the reconciled path is geometrically the
+path it was. Distribution is fixed arithmetic (evenly, remainder to the earliest segments), so
+the reconciliation is deterministic and playback repeats frame for frame. Then the two run
+vertex for vertex, position and both handles blended straight. This is what After Effects does,
+so an imported comp and a hand-built one behave alike.
+
+**Open against closed is held, not blended.** Whether a path is joined up is not a quantity and
+has no halfway. Across a span it takes the outgoing key's flag and flips at the next key — a
+Hold in all but name. The geometry still interpolates; only the closing segment appears or
+disappears, on a frame boundary rather than smearing.
+
+**The frame cache needs the evaluated path, not the stored keys.** The key carries no timeline
+position by design (K-214), and a keyframed mask serialises identically at every frame — so the
+stored keys alone would name every frame of a moving mask the same, and playback would hand
+back the first frame drawn while the mask sat still. The evaluated shape at the layer's local
+time therefore joins the hash, **and only for masks that are actually animated**, so no
+existing key moves and `ALGO_VERSION` does not need bumping. Masks evaluate at the layer's own
+clock, the one every other property on the layer reads (K-213).
+
+**Still whole-list ops.** `SetLayerMasks` carries the entire mask list, so a keyframe drag
+rewrites all of it as one undo entry. That is correct but coarse; a per-key op is noted in
+TODO.md for when the interface can make one.
 
 **K-314 · DECIDED · The Viewer gets an exposure and a tone map that the export can never
 see, and the tone map is a fixed highlight rolloff.** Two controls in the Viewer bar
@@ -7203,49 +7369,3 @@ cannot mis-serve an exposed frame to something expecting the composite.
 K-245 already writes into the `.lum`, which is not undoable and does not mark the project
 dirty. A way of looking is not an edit to the work, so Ctrl+Z must never undo an exposure
 nudge, and a comp reopens looking how it was left.
-
-**K-315 · DECIDED · A mask path animates through its own keyframe list, and mismatched point
-counts resample upward.** From the owner (2026-08-08): the deferral K-224 recorded ("neither
-can a mask path be keyframed") is closed for the engine half.
-
-**A separate carrier, not a generic `Property`.** Every animatable value in Lumit is a scalar:
-`Animation::{Static, Keyframed, Expression}` behind a `Property` whose `value_at` returns one
-`f64` at roughly two hundred call sites. A shape is not a scalar, and making `Property` generic
-to hold one would churn all two hundred to buy nothing. So `Mask` carries `path_keys:
-Vec<PathKeyframe>` beside its `path`, in `lumit-core::mask` where the path type already lives.
-Empty means unanimated, and empty is omitted from the file — an untouched mask writes the exact
-bytes it always did, which is what keeps every frame every existing project has banked
-(`lumit-eval` hashes the serialised masks into the frame key).
-
-**Timing eases, no value graph.** Path keys carry the same `SideInterp` pair a scalar keyframe
-does, and it shapes the **interpolation parameter** — 0 at this key, 1 at the next — evaluated
-by the scalar evaluator itself rather than a second copy of the same maths. A shape has no
-value to plot, so the lane shows diamonds only; the graph editor's speed lens is the TODO item
-that pairs with this.
-
-**Mismatched vertex counts resample to the higher count, never refuse.** Adding a point to a
-mask halfway through an animation is an ordinary act, so interpolation between a four-point key
-and a seven-point key must simply work. The sparser path is redrawn at the higher count by
-**splitting its own segments** — de Casteljau at a parameter, the same exact split K-221 relies
-on, so the two halves *are* the original cubic and the reconciled path is geometrically the
-path it was. Distribution is fixed arithmetic (evenly, remainder to the earliest segments), so
-the reconciliation is deterministic and playback repeats frame for frame. Then the two run
-vertex for vertex, position and both handles blended straight. This is what After Effects does,
-so an imported comp and a hand-built one behave alike.
-
-**Open against closed is held, not blended.** Whether a path is joined up is not a quantity and
-has no halfway. Across a span it takes the outgoing key's flag and flips at the next key — a
-Hold in all but name. The geometry still interpolates; only the closing segment appears or
-disappears, on a frame boundary rather than smearing.
-
-**The frame cache needs the evaluated path, not the stored keys.** The key carries no timeline
-position by design (K-214), and a keyframed mask serialises identically at every frame — so the
-stored keys alone would name every frame of a moving mask the same, and playback would hand
-back the first frame drawn while the mask sat still. The evaluated shape at the layer's local
-time therefore joins the hash, **and only for masks that are actually animated**, so no
-existing key moves and `ALGO_VERSION` does not need bumping. Masks evaluate at the layer's own
-clock, the one every other property on the layer reads (K-213).
-
-**Still whole-list ops.** `SetLayerMasks` carries the entire mask list, so a keyframe drag
-rewrites all of it as one undo entry. That is correct but coarse; a per-key op is noted in
-TODO.md for when the interface can make one.

@@ -13,6 +13,32 @@ pub const EDGE_OPTIONS: &[&str] = EdgesMode::OPTIONS;
 /// the common case, spelled once so every ungrouped Choice reads the same.
 pub const CHOICE_UNGROUPED: &[u32] = &[];
 
+/// Which channel of an auxiliary picture an effect reads as a single number —
+/// the depth out of a depth pass, the weight out of a custom aperture image.
+///
+/// One list, shared, so that every effect naming a channel of an auxiliary
+/// picture names it from the same short list rather than declaring its own and
+/// letting them drift. The index order is the wire form the resolved ops carry,
+/// so entries are appended, never reordered.
+///
+/// **Every entry has to be able to explain itself.** A depth pass or a dirt
+/// plate arrives as a picture, and the question is only which number in it is
+/// the one the effect wants:
+///
+/// - **Luminance** — the default, and right for the overwhelmingly common case:
+///   a grey map, whatever combination of channels it was written to. Weighted
+///   (Rec.709) rather than a plain mean, so a pass that is only *nearly* grey
+///   still reads sensibly.
+/// - **Alpha** — some renderers put depth in the alpha of the beauty pass.
+/// - **Red / Green / Blue** — a packed pass, where several AOVs were flattened
+///   into one image and this one landed in a particular channel. Red is also the
+///   historical convention for a depth pass on its own.
+///
+/// Hue, saturation and lightness are deliberately **not** here. Nothing encodes
+/// a depth or a density as a hue, and offering the option only invites someone
+/// to find out.
+pub const CHANNEL_OPTIONS: &[&str] = &["Luminance", "Alpha", "Red", "Green", "Blue"];
+
 /// Shake's twirls (P4): the per-axis wobble (FX-11, K-146) — the master
 /// Amplitude/Frequency drive x and y together while this group biases each axis
 /// and adds the z (depth/scale) shake that replaced the old Zoom pump — and the
@@ -66,6 +92,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // footage never darkens along the border), so their look is unchanged.
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "blur",
         label: "Gaussian blur",
         version: 1,
@@ -104,6 +131,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // unbounded Length cannot be padded statically.
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "directional_blur",
         label: "Directional blur",
         version: 1,
@@ -158,6 +186,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // bilinear_edge sampler the others use.
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "radial_blur",
         label: "Radial blur",
         version: 1,
@@ -233,6 +262,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // below; the match_name stays "sharpen" so saved projects are unchanged.
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "sharpen",
         label: "Unsharp mask",
         version: 1,
@@ -299,6 +329,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // radius/threshold/luma knobs.
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "sharpen_simple",
         label: "Sharpen",
         version: 1,
@@ -351,6 +382,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // grows the offset from the frame centre.
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "rgb_split",
         label: "RGB split",
         version: 1,
@@ -496,6 +528,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // default r/g/b) and the shared Wavelength/Samples spectral machinery.
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "chromatic_aberration",
         label: "Chromatic aberration",
         version: 1,
@@ -591,6 +624,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // §1.2 exempts inherently trigger-driven effects.
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "flash",
         label: "Flash",
         version: 1,
@@ -710,6 +744,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // §3.10 preset browser is for.
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "colour_balance",
         label: "Colour balance",
         version: 1,
@@ -759,6 +794,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // setting is a preset choice.
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "saturation",
         label: "Saturation",
         version: 1,
@@ -796,6 +832,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // scale). Same domain as Saturation: linear light, unpremultiplied (§2.2).
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "vibrancy",
         label: "Vibrancy",
         version: 1,
@@ -833,6 +870,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // already lists it.
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "vignette",
         label: "Vignette",
         version: 1,
@@ -917,6 +955,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // pinned by test). Category Colour, beside its grade siblings.
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "exposure",
         label: "Exposure",
         version: 1,
@@ -956,6 +995,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // beside its grade siblings.
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "hue_shift",
         label: "Hue shift",
         version: 1,
@@ -972,11 +1012,13 @@ pub const BUILTINS: &[EffectSchema] = &[
             ParamSchema {
                 id: "angle",
                 label: "Angle",
-                // Degrees; wraps every 360. 0 is neutral.
-                kind: ParamKind::Float {
+                // Degrees on a dial (docs/07 §6): a hue shift is a rotation
+                // about the colour wheel, so the control is that wheel. Wraps
+                // every 360, and unbounded so an animated hue winds through
+                // whole turns rather than stopping.
+                kind: ParamKind::Angle {
                     default: 0.0,
-                    slider: (-180.0, 180.0),
-                    hard: (None, None),
+                    dial_step: 15.0,
                 },
             },
             ParamSchema {
@@ -1002,6 +1044,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // its grade siblings.
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "contrast",
         label: "Contrast",
         version: 1,
@@ -1042,6 +1085,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // beside its grade siblings.
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "gamma",
         label: "Gamma",
         version: 1,
@@ -1086,6 +1130,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // passthrough, pinned by test). Category Colour, beside its grade siblings.
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "temperature",
         label: "Temperature",
         version: 1,
@@ -1130,6 +1175,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // never-crash rule). Moderate cost (a per-pixel 3D lookup), Exact ROI.
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "lut",
         label: "LUT",
         version: 1,
@@ -1158,21 +1204,115 @@ pub const BUILTINS: &[EffectSchema] = &[
     },
     // Depth of field (docs/08 §3.22, docs/impl/layer-input.md): a lens blur
     // driven by a depth pass. A `Layer` parameter names another layer as the
-    // depth input (its red channel read as 0..1 depth, docs/impl/layer-input.md
-    // §3), Focus/Range set the sharp band and Aperture the maximum blur disc.
-    // The heavy lifting is the existing `lumit_gpu::fx::dof` kernel; resolution
-    // carries only the scalars (Focus/Range/Aperture/Mix) — the depth layer is
-    // not `Copy`, so (like the LUT's cube and Motion blur's flow field) the
-    // referenced layer's rendered texture travels beside the resolved op,
-    // rendered alone at comp size exactly as a matte layer is. An unset (or
-    // dangling) depth reference is a labelled no-op, never a fault (the same
-    // sanctioned exception the File parameter takes to the "no no-op default"
-    // rule). Premultiplied (the disc gathers the working premultiplied colour,
-    // per `fx_dof.wgsl`), Moderate cost, `{0}` temporal. ROI is a padded
-    // gather: the static declaration covers the Aperture slider's 40 px@comp
-    // maximum across typical rasters (docs/08 §2.3 % diag ≈ 40 px at ≥ 1080p).
+    // depth input (docs/impl/layer-input.md §3), Focus/Range set the sharp band
+    // and Aperture the maximum blur disc.
+    //
+    // **In plain terms.** This is the whole lens, not just the blur. The first
+    // rows are what a depth-of-field always asked for — which layer carries the
+    // depth, what is sharp, how soft everything else goes. Behind the twirls is
+    // the part that makes it read as a *lens* rather than as a smudge: the
+    // shape of the iris the light is smeared into, and the point at which a
+    // highlight stops averaging away and starts blooming into a ball.
+    //
+    // **Every one of those is neutral at its default, and neutral means
+    // bit-identical.** The kernel does not multiply by a neutral value, it
+    // *branches around* the whole weighted path — because `Σ(c·w)/Σw` is not an
+    // identity in IEEE 754 even when every `w` is 1, and neither is splitting a
+    // tap at a threshold and putting it back together. So a project saved
+    // before any of this existed renders the same pixels it always did, which
+    // is what let this fold into the shipped effect instead of arriving as a
+    // second one beside it (K-313).
+    //
+    // The heavy lifting is `lumit_gpu::fx::dof` / `fx_dof.wgsl`; resolution
+    // carries only the scalars — the depth layer is not `Copy`, so (like the
+    // LUT's cube and Motion blur's flow field) the referenced layer's rendered
+    // texture travels beside the resolved op, rendered alone at comp size
+    // exactly as a matte layer is. An unset (or dangling) depth reference is a
+    // labelled no-op, never a fault (the same sanctioned exception the File
+    // parameter takes to the "no no-op default" rule). Premultiplied (the
+    // aperture gathers the working premultiplied colour, per `fx_dof.wgsl`),
+    // Moderate cost, `{0}` temporal. ROI is a padded gather: the static
+    // declaration covers the Aperture slider's 40 px@comp maximum across
+    // typical rasters (docs/08 §2.3 % diag ≈ 40 px at ≥ 1080p).
     EffectSchema {
-        groups: &[],
+        // The twirls (K-145's P4 groups). Both hold the controls that turn a
+        // disc average into a lens, and both arrive collapsed: the rows above
+        // them are the effect, and these are how it is shaped.
+        groups: &[
+            ParamGroup {
+                label: "Iris",
+                params: &["blades", "roundness", "rotation", "aspect", "rim"],
+                collapsed: true,
+                visible_when: None,
+            },
+            ParamGroup {
+                label: "Highlights",
+                params: &["threshold", "exposure"],
+                collapsed: true,
+                visible_when: None,
+            },
+            ParamGroup {
+                // How the depth pass is READ — which number in it is depth,
+                // which way round it runs, and how hard the blur answers to it.
+                // Where focus *is* lives above, beside the rows that set it.
+                label: "Depth map",
+                params: &[
+                    "depth_channel",
+                    "depth_invert",
+                    "gamma",
+                    "remove_edge_leak",
+                    "detect_edge_threshold",
+                ],
+                collapsed: true,
+                visible_when: None,
+            },
+        ],
+        // The greyed rows: which of two controls is in charge, said in the
+        // panel rather than left for the owner to discover by dragging
+        // something inert.
+        enabled_when: &[
+            // Focus point takes over from Focus distance. While it is ticked,
+            // focus is whatever depth sits under the point and the distance
+            // number decides nothing — and while it is not, the point does not.
+            EnabledWhen {
+                param: "focus",
+                on: "use_focus_point",
+                cond: EnabledCond::BoolIs(false),
+            },
+            EnabledWhen {
+                param: "focus_point_x",
+                on: "use_focus_point",
+                cond: EnabledCond::BoolIs(true),
+            },
+            EnabledWhen {
+                param: "focus_point_y",
+                on: "use_focus_point",
+                cond: EnabledCond::BoolIs(true),
+            },
+            // Everything that reads the depth pass needs one to read. With no
+            // layer picked the effect defocuses the frame uniformly, and these
+            // rows have nothing to describe.
+            EnabledWhen {
+                param: "depth_channel",
+                on: "depth",
+                cond: EnabledCond::LayerSet,
+            },
+            EnabledWhen {
+                param: "use_focus_point",
+                on: "depth",
+                cond: EnabledCond::LayerSet,
+            },
+            EnabledWhen {
+                param: "remove_edge_leak",
+                on: "depth",
+                cond: EnabledCond::LayerSet,
+            },
+            EnabledWhen {
+                param: "detect_edge_threshold",
+                on: "depth",
+                cond: EnabledCond::LayerSet,
+            },
+        ],
         match_name: "dof",
         label: "Depth of field",
         version: 1,
@@ -1182,9 +1322,12 @@ pub const BUILTINS: &[EffectSchema] = &[
             // Aperture is px@comp (up to 40); 3 % of the comp diagonal covers
             // that on a 1080p+ raster and over-covers smaller ones — a safe
             // static bound for a runtime-sized gather (docs/impl/layer-input.md).
+            // The aperture polygon is INSCRIBED in that circle at every
+            // Roundness and Deform (see `aperture_blades`), so shaping it can
+            // only ever gather fewer taps — the bound holds unchanged.
             roi: Roi::PaddedPctDiag(3.0),
             temporal: &[0],
-            premultiplied: true, // the disc gathers premultiplied colour (fx_dof.wgsl)
+            premultiplied: true, // the aperture gathers premultiplied colour (fx_dof.wgsl)
             seeded: false,
             beat_input: false,
         },
@@ -1192,7 +1335,7 @@ pub const BUILTINS: &[EffectSchema] = &[
             ParamSchema {
                 id: "depth",
                 label: "Depth layer",
-                // The layer whose red channel is the depth pass (0 = near,
+                // The layer whose depth channel is the depth pass (0 = near,
                 // 1 = far by convention; the effect is symmetric about Focus).
                 // Unset until the owner picks one (a labelled no-op): a
                 // depth pass is never the picture itself, so no
@@ -1210,24 +1353,50 @@ pub const BUILTINS: &[EffectSchema] = &[
             // K-125's `depth_after_effects` bool still loads — `layer_source`
             // falls back to it. Replaces the old "Depth after effects" checkbox.
             ParamSchema {
-                // Invert the depth pass (d' = 1 - d) before the circle-of-
-                // confusion, swapping near and far — the owner's "tick to
-                // invert the depth" box (Frischluft / DOF PRO both offer it).
-                // Off (default) keeps the historical reading, so old projects
-                // are unchanged. Continuous, so the §1.6 ULP oracle still holds.
-                id: "depth_invert",
-                label: "Depth invert",
-                kind: ParamKind::Bool { default: false },
-            },
-            ParamSchema {
                 id: "focus",
                 label: "Focus distance",
                 // The in-focus depth, 0..1. Mid-depth by default so a typical
-                // near-to-far pass has its middle sharp.
+                // near-to-far pass has its middle sharp. Greys out while Use
+                // focus point is on, because then the point decides.
                 kind: ParamKind::Float {
                     default: 0.5,
                     slider: (0.0, 1.0),
                     hard: (Some(0.0), Some(1.0)),
+                },
+            },
+            ParamSchema {
+                // Focus by clicking the thing you want sharp rather than by
+                // hunting for a number. Off by default: it changes what Focus
+                // distance means, and a saved project must keep meaning what it
+                // meant.
+                id: "use_focus_point",
+                label: "Use focus point",
+                kind: ParamKind::Bool { default: false },
+            },
+            ParamSchema {
+                // Where to read the focus depth, px@comp (K-260: point
+                // parameters are PIXELS, never % of frame). Pairs with
+                // `focus_point_y` into one point row with a crosshair pick
+                // (docs/07 §6.1) — the same row the Lens flare's Light uses,
+                // which is why this is a Float pair and not a schema kind of
+                // its own. The schema default is nominal 1080p centre;
+                // `instantiate_for_raster` centres a fresh instance on the
+                // actual comp.
+                id: "focus_point_x",
+                label: "Focus point x",
+                kind: ParamKind::Float {
+                    default: 960.0,
+                    slider: (0.0, 3840.0),
+                    hard: (None, None),
+                },
+            },
+            ParamSchema {
+                id: "focus_point_y",
+                label: "Focus point y",
+                kind: ParamKind::Float {
+                    default: 540.0,
+                    slider: (0.0, 2160.0),
+                    hard: (None, None),
                 },
             },
             ParamSchema {
@@ -1284,13 +1453,222 @@ pub const BUILTINS: &[EffectSchema] = &[
                     hard: (Some(0.0), None),
                 },
             },
+            // ---- The Iris twirl ----
+            ParamSchema {
+                // The iris's blade count — the shape a defocused highlight is
+                // smeared into. Inert at Roundness 1 (a circle has no blades),
+                // which is why the schema needs no Circle entry beside it. The
+                // ceiling is [`MAX_BLADES`], shared with the kernel's uniform
+                // array; an Int rather than a Choice so a keyframe can sweep it,
+                // stepping 5 → 6 rather than growing half a blade.
+                id: "blades",
+                label: "Blades",
+                kind: ParamKind::Int {
+                    default: 6,
+                    slider: (3, MAX_BLADES as i64),
+                    hard: (Some(3), Some(MAX_BLADES as i64)),
+                },
+            },
+            ParamSchema {
+                // Bows the blades. 0 is a straight-edged polygon, 1 is the
+                // circle, and **negative goes concave** — five blades at −1 is a
+                // star. 1 by default: that is the plain disc this effect has
+                // always gathered, so the shape controls cost an existing
+                // project nothing until it asks for them.
+                id: "roundness",
+                label: "Roundness",
+                kind: ParamKind::Float {
+                    default: 1.0,
+                    slider: (-1.0, 1.0),
+                    hard: (Some(-1.0), Some(1.0)),
+                },
+            },
+            ParamSchema {
+                // Turns the iris. Degrees on a dial (docs/07 §6), unbounded, so
+                // it winds through full turns rather than stopping at 360.
+                // Inert at Roundness 1, like Blades.
+                id: "rotation",
+                label: "Rotation",
+                kind: ParamKind::Angle {
+                    default: 0.0,
+                    dial_step: 15.0,
+                },
+            },
+            ParamSchema {
+                // The aperture's aspect: 0 is round, positive stretches the
+                // highlights wide and negative stretches them tall — the oval
+                // an anamorphic scope lens throws. Not a ratio in the
+                // 1.33-or-2.0 sense; it is a squeeze either side of round,
+                // which is why it runs −1…1 rather than upward from 1.
+                id: "aspect",
+                label: "Aspect ratio",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (-1.0, 1.0),
+                    hard: (Some(-1.0), Some(1.0)),
+                },
+            },
+            ParamSchema {
+                // **Where the light sits inside each ball.** A real lens does
+                // not throw a flat disc: an under-corrected one rings the edge
+                // bright (the "soap bubble" bokeh), an over-corrected one pools
+                // the light in the middle (creamy, smooth). That is spherical
+                // aberration, and this is the dial for it — negative a soft
+                // centre, 0 the flat disc a plain gather produces, positive a
+                // bright rim. **Our reading of the curve, not measured against a
+                // reference plugin** — docs/08 §3.22 records that.
+                id: "rim",
+                label: "Rim brightness",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (-1.0, 1.0),
+                    hard: (Some(-1.0), Some(1.0)),
+                },
+            },
+            // ---- The Highlights twirl ----
+            ParamSchema {
+                // The linear level each tap is split at before the power mean:
+                // everything below it averages flat, everything above expands.
+                // 1.0 is scene white, so only genuinely over-range highlights
+                // bloom — and with Exposure at 0 this decides nothing at all,
+                // because the split never happens.
+                id: "threshold",
+                label: "Highlight threshold",
+                kind: ParamKind::Float {
+                    default: 1.0,
+                    slider: (0.0, 4.0),
+                    hard: (Some(0.0), None),
+                },
+            },
+            ParamSchema {
+                // How hard the over-threshold part of each tap blooms, in stops.
+                // The gather's mean becomes a *power* mean, so a small bright
+                // area survives being averaged with its dark surroundings
+                // instead of vanishing into it — which is the whole difference
+                // between a blur and a bokeh.
+                //
+                // **0 by default, and 0 is the plain arithmetic mean**: the
+                // kernel branches around the split entirely, so an existing
+                // project's blur is untouched to the bit. Turning this up is
+                // what lights the balls.
+                //
+                // The stops-to-power constant lives in `resolve_one`
+                // (`EXPOSURE_STOPS_PER_DOUBLING`) and is fitted, not measured;
+                // docs/08 §3.22 records it as open.
+                id: "exposure",
+                label: "Highlight exposure",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (0.0, 30.0),
+                    hard: (Some(-30.0), Some(30.0)),
+                },
+            },
+            // ---- The Depth map twirl ----
+            ParamSchema {
+                // Which channel of the depth layer carries depth. Red by
+                // default — the channel this effect has always read, and the
+                // one a depth pass conventionally arrives in — but a pass that
+                // comes as luminance or in the alpha is ordinary enough to
+                // deserve the pick.
+                id: "depth_channel",
+                label: "Depth channel",
+                kind: ParamKind::Choice {
+                    options: CHANNEL_OPTIONS,
+                    default: 0, // Red
+                    dividers_after: CHOICE_UNGROUPED,
+                },
+            },
+            ParamSchema {
+                // Invert the depth pass (d' = 1 - d) before the circle-of-
+                // confusion, swapping near and far — the owner's "tick to
+                // invert the depth" box (Frischluft / DOF PRO both offer it).
+                // Off (default) keeps the historical reading, so old projects
+                // are unchanged. Continuous, so the §1.6 ULP oracle still holds.
+                id: "depth_invert",
+                label: "Depth invert",
+                kind: ParamKind::Bool { default: false },
+            },
+            ParamSchema {
+                // **The gamma on the depth axis** — the depth distance rescaled
+                // before the ramp, which decides how hard the blur answers to a
+                // small change in depth, and is what stops focus being
+                // all-or-nothing on a real depth pass.
+                //
+                // **The range is wide on purpose, and ±1 was not enough.** A
+                // real depth pass rarely spreads its content over 0..1: a linear
+                // depth channel puts the sky or a distant ceiling at 1.0 and
+                // compresses an entire room into the bottom fifth, so the depth
+                // *differences* that matter are a tenth of the range or less. At
+                // ±1 this control could only compress the falloff fourfold,
+                // which left such a pass focusing all-or-nothing however it was
+                // set — verified on the owner's own footage through the Focus
+                // map view.
+                //
+                // The scale is **one doubling per unit** (`2^profile`), chosen so
+                // the whole slider stays useful: the setting that reads well on a
+                // linear depth pass off game footage lands around 6 (a 64×
+                // magnification), which is the middle rather than the end, and
+                // ±10 reaches 1024× for a pass squeezed harder still. 0 is the
+                // neutral multiplier of exactly 1.
+                id: "gamma",
+                label: "Gamma",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (-10.0, 10.0),
+                    hard: (Some(-10.0), Some(10.0)),
+                },
+            },
+            ParamSchema {
+                // Sharp foreground colour bleeding into the defocused
+                // background is the standard artefact of gathering across a
+                // depth discontinuity; this pulls back taps that sit across one
+                // AND in front of this pixel. 0 is off, and off takes the
+                // unweighted gather — the arithmetic this effect has always
+                // done. **Our reading**, though the artefact and the family of
+                // fixes are well known.
+                id: "remove_edge_leak",
+                label: "Remove edge leak",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(1.0)),
+                },
+            },
+            ParamSchema {
+                // How big a depth jump counts as an edge for the row above.
+                id: "detect_edge_threshold",
+                label: "Detect edge threshold",
+                kind: ParamKind::Float {
+                    default: 0.10,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(1.0)),
+                },
+            },
+            // ---- Back out of the twirls ----
+            ParamSchema {
+                // On by default, which is what this effect has always done: a
+                // gather running off the frame holds the border pixel outward
+                // instead of pulling in transparency, so a bright edge does not
+                // darken. Off lets the frame edge fall away, which is what a
+                // flare element over black wants.
+                //
+                // Not the shared EdgesMode enum (P3, K-145) on purpose — that is
+                // a three-way choice, and this is a two-state switch.
+                id: "repeat_edge_pixels",
+                label: "Repeat edge pixels",
+                kind: ParamKind::Bool { default: true },
+            },
             ParamSchema {
                 // Diagnostic views (the realistic subset the reference plugins
                 // ship). Rendered is the normal blurred output; Depth map shows
-                // the post-invert depth as greyscale; Focus map is the smooth
-                // in-focus mask (white where sharp, darkening out of focus).
-                // Every mode is continuous, so the §1.6 ULP oracle holds across
-                // them. Absent on pre-feature projects → Rendered (default 0).
+                // the post-invert depth as greyscale — after the channel pick,
+                // so it is what the effect is actually reading; Focus map is the
+                // smooth in-focus mask (white where sharp, darkening out of
+                // focus). Every mode is continuous, so the §1.6 ULP oracle holds
+                // across them. Absent on pre-feature projects → Rendered
+                // (default 0). Forced to Rendered when no depth is bound: with
+                // nothing to show, the views would draw whatever texture stands
+                // in for the depth binding.
                 id: "display",
                 label: "Display",
                 kind: ParamKind::Choice {
@@ -1310,6 +1688,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // through bit-exactly (pinned by test). The §3.5 Skew pair is post-v1.
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "transform",
         label: "Transform",
         version: 1,
@@ -1387,12 +1766,12 @@ pub const BUILTINS: &[EffectSchema] = &[
             },
             ParamSchema {
                 id: "rotation",
-                label: "Rotation °",
-                // Degrees, unbounded — whip transitions spin whole turns.
-                kind: ParamKind::Float {
+                label: "Rotation",
+                // Degrees on a dial (docs/07 §6), unbounded — whip transitions
+                // spin whole turns, and a dial that stopped at 360 could not.
+                kind: ParamKind::Angle {
                     default: 0.0,
-                    slider: (-180.0, 180.0),
-                    hard: (None, None),
+                    dial_step: 15.0,
                 },
             },
             ParamSchema {
@@ -1418,6 +1797,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // spreads over transparency like light.
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "glow",
         label: "Glow",
         version: 1,
@@ -1512,6 +1892,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // under constant parameters, which the frame key reads (lumit-eval).
     EffectSchema {
         groups: SHAKE_GROUPS,
+        enabled_when: &[],
         match_name: "shake",
         label: "Shake",
         version: 1,
@@ -1704,6 +2085,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // this is pinned as an internal constant.
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "block_glitch",
         label: "Block glitch",
         version: 1,
@@ -1801,6 +2183,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // separate Darkness param folds into it on load).
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "scanlines",
         label: "Scanlines",
         version: 2,
@@ -1880,6 +2263,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // no hash or seed, so `seeded: false`, unlike them.
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "datamosh",
         label: "Datamosh",
         version: 3,
@@ -1978,6 +2362,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // output.
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "echo",
         label: "Echo",
         version: 2,
@@ -2062,6 +2447,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // the owner's global pass) or a per-layer time hold (This layer's effects).
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "posterize_time",
         label: "Posterize time",
         version: 1,
@@ -2129,6 +2515,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // temporal effects inside the sampled below-stack hold to stills.
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "accumulation_mb",
         // The user-facing motion blur (docs/08 §3.26): the accumulation kind is
         // the correct, whole-scene one, so it takes the plain name. The
@@ -2227,6 +2614,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // exactly like Echo (adjustment-layer temporal effects follow).
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "motion_blur",
         // The optical-flow, footage-internal blur (docs/08 §3.2): "Fast" because
         // it is a single-pass per-pixel smear, distinct from the whole-scene,
@@ -2318,6 +2706,7 @@ pub const BUILTINS: &[EffectSchema] = &[
             collapsed: true,
             visible_when: None,
         }],
+        enabled_when: &[],
         match_name: "matte_key",
         label: "Matte key",
         version: 2,
@@ -2478,6 +2867,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // the identity. Category Colour, beside its grade siblings.
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "invert",
         label: "Invert",
         version: 1,
@@ -2505,6 +2895,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // beside its grade siblings.
     EffectSchema {
         groups: &[],
+        enabled_when: &[],
         match_name: "tint",
         label: "Tint",
         version: 1,
@@ -2599,6 +2990,7 @@ pub const BUILTINS: &[EffectSchema] = &[
                 visible_when: Some(("source_type", &[1])),
             },
         ],
+        enabled_when: &[],
         match_name: "lens_flare",
         label: "Lens flare",
         version: 5,
@@ -2725,10 +3117,11 @@ pub const BUILTINS: &[EffectSchema] = &[
             ParamSchema {
                 id: "aperture_rotation",
                 label: "Rotation",
-                kind: ParamKind::Float {
+                // Degrees on a dial: turning an iris is the gesture, not typing
+                // a number at it.
+                kind: ParamKind::Angle {
                     default: 0.0,
-                    slider: (-180.0, 180.0),
-                    hard: (None, None),
+                    dial_step: 15.0,
                 },
             },
             ParamSchema {
@@ -2989,6 +3382,22 @@ pub fn instantiate_for_raster(match_name: &str, w: f64, h: f64) -> Option<Effect
             p.value = EffectValue::Float(Property::fixed(v));
         }
     }
+    // Depth of field's Focus point is the same shape of default: a fresh
+    // instance should focus on the middle of the frame, which is where the
+    // subject usually is and is the only guess that is never absurd. The schema
+    // declares (0, 0) because it cannot know the raster; landing focus in the
+    // top-left corner is exactly the "drop it on and it already looks right"
+    // failure (§1.2).
+    if match_name == "dof" {
+        for p in &mut inst.params {
+            let v = match p.id.as_str() {
+                "focus_point_x" => w * 0.5,
+                "focus_point_y" => h * 0.5,
+                _ => continue,
+            };
+            p.value = EffectValue::Float(Property::fixed(v));
+        }
+    }
     Some(inst)
 }
 
@@ -3001,6 +3410,10 @@ pub fn default_param_value(kind: &ParamKind) -> EffectValue {
         // Int is a display/rounding kind; the value is a Float like any
         // other scalar (see the schema's Int docs).
         ParamKind::Int { default, .. } => EffectValue::Float(Property::fixed(default as f64)),
+        // An angle is a number of degrees, so it stores as a plain Float
+        // (docs/08 §1.1) — the dial is a control, not a value type, and
+        // keyframes and expressions see nothing new.
+        ParamKind::Angle { default, .. } => EffectValue::Float(Property::fixed(default)),
         ParamKind::Choice { default, .. } => EffectValue::Choice(default),
         ParamKind::Bool { default } => EffectValue::Bool(default),
         ParamKind::Colour { default, .. } => EffectValue::Colour(default.map(Property::fixed)),
@@ -3099,6 +3512,53 @@ pub fn point_self_layer_params_at(inst: &mut EffectInstance, layer: uuid::Uuid) 
             slot.value = EffectValue::Layer(Some(layer));
         }
     }
+}
+
+/// Whether the parameter `id` is editable given what `inst` currently holds —
+/// the greyed-row rule of [`EnabledWhen`], evaluated.
+///
+/// **In plain terms.** Ticking "Use focus point" hands focus over to the point,
+/// so the focus *distance* number stops being what decides anything; this
+/// answers `false` for it while that tick is on, and the panel draws the row
+/// greyed. A parameter with no rule against it is always editable, which is
+/// nearly all of them.
+///
+/// This is the single authority on the question. The panel greys from it, and a
+/// write to a disabled parameter is still accepted — greying is an affordance
+/// telling you which control is in charge, not a lock. The resolve step
+/// implements the real branch independently and never calls this, so the two
+/// cannot drift into disagreeing about pixels: at worst a missing rule leaves a
+/// live control that does nothing, which is a panel bug, not a render bug.
+pub fn param_enabled(inst: &EffectInstance, id: &str) -> bool {
+    let Some(s) = schema(&inst.effect.match_name) else {
+        // No built-in schema (an OFX or placeholder instance) means no rules,
+        // so nothing is greyed.
+        return true;
+    };
+    s.enabled_when
+        .iter()
+        .filter(|rule| rule.param == id)
+        .all(|rule| {
+            // A rule naming a parameter the instance does not carry cannot be
+            // judged, so it does not grey anything: an older instance that
+            // predates the deciding parameter stays fully editable rather than
+            // locking a row it can never unlock (the `fill_missing_params`
+            // trap, from the other side).
+            let Some(value) = inst.param(rule.on) else {
+                return true;
+            };
+            match (rule.cond, value) {
+                (EnabledCond::BoolIs(want), EffectValue::Bool(got)) => *got == want,
+                (EnabledCond::ChoiceIs(want), EffectValue::Choice(got)) => *got == want,
+                (EnabledCond::ChoiceIsNot(no), EffectValue::Choice(got)) => *got != no,
+                (EnabledCond::LayerSet, EffectValue::Layer(layer)) => layer.is_some(),
+                // A rule pointed at the wrong kind of parameter is a schema
+                // mistake, not a reason to grey a row the owner can then never
+                // reach. `every_enablement_rule_names_a_parameter_of_its_kind`
+                // fails the build for it instead.
+                _ => true,
+            }
+        })
 }
 
 pub fn instantiate(match_name: &str) -> Option<EffectInstance> {

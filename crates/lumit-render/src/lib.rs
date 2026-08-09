@@ -68,7 +68,7 @@ pub use build::{
 pub use cache::{CacheTier, CachedCompFrame};
 pub use decode::{CompFrame, CompJob, CompLayerPixels, PreviewEngine, PreviewResult};
 pub use draw::{
-    AccumulationBelow, CompLayerDraw, DofInputDraw, DrawSource, MatteDraw, TemporalBelow,
+    AccumulationBelow, CompLayerDraw, DrawSource, LayerInputDraw, MatteDraw, TemporalBelow,
 };
 pub use headless::{
     preview_scale_q, DemotedFrame, FrameProvenance, HeadlessRenderer, PrefetchWant, PreparedFrame,

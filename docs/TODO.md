@@ -115,7 +115,7 @@ These are v1-scope surfaces it does not yet match.
     engine (`lumit-core::mask`) but not yet as controls; **Lighten** and **Darken**
     are the two modes still unbuilt, and feather is uniform - the variable-width,
     per-vertex kind is a model change ([03-DATA-MODEL.md](03-DATA-MODEL.md) §7).
-- **Variable-width mask feather** (K-313) - After Effects has had this since CS6:
+- **Variable-width mask feather** (K-318) - After Effects has had this since CS6:
     the **Mask Feather Tool** (`G` cycles onto it, under the Pen) drops *feather
     points* along an existing mask path, each dragging its own radius in or out,
     so one edge of a mask can be razor-sharp and another 200 px soft. It is what
@@ -269,26 +269,30 @@ imported theme travels with the user rather than the machine's settings.
     next to the razor. The name cell sits under the row's own tap detector, which
     is the same arena shape - so this may be the same problem, unfixed. Confirm
     on a real window before writing anything.
-- **The Timeline's two halves are built twice and kept in step by hand.**
-    `_Outline` and `_LayerArea` are separate widget trees walking the same layer
-    list, aligned only because both read the same numbers, with vertical scroll
-    mirrored behind a reentrancy flag. Building a layer **once** as a row holding
-    both halves inside one vertical scrollable (the lane side keeping its own
-    horizontal controller) gives alignment by construction. It deletes
-    both controllers' sync and the guard flag rather than adding anything - but
-    **not** `blockHeights`, which `layerDropSlot`, `layerDragTarget` and
-    `_sequenceBlanks` still need; it stops being an *alignment* device, not a
-    data structure. A session's refactor, no behaviour change. **The alignment
-    tests now exist** (`test/frb/timeline_alignment_test.dart`) and are the net;
-    they assert observable geometry rather than which widgets exist, so they
-    should pass unchanged on the far side. What they do not cover: `blockHeights`
-    decides only drag-slide and drop-slot geometry, so a merge that gets it wrong
-    while getting the widgets right shows up as a *drag* fault and stays green
-    here. The hard part is the six cross-row widgets that assume one continuous
-    lane coordinate space - the marquee and its hit-test, both work-area washes,
-    the razor overlay, the playhead, the divider painters - and the lane's
-    horizontal viewport, which must stay **one** scrollable (a `ScrollController`
-    asserts with more than one attached position).
+- **The Timeline's two halves are still two widget trees, and one vertical
+    scrollable cannot hold both.** This was once written down here as a session's
+    refactor — build each layer as a row holding both halves inside a single
+    vertical scrollable, and alignment holds by construction. It does not work,
+    and the reason is worth keeping so it is not re-derived. The ruler and the
+    cache bar scroll sideways with the lanes but must not scroll with the rows,
+    which means the lanes' horizontal scroll view has to sit *above* the vertical
+    one; a single `Scrollable` has a single subtree, so everything inside that
+    vertical scroll view then scrolls sideways with the lanes — including the
+    outline, which must not move (`timeline_alignment_test.dart` says so, and the
+    outline has a horizontal scroll of its own for narrow panels). Putting the
+    horizontal scrolls underneath instead gives one per row, and `_hLane` asserts
+    the moment a second position attaches to it, which is what `_positionOf`
+    exists to survive. The only arrangement that satisfies both is to drop the
+    lanes' horizontal *viewport* and offset them by a transform, with `_hLane`
+    anchored on the ruler band — and that costs horizontal trackpad panning over
+    the lanes, the very fault the `dragDevices` comment in the panel records as
+    invisible to anyone using a mouse. Not worth it. `blockHeights` stays
+    whichever way it goes: `layerDropSlot`, `layerDragTarget` and `LayerDragSlide`
+    each want every block's height, not one row's. What the merge was really
+    reaching for has landed instead — each layer is now decided **once** into a
+    `LayerRow` (its fold rows, its open Sequence view, its height) and both halves
+    read that, so they can differ in what they draw but no longer in what a layer
+    is. The scroll mirror and its guard flag stay.
 - **The lane keyframe selection selects and eases, nothing more** - moving or
     deleting a *whole lane selection* is not built (the graph view has both), nor
     are `=`/`-`/`\` or edge-follow during playback.
@@ -357,8 +361,8 @@ three small gaps:
 shipped core is docs/08 §3.27; its performance items sit in **Now** above. Still owed,
 each stable against the shipped parameters: the
 **Lights source wiring** (the mode is in the
-dropdown and resolves as Manual until light layers can act as flare sources); aperture
-**dirt / scratches** overlays and an **image aperture** file parameter; the **lens
+dropdown and resolves as Manual until light layers can act as flare sources); an
+**image aperture** file parameter; the **lens
 designer** (a window building a prescription element by element with a live lens
 diagram — the `lens_file` parameter landed in K-264, so the designer's output has a
 place to go); an **Occlusion layer** reference fading the flare when the light is

@@ -32,6 +32,7 @@ import '../l10n/strings.dart';
 import '../state/comp_time.dart';
 import '../state/preview_throttle.dart';
 import '../state/timeline_columns.dart';
+import '../widgets/angle_dial.dart';
 import '../widgets/controls.dart';
 import 'fx_section.dart';
 import 'keyframe_controls_frb.dart';
@@ -146,7 +147,7 @@ class TransformRowsFrb extends StatelessWidget {
     required this.onChanged,
     this.keyPrefix = 'tf',
     this.rowHeight,
-    this.rowPadding = const EdgeInsets.symmetric(vertical: 3),
+    this.rowPadding = const EdgeInsets.symmetric(vertical: 2),
     this.twoColumn = false,
   });
 
@@ -223,7 +224,7 @@ class TransformRowFrb extends StatefulWidget {
     required this.onChanged,
     this.keyPrefix = 'tf',
     this.rowHeight,
-    this.rowPadding = const EdgeInsets.symmetric(vertical: 3),
+    this.rowPadding = const EdgeInsets.symmetric(vertical: 2),
     this.valueColumn,
     this.onLabelTap,
     this.graphColours,
@@ -413,8 +414,22 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
       );
     }
 
+    // A rotation shows its whole turns beside its degrees (docs/07 §6.1): 30°
+    // and 390° are the same picture but not the same animation, and a single
+    // box cannot say which of the two a key holds. The value written is still
+    // the one angle — see `TurnsAndDegreesField`.
+    final isRotation = axis.suffix == '°';
+
     if (scalar is! BridgeScalar_Keyframed) {
       final static_ = (scalar as BridgeScalar_Static).field0;
+      if (isRotation) {
+        return TurnsAndDegreesField(
+          keyName: '${widget.keyPrefix}-${axis.prop.name}',
+          degrees: static_,
+          onChanged: (v) => _live(axis.prop, v),
+          onCommit: (v) => _commit(axis.prop, v),
+        );
+      }
       return SizedBox(
         width: fixed ? transformCellWidth : null,
         child: DragValueField(
@@ -442,6 +457,13 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
     // No live preview mid-drag: staging a keyframed transform through the
     // static-preview path would lie about the curve. The release commits one
     // op — the key at the playhead updated or planted.
+    if (isRotation) {
+      return TurnsAndDegreesField(
+        keyName: '${widget.keyPrefix}-${axis.prop.name}',
+        degrees: sampled,
+        onCommit: (v) => _commitKeyed(axis.prop, scalar, v, frame),
+      );
+    }
     return SizedBox(
       width: fixed ? transformCellWidth : null,
       child: KeyedValueField(
