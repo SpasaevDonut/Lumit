@@ -13,7 +13,7 @@
   "@addEffect": {
     "description": "Button that opens the list of built-in effects."
   },
-  "animated": "animated",
+  "animated": "已动画",
   "@animated": {
     "description": "Shown in place of a number when the value is animated rather than fixed. Lower case on purpose — it sits where a value would."
   },
@@ -21,39 +21,39 @@
   "@apply": {
     "description": "Button that commits a picked value."
   },
-  "armRazor": "Arm razor",
+  "armRazor": "启用剃刀",
   "@armRazor": {
     "description": "Menu item: pick up the blade that cuts a layer where you click."
   },
-  "bringForward": "Bring forward",
+  "bringForward": "上移一层",
   "@bringForward": {
     "description": "Context-menu item: move a layer one place up the stack."
   },
-  "cache": "Cache",
+  "cache": "缓存",
   "@cache": {
     "description": "Bottom strip: heading over the three cache meters."
   },
-  "cacheDeleteTitle": "Delete the frames parked on disk?",
+  "cacheDeleteTitle": "删除磁盘上留存的帧？",
   "@cacheDeleteTitle": {
     "description": "Asked before emptying the disk cache, which deletes real files."
   },
-  "cacheKeepThem": "Keep them",
+  "cacheKeepThem": "保留",
   "@cacheKeepThem": {
     "description": "Button that declines to delete the parked frames."
   },
-  "cacheLocationBesideProject": "Beside the project",
+  "cacheLocationBesideProject": "与项目文件放在一起",
   "@cacheLocationBesideProject": {
     "description": "Choice of where parked frames live: in a folder next to the project file."
   },
-  "cacheLocationChosenFolder": "A folder I choose",
+  "cacheLocationChosenFolder": "我指定的文件夹",
   "@cacheLocationChosenFolder": {
     "description": "Choice of where parked frames live: a folder the user picks."
   },
-  "cacheLocationWithLumit": "With Lumit",
+  "cacheLocationWithLumit": "与Lumit放在一起",
   "@cacheLocationWithLumit": {
     "description": "Choice of where parked frames live: in Lumit's own application data folder."
   },
-  "cancel": "Cancel",
+  "cancel": "取消",
   "@cancel": {
     "description": "Button that abandons a dialogue or a running job."
   },
@@ -61,7 +61,7 @@
   "@channelAlpha": {
     "description": "A viewing channel: transparency on its own. A technical term — keep it recognisable."
   },
-  "chooseA": "Choose a {kind}",
+  "chooseA": "选择{kind}",
   "@chooseA": {
     "description": "Tooltip on a button that opens a file dialogue. {kind} is the sort of file wanted, e.g. 'LUT'.",
     "placeholders": {
@@ -70,15 +70,15 @@
       }
     }
   },
-  "chooseConfirm": "Choose",
+  "chooseConfirm": "选择",
   "@chooseConfirm": {
     "description": "The confirm button in the system's folder-picking dialogue."
   },
-  "chooseEllipsis": "Choose…",
+  "chooseEllipsis": "选择…",
   "@chooseEllipsis": {
     "description": "Button that opens a file dialogue when nothing has been chosen yet."
   },
-  "clear": "Clear",
+  "clear": "清除",
   "@clear": {
     "description": "Tooltip on the button that empties a value."
   },
@@ -94,15 +94,15 @@
   "@clipDelete": {
     "description": "Context-menu item: remove a clip from a Sequence layer."
   },
-  "clipPasteShape": "Paste shape onto this layer",
+  "clipPasteShape": "将形状粘贴到此图层",
   "@clipPasteShape": {
     "description": "Context-menu item: apply a copied speed curve here."
   },
-  "clipResetSpeed": "Reset speed",
+  "clipResetSpeed": "重置速度",
   "@clipResetSpeed": {
     "description": "Context-menu item: put a clip back to playing at its normal speed."
   },
-  "clipboardValueColumn": "Value",
+  "clipboardValueColumn": "数值",
   "@clipboardValueColumn": {
     "description": "Column heading in the keyframe data copied to the clipboard."
   },
@@ -114,7 +114,7 @@
   "@cloneSourceSet": {
     "description": "Notice after alt-clicking with the clone stamp."
   },
-  "close": "Close",
+  "close": "关闭",
   "@close": {
     "description": "Button that shuts a window."
   },
@@ -122,23 +122,23 @@
   "@colourOutsideRange": {
     "description": "Note in the colour picker when a value is brighter or darker than a screen can show."
   },
-  "columnBlend": "Blend",
+  "columnBlend": "混合",
   "@columnBlend": {
     "description": "Timeline column heading."
   },
-  "columnCompose": "Matte · Blend · Parent",
+  "columnCompose": "遮罩 · 混合 · 父级",
   "@columnCompose": {
     "description": "Timeline column heading, over the three composing columns. The middle dot is a separator."
   },
-  "columnLayer": "Layer",
+  "columnLayer": "图层",
   "@columnLayer": {
     "description": "Timeline column heading, over the layer names."
   },
-  "columnMatte": "Matte",
+  "columnMatte": "遮罩",
   "@columnMatte": {
     "description": "Timeline column heading."
   },
-  "columnParent": "Parent",
+  "columnParent": "父级",
   "@columnParent": {
     "description": "Timeline column heading."
   },
@@ -146,19 +146,19 @@
   "@columnSwitches": {
     "description": "Timeline column heading, over the per-layer on/off controls."
   },
-  "compositionSettings": "Composition settings",
+  "compositionSettings": "合成设置",
   "@compositionSettings": {
     "description": "Title of the dialogue that edits an existing composition."
   },
-  "compositionSettingsEllipsis": "Composition settings…",
+  "compositionSettingsEllipsis": "合成设置…",
   "@compositionSettingsEllipsis": {
     "description": "Context-menu item; the ellipsis means a dialogue opens."
   },
-  "copyEffect": "Copy effect",
+  "copyEffect": "复制效果",
   "@copyEffect": {
     "description": "Context-menu item on an effect heading: put the effect on the clipboard."
   },
-  "copySequenceShape": "Copy sequence shape",
+  "copySequenceShape": "复制序列形状",
   "@copySequenceShape": {
     "description": "Context-menu item: copy the speed curve of a Sequence layer."
   },
@@ -166,19 +166,19 @@
   "@cornersRound": {
     "description": "Settings window: the rounded choice for the Corners setting."
   },
-  "cornersSharp": "Sharp",
+  "cornersSharp": "直角",
   "@cornersSharp": {
     "description": "Settings window: the square-cornered choice for the Corners setting."
   },
-  "couldNotAddShapeLayer": "Could not add a shape layer",
+  "couldNotAddShapeLayer": "无法添加形状图层",
   "@couldNotAddShapeLayer": {
     "description": "Notice when making a shape layer failed."
   },
-  "couldNotAddTextLayer": "Could not add a text layer",
+  "couldNotAddTextLayer": "无法添加文本图层",
   "@couldNotAddTextLayer": {
     "description": "Notice when making a text layer failed."
   },
-  "couldNotMeasureRenderTimes": "Could not measure render times: {error}",
+  "couldNotMeasureRenderTimes": "无法预计渲染时间:",
   "@couldNotMeasureRenderTimes": {
     "description": "Bottom-strip notice when the render-time measurement failed. {error} comes from the engine.",
     "placeholders": {
@@ -187,7 +187,7 @@
       }
     }
   },
-  "couldNotOpen": "Could not open {path}",
+  "couldNotOpen": "无法打开",
   "@couldNotOpen": {
     "description": "Bottom-strip notice when a file would not open. {path} is a file path.",
     "placeholders": {
@@ -196,27 +196,27 @@
       }
     }
   },
-  "couldNotSaveProject": "Could not save the project",
+  "couldNotSaveProject": "无法保存项目",
   "@couldNotSaveProject": {
     "description": "Bottom-strip notice when a save failed."
   },
-  "create": "Create",
+  "create": "创建",
   "@create": {
     "description": "Button that confirms a dialogue by making something new."
   },
-  "custom": "Custom",
+  "custom": "自定义",
   "@custom": {
     "description": "Shown in a preset picker when the values match no preset."
   },
-  "customiseEllipsis": "Customise…",
+  "customiseEllipsis": "自定义…",
   "@customiseEllipsis": {
     "description": "Button that opens the theme editor."
   },
-  "delete": "Delete",
+  "delete": "删除",
   "@delete": {
     "description": "Context-menu item."
   },
-  "deleteAllMarkers": "Delete all markers",
+  "deleteAllMarkers": "删除所有标记",
   "@deleteAllMarkers": {
     "description": "Context-menu item."
   },
@@ -224,19 +224,19 @@
   "@deleteKey": {
     "description": "Menu item: remove this keyframe."
   },
-  "deleteMarker": "Delete marker",
+  "deleteMarker": "删除标记",
   "@deleteMarker": {
     "description": "Context-menu item."
   },
-  "deleteMask": "Delete mask",
+  "deleteMask": "删除蒙版",
   "@deleteMask": {
     "description": "Context-menu item."
   },
-  "deleteShape": "Delete shape",
+  "deleteShape": "删除形状",
   "@deleteShape": {
     "description": "Context-menu item."
   },
-  "deleteStroke": "Delete stroke",
+  "deleteStroke": "删除笔画",
   "@deleteStroke": {
     "description": "Context-menu item: remove one brush stroke."
   },
@@ -244,23 +244,23 @@
   "@disarmRazor": {
     "description": "Menu item: put the blade down."
   },
-  "discard": "Discard",
+  "discard": "放弃",
   "@discard": {
     "description": "Button that throws away unsaved changes."
   },
-  "diskTier": "Disk",
+  "diskTier": "磁盘",
   "@diskTier": {
     "description": "Bottom strip: the name of the disk cache tier, beside RAM and VRAM."
   },
-  "done": "Done",
+  "done": "完成",
   "@done": {
     "description": "Button that closes a window when there is nothing to confirm."
   },
-  "dropperComposite": "Composite",
+  "dropperComposite": "合成",
   "@dropperComposite": {
     "description": "What the eyedropper is sampling when it reads the finished picture rather than one layer."
   },
-  "dropperReading": "Reading…",
+  "dropperReading": "读取中",
   "@dropperReading": {
     "description": "Shown while the eyedropper is taking its sample."
   },
@@ -268,7 +268,7 @@
   "@dropperThatLayer": {
     "description": "Shown where a layer's name would be, when the eyedropper is sampling a layer that has none."
   },
-  "duration": "Duration",
+  "duration": "持续时间",
   "@duration": {
     "description": "Field label: how long a composition runs."
   },
@@ -280,7 +280,7 @@
   "@easeBezier": {
     "description": "Keyframe easing with adjustable handles. Named after the curve — keep it recognisable."
   },
-  "easeEasy": "Easy ease",
+  "easeEasy": "简单缓动",
   "@easeEasy": {
     "description": "Keyframe easing: slow out of one key and into the next."
   },
@@ -288,15 +288,15 @@
   "@easeHold": {
     "description": "Keyframe easing: no change at all until the next key."
   },
-  "easeLinear": "Linear",
+  "easeLinear": "线性",
   "@easeLinear": {
     "description": "Keyframe easing: a straight line between two keys."
   },
-  "editMarkerEllipsis": "Edit marker…",
+  "editMarkerEllipsis": "编辑标记…",
   "@editMarkerEllipsis": {
     "description": "Context-menu item; the ellipsis means a dialogue opens."
   },
-  "effectControls": "Effect controls",
+  "effectControls": "效果控件",
   "@effectControls": {
     "description": "Name of the panel that edits the effects on a layer."
   },
@@ -304,35 +304,35 @@
   "@effectControlsNoComp": {
     "description": "Empty-state line in the Effect controls panel when no composition is open."
   },
-  "effectControlsNoLayer": "Select a layer in the Timeline.",
+  "effectControlsNoLayer": "在时间线中选择一个图层",
   "@effectControlsNoLayer": {
     "description": "Empty-state line in the Effect controls panel when no layer is selected."
   },
-  "exportAction": "Export",
+  "exportAction": "导出",
   "@exportAction": {
     "description": "Button that starts the export."
   },
-  "exportAudioBitRate": "Audio bit rate",
+  "exportAudioBitRate": "音频位速率",
   "@exportAudioBitRate": {
     "description": "Export dialogue: how many bits per second the sound is given."
   },
-  "exportBitRate": "Bit rate",
+  "exportBitRate": "位速率",
   "@exportBitRate": {
     "description": "Export dialogue: how many bits per second the video is given."
   },
-  "exportCancel": "Cancel export",
+  "exportCancel": "取消导出",
   "@exportCancel": {
     "description": "Button that stops an export that is running."
   },
-  "exportCancelled": "Export cancelled",
+  "exportCancelled": "导出已取消",
   "@exportCancelled": {
     "description": "Bottom strip, when the user stopped an export."
   },
-  "exportComposition": "Export composition",
+  "exportComposition": "导出合成",
   "@exportComposition": {
     "description": "Title of the export dialogue. Lumit says 'export' for writing a file, never 'render'."
   },
-  "exportFailed": "Export failed: {error}",
+  "exportFailed": "导出失败:",
   "@exportFailed": {
     "description": "Bottom strip, when an export could not finish. {error} comes from the engine.",
     "placeholders": {
@@ -341,11 +341,11 @@
       }
     }
   },
-  "exportFormat": "Format",
+  "exportFormat": "格式",
   "@exportFormat": {
     "description": "Export dialogue: the container and codec to write."
   },
-  "exportFrameOf": "Frame {frame} of {total} ({encoder})",
+  "exportFrameOf": "",
   "@exportFrameOf": {
     "description": "Export dialogue: progress. {encoder} is a codec name and is not translated.",
     "placeholders": {
@@ -381,7 +381,7 @@
   "@exportNotChosen": {
     "description": "Export dialogue: shown where the file would be, before one has been picked."
   },
-  "exportPreparing": "Preparing… ({encoder})",
+  "exportPreparing": "准备中...",
   "@exportPreparing": {
     "description": "Export dialogue: shown before the first frame is written. {encoder} is a codec name and is not translated.",
     "placeholders": {
@@ -390,7 +390,7 @@
       }
     }
   },
-  "exportPreset": "Preset",
+  "exportPreset": "预设",
   "@exportPreset": {
     "description": "Export dialogue: a saved set of encoder options."
   },
@@ -411,7 +411,7 @@
       }
     }
   },
-  "exportedTo": "Exported to {path}",
+  "exportedTo": "已导出至",
   "@exportedTo": {
     "description": "Bottom strip, when an export has finished. {path} is a file path.",
     "placeholders": {
@@ -435,7 +435,7 @@
       }
     }
   },
-  "fileTypeFootage": "Footage",
+  "fileTypeFootage": "素材",
   "@fileTypeFootage": {
     "description": "A file type in the system's Import dialogue: video, images and sound."
   },
@@ -443,19 +443,19 @@
   "@fileTypeKeymap": {
     "description": "A file type in the system's file dialogues: an exported set of shortcuts."
   },
-  "fileTypePreset": "Lumit effect preset",
+  "fileTypePreset": "Lumit 效果预设",
   "@fileTypePreset": {
     "description": "A file type in the system's file dialogues: a saved .lumfx effect stack."
   },
-  "fileTypeProject": "Lumit project",
+  "fileTypeProject": "Lumit 项目",
   "@fileTypeProject": {
     "description": "A file type in the system's Open dialogue: Lumit's own .lum project files."
   },
-  "fileTypeTheme": "Lumit theme",
+  "fileTypeTheme": "Lumit 主题",
   "@fileTypeTheme": {
     "description": "A file type in the system’s file dialogues: a .lumtheme colour scheme."
   },
-  "findMissingFootage": "Find missing footage",
+  "findMissingFootage": "查找丢失的素材",
   "@findMissingFootage": {
     "description": "Context-menu item: search a folder for files that have moved."
   },
@@ -495,7 +495,7 @@
   "@foldPaint": {
     "description": "Heading in a layer's fold-out, over its brush strokes."
   },
-  "foldWaveform": "Waveform",
+  "foldWaveform": "波形图",
   "@foldWaveform": {
     "description": "Heading in a layer's fold-out, over the picture of its sound; also the name of a scope."
   },
@@ -543,7 +543,7 @@
   "@fxAmount": {
     "description": "Effect controls — a control on Radial blur."
   },
-  "fxAmplitude": "Amplitude",
+  "fxAmplitude": "振幅",
   "@fxAmplitude": {
     "description": "Effect controls — a control on Shake."
   },
@@ -703,7 +703,7 @@
   "@fxDifference": {
     "description": "Effect controls — a control on Echo."
   },
-  "fxDirectionalBlur": "Directional blur",
+  "fxDirectionalBlur": "径向模糊",
   "@fxDirectionalBlur": {
     "description": "Effect controls — the name of an effect."
   },
@@ -711,7 +711,7 @@
   "@fxDispersion": {
     "description": "Effect controls — a control on Lens flare."
   },
-  "fxDisplacement": "Displacement",
+  "fxDisplacement": "置换",
   "@fxDisplacement": {
     "description": "Effect controls — a control on Block glitch."
   },
@@ -963,7 +963,7 @@
   "@fxMatteKey": {
     "description": "Effect controls — the name of an effect."
   },
-  "fxMatteLayer": "Matte layer",
+  "fxMatteLayer": "遮罩图层",
   "@fxMatteLayer": {
     "description": "Effect controls — a control on Lens flare."
   },
@@ -1179,7 +1179,7 @@
   "@fxShutterAngle": {
     "description": "Effect controls — a control on Posterize time."
   },
-  "fxShutterPhase": "Shutter phase",
+  "fxShutterPhase": "快门阶段",
   "@fxShutterPhase": {
     "description": "Effect controls — a control on Posterize time."
   },
@@ -1243,7 +1243,7 @@
   "@fxThreshold": {
     "description": "Effect controls — a control on Unsharp mask."
   },
-  "fxThresholdSoftness": "Threshold softness",
+  "fxThresholdSoftness": "阈值平滑",
   "@fxThresholdSoftness": {
     "description": "Effect controls — a control on Lens flare."
   },
