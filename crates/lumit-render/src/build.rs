@@ -456,25 +456,45 @@ pub fn build_comp_draws_at(
         })
     };
 
+    /// The parameter a built-in names its auxiliary-layer input by, or `None` for
+    /// an effect that takes no layer (docs/impl/layer-input.md §2).
+    ///
+    /// One place, because two lists have to agree exactly or the slots and the ops
+    /// drift apart silently: `build.rs` fills a slot per matching effect, and
+    /// `fxops::run_ops` consumes one per matching op, in the same order.
+    fn layer_input_param(match_name: &str) -> Option<&'static str> {
+        match match_name {
+            "dof" => Some("depth"),
+            _ => None,
+        }
+    }
+
     let dof_inputs_for =
         |owner: uuid::Uuid, effects: &[lumit_core::model::EffectInstance]| -> Vec<LayerInputDraw> {
             use lumit_core::model::EffectNamespace;
             effects
                 .iter()
+                // "One slot per effect op that declares a Layer parameter"
+                // (docs/impl/layer-input.md §2) — the contract has always been
+                // general; this is the list of built-ins that take one, paired
+                // with the parameter each names it by. Every one resolves to
+                // exactly one op, so the 1:1 ordering with `run_ops`'s counter
+                // holds across all of them.
                 .filter(|e| {
                     e.enabled
                         && e.effect.namespace == EffectNamespace::Builtin
-                        && e.effect.match_name == "dof"
+                        && layer_input_param(&e.effect.match_name).is_some()
                 })
                 .map(|e| {
+                    let param = layer_input_param(&e.effect.match_name).unwrap_or("depth");
                     // "This layer" (K-288): a reference to the layer the effect
                     // is ON is not a second render — it is the effect's own
                     // input, which `run_ops` already holds.
-                    if e.layer_ref("depth") == Some(owner) {
+                    if e.layer_ref(param) == Some(owner) {
                         return LayerInputDraw::ThisLayer;
                     }
                     let slot = || -> Option<DofInputDraw> {
-                        let id = e.layer_ref("depth")?;
+                        let id = e.layer_ref(param)?;
                         let src = comp.layers.iter().find(|l| l.id == id)?;
                         if !in_span(src) {
                             return None;
@@ -483,7 +503,7 @@ pub fn build_comp_draws_at(
                         if let Some(nested) = nested_input_for(src) {
                             return Some(nested);
                         }
-                        let mode = e.layer_source("depth");
+                        let mode = e.layer_source(param);
                         // Depth source (K-142). None samples the depth layer's raw
                         // pixels — clear its masks so `pixels_for` skips them; Masks
                         // and Effects and masks keep them.
