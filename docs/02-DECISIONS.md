@@ -7396,3 +7396,194 @@ Regression tests, one per surface, each failing without the fix: `Enter renames 
 effect, and the name persists` and `Enter renames the selected item` (extended with an
 Escape leg), `Enter renames the selected layer` (timeline_panel_frb_test.dart), and `a value
 box opens its editor with the text selected` (dialog_keys_test.dart).
+
+**K-324 · DECIDED · The Ctrl+Space console: a search bar over the effects, and a Blender-style
+radial menu under it. Supersedes K-102's deferral.**
+From the owner (2026-08-09): a Ctrl+Space window with "at the top a search bar the user can
+type in… effect options then a little divider for comp names", modelled on Video Copilot's
+**FX Console** ("with the little camera/snapshot button too"), and "below this bar a radial
+menu just like Blender's" whose entries follow the selection. K-102 deferred exactly this
+("the effects radial menu (Ctrl+Space, apply-to-clip) — that remains blocked on a from-scratch
+build (no egui 0.31-compatible `egui_pie_menu`)"). That blocker is gone with egui: the port to
+Flutter (K-174) means a ring is a `Stack` of positioned labels over a gesture detector, and
+the only real content is the arithmetic of which slice a direction means. This entry
+supersedes that half of K-102; the command palette (Ctrl+Shift+P) stays exactly as it is,
+because the two answer different questions — the palette is every command by name, the
+console is *effects*, fast, plus the thing you were about to do.
+
+**The search half.** Effects first, then a divider, then compositions — ranked within each
+kind and never across it, because the reason to open this window is nearly always an effect
+and a comp that happened to score better would be in the way. Matching is the palette's
+subsequence ranking (earlier and tighter wins), so "gau" finds Gaussian blur. Enter applies
+the top match to **every** selected layer, as the Effect menu does (K-217); a comp fronts.
+The **snapshot** button beside the field writes the frame on screen to a PNG — a one-frame
+image-sequence export (`codec: 'png'`, K-201) rather than a second still-writer beside the
+exporter, so it is the same tested path to a file and the status line already reports it. It
+lands in a `Snapshots` folder beside the saved project, or the user's pictures folder when
+the project has never been saved — never the working directory.
+
+**The radial half.** A slice is chosen by **angle alone**, not by hit-testing a drawn wedge:
+flick in a direction and the choice is made however far the pointer travelled, which is what
+makes a ring faster than a list once the hand has learned it. A dead zone in the middle picks
+nothing, so opening the menu and releasing without moving cancels rather than committing to
+whatever was nearest. The first slice is straight up and they run clockwise. The entries are
+chosen from the selection in four contexts — a picked effect offers what you do to an effect;
+a selected layer what you do to a layer; a composition with nothing selected the new-layer
+menu; nothing open at all the two ways to get somewhere — each capped at six, because a ring
+of twelve is a ring nobody learns and the long tail is the search bar directly above it. A
+slice that cannot run right now is drawn dimmed rather than dropped, so a direction a hand
+has learned keeps its meaning.
+
+**Where the lists come from.** `menu_bar_frb.dart`, beside the menu items, for the same
+reason the palette's commands are declared there (K-102): the effects this applies and the
+comps it fronts must be the ones the menus mean, and a second list would drift.
+`fx_console_frb.dart` is the widget and knows nothing about the document;
+`fx_console_context.dart` holds the selection knowledge; `widgets/radial_maths.dart` is the
+geometry, widget-free so it is tested as arithmetic. Regression tests:
+`radial_maths_test.dart` (slice centres, direction-picks-slice at any distance, the dead
+zone, every wedge boundary, an empty ring), `fx_console_test.dart` (subsequence ranking,
+effects-before-comps, Enter applies the top match, the snapshot button's two states, a flick
+runs a slice, a dead-zone release cancels, a disabled slice keeps its place),
+`the_fx_console_has_its_own_chord_and_does_not_clash` (lumit-keymap — and the bare space bar
+still plays).
+
+**K-325 · DECIDED · The console opens around the pointer, the search waits to be asked, and
+rings nest. Reshapes K-324's presentation; the chord, ranking and snapshot stand.**
+From the owner (2026-08-09), after working with K-324's console, four faults with how it
+presented: it opened as a centred window rather than at the mouse; the search half listed
+every effect before anything was typed; the box was opaque over the very frame it acts on;
+and the ring for a *selected layer* offered "Solid" and "Text" — new-layer commands that
+have nothing to do with the thing selected.
+
+**It opens where the mouse is.** The ring is centred on the pointer, because the whole point
+of a ring is that the flick can start the instant the chord lands — travel to a window first
+and a list would have done. The key event carries no position, so the shell records the last
+pointer position — through a **global pointer route**, not a widget `Listener`: the owner's
+first build showed a `Listener` misses everywhere no widget claims the hit (the Viewer's
+texture, exactly where this menu is most wanted), so the console kept opening at wherever
+the pointer had last crossed a panel. The route sees every pointer event regardless of hit
+testing, and is still one plain field write per event — no `setState`, no bridge call, so
+the no-bridge-in-rebuild-paths budget is untouched. The **search bar floats above the
+ring**, or below it when the pointer is near the top of the window; centre and bar placement
+(edge clamping included) is `fxConsoleLayout` in `radial_maths.dart`, pure arithmetic with
+its own tests. No boxed window; the console's surfaces are the standard menu float let
+through a little (`surface3` at 0.88 — derived from the theme, no new colour), over the
+modal scrim at **half strength** (from the owner, same day: a slight darkening keeps every
+slice legible over any frame, while a full scrim would shut out the very work the console
+acts on).
+
+**The search waits to be asked.** An empty bar lists nothing — the ring is the offer. Typing
+opens a dropdown *below the bar* with the matches (K-324's ranking unchanged: effects first,
+comps after the divider, never across), and the ring steps aside while the query is
+non-empty, both because the dropdown needs the room and because starting to type *is*
+choosing the other way in. Escape retreats one step at a time — clear the text, then pop a
+sub-ring, then close — and Enter on an empty bar closes rather than sitting inert. Escape is
+handled at the **keyboard itself** for the console's lifetime, the way the shell's own
+shortcuts are, and nowhere else: the owner found a handler on the search field's focus node
+answers only while the field has focus, which a pointer resting on the ring need not have —
+and one handler means one press is always exactly one step back.
+
+**Rings nest, so context stays honest.** `RadialEntry` gains `children`: choosing such a
+slice expands the menu in place (Blender's nested pies), the centre of the ring names where
+you are and steps back out, and a caret on the slice says it expands. The layer-selected
+ring is now only what you do to *this* layer — Duplicate, Add effect, Pre-compose (wired to
+the real pre-compose dialogue now, not a jump to the Timeline panel), Delete — plus a
+**New ▸** slice whose sub-ring is Layer ▸ New's six items in the menu's order. The
+comp-with-nothing-selected ring keeps creation at the top level (that context *is* "make me
+a layer") reordered to match the menu, and the picked-effect and nothing-open rings stand.
+
+Regression tests: `fxConsoleLayout` placement (centres on the anchor, pulls in at edges, bar
+flips below near the top, tiny-window fallback — radial_maths_test.dart); the empty bar
+lists nothing; typing opens the dropdown and hides the ring, clearing restores it; Escape's
+one-step retreat; the ring centres on the anchor; a child slice expands in place, the centre
+backs out, a flick expands rather than closes, Escape pops before it closes; Enter on an
+empty bar closes (fx_console_test.dart).
+
+**K-326 · DECIDED · The Keyframe ring: the console keys a transform row where the playhead
+stands, and the Timeline shows the key it made.**
+From the owner (2026-08-09): "maybe on the radial menu having a keyframe option, which opens
+up all properties on that layer you could add a keyframe to in that position, and clicking
+adds one and opens that property row in the timeline if it's not already". So the
+layer-selected ring gains a sixth slice, **Keyframe ▸** (the ring is now at K-325's cap of
+six), whose sub-ring is one slice per transform row: Anchor point, Position, Scale, Rotation,
+Opacity — the five everyday rows, not the 3D extras, both for the cap and because Rotation
+X/Y remain the fold-out's business. A row driven by an expression is dimmed rather than
+dropped: writing keys over an expression would delete it.
+
+**Choosing a slice plants a key at the playhead holding the value already there** — nothing
+moves, the same invariant the stopwatch keeps — with every axis of the row keyed together
+and the key inserted in time order. A row already keyed at the playhead skips the write; in
+both cases the Timeline is fronted with **that row open**, so the key just made (or found)
+is on screen. The reveal is a new `revealPropertyRequest` on the shell state, speaking the
+same `reveal.*` words the P/S/R/T/A keys use so one mapping serves both — but it
+**ensures open** rather than toggling, because asking to see a row twice must never hide it.
+
+Regression tests (fx_console_context_frb_test.dart, against the real engine): the ring is
+exactly the five rows; a slice plants one key at the playhead and fires the reveal; the same
+frame never duplicates a key while a new frame inserts in order; an expressed row is dimmed;
+the Timeline opens exactly the asked row, consumes the request, and a second ask never
+closes it.
+
+**K-327 · DECIDED · A Project panel item's ring is "Add to comp" — one slice, dimmed when it
+cannot run, never the new-layer grab-bag.**
+From the owner (2026-08-09): "when you select an item in the project panel, why does it
+display the layer types…?? We don't want that, remove those… if it can be added to the
+current comp then have that as an option (otherwise have it there so people can get muscle
+memory but disable it)". The console had no project-item context at all, so a picked item
+fell through to the comp's new-layer ring — six slices with nothing to do with the
+selection. Now, **while the Project panel is the active panel** (the console follows where
+the user stands, as the keymap's contexts do) and an item is picked there, the ring is a
+single slice: **Add to comp**, doing exactly what dropping the item on the Timeline does —
+footage becomes a footage layer (honouring K-246's Vegas preference), a composition nests
+as a precomp. Per the owner's muscle-memory rule (and K-325's), the slice is **dimmed, never
+dropped**, when it cannot run: no comp open, a folder, a solid (no engine path from the
+panel yet), or a comp offered to itself, which the engine would refuse — said up front
+rather than after the flick.
+
+**The plumbing.** The Project panel's selection stays its own; it now publishes the anchor
+item to a `selectedProjectItem` notifier on the shell state on every click, which is also
+what puts the item's name in the middle of the ring. A stale handle (the item deleted, the
+project switched since publishing) dims the slice and falls through the title rather than
+throwing. Regression tests: the panel publishes on click and follows it
+(project_panel_frb_test.dart); footage places a layer, a comp nests but never into itself,
+the slice dims with no comp open, and the item counts only while the Project panel is the
+active one (fx_console_context_frb_test.dart).
+
+**K-328 · DECIDED · While the console is open, the keyboard is the console's: the search box
+holds focus for the console's whole life, and every command handler stands down.**
+From the owner (2026-08-09), running K-325's build: "the search bar has stopped being
+selected by default… if any text is typed when the console is on screen, it is what keys are
+put into, so users don't accidentally start opening/editing layers etc". Two faults, one
+root: the boxed K-324 console was a movable window, which counted into `lumitModalOpen` —
+the flag every panel's hardware-keyboard handler checks (K-243) — and its field won focus as
+dialogs do. The K-325 overlay was neither, so the field's `autofocus` lost the race against
+the shell's own scope and, with focus astray, keystrokes fell through to the panels' and
+shell's command handlers: typing a search renamed and added layers underneath.
+
+So the console now does both things a dialogue does, explicitly. **It counts into
+`lumitModalOpen`** (via `markModalMounted`/`markModalUnmounted`, mount-counted for K-243's
+stuck-counter reason), and the *shell's* global key handler now honours that flag too —
+which it never had, an older gap the console exposed. **And the search field holds focus
+deterministically**: focused post-frame on open (`autofocus` races are what failed), then
+re-taken the moment anything steals it, for as long as the console is open. There is no
+keyboard route out of the console except Escape; the pointer route is a click outside.
+`HouseTextField` gains an optional caller-owned `focusNode` to make that steering possible.
+
+**And the console's `Stack` children are keyed, which is load-bearing rather than tidiness.**
+Owner-found immediately after the above: typing worked for exactly one letter and then
+stopped. The ring is hidden while the query is non-empty, so the first keystroke *removes a
+child from the middle of the stack* — and Flutter matches unkeyed children by index and
+runtime type, both of these being `Positioned`. The bar's element was recycled onto the
+ring's old slot and the field beneath it rebuilt from nothing; a fresh `EditableText` whose
+focus node is **already** focused never opens a text-input connection, so every later
+keystroke had nowhere to land. Keying each child matches by identity instead, and the field
+survives the ring coming and going untouched. The general rule this is an instance of: any
+conditional child in a `Stack` whose siblings hold state needs a key.
+
+Regression tests: the field has focus on open and takes it back when unfocused; **typing
+keeps going after the ring steps aside** — the field's state object must be the same
+instance across the change, and the second letter is delivered through the connection
+already open (`updateEditingValue`) rather than `enterText`, which re-attaches one and would
+hide exactly this fault (fx_console_test.dart). With the console open the space bar types
+instead of playing, and plays again once Escape closes it (shortcuts_frb_test.dart — the
+existing Ctrl+Space test now closes the console before asserting the bare space bar).

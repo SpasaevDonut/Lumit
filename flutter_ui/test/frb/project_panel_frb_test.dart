@@ -19,7 +19,7 @@ import 'package:lumit_flutter/panels/project_panel_frb.dart';
 import 'package:lumit_flutter/src/rust/api/footage.dart'
     show FootageReference, LumitMediaStatus;
 import 'package:lumit_flutter/src/rust/api/project_item.dart'
-    show ItemReference_Footage;
+    show ItemReference_Composition, ItemReference_Footage;
 import 'package:lumit_flutter/src/rust/api/state.dart' show ScopedChange;
 import 'package:lumit_flutter/state/dock.dart';
 import 'package:lumit_flutter/state/drag_payloads.dart';
@@ -155,6 +155,34 @@ void main() {
       expect(comp, isNotNull, reason: 'the new comp is fronted');
       expect(comp!.getLayers(), hasLength(1),
           reason: 'the clip it was made from is in it');
+    });
+
+    testWidgets('a click publishes the picked item for the FX console',
+        (tester) async {
+      final p = freshProject();
+      p.state.project!.importFootage(path: 'C:/clips/shot.mov');
+      p.state.project!.newComposition(name: 'Scene');
+
+      await tester.pumpWidget(hostPanel(
+        child: const ProjectPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+
+      expect(p.uiState.selectedProjectItem.value, isNull,
+          reason: 'nothing picked, nothing published');
+      // The pumps ride out the rows' double-tap window, which arms a timer on
+      // every tap.
+      await tester.tap(rowText('shot.mov'));
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(p.uiState.selectedProjectItem.value, isA<ItemReference_Footage>(),
+          reason: 'the anchor item is mirrored to the shell (K-327)');
+      await tester.tap(rowText('Scene'));
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(p.uiState.selectedProjectItem.value,
+          isA<ItemReference_Composition>(),
+          reason: 'and follows the click');
     });
 
     /// Opening a folder is showing what is in it, so a second click shuts it

@@ -1029,6 +1029,13 @@ int _openModals = 0;
 /// zero and leave the keyboard dead for the rest of the session.
 bool get lumitModalOpen => _openModals > 0;
 
+/// For a modal surface that is not a [_MovableWindow] — the FX console
+/// (K-328) is the one today. Counted from `initState` and `dispose`, for the
+/// reason the window count is: a surface can leave by having the tree taken
+/// down under it.
+void markModalMounted() => _openModals++;
+void markModalUnmounted() => _openModals--;
+
 /// A window that can be dragged around the app window and, when it has a size,
 /// resized from its bottom-right corner.
 ///
@@ -1248,6 +1255,12 @@ class HouseTextField extends StatefulWidget {
   /// asking the user to say it twice.
   final bool autofocus;
 
+  /// The field's focus, owned by the caller — for a caller that has to steer
+  /// it after build (the FX console keeps its field focused for its whole
+  /// life, K-328). Null and the field makes and disposes its own, as every
+  /// other caller wants.
+  final FocusNode? focusNode;
+
   /// Muted placeholder shown while the field is empty — what the field is
   /// *for*, on fields whose surroundings do not already say.
   final String? hint;
@@ -1262,6 +1275,7 @@ class HouseTextField extends StatefulWidget {
     this.onCancelled,
     this.autofill,
     this.autofocus = false,
+    this.focusNode,
     this.style,
     this.hint,
   });
@@ -1280,7 +1294,8 @@ class _HouseTextFieldState extends State<HouseTextField>
   @override
   void initState() {
     super.initState();
-    _focus = FocusNode(onKeyEvent: onKeyEvent);
+    _focus = widget.focusNode ?? FocusNode();
+    _focus.onKeyEvent = onKeyEvent;
     // The hint draws only while empty, so emptiness changing must redraw.
     widget.controller.addListener(_changed);
   }
@@ -1438,7 +1453,13 @@ class _HouseTextFieldState extends State<HouseTextField>
     // it is taken down here, and a field disposed with suggestions showing
     // leaves them on screen over whatever comes next.
     hideOverlay();
-    _focus.dispose();
+    if (widget.focusNode == null) {
+      _focus.dispose();
+    } else {
+      // A borrowed node goes back the way it came: handler detached, life
+      // still the caller's.
+      _focus.onKeyEvent = null;
+    }
     super.dispose();
   }
 

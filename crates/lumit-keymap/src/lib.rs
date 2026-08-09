@@ -88,6 +88,7 @@ impl ActionId {
             "edit.copy" => "Copy the selection",
             "edit.paste" => "Paste",
             "palette.open" => "Open the command palette",
+            "console.open" => "Open the FX console",
             "export.queue.add" => "Add to the export queue",
             "comp.settings" => "Composition settings",
             "edit.undo" => "Undo",
@@ -650,6 +651,9 @@ pub fn default_keymap() -> Keymap {
         row(Global, "Mod+C", "edit.copy"),
         row(Global, "Mod+V", "edit.paste"),
         row(Global, "Mod+Shift+P", "palette.open"),
+        // The FX console (K-324): Video Copilot's own chord, and the one the
+        // owner asked for.
+        row(Global, "Mod+Space", "console.open"),
         row(Global, "Mod+M", "export.queue.add"),
         row(Global, "Mod+K", "comp.settings"),
         row(Global, "Mod+Z", "edit.undo"),
@@ -865,6 +869,23 @@ mod tests {
             "Hyper+A".parse::<Chord>(),
             Err(ChordError::UnknownModifier(_))
         ));
+    }
+
+    #[test]
+    fn the_fx_console_has_its_own_chord_and_does_not_clash() {
+        // K-324: Ctrl+Space opens the console. Video Copilot's own chord, and
+        // the shipped map must stay conflict-free with it in.
+        let km = default_keymap();
+        assert_eq!(
+            km.lookup(KeyContext::Global, &"Mod+Space".parse().unwrap()),
+            Some(&ActionId::from("console.open"))
+        );
+        // The bare space bar still plays; the console took the modified one.
+        assert_eq!(
+            km.lookup(KeyContext::Global, &"Space".parse().unwrap()),
+            Some(&ActionId::from("playback.toggle"))
+        );
+        assert!(km.conflicts().is_empty(), "the shipped map ships clean");
     }
 
     #[test]

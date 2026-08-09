@@ -173,7 +173,8 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
 
   /// The items currently selected, by id, in the order the panel lists them.
   /// Held here rather than in `LumitUiState` because nothing outside this panel
-  /// reads it yet.
+  /// reads the full set — only the anchor item is published, for the FX
+  /// console (K-327), through [_publishSelection].
   ///
   /// A set rather than one id because more than one row can be picked:
   /// `Ctrl`-click adds or removes one, `Shift`-click takes the run between the
@@ -245,6 +246,17 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
             ));
       }
     });
+    _publishSelection();
+  }
+
+  /// Mirror the anchor item to the shell (K-327), where the FX console reads
+  /// it. The anchor, not the set: the console acts on one thing, the way the
+  /// info header describes one thing. Deselected (a toggle off) or unknown
+  /// (a stale id after a delete) publishes null rather than a dead handle.
+  void _publishSelection() {
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    ui.selectedProjectItem.value =
+        _selectedIds.contains(_anchorId) ? _itemById[_anchorId] : null;
   }
 
   /// The row being renamed in place, by id.

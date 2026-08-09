@@ -1124,6 +1124,24 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     return true;
   }
 
+  /// The FX console has planted a key and wants its row visible (K-326): open
+  /// the layer and the named row, leaving whatever else is open alone.
+  void _onRevealRequested() {
+    final request = _ui?.revealPropertyRequest.value;
+    if (request == null || !mounted) return;
+    _ui!.revealPropertyRequest.value = null;
+    final (layerId, action) = request;
+    setState(() {
+      for (final entry in _ui!.model.layers) {
+        if (entry.layer.internallayerId != layerId) continue;
+        final id = layerId.toString();
+        _open
+          ..add(id)
+          ..addAll(_revealPaths(id, entry, action));
+      }
+    });
+  }
+
   /// Which fold paths a reveal key opens under [id]. Empty means the layer's
   /// own row and nothing beneath it — what the Retime chord leaves behind, and
   /// what `E` or `M` come to on a layer with no effects or masks to show.
@@ -1278,6 +1296,10 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     // the outline is that much narrower for it — a layout change, so the panel
     // has to hear about it rather than only the cells inside the column.
     _ui!.renderTimings.addListener(_onTimingsChanged);
+    // The FX console's Keyframe ring plants a key and then asks for its row to
+    // be on screen (K-326). Ensure-open, not the reveal keys' toggle: showing
+    // a row that is already showing must never hide it.
+    _ui!.revealPropertyRequest.addListener(_onRevealRequested);
     // Merged **once**, not per build: a fresh `Listenable` every rebuild makes
     // every cache bar under it unsubscribe and resubscribe, which during a zoom
     // flight is sixty times a second for nothing (K-293).
@@ -1716,6 +1738,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     HardwareKeyboard.instance.removeHandler(_onKey);
     _ui?.selectedLayer.removeListener(_onPrimaryChanged);
     _ui?.renderTimings.removeListener(_onTimingsChanged);
+    _ui?.revealPropertyRequest.removeListener(_onRevealRequested);
     if (_ui?.deleteClaim == _deleteSelectedMasks) _ui!.deleteClaim = null;
     if (_ui?.copyClaim == _copySelectedKeys) _ui!.copyClaim = null;
     if (_ui?.pasteClaim == _pasteKeysIntoSelection) _ui!.pasteClaim = null;
