@@ -7098,13 +7098,13 @@ class _BarState extends State<_Bar> {
                     // The layer's label colour (K-188): the same chip the
                     // outline swatch shows, so recolouring a layer recolours
                     // its bar — and each kind starts on its own colour.
-                    color: t.labelColour(info.label),
-                    // Selected bars take the accent as an outline rather than a
-                    // fill: the fill is the label colour and says which layer
-                    // this is, which is not a thing selection may overwrite.
-                    border: widget.selected
-                        ? Border.all(color: t.accent, width: 1)
-                        : null,
+                    // Selected bars brighten that colour rather than growing
+                    // an outline: the hue still says which layer this is, and
+                    // a lighter bar reads at a glance where a 1px box did not.
+                    color: widget.selected
+                        ? Color.lerp(
+                            t.labelColour(info.label), t.textPrimary, 0.35)!
+                        : t.labelColour(info.label),
                     borderRadius: BorderRadius.circular(2),
                   ),
                   child: Stack(

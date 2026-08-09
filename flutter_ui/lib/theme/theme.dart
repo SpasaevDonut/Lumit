@@ -710,7 +710,7 @@ class LumitTheme {
         ),
       );
 
-  // --- Type scale (docs/15-DESIGN §density: 12 px body, 11 px small) -------
+  // --- Type scale (docs/15-DESIGN §density: 11 px body, 10 px small) -------
 
   static const String fontFamily = 'Inter';
 
@@ -722,7 +722,7 @@ class LumitTheme {
       fontWeight: FontWeight.w500);
   TextStyle get body => TextStyle(
       fontFamily: fontFamily,
-      fontSize: 12,
+      fontSize: 11,
       color: textSecondary,
       decoration: TextDecoration.none,
       fontWeight: FontWeight.w400);
@@ -734,7 +734,7 @@ class LumitTheme {
   TextStyle get bodyStrong => body.copyWith(fontWeight: FontWeight.w500);
   TextStyle get small => TextStyle(
       fontFamily: fontFamily,
-      fontSize: 11,
+      fontSize: 10,
       color: textMuted,
       decoration: TextDecoration.none,
       fontWeight: FontWeight.w400);
@@ -742,7 +742,7 @@ class LumitTheme {
   /// The note under a field explaining its format — smaller than a label so it
   /// reads as an aside rather than as another thing to fill in
   /// (docs/15-DESIGN.md §7.1).
-  TextStyle get caption => small.copyWith(fontSize: 10);
+  TextStyle get caption => small.copyWith(fontSize: 9);
   TextStyle get mono => TextStyle(
       fontFamily: 'monospace',
       fontSize: 12,

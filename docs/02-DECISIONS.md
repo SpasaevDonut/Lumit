@@ -7208,3 +7208,25 @@ that had hand-forced `FontWeight.w400` over the Medium default (timeline marker 
 drop their overrides. No spec change: this aligns the build with what 15-DESIGN already
 said. Regression test: `body text is regular weight; emphasis is medium and rationed`
 (theme_test.dart).
+
+**K-317 · DECIDED · The type scale drops a step, property rows tighten, and a selected
+bar brightens instead of growing an outline.** Three owner calls from testing K-316 in
+the app beside After Effects (2026-08-09).
+
+**Type drops one step.** Body Inter goes 12px → 11px (and with it every value field,
+menu and button, since they all read the theme's `body`/`bodyPrimary`); `small` 11 → 10;
+`caption` 10 → 9. docs/15-DESIGN §7.1's table moves with it in this commit. Beyond size,
+the owner's "words feel soft" reads as Flutter-on-Windows greyscale antialiasing (no
+ClearType subpixel rendering), which no theme value reaches; the smaller regular-weight
+face is the lever the theme has.
+
+**Property rows tighten.** The vertical breathing space on effect, transform and source
+rows goes 3px → 2px a side, bringing the Effect controls' row rhythm to AE's. One value
+in four files (`effect_param_row_frb`, `transform_rows_frb`, `source_rows_frb`, and the
+point row) — the Timeline's fold-out already passes zero and is untouched.
+
+**A selected bar brightens.** The lane bar used to mark selection with a 1px accent
+outline; on a 22px bar that is a whisper. It now lerps its label colour 35 % toward
+`textPrimary` — the hue still says which layer it is (K-188's rule survives), and the
+lit bar is what AE does and reads at any zoom. No spec pinned the outline, so nothing
+else moves.

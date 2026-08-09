@@ -130,7 +130,7 @@ class EffectParamRowFrb extends StatelessWidget {
     required this.ownerLayerId,
     required this.ownerLayers,
     this.valueColumn,
-    this.rowPadding = const EdgeInsets.symmetric(vertical: 3),
+    this.rowPadding = const EdgeInsets.symmetric(vertical: 2),
     this.onLabelTap,
     this.graphColour,
     this.twoColumn = false,
@@ -1020,7 +1020,7 @@ class EffectPointRowFrb extends StatelessWidget {
 
     if (twoColumn) {
       return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
+        padding: const EdgeInsets.symmetric(vertical: 2),
         child: fxTwoColumnRow(
           context: context,
           name: label,
@@ -1030,7 +1030,7 @@ class EffectPointRowFrb extends StatelessWidget {
       );
     }
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
+      padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         children: [
           if (keyframes != null) greyed(keyframes),
