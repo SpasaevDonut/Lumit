@@ -336,6 +336,9 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
                           setState(() => _renamingEffect = null);
                           ui.model.refresh();
                         },
+                        // Escape: close the editor, write nothing (K-323).
+                        onRenameCancelled: () =>
+                            setState(() => _renamingEffect = null),
                         onSelect: () => ui.pickEffect(
                           layer,
                           info.effects[index].id,
@@ -503,9 +506,11 @@ class _EffectSection extends StatelessWidget {
   /// The stack itself changed (enabled, reordered, removed) — re-read it.
   final VoidCallback onStackChanged;
 
-  /// The heading is an inline rename editor (K-321), and its commit.
+  /// The heading is an inline rename editor (K-321), its commit, and the
+  /// Escape that throws the edit away instead (K-323).
   final bool renaming;
   final ValueChanged<String>? onRenamed;
+  final VoidCallback? onRenameCancelled;
 
   /// Write a parameter — a typed value, or the release of a drag. One op.
   final void Function(UuidValue effect, String param, BridgeEffectValue value)
@@ -542,6 +547,7 @@ class _EffectSection extends StatelessWidget {
     required this.onLive,
     this.renaming = false,
     this.onRenamed,
+    this.onRenameCancelled,
     required this.isGroupOpen,
     required this.onToggleGroup,
   });
@@ -594,6 +600,7 @@ class _EffectSection extends StatelessWidget {
       onSelect: onSelect,
       renaming: renaming,
       onRenamed: onRenamed,
+      onRenameCancelled: onRenameCancelled,
       twirlKey: ValueKey<String>('fx-twirl-$id'),
       leading: LumitTooltip(
         message: info.enabled ? l10n.tipDisable : l10n.tipEnable,

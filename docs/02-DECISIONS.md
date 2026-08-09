@@ -7367,3 +7367,32 @@ the other three presets are untouched. A saved workspace is unaffected — this 
 layout, which Reset workspace restores. Regression test: the amended `default layout matches
 default_layout() structure and shares` (dock_test.dart), which now also pins which tab each
 group opens on.
+
+**K-323 · DECIDED · `Escape` is the way out of an inline editor, and it writes nothing.**
+From the owner (2026-08-09), testing K-321: "escape still doesn't exit the rename dialogue".
+It never did, and the reason is worth recording because K-319 looked like it had covered
+this. K-319 gave *modals* an Escape by contributing an `Actions` entry for Flutter's own
+`DismissIntent`, which `WidgetsApp` already binds the key to. An inline rename is not a
+modal — it is a text field that replaced a label in place — so there was no `DismissIntent`
+handler anywhere above it and the key reached nothing.
+
+**The gap was the shape of the contract, not one missing handler.** K-243 established that
+every way out of an inline rename *commits*: Enter commits, clicking away commits (that was
+the point of K-243), losing focus commits. That is right — a rename typed and then abandoned
+by clicking elsewhere should not be thrown away. But it left no way to change your mind at
+all, on any of the three inline renames (an effect's name, a layer's name, a Project item's
+name) or in the value boxes, which have the same all-roads-commit shape.
+
+**So `Escape` cancels: the editor shuts and nothing is written.** `HouseTextField` gains an
+`onCancelled` callback and the two renames that use it pass one; the Project row's editor is
+a bare `EditableText`, so it wires the same key on its own focus node; `DragValueField`'s
+open editor does the same for typed numbers. In every case the key is handled on the field's
+**own focus node**, which sees it before the `Shortcuts`/`Actions` system — deliberately,
+because `EditableText` has its own `DismissIntent` handling and a handler placed above it
+could be swallowed. Clearing the editing flag *before* the editor closes is load-bearing in
+the value box: closing it is what loses focus, and the focus listener commits on focus loss.
+
+Regression tests, one per surface, each failing without the fix: `Enter renames the selected
+effect, and the name persists` and `Enter renames the selected item` (extended with an
+Escape leg), `Enter renames the selected layer` (timeline_panel_frb_test.dart), and `a value
+box opens its editor with the text selected` (dialog_keys_test.dart).

@@ -181,6 +181,19 @@ void main() {
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pump();
     expect(value, 55);
+
+    // Escape is the way back out (K-323): the editor shuts and the typed
+    // number is thrown away. Every other exit — Enter, clicking away, losing
+    // focus — commits, so without this a half-typed value could not be undone
+    // without retyping the old one.
+    await tester.tap(find.byType(DragValueField));
+    await tester.pump();
+    await tester.enterText(find.byType(EditableText), '99');
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byType(EditableText), findsNothing,
+        reason: 'Escape closes the editor');
+    expect(value, 55, reason: 'and the field keeps the value it had');
   });
 
   testWidgets('the slider brackets a drag with start and end', (tester) async {

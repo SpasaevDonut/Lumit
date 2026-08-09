@@ -736,6 +736,20 @@ void main() {
       expect(p.layer.getEffects().single.getInfo().customName, isNull);
       expect(find.text(effectLabelOf('blur')), findsOneWidget,
           reason: 'a cleared name falls back to the effect label');
+
+      // Escape throws the edit away (K-323). Enter, clicking away and an
+      // empty commit all *write*; without this there is no way out that does
+      // not, and Escape fell through to a modal dismissal with no modal.
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.byKey(const ValueKey('fx-rename-field')), 'Regretted');
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('fx-rename-field')), findsNothing,
+          reason: 'Escape closes the rename editor');
+      expect(p.layer.getEffects().single.getInfo().customName, isNull,
+          reason: 'and writes nothing to the document');
     });
 
     // Depth of field's folded aperture (K-313): the twirls, the greyed rows and

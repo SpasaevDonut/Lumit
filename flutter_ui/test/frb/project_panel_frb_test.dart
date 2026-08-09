@@ -1012,6 +1012,20 @@ void main() {
       expect(rowText('Hero shot'), findsOneWidget,
           reason: 'the rename reached the document');
 
+      // Escape throws the edit away (K-323): the editor closes and the item
+      // keeps the name it had. Every other way out of an inline rename
+      // commits, so without this there is no way to change your mind.
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.byKey(const ValueKey('rename-field')), 'Typed then regretted');
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('rename-field')), findsNothing,
+          reason: 'Escape closes the editor');
+      expect(rowText('Hero shot'), findsOneWidget,
+          reason: 'and writes nothing: the old name stands');
+
       // While another panel is the active one, the key is not this panel's.
       p.uiState.activePanel.value = Panel.timeline;
       await tester.tap(rowText('Hero shot'));

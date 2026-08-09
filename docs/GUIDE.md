@@ -4050,6 +4050,40 @@ is set**. A project with no renamed effects is byte-for-byte the file it was
 before, and an older project simply reads as "no name given". Nothing needs
 migrating.
 
+### The way back out of an editor (K-323)
+
+An earlier change (K-243) settled that every way of leaving an inline rename
+*keeps* what you typed: pressing Enter, clicking somewhere else, tabbing away.
+That was the right call — abandoning a rename by clicking elsewhere should not
+silently throw the work away. But taken together it meant there was no way to
+change your mind at all. Whatever you had typed was going to be written.
+
+Escape is that way out now: the editor shuts and nothing is written, so the
+thing keeps the name or the number it already had. It works on all four
+editors that had the problem — an effect's name, a layer's name, a Project
+item's name, and any value box you are typing into.
+
+Why it did not already work is the interesting part. Modals got Escape earlier
+(K-319) by leaning on a mechanism Flutter already has: the framework binds
+Escape to a "dismiss" request that travels up the widget tree looking for
+something willing to handle it, and each dialog says what dismissing means for
+it. An inline rename is not a dialog — it is a text field that has replaced a
+label where it stood — so that request travelled up and found nobody, and the
+key did nothing at all.
+
+The fix attaches Escape to each editor's own **focus node**. A focus node gets
+first refusal on keys before the general shortcut machinery runs, which matters
+here for a specific reason: Flutter's text editor has its own idea of what the
+dismiss request means (hiding the selection toolbar), so a handler placed above
+it could have been quietly swallowed. Handling the raw key at the field itself
+is the version that cannot be intercepted.
+
+One trap worth remembering, because it is the sort that produces a bug that
+looks like the opposite of what you wrote: the value box commits its number
+whenever it loses focus, and closing the editor is *what loses focus*. So
+cancelling has to mark the editor closed before it takes it down, or Escape
+would commit the very value it was asked to discard.
+
 ### The panel that was never on screen (K-322)
 
 The default workspace put **Effects & presets** as the *third tab of the left

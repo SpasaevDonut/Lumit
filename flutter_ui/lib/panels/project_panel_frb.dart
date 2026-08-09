@@ -853,7 +853,19 @@ class _ProjectRowFrb extends StatefulWidget {
 class _ProjectRowFrbState extends State<_ProjectRowFrb> {
   bool _hover = false;
   TextEditingController? _rename;
-  final FocusNode _renameFocus = FocusNode();
+  // Escape on the field's own node, ahead of the shortcut system (K-323): the
+  // row's editor is a bare EditableText rather than a HouseTextField, so it
+  // wires the same key itself instead of inheriting it.
+  late final FocusNode _renameFocus = FocusNode(onKeyEvent: _onRenameKey);
+
+  KeyEventResult _onRenameKey(FocusNode node, KeyEvent event) {
+    if (event is KeyDownEvent &&
+        event.logicalKey == LogicalKeyboardKey.escape) {
+      _cancelRename();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
 
   ItemReference get item => widget.item;
 
@@ -871,6 +883,13 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
       _rename = TextEditingController(text: widget.name);
       _renameFocus.requestFocus();
     }
+  }
+
+  /// Escape: shut the editor, rename nothing (K-323).
+  void _cancelRename() {
+    _rename?.dispose();
+    _rename = null;
+    widget.onEndRename();
   }
 
   void _commitRename() {

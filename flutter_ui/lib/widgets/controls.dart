@@ -1230,6 +1230,16 @@ class HouseTextField extends StatefulWidget {
   /// field that kept what was typed only when `Enter` was pressed threw the
   /// work away for everyone who clicks instead (K-243).
   final VoidCallback? onTapOutside;
+
+  /// `Escape`: throw the edit away and close the editor, keeping what the
+  /// thing was called before. The counterpart to [onSubmitted] — every other
+  /// way out of an inline rename *commits* (Enter, clicking away, K-243), so
+  /// without this there is no way to change your mind, and Escape fell through
+  /// to the modal dismissal that an inline editor has no modal for.
+  ///
+  /// Handled on the field's own focus node, ahead of the shortcut system, so
+  /// it cannot be swallowed by `EditableText`'s own `DismissIntent` handling.
+  final VoidCallback? onCancelled;
   final TextStyle? style;
   final AutofillGenerator? autofill;
 
@@ -1249,6 +1259,7 @@ class HouseTextField extends StatefulWidget {
     this.onSubmitted,
     this.submitOnLostFocus = false,
     this.onTapOutside,
+    this.onCancelled,
     this.autofill,
     this.autofocus = false,
     this.style,
@@ -1299,6 +1310,15 @@ class _HouseTextFieldState extends State<HouseTextField>
   }
 
   KeyEventResult onKeyEvent(FocusNode node, KeyEvent event) {
+    // Escape first, and before the shortcut system sees it: an inline rename
+    // is not a modal, so `DismissIntent` finds nothing to dismiss and the
+    // editor used to sit there with no way out but committing.
+    if (event is KeyDownEvent &&
+        event.logicalKey == LogicalKeyboardKey.escape &&
+        widget.onCancelled != null) {
+      widget.onCancelled!();
+      return KeyEventResult.handled;
+    }
     if (suggestions.isNotEmpty) {
       if (event is! KeyDownEvent) {
         return KeyEventResult.ignored;
@@ -1966,7 +1986,23 @@ class _DragValueFieldState extends State<DragValueField>
   /// press was a click that wobbled, not a scrub).
   num? _lastDragValue;
   late TextEditingController _controller;
-  final FocusNode _focus = FocusNode();
+  late final FocusNode _focus = FocusNode(onKeyEvent: _onEditorKey);
+
+  /// `Escape` in the open editor: shut it and keep the value the field had
+  /// (K-323). Every other way out commits — Enter, Tab, clicking away — so
+  /// without this a half-typed number had no way back.
+  ///
+  /// Clearing `_editing` first matters: the focus listener below commits on
+  /// focus loss, and closing the editor is what loses it.
+  KeyEventResult _onEditorKey(FocusNode node, KeyEvent event) {
+    if (event is KeyDownEvent &&
+        event.logicalKey == LogicalKeyboardKey.escape &&
+        _editing) {
+      setState(() => _editing = false);
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
 
   /// The idle box's focus — how Tab reaches the field, and what `Enter`
   /// opens the editor from (K-319).

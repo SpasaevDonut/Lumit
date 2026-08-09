@@ -5115,6 +5115,19 @@ class _OutlineRowState extends State<_OutlineRow> {
         () => _rename = TextEditingController(text: widget.entry.info.name));
   }
 
+  /// Escape: shut the editor and rename nothing (K-323). Shares the closing
+  /// half of [_commitRename] — the write is the only difference between them.
+  void _cancelRename() {
+    if (!mounted || _rename == null) return;
+    setState(() {
+      _rename?.dispose();
+      _rename = null;
+    });
+    if (widget.renameRequest.value == layer.internallayerId) {
+      widget.renameRequest.value = null;
+    }
+  }
+
   void _commitRename() {
     // Both ways out of the editor can land here for one edit — submitting and
     // then losing the pointer — and the row can be gone by the time the second
@@ -5476,6 +5489,7 @@ class _OutlineRowState extends State<_OutlineRow> {
         // Clicking anywhere else finishes the edit and keeps what was typed.
         // It used to leave the field open and lose the change (K-243).
         onTapOutside: _commitRename,
+        onCancelled: _cancelRename,
       );
     }
     return GestureDetector(

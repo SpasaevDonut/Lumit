@@ -870,6 +870,13 @@ answer a click on the scrim gives. It is Flutter's own `DismissIntent`, which th
 Escape to above everything, so a window contributes only what dismissing *means* rather than
 another key handler.
 
+**Escape cancels an inline editor too, and writes nothing (K-323).** An inline rename or an
+open value box is not a modal, so `DismissIntent` reaches nothing above it; each such editor
+MUST therefore answer Escape on its **own focus node**, ahead of the shortcut system. Every
+other exit commits (§4.3, K-243) — Enter, clicking away, losing focus — so Escape is the one
+way out that keeps the old name or value. It applies to all four surfaces that have one: an
+effect's name, a layer's name, a Project item's name, and any value box being typed into.
+
 **Every window, not just one (K-319).** That rule is now the shape of *all* of them: each
 confirmation or settings window names one **default action** — the affirmative one, or the
 safe one where the affirmative is destructive — and that button carries the accent edge and
