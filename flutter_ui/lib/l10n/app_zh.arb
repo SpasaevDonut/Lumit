@@ -703,7 +703,7 @@
   "@fxDifference": {
     "description": "Effect controls — a control on Echo."
   },
-  "fxDirectionalBlur": "Directional blur",
+  "fxDirectionalBlur": "径向模糊",
   "@fxDirectionalBlur": {
     "description": "Effect controls — the name of an effect."
   },
@@ -711,7 +711,7 @@
   "@fxDispersion": {
     "description": "Effect controls — a control on Lens flare."
   },
-  "fxDisplacement": "Displacement",
+  "fxDisplacement": "置换",
   "@fxDisplacement": {
     "description": "Effect controls — a control on Block glitch."
   },
@@ -963,7 +963,7 @@
   "@fxMatteKey": {
     "description": "Effect controls — the name of an effect."
   },
-  "fxMatteLayer": "Matte layer",
+  "fxMatteLayer": "遮罩图层",
   "@fxMatteLayer": {
     "description": "Effect controls — a control on Lens flare."
   },
@@ -1179,7 +1179,7 @@
   "@fxShutterAngle": {
     "description": "Effect controls — a control on Posterize time."
   },
-  "fxShutterPhase": "Shutter phase",
+  "fxShutterPhase": "快门阶段",
   "@fxShutterPhase": {
     "description": "Effect controls — a control on Posterize time."
   },
@@ -1243,7 +1243,7 @@
   "@fxThreshold": {
     "description": "Effect controls — a control on Unsharp mask."
   },
-  "fxThresholdSoftness": "Threshold softness",
+  "fxThresholdSoftness": "阈值平滑",
   "@fxThresholdSoftness": {
     "description": "Effect controls — a control on Lens flare."
   },
