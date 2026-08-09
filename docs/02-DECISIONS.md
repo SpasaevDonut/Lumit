@@ -7110,3 +7110,102 @@ on a runner with Xcode 26 — and reopening the icon in Icon Composer and saving
 to put both keys back, so this is a mistake with a standing invitation to recur. The
 script is the regression test K-007 asks for: it fails on the `icon.json` as it was, and
 passes on the one that compiles.
+
+**K-314 · DECIDED · Submenus survive the diagonal: the safe hover triangle.**
+From the owner (2026-08-09): "when going through menus of any kind, I think we need to add
+safe hover triangles — like how JavaScript has intent plugins." A flyout opens beside the
+row that owns it, so the natural path to its first entry crosses the rows *below* that row;
+the menu switched on whichever row the pointer merely passed over, and the flyout vanished
+before it could be reached. The fix is the classic one: while a flyout is open, a hover
+report from another row of the same surface is **held** while the pointer is inside the
+triangle from where it left the owning row to the flyout's near edge. The held switch lands
+when the pointer leaves the triangle, or after a 300ms grace if the pointer simply stops
+there — resting on a row still means that row, which is the property a plain delay would
+lose. Reaching the flyout voids anything pending; a move that is not travel at all (straight
+down the menu) switches with no delay. The geometry lives in
+`flutter_ui/lib/widgets/hover_intent.dart` as pure arithmetic (`SafeTriangle`, tested as
+such), with the timers and hover state in `FloatSurface` — so every popup on the shared menu
+surface gets it at once: the menu bar, the Add effect browser's category flyouts, and every
+right-click menu. No animation, no toolkit dependency. Regression tests:
+`hover_intent_test.dart` (the geometry, and three submenu journeys — crossing, settling,
+leaving).
+
+**K-315 · DECIDED · Every window has a default action; every control answers the keyboard;
+Tab reads left-to-right, top-to-bottom.**
+From the owner (2026-08-09), three complaints in one shape — "opening any confirmation
+window should have the okay button selected by default, and pressing enter presses whatever
+is currently the selected button", "tabbing through menus needs to be improved… left to
+right then top to bottom", and "when a user clicks a text/value box but immediately starts
+dragging without lifting up, it should still just be like they've selected the box". All
+three were the same gap: house controls were painted, not focusable. `HouseButton`,
+`HouseCheckbox`, `HouseRadio` and the idle `DragValueField` now hold a `ControlFocusNode`,
+draw the accent focus ring (docs/15 §6.5) and answer `Enter`/`Space`; the global shortcut
+handler stands down while one holds focus, exactly as it already did for a focused text
+field, so a dialogue's `Enter` can never also fire a panel command. Each confirmation window
+names one **default action** — affirmative, or safe where the affirmative is destructive —
+which is `primary: true` *and* `autofocus: true`; K-243 had established that shape for the
+Pre-compose dialogue alone, and it is now all of them (disk-cache clear, composition
+settings, export, project settings, theme name, theme-editor save, marker label, update
+offer, restart). Modals wrap their body in a `FocusScope` + `ReadingOrderTraversalPolicy`, so
+Tab cycles inside the window in *visual* reading order rather than widget-tree order — the
+two disagree wherever a layout nests columns inside rows. For the value boxes: a drag that
+never crosses one increment now cancels as a drag and then opens the editor (a click that
+wobbled is a click); the editor opens with the value **selected**, since a value is retyped
+far more often than amended; the numeric and timecode editors gained the desktop selection
+gestures they never had, so press-and-drag highlights; and `HouseTextField` takes focus on
+the pointer's *down* stroke so a press that slides into a drag selects text from the first
+pixel. Regression tests: `dialog_keys_test.dart`.
+
+**K-316 · DECIDED · A dragged zoom slider anchors once.**
+Same report ("zooming in the timeline with the slider can still ping around a lot"), and
+K-293's anchoring was right but measured at the wrong moment. `_setZoom` re-measured the
+anchor on every drag update, reading `_hLane.offset` *before* layout had corrected it for
+the zoom just applied — a fresh zoom against a stale offset — so each update re-anchored
+somewhere slightly wrong and the lanes lurched; near the viewport edges the in-view/recentre
+branch flip-flopped as well. The slider's drag now brackets the gesture (`onChangeStart`/
+`onChangeEnd` on `HouseSlider`): the anchor is chosen once, at the start, and held to the
+end, which is the invariant the flight already assumed. The anchor's per-frame width is also
+taken from the scroll position's own content extent — the same numbers `zoomAnchorOffset`
+applies it with — rather than from the build-time viewport cache, which disagreed by a
+little at every zoom and by more the further in you were. Landed with K-315, from the same
+report; the zoom rule it amends is docs/07 §4.6.
+
+**K-317 · DECIDED · `Enter` renames the selection; nothing renames on a double-click; effects
+can carry their own name.**
+From the owner (2026-08-09): "if there's anywhere still allowing double click or click a
+selected item to rename, drop that behaviour and instead enable pressing enter to edit the
+name of the selected item (this also needs to work for effect names in the effect control,
+but not property rows, just effect name)." K-191 had already moved compositions off the
+second-click rename and K-243 had given the Timeline `Enter`; the Project panel still
+renamed footage, solids and folders on a second click, which is the same gesture as a slow
+double-click and opened editors under people's pointers. That is gone: a second click
+*opens* (K-191's rule, now without exception), and `Enter` renames whatever the focused panel
+has selected. Two new actions join the keymap — `item.rename` (Project) and `effect.rename`
+(Effect controls) — bound to `Enter` in their own contexts, so the binding is live in the
+focused panel alone and one press can never open two editors (the Timeline's handler gained
+the same guard). **An effect instance gains `custom_name: Option<String>`**
+(`serde(default, skip_serializing_if = "Option::is_none")`, so a project without one is
+byte-for-byte unchanged and an older file reads as `None`). It is a display name only:
+`match_name`, the schema, the parameters and every lookup are untouched, and it shows in
+place of the effect's label in both the Effect controls heading and the Timeline's fold-out.
+`BridgeEffectInstance::set_custom_name` stages it and `set_effects` commits, so a rename is
+one op and one undo step; an empty or whitespace name clears back to the label. Parameter
+rows are not renameable — a parameter's name is the schema's. Regression tests:
+`custom_name_roundtrips_and_defaults_to_none` (lumit-core),
+`enter_renames_the_selection_in_each_panel_that_has_one` (lumit-keymap), `Enter renames the
+selected item` (project_panel_frb_test.dart), `Enter renames the selected effect, and the
+name persists` (effect_controls_frb_test.dart).
+
+**K-318 · DECIDED · The default workspace puts Effects & presets in the right-hand column.**
+From the owner (2026-08-09): "the default workspace layout should move the effect and preset
+panel to the right side panel." It also settles a disagreement between code and spec that
+had stood since the port: docs/07 §1.6 always described the Edit workspace as having
+"right column Effects & Presets", while `defaultLayout()` made it the *third tab of the left
+group* — behind Project and Effect controls, so it was never visible on a fresh install —
+and fronted the **Debug** view in the right column instead, which is a developer panel. The
+left group is now Project (fronted), Effect controls, Hierarchy; the right group is Effects
+& presets (fronted), Scopes, Debug. Shares are unchanged (0.68/0.32; 0.22/0.58/0.20), and
+the other three presets are untouched. A saved workspace is unaffected — this is the factory
+layout, which Reset workspace restores. Regression test: the amended `default layout matches
+default_layout() structure and shares` (dock_test.dart), which now also pins which tab each
+group opens on.

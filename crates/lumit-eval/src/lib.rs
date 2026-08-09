@@ -1389,6 +1389,7 @@ mod tests {
                 extra: serde_json::Map::new(),
             }],
             sample_temporally: true,
+            custom_name: None,
             extra: serde_json::Map::new(),
         };
         let mut with_fx = plain.clone();
@@ -1495,6 +1496,7 @@ mod tests {
                 extra: serde_json::Map::new(),
             }],
             sample_temporally: true,
+            custom_name: None,
             extra: serde_json::Map::new(),
         };
 

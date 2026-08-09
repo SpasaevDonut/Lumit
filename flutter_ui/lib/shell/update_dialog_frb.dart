@@ -194,6 +194,9 @@ class _OfferUpdate extends StatelessWidget {
                 HouseButton(
                   key: const ValueKey('update-offer-yes'),
                   small: true,
+                  // The window's default action (K-315): Enter downloads.
+                  primary: true,
+                  autofocus: true,
                   onPressed: () => onChoose(true),
                   child: Text(l10n.updateDownload, style: t.small),
                 ),
@@ -424,6 +427,10 @@ class _RestartToFinish extends StatelessWidget {
                   HouseButton(
                     key: const ValueKey('update-save-restart'),
                     small: true,
+                    // The default (K-315): Enter takes the safe restart — the
+                    // one that saves.
+                    primary: true,
+                    autofocus: true,
                     onPressed: () => onChoose(_RestartAnswer.saveAndRestart),
                     child: Text(l10n.updateSaveAndRestart, style: t.small),
                   ),
@@ -431,6 +438,8 @@ class _RestartToFinish extends StatelessWidget {
                   HouseButton(
                     key: const ValueKey('update-restart-now'),
                     small: true,
+                    primary: true,
+                    autofocus: true,
                     onPressed: () => onChoose(_RestartAnswer.restart),
                     child: Text(
                         quits ? l10n.updateRestartNow : l10n.updateShowTheFile,

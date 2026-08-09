@@ -5981,3 +5981,28 @@ fn zz_debug_cells() {
         }
     }
 }
+
+/// K-317: an instance may carry the user's own name. `None` — every older
+/// project — serialises to nothing at all, so documents without the feature
+/// are byte-for-byte unchanged, and a named instance round-trips exactly.
+#[test]
+fn custom_name_roundtrips_and_defaults_to_none() {
+    let e = instantiate("blur").unwrap();
+    assert_eq!(e.custom_name, None);
+    let bare = serde_json::to_string(&e).unwrap();
+    assert!(
+        !bare.contains("custom_name"),
+        "an unnamed instance writes no field, so older files are unchanged"
+    );
+    let back: EffectInstance = serde_json::from_str(&bare).unwrap();
+    assert_eq!(
+        back.custom_name, None,
+        "a file without the field reads None"
+    );
+
+    let mut named = e;
+    named.custom_name = Some("Blur the sign".into());
+    let json = serde_json::to_string(&named).unwrap();
+    let back: EffectInstance = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.custom_name.as_deref(), Some("Blur the sign"));
+}

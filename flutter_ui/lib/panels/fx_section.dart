@@ -81,6 +81,16 @@ class FxSection extends StatelessWidget {
   /// The rows under the heading, drawn only while [open].
   final List<Widget> rows;
 
+  /// While true the heading's name is an inline editor instead of a label —
+  /// how an effect is renamed (`Enter` on the selected effect, K-317).
+  /// Sections that cannot be renamed (Source, Transform) never set it.
+  final bool renaming;
+
+  /// The rename's commit: the typed name, empty to clear back to the
+  /// effect's own label. Called on Enter and on clicking away, the same
+  /// contract every inline rename in the application has (K-243).
+  final ValueChanged<String>? onRenamed;
+
   const FxSection({
     super.key,
     required this.title,
@@ -96,6 +106,8 @@ class FxSection extends StatelessWidget {
     this.twirlKey,
     this.dragIndex,
     this.onDropped,
+    this.renaming = false,
+    this.onRenamed,
   });
 
   @override
@@ -209,9 +221,11 @@ class FxSection extends StatelessWidget {
                       const SizedBox(width: 6),
                     ],
                     Expanded(
-                      child: Text(title,
-                          style: t.bodyPrimary,
-                          overflow: TextOverflow.ellipsis),
+                      child: renaming && onRenamed != null
+                          ? _RenameField(initial: title, onDone: onRenamed!)
+                          : Text(title,
+                              style: t.bodyPrimary,
+                              overflow: TextOverflow.ellipsis),
                     ),
                   ],
                 ),
@@ -223,6 +237,43 @@ class FxSection extends StatelessWidget {
             ],
           ),
         ),
+      );
+}
+
+/// The heading's inline rename editor (K-317): opens with the current name
+/// selected — a name is retyped far more often than amended — commits on
+/// Enter or on clicking away, like every inline rename (K-243).
+class _RenameField extends StatefulWidget {
+  final String initial;
+  final ValueChanged<String> onDone;
+  const _RenameField({required this.initial, required this.onDone});
+
+  @override
+  State<_RenameField> createState() => _RenameFieldState();
+}
+
+class _RenameFieldState extends State<_RenameField> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initial,
+  )..selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: widget.initial.length,
+    );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => HouseTextField(
+        key: const ValueKey('fx-rename-field'),
+        controller: _controller,
+        width: fxNameColumnWidth - 40,
+        autofocus: true,
+        submitOnLostFocus: true,
+        onSubmitted: widget.onDone,
       );
 }
 

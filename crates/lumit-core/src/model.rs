@@ -573,6 +573,13 @@ pub struct EffectInstance {
     /// it N times. Ignored unless a temporal re-render effect is sampling.
     #[serde(default = "default_true")]
     pub sample_temporally: bool,
+    /// The user's own name for this instance, shown in place of the effect's
+    /// label wherever the stack is drawn (K-317) — "Blur the sign", not
+    /// "Gaussian blur". `None` (the default, and what every older project
+    /// deserialises to) shows the label; rendering, expressions and every
+    /// `match_name` lookup are untouched by it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_name: Option<String>,
     #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }

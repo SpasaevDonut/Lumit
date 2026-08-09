@@ -110,6 +110,11 @@ abstract class BridgeEffectInstance implements RustOpaqueInterface {
 
   String serialize();
 
+  /// Stage the user's own name for this instance (K-317) — an empty or
+  /// whitespace name clears it back to the effect's label. Staging only, like
+  /// `set_value`: `LayerReference::set_effects` is the commit.
+  void setCustomName({required String name});
+
   /// Overwrite a parameter on this staged copy. Nothing is committed — see the
   /// type's own documentation; `LayerReference::set_effects` is the commit.
   ///
@@ -212,19 +217,29 @@ class BridgeEffectInfo {
 class BridgeEffectInstanceInfo {
   final UuidValue id;
   final String name;
+
+  /// The user's own name for the instance (K-317), or `None` to show the
+  /// effect's label. `name` stays the `match_name` either way — it is the
+  /// schema key, not a display string.
+  final String? customName;
   final bool enabled;
   final List<BridgeParamValue> values;
 
   const BridgeEffectInstanceInfo({
     required this.id,
     required this.name,
+    this.customName,
     required this.enabled,
     required this.values,
   });
 
   @override
   int get hashCode =>
-      id.hashCode ^ name.hashCode ^ enabled.hashCode ^ values.hashCode;
+      id.hashCode ^
+      name.hashCode ^
+      customName.hashCode ^
+      enabled.hashCode ^
+      values.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -233,6 +248,7 @@ class BridgeEffectInstanceInfo {
           runtimeType == other.runtimeType &&
           id == other.id &&
           name == other.name &&
+          customName == other.customName &&
           enabled == other.enabled &&
           values == other.values;
 }

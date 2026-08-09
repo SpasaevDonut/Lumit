@@ -21,6 +21,8 @@ import 'package:lumit_flutter/panels/effect_param_row_frb.dart' show effectLabel
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 
+import 'package:lumit_flutter/state/dock.dart';
+
 import 'frb_test_support.dart';
 
 void main() {
@@ -690,6 +692,48 @@ void main() {
           reason: 'the curated default is the reference cine prime');
       expect(find.text('Lens file'), findsOneWidget,
           reason: 'a user .lens file covers everything the palette leaves out');
+    });
+
+    testWidgets('Enter renames the selected effect, and the name persists',
+        (tester) async {
+      // K-317: an effect instance can carry the user's own name. Enter on the
+      // selected effect opens the heading's inline editor; the committed name
+      // shows in place of the label and reaches the document.
+      final p = withLayer();
+      p.layer.addEffect(name: 'blur');
+      await mount(tester, p);
+      p.uiState.activePanel.value = Panel.effectControls;
+
+      final stack = p.layer.getEffects();
+      await tester.tap(find.text(effectLabelOf(stack.single.name())));
+      await tester.pumpAndSettle();
+      expect(p.uiState.selectedEffects.value, [stack.single.id()]);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('fx-rename-field')), findsOneWidget,
+          reason: 'Enter on the selected effect opens the inline rename');
+
+      await tester.enterText(
+          find.byKey(const ValueKey('fx-rename-field')), 'Blur the sign');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Blur the sign'), findsOneWidget,
+          reason: 'the heading shows the given name');
+      expect(p.layer.getEffects().single.getInfo().customName, 'Blur the sign',
+          reason: 'the name reached the document');
+
+      // An empty rename clears back to the label.
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.byKey(const ValueKey('fx-rename-field')), '');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(p.layer.getEffects().single.getInfo().customName, isNull);
+      expect(find.text(effectLabelOf('blur')), findsOneWidget,
+          reason: 'a cleared name falls back to the effect label');
     });
 
     // Without the built library there is nothing to test against; the harness

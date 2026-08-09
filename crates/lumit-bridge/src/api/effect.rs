@@ -850,6 +850,10 @@ pub struct BridgeParamValue {
 pub struct BridgeEffectInstanceInfo {
     pub id: Uuid,
     pub name: String,
+    /// The user's own name for the instance (K-317), or `None` to show the
+    /// effect's label. `name` stays the `match_name` either way — it is the
+    /// schema key, not a display string.
+    pub custom_name: Option<String>,
     pub enabled: bool,
     pub values: Vec<BridgeParamValue>,
 }
@@ -864,6 +868,7 @@ pub(crate) fn read_instance_info(
     BridgeEffectInstanceInfo {
         id: effect.id,
         name: effect.effect.match_name.clone(),
+        custom_name: effect.custom_name.clone(),
         enabled: effect.enabled,
         values: effect
             .params
@@ -910,6 +915,15 @@ impl BridgeEffectInstance {
     #[frb(sync)]
     pub fn enabled(&self) -> bool {
         self.effect.enabled
+    }
+
+    /// Stage the user's own name for this instance (K-317) — an empty or
+    /// whitespace name clears it back to the effect's label. Staging only, like
+    /// `set_value`: `LayerReference::set_effects` is the commit.
+    #[frb(sync)]
+    pub fn set_custom_name(&mut self, name: String) {
+        let trimmed = name.trim();
+        self.effect.custom_name = (!trimmed.is_empty()).then(|| trimmed.to_string());
     }
 
     #[frb(ignore)]

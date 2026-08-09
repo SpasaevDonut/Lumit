@@ -103,6 +103,7 @@ impl ActionId {
             "comp.new" => "New composition",
             "app.settings" => "Open Settings",
             "project.settings" => "Open Project settings",
+            "item.rename" => "Rename the selected item",
             "panel.maximise" => "Maximise the panel under the pointer",
             "graph.toggle" => "Show or hide the graph editor",
             // Tools.
@@ -142,6 +143,7 @@ impl ActionId {
             "timeline.zoom.out" => "Zoom out",
             "timeline.zoom.fit" => "Zoom to fit",
             "layer.rename" => "Rename the layer",
+            "effect.rename" => "Rename the selected effect",
             "layer.toggle.visible" => "Show or hide the layer",
             // Graph editor.
             "graph.ease" => "Easy ease",
@@ -597,7 +599,7 @@ fn row(context: KeyContext, chord: &str, action: &str) -> Option<Binding> {
 /// it to Cmd on macOS. Ships conflict-free (proven in tests).
 #[must_use]
 pub fn default_keymap() -> Keymap {
-    use KeyContext::{Global, Graph, Panels, Timeline, Tools, Viewer};
+    use KeyContext::{Effects, Global, Graph, Panels, Project, Timeline, Tools, Viewer};
     let rows = [
         // --- Global: transport, navigation, app-wide commands ---
         row(Global, "Space", "playback.toggle"),
@@ -726,6 +728,11 @@ pub fn default_keymap() -> Keymap {
         row(Timeline, "-", "timeline.zoom.out"),
         row(Timeline, "\\", "timeline.zoom.fit"),
         row(Timeline, "Enter", "layer.rename"),
+        // Enter renames the selected thing wherever one is selected (K-317):
+        // the item in the Project panel, the effect in Effect controls — the
+        // same key the Timeline has always used for its layers.
+        row(Project, "Enter", "item.rename"),
+        row(Effects, "Enter", "effect.rename"),
         row(Timeline, "X", "layer.toggle.visible"),
         // --- Graph editor ---
         row(Graph, "F9", "graph.ease"),
@@ -858,6 +865,26 @@ mod tests {
             "Hyper+A".parse::<Chord>(),
             Err(ChordError::UnknownModifier(_))
         ));
+    }
+
+    #[test]
+    fn enter_renames_the_selection_in_each_panel_that_has_one() {
+        // K-317: the same key the Timeline always used for its layers is
+        // bound for the Project panel's items and Effect controls' effects.
+        let km = default_keymap();
+        let enter: Chord = "Enter".parse().unwrap();
+        assert_eq!(
+            km.lookup(KeyContext::Timeline, &enter),
+            Some(&ActionId::from("layer.rename"))
+        );
+        assert_eq!(
+            km.lookup(KeyContext::Project, &enter),
+            Some(&ActionId::from("item.rename"))
+        );
+        assert_eq!(
+            km.lookup(KeyContext::Effects, &enter),
+            Some(&ActionId::from("effect.rename"))
+        );
     }
 
     #[test]

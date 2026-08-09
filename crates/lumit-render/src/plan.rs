@@ -693,6 +693,7 @@ mod tests {
                         },
                     ],
                     sample_temporally: true,
+                    custom_name: None,
                     extra: serde_json::Map::new(),
                 });
             }

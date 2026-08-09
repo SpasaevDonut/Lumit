@@ -3803,6 +3803,173 @@ copy…** inside the colour editor, which branches a theme without first
 overwriting it. The picker also draws eight swatches of the selected theme beside
 its name, so you can recognise a theme without applying it.
 
+### The corner you no longer have to travel (K-314)
+
+Open a menu, hover a row with an arrow on it, and a second menu flies out to the
+right. Now move towards it. The obvious path is a diagonal — up-and-right, or
+down-and-right — and that diagonal crosses the rows *underneath* the one you
+started on. The menu, watching only for "which row is the pointer over", saw one
+of those rows, decided you had changed your mind, and took the flyout away
+before you got there. The workaround everyone learns without noticing is to
+travel the corner: straight right first, then down. That is a small tax paid on
+every single submenu.
+
+The fix is old and has a name — the **safe triangle**. When a flyout is open,
+draw an imaginary triangle from where your pointer is to the two near corners of
+the flyout. Anything inside that triangle is *travel*: you are on your way to
+the flyout, whatever row you happen to be passing over. So while the pointer is
+in there, the menu holds the switch back rather than acting on it.
+
+Two details stop that from becoming its own annoyance:
+
+- If the pointer *stops* inside the triangle — you were heading for the flyout,
+  changed your mind, and settled on a row — the held switch lands anyway after
+  about a third of a second. Resting on a row still means that row.
+- If the pointer moves somewhere the triangle does not cover — straight down the
+  menu, say — the switch happens immediately, with no delay to feel. Only travel
+  towards the flyout is ever held.
+
+The geometry is a separate little file (`widgets/hover_intent.dart`) with no
+Flutter in it beyond the `Offset` and `Rect` types, which is what lets it be
+tested as plain arithmetic: is this point inside this triangle? The timers and
+the "which row is hovered" bookkeeping live with the floating menu surface every
+popup already shares, so the menu bar, the Add effect browser and every
+right-click menu got this at the same moment, from one change.
+
+### Windows you can drive without the mouse (K-315)
+
+Three complaints turned out to be one missing thing.
+
+**The buttons were pictures.** A `HouseButton` drew itself, watched for a click,
+and that was all — it could not hold keyboard focus, so Tab never reached it and
+Enter never pressed it. Every house control now carries a **focus node**: the
+buttons, the checkboxes, the radios, and the resting state of a value box. A
+focused control draws the accent ring the design spec has always asked for, and
+answers Enter (and Space, where "press" is what it does).
+
+**"Enter presses the OK button" is not a special case.** Rather than wiring one
+button to the Enter key, each window now says which of its buttons is the
+*default* — the affirmative one, or the safe one where the affirmative deletes
+something — and that button simply **takes focus when the window opens**. Enter
+then presses whatever is focused, which is that button until you Tab somewhere
+else. One rule instead of a special case, and it means a whole window is
+operable from the keyboard rather than just its OK button.
+
+There is a companion rule that already existed for text fields and now covers
+controls too: while a control holds focus, the application's global shortcuts
+stand down. Otherwise Enter on a dialogue's button would *also* rename a layer
+in the Timeline behind it — which is a real bug this project has already had
+once (K-243).
+
+**Tab now goes the way you read.** Left to right, then top to bottom. It sounds
+like it should be the default, and it is not: the toolkit walks the *widget
+tree*, and a layout that nests a column inside a row visits things in whatever
+order the code composed them, which can be down-then-across, or worse. Flutter
+ships a policy that sorts by actual screen position instead
+(`ReadingOrderTraversalPolicy`); every modal is now wrapped in one, plus a focus
+scope so Tab cycles inside the window rather than wandering off into the panels
+behind it.
+
+### Clicks that wobble, and text you can drag over (K-315)
+
+A value box in Lumit does two jobs: drag it sideways to scrub the number, click
+it to type one. Deciding which of those you meant happens in Flutter's *gesture
+arena* — the pointer goes down, and whoever recognises a gesture first wins.
+Move sideways more than a few pixels and the drag wins; stay still and the tap
+wins.
+
+The gap was what happened to a press that wandered a little but never actually
+scrubbed a whole step. The drag recogniser won it, ticked nothing, and released
+into nothing at all: no value change, no editor. To a person that is a click
+that the box swallowed, and mice wobble constantly. Now a drag that ends without
+ever crossing one increment is understood for what it is — a click — and opens
+the editor.
+
+Two more things about that editor. It opens with the whole value **selected**,
+because a value is retyped far more often than it is amended, and a caret parked
+at the end means every edit begins with a select-all of your own. And it now has
+real text selection: press to place the caret, drag to highlight. It sounds like
+something you get for free, and you do not — a bare `EditableText` takes keys but
+has no selection gestures attached until you wrap it in the builder that
+provides them, which the plain text fields had and the numeric ones did not.
+
+The ordinary text fields gained one further thing: they take focus on the
+pointer's **down** stroke rather than waiting for the tap to resolve. Somebody
+who presses in a field and immediately drags is selecting text in one motion,
+and the field has to be theirs before the highlight starts or the drag selects
+nothing.
+
+### Why the zoom slider still pinged, after it was fixed (K-316)
+
+The Timeline's zoom keeps something still while the lanes grow — the playhead,
+when you use the slider. That mechanism (K-293) was right. What was wrong was
+*when* it measured.
+
+Keeping the playhead still means working out where it is on screen right now,
+and then, after the lanes have grown, moving the scroll so it is still there.
+The panel did that measurement on **every drag update**. But a drag update
+arrives, applies the new zoom, and returns — the scroll offset is only corrected
+later, during layout. So the second update measured a *fresh zoom against a
+stale offset*: two numbers describing different moments. Each update anchored
+somewhere slightly wrong, and the lanes lurched. Near the edges of the view it
+was worse, because the "is the playhead visible?" test flipped back and forth
+between "keep it where it is" and "bring it to the middle".
+
+The fix is to measure once. The slider now says when its drag begins and when it
+ends, and the anchor is chosen at the start and held for the whole gesture —
+which is what the flight always assumed anyway. The other half is where the
+width comes from: it is now read from the scroll position's own content extent,
+the same numbers the correction is applied with, rather than from a viewport
+size cached during build. Those two disagreed by a little at every zoom, and the
+disagreement grew the further in you were.
+
+### One way to rename anything (K-317)
+
+Renaming had drifted into three different gestures in three places, and one of
+them was actively in the way: in the Project panel, clicking a row that was
+already selected opened its name for editing. That is the *same gesture* as a
+slightly slow double-click, so names kept opening for editing under people's
+pointers when they meant to open the item.
+
+It is one rule now: **`Enter` renames whatever the focused panel has selected.**
+A layer in the Timeline (which already worked this way), an item in the Project
+panel, an effect in Effect controls. Double-clicking, and clicking an
+already-selected row, mean *open* everywhere, without exception.
+
+Each of those is a separate keyboard binding in a separate context, which is how
+one Enter press cannot open two editors at once: a per-panel binding is only
+live in the panel that has focus, and each panel's handler checks that it is the
+focused one before acting.
+
+**Effects can now carry a name of their own**, which is the new part. A blur
+called "Gaussian blur" three times down a stack tells you nothing; "Blur the
+sign" does. The instance gains one optional field, `custom_name`, and where it
+is set it is shown in place of the effect's label — in the Effect controls
+heading and in the Timeline's fold-out alike. It is a *display* name only:
+`match_name` is the schema key everything else looks the effect up by, and it is
+untouched, so nothing about rendering or expressions changes. Clearing the field
+puts the label back.
+
+The saved-file question is worth stating plainly, because it is the one that
+decides whether a feature like this is safe: the field is written **only when it
+is set**. A project with no renamed effects is byte-for-byte the file it was
+before, and an older project simply reads as "no name given". Nothing needs
+migrating.
+
+### The panel that was never on screen (K-318)
+
+The default workspace put **Effects & presets** as the *third tab of the left
+group*, behind Project and Effect controls — so on a fresh install you never saw
+it — and gave the fronted spot in the right-hand column to the **Debug** view,
+which is a developer panel. The specification had said "right column Effects &
+Presets" all along; the code had never matched it.
+
+It matches now. Left group: Project (open), Effect controls, Hierarchy. Right
+column: Effects & presets (open), Scopes, Debug. Nothing about the proportions
+changed, and the other three workspace presets are as they were. This is the
+*factory* layout, so a workspace you have already arranged is untouched — you
+would see the new one by resetting the workspace, or on a new install.
+
 ### The rules that bite
 
 These are the ones a plausible-looking change breaks. Each has tests standing

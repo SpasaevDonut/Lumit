@@ -38,6 +38,7 @@ import '../icons/icons.dart';
 import '../l10n/strings.dart';
 import '../state/comp_model.dart';
 import '../state/comp_time.dart';
+import '../state/dock.dart';
 import '../state/drag_payloads.dart';
 import '../state/timecode.dart';
 import '../state/timeline_columns.dart';
@@ -1374,8 +1375,14 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     }
     // Enter renames the selected layer in place (docs/07 §15, K-243): the row
     // it names opens its own editor, which is why this sets a value rather
-    // than reaching into a row.
+    // than reaching into a row. Only while this is the focused panel — the
+    // Project panel and Effect controls answer the same key for their own
+    // selections now (K-317), and two renames on one press is a mess.
     if (action == 'layer.rename') {
+      // A different panel is focused: its own rename answers this key. No
+      // panel focused yet falls to the Timeline, as it always did.
+      final active = ui.activePanel.value;
+      if (active != null && active != Panel.timeline) return false;
       final layer = ui.selectedLayer.value;
       if (layer == null) return false;
       _renameRequest.value = layer.internallayerId;
@@ -1723,18 +1730,51 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
   /// flight restarted before it ever arrived. A tap on the track, or the
   /// wheel, is a discrete jump and still flies.
   void _setZoom(double z, {bool fly = true}) {
-    _anchorOnPlayhead();
+    // While the slider is being dragged the anchor was chosen once, at the
+    // start of the gesture, and holds to the end (K-315). Re-measuring it on
+    // every drag update read the scroll offset before layout had corrected it
+    // for the zoom just applied — a fresh zoom against a stale offset — and
+    // each update re-anchored somewhere slightly wrong, which is what made
+    // the lanes ping around under a dragged slider. The measured-once anchor
+    // is exact: the flight (and the drag) re-applies the same fixed point
+    // every tick, which is the invariant the whole mechanism is built on.
+    if (!_zoomAnchorHeld) _anchorOnPlayhead();
     _zoomMotion.goTo(z,
         duration: fly ? animationDuration(_animationLevel) : Duration.zero);
   }
 
+  /// True while a slider drag holds the anchor fixed — see [_setZoom].
+  bool _zoomAnchorHeld = false;
+
+  /// The slider's drag began: choose the anchor now, and keep it for the
+  /// whole gesture.
+  void _zoomDragStart() {
+    _anchorOnPlayhead();
+    _zoomAnchorHeld = true;
+  }
+
+  void _zoomDragEnd() {
+    _zoomAnchorHeld = false;
+  }
+
   /// Point the flight's anchor at the playhead — held where it is if it is on
   /// screen, brought to the middle if it is not.
+  ///
+  /// The per-frame width is derived from the scroll position's own content
+  /// extent when it has one — the same numbers `zoomAnchorOffset` applies the
+  /// anchor with — so the point measured here is exactly the point the layout
+  /// puts back. A width from anywhere else (the build-time viewport cache)
+  /// disagrees by a little at every zoom, and the disagreement is a
+  /// systematic drift that grows with magnification.
   void _anchorOnPlayhead() {
     final viewport =
         _hLane.hasClients ? _hLane.position.viewportDimension : _laneViewport;
     final offset = _hLane.hasClients ? _hLane.offset : 0.0;
-    final perFrame = _perFrameNow;
+    final perFrame = _hLane.hasClients && _laneFrames > 0
+        ? (_hLane.position.viewportDimension +
+                _hLane.position.maxScrollExtent) /
+            _laneFrames
+        : _perFrameNow;
     final playhead = (_ui?.playheadFrame.value ?? 0).toDouble();
     _zoomAnchorFrame = playhead;
     final x = playhead * perFrame - offset;
@@ -2496,6 +2536,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
                                           onZoom: _setZoom,
                                           onZoomLive: (z) =>
                                               _setZoom(z, fly: false),
+                                          onZoomDragStart: _zoomDragStart,
+                                          onZoomDragEnd: _zoomDragEnd,
                                           maxZoom: _maxZoom,
                                           lens: _graphLens,
                                           onLens: (lens) =>
@@ -2677,6 +2719,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
                                           onZoom: _setZoom,
                                           onZoomLive: (z) =>
                                               _setZoom(z, fly: false),
+                                          onZoomDragStart: _zoomDragStart,
+                                          onZoomDragEnd: _zoomDragEnd,
                                           maxZoom: _maxZoom,
                                         ),
                                       ],
@@ -6648,6 +6692,10 @@ class _LaneBottomBar extends StatelessWidget {
   /// A zoom asked for continuously, while the handle is dragged. The drag is
   /// the motion, so this one arrives at once.
   final ValueChanged<double> onZoomLive;
+
+  /// The drag's ends, so the panel can anchor once per gesture (K-315).
+  final VoidCallback? onZoomDragStart;
+  final VoidCallback? onZoomDragEnd;
   final bool magnet;
   final VoidCallback onToggleMagnet;
 
@@ -6664,6 +6712,8 @@ class _LaneBottomBar extends StatelessWidget {
     required this.hScroll,
     required this.onZoom,
     required this.onZoomLive,
+    this.onZoomDragStart,
+    this.onZoomDragEnd,
     required this.magnet,
     required this.onToggleMagnet,
     this.lens,
@@ -6800,7 +6850,10 @@ class _LaneBottomBar extends StatelessWidget {
                             showValue: false,
                             // Dragged, the zoom follows the finger with no
                             // flight; tapped, it flies to where the track was
-                            // clicked (K-293).
+                            // clicked (K-293). The drag's ends bracket the
+                            // gesture so the panel anchors once (K-315).
+                            onChangeStart: onZoomDragStart,
+                            onChangeEnd: onZoomDragEnd,
                             onChangeLive: (t) =>
                                 onZoomLive(zoomForSliderPosition(t, maxZoom)),
                             onChanged: (t) =>

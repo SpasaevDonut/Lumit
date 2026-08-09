@@ -323,6 +323,8 @@ Map<String, String> get _table => {
       "Zoom out": l10n.keyZoomOut,
       "Zoom to fit": l10n.keyZoomToFit,
       "Rename the layer": l10n.keyRenameTheLayer,
+      "Rename the selected item": l10n.keyRenameTheSelectedItem,
+      "Rename the selected effect": l10n.keyRenameTheSelectedEffect,
       "Show or hide the layer": l10n.keyShowOrHideTheLayer,
       "Easy ease": l10n.keyEasyEase,
       "Easy ease in": l10n.keyEasyEaseIn,

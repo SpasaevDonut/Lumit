@@ -121,11 +121,25 @@ class TimeReadout extends StatefulWidget {
   State<TimeReadout> createState() => _TimeReadoutState();
 }
 
-class _TimeReadoutState extends State<TimeReadout> {
+class _TimeReadoutState extends State<TimeReadout>
+    implements TextSelectionGestureDetectorBuilderDelegate {
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focus = FocusNode();
   bool _editing = false;
   bool _hovered = false;
+
+  /// The open editor, for the selection gestures — pressing places the caret
+  /// and dragging highlights, like any text box (K-315).
+  final GlobalKey<EditableTextState> textFieldKey = GlobalKey();
+
+  @override
+  GlobalKey<EditableTextState> get editableTextKey => textFieldKey;
+
+  @override
+  bool get forcePressEnabled => false;
+
+  @override
+  bool get selectionEnabled => true;
 
   /// Pixels dragged since the last whole frame was ticked.
   double _dragAccum = 0;
@@ -171,8 +185,8 @@ class _TimeReadoutState extends State<TimeReadout> {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    final width =
-        monoSlotWidth(widget.style, widget.widthChars) + readoutPadding.horizontal;
+    final width = monoSlotWidth(widget.style, widget.widthChars) +
+        readoutPadding.horizontal;
 
     final Widget inner = _editing
         ? Focus(
@@ -184,18 +198,23 @@ class _TimeReadoutState extends State<TimeReadout> {
               }
               return KeyEventResult.ignored;
             },
-            child: EditableText(
-              controller: _controller,
-              focusNode: _focus,
-              autofocus: true,
-              style: widget.style.copyWith(color: t.textPrimary),
-              cursorColor: t.accent,
-              backgroundCursorColor: t.surface2,
-              selectionColor: t.accent.withValues(alpha: 0.5),
-              onSubmitted: (_) => _commitTyped(),
-              // Clicking away finishes the edit rather than throwing it away:
-              // people leave a field by looking at the next thing (K-243).
-              onTapOutside: (_) => _commitTyped(),
+            child: TextSelectionGestureDetectorBuilder(delegate: this)
+                .buildGestureDetector(
+              child: EditableText(
+                key: textFieldKey,
+                controller: _controller,
+                focusNode: _focus,
+                autofocus: true,
+                style: widget.style.copyWith(color: t.textPrimary),
+                cursorColor: t.accent,
+                backgroundCursorColor: t.surface2,
+                selectionColor: t.accent.withValues(alpha: 0.5),
+                onSubmitted: (_) => _commitTyped(),
+                // Clicking away finishes the edit rather than throwing it
+                // away: people leave a field by looking at the next thing
+                // (K-243).
+                onTapOutside: (_) => _commitTyped(),
+              ),
             ),
           )
         : Text(
@@ -239,10 +258,12 @@ class _TimeReadoutState extends State<TimeReadout> {
                 _dragged = null;
                 if (last != null) {
                   widget.onCommit(last);
-                } else {
-                  // Never crossed a whole frame: nothing was ticked, so a
-                  // release here changes nothing.
+                } else if (!_editing) {
+                  // Never crossed a whole frame: the press was a click that
+                  // wobbled, not a scrub — cancel the drag, then do what the
+                  // click meant and open the editor (K-315).
                   widget.onDragCancel?.call();
+                  _beginEdit();
                 }
               }
             : null,

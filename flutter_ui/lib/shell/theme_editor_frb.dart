@@ -293,6 +293,9 @@ class _ThemeEditorState extends State<_ThemeEditor> {
                   HouseButton(
                     key: const ValueKey('theme-editor-save-on-close'),
                     small: true,
+                    // The default action (K-315): Enter keeps the work.
+                    primary: true,
+                    autofocus: true,
                     onPressed: () => close(true),
                     child: Text(l10n.save),
                   ),
