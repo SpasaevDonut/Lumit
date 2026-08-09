@@ -98,11 +98,11 @@
   "@clipPasteShape": {
     "description": "Context-menu item: apply a copied speed curve here."
   },
-  "clipResetSpeed": "Reset speed",
+  "clipResetSpeed": "重置速度",
   "@clipResetSpeed": {
     "description": "Context-menu item: put a clip back to playing at its normal speed."
   },
-  "clipboardValueColumn": "Value",
+  "clipboardValueColumn": "数值",
   "@clipboardValueColumn": {
     "description": "Column heading in the keyframe data copied to the clipboard."
   },
