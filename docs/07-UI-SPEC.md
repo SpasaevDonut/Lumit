@@ -1744,6 +1744,12 @@ made slightly translucent, over a **half-strength scrim** — enough darkening t
 slice reads over any frame, never so much that the work it acts on disappears. `Esc` MUST
 close it from anywhere, whatever has focus.
 
+**While the console is open, the keyboard is the console's (K-328).** The search field MUST
+hold focus for the console's whole life — anything typed lands in the box from the first
+keystroke — and every command handler stands down (`lumitModalOpen`), so a keystroke aimed
+at the box can never run a shortcut underneath. The only ways out are `Esc` and a click
+outside.
+
 **The search bar starts empty and lists nothing** — the ring is the offer. Typing opens a
 dropdown below the bar, which MUST rank **effects first and compositions after a divider**,
 within each kind and never across it: the reason to open this window is nearly always an

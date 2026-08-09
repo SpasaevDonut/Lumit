@@ -227,6 +227,11 @@ const double _barHeight = 44;
 
 class _FxConsoleState extends State<_FxConsole> {
   final TextEditingController _query = TextEditingController();
+
+  /// The search field's focus, held here because the console steers it: the
+  /// field is focused on open and *kept* focused for the console's whole life
+  /// (K-328), so anything typed while the console is up lands in the box.
+  final FocusNode _queryFocus = FocusNode(debugLabel: 'fx-console-query');
   int _highlighted = 0;
 
   /// Which radial slice the pointer is choosing, or null in the dead zone.
@@ -248,13 +253,35 @@ class _FxConsoleState extends State<_FxConsole> {
     // lifetime, the same reason the shell's own shortcuts are global. It is
     // the only place Escape is handled, so one press is one step back.
     HardwareKeyboard.instance.addHandler(_escapeAnywhere);
+    // While the console is up, the keyboard is the console's (K-328): the
+    // panels' hardware-keyboard commands stand down exactly as they do for a
+    // dialogue, so a keystroke meant for the search box can never rename a
+    // layer underneath.
+    markModalMounted();
+    // And the search box owns typing outright: focused now — deterministic,
+    // where `autofocus` lost a race against the shell's own scope — and
+    // re-taken the moment anything else grabs focus, for as long as the
+    // console is open. The only ways out are Escape and a click outside,
+    // both of which close the whole console.
+    _queryFocus.addListener(_keepFocus);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _queryFocus.requestFocus();
+    });
   }
 
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_escapeAnywhere);
+    markModalUnmounted();
+    _queryFocus
+      ..removeListener(_keepFocus)
+      ..dispose();
     _query.dispose();
     super.dispose();
+  }
+
+  void _keepFocus() {
+    if (mounted && !_queryFocus.hasFocus) _queryFocus.requestFocus();
   }
 
   bool _escapeAnywhere(KeyEvent event) {
@@ -427,7 +454,7 @@ class _FxConsoleState extends State<_FxConsole> {
                 key: const ValueKey('fx-console-query'),
                 controller: _query,
                 width: 280,
-                autofocus: true,
+                focusNode: _queryFocus,
                 hint: l10n.fxConsoleHint,
                 onSubmitted: (_) => _runHighlighted(matches),
               ),

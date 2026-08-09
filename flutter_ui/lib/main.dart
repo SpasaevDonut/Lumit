@@ -1739,6 +1739,11 @@ class _LumitAppViewState extends State<LumitAppView> {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
     }
+    // A modal surface is up — a dialogue, or the FX console (K-328): its keys
+    // are its own, exactly as the panels' handlers already treat it (K-243).
+    // Without this, a keystroke aimed at the console's search box also ran
+    // whatever shell command it happened to spell.
+    if (lumitModalOpen) return KeyEventResult.ignored;
     // A field with focus keeps its keys, or typing a layer name would also run
     // commands. The focused context's own widget is the `Focus` that
     // `EditableText` builds, not the `EditableText` — so the check has to look

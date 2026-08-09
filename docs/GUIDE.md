@@ -4106,8 +4106,11 @@ floating just above it (or below, if your pointer is near the top of the
 window). Nothing is boxed: the console floats translucent over your work,
 because your work is the thing it is about to act on, and behind it the frame
 dims just a little — enough that every slice stays readable over any picture,
-never enough to hide what you are working on. Escape closes it from anywhere.
-Two ways into the same handful of things, because they suit different moments.
+never enough to hide what you are working on. While it is open, the keyboard
+is the console's: anything you type goes into the search box, never into the
+panels underneath, so a keystroke can never rename a layer you did not mean
+to touch. Escape closes it from anywhere; so does a click outside. Two ways
+into the same handful of things, because they suit different moments.
 
 **The ring is a radial menu**, the kind Blender uses. The point of a ring is
 not that it looks better than a list. It is that every choice is in a fixed

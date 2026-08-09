@@ -87,6 +87,29 @@ void main() {
     Finder query() => find.byKey(const ValueKey('fx-console-query'));
     Finder centre() => find.byKey(const ValueKey('fx-radial-centre'));
 
+    testWidgets('the search field holds focus for the console whole life',
+        (tester) async {
+      await open(
+        tester,
+        FxConsoleModel(
+          radialTitle: 'Scene',
+          radial: [RadialEntry(label: 'Solid', run: () {})],
+          entries: [effect('Glow')],
+        ),
+      );
+      expect(tester.binding.focusManager.primaryFocus?.debugLabel,
+          'fx-console-query',
+          reason: 'typing lands in the box from the first keystroke');
+
+      // Something steals focus: the console takes it straight back, so a
+      // stray click can never leave keystrokes falling on the panels.
+      tester.binding.focusManager.primaryFocus?.unfocus();
+      await tester.pump();
+      expect(tester.binding.focusManager.primaryFocus?.debugLabel,
+          'fx-console-query',
+          reason: 'the console owns the keyboard while it is open');
+    });
+
     testWidgets('an empty bar lists nothing — the ring is the offer',
         (tester) async {
       await open(

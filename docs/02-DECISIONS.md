@@ -7548,3 +7548,28 @@ throwing. Regression tests: the panel publishes on click and follows it
 (project_panel_frb_test.dart); footage places a layer, a comp nests but never into itself,
 the slice dims with no comp open, and the item counts only while the Project panel is the
 active one (fx_console_context_frb_test.dart).
+
+**K-328 · DECIDED · While the console is open, the keyboard is the console's: the search box
+holds focus for the console's whole life, and every command handler stands down.**
+From the owner (2026-08-09), running K-325's build: "the search bar has stopped being
+selected by default… if any text is typed when the console is on screen, it is what keys are
+put into, so users don't accidentally start opening/editing layers etc". Two faults, one
+root: the boxed K-324 console was a movable window, which counted into `lumitModalOpen` —
+the flag every panel's hardware-keyboard handler checks (K-243) — and its field won focus as
+dialogs do. The K-325 overlay was neither, so the field's `autofocus` lost the race against
+the shell's own scope and, with focus astray, keystrokes fell through to the panels' and
+shell's command handlers: typing a search renamed and added layers underneath.
+
+So the console now does both things a dialogue does, explicitly. **It counts into
+`lumitModalOpen`** (via `markModalMounted`/`markModalUnmounted`, mount-counted for K-243's
+stuck-counter reason), and the *shell's* global key handler now honours that flag too —
+which it never had, an older gap the console exposed. **And the search field holds focus
+deterministically**: focused post-frame on open (`autofocus` races are what failed), then
+re-taken the moment anything steals it, for as long as the console is open. There is no
+keyboard route out of the console except Escape; the pointer route is a click outside.
+`HouseTextField` gains an optional caller-owned `focusNode` to make that steering possible.
+
+Regression tests: the field has focus on open and takes it back when unfocused
+(fx_console_test.dart); with the console open the space bar types instead of playing, and
+plays again once Escape closes it (shortcuts_frb_test.dart — the existing Ctrl+Space test
+now closes the console before asserting the bare space bar).

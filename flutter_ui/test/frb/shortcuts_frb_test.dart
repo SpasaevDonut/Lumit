@@ -86,10 +86,40 @@ void main() {
       expect(console, 1);
       expect(play, 0, reason: 'the modified chord is not the transport');
 
+      // The console that just opened owns the keyboard (K-328), so it is
+      // closed before the bare space bar can mean the transport again.
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
       await tester.sendKeyEvent(LogicalKeyboardKey.space);
       await tester.pumpAndSettle();
       expect(play, 1, reason: 'the bare space bar still plays');
       expect(console, 1);
+    });
+
+    /// With the console up, the keyboard is the console's (K-328): a
+    /// keystroke aimed at its search box must never also run a shell command
+    /// — the exact bug was typing over the open console renaming and adding
+    /// layers underneath it.
+    testWidgets('with the console open, typing cannot run shell commands',
+        (tester) async {
+      final p = await mount(tester);
+      var play = 0;
+      p.uiState.togglePlayRequest.addListener(() => play++);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pumpAndSettle();
+      expect(play, 0, reason: 'the space bar is typing, not the transport');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pumpAndSettle();
+      expect(play, 1, reason: 'closed, the keys are the shell again');
     });
 
     /// **The recurring space-bar funeral.** Menus, popups and the palette all
