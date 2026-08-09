@@ -2250,6 +2250,20 @@ void main() {
       await tester.pump();
       expect(barColour(), t.labelColour(6),
           reason: 'picking a label recolours the bar');
+
+      // Selection brightens the bar rather than outlining it (K-317): the
+      // label colour lerps toward textPrimary, so the hue still says which
+      // layer this is while the lit bar says it is the one in hand.
+      p.uiState.setSelection([layer]);
+      await tester.pump();
+      expect(barColour(), Color.lerp(t.labelColour(6), t.textPrimary, 0.35),
+          reason: 'a selected bar is its label colour, lit');
+      final deco = tester
+          .widget<Container>(find
+              .byKey(ValueKey<String>('tl-bar-fill-${layer.internallayerId}')))
+          .decoration as BoxDecoration;
+      expect(deco.border, isNull,
+          reason: 'selection no longer draws an outline');
     });
 
     /// A stack taller than the panel scrolls rather than overflowing, and

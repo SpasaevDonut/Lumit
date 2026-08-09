@@ -982,7 +982,7 @@ void main() {
           reason: 'the blank space below the rows takes the gesture too');
     });
 
-    /// Enter renames the lone selected item (K-317) — the keyboard path that
+    /// Enter renames the lone selected item (K-321) — the keyboard path that
     /// replaced the old second-click rename, live for every item kind.
     testWidgets('Enter renames the selected item', (tester) async {
       final p = freshProject();

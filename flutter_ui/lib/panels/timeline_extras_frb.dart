@@ -1146,7 +1146,7 @@ class _TimelineRulerState extends State<TimelineRuler> {
                       label: marker.label,
                       fill: t.marker,
                       ink: t.surface0,
-                      text: t.caption.copyWith(fontWeight: FontWeight.w400),
+                      text: t.caption,
                     ),
                   ),
                 ),
@@ -1349,7 +1349,7 @@ class _MarkerLabelDialogState extends State<_MarkerLabelDialog> {
                 HouseButton(
                   key: const ValueKey('marker-edit-ok'),
                   small: true,
-                  // The default action (K-315). The label field holds focus,
+                  // The default action (K-319). The label field holds focus,
                   // so Enter lands there and submits the same commit.
                   primary: true,
                   onPressed: () => widget.onDone(_label.text),

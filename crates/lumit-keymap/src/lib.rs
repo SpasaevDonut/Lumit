@@ -728,7 +728,7 @@ pub fn default_keymap() -> Keymap {
         row(Timeline, "-", "timeline.zoom.out"),
         row(Timeline, "\\", "timeline.zoom.fit"),
         row(Timeline, "Enter", "layer.rename"),
-        // Enter renames the selected thing wherever one is selected (K-317):
+        // Enter renames the selected thing wherever one is selected (K-321):
         // the item in the Project panel, the effect in Effect controls — the
         // same key the Timeline has always used for its layers.
         row(Project, "Enter", "item.rename"),
@@ -869,7 +869,7 @@ mod tests {
 
     #[test]
     fn enter_renames_the_selection_in_each_panel_that_has_one() {
-        // K-317: the same key the Timeline always used for its layers is
+        // K-321: the same key the Timeline always used for its layers is
         // bound for the Project panel's items and Effect controls' effects.
         let km = default_keymap();
         let enter: Chord = "Enter".parse().unwrap();

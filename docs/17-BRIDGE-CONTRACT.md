@@ -81,7 +81,7 @@ undo step:
     pixels without producing a hundred commits, journal writes and undo entries.
     Only the release commits. Everything editable on a staged
     `BridgeEffectInstance` follows that shape, not `set_value` alone:
-    `set_custom_name` (the instance's own display name, K-317) stages onto the
+    `set_custom_name` (the instance's own display name, K-321) stages onto the
     copy and `LayerReference::set_effects` is the commit, so a rename is one op
     and one undo step like any other stack edit.
 
@@ -174,6 +174,39 @@ other side of this boundary.
     it — the whole transform, a Retime property, an effect parameter, a camera's zoom, a
     volume curve, a staged `BridgeEffectInstance` — carries the same conversion. Read raw,
     every key on a layer that had been moved drew at the start of the composition.
+
+### The effect schema crosses as three lists, not one
+
+An effect's parameters are one question; how the panel *arranges* them is another, and they
+have different lifetimes. Three `#[frb(sync)]` free functions answer them, each keyed by the
+effect's match name and each memoised on the Dart side for the life of the process — the
+schema is static, and re-fetching it per card per rebuild was real hover-hot bridge traffic
+(K-183, and the budget test that forbids bridge calls in a rebuild path):
+
+- `list_parameters(effect)` — one `BridgeParamInfo` per declared parameter, in schema order:
+    its id, its label, and its **kind**, which is what decides the control drawn. The kinds
+    are Float, Int, **Angle**, Choice, Bool, Colour, Seed, File and Layer.
+- `list_parameter_groups(effect)` — the twirls (K-145). A group names a *contiguous run* of
+    the schema's parameters and renders where its first member sits; an empty label renders
+    headerless, and `visible_when_param`/`visible_when_values` hide the whole run while a
+    sibling Choice holds a different value (K-259).
+- `list_enabled_when(effect)` — the **greying rules** (K-313): `param` is editable only while
+    `on` satisfies `cond` (a bool is some value, a choice is/is not some index, a layer
+    reference actually names a layer). `lumit_core::fx::param_enabled` is the same rule in
+    Rust and the authority the tests pin; the panel evaluates it locally against values it
+    already holds, because a round trip per row per rebuild for an answer it can compute is
+    exactly the traffic the budget forbids. Greying is an **affordance, not a lock** — a
+    write to a greyed parameter is still accepted, and the resolve step implements the real
+    branch independently and never consults these rules, so the two cannot drift into
+    disagreeing about pixels.
+
+**There is no `Point` kind, and that is deliberate.** A 2-D point crosses as two adjacent
+`_x`/`_y` Float parameters that the panel folds into one row with a crosshair pick
+([07-UI-SPEC.md](07-UI-SPEC.md) §6.1) — the naming convention is the whole mechanism. The
+Lens flare's Light, Radial blur's Centre and Depth of field's Focus point all ride it. An
+`Angle` **is** its own kind, because no arrangement of existing rows draws a dial; its value
+still crosses as a `BridgeEffectValue::Float`, since an angle is a number of degrees and the
+kind only says which control to draw.
 
 ### Versioning
 

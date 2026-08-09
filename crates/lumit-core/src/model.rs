@@ -574,7 +574,7 @@ pub struct EffectInstance {
     #[serde(default = "default_true")]
     pub sample_temporally: bool,
     /// The user's own name for this instance, shown in place of the effect's
-    /// label wherever the stack is drawn (K-317) — "Blur the sign", not
+    /// label wherever the stack is drawn (K-321) — "Blur the sign", not
     /// "Gaussian blur". `None` (the default, and what every older project
     /// deserialises to) shows the label; rendering, expressions and every
     /// `match_name` lookup are untouched by it.

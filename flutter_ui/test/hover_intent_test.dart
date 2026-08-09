@@ -1,4 +1,4 @@
-// The safe hover triangle (K-314): the geometry, and the submenu behaviour it
+// The safe hover triangle (K-318): the geometry, and the submenu behaviour it
 // exists for — crossing a sibling row on the diagonal to a flyout must not
 // take the flyout away, and settling on a sibling still must.
 

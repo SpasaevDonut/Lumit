@@ -1356,6 +1356,7 @@ ColorFilter? channelFilterFor(ViewerChannel channel) => switch (channel) {
 Rect checkerArea(Rect picture, Size panel) =>
     picture.intersect(Offset.zero & panel);
 
+
 /// The transparency checkerboard behind the picture.
 ///
 /// [picture] is where the picture is drawn in the panel; the board fills that

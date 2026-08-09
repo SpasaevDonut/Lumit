@@ -72,7 +72,7 @@ class _ProjectSettingsWindowState extends State<_ProjectSettingsWindow> {
                   HouseButton(
                     key: const ValueKey('project-settings-close'),
                     small: true,
-                    // The window's only action (K-315): Enter closes it.
+                    // The window's only action (K-319): Enter closes it.
                     primary: true,
                     autofocus: true,
                     onPressed: widget.onClose,

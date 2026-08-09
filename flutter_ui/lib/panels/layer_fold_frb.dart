@@ -445,7 +445,7 @@ List<LayerFoldRow> layerFoldRows({
         final effectOpen = open.contains(path);
         rows.add(FoldGroupRow(
           path: path,
-          // The user's own name where one is set (K-317), so the fold-out
+          // The user's own name where one is set (K-321), so the fold-out
           // and the Effect controls read the same.
           label: fx.customName ?? effectLabelOf(fx.name),
           open: effectOpen,

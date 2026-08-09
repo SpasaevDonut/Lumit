@@ -1,4 +1,4 @@
-// The keyboard model of confirmation windows (K-315): the default button is
+// The keyboard model of confirmation windows (K-319): the default button is
 // focused on open so Enter presses it, Tab walks the window in reading order,
 // and the house controls answer the keyboard at all.
 
@@ -65,7 +65,7 @@ void main() {
   testWidgets('Escape closes a modal, the same as clicking the scrim',
       (tester) async {
     // Flutter's own DismissIntent, which `WidgetsApp` binds Escape to — so the
-    // host here is a MaterialApp, as the application is. Before K-315 nothing
+    // host here is a MaterialApp, as the application is. Before K-319 nothing
     // in the window claimed that intent and Escape did nothing in every
     // dialogue, despite a comment claiming it worked "via the route".
     late BuildContext ctx;

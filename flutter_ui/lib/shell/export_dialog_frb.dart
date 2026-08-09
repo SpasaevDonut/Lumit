@@ -352,7 +352,7 @@ class _ExportDialogState extends State<_ExportDialog> {
                   HouseButton(
                     key: const ValueKey('export-start'),
                     small: true,
-                    // The window's default action (K-315): Enter starts the
+                    // The window's default action (K-319): Enter starts the
                     // export unless a field is being typed in.
                     primary: true,
                     autofocus: true,

@@ -88,7 +88,7 @@ class _ConfirmClearDisk extends StatelessWidget {
                   small: true,
                   // The window's default action: focused on open, so Enter
                   // confirms, and drawn with the accent edge that says so
-                  // (K-315).
+                  // (K-319).
                   primary: true,
                   autofocus: true,
                   onPressed: () => onChoose(true),

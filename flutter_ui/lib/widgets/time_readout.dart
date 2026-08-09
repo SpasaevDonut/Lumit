@@ -129,7 +129,7 @@ class _TimeReadoutState extends State<TimeReadout>
   bool _hovered = false;
 
   /// The open editor, for the selection gestures — pressing places the caret
-  /// and dragging highlights, like any text box (K-315).
+  /// and dragging highlights, like any text box (K-319).
   final GlobalKey<EditableTextState> textFieldKey = GlobalKey();
 
   @override
@@ -261,7 +261,7 @@ class _TimeReadoutState extends State<TimeReadout>
                 } else if (!_editing) {
                   // Never crossed a whole frame: the press was a click that
                   // wobbled, not a scrub — cancel the drag, then do what the
-                  // click meant and open the editor (K-315).
+                  // click meant and open the editor (K-319).
                   widget.onDragCancel?.call();
                   _beginEdit();
                 }

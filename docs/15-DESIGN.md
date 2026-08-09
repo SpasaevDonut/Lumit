@@ -473,13 +473,16 @@ failure.
 
 ### 7.1 Scale
 
-Lumit is a pro tool; the household 16px body default gives way to an 11–13px UI scale:
+Lumit is a pro tool; the household 16px body default gives way to a 10–13px UI scale
+(tightened from 11–13px by K-317, after the owner found the interface a step large and
+soft beside the editors it sits among):
 
 | Size | Face | Use |
 |---|---|---|
-| 10px | Inter | Field captions only — the note under a control saying what format it takes. Never for anything the user has to act on |
+| 9px | Inter | Field captions only — the note under a control saying what format it takes. Never for anything the user has to act on |
+| 10px | Inter | Secondary notes and hints (`small`) |
 | 11px | JetBrains Mono, +0.08em, caps | Kickers, layer bar labels, axis numbers, attribution |
-| 12px | Inter | Panel body copy, property names, menus, buttons |
+| 11px | Inter | Panel body copy, property names, menus, buttons |
 | 13px | JetBrains Mono | Property values, timecode fields, frame numbers, speed percentages |
 | 14px | Inter Medium | Dialog body emphasis, panel tab labels |
 | 16px | Schibsted Grotesk | Dialog titles, workspace names |
@@ -550,8 +553,8 @@ section's 4/8/12/16px scale) does not vary by shape; only radius, gap, inset and
   (and `Space`, where pressing is what it does). Tab visits them in **reading order**: left
   to right, then top to bottom, by where they sit on screen rather than by the order the
   layout code composed them. A modal window is its own focus scope, so Tab cycles inside it
-  (K-315, docs/07 §4.2).
-- **A pointer travelling to a submenu is not hovering what it passes over** (K-314). Menus
+  (K-319, docs/07 §4.2).
+- **A pointer travelling to a submenu is not hovering what it passes over** (K-318). Menus
   hold an open flyout while the pointer is inside the triangle from where it left the owning
   row to that flyout's near edge — the "safe triangle". A pointer that *stops* on another row
   still switches, after a 300ms grace; one that plainly moves elsewhere switches at once. No

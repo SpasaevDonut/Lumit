@@ -1704,7 +1704,7 @@ class _LumitAppViewState extends State<LumitAppView> {
     // A focused house control (a dialog's OK button, a tabbed-to checkbox)
     // keeps its keys the same way a text field does: Enter or Space there
     // presses the control, and must not also run a panel command underneath
-    // it (K-315).
+    // it (K-319).
     if (FocusManager.instance.primaryFocus is ControlFocusNode) {
       return KeyEventResult.ignored;
     }

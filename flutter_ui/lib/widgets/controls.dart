@@ -38,7 +38,7 @@ const Set<PointerDeviceKind> dragDevices = {
 /// `main.dart` stands down while one of these has focus — the same courtesy
 /// it pays a focused text field — so `Enter` or `Space` on a focused control
 /// presses the control and never also runs a panel command underneath it
-/// (K-315).
+/// (K-319).
 class ControlFocusNode extends FocusNode {
   ControlFocusNode({super.debugLabel});
 }
@@ -83,7 +83,7 @@ class HouseButton extends StatefulWidget {
 
   /// Take keyboard focus on first build — for the default button of a
   /// confirmation window, so `Enter` presses it the moment the window opens
-  /// (K-315). Pair it with [primary] so what Enter will do is visible.
+  /// (K-319). Pair it with [primary] so what Enter will do is visible.
   final bool autofocus;
 
   const HouseButton({
@@ -241,7 +241,7 @@ class _MenuRowState extends State<MenuRow> {
         // Tell the surface which row the pointer is on, so a submenu that is
         // out can take itself back when the pointer moves to another row. The
         // surface may *hold* the report briefly while the pointer is inside an
-        // open flyout's safe triangle (K-314) — the highlight above is
+        // open flyout's safe triangle (K-318) — the highlight above is
         // immediate either way; only the flyout switch waits.
         surface?._hoverRow(widget.hoverId ?? this, e.position);
       },
@@ -281,7 +281,7 @@ class FloatSurface extends StatefulWidget {
       context.getInheritedWidgetOfExactType<_MenuHoverScope>()?.hovered;
 
   /// The surface state itself — the rows and [SubmenuRow] talk to it for the
-  /// hover-intent gating (K-314).
+  /// hover-intent gating (K-318).
   static _FloatSurfaceState? _of(BuildContext context) =>
       context.getInheritedWidgetOfExactType<_MenuHoverScope>()?.state;
 
@@ -292,7 +292,7 @@ class FloatSurface extends StatefulWidget {
 class _FloatSurfaceState extends State<FloatSurface> {
   final _hovered = ValueNotifier<Object?>(null);
 
-  // --- Safe-triangle hover intent (K-314) -------------------------------
+  // --- Safe-triangle hover intent (K-318) -------------------------------
   //
   // While a [SubmenuRow]'s flyout is out, it arms a guard here: the row it
   // belongs to, and the flyout's rectangle. A hover report from any *other*
@@ -835,7 +835,7 @@ class _CaretPainter extends CustomPainter {
 /// A centred modal on the app Overlay, with a dimmed click-to-dismiss backdrop.
 /// Completes with whatever `close` was given, or null when dismissed.
 ///
-/// **Escape is Flutter's own `DismissIntent`, not another key handler** (K-315).
+/// **Escape is Flutter's own `DismissIntent`, not another key handler** (K-319).
 /// `WidgetsApp` already binds Escape to it above everything, so the window only
 /// has to say what dismissing *means* — an `Actions` entry that closes with
 /// null, the same answer a click on the scrim gives. The comment that used to
@@ -1038,7 +1038,7 @@ class _MovableWindowState extends State<_MovableWindow> {
                     // reading order — left to right, then top to bottom —
                     // rather than widget-tree order, which nests columns
                     // inside rows and visits them in whatever order the
-                    // layout code happened to compose them (K-315).
+                    // layout code happened to compose them (K-319).
                     child: FocusScope(
                       child: FocusTraversalGroup(
                         policy: ReadingOrderTraversalPolicy(),
@@ -1342,7 +1342,7 @@ class _HouseTextFieldState extends State<HouseTextField>
           // Focus on the *down* stroke, not the resolved tap: a press that
           // slides straight into a drag is someone selecting text in one
           // motion, and the field must already be theirs when the drag's
-          // highlight starts (K-315).
+          // highlight starts (K-319).
           Listener(
             onPointerDown: (_) {
               if (!_focus.hasFocus) _focus.requestFocus();
@@ -1428,7 +1428,7 @@ class _SubmenuRowState extends State<SubmenuRow> {
   VoidCallback? _close;
 
   /// The open flyout's surface, measured after it builds — what the parent
-  /// surface's safe triangle points at (K-314).
+  /// surface's safe triangle points at (K-318).
   final GlobalKey _flyoutKey = GlobalKey();
 
   /// The parent surface this row sits on, resolved in build. Held as a state
@@ -1869,7 +1869,7 @@ class _DragValueFieldState extends State<DragValueField>
   final FocusNode _focus = FocusNode();
 
   /// The idle box's focus — how Tab reaches the field, and what `Enter`
-  /// opens the editor from (K-315).
+  /// opens the editor from (K-319).
   final ControlFocusNode _idleFocus = ControlFocusNode(debugLabel: 'value');
 
   /// The open editor, for the selection gestures: pressing in it puts the
@@ -1904,7 +1904,7 @@ class _DragValueFieldState extends State<DragValueField>
 
   /// Open the text editor with the whole value selected — a value box is
   /// retyped far more often than it is amended, and a selected value means
-  /// the first keystroke replaces it (K-315).
+  /// the first keystroke replaces it (K-319).
   void _beginEdit() {
     setState(() {
       _editing = true;
@@ -2014,7 +2014,7 @@ class _DragValueFieldState extends State<DragValueField>
           ),
           // The selection gestures, so a press puts the caret down and a drag
           // highlights — without this the editor took keys but a drag over the
-          // text selected nothing (K-315).
+          // text selected nothing (K-319).
           child: TextSelectionGestureDetectorBuilder(delegate: this)
               .buildGestureDetector(
             child: Padding(
@@ -2079,7 +2079,7 @@ class _DragValueFieldState extends State<DragValueField>
               // Never crossed one speed-increment: nothing was ticked, so the
               // press was a click that wobbled a few pixels, not a scrub. It
               // cancels as a drag — and then does what the click meant, which
-              // is open the editor (K-315). Before this, a click that moved
+              // is open the editor (K-319). Before this, a click that moved
               // at all did nothing, and value boxes felt like they swallowed
               // clicks.
               widget.onDragCancel?.call();
@@ -2143,7 +2143,7 @@ class HouseSlider extends StatefulWidget {
   /// Fired once when a drag begins, before the first [onChangeLive] — for a
   /// caller that fixes something at the start of the gesture and holds it to
   /// the end (the Timeline's zoom anchors on the playhead *once* per drag,
-  /// K-315). Omitted by callers with nothing to fix.
+  /// K-319). Omitted by callers with nothing to fix.
   final VoidCallback? onChangeStart;
 
   /// Fired once when a drag ends, after the last tick.

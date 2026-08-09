@@ -303,7 +303,7 @@ class _CompSettingsBodyState extends State<_CompSettingsBody> {
             children: [
               HouseButton(
                 key: const ValueKey('comp-apply'),
-                // The window's default action (K-315): focused on open so
+                // The window's default action (K-319): focused on open so
                 // Enter applies; a field being typed in keeps Enter for its
                 // own submit, which calls the same confirm.
                 primary: true,

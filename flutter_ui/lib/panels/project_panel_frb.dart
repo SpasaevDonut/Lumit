@@ -131,7 +131,7 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
       final needle = _searchController.text.trim().toLowerCase();
       if (needle != _search) setState(() => _search = needle);
     });
-    // Enter renames the lone selected item (K-317) — the same key the
+    // Enter renames the lone selected item (K-321) — the same key the
     // Timeline gives its layers. Registered on the hardware keyboard like the
     // Timeline's commands; the handler stands down for modals, focused
     // fields, and whenever this panel is not the active one.
@@ -955,7 +955,7 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
       // place (K-191), which meant a slow double-click and a deliberate click
       // on a selected row were the same gesture and names opened editors
       // under people's pointers. Renaming is `Enter` on the selection now
-      // (K-317), with the row menu's Rename as the mouse path.
+      // (K-321), with the row menu's Rename as the mouse path.
       return;
     }
     widget.onSelect(SelectMode.replace);
