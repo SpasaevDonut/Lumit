@@ -1,5 +1,5 @@
 {
-  "@@locale": "zh",
+  "@@locale": "zh-CN",
   "@@x-notes": "Lumit's user-facing text, British English (K-005), the single source translation works from (K-303). Edit this file; every other app_*.arb in this folder comes back from Crowdin and is overwritten by the next sync. Voice: sentence case, calm, no exclamation marks, no emoji, glossary terms exactly (docs/01-GLOSSARY.md section 9 - layer not track, speed not velocity, Retime not time remap, export not render, playhead not CTI). Tooltips are the control's name, not a sentence about it (docs/07-UI-SPEC.md section 13.2): under five words, two where two will do.",
   "aboutBlurb": "一个动态图形设计与合成编辑器。V3通用公共许可协议下的免费剪辑软件",
   "@aboutBlurb": {
@@ -535,6 +535,10 @@
   "@fxAdd": {
     "description": "Effect controls — a control on Echo."
   },
+  "fxAlpha": "Alpha",
+  "@fxAlpha": {
+    "description": "Effect controls — a depth-channel option on Depth of field."
+  },
   "fxAlphaBias": "Alpha bias",
   "@fxAlphaBias": {
     "description": "Effect controls — a control on Matte key."
@@ -565,6 +569,10 @@
   },
   "fxAperture": "Aperture",
   "@fxAperture": {
+    "description": "Effect controls — a control on Depth of field."
+  },
+  "fxAspectRatio": "Aspect ratio",
+  "@fxAspectRatio": {
     "description": "Effect controls — a control on Depth of field."
   },
   "fxBehind": "Behind",
@@ -671,6 +679,10 @@
   "@fxDecay": {
     "description": "Effect controls — a control on Flash."
   },
+  "fxDepthChannel": "Depth channel",
+  "@fxDepthChannel": {
+    "description": "Effect controls — a control on Depth of field."
+  },
   "fxDepthInvert": "Depth invert",
   "@fxDepthInvert": {
     "description": "Effect controls — a control on Depth of field."
@@ -698,6 +710,10 @@
   "fxDetail": "Detail",
   "@fxDetail": {
     "description": "Effect controls — a control on Lens flare."
+  },
+  "fxDetectEdgeThreshold": "Detect edge threshold",
+  "@fxDetectEdgeThreshold": {
+    "description": "Effect controls — a control on Depth of field."
   },
   "fxDifference": "Difference",
   "@fxDifference": {
@@ -803,6 +819,14 @@
   "@fxFocusMap": {
     "description": "Effect controls — a control on Depth of field."
   },
+  "fxFocusPointX": "Focus point x",
+  "@fxFocusPointX": {
+    "description": "Effect controls — a control on Depth of field."
+  },
+  "fxFocusPointY": "Focus point y",
+  "@fxFocusPointY": {
+    "description": "Effect controls — a control on Depth of field."
+  },
   "fxFocusRange": "Focus range",
   "@fxFocusRange": {
     "description": "Effect controls — a control on Depth of field."
@@ -863,6 +887,18 @@
   "@fxHigh": {
     "description": "Effect controls — a control on Lens flare."
   },
+  "fxHighlightExposure": "Highlight exposure",
+  "@fxHighlightExposure": {
+    "description": "Effect controls — a control on Depth of field."
+  },
+  "fxHighlightThreshold": "Highlight threshold",
+  "@fxHighlightThreshold": {
+    "description": "Effect controls — a control on Depth of field."
+  },
+  "fxHighlights": "Highlights",
+  "@fxHighlights": {
+    "description": "Effect controls — a group of controls on Depth of field."
+  },
   "fxHueShift": "Hue shift",
   "@fxHueShift": {
     "description": "Effect controls — the name of an effect."
@@ -882,6 +918,10 @@
   "fxInvert": "Invert",
   "@fxInvert": {
     "description": "Effect controls — the name of an effect."
+  },
+  "fxIris": "Iris",
+  "@fxIris": {
+    "description": "Effect controls — a group of controls on Depth of field."
   },
   "fxLength": "Length",
   "@fxLength": {
@@ -930,6 +970,10 @@
   "fxLinePeriod": "Line period",
   "@fxLinePeriod": {
     "description": "Effect controls — a control on Scanlines."
+  },
+  "fxLuminance": "Luminance",
+  "@fxLuminance": {
+    "description": "Effect controls — a depth-channel option on Depth of field."
   },
   "fxLuminanceOnly": "Luminance only",
   "@fxLuminanceOnly": {
@@ -1063,6 +1107,10 @@
   "@fxRed": {
     "description": "Effect controls — a control on RGB split."
   },
+  "fxRemoveEdgeLeak": "Remove edge leak",
+  "@fxRemoveEdgeLeak": {
+    "description": "Effect controls — a control on Depth of field."
+  },
   "fxRendered": "Rendered",
   "@fxRendered": {
     "description": "Effect controls — a control on Depth of field."
@@ -1070,6 +1118,10 @@
   "fxRepeat": "Repeat",
   "@fxRepeat": {
     "description": "Effect controls — a control on an effect."
+  },
+  "fxRepeatEdgePixels": "Repeat edge pixels",
+  "@fxRepeatEdgePixels": {
+    "description": "Effect controls — a control on Depth of field."
   },
   "fxReplaceColour": "Replace colour",
   "@fxReplaceColour": {
@@ -1086,6 +1138,10 @@
   "fxRgbSplit": "RGB split",
   "@fxRgbSplit": {
     "description": "Effect controls — the name of an effect."
+  },
+  "fxRimBrightness": "Rim brightness",
+  "@fxRimBrightness": {
+    "description": "Effect controls — a control on Depth of field."
   },
   "fxRollSpeed": "Roll speed",
   "@fxRollSpeed": {
@@ -1274,6 +1330,10 @@
   "fxUnsharpMask": "Unsharp mask",
   "@fxUnsharpMask": {
     "description": "Effect controls — the name of an effect."
+  },
+  "fxUseFocusPoint": "Use focus point",
+  "@fxUseFocusPoint": {
+    "description": "Effect controls — a control on Depth of field."
   },
   "fxUseSourceColour": "Use source colour",
   "@fxUseSourceColour": {
@@ -1605,6 +1665,14 @@
   },
   "keyRenameTheLayer": "Rename the layer",
   "@keyRenameTheLayer": {
+    "description": "Settings → Keymap: what a shortcut does, in the table’s left column."
+  },
+  "keyRenameTheSelectedEffect": "Rename the selected effect",
+  "@keyRenameTheSelectedEffect": {
+    "description": "Settings → Keymap: what a shortcut does, in the table’s left column."
+  },
+  "keyRenameTheSelectedItem": "Rename the selected item",
+  "@keyRenameTheSelectedItem": {
     "description": "Settings → Keymap: what a shortcut does, in the table’s left column."
   },
   "keyRevealAnchorPoint": "Reveal Anchor point",
