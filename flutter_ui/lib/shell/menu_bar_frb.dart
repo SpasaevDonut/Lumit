@@ -354,6 +354,9 @@ class LumitMenuBarFrb extends StatelessWidget {
 
     await showFxConsoleFrb(
       context: context,
+      // The ring opens around the mouse (K-325): the shell records where the
+      // pointer last was, because the key event itself has no position.
+      anchor: lastKnownPointerPosition,
       model: FxConsoleModel(
         radialTitle: fxConsoleContextTitle(ui),
         radial: fxConsoleRadial(context, app, ui),

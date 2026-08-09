@@ -21,6 +21,8 @@ import 'package:lumit_flutter/shell/precompose_dialog_frb.dart';
 import 'package:lumit_flutter/shell/dock_widget.dart';
 import 'package:lumit_flutter/shell/about_window_frb.dart';
 import 'package:lumit_flutter/shell/first_run_frb.dart';
+import 'package:lumit_flutter/shell/fx_console_frb.dart'
+    show lastKnownPointerPosition;
 import 'package:lumit_flutter/shell/menu_bar_frb.dart';
 import 'package:lumit_flutter/shell/project_settings_frb.dart';
 import 'package:lumit_flutter/shell/settings_window_frb.dart';
@@ -1656,25 +1658,36 @@ class _LumitAppViewState extends State<LumitAppView> {
     // falls back to the enclosing scope rather than to nothing.
     return FocusScope(
       autofocus: true,
-      child: Column(
-        children: [
-          LumitMenuBarFrb(app: state),
-          // The tools, under the menu and above everything else — where a
-          // toolbar goes, and where docs/07 §1.7 puts it.
-          const LumitToolBarFrb(),
-          Expanded(
-            child: DockWidget(
-              root: uiState.split,
-              buildPanel: (context, panel) => buildPanelBodyFrb(context, panel),
-              // Persisted, so an arrangement survives a restart.
-              onLayoutChanged: uiState.saveLayout,
-              activePanel: uiState.activePanel,
+      // Where the pointer last was, for the one thing that opens *at* it: the
+      // Ctrl+Space console centres its ring on the mouse (K-325), and the key
+      // event that opens it carries no position. A plain field write — no
+      // setState, no bridge — so tracking costs nothing per event.
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerHover: (e) => lastKnownPointerPosition = e.position,
+        onPointerMove: (e) => lastKnownPointerPosition = e.position,
+        onPointerDown: (e) => lastKnownPointerPosition = e.position,
+        child: Column(
+          children: [
+            LumitMenuBarFrb(app: state),
+            // The tools, under the menu and above everything else — where a
+            // toolbar goes, and where docs/07 §1.7 puts it.
+            const LumitToolBarFrb(),
+            Expanded(
+              child: DockWidget(
+                root: uiState.split,
+                buildPanel: (context, panel) =>
+                    buildPanelBodyFrb(context, panel),
+                // Persisted, so an arrangement survives a restart.
+                onLayoutChanged: uiState.saveLayout,
+                activePanel: uiState.activePanel,
+              ),
             ),
-          ),
-          // The strip under the dock (docs/07 §1): the running export's
-          // progress and Cancel, reachable without the dialogue open.
-          const StatusLineFrb(),
-        ],
+            // The strip under the dock (docs/07 §1): the running export's
+            // progress and Cancel, reachable without the dialogue open.
+            const StatusLineFrb(),
+          ],
+        ),
       ),
     );
   }

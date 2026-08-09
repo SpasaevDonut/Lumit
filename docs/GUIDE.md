@@ -4098,22 +4098,62 @@ changed, and the other three workspace presets are as they were. This is the
 *factory* layout, so a workspace you have already arranged is untouched — you
 would see the new one by resetting the workspace, or on a new install.
 
-### The Ctrl+Space console, and why a ring beats a list (K-324)
+### The Ctrl+Space console, and why a ring beats a list (K-324, K-325)
 
-Two ways into the same handful of things, stacked in one window, because they
-suit different moments.
+Press Ctrl+Space and a ring of choices appears **around your mouse**, with a
+search box floating just above it (or below, if your pointer is near the top
+of the window). Nothing is boxed and nothing goes dim: the console floats
+translucent over your work, because your work is the thing it is about to act
+on. Two ways into the same handful of things, because they suit different
+moments.
 
-**The top half is a search box.** Type "gau", press Enter, and Gaussian blur is
-on every selected layer. The list puts **effects first and compositions after a
-divider**, and — this is the deliberate part — a composition can never outrank
-an effect however well it matches. The reason you hit this key is nearly always
-an effect; a comp that happened to score better would just be in the way. The
-comps are there so the same window can also be "take me to that comp" rather
-than needing a second window for it.
+**The ring is a radial menu**, the kind Blender uses. The point of a ring is
+not that it looks better than a list. It is that every choice is in a fixed
+*direction*, and the ring opens where your hand already is — so after a few
+uses your hand knows "duplicate is up" and stops reading the menu at all: you
+press the chord, flick, and it is done. A list can never offer that, because a
+list's third entry moves the moment the list grows.
+
+Two rules follow from that, and they are most of the code:
+
+- **A slice is chosen by angle, not by what you are hovering over.** Flick in a
+  direction and the choice is made, however far the pointer actually travelled.
+  If it were hit-testing a drawn wedge you would have to land *inside* the
+  shape, and the gesture could only be as fast as your aim.
+- **There is a dead zone in the middle.** Inside it nothing is chosen, so
+  opening the menu and letting go without moving cancels — rather than
+  committing you to whatever happened to be nearest the cursor.
+
+What is *in* the ring depends on what you have selected. An effect picked out
+in the stack offers the things you do to an effect; a selected layer the
+things you do to *that layer* — duplicate, add an effect, pre-compose, delete
+— and never a stray "new solid" beside them, because creating a layer is not
+something about your selection. Creation is still one flick away: the **New**
+slice carries a small caret, and choosing it expands the ring in place into
+the same six entries as Layer ▸ New, the way Blender nests its pies. The
+centre of the ring always names where you are, and inside a sub-ring it is
+also the way back out (so is Escape). A composition with nothing selected
+offers the new-layer ring directly, because that is what an empty timeline is
+asking for; with nothing open at all it offers the two ways to get somewhere.
+Never more than six to a ring — a ring of twelve is a ring nobody learns, and
+the long tail is the search box beside it. An entry that cannot run right now
+is dimmed rather than removed, so a direction your hand has learned keeps
+meaning the same thing tomorrow.
+
+**The search box starts empty and shows nothing** — the ring is the offer.
+Start typing and the ring steps aside for a dropdown of matches under the box:
+type "gau", press Enter, and Gaussian blur is on every selected layer. The
+dropdown puts **effects first and compositions after a divider**, and — this
+is the deliberate part — a composition can never outrank an effect however
+well it matches. The reason you hit this key is nearly always an effect; a
+comp that happened to score better would just be in the way. The comps are
+there so the same box can also be "take me to that comp". Escape backs out one
+step at a time: it clears what you typed before it closes anything, so a
+mistyped search never costs you the whole console.
 
 This half is modelled on Video Copilot's **FX Console**, which is the plug-in
 After Effects users install first and then cannot work without. That includes
-its **snapshot button** in the corner: one press writes the frame you are
+its **snapshot button** beside the box: one press writes the frame you are
 looking at to a PNG, so you can change a look and compare the two without
 setting up an export.
 
@@ -4127,34 +4167,10 @@ into a `Snapshots` folder beside your project, or your pictures folder if the
 project has never been saved — never into whatever directory the application
 happened to be started from, which is where a bare file name would have put it.
 
-**The bottom half is a radial menu**, the kind Blender uses. Its choices sit in
-a ring around where your pointer already is.
-
-The point of a ring is not that it looks better than a list. It is that every
-choice is in a fixed *direction*. After a few uses your hand knows "solid is
-up, text is right" and stops reading the menu at all — you flick and it is
-done. A list can never offer that, because a list's third entry moves the
-moment the list grows.
-
-Two rules follow from that, and they are most of the code:
-
-- **A slice is chosen by angle, not by what you are hovering over.** Flick in a
-  direction and the choice is made, however far the pointer actually travelled.
-  If it were hit-testing a drawn wedge you would have to land *inside* the
-  shape, and the gesture could only be as fast as your aim.
-- **There is a dead zone in the middle.** Inside it nothing is chosen, so
-  opening the menu and letting go without moving cancels — rather than
-  committing you to whatever happened to be nearest the cursor.
-
-What is *in* the ring depends on what you have selected, which is the other
-half of making it worth using. An effect picked out in the stack offers the
-things you do to an effect; a selected layer the things you do to a layer; a
-composition with nothing selected offers the new-layer menu, because that is
-what an empty timeline is asking for; and with nothing open at all it offers
-the two ways to get somewhere. Never more than six at once — a ring of twelve
-is a ring nobody learns, and the long tail is the search box directly above it.
-An entry that cannot run right now is dimmed rather than removed, so a
-direction your hand has learned keeps meaning the same thing tomorrow.
+One small mechanism makes "opens at the mouse" possible at all: a keyboard
+event does not know where the mouse is. So the shell keeps a note of the last
+place the pointer was seen — a single remembered position, updated as the
+mouse moves, costing nothing — and the console reads it when the chord lands.
 
 **Why this is not the command palette.** Ctrl+Shift+P still opens that, and the
 two are not competing: the palette is *every command by name*, the console is
@@ -4166,9 +4182,10 @@ This also closes something that had been deferred since K-102, where the radial
 menu was blocked on there being no pie-menu library for the old toolkit. The
 move to Flutter (K-174) removed the blocker: a ring is a stack of positioned
 labels over a gesture detector, and the only real content is the arithmetic of
-which slice a direction means — which is why that arithmetic lives in its own
-file, `widgets/radial_maths.dart`, with no Flutter in it and a test that treats
-it as pure maths.
+which slice a direction means — which is why that arithmetic, and the sums
+that place the ring and bar on screen, live in their own file,
+`widgets/radial_maths.dart`, with no Flutter in it and a test that treats it
+as pure maths.
 
 ### The rules that bite
 

@@ -27,6 +27,51 @@ const double radialDeadZone = 26;
 /// The ring's radius: where the labels sit.
 const double radialRadius = 96;
 
+/// The ring's full visual reach from its centre: the labels sit at
+/// [radialRadius] and a slice pill extends about half its width past them.
+const double radialExtent = radialRadius + 56;
+
+/// Clamp [v] into [lo, hi]; when the room is narrower than nothing (a window
+/// smaller than the ring) settle on the middle rather than throwing.
+double _fit(double v, double lo, double hi) =>
+    hi < lo ? (lo + hi) / 2 : (v < lo ? lo : (v > hi ? hi : v));
+
+/// Where the console sits (K-325): the ring centred on the pointer — pulled
+/// in just enough that the whole ring stays on screen — and the search bar
+/// above it, or below it when the top of the window would cut it off.
+///
+/// Pure arithmetic, so the placement rules are tested without a widget tree.
+({double centreX, double centreY, double barLeft, double barTop, bool barBelow})
+    fxConsoleLayout({
+  required double screenWidth,
+  required double screenHeight,
+  required double anchorX,
+  required double anchorY,
+  required double barWidth,
+  required double barHeight,
+  double margin = 8,
+  double gap = 12,
+}) {
+  final centreX =
+      _fit(anchorX, radialExtent + margin, screenWidth - radialExtent - margin);
+  final centreY = _fit(
+      anchorY, radialExtent + margin, screenHeight - radialExtent - margin);
+  final barLeft =
+      _fit(centreX - barWidth / 2, margin, screenWidth - barWidth - margin);
+  // Above the ring by default — the eye reads top-down, and the dropdown the
+  // search opens needs the room below. Below only when above would clip.
+  final above = centreY - radialExtent - gap - barHeight;
+  final barBelow = above < margin;
+  final barTop = barBelow ? centreY + radialExtent + gap : above;
+  return (
+    centreX: centreX,
+    centreY: centreY,
+    barLeft: barLeft,
+    barTop: barTop,
+    barBelow: barBelow,
+  );
+}
+
 /// The angle, in radians clockwise from straight up, at which slice [index] of
 /// [count] sits — the centre of its wedge.
 ///

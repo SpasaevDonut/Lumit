@@ -1728,18 +1728,29 @@ flowchart (the deferred node-graph view) grows from it.
 
 ---
 
-## 12.2 The FX console (`Ctrl+Space`, K-324)
+## 12.2 The FX console (`Ctrl+Space`, K-324; presentation K-325)
 
 A second, narrower command surface, and deliberately not a duplicate of §12: the palette is
-every command by name, the console is **effects, fast** — plus, under it, the thing you were
-probably about to do. Modelled on Video Copilot's FX Console, which is what After Effects
-users install first. It supersedes the radial menu K-102 deferred.
+every command by name, the console is **effects, fast** — plus the thing you were probably
+about to do. Modelled on Video Copilot's FX Console, which is what After Effects users
+install first. It supersedes the radial menu K-102 deferred.
 
-**The search bar** MUST rank **effects first and compositions after a divider**, within each
-kind and never across it: the reason to open this window is nearly always an effect, and a
-comp that happened to score better would be in the way. Matching is §12's subsequence
-ranking, so "gau" finds Gaussian blur. `Enter` applies the top match to **every** selected
-layer (K-217); a composition fronts. `Esc` closes; the arrow keys move the highlight.
+**Where it opens (K-325).** The ring MUST open **centred on the pointer** — pulled in just
+enough that the whole ring stays on screen — so the flick can start the instant the chord
+lands. The search bar floats **above** the ring, or **below** it when the top of the window
+would clip it; its dropdown always opens downward from the bar. The console is not a boxed
+window and MUST NOT dim the frame behind it: its surfaces are the standard menu float made
+slightly translucent, because what it acts on is what the user should keep seeing.
+
+**The search bar starts empty and lists nothing** — the ring is the offer. Typing opens a
+dropdown below the bar, which MUST rank **effects first and compositions after a divider**,
+within each kind and never across it: the reason to open this window is nearly always an
+effect, and a comp that happened to score better would be in the way. Matching is §12's
+subsequence ranking, so "gau" finds Gaussian blur. `Enter` applies the top match to
+**every** selected layer (K-217); a composition fronts; `Enter` on an empty bar closes. The
+arrow keys move the highlight. While the query is non-empty the ring steps aside — the
+dropdown needs the room, and typing is choosing the other way in. `Esc` retreats **one step
+at a time**: clear the text, then pop a sub-ring, then close.
 
 **The snapshot button** sits beside the field and writes the frame on screen to a PNG. It
 MUST be a one-frame image-sequence export (§11's `png` codec, K-201) rather than a second
@@ -1747,7 +1758,7 @@ still-writer: same colour and sizing path, and the status line already reports i
 to a `Snapshots` folder beside the saved project, or the user's pictures folder for a project
 never saved — never the working directory. It MUST grey out with no composition open.
 
-**The radial menu** below it follows Blender's:
+**The radial menu** follows Blender's:
 
 - A slice MUST be chosen by **angle alone**, not by hit-testing a drawn wedge — a flick in a
   direction picks that slice however far the pointer travelled. That is the whole reason a
@@ -1757,15 +1768,20 @@ never saved — never the working directory. It MUST grey out with no compositio
   moving cancels rather than committing to whatever was nearest.
 - The first slice is straight up, and they run clockwise.
 - Entries MUST follow the selection, in four contexts: a **picked effect** offers what you do
-  to an effect (bypass, copy, remove, add another); a **selected layer** what you do to a
-  layer; a **composition with nothing selected** the new-layer menu, which is what an empty
-  timeline is asking for; **nothing open at all** the two ways to get somewhere.
-- Each set MUST be at most **six** entries. A ring of twelve is a ring nobody learns, and the
-  long tail is the search bar directly above it.
+  to an effect (bypass, copy, remove, add another); a **selected layer** what you do to
+  *that* layer — never new-layer commands beside it (K-325); a **composition with nothing
+  selected** the new-layer menu, which is what an empty timeline is asking for; **nothing
+  open at all** the two ways to get somewhere.
+- A slice MAY carry a **ring of its own** (K-325): choosing it expands the menu in place, a
+  caret on the slice says it will, and the centre — or `Esc` — steps back out. This is how
+  the selected-layer ring reaches creation: a **New ▸** slice opens Layer ▸ New's items, in
+  the menu's order, so the two surfaces teach the same thing.
+- Each ring MUST be at most **six** entries. A ring of twelve is a ring nobody learns, and
+  the long tail is the search bar beside it.
 - A slice that cannot run right now MUST be drawn dimmed rather than dropped, so a direction
   a hand has learned keeps its meaning.
-- The middle of the ring names what it is about (the picked effect, the layer, the comp), so
-  the context is never a guess.
+- The middle of the ring names what it is about (the picked effect, the layer, the comp, the
+  sub-ring entered), so the context is never a guess.
 
 The console's lists are declared beside the menu items, as §12's are, so the effects it
 applies and the comps it fronts cannot drift from what the menus mean.

@@ -5,15 +5,17 @@
 // what you were about to do. So the ring is not one fixed set of commands: it
 // is chosen from the selection, in the order the panels themselves are worked
 // in. An effect picked out in the stack offers the things you do to an effect;
-// a layer selected with no effect picked offers the things you do to a layer;
-// a composition open with nothing selected offers the new-layer menu, because
-// that is what an empty timeline is for; and with no composition at all the
-// ring offers the two ways to get one.
+// a layer selected with no effect picked offers the things you do to *that*
+// layer — creation sits one flick further, behind a New slice that expands
+// into the Layer ▸ New ring (K-325), never loose beside the selection's own
+// actions; a composition open with nothing selected offers the new-layer menu
+// directly, because that is what an empty timeline is for; and with no
+// composition at all the ring offers the two ways to get one.
 //
-// Each set is at most six entries, on purpose. The whole value of a radial menu
-// is that a direction becomes muscle memory, and a ring of twelve is a ring
-// nobody learns — the long tail belongs in the search bar above it, which is
-// where it is.
+// Each ring is at most six entries, on purpose. The whole value of a radial
+// menu is that a direction becomes muscle memory, and a ring of twelve is a
+// ring nobody learns — the long tail belongs in the search bar beside it,
+// which is where it is.
 //
 // This file is kept apart from `fx_console_frb.dart` so the console widget
 // stays a thing that draws what it is given: the widget knows nothing about
@@ -30,6 +32,7 @@ import '../src/rust/api/export.dart';
 import '../state/dock.dart';
 import 'fx_console_frb.dart';
 import 'menu_bar_frb.dart';
+import 'precompose_dialog_frb.dart';
 
 /// What the ring is about, drawn in its middle so the context is never a
 /// guess: the picked effect's name, the selected layer's, the composition's,
@@ -119,7 +122,57 @@ List<RadialEntry> fxConsoleRadial(
     ];
   }
 
-  // 2. A layer is selected: what you do to a layer.
+  // The new-layer ring, in the order Layer ▸ New lists them, so the two
+  // surfaces teach the same directions for the same things.
+  List<RadialEntry> newLayers() => [
+        RadialEntry(
+          label: l10n.menuSolid,
+          run: () {
+            comp!.addSolidLayer();
+            done();
+          },
+        ),
+        RadialEntry(
+          label: l10n.menuText,
+          run: () {
+            comp!.addTextLayer();
+            done();
+          },
+        ),
+        RadialEntry(
+          label: l10n.menuCamera,
+          run: () {
+            comp!.addCameraLayer();
+            done();
+          },
+        ),
+        RadialEntry(
+          label: l10n.menuAdjustment,
+          run: () {
+            comp!.addAdjustmentLayer();
+            done();
+          },
+        ),
+        RadialEntry(
+          label: l10n.menuNull,
+          run: () {
+            comp!.addNullLayer();
+            done();
+          },
+        ),
+        RadialEntry(
+          label: l10n.menuSequence,
+          run: () {
+            comp!.addSequenceLayer();
+            done();
+          },
+        ),
+      ];
+
+  // 2. A layer is selected: what you do to THIS layer — never a grab-bag of
+  //    creation commands beside it (K-325). Creating sits one level down,
+  //    behind a New slice that expands into the Layer ▸ New ring, so it is
+  //    reachable without being mistaken for something about the selection.
   if (layer != null && comp != null) {
     return [
       RadialEntry(
@@ -135,7 +188,13 @@ List<RadialEntry> fxConsoleRadial(
       ),
       RadialEntry(
         label: l10n.menuPreCompose,
-        run: () => ui.activePanel.value = Panel.timeline,
+        run: () => showPrecomposeDialogFrb(
+          context: context,
+          comp: comp,
+          selectedLayers: ui.selectedLayers.value,
+          ui: ui,
+          workspace: ui.workspace,
+        ),
       ),
       RadialEntry(
         label: l10n.delete,
@@ -144,62 +203,16 @@ List<RadialEntry> fxConsoleRadial(
           done();
         },
       ),
-      RadialEntry(
-        label: l10n.menuSolid,
-        run: () {
-          comp.addSolidLayer();
-          done();
-        },
-      ),
-      RadialEntry(
-        label: l10n.menuText,
-        run: () {
-          comp.addTextLayer();
-          done();
-        },
-      ),
+      RadialEntry(label: l10n.menuNew, children: newLayers()),
     ];
   }
 
-  // 3. A composition, nothing selected in it: the new-layer menu, which is
-  //    what an empty timeline is asking for.
+  // 3. A composition, nothing selected in it: the new-layer menu directly,
+  //    which is what an empty timeline is asking for — plus Import, the other
+  //    way something gets into a comp.
   if (comp != null) {
     return [
-      RadialEntry(
-        label: l10n.menuSolid,
-        run: () {
-          comp.addSolidLayer();
-          done();
-        },
-      ),
-      RadialEntry(
-        label: l10n.menuText,
-        run: () {
-          comp.addTextLayer();
-          done();
-        },
-      ),
-      RadialEntry(
-        label: l10n.menuAdjustment,
-        run: () {
-          comp.addAdjustmentLayer();
-          done();
-        },
-      ),
-      RadialEntry(
-        label: l10n.menuNull,
-        run: () {
-          comp.addNullLayer();
-          done();
-        },
-      ),
-      RadialEntry(
-        label: l10n.menuCamera,
-        run: () {
-          comp.addCameraLayer();
-          done();
-        },
-      ),
+      ...newLayers().take(5),
       RadialEntry(
         label: l10n.menuImport,
         run: () => importFootageFrb(app),

@@ -63,4 +63,65 @@ void main() {
     expect(radialSliceAt(0, -100, 0), isNull);
     expect(radialSliceAngle(0, 0), 0);
   });
+
+  group('where the console opens (K-325)', () {
+    ({
+      double centreX,
+      double centreY,
+      double barLeft,
+      double barTop,
+      bool barBelow
+    }) layout(double x, double y,
+            {double w = 1600, double h = 1000}) =>
+        fxConsoleLayout(
+          screenWidth: w,
+          screenHeight: h,
+          anchorX: x,
+          anchorY: y,
+          barWidth: 356,
+          barHeight: 44,
+        );
+
+    test('the ring centres on the pointer', () {
+      final at = layout(700, 500);
+      expect(at.centreX, 700);
+      expect(at.centreY, 500);
+    });
+
+    test('an anchor near an edge is pulled in so the whole ring fits', () {
+      final left = layout(10, 500);
+      expect(left.centreX, greaterThanOrEqualTo(radialExtent),
+          reason: 'the ring must not hang off the left edge');
+      final bottom = layout(700, 995);
+      expect(bottom.centreY, lessThanOrEqualTo(1000 - radialExtent),
+          reason: 'nor off the bottom');
+    });
+
+    test('the bar sits above the ring, and its bottom clears it', () {
+      final at = layout(700, 500);
+      expect(at.barBelow, isFalse);
+      expect(at.barTop + 44, lessThan(at.centreY - radialExtent),
+          reason: 'above the ring with a gap, not overlapping it');
+    });
+
+    test('near the top of the window the bar flips below the ring', () {
+      final at = layout(700, 30);
+      expect(at.barBelow, isTrue);
+      expect(at.barTop, greaterThan(at.centreY + radialExtent),
+          reason: 'below the ring with a gap');
+    });
+
+    test('the bar keeps itself on screen however far right the pointer is',
+        () {
+      final at = layout(1590, 500);
+      expect(at.barLeft + 356, lessThanOrEqualTo(1600),
+          reason: 'clamped inside the right edge');
+    });
+
+    test('a window smaller than the ring settles on the middle', () {
+      final at = layout(100, 100, w: 200, h: 200);
+      expect(at.centreX, 100);
+      expect(at.centreY, 100);
+    });
+  });
 }

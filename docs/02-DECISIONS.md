@@ -7446,3 +7446,46 @@ effects-before-comps, Enter applies the top match, the snapshot button's two sta
 runs a slice, a dead-zone release cancels, a disabled slice keeps its place),
 `the_fx_console_has_its_own_chord_and_does_not_clash` (lumit-keymap — and the bare space bar
 still plays).
+
+**K-325 · DECIDED · The console opens around the pointer, the search waits to be asked, and
+rings nest. Reshapes K-324's presentation; the chord, ranking and snapshot stand.**
+From the owner (2026-08-09), after working with K-324's console, four faults with how it
+presented: it opened as a centred window rather than at the mouse; the search half listed
+every effect before anything was typed; the box was opaque over the very frame it acts on;
+and the ring for a *selected layer* offered "Solid" and "Text" — new-layer commands that
+have nothing to do with the thing selected.
+
+**It opens where the mouse is.** The ring is centred on the pointer, because the whole point
+of a ring is that the flick can start the instant the chord lands — travel to a window first
+and a list would have done. The key event carries no position, so the shell records the last
+pointer position in a root `Listener` — a plain field write per event, no `setState`, no
+bridge call, so the no-bridge-in-rebuild-paths budget is untouched. The **search bar floats
+above the ring**, or below it when the pointer is near the top of the window; centre and bar
+placement (edge clamping included) is `fxConsoleLayout` in `radial_maths.dart`, pure
+arithmetic with its own tests. No boxed window and **no dimmed backdrop**: the console's
+surfaces are the standard menu float let through a little (`surface3` at 0.88 — derived from
+the theme, no new colour), because what the console acts on is what the user should keep
+seeing.
+
+**The search waits to be asked.** An empty bar lists nothing — the ring is the offer. Typing
+opens a dropdown *below the bar* with the matches (K-324's ranking unchanged: effects first,
+comps after the divider, never across), and the ring steps aside while the query is
+non-empty, both because the dropdown needs the room and because starting to type *is*
+choosing the other way in. Escape retreats one step at a time — clear the text, then pop a
+sub-ring, then close — and Enter on an empty bar closes rather than sitting inert.
+
+**Rings nest, so context stays honest.** `RadialEntry` gains `children`: choosing such a
+slice expands the menu in place (Blender's nested pies), the centre of the ring names where
+you are and steps back out, and a caret on the slice says it expands. The layer-selected
+ring is now only what you do to *this* layer — Duplicate, Add effect, Pre-compose (wired to
+the real pre-compose dialogue now, not a jump to the Timeline panel), Delete — plus a
+**New ▸** slice whose sub-ring is Layer ▸ New's six items in the menu's order. The
+comp-with-nothing-selected ring keeps creation at the top level (that context *is* "make me
+a layer") reordered to match the menu, and the picked-effect and nothing-open rings stand.
+
+Regression tests: `fxConsoleLayout` placement (centres on the anchor, pulls in at edges, bar
+flips below near the top, tiny-window fallback — radial_maths_test.dart); the empty bar
+lists nothing; typing opens the dropdown and hides the ring, clearing restores it; Escape's
+one-step retreat; the ring centres on the anchor; a child slice expands in place, the centre
+backs out, a flick expands rather than closes, Escape pops before it closes; Enter on an
+empty bar closes (fx_console_test.dart).
