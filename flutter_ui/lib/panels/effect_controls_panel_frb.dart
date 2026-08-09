@@ -84,6 +84,22 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
         if (!_shut.remove(path)) _shut.add(path);
       });
 
+  /// Which parameter twirls the owner has opened or shut, by path.
+  ///
+  /// A map rather than the closed-set [_shut] because a group carries its own
+  /// default: most arrive collapsed (they hold the advanced controls), so
+  /// "absent" cannot mean open here the way it does for a section. Absent means
+  /// "whatever the schema said", and the entry appears the first time the owner
+  /// disagrees.
+  final Map<String, bool> _groupOpen = <String, bool>{};
+
+  bool _isGroupOpen(String path, bool collapsedByDefault) =>
+      _groupOpen[path] ?? !collapsedByDefault;
+
+  void _toggleGroup(String path, bool collapsedByDefault) => setState(() {
+        _groupOpen[path] = !_isGroupOpen(path, collapsedByDefault);
+      });
+
   @override
   Widget build(BuildContext context) {
     final ui = Provider.of<LumitUiState>(context);
@@ -280,6 +296,8 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
                         comp: comp,
                         playheadFrame: playhead,
                         onSeek: (frame) => ui.playheadFrame.value = frame,
+                        isGroupOpen: _isGroupOpen,
+                        onToggleGroup: _toggleGroup,
                       ),
                 ],
               ),
@@ -430,6 +448,13 @@ class _EffectSection extends StatelessWidget {
   final void Function(UuidValue effect, String param, BridgeEffectValue value)
       onLive;
 
+  /// Whether a parameter group's twirl is open, and toggling it. Held by the
+  /// panel rather than here because this card is rebuilt from the read model on
+  /// every change, and a fold that reset itself each time would be unusable.
+  /// The schema's `collapsed` is the default until the owner touches it.
+  final bool Function(String path, bool collapsedByDefault) isGroupOpen;
+  final void Function(String path, bool collapsedByDefault) onToggleGroup;
+
   const _EffectSection({
     super.key,
     required this.info,
@@ -448,6 +473,8 @@ class _EffectSection extends StatelessWidget {
     required this.onStackChanged,
     required this.onWrite,
     required this.onLive,
+    required this.isGroupOpen,
+    required this.onToggleGroup,
   });
 
   /// Run [op] on a freshly read handle for this card's effect.
@@ -595,6 +622,16 @@ class _EffectSection extends StatelessWidget {
       };
     }
 
+    // Which rows another parameter has taken over (`EnabledWhen`, K-313).
+    // Judged on what the panel is SHOWING, staged drag included, so ticking a
+    // checkbox greys its dependent row on the spot rather than after the commit
+    // round-trips.
+    final shown = {
+      for (final p in params)
+        if ((stagedValue(id, p.id) ?? values[p.id]) case final v?) p.id: v,
+    };
+    final disabled = disabledParams(info.name, shown);
+
     Widget rowFor(BridgeParamInfo param) => EffectParamRowFrb(
           key: ValueKey<String>('fx-row-$id-${param.id}'),
           effectId: id,
@@ -608,6 +645,7 @@ class _EffectSection extends StatelessWidget {
           onWrite: onWrite,
           onLive: onLive,
           twoColumn: true,
+          enabled: !disabled.contains(param.id),
           // The effect's other values, for a control whose behaviour
           // depends on a sibling (the depth-of-field dropper reads the
           // effect's own `depth` layer).
@@ -640,6 +678,11 @@ class _EffectSection extends StatelessWidget {
             onWrite: onWrite,
             onLive: onLive,
             twoColumn: true,
+            // A point is one row over two parameters, so it goes quiet only
+            // when both halves have been taken over — which is how the schema
+            // declares them.
+            enabled:
+                !disabled.contains(param.id) || !disabled.contains(next.id),
             pickPixels: pickablePointParams[param.id],
           ));
           i += 2;

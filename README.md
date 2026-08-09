@@ -1,3 +1,4 @@
+[English](./README.md) | [中文](./README.zh-CN.md) |
 <div align="center">
 
 <a href="https://lumitlab.com">

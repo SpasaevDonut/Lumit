@@ -7111,7 +7111,90 @@ to put both keys back, so this is a mistake with a standing invitation to recur.
 script is the regression test K-007 asks for: it fails on the `icon.json` as it was, and
 passes on the one that compiles.
 
-**K-313 · DECIDED · Body text renders at regular weight; Medium is rationed to emphasis.**
+**K-313 · DECIDED · Bokeh folds into Depth of field rather than shipping beside it; the
+"advanced" slot is reserved for a genuinely physical model.** The contributed Bokeh effect
+(PR #38) brought an aperture polygon (blades, roundness reaching below zero into stars, an
+anamorphic squeeze, a radial weighting), a split-at-threshold power mean so a small bright
+thing blooms into a ball instead of dissolving into its surroundings, and a fuller depth
+model (channel pick, click-to-focus point, a Profile that scales the depth distance before
+the ramp, edge-leak suppression). It shipped as a second effect standing next to `dof`.
+
+**Why it folds in.** §3.22 has recorded since K-124 that the flat disc was the *base* and
+that "shaped, bright-rimmed highlights are the planned DOF PRO second effect" — but none of
+the above is a second effect's worth of physics. There is no scene-referred aperture, no
+f-stop, no per-pixel scatter, no occlusion or inpainting behind foreground edges, no
+spectral response. It is the base lens blur finished properly. Shipped beside `dof` it
+would have left the *default* depth-of-field permanently the worse of the two, and left two
+90 %-identical gathers to maintain. Folded, the shipped effect gains the aperture and
+DOF PRO stays free for the physically-accurate, deliberately intensive model the owner
+wants it to be.
+
+**Every added control is neutral at its default, and neutral is reached by BRANCHING.**
+Roundness 1 takes the plain `r² ≤ coc²` circle test, Concentration 0 and Remove edge leak 0
+take the unweighted accumulation, Exposure 0 takes the unsplit sum. None of those is an
+IEEE 754 identity — `Σ(c·w)/Σw` is not `Σc/n` when every `w` is 1, `min(c,t) + max(c−t,0)`
+is not reliably `c`, and scaling both sides of a comparison by `apothem2` can flip a
+boundary tap — so multiplying by one would have re-rendered every saved project by an ULP
+or two. The branch is what makes the fold safe, and
+`the_default_aperture_is_the_historical_disc_bit_for_bit` pins it on the arithmetic rather
+than asserting it in a comment. Profile is the exception that proves the rule: its neutral
+is a multiply by exactly 1, which *is* exact, so it needs no branch.
+
+**Three of the contributed controls are dropped.** Placement and Resolution were declared
+but inert; Custom blur shape declared a layer reference the kernel never bound. Resolution
+was worse than inert — read as a band count quantising the defocus ramp, it put a real
+depth pass's whole content in one band and its near object in another, making focus
+all-or-nothing. A declared-but-dead control is a promise the panel cannot keep, so they go
+until someone can say what they do.
+
+**No `ParamKind::Point` was added.** The contributed branch introduced one; the panel had
+meanwhile learned to fold two adjacent `_x`/`_y` Float parameters into a single row with a
+crosshair pick (docs/07 §6.1), which the Lens flare's Light and Radial blur's Centre both
+ride. Focus point uses that instead — the naming convention is the whole mechanism, and a
+schema kind, a bridge kind, generated code and a Dart row were deleted rather than written.
+`ParamKind::Angle` *is* added: there is no arrangement of existing rows that draws a dial.
+
+**Consequence:** `EffectSchema` gains `enabled_when` (the greyed-row rule, evaluated by
+`lumit_core::fx::param_enabled` and mirrored on the panel), the schema gains `Angle`, and
+`dof` gains three collapsed twirls — Iris, Highlights, Depth map. The stops-to-power
+constant (`EXPOSURE_STOPS_PER_DOUBLING`, 12) is fitted from screenshots rather than measured
+against a reference plugin, and §3.22 records it as open.
+
+**K-315 · DECIDED · Depth of field's control surface, after the owner's first pass on
+it.** Five changes, each from testing K-313 in the app rather than from a spec.
+
+**Composite mode is gone.** Five blend modes on one effect is a menu nobody has a reason to
+open: an effect whose result wants adding over a sharp plate is an adjustment layer with a
+blend mode, which already exists, does it in one obvious place, and does it for *every*
+effect rather than for whichever ones happened to grow a dropdown.
+
+**The depth channel list is five entries, and every one can explain itself.** Luminance (the
+default — right for the grey map a depth pass usually is, whatever channels it was written
+to), Alpha (some renderers put depth there), Red/Green/Blue (a packed pass, several AOVs
+flattened into one image). Hue, saturation, lightness and the plain channel mean are gone:
+nothing encodes a depth or a density as a hue, and offering the option only invites someone
+to find out. **Depth invert moves into that group** — it is part of how the pass is *read*,
+not part of where focus is. Changing the default from Red to Luminance is a look change on a
+non-grey depth pass; it is recorded here rather than hidden, and K-313 has not shipped.
+
+**Focus distance, Use focus point and Focus point are now adjacent.** A switch that hands one
+control's job to another is an affordance only if both are visible at once; with the toggle
+three twirls below the number it governed, neither row explained the other.
+
+**Three renames, because the names were the problem.** *Profile* → **Gamma**: it is a
+gamma on the depth axis, deciding how hard the blur answers to a small change in depth.
+*Concentration* → **Rim brightness**: it decides where the light sits inside each ball, which
+is spherical aberration. *Deform* → **Aspect ratio**. None of the three could be guessed from
+its old label, and a control nobody can name is a control nobody uses.
+
+**The angle dial sits beside its number, not under it**, and the same control now serves every
+*unbounded* rotation in the catalogue: the Transform effect's Rotation, Hue shift's Angle (a
+hue shift is a rotation about the colour wheel — the most dial-shaped control there is) and
+the Lens flare's aperture Rotation. The two blur-direction angles keep their `±3600` hard
+bound and stay plain numbers, because `Angle` is deliberately unbounded and swapping them
+would quietly drop a clamp.
+
+**K-316 · DECIDED · Body text renders at regular weight; Medium is rationed to emphasis.**
 From the owner (2026-08-09): "less text should be bold — a lot of it is too thick and can
 actually reduce readability." The cause was packaging, not the type scale: only
 `Inter-Medium.otf` was bundled, so every weight the code asked for drew as Medium and the
