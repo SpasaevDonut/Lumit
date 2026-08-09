@@ -7110,3 +7110,53 @@ on a runner with Xcode 26 — and reopening the icon in Icon Composer and saving
 to put both keys back, so this is a mistake with a standing invitation to recur. The
 script is the regression test K-007 asks for: it fails on the `icon.json` as it was, and
 passes on the one that compiles.
+
+**K-319 · DECIDED · The Ctrl+Space console: a search bar over the effects, and a Blender-style
+radial menu under it. Supersedes K-102's deferral.**
+From the owner (2026-08-09): a Ctrl+Space window with "at the top a search bar the user can
+type in… effect options then a little divider for comp names", modelled on Video Copilot's
+**FX Console** ("with the little camera/snapshot button too"), and "below this bar a radial
+menu just like Blender's" whose entries follow the selection. K-102 deferred exactly this
+("the effects radial menu (Ctrl+Space, apply-to-clip) — that remains blocked on a from-scratch
+build (no egui 0.31-compatible `egui_pie_menu`)"). That blocker is gone with egui: the port to
+Flutter (K-174) means a ring is a `Stack` of positioned labels over a gesture detector, and
+the only real content is the arithmetic of which slice a direction means. This entry
+supersedes that half of K-102; the command palette (Ctrl+Shift+P) stays exactly as it is,
+because the two answer different questions — the palette is every command by name, the
+console is *effects*, fast, plus the thing you were about to do.
+
+**The search half.** Effects first, then a divider, then compositions — ranked within each
+kind and never across it, because the reason to open this window is nearly always an effect
+and a comp that happened to score better would be in the way. Matching is the palette's
+subsequence ranking (earlier and tighter wins), so "gau" finds Gaussian blur. Enter applies
+the top match to **every** selected layer, as the Effect menu does (K-217); a comp fronts.
+The **snapshot** button beside the field writes the frame on screen to a PNG — a one-frame
+image-sequence export (`codec: 'png'`, K-201) rather than a second still-writer beside the
+exporter, so it is the same tested path to a file and the status line already reports it. It
+lands in a `Snapshots` folder beside the saved project, or the user's pictures folder when
+the project has never been saved — never the working directory.
+
+**The radial half.** A slice is chosen by **angle alone**, not by hit-testing a drawn wedge:
+flick in a direction and the choice is made however far the pointer travelled, which is what
+makes a ring faster than a list once the hand has learned it. A dead zone in the middle picks
+nothing, so opening the menu and releasing without moving cancels rather than committing to
+whatever was nearest. The first slice is straight up and they run clockwise. The entries are
+chosen from the selection in four contexts — a picked effect offers what you do to an effect;
+a selected layer what you do to a layer; a composition with nothing selected the new-layer
+menu; nothing open at all the two ways to get somewhere — each capped at six, because a ring
+of twelve is a ring nobody learns and the long tail is the search bar directly above it. A
+slice that cannot run right now is drawn dimmed rather than dropped, so a direction a hand
+has learned keeps its meaning.
+
+**Where the lists come from.** `menu_bar_frb.dart`, beside the menu items, for the same
+reason the palette's commands are declared there (K-102): the effects this applies and the
+comps it fronts must be the ones the menus mean, and a second list would drift.
+`fx_console_frb.dart` is the widget and knows nothing about the document;
+`fx_console_context.dart` holds the selection knowledge; `widgets/radial_maths.dart` is the
+geometry, widget-free so it is tested as arithmetic. Regression tests:
+`radial_maths_test.dart` (slice centres, direction-picks-slice at any distance, the dead
+zone, every wedge boundary, an empty ring), `fx_console_test.dart` (subsequence ranking,
+effects-before-comps, Enter applies the top match, the snapshot button's two states, a flick
+runs a slice, a dead-zone release cancels, a disabled slice keeps its place),
+`the_fx_console_has_its_own_chord_and_does_not_clash` (lumit-keymap — and the bare space bar
+still plays).

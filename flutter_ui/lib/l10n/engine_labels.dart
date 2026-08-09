@@ -265,6 +265,7 @@ Map<String, String> get _table => {
       "Add a marker at the playhead": l10n.keyAddAMarkerAtThePlayhead,
       "Delete the selection": l10n.keyDeleteTheSelection,
       "Open the command palette": l10n.keyOpenTheCommandPalette,
+      "Open the FX console": l10n.keyOpenTheFxConsole,
       "Add to the export queue": l10n.keyAddToTheExportQueue,
       "Composition settings": l10n.keyCompositionSettings,
       "Undo": l10n.keyUndo,

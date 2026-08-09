@@ -1635,6 +1635,48 @@ flowchart (the deferred node-graph view) grows from it.
 
 ---
 
+## 12.2 The FX console (`Ctrl+Space`, K-319)
+
+A second, narrower command surface, and deliberately not a duplicate of §12: the palette is
+every command by name, the console is **effects, fast** — plus, under it, the thing you were
+probably about to do. Modelled on Video Copilot's FX Console, which is what After Effects
+users install first. It supersedes the radial menu K-102 deferred.
+
+**The search bar** MUST rank **effects first and compositions after a divider**, within each
+kind and never across it: the reason to open this window is nearly always an effect, and a
+comp that happened to score better would be in the way. Matching is §12's subsequence
+ranking, so "gau" finds Gaussian blur. `Enter` applies the top match to **every** selected
+layer (K-217); a composition fronts. `Esc` closes; the arrow keys move the highlight.
+
+**The snapshot button** sits beside the field and writes the frame on screen to a PNG. It
+MUST be a one-frame image-sequence export (§11's `png` codec, K-201) rather than a second
+still-writer: same colour and sizing path, and the status line already reports it. It writes
+to a `Snapshots` folder beside the saved project, or the user's pictures folder for a project
+never saved — never the working directory. It MUST grey out with no composition open.
+
+**The radial menu** below it follows Blender's:
+
+- A slice MUST be chosen by **angle alone**, not by hit-testing a drawn wedge — a flick in a
+  direction picks that slice however far the pointer travelled. That is the whole reason a
+  ring beats a list: the direction becomes muscle memory, and a list's third entry moves the
+  moment the list grows.
+- A **dead zone** in the middle picks nothing, so opening the menu and releasing without
+  moving cancels rather than committing to whatever was nearest.
+- The first slice is straight up, and they run clockwise.
+- Entries MUST follow the selection, in four contexts: a **picked effect** offers what you do
+  to an effect (bypass, copy, remove, add another); a **selected layer** what you do to a
+  layer; a **composition with nothing selected** the new-layer menu, which is what an empty
+  timeline is asking for; **nothing open at all** the two ways to get somewhere.
+- Each set MUST be at most **six** entries. A ring of twelve is a ring nobody learns, and the
+  long tail is the search bar directly above it.
+- A slice that cannot run right now MUST be drawn dimmed rather than dropped, so a direction
+  a hand has learned keeps its meaning.
+- The middle of the ring names what it is about (the picked effect, the layer, the comp), so
+  the context is never a guess.
+
+The console's lists are declared beside the menu items, as §12's are, so the effects it
+applies and the comps it fronts cannot drift from what the menus mean.
+
 ## 13. Onboarding and empty states
 
 ### 13.1 First-run setup (K-006; v1 ships minimal per K-246)
@@ -1949,6 +1991,7 @@ app-wide, so a list, a field or a canvas is free to use them for moving within i
 | Global | `0…9` | Go to that numbered marker; nothing happens until one has been set (K-254) |
 | Global | `Delete` / `Backspace` | Delete the selection — keyframes when any are selected, else the layer (TF-6) |
 | Global | `Ctrl+Shift+P` | Command palette |
+| Global | `Ctrl+Space` | FX console (K-319) |
 | Global | `Ctrl+M` | Add active comp to export queue |
 | Global | `Ctrl+K` | Composition settings |
 | Global | `Ctrl+Alt+Shift+K` | Project settings (K-286) |

@@ -3803,6 +3803,78 @@ copy…** inside the colour editor, which branches a theme without first
 overwriting it. The picker also draws eight swatches of the selected theme beside
 its name, so you can recognise a theme without applying it.
 
+### The Ctrl+Space console, and why a ring beats a list (K-319)
+
+Two ways into the same handful of things, stacked in one window, because they
+suit different moments.
+
+**The top half is a search box.** Type "gau", press Enter, and Gaussian blur is
+on every selected layer. The list puts **effects first and compositions after a
+divider**, and — this is the deliberate part — a composition can never outrank
+an effect however well it matches. The reason you hit this key is nearly always
+an effect; a comp that happened to score better would just be in the way. The
+comps are there so the same window can also be "take me to that comp" rather
+than needing a second window for it.
+
+This half is modelled on Video Copilot's **FX Console**, which is the plug-in
+After Effects users install first and then cannot work without. That includes
+its **snapshot button** in the corner: one press writes the frame you are
+looking at to a PNG, so you can change a look and compare the two without
+setting up an export.
+
+Worth knowing how the snapshot is done, because the cheap way was also the
+right way: it is a **one-frame export**. Lumit's exporter already writes PNG
+sequences, and it is the tested path from a Lumit frame to a file — colour,
+sizing, all of it. So a snapshot is that, with the range set to "this frame and
+the next". The alternative would have been a second still-writer living beside
+the exporter: a second thing to keep correct, for nothing gained. The file goes
+into a `Snapshots` folder beside your project, or your pictures folder if the
+project has never been saved — never into whatever directory the application
+happened to be started from, which is where a bare file name would have put it.
+
+**The bottom half is a radial menu**, the kind Blender uses. Its choices sit in
+a ring around where your pointer already is.
+
+The point of a ring is not that it looks better than a list. It is that every
+choice is in a fixed *direction*. After a few uses your hand knows "solid is
+up, text is right" and stops reading the menu at all — you flick and it is
+done. A list can never offer that, because a list's third entry moves the
+moment the list grows.
+
+Two rules follow from that, and they are most of the code:
+
+- **A slice is chosen by angle, not by what you are hovering over.** Flick in a
+  direction and the choice is made, however far the pointer actually travelled.
+  If it were hit-testing a drawn wedge you would have to land *inside* the
+  shape, and the gesture could only be as fast as your aim.
+- **There is a dead zone in the middle.** Inside it nothing is chosen, so
+  opening the menu and letting go without moving cancels — rather than
+  committing you to whatever happened to be nearest the cursor.
+
+What is *in* the ring depends on what you have selected, which is the other
+half of making it worth using. An effect picked out in the stack offers the
+things you do to an effect; a selected layer the things you do to a layer; a
+composition with nothing selected offers the new-layer menu, because that is
+what an empty timeline is asking for; and with nothing open at all it offers
+the two ways to get somewhere. Never more than six at once — a ring of twelve
+is a ring nobody learns, and the long tail is the search box directly above it.
+An entry that cannot run right now is dimmed rather than removed, so a
+direction your hand has learned keeps meaning the same thing tomorrow.
+
+**Why this is not the command palette.** Ctrl+Shift+P still opens that, and the
+two are not competing: the palette is *every command by name*, the console is
+effects plus the thing you were about to do. Both build their lists in the same
+file as the menu items, so neither can drift into a different idea of what
+"New composition" means.
+
+This also closes something that had been deferred since K-102, where the radial
+menu was blocked on there being no pie-menu library for the old toolkit. The
+move to Flutter (K-174) removed the blocker: a ring is a stack of positioned
+labels over a gesture detector, and the only real content is the arithmetic of
+which slice a direction means — which is why that arithmetic lives in its own
+file, `widgets/radial_maths.dart`, with no Flutter in it and a test that treats
+it as pure maths.
+
 ### The rules that bite
 
 These are the ones a plausible-looking change breaks. Each has tests standing

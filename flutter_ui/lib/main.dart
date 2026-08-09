@@ -536,6 +536,13 @@ class LumitUiState extends ChangeNotifier {
 
   void requestPalette() => paletteRequest.value++;
 
+  /// Bumped when `Ctrl+Space` asks for the FX console (K-319). Its effects,
+  /// comps and radial entries are the menu bar's, for the same reason the
+  /// palette's commands are.
+  final ValueNotifier<int> consoleRequest = ValueNotifier(0);
+
+  void requestConsole() => consoleRequest.value++;
+
   /// Bumped each time a rendered frame reaches the Viewer, on any of the three
   /// transports. Watched by anything that redraws when the picture does — the
   /// Timeline's cache bar, the Scopes panel.
@@ -1286,6 +1293,7 @@ class LumitUiState extends ChangeNotifier {
     selectedLayers.dispose();
     activePanel.dispose();
     paletteRequest.dispose();
+    consoleRequest.dispose();
     super.dispose();
   }
 
@@ -1763,6 +1771,10 @@ class _LumitAppViewState extends State<LumitAppView> {
         } else {
           state.toggleRetime(layer);
         }
+      case 'console.open':
+        // The menu bar owns the console's lists too, so the key asks for it
+        // rather than assembling a second one (K-319).
+        ui.requestConsole();
       case 'palette.open':
         // The menu bar owns the palette's list of commands, so the key asks
         // for it rather than assembling a second one (docs/07 §12).

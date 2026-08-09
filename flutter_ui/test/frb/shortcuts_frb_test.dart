@@ -68,6 +68,30 @@ void main() {
       expect(asked, 1);
     });
 
+    /// `Ctrl+Space` asks the same bar for the FX console (K-319) — and the
+    /// bare space bar must still reach the transport, which is the thing a
+    /// modified space bar is most likely to have broken.
+    testWidgets('Ctrl+Space asks for the FX console, and space still plays',
+        (tester) async {
+      final p = await mount(tester);
+      var console = 0;
+      var play = 0;
+      p.uiState.consoleRequest.addListener(() => console++);
+      p.uiState.togglePlayRequest.addListener(() => play++);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+      expect(console, 1);
+      expect(play, 0, reason: 'the modified chord is not the transport');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pumpAndSettle();
+      expect(play, 1, reason: 'the bare space bar still plays');
+      expect(console, 1);
+    });
+
     /// **The recurring space-bar funeral.** Menus, popups and the palette all
     /// live in the Overlay outside the shell's focus scope; any of them could
     /// walk focus away for good, and every shortcut died until something was
