@@ -473,13 +473,16 @@ failure.
 
 ### 7.1 Scale
 
-Lumit is a pro tool; the household 16px body default gives way to an 11–13px UI scale:
+Lumit is a pro tool; the household 16px body default gives way to a 10–13px UI scale
+(tightened from 11–13px by K-317, after the owner found the interface a step large and
+soft beside the editors it sits among):
 
 | Size | Face | Use |
 |---|---|---|
-| 10px | Inter | Field captions only — the note under a control saying what format it takes. Never for anything the user has to act on |
+| 9px | Inter | Field captions only — the note under a control saying what format it takes. Never for anything the user has to act on |
+| 10px | Inter | Secondary notes and hints (`small`) |
 | 11px | JetBrains Mono, +0.08em, caps | Kickers, layer bar labels, axis numbers, attribution |
-| 12px | Inter | Panel body copy, property names, menus, buttons |
+| 11px | Inter | Panel body copy, property names, menus, buttons |
 | 13px | JetBrains Mono | Property values, timecode fields, frame numbers, speed percentages |
 | 14px | Inter Medium | Dialog body emphasis, panel tab labels |
 | 16px | Schibsted Grotesk | Dialog titles, workspace names |
@@ -545,7 +548,17 @@ section's 4/8/12/16px scale) does not vary by shape; only radius, gap, inset and
 - **Keyboard operability of every control** — every panel reachable by shortcut, every
   control focusable and operable, every drag having a keyboard equivalent (nudge keys move
   clips/keyframes by frame; modifier for 10 frames).
-- **Visible focus** everywhere, per §6.5.
+- **Visible focus** everywhere, per §6.5. Every house control — button, checkbox, radio,
+  value box — is focusable, draws the accent focus ring while focused, and answers `Enter`
+  (and `Space`, where pressing is what it does). Tab visits them in **reading order**: left
+  to right, then top to bottom, by where they sit on screen rather than by the order the
+  layout code composed them. A modal window is its own focus scope, so Tab cycles inside it
+  (K-319, docs/07 §4.2).
+- **A pointer travelling to a submenu is not hovering what it passes over** (K-318). Menus
+  hold an open flyout while the pointer is inside the triangle from where it left the owning
+  row to that flyout's near edge — the "safe triangle". A pointer that *stops* on another row
+  still switches, after a 300ms grace; one that plainly moves elsewhere switches at once. No
+  animation is involved and nothing is delayed that the user did not aim at.
 - **Contrast floors on the dark ramp** (WCAG 2.1, against the surface the text sits on):
   `text_primary` ≥7:1 (AAA); `text_secondary` ≥7:1; `text_muted` — the floor for the 11px
   mono labels — ≥4.5:1 (AA); disabled states exempt but kept ≥3:1; non-text interactive

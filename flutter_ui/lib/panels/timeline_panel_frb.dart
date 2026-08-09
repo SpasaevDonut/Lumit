@@ -38,6 +38,7 @@ import '../icons/icons.dart';
 import '../l10n/strings.dart';
 import '../state/comp_model.dart';
 import '../state/comp_time.dart';
+import '../state/dock.dart';
 import '../state/drag_payloads.dart';
 import '../state/timecode.dart';
 import '../state/timeline_columns.dart';
@@ -143,38 +144,82 @@ class LayerDrag {
   int get hashCode => Object.hash(from, to);
 }
 
-/// Every layer's block height: its own row plus whatever fold rows it shows.
+/// One layer as **both halves of the table see it**: the rows it shows, the
+/// room an open Sequence view wants, and the height those come to.
 ///
-/// Worked out **once per panel build and handed to both halves**, rather than
-/// each half measuring its own rows. Two measurements that must agree are two
-/// chances to disagree — and a half-pixel of disagreement is a table whose
-/// lanes drift out of line with their names as it scrolls.
-List<double> layerBlockHeights({
+/// The outline and the lane area are still two widget trees, and they have to
+/// be: they sit in two scroll views, and only the lane half rebuilds when the
+/// zoom moves (K-293). What they must never be is two *opinions*. Each half
+/// used to walk [layerFoldRows] for itself, test `open` for itself and look up
+/// `sequenceExtra` for itself, and the table was level only because all three
+/// pairs happened to agree — a layer could grow a row on one side and not the
+/// other, and nothing would say so. Decided once here, the halves can differ in
+/// what they draw but not in what a layer *is*.
+class LayerRow {
+  final BridgeLayerEntry entry;
+
+  /// The layer's id as a string, which is the key everything else is filed
+  /// under — worked out once rather than at each of the dozen places that
+  /// wanted it.
+  final String id;
+
+  /// Twirled open — whether [foldRows] are **drawn**.
+  final bool open;
+
+  /// The rows this layer's fold-out has, open or shut.
+  ///
+  /// Held for a shut layer too, because snapping wants them: a keyframe is
+  /// somewhere in time whether or not its row is on screen, and a key drag or
+  /// a razor cut can land on it either way (`_snapTargets`, K-292). Everything
+  /// that *draws* reads [drawnRows] instead — the one place that difference is
+  /// written down, rather than an `open` test remembered at each of five call
+  /// sites.
+  final List<LayerFoldRow> foldRows;
+
+  /// The rows the table draws under this layer: its fold-out when it is
+  /// twirled open, nothing when it is not.
+  List<LayerFoldRow> get drawnRows => open ? foldRows : const [];
+
+  /// How much taller an open Sequence view makes this row (K-248), or null
+  /// when the layer has no view open. **The outline reserves exactly the room
+  /// the lanes draw the view in**, or every row below sits at a different
+  /// height on the two sides.
+  final double? sequenceExtra;
+
+  const LayerRow({
+    required this.entry,
+    required this.id,
+    required this.open,
+    required this.foldRows,
+    required this.sequenceExtra,
+  });
+
+  /// This block's height: its own row, the rows it draws, and its open view.
+  double get height =>
+      _rowHeight * (1 + drawnRows.length) + (sequenceExtra ?? 0);
+}
+
+/// Decide every layer's row, once for the whole panel.
+List<LayerRow> layerRows({
   required List<BridgeLayerEntry> layers,
   required Set<String> open,
   required Map<String, bool> hasAudio,
-
-  /// How much taller each open sequence view makes its layer's row, by layer
-  /// id (K-248). **Both halves of the Timeline read this**: the outline
-  /// reserves the same room the lanes draw the view in, or the two stop lining
-  /// up and every row below sits at a different height on each side.
   Map<String, double> sequenceExtra = const {},
-}) =>
-    [
-      for (final entry in layers)
-        _rowHeight *
-                (1 +
-                    (open.contains(entry.layer.internallayerId.toString())
-                        ? layerFoldRows(
-                            entry: entry,
-                            open: open,
-                            hasAudio: hasAudio[
-                                    entry.layer.internallayerId.toString()] ??
-                                false,
-                          ).length
-                        : 0)) +
-            (sequenceExtra[entry.layer.internallayerId.toString()] ?? 0),
-    ];
+}) {
+  final out = <LayerRow>[];
+  for (final entry in layers) {
+    final id = entry.layer.internallayerId.toString();
+    out.add(LayerRow(
+      entry: entry,
+      id: id,
+      open: open.contains(id),
+      foldRows: layerFoldRows(
+          entry: entry, open: open, hasAudio: hasAudio[id] ?? false),
+      sequenceExtra: sequenceExtra[id],
+    ));
+  }
+  return out;
+}
 
 /// How far the block at [index] slides while a drag is in flight, in pixels;
 /// positive is down.
@@ -730,12 +775,11 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
   /// Where each open sequence view sits down the table, as (top, bottom) in
   /// the rows' own coordinates — what the row seams skip over, so an open view
   /// reads as one cell rather than six ruled rows.
-  List<(double, double)> _sequenceBlanks(
-      List<BridgeLayerEntry> layers, List<double> heights) {
+  List<(double, double)> _sequenceBlanks(List<LayerRow> rows) {
     final out = <(double, double)>[];
     var y = 0.0;
-    for (var i = 0; i < layers.length && i < heights.length; i++) {
-      final extra = _sequenceExtra[layers[i].layer.internallayerId.toString()];
+    for (final row in rows) {
+      final extra = row.sequenceExtra;
       if (extra != null) {
         // **From the top of the layer's own row.** The view takes that row as
         // the first of its three clip rows, so a seam ruled under it would cut
@@ -745,7 +789,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
         // line above it and the fold-out below still has one over it.
         out.add((y, y + _rowHeight + extra));
       }
-      y += heights[i];
+      y += row.height;
     }
     return out;
   }
@@ -1374,8 +1418,14 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     }
     // Enter renames the selected layer in place (docs/07 §15, K-243): the row
     // it names opens its own editor, which is why this sets a value rather
-    // than reaching into a row.
+    // than reaching into a row. Only while this is the focused panel — the
+    // Project panel and Effect controls answer the same key for their own
+    // selections now (K-321), and two renames on one press is a mess.
     if (action == 'layer.rename') {
+      // A different panel is focused: its own rename answers this key. No
+      // panel focused yet falls to the Timeline, as it always did.
+      final active = ui.activePanel.value;
+      if (active != null && active != Panel.timeline) return false;
       final layer = ui.selectedLayer.value;
       if (layer == null) return false;
       _renameRequest.value = layer.internallayerId;
@@ -1723,18 +1773,51 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
   /// flight restarted before it ever arrived. A tap on the track, or the
   /// wheel, is a discrete jump and still flies.
   void _setZoom(double z, {bool fly = true}) {
-    _anchorOnPlayhead();
+    // While the slider is being dragged the anchor was chosen once, at the
+    // start of the gesture, and holds to the end (K-319). Re-measuring it on
+    // every drag update read the scroll offset before layout had corrected it
+    // for the zoom just applied — a fresh zoom against a stale offset — and
+    // each update re-anchored somewhere slightly wrong, which is what made
+    // the lanes ping around under a dragged slider. The measured-once anchor
+    // is exact: the flight (and the drag) re-applies the same fixed point
+    // every tick, which is the invariant the whole mechanism is built on.
+    if (!_zoomAnchorHeld) _anchorOnPlayhead();
     _zoomMotion.goTo(z,
         duration: fly ? animationDuration(_animationLevel) : Duration.zero);
   }
 
+  /// True while a slider drag holds the anchor fixed — see [_setZoom].
+  bool _zoomAnchorHeld = false;
+
+  /// The slider's drag began: choose the anchor now, and keep it for the
+  /// whole gesture.
+  void _zoomDragStart() {
+    _anchorOnPlayhead();
+    _zoomAnchorHeld = true;
+  }
+
+  void _zoomDragEnd() {
+    _zoomAnchorHeld = false;
+  }
+
   /// Point the flight's anchor at the playhead — held where it is if it is on
   /// screen, brought to the middle if it is not.
+  ///
+  /// The per-frame width is derived from the scroll position's own content
+  /// extent when it has one — the same numbers `zoomAnchorOffset` applies the
+  /// anchor with — so the point measured here is exactly the point the layout
+  /// puts back. A width from anywhere else (the build-time viewport cache)
+  /// disagrees by a little at every zoom, and the disagreement is a
+  /// systematic drift that grows with magnification.
   void _anchorOnPlayhead() {
     final viewport =
         _hLane.hasClients ? _hLane.position.viewportDimension : _laneViewport;
     final offset = _hLane.hasClients ? _hLane.offset : 0.0;
-    final perFrame = _perFrameNow;
+    final perFrame = _hLane.hasClients && _laneFrames > 0
+        ? (_hLane.position.viewportDimension +
+                _hLane.position.maxScrollExtent) /
+            _laneFrames
+        : _perFrameNow;
     final playhead = (_ui?.playheadFrame.value ?? 0).toDouble();
     _zoomAnchorFrame = playhead;
     final x = playhead * perFrame - offset;
@@ -1886,6 +1969,16 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     // has ends, and they must be known the moment it comes back.
     _refreshBounds(ui.model, fpsNum, fpsDen);
 
+    // What each layer is, decided **once for the whole panel** and read by
+    // everything below — the outline, the lanes, the drag maths and the row
+    // seams alike. It used to be worked out four times over from the same
+    // three inputs, once per reader.
+    final rows = layerRows(
+        layers: layers,
+        open: _open,
+        hasAudio: _hasAudio,
+        sequenceExtra: _sequenceExtra);
+
     // The property rows on screen, in display order — what a Shift+click
     // range runs along — and the graph channels the selection resolves to,
     // each with its stroke colour for the outline's labels to match.
@@ -1894,15 +1987,9 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     // that can be picked (and copied), so a Shift+click has to be able to run
     // over one. Waveforms are not a row anything selects.
     _visiblePropertyPaths = [
-      for (final e in layers)
-        if (_open.contains(e.layer.internallayerId.toString()))
-          for (final row in layerFoldRows(
-            entry: e,
-            open: _open,
-            hasAudio: _hasAudio[e.layer.internallayerId.toString()] ?? false,
-          ))
-            if (row is! FoldWaveformRow)
-              foldRowPath(e.layer.internallayerId.toString(), row),
+      for (final layer in rows)
+        for (final row in layer.drawnRows)
+          if (row is! FoldWaveformRow) foldRowPath(layer.id, row),
     ];
     final channels =
         graphChannels(layers: ui.model.layers, selected: _selectedProperties);
@@ -1910,14 +1997,12 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     // ruler draws it, the lanes and the curves are washed by it, and the two
     // are one span.
     final work = workAreaFrames(comp);
-    // One walk of the row stack for the whole panel: both halves slide their
-    // blocks by these heights during a drag, so neither can measure the table
-    // differently from the other (K-208).
-    final blockHeights = layerBlockHeights(
-        sequenceExtra: _sequenceExtra,
-        layers: layers,
-        open: _open,
-        hasAudio: _hasAudio);
+    // The block heights, as a plain list. Still needed even though the rows
+    // now carry their own height: a drag measures its travel against the
+    // *stack* ([layerDragTarget]), a drop reads a slot out of it
+    // ([layerDropSlot]) and [LayerDragSlide] slides one block by the ones it
+    // passes — all three want every height, not this row's.
+    final blockHeights = [for (final row in rows) row.height];
     final graphColours = <String, List<Color>>{};
     for (final channel in channels) {
       (graphColours[channel.path] ??= [])
@@ -2152,9 +2237,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
                                                       controller: _vOutline,
                                                       child: _Outline(
                                                         comp: comp,
-                                                        layers: layers,
-                                                        sequenceExtra:
-                                                            _sequenceExtra,
+                                                        rows: rows,
                                                         onOpenSequence:
                                                             _toggleSequenceView,
                                                         layerDrag: _layerDrag,
@@ -2176,8 +2259,6 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
                                                             _selectProperty,
                                                         onEditProperty:
                                                             _selectOnEdit,
-                                                        open: _open,
-                                                        hasAudio: _hasAudio,
                                                         onToggle: _toggle,
                                                         playheadFrame: ui
                                                             .playheadFrame
@@ -2245,8 +2326,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
                                             // carried up by however far the rows
                                             // have scrolled.
                                             blanks: [
-                                              for (final b in _sequenceBlanks(
-                                                  layers, blockHeights))
+                                              for (final b
+                                                  in _sequenceBlanks(rows))
                                                 (
                                                   b.$1 -
                                                       (_positionOf(_vOutline)
@@ -2496,6 +2577,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
                                           onZoom: _setZoom,
                                           onZoomLive: (z) =>
                                               _setZoom(z, fly: false),
+                                          onZoomDragStart: _zoomDragStart,
+                                          onZoomDragEnd: _zoomDragEnd,
                                           maxZoom: _maxZoom,
                                           lens: _graphLens,
                                           onLens: (lens) =>
@@ -2526,15 +2609,12 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
                                                     width: axis.width,
                                                     child: _LayerArea(
                                                       comp: comp,
-                                                      layers: layers,
+                                                      rows: rows,
                                                       selectedIds:
                                                           ui.selectedLayerIds,
                                                       layerDrag: _layerDrag,
                                                       blockHeights:
                                                           blockHeights,
-                                                      open: _open,
-                                                      sequenceExtra:
-                                                          _sequenceExtra,
                                                       onOpenSequence:
                                                           _toggleSequenceView,
                                                       onGraphHeight: (entry,
@@ -2545,9 +2625,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
                                                                   .internallayerId
                                                                   .toString()] = h),
                                                       sequenceBlanks:
-                                                          _sequenceBlanks(
-                                                              layers,
-                                                              blockHeights),
+                                                          _sequenceBlanks(rows),
                                                       hScroll: _hLane,
                                                       onClipPreview: (entry,
                                                               clip, keys) =>
@@ -2561,7 +2639,6 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
                                                         retime: BridgeScalar
                                                             .keyframed(keys),
                                                       ),
-                                                      hasAudio: _hasAudio,
                                                       peaks: _peaks,
                                                       waveformStyle:
                                                           _waveformStyle,
@@ -2677,6 +2754,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
                                           onZoom: _setZoom,
                                           onZoomLive: (z) =>
                                               _setZoom(z, fly: false),
+                                          onZoomDragStart: _zoomDragStart,
+                                          onZoomDragEnd: _zoomDragEnd,
                                           maxZoom: _maxZoom,
                                         ),
                                       ],
@@ -4759,7 +4838,11 @@ Future<void> _showLayerMenu(
 /// The left column: one row per layer, with its switches and columns.
 class _Outline extends StatelessWidget {
   final CompositionReference comp;
-  final List<BridgeLayerEntry> layers;
+
+  /// The layers as the panel decided them — the same [LayerRow] list the lane
+  /// area draws from, so a row's fold-out, its open Sequence view and its
+  /// height are one answer rather than two that agree.
+  final List<LayerRow> rows;
 
   /// The column groups in their current order and at their current widths
   /// (docs/07 §4.2) — rows draw their cells to match the header's.
@@ -4781,14 +4864,9 @@ class _Outline extends StatelessWidget {
   final Map<String, List<Color>> graphColours;
   final ValueChanged<String> onSelectProperty;
   final ValueChanged<String> onEditProperty;
-  final Set<String> open;
 
-  /// How much taller each open sequence view makes its row, by layer id, and
-  /// how to toggle one (K-248). The outline reserves exactly what the lanes
-  /// draw, so the two halves stay in step.
-  final Map<String, double> sequenceExtra;
+  /// Open or close a Sequence layer's view (K-248).
   final void Function(BridgeLayerEntry entry)? onOpenSequence;
-  final Map<String, bool> hasAudio;
   final ValueChanged<String> onToggle;
   final int playheadFrame;
   final ValueChanged<int> onSeek;
@@ -4806,7 +4884,7 @@ class _Outline extends StatelessWidget {
 
   const _Outline({
     required this.comp,
-    required this.layers,
+    required this.rows,
     required this.groupOrder,
     required this.widths,
     required this.selectedIds,
@@ -4815,10 +4893,7 @@ class _Outline extends StatelessWidget {
     required this.graphColours,
     required this.onSelectProperty,
     required this.onEditProperty,
-    required this.open,
-    this.sequenceExtra = const {},
     this.onOpenSequence,
-    required this.hasAudio,
     required this.onToggle,
     required this.playheadFrame,
     required this.onSeek,
@@ -4833,10 +4908,14 @@ class _Outline extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final valueColumn = valueColumnFor(groupOrder, widths);
+    // The layer entries, for the parent picker's menu — every layer is on
+    // offer as a parent, and they come from the row list rather than from a
+    // second list handed in beside it.
+    final layers = [for (final row in rows) row.entry];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (var i = 0; i < layers.length; i++)
+        for (var i = 0; i < rows.length; i++)
           LayerDragSlide(
             drag: layerDrag,
             heights: blockHeights,
@@ -4845,30 +4924,25 @@ class _Outline extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 _OutlineRow(
-                  key: ValueKey<String>(
-                      'tl-row-${layers[i].layer.internallayerId}'),
+                  key: ValueKey<String>('tl-row-${rows[i].id}'),
                   comp: comp,
-                  entry: layers[i],
-                  onOpenSequence: () => onOpenSequence?.call(layers[i]),
+                  entry: rows[i].entry,
+                  onOpenSequence: () => onOpenSequence?.call(rows[i].entry),
                   layers: layers,
                   groupOrder: groupOrder,
                   widths: widths,
                   index: i,
-                  count: layers.length,
+                  count: rows.length,
                   // A local compare, not a bridge call: both ids already sit here.
                   selected:
-                      selectedIds.contains(layers[i].layer.internallayerId),
+                      selectedIds.contains(rows[i].entry.layer.internallayerId),
                   // A layer marks itself when its fold was last touched, and when
                   // a selected property is one of its own (docs/07 §4.3).
-                  highlighted: highlighted ==
-                          layers[i].layer.internallayerId.toString() ||
-                      selectedProperties.any((p) => isUnderPath(
-                          layers[i].layer.internallayerId.toString(), p)),
-                  open:
-                      open.contains(layers[i].layer.internallayerId.toString()),
-                  onToggleOpen: () =>
-                      onToggle(layers[i].layer.internallayerId.toString()),
-                  onSelect: () => onSelect(layers[i].layer),
+                  highlighted: highlighted == rows[i].id ||
+                      selectedProperties.any((p) => isUnderPath(rows[i].id, p)),
+                  open: rows[i].open,
+                  onToggleOpen: () => onToggle(rows[i].id),
+                  onSelect: () => onSelect(rows[i].entry.layer),
                   onChanged: onChanged,
                   layerDrag: layerDrag,
                   renameRequest: renameRequest,
@@ -4878,50 +4952,40 @@ class _Outline extends StatelessWidget {
                 // outline has nothing to put here — the clips and their envelope are
                 // the lane's to draw — but it must leave exactly the same gap, or
                 // every row below this one sits at a different height on the two
-                // sides of the Timeline and the halves stop lining up.
-                if (sequenceExtra
-                    .containsKey(layers[i].layer.internallayerId.toString()))
+                // sides of the Timeline and the halves stop lining up. Both sides
+                // ask the same [LayerRow], so the gap and the view cannot be
+                // opened by one half and not the other.
+                if (rows[i].sequenceExtra != null)
                   SizedBox(
-                    key: ValueKey<String>(
-                        'tl-seq-room-${layers[i].layer.internallayerId}'),
-                    height: sequenceExtra[
-                        layers[i].layer.internallayerId.toString()],
+                    key: ValueKey<String>('tl-seq-room-${rows[i].id}'),
+                    height: rows[i].sequenceExtra,
                   ),
                 // The fold-out, from the same list the lanes leave room for.
-                if (open.contains(layers[i].layer.internallayerId.toString()))
-                  for (final row in layerFoldRows(
-                    entry: layers[i],
-                    open: open,
-                    hasAudio:
-                        hasAudio[layers[i].layer.internallayerId.toString()] ??
-                            false,
-                  ))
-                    // A raw pointer listener, not a gesture: touching a sub-item
-                    // highlights its layer, and it must never fight the row's own
-                    // taps and drags for the gesture arena.
-                    Listener(
-                      onPointerDown: (_) => onHighlight(
-                          layers[i].layer.internallayerId.toString()),
-                      child: _FoldRow(
-                        comp: comp,
-                        layer: layers[i].layer,
-                        row: row,
-                        valueColumn: valueColumn,
-                        timingsColumn: timingsColumnFor(groupOrder, widths),
-                        baseIndent: identityStart(groupOrder, widths),
-                        path: foldRowPath(
-                            layers[i].layer.internallayerId.toString(), row),
-                        selectedProperties: selectedProperties,
-                        graphColours: graphColours,
-                        onSelectProperty: onSelectProperty,
-                        onEditProperty: onEditProperty,
-                        playheadFrame: playheadFrame,
-                        onSeek: onSeek,
-                        onToggle: onToggle,
-                        onChanged: onChanged,
-                        locked: layers[i].info.switches.locked,
-                      ),
+                for (final row in rows[i].drawnRows)
+                  // A raw pointer listener, not a gesture: touching a sub-item
+                  // highlights its layer, and it must never fight the row's own
+                  // taps and drags for the gesture arena.
+                  Listener(
+                    onPointerDown: (_) => onHighlight(rows[i].id),
+                    child: _FoldRow(
+                      comp: comp,
+                      layer: rows[i].entry.layer,
+                      row: row,
+                      valueColumn: valueColumn,
+                      timingsColumn: timingsColumnFor(groupOrder, widths),
+                      baseIndent: identityStart(groupOrder, widths),
+                      path: foldRowPath(rows[i].id, row),
+                      selectedProperties: selectedProperties,
+                      graphColours: graphColours,
+                      onSelectProperty: onSelectProperty,
+                      onEditProperty: onEditProperty,
+                      playheadFrame: playheadFrame,
+                      onSeek: onSeek,
+                      onToggle: onToggle,
+                      onChanged: onChanged,
+                      locked: rows[i].entry.info.switches.locked,
                     ),
+                  ),
               ],
             ),
           ),
@@ -5049,6 +5113,19 @@ class _OutlineRowState extends State<_OutlineRow> {
     if (widget.entry.info.switches.locked) return;
     setState(
         () => _rename = TextEditingController(text: widget.entry.info.name));
+  }
+
+  /// Escape: shut the editor and rename nothing (K-323). Shares the closing
+  /// half of [_commitRename] — the write is the only difference between them.
+  void _cancelRename() {
+    if (!mounted || _rename == null) return;
+    setState(() {
+      _rename?.dispose();
+      _rename = null;
+    });
+    if (widget.renameRequest.value == layer.internallayerId) {
+      widget.renameRequest.value = null;
+    }
   }
 
   void _commitRename() {
@@ -5412,6 +5489,7 @@ class _OutlineRowState extends State<_OutlineRow> {
         // Clicking anywhere else finishes the edit and keeps what was typed.
         // It used to leave the field open and lose the change (K-243).
         onTapOutside: _commitRename,
+        onCancelled: _cancelRename,
       );
     }
     return GestureDetector(
@@ -5669,21 +5747,19 @@ class _OutlineRowState extends State<_OutlineRow> {
 /// The right column: the ruler, the playhead, and one bar per layer.
 class _LayerArea extends StatelessWidget {
   final CompositionReference comp;
-  final List<BridgeLayerEntry> layers;
+
+  /// The layers as the panel decided them — the same [LayerRow] list the
+  /// outline draws from. Which rows a layer shows, whether its Sequence view
+  /// is open and how tall the block is are read here rather than worked out
+  /// again, so this half cannot come to a different answer from the other.
+  final List<LayerRow> rows;
 
   /// The selection as ids, the same set the outline draws from (K-217) — a bar
   /// outlines when its name row is lit, so the two halves of the table never
   /// disagree about what is chosen.
   final Set<UuidValue> selectedIds;
 
-  /// Which layers are twirled open in the outline. Read only to leave the same
-  /// room their property rows take, so a bar never drifts away from its name.
-  final Set<String> open;
-
-  /// How much taller each open sequence view makes its row, by layer id, and
-  /// how to toggle one (K-248). The outline reserves exactly what the lanes
-  /// draw, so the two halves stay in step.
-  final Map<String, double> sequenceExtra;
+  /// Open or close a Sequence layer's view (K-248).
   final void Function(BridgeLayerEntry entry)? onOpenSequence;
 
   /// The graph half of a sequence view has been dragged to a new height.
@@ -5701,10 +5777,6 @@ class _LayerArea extends StatelessWidget {
 
   /// Where the open sequence views sit, so the row seams skip them (K-248).
   final List<(double, double)> sequenceBlanks;
-
-  /// Which layers carry sound — passed through only so the row list this side
-  /// builds is identical to the outline's.
-  final Map<String, bool> hasAudio;
 
   /// Each layer's source peaks, for the waveform lanes.
   final Map<String, BridgeAudioPeaks> peaks;
@@ -5779,16 +5851,13 @@ class _LayerArea extends StatelessWidget {
 
   const _LayerArea({
     required this.comp,
-    required this.layers,
+    required this.rows,
     required this.selectedIds,
-    required this.open,
-    this.sequenceExtra = const {},
     this.onOpenSequence,
     this.onGraphHeight,
     this.sequenceBlanks = const [],
     this.hScroll,
     this.onClipPreview,
-    required this.hasAudio,
     required this.peaks,
     required this.waveformStyle,
     required this.fps,
@@ -5815,24 +5884,14 @@ class _LayerArea extends StatelessWidget {
     required this.onWheel,
   });
 
-  /// The fold rows the lanes leave room for, per layer — one walk shared by
-  /// the lane column, the marquee's hit maths and the diamonds.
-  List<LayerFoldRow> _rowsOf(BridgeLayerEntry entry) => layerFoldRows(
-        entry: entry,
-        open: open,
-        hasAudio: hasAudio[entry.layer.internallayerId.toString()] ?? false,
-      );
-
   /// Every keyframe the box caught, walking the same rows the lanes draw —
   /// y from the row stack, x from the key's frame on the axis.
   Set<String> _keysIn(Rect rect) {
     final caught = <String>{};
     var y = 0.0;
-    for (final entry in layers) {
-      final id = entry.layer.internallayerId.toString();
+    for (final layer in rows) {
       y += _rowHeight; // the layer's own bar row
-      if (!open.contains(id)) continue;
-      for (final row in _rowsOf(entry)) {
+      for (final row in layer.drawnRows) {
         final rowTop = y;
         y += _rowHeight;
         if (rowTop + _rowHeight < rect.top || rowTop > rect.bottom) continue;
@@ -5840,7 +5899,7 @@ class _LayerArea extends StatelessWidget {
         for (var i = 0; i < keys.length; i++) {
           final x = axis.xOf(laneKeyFrame(keys[i], fps));
           if (x >= rect.left && x <= rect.right) {
-            caught.add('${foldRowPath(id, row)}#$i');
+            caught.add('${foldRowPath(layer.id, row)}#$i');
           }
         }
       }
@@ -5985,7 +6044,7 @@ class _LayerArea extends StatelessWidget {
                             Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                                for (var i = 0; i < layers.length; i++)
+                                for (var i = 0; i < rows.length; i++)
                                   // The block slides by the same rule and
                                   // the same heights the outline's does, so
                                   // a layer dragged up the stack takes its
@@ -6010,10 +6069,7 @@ class _LayerArea extends StatelessWidget {
                                       // paints over the content and
                                       // occupies no layout at all.
                                       foregroundDecoration:
-                                          sequenceExtra.containsKey(layers[i]
-                                                  .layer
-                                                  .internallayerId
-                                                  .toString())
+                                          rows[i].sequenceExtra != null
                                               ? BoxDecoration(
                                                   border: Border.all(
                                                     color: t.accent
@@ -6035,56 +6091,50 @@ class _LayerArea extends StatelessWidget {
                                           // bar drawn across the first of
                                           // them would put a seam through
                                           // the middle of it (K-248).
-                                          if (!sequenceExtra.containsKey(
-                                              layers[i]
-                                                  .layer
-                                                  .internallayerId
-                                                  .toString()))
+                                          if (rows[i].sequenceExtra == null)
                                             _Bar(
                                               key: ValueKey<String>(
-                                                  'tl-bar-${layers[i].layer.internallayerId}'),
+                                                  'tl-bar-${rows[i].id}'),
                                               comp: comp,
-                                              entry: layers[i],
+                                              entry: rows[i].entry,
                                               axis: axis,
                                               razor: razor,
                                               selected: selectedIds.contains(
-                                                  layers[i]
+                                                  rows[i]
+                                                      .entry
                                                       .layer
                                                       .internallayerId),
                                               playheadFrame: () =>
                                                   playhead.value,
                                               onRazor: (frame) =>
-                                                  onRazor(layers[i], frame),
+                                                  onRazor(rows[i].entry, frame),
                                               razorFrameAt: razorFrameAt,
                                               onSelect: () =>
-                                                  onSelect(layers[i].layer),
-                                              onOpenSequence: layers[i]
+                                                  onSelect(rows[i].entry.layer),
+                                              onOpenSequence: rows[i]
+                                                          .entry
                                                           .info
                                                           .kind ==
                                                       BridgeLayerKind.sequence
                                                   ? () => onOpenSequence
-                                                      ?.call(layers[i])
+                                                      ?.call(rows[i].entry)
                                                   : null,
                                               onChanged: onChanged,
                                               dragPreview: dragPreview,
-                                              bounds: bounds[layers[i]
-                                                      .layer
-                                                      .internallayerId
-                                                      .toString()] ??
+                                              bounds: bounds[rows[i].id] ??
                                                   BarBounds.free,
                                             ),
                                           // A Sequence layer's own clips and
                                           // their speed envelope, in the room
-                                          // the row grew for them (K-248).
-                                          if (sequenceExtra.containsKey(
-                                              layers[i]
-                                                  .layer
-                                                  .internallayerId
-                                                  .toString()))
+                                          // the row grew for them (K-248) —
+                                          // the same `sequenceExtra` the
+                                          // outline left the gap for, so the
+                                          // view and its room are one answer.
+                                          if (rows[i].sequenceExtra != null)
                                             SequenceViewFrb(
                                               key: ValueKey<String>(
-                                                  'tl-seq-${layers[i].layer.internallayerId}'),
-                                              entry: layers[i],
+                                                  'tl-seq-${rows[i].id}'),
+                                              entry: rows[i].entry,
                                               axis: axis,
                                               fps: fps,
                                               fpsNum: fpsNum,
@@ -6093,45 +6143,44 @@ class _LayerArea extends StatelessWidget {
                                               style: waveformStyle,
                                               razor: razor,
                                               onRazor: (frame) =>
-                                                  onRazor(layers[i], frame),
+                                                  onRazor(rows[i].entry, frame),
                                               razorFrameAt: razorFrameAt,
                                               onSelect: () =>
-                                                  onSelect(layers[i].layer),
+                                                  onSelect(rows[i].entry.layer),
                                               onClose: () => onOpenSequence
-                                                  ?.call(layers[i]),
-                                              graphHeight: (sequenceExtra[
-                                                          layers[i]
-                                                              .layer
-                                                              .internallayerId
-                                                              .toString()] ??
-                                                      sequenceViewHeight) -
-                                                  sequenceClipExtra,
+                                                  ?.call(rows[i].entry),
+                                              graphHeight:
+                                                  (rows[i].sequenceExtra ??
+                                                          sequenceViewHeight) -
+                                                      sequenceClipExtra,
                                               onGraphHeight: (h) =>
                                                   onGraphHeight?.call(
-                                                      layers[i], h),
+                                                      rows[i].entry, h),
                                               onPreview: (clip, keys) =>
                                                   onClipPreview?.call(
-                                                      layers[i], clip, keys),
+                                                      rows[i].entry,
+                                                      clip,
+                                                      keys),
                                               onChanged: onChanged,
                                             ),
                                           // One lane per fold-out row the outline shows,
                                           // from the same list it builds: keyframe rows
                                           // draw their diamonds, the waveform row its
                                           // peaks (K-172), the rest leave their room.
-                                          if (open.contains(layers[i]
-                                              .layer
-                                              .internallayerId
-                                              .toString()))
+                                          if (rows[i].open)
                                             Column(
                                               key: ValueKey<String>(
-                                                  'tl-lanes-${layers[i].layer.internallayerId}'),
+                                                  'tl-lanes-${rows[i].id}'),
                                               children: [
                                                 for (final row
-                                                    in _rowsOf(layers[i]))
+                                                    in rows[i].drawnRows)
                                                   SizedBox(
                                                     height: _rowHeight,
-                                                    child: _lane(t, layers[i],
-                                                        row, snap),
+                                                    child: _lane(
+                                                        t,
+                                                        rows[i].entry,
+                                                        row,
+                                                        snap),
                                                   ),
                                               ],
                                             ),
@@ -6207,13 +6256,13 @@ class _LayerArea extends StatelessWidget {
   /// panel from the read model and the memoised marker list — so it costs no
   /// bridge calls, and no lane pays for another lane's targets.
   List<SnapTarget> _snapTargets() => snapTargetsOf(
-        layers: layers,
+        layers: [for (final row in rows) row.entry],
         compMarkers: markersOf(comp),
         keyRows: [
-          for (final entry in layers)
-            for (final row in _rowsOf(entry))
+          for (final layer in rows)
+            for (final row in layer.foldRows)
               (
-                rowId: foldRowPath(entry.layer.internallayerId.toString(), row),
+                rowId: foldRowPath(layer.id, row),
                 frames: [
                   for (final k in laneKeysOf(row)) laneKeyFrame(k, fps),
                 ],
@@ -6648,6 +6697,10 @@ class _LaneBottomBar extends StatelessWidget {
   /// A zoom asked for continuously, while the handle is dragged. The drag is
   /// the motion, so this one arrives at once.
   final ValueChanged<double> onZoomLive;
+
+  /// The drag's ends, so the panel can anchor once per gesture (K-319).
+  final VoidCallback? onZoomDragStart;
+  final VoidCallback? onZoomDragEnd;
   final bool magnet;
   final VoidCallback onToggleMagnet;
 
@@ -6664,6 +6717,8 @@ class _LaneBottomBar extends StatelessWidget {
     required this.hScroll,
     required this.onZoom,
     required this.onZoomLive,
+    this.onZoomDragStart,
+    this.onZoomDragEnd,
     required this.magnet,
     required this.onToggleMagnet,
     this.lens,
@@ -6800,7 +6855,10 @@ class _LaneBottomBar extends StatelessWidget {
                             showValue: false,
                             // Dragged, the zoom follows the finger with no
                             // flight; tapped, it flies to where the track was
-                            // clicked (K-293).
+                            // clicked (K-293). The drag's ends bracket the
+                            // gesture so the panel anchors once (K-319).
+                            onChangeStart: onZoomDragStart,
+                            onChangeEnd: onZoomDragEnd,
                             onChangeLive: (t) =>
                                 onZoomLive(zoomForSliderPosition(t, maxZoom)),
                             onChanged: (t) =>
@@ -7107,13 +7165,13 @@ class _BarState extends State<_Bar> {
                     // The layer's label colour (K-188): the same chip the
                     // outline swatch shows, so recolouring a layer recolours
                     // its bar — and each kind starts on its own colour.
-                    color: t.labelColour(info.label),
-                    // Selected bars take the accent as an outline rather than a
-                    // fill: the fill is the label colour and says which layer
-                    // this is, which is not a thing selection may overwrite.
-                    border: widget.selected
-                        ? Border.all(color: t.accent, width: 1)
-                        : null,
+                    // Selected bars brighten that colour rather than growing
+                    // an outline: the hue still says which layer this is, and
+                    // a lighter bar reads at a glance where a 1px box did not.
+                    color: widget.selected
+                        ? Color.lerp(
+                            t.labelColour(info.label), t.textPrimary, 0.35)!
+                        : t.labelColour(info.label),
                     borderRadius: BorderRadius.circular(2),
                   ),
                   child: Stack(
@@ -7191,7 +7249,7 @@ class _BarState extends State<_Bar> {
                     label: m.marker.label,
                     fill: t.marker,
                     ink: t.surface0,
-                    text: t.caption.copyWith(fontWeight: FontWeight.w400),
+                    text: t.caption,
                   ),
                 ),
               ),

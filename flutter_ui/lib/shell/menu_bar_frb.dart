@@ -231,7 +231,7 @@ class LumitMenuBarFrb extends StatelessWidget {
             // palette this bar builds, rather than the shell building a second
             // one from a list that would drift out of step with these menus.
             _PaletteHotkey(onRequested: () => _palette(context)),
-            // The same, for Ctrl+Space (K-319): the console's effects and comps
+            // The same, for Ctrl+Space (K-324): the console's effects and comps
             // come from this file for the same reason the palette's commands do.
             _ConsoleHotkey(onRequested: () => _console(context)),
           ],
@@ -335,7 +335,7 @@ class LumitMenuBarFrb extends StatelessWidget {
     );
   }
 
-  /// The Ctrl+Space console (K-319). Its two halves are built here beside the
+  /// The Ctrl+Space console (K-324). Its two halves are built here beside the
   /// menus for the same reason the palette's list is: the effects it applies
   /// and the comps it fronts must be the ones the menus mean.
   Future<void> _console(BuildContext context) async {
@@ -1269,7 +1269,7 @@ class _PaletteHotkeyState extends State<_PaletteHotkey> {
   }
 }
 
-/// The same for the Ctrl+Space console (K-319): holds the subscription to
+/// The same for the Ctrl+Space console (K-324): holds the subscription to
 /// [LumitUiState.consoleRequest] and draws nothing.
 class _ConsoleHotkey extends StatefulWidget {
   final VoidCallback onRequested;

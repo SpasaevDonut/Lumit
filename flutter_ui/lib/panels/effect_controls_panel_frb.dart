@@ -35,11 +35,14 @@
 
 import 'dart:async';
 
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
+import 'package:lumit_flutter/src/rust/api/keymap.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
+import 'package:lumit_flutter/state/dock.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
@@ -82,6 +85,61 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
   bool _isOpen(String path) => !_shut.contains(path);
   void _toggle(String path) => setState(() {
         if (!_shut.remove(path)) _shut.add(path);
+      });
+
+  /// The effect whose heading is an inline rename editor, or null (K-321).
+  UuidValue? _renamingEffect;
+
+  @override
+  void initState() {
+    super.initState();
+    // `Enter` renames the selected effect (K-321) — registered on the
+    // hardware keyboard like every panel command; stands down for modals,
+    // focused fields, and whenever this panel is not the active one.
+    HardwareKeyboard.instance.addHandler(_onKey);
+  }
+
+  @override
+  void dispose() {
+    HardwareKeyboard.instance.removeHandler(_onKey);
+    super.dispose();
+  }
+
+  bool _onKey(KeyEvent event) {
+    if (event is! KeyDownEvent || !mounted) return false;
+    if (lumitModalOpen) return false;
+    final focused = FocusManager.instance.primaryFocus?.context;
+    if (focused != null &&
+        (focused.widget is EditableText ||
+            focused.findAncestorWidgetOfExactType<EditableText>() != null)) {
+      return false;
+    }
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    if (ui.activePanel.value != Panel.effectControls) return false;
+    final action = ui.keymap.actionFor(BridgeKeyContext.effects, event);
+    if (action == 'effect.rename') {
+      final picked = ui.selectedEffects.value;
+      if (picked.length != 1 || _renamingEffect != null) return false;
+      setState(() => _renamingEffect = picked.first);
+      return true;
+    }
+    return false;
+  }
+
+  /// Which parameter twirls the owner has opened or shut, by path.
+  ///
+  /// A map rather than the closed-set [_shut] because a group carries its own
+  /// default: most arrive collapsed (they hold the advanced controls), so
+  /// "absent" cannot mean open here the way it does for a section. Absent means
+  /// "whatever the schema said", and the entry appears the first time the owner
+  /// disagrees.
+  final Map<String, bool> _groupOpen = <String, bool>{};
+
+  bool _isGroupOpen(String path, bool collapsedByDefault) =>
+      _groupOpen[path] ?? !collapsedByDefault;
+
+  void _toggleGroup(String path, bool collapsedByDefault) => setState(() {
+        _groupOpen[path] = !_isGroupOpen(path, collapsedByDefault);
       });
 
   @override
@@ -257,6 +315,30 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
                         open: _isOpen('fx-${info.effects[index].id}'),
                         onToggle: () => _toggle('fx-${info.effects[index].id}'),
                         selected: picked.contains(info.effects[index].id),
+                        renaming: _renamingEffect == info.effects[index].id,
+                        onRenamed: (name) {
+                          // Stage the name on a fresh handle and commit the
+                          // stack — one SetLayerEffects, one undo step, the
+                          // same shape every stack edit has.
+                          final stack = layer.getEffects();
+                          for (final instance in stack) {
+                            if (instance.id() == info.effects[index].id) {
+                              instance.setCustomName(name: name);
+                              try {
+                                layer.setEffects(effects: stack);
+                              } catch (_) {
+                                // The stack changed under us; re-reading is
+                                // the recovery.
+                              }
+                              break;
+                            }
+                          }
+                          setState(() => _renamingEffect = null);
+                          ui.model.refresh();
+                        },
+                        // Escape: close the editor, write nothing (K-323).
+                        onRenameCancelled: () =>
+                            setState(() => _renamingEffect = null),
                         onSelect: () => ui.pickEffect(
                           layer,
                           info.effects[index].id,
@@ -280,6 +362,8 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
                         comp: comp,
                         playheadFrame: playhead,
                         onSeek: (frame) => ui.playheadFrame.value = frame,
+                        isGroupOpen: _isGroupOpen,
+                        onToggleGroup: _toggleGroup,
                       ),
                 ],
               ),
@@ -422,6 +506,12 @@ class _EffectSection extends StatelessWidget {
   /// The stack itself changed (enabled, reordered, removed) — re-read it.
   final VoidCallback onStackChanged;
 
+  /// The heading is an inline rename editor (K-321), its commit, and the
+  /// Escape that throws the edit away instead (K-323).
+  final bool renaming;
+  final ValueChanged<String>? onRenamed;
+  final VoidCallback? onRenameCancelled;
+
   /// Write a parameter — a typed value, or the release of a drag. One op.
   final void Function(UuidValue effect, String param, BridgeEffectValue value)
       onWrite;
@@ -429,6 +519,13 @@ class _EffectSection extends StatelessWidget {
   /// A drag tick: preview it, do not commit it.
   final void Function(UuidValue effect, String param, BridgeEffectValue value)
       onLive;
+
+  /// Whether a parameter group's twirl is open, and toggling it. Held by the
+  /// panel rather than here because this card is rebuilt from the read model on
+  /// every change, and a fold that reset itself each time would be unusable.
+  /// The schema's `collapsed` is the default until the owner touches it.
+  final bool Function(String path, bool collapsedByDefault) isGroupOpen;
+  final void Function(String path, bool collapsedByDefault) onToggleGroup;
 
   const _EffectSection({
     super.key,
@@ -448,6 +545,11 @@ class _EffectSection extends StatelessWidget {
     required this.onStackChanged,
     required this.onWrite,
     required this.onLive,
+    this.renaming = false,
+    this.onRenamed,
+    this.onRenameCancelled,
+    required this.isGroupOpen,
+    required this.onToggleGroup,
   });
 
   /// Run [op] on a freshly read handle for this card's effect.
@@ -489,11 +591,16 @@ class _EffectSection extends StatelessWidget {
     final values = {for (final v in info.values) v.id: v.value};
 
     return FxSection(
-      title: effectLabelOf(info.name),
+      // The user's own name where one is set (K-321); the effect's label
+      // otherwise.
+      title: info.customName ?? effectLabelOf(info.name),
       open: open,
       onToggle: onToggle,
       selected: selected,
       onSelect: onSelect,
+      renaming: renaming,
+      onRenamed: onRenamed,
+      onRenameCancelled: onRenameCancelled,
       twirlKey: ValueKey<String>('fx-twirl-$id'),
       leading: LumitTooltip(
         message: info.enabled ? l10n.tipDisable : l10n.tipEnable,
@@ -595,6 +702,16 @@ class _EffectSection extends StatelessWidget {
       };
     }
 
+    // Which rows another parameter has taken over (`EnabledWhen`, K-313).
+    // Judged on what the panel is SHOWING, staged drag included, so ticking a
+    // checkbox greys its dependent row on the spot rather than after the commit
+    // round-trips.
+    final shown = {
+      for (final p in params)
+        if ((stagedValue(id, p.id) ?? values[p.id]) case final v?) p.id: v,
+    };
+    final disabled = disabledParams(info.name, shown);
+
     Widget rowFor(BridgeParamInfo param) => EffectParamRowFrb(
           key: ValueKey<String>('fx-row-$id-${param.id}'),
           effectId: id,
@@ -608,6 +725,7 @@ class _EffectSection extends StatelessWidget {
           onWrite: onWrite,
           onLive: onLive,
           twoColumn: true,
+          enabled: !disabled.contains(param.id),
           // The effect's other values, for a control whose behaviour
           // depends on a sibling (the depth-of-field dropper reads the
           // effect's own `depth` layer).
@@ -640,6 +758,11 @@ class _EffectSection extends StatelessWidget {
             onWrite: onWrite,
             onLive: onLive,
             twoColumn: true,
+            // A point is one row over two parameters, so it goes quiet only
+            // when both halves have been taken over — which is how the schema
+            // declares them.
+            enabled:
+                !disabled.contains(param.id) || !disabled.contains(next.id),
             pickPixels: pickablePointParams[param.id],
           ));
           i += 2;

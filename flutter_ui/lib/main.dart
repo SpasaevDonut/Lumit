@@ -536,7 +536,7 @@ class LumitUiState extends ChangeNotifier {
 
   void requestPalette() => paletteRequest.value++;
 
-  /// Bumped when `Ctrl+Space` asks for the FX console (K-319). Its effects,
+  /// Bumped when `Ctrl+Space` asks for the FX console (K-324). Its effects,
   /// comps and radial entries are the menu bar's, for the same reason the
   /// palette's commands are.
   final ValueNotifier<int> consoleRequest = ValueNotifier(0);
@@ -1709,6 +1709,13 @@ class _LumitAppViewState extends State<LumitAppView> {
             focused.findAncestorWidgetOfExactType<EditableText>() != null)) {
       return KeyEventResult.ignored;
     }
+    // A focused house control (a dialog's OK button, a tabbed-to checkbox)
+    // keeps its keys the same way a text field does: Enter or Space there
+    // presses the control, and must not also run a panel command underneath
+    // it (K-319).
+    if (FocusManager.instance.primaryFocus is ControlFocusNode) {
+      return KeyEventResult.ignored;
+    }
 
     final project = state.project;
     final comp = ui.selectedComp;
@@ -1773,7 +1780,7 @@ class _LumitAppViewState extends State<LumitAppView> {
         }
       case 'console.open':
         // The menu bar owns the console's lists too, so the key asks for it
-        // rather than assembling a second one (K-319).
+        // rather than assembling a second one (K-324).
         ui.requestConsole();
       case 'palette.open':
         // The menu bar owns the palette's list of commands, so the key asks

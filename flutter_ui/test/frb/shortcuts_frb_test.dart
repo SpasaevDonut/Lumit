@@ -68,7 +68,7 @@ void main() {
       expect(asked, 1);
     });
 
-    /// `Ctrl+Space` asks the same bar for the FX console (K-319) — and the
+    /// `Ctrl+Space` asks the same bar for the FX console (K-324) — and the
     /// bare space bar must still reach the transport, which is the thing a
     /// modified space bar is most likely to have broken.
     testWidgets('Ctrl+Space asks for the FX console, and space still plays',

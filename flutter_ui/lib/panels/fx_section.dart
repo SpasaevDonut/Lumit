@@ -81,6 +81,19 @@ class FxSection extends StatelessWidget {
   /// The rows under the heading, drawn only while [open].
   final List<Widget> rows;
 
+  /// While true the heading's name is an inline editor instead of a label —
+  /// how an effect is renamed (`Enter` on the selected effect, K-321).
+  /// Sections that cannot be renamed (Source, Transform) never set it.
+  final bool renaming;
+
+  /// The rename's commit: the typed name, empty to clear back to the
+  /// effect's own label. Called on Enter and on clicking away, the same
+  /// contract every inline rename in the application has (K-243).
+  final ValueChanged<String>? onRenamed;
+
+  /// `Escape` while renaming: close the editor and keep the old name (K-323).
+  final VoidCallback? onRenameCancelled;
+
   const FxSection({
     super.key,
     required this.title,
@@ -96,6 +109,9 @@ class FxSection extends StatelessWidget {
     this.twirlKey,
     this.dragIndex,
     this.onDropped,
+    this.renaming = false,
+    this.onRenamed,
+    this.onRenameCancelled,
   });
 
   @override
@@ -209,9 +225,15 @@ class FxSection extends StatelessWidget {
                       const SizedBox(width: 6),
                     ],
                     Expanded(
-                      child: Text(title,
-                          style: t.bodyPrimary,
-                          overflow: TextOverflow.ellipsis),
+                      child: renaming && onRenamed != null
+                          ? _RenameField(
+                              initial: title,
+                              onDone: onRenamed!,
+                              onCancel: onRenameCancelled ?? () {},
+                            )
+                          : Text(title,
+                              style: t.bodyPrimary,
+                              overflow: TextOverflow.ellipsis),
                     ),
                   ],
                 ),
@@ -223,6 +245,47 @@ class FxSection extends StatelessWidget {
             ],
           ),
         ),
+      );
+}
+
+/// The heading's inline rename editor (K-321): opens with the current name
+/// selected — a name is retyped far more often than amended — commits on
+/// Enter or on clicking away, like every inline rename (K-243), and throws the
+/// edit away on Escape (K-323).
+class _RenameField extends StatefulWidget {
+  final String initial;
+  final ValueChanged<String> onDone;
+  final VoidCallback onCancel;
+  const _RenameField(
+      {required this.initial, required this.onDone, required this.onCancel});
+
+  @override
+  State<_RenameField> createState() => _RenameFieldState();
+}
+
+class _RenameFieldState extends State<_RenameField> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initial,
+  )..selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: widget.initial.length,
+    );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => HouseTextField(
+        key: const ValueKey('fx-rename-field'),
+        controller: _controller,
+        width: fxNameColumnWidth - 40,
+        autofocus: true,
+        submitOnLostFocus: true,
+        onSubmitted: widget.onDone,
+        onCancelled: widget.onCancel,
       );
 }
 
@@ -260,6 +323,61 @@ Widget fxTwoColumnRow({
         ),
       ],
     );
+
+/// A parameter group's own twirl inside a section (P4, K-145): the sub-heading
+/// an effect tucks its advanced controls behind — Bokeh's Depth map, Shake's
+/// Per-axis wobble, Matte key's Screen matte.
+///
+/// **Why it is a row and not a nested section.** The panel is one list
+/// (docs/07 §6), and a group is a fold *within* a section, not a section of its
+/// own: it keeps the same hairline, the same name column and the same padding
+/// as the rows around it, and differs only by a twirl and a heavier label. A
+/// nested [FxSection] would bring its own heading bar and — in round mode — its
+/// own card, which would read as an effect inside an effect.
+///
+/// It is indented by the keyframe gutter so its twirl sits where the parameter
+/// stopwatches sit, which is what makes the fold read as belonging to the rows
+/// beneath it rather than to the effect heading above.
+Widget fxGroupHeaderRow(
+  BuildContext context, {
+  required String label,
+  required bool open,
+  required VoidCallback onToggle,
+  Key? key,
+}) {
+  final t = ThemeScope.of(context).theme;
+  return GestureDetector(
+    key: key,
+    behavior: HitTestBehavior.opaque,
+    onTap: onToggle,
+    child: Row(
+      children: [
+        SizedBox(
+          width: fxNameColumnWidth,
+          child: Row(
+            children: [
+              const SizedBox(width: 2),
+              lumitIcon(
+                open ? LumitIcon.twirlOpen : LumitIcon.twirlClosed,
+                size: iconSize,
+                color: open ? t.textPrimary : t.textMuted,
+              ),
+              const SizedBox(width: 2),
+              Expanded(
+                child: Text(
+                  label,
+                  style: t.bodyPrimary,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const Expanded(child: SizedBox.shrink()),
+      ],
+    ),
+  );
+}
 
 /// A section heading's text action — Reset. Sits in the value column, so it
 /// reads as an action *on* the values rather than on the panel.

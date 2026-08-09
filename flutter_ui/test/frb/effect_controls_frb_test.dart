@@ -17,9 +17,13 @@ import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/shell/menu_bar_frb.dart';
 import 'package:lumit_flutter/state/clipboard.dart';
 import 'package:lumit_flutter/panels/effect_controls_panel_frb.dart';
-import 'package:lumit_flutter/panels/effect_param_row_frb.dart' show effectLabelOf;
+import 'package:lumit_flutter/panels/effect_param_row_frb.dart'
+    show effectLabelOf, EffectParamRowFrb;
+import 'package:lumit_flutter/widgets/angle_dial.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
+
+import 'package:lumit_flutter/state/dock.dart';
 
 import 'frb_test_support.dart';
 
@@ -690,6 +694,108 @@ void main() {
           reason: 'the curated default is the reference cine prime');
       expect(find.text('Lens file'), findsOneWidget,
           reason: 'a user .lens file covers everything the palette leaves out');
+    });
+
+    testWidgets('Enter renames the selected effect, and the name persists',
+        (tester) async {
+      // K-321: an effect instance can carry the user's own name. Enter on the
+      // selected effect opens the heading's inline editor; the committed name
+      // shows in place of the label and reaches the document.
+      final p = withLayer();
+      p.layer.addEffect(name: 'blur');
+      await mount(tester, p);
+      p.uiState.activePanel.value = Panel.effectControls;
+
+      final stack = p.layer.getEffects();
+      await tester.tap(find.text(effectLabelOf(stack.single.name())));
+      await tester.pumpAndSettle();
+      expect(p.uiState.selectedEffects.value, [stack.single.id()]);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('fx-rename-field')), findsOneWidget,
+          reason: 'Enter on the selected effect opens the inline rename');
+
+      await tester.enterText(
+          find.byKey(const ValueKey('fx-rename-field')), 'Blur the sign');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Blur the sign'), findsOneWidget,
+          reason: 'the heading shows the given name');
+      expect(p.layer.getEffects().single.getInfo().customName, 'Blur the sign',
+          reason: 'the name reached the document');
+
+      // An empty rename clears back to the label.
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.byKey(const ValueKey('fx-rename-field')), '');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(p.layer.getEffects().single.getInfo().customName, isNull);
+      expect(find.text(effectLabelOf('blur')), findsOneWidget,
+          reason: 'a cleared name falls back to the effect label');
+
+      // Escape throws the edit away (K-323). Enter, clicking away and an
+      // empty commit all *write*; without this there is no way out that does
+      // not, and Escape fell through to a modal dismissal with no modal.
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.byKey(const ValueKey('fx-rename-field')), 'Regretted');
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('fx-rename-field')), findsNothing,
+          reason: 'Escape closes the rename editor');
+      expect(p.layer.getEffects().single.getInfo().customName, isNull,
+          reason: 'and writes nothing to the document');
+    });
+
+    // Depth of field's folded aperture (K-313): the twirls, the greyed rows and
+    // the angle dial all arrive on the panel. This is the front half of the
+    // fold — the back half (that the shipped defaults render the historical
+    // disc bit for bit) is pinned in the engine tests.
+    testWidgets('depth of field folds its aperture behind twirls, and greys',
+        (tester) async {
+      final p = withLayer();
+      p.layer.addEffect(name: 'dof');
+      p.uiState.model.refresh();
+      await mount(tester, p, transform: false);
+
+      // The three twirls show their headers, not their members.
+      for (final label in ['Iris', 'Highlights', 'Depth map']) {
+        expect(find.text(label), findsOneWidget);
+      }
+      expect(find.text('Roundness'), findsNothing,
+          reason: 'the aperture arrives collapsed behind its twirl');
+
+      // Twirling Iris open reveals the shape controls, the dial among them.
+      await tester.tap(find.text('Iris'));
+      await tester.pump();
+      expect(find.text('Roundness'), findsOneWidget);
+      expect(find.text('Blades'), findsOneWidget);
+      expect(find.byType(AngleDial), findsOneWidget,
+          reason: 'Rotation is a dial (docs/07 SS6), not a slider');
+
+      // The focus point is one row over an _x/_y pair, with its own crosshair.
+      await tester.tap(find.text('Depth map'));
+      await tester.pump();
+      expect(find.text('Focus point'), findsOneWidget);
+      expect(find.text('Focus point y'), findsNothing);
+
+      // Greying: no depth layer is picked, so everything that reads one is
+      // disabled, while Focus distance — which does not — stays live.
+      final greyed = tester
+          .widgetList<EffectParamRowFrb>(find.byType(EffectParamRowFrb))
+          .where((r) => !r.enabled)
+          .map((r) => r.param.id)
+          .toSet();
+      expect(greyed, contains('depth_channel'));
+      expect(greyed, contains('use_focus_point'));
+      expect(greyed, contains('remove_edge_leak'));
+      expect(greyed, isNot(contains('focus')));
+      expect(greyed, isNot(contains('roundness')));
     });
 
     // Without the built library there is nothing to test against; the harness

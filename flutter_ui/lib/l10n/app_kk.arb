@@ -1,67 +1,67 @@
 {
   "@@locale": "kk",
   "@@x-notes": "Lumit's user-facing text, British English (K-005), the single source translation works from (K-303). Edit this file; every other app_*.arb in this folder comes back from Crowdin and is overwritten by the next sync. Voice: sentence case, calm, no exclamation marks, no emoji, glossary terms exactly (docs/01-GLOSSARY.md section 9 - layer not track, speed not velocity, Retime not time remap, export not render, playhead not CTI). Tooltips are the control's name, not a sentence about it (docs/07-UI-SPEC.md section 13.2): under five words, two where two will do.",
-  "aboutBlurb": "A motion-graphics and compositing editor. Free software under the GNU General Public Licence, version 3.",
+  "aboutBlurb": "Моушн-графика және композитинг редакторы. GNU General Public License, 3-нұсқа бойынша тегін бағдарламалық қамтамасыз ету.",
   "@aboutBlurb": {
     "description": "About window: what Lumit is, and its licence. The licence name is a proper noun — keep it recognisable, and do not translate \"GNU\"."
   },
-  "addAtPlayhead": "Add at playhead",
+  "addAtPlayhead": "Плейхед тұрған жерге қосу",
   "@addAtPlayhead": {
     "description": "Button that puts a marker where the playhead is."
   },
-  "addEffect": "Add effect",
+  "addEffect": "Эффект қосу",
   "@addEffect": {
     "description": "Button that opens the list of built-in effects."
   },
-  "animated": "animated",
+  "animated": "анимацияланған",
   "@animated": {
     "description": "Shown in place of a number when the value is animated rather than fixed. Lower case on purpose — it sits where a value would."
   },
-  "apply": "Apply",
+  "apply": "Қолдану",
   "@apply": {
     "description": "Button that commits a picked value."
   },
-  "armRazor": "Arm razor",
+  "armRazor": "Лезвиені таңдау",
   "@armRazor": {
     "description": "Menu item: pick up the blade that cuts a layer where you click."
   },
-  "bringForward": "Bring forward",
+  "bringForward": "Алға жылжыту",
   "@bringForward": {
     "description": "Context-menu item: move a layer one place up the stack."
   },
-  "cache": "Cache",
+  "cache": "Кэш",
   "@cache": {
     "description": "Bottom strip: heading over the three cache meters."
   },
-  "cacheDeleteTitle": "Delete the frames parked on disk?",
+  "cacheDeleteTitle": "Дискідегі кадрларды өшіру?",
   "@cacheDeleteTitle": {
     "description": "Asked before emptying the disk cache, which deletes real files."
   },
-  "cacheKeepThem": "Keep them",
+  "cacheKeepThem": "Оларды қалдыру",
   "@cacheKeepThem": {
     "description": "Button that declines to delete the parked frames."
   },
-  "cacheLocationBesideProject": "Beside the project",
+  "cacheLocationBesideProject": "Проект файлының жанында",
   "@cacheLocationBesideProject": {
     "description": "Choice of where parked frames live: in a folder next to the project file."
   },
-  "cacheLocationChosenFolder": "A folder I choose",
+  "cacheLocationChosenFolder": "Таңдалған бумада",
   "@cacheLocationChosenFolder": {
     "description": "Choice of where parked frames live: a folder the user picks."
   },
-  "cacheLocationWithLumit": "With Lumit",
+  "cacheLocationWithLumit": "Lumit бумасында",
   "@cacheLocationWithLumit": {
     "description": "Choice of where parked frames live: in Lumit's own application data folder."
   },
-  "cancel": "Cancel",
+  "cancel": "Болдырмау",
   "@cancel": {
     "description": "Button that abandons a dialogue or a running job."
   },
-  "channelAlpha": "Alpha",
+  "channelAlpha": "Альфа",
   "@channelAlpha": {
     "description": "A viewing channel: transparency on its own. A technical term — keep it recognisable."
   },
-  "chooseA": "Choose a {kind}",
+  "chooseA": "{kind} таңдау",
   "@chooseA": {
     "description": "Tooltip on a button that opens a file dialogue. {kind} is the sort of file wanted, e.g. 'LUT'.",
     "placeholders": {
@@ -70,115 +70,115 @@
       }
     }
   },
-  "chooseConfirm": "Choose",
+  "chooseConfirm": "Таңдау",
   "@chooseConfirm": {
     "description": "The confirm button in the system's folder-picking dialogue."
   },
-  "chooseEllipsis": "Choose…",
+  "chooseEllipsis": "Таңдау…",
   "@chooseEllipsis": {
     "description": "Button that opens a file dialogue when nothing has been chosen yet."
   },
-  "clear": "Clear",
+  "clear": "Тазалау",
   "@clear": {
     "description": "Tooltip on the button that empties a value."
   },
-  "clipCopyRowShape": "Copy the whole row's shape",
+  "clipCopyRowShape": "Бүкіл жолдың пішінін көшіру",
   "@clipCopyRowShape": {
     "description": "Context-menu item: copy the speed curve of every clip on the layer."
   },
-  "clipCopyShape": "Copy this clip's shape",
+  "clipCopyShape": "Осы клиптің пішінін көшіру",
   "@clipCopyShape": {
     "description": "Context-menu item on a clip in a Sequence layer: copy its speed curve."
   },
-  "clipDelete": "Delete clip",
+  "clipDelete": "Клипті өшіру",
   "@clipDelete": {
     "description": "Context-menu item: remove a clip from a Sequence layer."
   },
-  "clipPasteShape": "Paste shape onto this layer",
+  "clipPasteShape": "Пішінді осы қабатқа қою",
   "@clipPasteShape": {
     "description": "Context-menu item: apply a copied speed curve here."
   },
-  "clipResetSpeed": "Reset speed",
+  "clipResetSpeed": "Жылдамдықты қалпына келтіру",
   "@clipResetSpeed": {
     "description": "Context-menu item: put a clip back to playing at its normal speed."
   },
-  "clipboardValueColumn": "Value",
+  "clipboardValueColumn": "Мәні",
   "@clipboardValueColumn": {
     "description": "Column heading in the keyframe data copied to the clipboard."
   },
-  "cloneSourceFirst": "Alt-click to set the clone source first",
+  "cloneSourceFirst": "Алдымен клон бастауын орнату үшін Alt түймесін басыңыз",
   "@cloneSourceFirst": {
     "description": "Notice when the clone stamp is used before a source is chosen. Alt is a key name."
   },
-  "cloneSourceSet": "Clone source set",
+  "cloneSourceSet": "Клон бастауы орнатылды",
   "@cloneSourceSet": {
     "description": "Notice after alt-clicking with the clone stamp."
   },
-  "close": "Close",
+  "close": "Жабу",
   "@close": {
     "description": "Button that shuts a window."
   },
-  "colourOutsideRange": "Outside 0–1: the swatch and hex are clipped",
+  "colourOutsideRange": "0–1 ауқымынан тыс: үлгі мен hex қысқартылған",
   "@colourOutsideRange": {
     "description": "Note in the colour picker when a value is brighter or darker than a screen can show."
   },
-  "columnBlend": "Blend",
+  "columnBlend": "Араластыру",
   "@columnBlend": {
     "description": "Timeline column heading."
   },
-  "columnCompose": "Matte · Blend · Parent",
+  "columnCompose": "Маска · Араластыру · Аталық",
   "@columnCompose": {
     "description": "Timeline column heading, over the three composing columns. The middle dot is a separator."
   },
-  "columnLayer": "Layer",
+  "columnLayer": "Қабат",
   "@columnLayer": {
     "description": "Timeline column heading, over the layer names."
   },
-  "columnMatte": "Matte",
+  "columnMatte": "Маска",
   "@columnMatte": {
     "description": "Timeline column heading."
   },
-  "columnParent": "Parent",
+  "columnParent": "Аталық",
   "@columnParent": {
     "description": "Timeline column heading."
   },
-  "columnSwitches": "Switches",
+  "columnSwitches": "Ауыстырғыштар",
   "@columnSwitches": {
     "description": "Timeline column heading, over the per-layer on/off controls."
   },
-  "compositionSettings": "Composition settings",
+  "compositionSettings": "Композиция баптаулары",
   "@compositionSettings": {
     "description": "Title of the dialogue that edits an existing composition."
   },
-  "compositionSettingsEllipsis": "Composition settings…",
+  "compositionSettingsEllipsis": "Композиция баптаулары…",
   "@compositionSettingsEllipsis": {
     "description": "Context-menu item; the ellipsis means a dialogue opens."
   },
-  "copyEffect": "Copy effect",
+  "copyEffect": "Эффектіні көшіру",
   "@copyEffect": {
     "description": "Context-menu item on an effect heading: put the effect on the clipboard."
   },
-  "copySequenceShape": "Copy sequence shape",
+  "copySequenceShape": "Секвенция пішінін көшіру",
   "@copySequenceShape": {
     "description": "Context-menu item: copy the speed curve of a Sequence layer."
   },
-  "cornersRound": "Round",
+  "cornersRound": "Дөңгелектелген",
   "@cornersRound": {
     "description": "Settings window: the rounded choice for the Corners setting."
   },
-  "cornersSharp": "Sharp",
+  "cornersSharp": "Сүйір",
   "@cornersSharp": {
     "description": "Settings window: the square-cornered choice for the Corners setting."
   },
-  "couldNotAddShapeLayer": "Could not add a shape layer",
+  "couldNotAddShapeLayer": "Пішін қабатын қосу мүмкін болмады",
   "@couldNotAddShapeLayer": {
     "description": "Notice when making a shape layer failed."
   },
-  "couldNotAddTextLayer": "Could not add a text layer",
+  "couldNotAddTextLayer": "Текст қабатын қосу мүмкін болмады",
   "@couldNotAddTextLayer": {
     "description": "Notice when making a text layer failed."
   },
-  "couldNotMeasureRenderTimes": "Could not measure render times: {error}",
+  "couldNotMeasureRenderTimes": "Рендер уақытын өлшеу мүмкін болмады: {error}",
   "@couldNotMeasureRenderTimes": {
     "description": "Bottom-strip notice when the render-time measurement failed. {error} comes from the engine.",
     "placeholders": {
@@ -187,7 +187,7 @@
       }
     }
   },
-  "couldNotOpen": "Could not open {path}",
+  "couldNotOpen": "{path} ашу мүмкін болмады",
   "@couldNotOpen": {
     "description": "Bottom-strip notice when a file would not open. {path} is a file path.",
     "placeholders": {
@@ -196,27 +196,27 @@
       }
     }
   },
-  "couldNotSaveProject": "Could not save the project",
+  "couldNotSaveProject": "Проектіні сақтау мүмкін болмады",
   "@couldNotSaveProject": {
     "description": "Bottom-strip notice when a save failed."
   },
-  "create": "Create",
+  "create": "Жасау",
   "@create": {
     "description": "Button that confirms a dialogue by making something new."
   },
-  "custom": "Custom",
+  "custom": "Реттелмелі",
   "@custom": {
     "description": "Shown in a preset picker when the values match no preset."
   },
-  "customiseEllipsis": "Customise…",
+  "customiseEllipsis": "Баптау…",
   "@customiseEllipsis": {
     "description": "Button that opens the theme editor."
   },
-  "delete": "Delete",
+  "delete": "Өшіру",
   "@delete": {
     "description": "Context-menu item."
   },
-  "deleteAllMarkers": "Delete all markers",
+  "deleteAllMarkers": "Барлық маркерлерді өшіру",
   "@deleteAllMarkers": {
     "description": "Context-menu item."
   },
@@ -467,15 +467,15 @@
   "@firstRunAutoUpdate": {
     "description": "First run: the sentence beside the automatic-updates checkbox."
   },
-  "firstRunBlurb": "Lumit can start out shaped like the editor you already know. Either answer can be changed later in Settings.",
+  "firstRunBlurb": "Lumit сіз бұрыннан білетін редактор ретінде бейімделе алады. Кез келген жауапты кейін Баптаулардан өзгертуге болады.",
   "@firstRunBlurb": {
     "description": "The sentence under the first-run question."
   },
-  "firstRunTitle": "How do you edit?",
+  "firstRunTitle": "Қалай өңдейсіз?",
   "@firstRunTitle": {
     "description": "Title of the one screen shown the first time Lumit opens."
   },
-  "firstRunVegas": "Video arrives as a Sequence layer you can cut into clips, and the Retime graph shows playback speed you drag up to ramp and below zero to reverse.",
+  "firstRunVegas": "Бейне сіз кесінділерге бөле алатын Секвенция қабаты түрінде жүктеледі, ал Уақытты өзгерту графигі ойнату жылдамдығын көрсетеді: жылдамдату үшін жоғары, ал кері айналдыру үшін нөлден төмен сүйрейсіз.",
   "@firstRunVegas": {
     "description": "First run: what choosing Vegas habits does. Retime and Sequence layer are Lumit product terms."
   },
@@ -483,191 +483,191 @@
   "@firstRunVegasName": {
     "description": "First run: the name of the other editor offered. A product name — leave it as it is."
   },
-  "foldContents": "Contents",
+  "foldContents": "Мазмұны",
   "@foldContents": {
     "description": "Heading in a layer's fold-out, over what a shape layer is made of."
   },
-  "foldMasks": "Masks",
+  "foldMasks": "Маскалар",
   "@foldMasks": {
     "description": "Heading in a layer's fold-out, over its masks."
   },
-  "foldPaint": "Paint",
+  "foldPaint": "Бояу",
   "@foldPaint": {
     "description": "Heading in a layer's fold-out, over its brush strokes."
   },
-  "foldWaveform": "Waveform",
+  "foldWaveform": "Толқын пішіні",
   "@foldWaveform": {
     "description": "Heading in a layer's fold-out, over the picture of its sound; also the name of a scope."
   },
-  "formatH264": "H.264 video (.mp4)",
+  "formatH264": "H.264 видео (.mp4)",
   "@formatH264": {
     "description": "Export format. H.264 and .mp4 are technical names and stay as they are."
   },
-  "formatHevc": "HEVC video (.mp4)",
+  "formatHevc": "HEVC видео (.mp4)",
   "@formatHevc": {
     "description": "Export format. HEVC and .mp4 are technical names and stay as they are."
   },
-  "formatMp4Picker": "MP4 video",
+  "formatMp4Picker": "MP4 видео",
   "@formatMp4Picker": {
     "description": "The file type shown in the system Save dialogue. MP4 stays as it is."
   },
-  "formatPngPicker": "PNG image",
+  "formatPngPicker": "PNG кескіні",
   "@formatPngPicker": {
     "description": "The file type shown in the system Save dialogue. PNG stays as it is."
   },
-  "formatPngSequence": "PNG image sequence",
+  "formatPngSequence": "PNG кескіндер тізбегі",
   "@formatPngSequence": {
     "description": "Export format: one numbered PNG per frame. PNG stays as it is."
   },
-  "formatTiffPicker": "TIFF image",
+  "formatTiffPicker": "TIFF кескіні",
   "@formatTiffPicker": {
     "description": "The file type shown in the system Save dialogue. TIFF stays as it is."
   },
-  "formatTiffSequence": "TIFF image sequence",
+  "formatTiffSequence": "TIFF кескіндер тізбегі",
   "@formatTiffSequence": {
     "description": "Export format: one numbered TIFF per frame. TIFF stays as it is."
   },
-  "frameRate": "Frame rate",
+  "frameRate": "Кадр жиілігі",
   "@frameRate": {
     "description": "Field label: frames per second."
   },
-  "fxAdd": "Add",
+  "fxAdd": "Қосу",
   "@fxAdd": {
     "description": "Effect controls — a control on Echo."
   },
-  "fxAlphaBias": "Alpha bias",
+  "fxAlphaBias": "Альфа-ығысу",
   "@fxAlphaBias": {
     "description": "Effect controls — a control on Matte key."
   },
-  "fxAmount": "Amount",
+  "fxAmount": "Мөлшері",
   "@fxAmount": {
     "description": "Effect controls — a control on Radial blur."
   },
-  "fxAmplitude": "Amplitude",
+  "fxAmplitude": "Амплитуда",
   "@fxAmplitude": {
     "description": "Effect controls — a control on Shake."
   },
-  "fxAnamorphicSqueeze": "Anamorphic squeeze",
+  "fxAnamorphicSqueeze": "Анаморфты сығу",
   "@fxAnamorphicSqueeze": {
     "description": "Effect controls — a control on Lens flare."
   },
-  "fxAnchorX": "Anchor x",
+  "fxAnchorX": "Зәкір X",
   "@fxAnchorX": {
     "description": "Effect controls — a control on Transform."
   },
-  "fxAnchorY": "Anchor y",
+  "fxAnchorY": "Зәкір Y",
   "@fxAnchorY": {
     "description": "Effect controls — a control on Transform."
   },
-  "fxAngle": "Angle",
+  "fxAngle": "Бұрышы",
   "@fxAngle": {
     "description": "Effect controls — a control on Directional blur."
   },
-  "fxAperture": "Aperture",
+  "fxAperture": "Диафрагма",
   "@fxAperture": {
     "description": "Effect controls — a control on Depth of field."
   },
-  "fxBehind": "Behind",
+  "fxBehind": "Артында",
   "@fxBehind": {
     "description": "Effect controls — a control on Echo."
   },
-  "fxBlades": "Blades",
+  "fxBlades": "Қалақшалар",
   "@fxBlades": {
     "description": "Effect controls — a control on Lens flare."
   },
-  "fxBlend": "Blend",
+  "fxBlend": "Араластыру",
   "@fxBlend": {
     "description": "Effect controls — a control on Lens flare."
   },
-  "fxBlockGlitch": "Block glitch",
+  "fxBlockGlitch": "Блоктық глитч",
   "@fxBlockGlitch": {
     "description": "Effect controls — the name of an effect."
   },
-  "fxBlockSize": "Block size",
+  "fxBlockSize": "Блок мөлшері ",
   "@fxBlockSize": {
     "description": "Effect controls — a control on Block glitch."
   },
-  "fxBloom": "Bloom",
+  "fxBloom": "Жарқырау",
   "@fxBloom": {
     "description": "Effect controls — a control on Datamosh."
   },
-  "fxBlue": "Blue",
+  "fxBlue": "Көк",
   "@fxBlue": {
     "description": "Effect controls — a control on RGB split."
   },
-  "fxBlurAndSharpen": "Blur & sharpen",
+  "fxBlurAndSharpen": "Бұлдырату және айқындау",
   "@fxBlurAndSharpen": {
     "description": "Add-effect menu category heading."
   },
-  "fxCentreX": "Centre X",
+  "fxCentreX": "Орталық X",
   "@fxCentreX": {
     "description": "Effect controls — a control on Radial blur."
   },
-  "fxCentreY": "Centre Y",
+  "fxCentreY": "Орталық Y",
   "@fxCentreY": {
     "description": "Effect controls — a control on Radial blur."
   },
-  "fxChannelOffset": "Channel offset",
+  "fxChannelOffset": "Каналдар ығысуы",
   "@fxChannelOffset": {
     "description": "Effect controls — a control on Block glitch."
   },
-  "fxChromaticAberration": "Chromatic aberration",
+  "fxChromaticAberration": "Хроматикалық аберрация",
   "@fxChromaticAberration": {
     "description": "Effect controls — the name of an effect."
   },
-  "fxClipBlack": "Clip black",
+  "fxClipBlack": "Қара түсті қию",
   "@fxClipBlack": {
     "description": "Effect controls — a control on Matte key."
   },
-  "fxClipRollback": "Clip rollback",
+  "fxClipRollback": "Қиюды қайтару",
   "@fxClipRollback": {
     "description": "Effect controls — a control on Matte key."
   },
-  "fxClipWhite": "Clip white",
+  "fxClipWhite": "Ақ түсті қию",
   "@fxClipWhite": {
     "description": "Effect controls — a control on Matte key."
   },
-  "fxCoating": "Coating",
+  "fxCoating": "Қаптама",
   "@fxCoating": {
     "description": "Effect controls — a control on Lens flare."
   },
-  "fxColour": "Colour",
+  "fxColour": "Түс",
   "@fxColour": {
     "description": "Effect controls — a control on Flash."
   },
-  "fxColour1": "Colour 1",
+  "fxColour1": "Түс 1",
   "@fxColour1": {
     "description": "Effect controls — a control on RGB split."
   },
-  "fxColour2": "Colour 2",
+  "fxColour2": "Түс 2",
   "@fxColour2": {
     "description": "Effect controls — a control on RGB split."
   },
-  "fxColour3": "Colour 3",
+  "fxColour3": "Түс 3",
   "@fxColour3": {
     "description": "Effect controls — a control on RGB split."
   },
-  "fxColourBalance": "Colour balance",
+  "fxColourBalance": "Түс балансы",
   "@fxColourBalance": {
     "description": "Effect controls — the name of an effect."
   },
-  "fxConfidence": "Confidence",
+  "fxConfidence": "Сенімділік",
   "@fxConfidence": {
     "description": "Effect controls — a control on Posterize time."
   },
-  "fxContrast": "Contrast",
+  "fxContrast": "Контраст",
   "@fxContrast": {
     "description": "Effect controls — the name of an effect."
   },
-  "fxDarken": "Darken",
+  "fxDarken": "Қараңғылау",
   "@fxDarken": {
     "description": "Effect controls — a control on Echo."
   },
-  "fxDatamosh": "Datamosh",
+  "fxDatamosh": "Датамош",
   "@fxDatamosh": {
     "description": "Effect controls — the name of an effect."
   },
-  "fxDecay": "Decay",
+  "fxDecay": "Өшу",
   "@fxDecay": {
     "description": "Effect controls — a control on Flash."
   },

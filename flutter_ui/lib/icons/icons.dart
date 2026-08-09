@@ -100,7 +100,7 @@ enum LumitIcon {
   text,
   camera,
 
-  /// The still camera on the Ctrl+Space console's snapshot button (K-319) —
+  /// The still camera on the Ctrl+Space console's snapshot button (K-324) —
   /// a *photo*, distinct from [camera], which is the camera layer.
   snapshot,
   eye,

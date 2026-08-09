@@ -1,5 +1,5 @@
 // What the Ctrl+Space console's radial menu offers, given what is selected
-// (K-319) — and the snapshot the console's camera button writes.
+// (K-324) — and the snapshot the console's camera button writes.
 //
 // **In plain terms.** A radial menu is only worth having if what is in it is
 // what you were about to do. So the ring is not one fixed set of commands: it
@@ -221,7 +221,7 @@ List<RadialEntry> fxConsoleRadial(
   ];
 }
 
-/// Write the frame on screen to a PNG (K-319).
+/// Write the frame on screen to a PNG (K-324).
 ///
 /// It is a one-frame **export**, not a new engine path: the exporter already
 /// writes PNGs (`codec: 'png'`, K-201) and is the tested way a Lumit frame

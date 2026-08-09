@@ -1,4 +1,4 @@
-// The geometry of a Blender-style radial menu (K-319).
+// The geometry of a Blender-style radial menu (K-324).
 //
 // In plain terms: a radial (or "pie") menu puts its choices in a ring around
 // where the pointer already is, so every choice is the same short distance

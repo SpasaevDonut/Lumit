@@ -1,4 +1,4 @@
-// The Ctrl+Space console (K-319): a search bar over the effects, and a radial
+// The Ctrl+Space console (K-324): a search bar over the effects, and a radial
 // menu of whatever the selection makes sensible.
 //
 // **In plain terms.** Two ways of reaching the same kinds of thing, stacked in

@@ -1,4 +1,4 @@
-// The Ctrl+Space console (K-319): what the search ranks and divides, and what
+// The Ctrl+Space console (K-324): what the search ranks and divides, and what
 // the ring does with a flick.
 
 import 'package:flutter/material.dart';

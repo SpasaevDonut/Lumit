@@ -1,4 +1,4 @@
-// The radial menu's geometry (K-319): direction picks the slice, the dead
+// The radial menu's geometry (K-324): direction picks the slice, the dead
 // zone picks nothing.
 
 import 'dart:math' as math;

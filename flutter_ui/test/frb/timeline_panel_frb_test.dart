@@ -2250,6 +2250,20 @@ void main() {
       await tester.pump();
       expect(barColour(), t.labelColour(6),
           reason: 'picking a label recolours the bar');
+
+      // Selection brightens the bar rather than outlining it (K-317): the
+      // label colour lerps toward textPrimary, so the hue still says which
+      // layer this is while the lit bar says it is the one in hand.
+      p.uiState.setSelection([layer]);
+      await tester.pump();
+      expect(barColour(), Color.lerp(t.labelColour(6), t.textPrimary, 0.35),
+          reason: 'a selected bar is its label colour, lit');
+      final deco = tester
+          .widget<Container>(find
+              .byKey(ValueKey<String>('tl-bar-fill-${layer.internallayerId}')))
+          .decoration as BoxDecoration;
+      expect(deco.border, isNull,
+          reason: 'selection no longer draws an outline');
     });
 
     /// A stack taller than the panel scrolls rather than overflowing, and
@@ -3439,6 +3453,18 @@ void main() {
       expect(layer.getInfo().name, 'Hero solid');
       expect(find.byKey(ValueKey<String>('tl-rename-$id')), findsNothing,
           reason: 'submitting leaves the editor');
+
+      // Escape leaves it the other way (K-323): editor shut, nothing written.
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      await tester.enterText(
+          find.byKey(ValueKey<String>('tl-rename-$id')), 'Regretted');
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byKey(ValueKey<String>('tl-rename-$id')), findsNothing,
+          reason: 'Escape closes the editor');
+      expect(layer.getInfo().name, 'Hero solid',
+          reason: 'and the layer keeps the name it had');
     });
 
     /// Clicking away from the rename editor finishes the edit and keeps what
