@@ -7110,3 +7110,18 @@ on a runner with Xcode 26 — and reopening the icon in Icon Composer and saving
 to put both keys back, so this is a mistake with a standing invitation to recur. The
 script is the regression test K-007 asks for: it fails on the `icon.json` as it was, and
 passes on the one that compiles.
+
+**K-313 · DECIDED · Body text renders at regular weight; Medium is rationed to emphasis.**
+From the owner (2026-08-09): "less text should be bold — a lot of it is too thick and can
+actually reduce readability." The cause was packaging, not the type scale: only
+`Inter-Medium.otf` was bundled, so every weight the code asked for drew as Medium and the
+whole interface sat a step bolder than docs/15-DESIGN §7.1 specifies (12px *plain* Inter
+for panel copy, menus and buttons; Medium reserved for dialog emphasis and tab labels).
+`Inter-Regular.otf` (same v3.019 build as the bundled Medium, so metrics match) is now
+bundled at weight 400; the theme's `body`/`small`/`caption` styles request w400 and
+`heading` keeps w500, joined by a `bodyStrong` getter (w500) that the dock tab pills and
+drag ghost titles use — the two "panel tab label" emphasis sites §7.1 names. The two spots
+that had hand-forced `FontWeight.w400` over the Medium default (timeline marker flags)
+drop their overrides. No spec change: this aligns the build with what 15-DESIGN already
+said. Regression test: `body text is regular weight; emphasis is medium and rationed`
+(theme_test.dart).

@@ -725,14 +725,19 @@ class LumitTheme {
       fontSize: 12,
       color: textSecondary,
       decoration: TextDecoration.none,
-      fontWeight: FontWeight.w500);
+      fontWeight: FontWeight.w400);
   TextStyle get bodyPrimary => body.copyWith(color: textPrimary);
+
+  /// Medium-weight body for the few places docs/15-DESIGN §7.1 keeps
+  /// emphasis: panel tab labels and dialog body emphasis. Everything else
+  /// reads at regular weight.
+  TextStyle get bodyStrong => body.copyWith(fontWeight: FontWeight.w500);
   TextStyle get small => TextStyle(
       fontFamily: fontFamily,
       fontSize: 11,
       color: textMuted,
       decoration: TextDecoration.none,
-      fontWeight: FontWeight.w500);
+      fontWeight: FontWeight.w400);
 
   /// The note under a field explaining its format — smaller than a label so it
   /// reads as an aside rather than as another thing to fill in

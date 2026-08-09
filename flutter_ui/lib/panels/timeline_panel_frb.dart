@@ -7191,7 +7191,7 @@ class _BarState extends State<_Bar> {
                     label: m.marker.label,
                     fill: t.marker,
                     ink: t.surface0,
-                    text: t.caption.copyWith(fontWeight: FontWeight.w400),
+                    text: t.caption,
                   ),
                 ),
               ),
