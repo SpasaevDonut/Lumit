@@ -62,6 +62,54 @@ void main() {
     expect(value, isTrue);
   });
 
+  testWidgets('Escape closes a modal, the same as clicking the scrim',
+      (tester) async {
+    // Flutter's own DismissIntent, which `WidgetsApp` binds Escape to — so the
+    // host here is a MaterialApp, as the application is. Before K-315 nothing
+    // in the window claimed that intent and Escape did nothing in every
+    // dialogue, despite a comment claiming it worked "via the route".
+    late BuildContext ctx;
+    await tester.pumpWidget(MaterialApp(
+      home: ThemeScope(
+        theme: LumitTheme.dark(),
+        animationLevel: AnimationLevel.none,
+        showTooltips: false,
+        child: Overlay(initialEntries: [
+          OverlayEntry(builder: (c) {
+            ctx = c;
+            return const SizedBox.expand();
+          }),
+        ]),
+      ),
+    ));
+
+    var answer = 'not closed';
+    showLumitModal<String>(
+      context: ctx,
+      builder: (close) => FloatSurface(
+        child: SizedBox(
+          width: 200,
+          height: 100,
+          child: HouseButton(
+            autofocus: true,
+            primary: true,
+            onPressed: () => close('confirmed'),
+            child: const Text('OK'),
+          ),
+        ),
+      ),
+    ).then((v) => answer = v ?? 'dismissed');
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('OK'), findsOneWidget);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(answer, 'dismissed',
+        reason: 'Escape dismisses with null, as the scrim does');
+    expect(find.text('OK'), findsNothing);
+  });
+
   testWidgets('a modal walks its controls in reading order', (tester) async {
     final log = <String>[];
     Widget button(String name, {bool autofocus = false}) => HouseButton(

@@ -7130,6 +7130,44 @@ right-click menu. No animation, no toolkit dependency. Regression tests:
 `hover_intent_test.dart` (the geometry, and three submenu journeys — crossing, settling,
 leaving).
 
+**K-314a · NOTE · What Flutter already gives, and what it does not (the wheel check).**
+Asked by the owner before merging K-314/K-315: are we reinventing things the toolkit ships?
+Checked against Flutter 3.44.7's own source, and worth recording so it is not re-argued.
+
+**Already Flutter's, and used as such:** `ReadingOrderTraversalPolicy` is the traversal K-315
+installs — not a hand-written comparator. `TextSelectionGestureDetectorBuilder` is the
+press-to-caret/drag-to-highlight the value and timecode editors gained; the earlier code's
+fault was a bare `EditableText` with no gesture builder around it, not a missing feature.
+`DismissIntent` is now what Escape means in a modal (see below).
+
+**Flutter has a weaker answer, so ours stands.** `SubmenuButton` offers `hoverOpenDelay`
+(`material/menu_anchor.dart`) — a plain delay before a flyout *opens*. That is the naive fix
+K-314 rejected: it makes every submenu feel sluggish, and it does not address the actual
+complaint, which is that crossing a sibling row **closes** the flyout you are travelling to.
+There is no safe triangle anywhere in the framework (no hit for `safeTriangle`/`hoverIntent`
+in `packages/flutter`). The K-314 geometry is therefore not a reimplementation.
+
+**Flutter has nothing:** a radial/pie menu (K-319). Correct to build.
+
+**We did duplicate one thing, mildly.** `WidgetsApp` already binds Enter/numpadEnter/Space to
+`ActivateIntent`, and `FocusableActionDetector` bundles focus + hover + shortcuts + actions —
+so the per-control `Focus(onKeyEvent:)` in `HouseButton`/`HouseCheckbox`/`HouseRadio` is about
+eight lines each that the Actions system could carry. It is left as it is *for now*, on
+purpose: the house controls are deliberately not Material (K-084), the hand-rolled version is
+tested, and — the part that matters — it does **not** take focus on a mouse click, so a
+clicked button shows no focus ring. Moving to `ActivateIntent` means opting into the standard
+focus-highlight behaviour and re-deciding that. Worth doing as its own change with its own
+look, not folded into this one.
+
+**The check found a real bug, which is why it was worth doing.** `showLumitModal`'s comment
+claimed dismissal happened on "Escape, via the route" — but a Lumit modal is an
+`OverlayEntry`, not a route, so **nothing listened and Escape did nothing in every dialogue
+in the application**. Fixed the framework's way rather than with a tenth key handler: the
+window contributes an `Actions` entry for `DismissIntent`, which `WidgetsApp` has already
+bound Escape to, and dismissing means completing with null exactly as a click on the scrim
+does. Regression test: `Escape closes a modal, the same as clicking the scrim`
+(dialog_keys_test.dart), which fails without the `Actions` entry.
+
 **K-315 · DECIDED · Every window has a default action; every control answers the keyboard;
 Tab reads left-to-right, top-to-bottom.**
 From the owner (2026-08-09), three complaints in one shape — "opening any confirmation

@@ -865,6 +865,11 @@ down anywhere else, not only on `Enter`.
 open. A dialogue's default action takes focus when the window opens, is drawn with the accent
 edge, and `Enter` presses it.
 
+**Escape dismisses (K-315).** Every modal MUST answer Escape by dismissing — the same
+answer a click on the scrim gives. It is Flutter's own `DismissIntent`, which the app binds
+Escape to above everything, so a window contributes only what dismissing *means* rather than
+another key handler.
+
 **Every window, not just one (K-315).** That rule is now the shape of *all* of them: each
 confirmation or settings window names one **default action** — the affirmative one, or the
 safe one where the affirmative is destructive — and that button carries the accent edge and

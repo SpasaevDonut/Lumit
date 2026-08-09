@@ -831,9 +831,17 @@ class _CaretPainter extends CustomPainter {
 }
 
 /// Show a positioned popup and complete with the value handed to `close`.
-/// Clicking outside (or Escape, via the route) dismisses with null.
+/// Clicking outside, or pressing Escape, dismisses with null.
 /// A centred modal on the app Overlay, with a dimmed click-to-dismiss backdrop.
 /// Completes with whatever `close` was given, or null when dismissed.
+///
+/// **Escape is Flutter's own `DismissIntent`, not another key handler** (K-315).
+/// `WidgetsApp` already binds Escape to it above everything, so the window only
+/// has to say what dismissing *means* — an `Actions` entry that closes with
+/// null, the same answer a click on the scrim gives. The comment that used to
+/// sit here claimed Escape worked "via the route": it did not, because this is
+/// an `OverlayEntry` and not a route, so nothing was listening and Escape did
+/// nothing in every dialogue in the application.
 ///
 /// The value-returning sibling of [showLumitPopup]. `dialogs.dart` has a private
 /// `_showModal` that returns nothing, which is fine for a dialog that commits
@@ -863,24 +871,36 @@ Future<T?> showLumitModal<T>({
   }
 
   entry = OverlayEntry(
-    builder: (_) => Stack(
-      children: [
-        Positioned.fill(
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () => close(null),
-            child: ColoredBox(
-              color: ThemeScope.of(context).theme.scrim,
+    builder: (_) => Actions(
+      // Escape. `WidgetsApp` binds it to DismissIntent above the whole tree,
+      // so this only has to say what dismissing means here.
+      actions: <Type, Action<Intent>>{
+        DismissIntent: CallbackAction<DismissIntent>(
+          onInvoke: (_) {
+            close(null);
+            return null;
+          },
+        ),
+      },
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => close(null),
+              child: ColoredBox(
+                color: ThemeScope.of(context).theme.scrim,
+              ),
             ),
           ),
-        ),
-        _MovableWindow(
-          id: id,
-          initialSize: initialSize,
-          minSize: minSize,
-          child: builder(close),
-        ),
-      ],
+          _MovableWindow(
+            id: id,
+            initialSize: initialSize,
+            minSize: minSize,
+            child: builder(close),
+          ),
+        ],
+      ),
     ),
   );
   overlay.insert(entry);

@@ -3861,6 +3861,15 @@ stand down. Otherwise Enter on a dialogue's button would *also* rename a layer
 in the Timeline behind it — which is a real bug this project has already had
 once (K-243).
 
+**Escape closes a window, which it did not.** The code said it did — there was a comment
+claiming Escape was handled "via the route" — but a Lumit dialogue is not a *route*, it is a
+panel painted into the overlay, so there was no route to handle anything and Escape did
+nothing in every dialogue in the application. This was found by going looking for what
+Flutter already provides rather than writing more of our own: the framework binds Escape to
+something called a "dismiss intent" all by itself, and a window only has to say what
+dismissing means for it. Here it means the same as clicking the dimmed background — the
+window closes and answers "cancelled".
+
 **Tab now goes the way you read.** Left to right, then top to bottom. It sounds
 like it should be the default, and it is not: the toolkit walks the *widget
 tree*, and a layout that nests a column inside a row visits things in whatever
