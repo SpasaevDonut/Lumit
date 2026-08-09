@@ -664,6 +664,21 @@ pub struct ColourEngine {
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     linear_sampler: wgpu::Sampler,
+    /// The view uniform, as **two buffers made once** rather than one made per
+    /// pass. A pass-sized allocation looks harmless and is not: a frame batches
+    /// its passes into a single command buffer (K-290), so nothing frees until
+    /// that submission retires, and a long session's worth of them exhausts the
+    /// device — which is how it showed up, as `request_device` failing with
+    /// "not enough memory" partway through a test run on a software adapter.
+    ///
+    /// Two, not one, because a single frame mixes views: `linearise` is always
+    /// neutral while `display` carries the Viewer's, and with the passes in one
+    /// submission a shared buffer would hand both whichever value was written
+    /// last. Two is enough because only ever *one* view is non-neutral — the
+    /// renderer's own — so [`Self::view_buf`] is rewritten (never reallocated)
+    /// and every non-neutral pass in a frame wants the same value anyway.
+    neutral_buf: wgpu::Buffer,
+    view_buf: wgpu::Buffer,
 }
 
 /// The two viewer-only controls that live inside the display transform
@@ -720,6 +735,18 @@ impl Default for DisplayParams {
     fn default() -> Self {
         Self::NEUTRAL
     }
+}
+
+/// One view uniform, sized and written at creation.
+fn view_uniform(ctx: &GpuContext, label: &str, view: DisplayParams) -> wgpu::Buffer {
+    wgpu::util::DeviceExt::create_buffer_init(
+        &ctx.device,
+        &wgpu::util::BufferInitDescriptor {
+            label: Some(label),
+            contents: bytemuck::bytes_of(&view.raw()),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        },
+    )
 }
 
 /// `ViewParams` in `colour.wgsl`, laid out for the card.
@@ -902,6 +929,8 @@ impl ColourEngine {
             layout,
             sampler,
             linear_sampler,
+            neutral_buf: view_uniform(ctx, "colour-view-neutral", DisplayParams::NEUTRAL),
+            view_buf: view_uniform(ctx, "colour-view", DisplayParams::NEUTRAL),
         }
     }
 
@@ -994,14 +1023,16 @@ impl ColourEngine {
                 | extra_usage,
             view_formats: &[],
         });
-        let view_buf = wgpu::util::DeviceExt::create_buffer_init(
-            &ctx.device,
-            &wgpu::util::BufferInitDescriptor {
-                label: Some(label),
-                contents: bytemuck::bytes_of(&view.raw()),
-                usage: wgpu::BufferUsages::UNIFORM,
-            },
-        );
+        // Queue writes are ordered against submissions, so writing here lands
+        // before this pass's own submit — and before any other pass batched
+        // into it, every one of which carries this same non-neutral view.
+        let view_buf = if view.is_neutral() {
+            &self.neutral_buf
+        } else {
+            ctx.queue
+                .write_buffer(&self.view_buf, 0, bytemuck::bytes_of(&view.raw()));
+            &self.view_buf
+        };
         let bind = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(label),
             layout: &self.layout,

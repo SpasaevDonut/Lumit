@@ -1327,6 +1327,10 @@ class LumitUiState extends ChangeNotifier {
   ViewerLook get viewerLook =>
       viewerLooks[_selectedComp?.internalid.toString()] ?? neutralLook;
 
+  /// The last look actually sent to the engine, so a neutral push onto an
+  /// already-neutral renderer can be skipped. A worker is born neutral.
+  ViewerLook _pushedLook = neutralLook;
+
   /// Set the exposure, leaving the tone map as it is; and the mirror of it.
   ///
   /// Two setters rather than one taking a whole [ViewerLook], because each
@@ -1357,10 +1361,18 @@ class LumitUiState extends ChangeNotifier {
   /// Tell the engine what the Viewer is looking through, and ask for the frame
   /// again — a setting changes what the *next* frame looks like, so without the
   /// ask the picture would not move until something else moved it.
+  ///
+  /// Neutral onto a renderer already neutral is nothing to say and nothing to
+  /// undo, so it is skipped — which is every fronting in a session where
+  /// nobody has touched either control, and the renderer is born neutral. The
+  /// re-render is the expensive half: fronting a comp asks for its frame
+  /// anyway, and asking twice is a whole extra composite each time.
   void pushViewerLook() {
     final comp = selectedComp;
     if (comp == null) return;
     final look = viewerLook;
+    if (look == neutralLook && _pushedLook == neutralLook) return;
+    _pushedLook = look;
     try {
       comp.setDisplayView(stops: look.stops, toneMap: look.toneMap);
     } catch (_) {
@@ -1469,6 +1481,8 @@ class LumitUiState extends ChangeNotifier {
       clearSelection();
       playheadFrame.value = 0;
       viewerLooks.clear();
+      // A new project is a new worker, and a new worker is born neutral.
+      _pushedLook = neutralLook;
       setSelectedComp(null);
 
       final path = project?.path();
