@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'dart:io' show File, Platform;
 import 'dart:ui' show AppExitResponse;
 
+import 'package:flutter/gestures.dart' show GestureBinding;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
@@ -544,6 +545,18 @@ class LumitUiState extends ChangeNotifier {
   final ValueNotifier<int> consoleRequest = ValueNotifier(0);
 
   void requestConsole() => consoleRequest.value++;
+
+  /// A property row the Timeline has been asked to show — the layer and one of
+  /// the `reveal.*` actions (docs/07 §4.3's P/S/R/T/A family). Set by the FX
+  /// console's Keyframe ring (K-326) after it plants a key, so the key just
+  /// made is on screen. The Timeline listens and *ensures* the row is open —
+  /// no toggle, unlike the reveal keys, because asking to see a row twice
+  /// should never hide it.
+  final ValueNotifier<(UuidValue, String)?> revealPropertyRequest =
+      ValueNotifier(null);
+
+  void requestRevealProperty(UuidValue layer, String action) =>
+      revealPropertyRequest.value = (layer, action);
 
   /// Bumped each time a rendered frame reaches the Viewer, on any of the three
   /// transports. Watched by anything that redraws when the picture does — the
@@ -1614,6 +1627,14 @@ class _LumitAppViewState extends State<LumitAppView> {
     // funeral). A hardware-keyboard handler fires wherever focus is; the
     // focused-text-field guard inside _onKey keeps typing safe.
     HardwareKeyboard.instance.addHandler(_handleKey);
+    // The pointer is tracked the same way — globally, not through the widget
+    // tree. The Ctrl+Space console opens its ring at the mouse (K-325), and a
+    // key event carries no position; a widget `Listener` missed everywhere no
+    // widget claims the hit (the Viewer's texture, above all), so the console
+    // kept opening at wherever the pointer had last crossed a panel. A global
+    // route sees every pointer event regardless. One field write per event —
+    // no setState, no bridge.
+    GestureBinding.instance.pointerRouter.addGlobalRoute(_trackPointer);
     // A Lumit document copied while this window was away — in another Lumit
     // window, most of all — is picked up when the window comes back (K-302), so
     // Paste is live rather than greyed over something that is genuinely there.
@@ -1638,8 +1659,17 @@ class _LumitAppViewState extends State<LumitAppView> {
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_handleKey);
+    GestureBinding.instance.pointerRouter.removeGlobalRoute(_trackPointer);
     _clipboardWatch?.dispose();
     super.dispose();
+  }
+
+  void _trackPointer(PointerEvent event) {
+    if (event is PointerHoverEvent ||
+        event is PointerMoveEvent ||
+        event is PointerDownEvent) {
+      lastKnownPointerPosition = event.position;
+    }
   }
 
   bool _handleKey(KeyEvent event) {
@@ -1658,36 +1688,25 @@ class _LumitAppViewState extends State<LumitAppView> {
     // falls back to the enclosing scope rather than to nothing.
     return FocusScope(
       autofocus: true,
-      // Where the pointer last was, for the one thing that opens *at* it: the
-      // Ctrl+Space console centres its ring on the mouse (K-325), and the key
-      // event that opens it carries no position. A plain field write — no
-      // setState, no bridge — so tracking costs nothing per event.
-      child: Listener(
-        behavior: HitTestBehavior.translucent,
-        onPointerHover: (e) => lastKnownPointerPosition = e.position,
-        onPointerMove: (e) => lastKnownPointerPosition = e.position,
-        onPointerDown: (e) => lastKnownPointerPosition = e.position,
-        child: Column(
-          children: [
-            LumitMenuBarFrb(app: state),
-            // The tools, under the menu and above everything else — where a
-            // toolbar goes, and where docs/07 §1.7 puts it.
-            const LumitToolBarFrb(),
-            Expanded(
-              child: DockWidget(
-                root: uiState.split,
-                buildPanel: (context, panel) =>
-                    buildPanelBodyFrb(context, panel),
-                // Persisted, so an arrangement survives a restart.
-                onLayoutChanged: uiState.saveLayout,
-                activePanel: uiState.activePanel,
-              ),
+      child: Column(
+        children: [
+          LumitMenuBarFrb(app: state),
+          // The tools, under the menu and above everything else — where a
+          // toolbar goes, and where docs/07 §1.7 puts it.
+          const LumitToolBarFrb(),
+          Expanded(
+            child: DockWidget(
+              root: uiState.split,
+              buildPanel: (context, panel) => buildPanelBodyFrb(context, panel),
+              // Persisted, so an arrangement survives a restart.
+              onLayoutChanged: uiState.saveLayout,
+              activePanel: uiState.activePanel,
             ),
-            // The strip under the dock (docs/07 §1): the running export's
-            // progress and Cancel, reachable without the dialogue open.
-            const StatusLineFrb(),
-          ],
-        ),
+          ),
+          // The strip under the dock (docs/07 §1): the running export's
+          // progress and Cancel, reachable without the dialogue open.
+          const StatusLineFrb(),
+        ],
       ),
     );
   }

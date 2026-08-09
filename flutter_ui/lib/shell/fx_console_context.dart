@@ -28,7 +28,12 @@ import 'package:flutter/widgets.dart';
 import '../l10n/strings.dart';
 import '../main.dart';
 import '../panels/effect_param_row_frb.dart' show effectLabelOf;
+import '../panels/transform_rows_frb.dart'
+    show TransformGroup, transformGroups, read;
+import '../src/rust/api/composition.dart';
+import '../src/rust/api/effect.dart';
 import '../src/rust/api/export.dart';
+import '../src/rust/api/layer.dart';
 import '../state/dock.dart';
 import 'fx_console_frb.dart';
 import 'menu_bar_frb.dart';
@@ -204,6 +209,10 @@ List<RadialEntry> fxConsoleRadial(
         },
       ),
       RadialEntry(label: l10n.menuNew, children: newLayers()),
+      RadialEntry(
+        label: l10n.fxConsoleKeyframe,
+        children: fxConsoleKeyframeRing(app, ui, layer, comp),
+      ),
     ];
   }
 
@@ -232,6 +241,94 @@ List<RadialEntry> fxConsoleRadial(
       run: () => importFootageFrb(app),
     ),
   ];
+}
+
+/// The Keyframe ring (K-326): one slice per transform row, so "key this
+/// where I am" is a flick rather than a trip through the fold-out.
+///
+/// Choosing a slice plants a key at the playhead holding the value already
+/// there — nothing moves, exactly as the stopwatch behaves — and then fronts
+/// the Timeline with that row open, so the key just made is on screen. A row
+/// already keyed at the playhead skips the write and just reveals.
+///
+/// The five everyday rows, not the 3D extras: a ring is capped at six
+/// (docs/07 §12.2), and Rotation X/Y stay the fold-out's business. A row
+/// driven by an expression is dimmed rather than dropped — writing keys over
+/// an expression would delete it.
+List<RadialEntry> fxConsoleKeyframeRing(
+  LumitState app,
+  LumitUiState ui,
+  LayerReference layer,
+  CompositionReference comp,
+) {
+  final entry = ui.model.byId(layer.internallayerId);
+  if (entry == null) return const [];
+  final transform = entry.info.transform;
+  return [
+    for (final group in transformGroups(threeD: entry.info.switches.threeD))
+      if (group.axes.first.prop.name != 'rotationX' &&
+          group.axes.first.prop.name != 'rotationY')
+        RadialEntry(
+          label: group.label,
+          enabled: group.axes.every(
+              (a) => read(transform, a.prop) is! BridgeScalar_Expression),
+          run: () => _keyTransformGroup(app, ui, layer, comp, group, transform),
+        ),
+  ];
+}
+
+void _keyTransformGroup(
+  LumitState app,
+  LumitUiState ui,
+  LayerReference layer,
+  CompositionReference comp,
+  TransformGroup group,
+  BridgeTransform transform,
+) {
+  final frame = ui.playheadFrame.value;
+  final time = comp.timeOfFrame(frame: frame);
+  // A key already under the playhead: nothing to add, only to show. Compared
+  // by frame, as the diamond does — the same key to the user either way.
+  final lead = read(transform, group.axes.first.prop);
+  final onKey = lead is BridgeScalar_Keyframed &&
+      lead.field0.any((k) => comp.frameAtTime(time: k.time) == frame);
+  if (!onKey) {
+    // Every axis of the row keys together, at the value it reads now, so the
+    // picture does not move — the row invariant the stopwatch keeps.
+    final next = <BridgeScalar>[];
+    for (final axis in group.axes) {
+      final scalar = read(transform, axis.prop);
+      final value = sampleScalar(scalar: scalar, time: time);
+      final keys = switch (scalar) {
+        BridgeScalar_Keyframed(:final field0) => field0,
+        _ => const <BridgeKeyframe>[],
+      };
+      // In order, as the engine requires — inserted, not appended and hoped.
+      final added = [
+        ...keys,
+        BridgeKeyframe(
+          time: time,
+          value: value,
+          interpIn: const BridgeSideInterp.linear(),
+          interpOut: const BridgeSideInterp.linear(),
+        ),
+      ]..sort((a, b) => comp
+          .frameAtTime(time: a.time)
+          .compareTo(comp.frameAtTime(time: b.time)));
+      next.add(BridgeScalar.keyframed(added));
+    }
+    layer.setTransforms(
+      props: [for (final axis in group.axes) axis.prop],
+      values: next,
+    );
+    app.notifyDocumentChanged();
+  }
+  // Show the key just made: the Timeline fronted, the row open. The reveal
+  // action is the row's axis name — 'anchorX' becomes 'reveal.anchor', the
+  // same words the P/S/R/T/A keys use, so one mapping serves both.
+  final axis = group.axes.first.prop.name.replaceFirst(RegExp(r'[XYZ]$'), '');
+  ui.requestRevealProperty(layer.internallayerId, 'reveal.$axis');
+  ui.activePanel.value = Panel.timeline;
 }
 
 /// Write the frame on screen to a PNG (K-324).

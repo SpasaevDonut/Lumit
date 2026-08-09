@@ -242,12 +242,28 @@ class _FxConsoleState extends State<_FxConsole> {
   void initState() {
     super.initState();
     _query.addListener(() => setState(() => _highlighted = 0));
+    // Escape has to work from anywhere — over the ring, mid-flick, wherever
+    // focus happens to sit. A handler on the search field's node covers only
+    // the field, so this listens at the keyboard itself for the console's
+    // lifetime, the same reason the shell's own shortcuts are global. It is
+    // the only place Escape is handled, so one press is one step back.
+    HardwareKeyboard.instance.addHandler(_escapeAnywhere);
   }
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_escapeAnywhere);
     _query.dispose();
     super.dispose();
+  }
+
+  bool _escapeAnywhere(KeyEvent event) {
+    if (event is! KeyDownEvent ||
+        event.logicalKey != LogicalKeyboardKey.escape) {
+      return false;
+    }
+    _back();
+    return true;
   }
 
   bool get _typing => _query.text.trim().isNotEmpty;
@@ -322,9 +338,8 @@ class _FxConsoleState extends State<_FxConsole> {
           case LogicalKeyboardKey.numpadEnter:
             _runHighlighted(matches);
             return KeyEventResult.handled;
-          case LogicalKeyboardKey.escape:
-            _back();
-            return KeyEventResult.handled;
+          // Escape is deliberately absent: [_escapeAnywhere] owns it, so it
+          // works with focus anywhere and never fires twice.
           default:
             return KeyEventResult.ignored;
         }
@@ -345,13 +360,18 @@ class _FxConsoleState extends State<_FxConsole> {
           );
           return Stack(
             children: [
-              // No dimming: the console floats over the work it acts on. The
-              // scrim only catches the click that means "never mind".
+              // A hush, not a blackout: the modal scrim at half its strength,
+              // so the slices stay legible over any frame while the work stays
+              // part of the picture. It also catches the click that means
+              // "never mind".
               Positioned.fill(
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
                   onTap: widget.onClose,
                   onSecondaryTap: widget.onClose,
+                  child: ColoredBox(
+                    color: t.scrim.withValues(alpha: t.scrim.a * 0.5),
+                  ),
                 ),
               ),
               // The ring steps aside while the user is typing: the dropdown
@@ -410,10 +430,6 @@ class _FxConsoleState extends State<_FxConsole> {
                 autofocus: true,
                 hint: l10n.fxConsoleHint,
                 onSubmitted: (_) => _runHighlighted(matches),
-                // Escape retreats one step (clear, pop, close) — handled on
-                // the field's own node, ahead of anything that would swallow
-                // it (the K-323 lesson).
-                onCancelled: _back,
               ),
             ),
             const SizedBox(width: 6),

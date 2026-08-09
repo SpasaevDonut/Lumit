@@ -4100,12 +4100,14 @@ would see the new one by resetting the workspace, or on a new install.
 
 ### The Ctrl+Space console, and why a ring beats a list (K-324, K-325)
 
-Press Ctrl+Space and a ring of choices appears **around your mouse**, with a
-search box floating just above it (or below, if your pointer is near the top
-of the window). Nothing is boxed and nothing goes dim: the console floats
-translucent over your work, because your work is the thing it is about to act
-on. Two ways into the same handful of things, because they suit different
-moments.
+Press Ctrl+Space and a ring of choices appears **around your mouse** —
+anywhere, including over the picture in the Viewer — with a search box
+floating just above it (or below, if your pointer is near the top of the
+window). Nothing is boxed: the console floats translucent over your work,
+because your work is the thing it is about to act on, and behind it the frame
+dims just a little — enough that every slice stays readable over any picture,
+never enough to hide what you are working on. Escape closes it from anywhere.
+Two ways into the same handful of things, because they suit different moments.
 
 **The ring is a radial menu**, the kind Blender uses. The point of a ring is
 not that it looks better than a list. It is that every choice is in a fixed
@@ -4140,6 +4142,16 @@ the long tail is the search box beside it. An entry that cannot run right now
 is dimmed rather than removed, so a direction your hand has learned keeps
 meaning the same thing tomorrow.
 
+A selected layer's ring has one more trick: the **Keyframe** slice. It expands
+into one slice per transform row — Anchor point, Position, Scale, Rotation,
+Opacity — and choosing one plants a keyframe at the playhead holding whatever
+value is already there, so nothing on screen moves. Then the Timeline comes to
+the front with that row open, and the key you just made is sitting there under
+the playhead. It is the flick-sized version of twirling the layer open,
+finding the row, and pressing its diamond — the three steps it replaces. A row
+already keyed at this frame is not keyed twice, and a row driven by an
+expression is dimmed, because writing keys over an expression would erase it.
+
 **The search box starts empty and shows nothing** — the ring is the offer.
 Start typing and the ring steps aside for a dropdown of matches under the box:
 type "gau", press Enter, and Gaussian blur is on every selected layer. The
@@ -4171,6 +4183,11 @@ One small mechanism makes "opens at the mouse" possible at all: a keyboard
 event does not know where the mouse is. So the shell keeps a note of the last
 place the pointer was seen — a single remembered position, updated as the
 mouse moves, costing nothing — and the console reads it when the chord lands.
+The note is taken at the door rather than in any one room: pointer events are
+recorded globally, before the interface decides which widget they belong to,
+because some regions (the Viewer's picture is drawn by the engine, not by a
+widget) belong to no widget at all, and a note taken inside the widget tree
+went stale exactly there.
 
 **Why this is not the command palette.** Ctrl+Shift+P still opens that, and the
 two are not competing: the palette is *every command by name*, the console is

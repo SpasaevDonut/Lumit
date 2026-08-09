@@ -679,6 +679,10 @@
   "@fxConsoleHint": {
     "description": "Placeholder in the FX console’s search field."
   },
+  "fxConsoleKeyframe": "Keyframe",
+  "@fxConsoleKeyframe": {
+    "description": "The FX console radial menu: the slice that expands into one slice per transform row, each planting a keyframe at the playhead."
+  },
   "fxConsoleNothingSelected": "Nothing selected",
   "@fxConsoleNothingSelected": {
     "description": "Shown in the middle of the FX console’s radial menu when nothing is selected."

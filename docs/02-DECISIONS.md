@@ -7458,21 +7458,30 @@ have nothing to do with the thing selected.
 **It opens where the mouse is.** The ring is centred on the pointer, because the whole point
 of a ring is that the flick can start the instant the chord lands — travel to a window first
 and a list would have done. The key event carries no position, so the shell records the last
-pointer position in a root `Listener` — a plain field write per event, no `setState`, no
-bridge call, so the no-bridge-in-rebuild-paths budget is untouched. The **search bar floats
-above the ring**, or below it when the pointer is near the top of the window; centre and bar
-placement (edge clamping included) is `fxConsoleLayout` in `radial_maths.dart`, pure
-arithmetic with its own tests. No boxed window and **no dimmed backdrop**: the console's
-surfaces are the standard menu float let through a little (`surface3` at 0.88 — derived from
-the theme, no new colour), because what the console acts on is what the user should keep
-seeing.
+pointer position — through a **global pointer route**, not a widget `Listener`: the owner's
+first build showed a `Listener` misses everywhere no widget claims the hit (the Viewer's
+texture, exactly where this menu is most wanted), so the console kept opening at wherever
+the pointer had last crossed a panel. The route sees every pointer event regardless of hit
+testing, and is still one plain field write per event — no `setState`, no bridge call, so
+the no-bridge-in-rebuild-paths budget is untouched. The **search bar floats above the
+ring**, or below it when the pointer is near the top of the window; centre and bar placement
+(edge clamping included) is `fxConsoleLayout` in `radial_maths.dart`, pure arithmetic with
+its own tests. No boxed window; the console's surfaces are the standard menu float let
+through a little (`surface3` at 0.88 — derived from the theme, no new colour), over the
+modal scrim at **half strength** (from the owner, same day: a slight darkening keeps every
+slice legible over any frame, while a full scrim would shut out the very work the console
+acts on).
 
 **The search waits to be asked.** An empty bar lists nothing — the ring is the offer. Typing
 opens a dropdown *below the bar* with the matches (K-324's ranking unchanged: effects first,
 comps after the divider, never across), and the ring steps aside while the query is
 non-empty, both because the dropdown needs the room and because starting to type *is*
 choosing the other way in. Escape retreats one step at a time — clear the text, then pop a
-sub-ring, then close — and Enter on an empty bar closes rather than sitting inert.
+sub-ring, then close — and Enter on an empty bar closes rather than sitting inert. Escape is
+handled at the **keyboard itself** for the console's lifetime, the way the shell's own
+shortcuts are, and nowhere else: the owner found a handler on the search field's focus node
+answers only while the field has focus, which a pointer resting on the ring need not have —
+and one handler means one press is always exactly one step back.
 
 **Rings nest, so context stays honest.** `RadialEntry` gains `children`: choosing such a
 slice expands the menu in place (Blender's nested pies), the centre of the ring names where
@@ -7489,3 +7498,28 @@ lists nothing; typing opens the dropdown and hides the ring, clearing restores i
 one-step retreat; the ring centres on the anchor; a child slice expands in place, the centre
 backs out, a flick expands rather than closes, Escape pops before it closes; Enter on an
 empty bar closes (fx_console_test.dart).
+
+**K-326 · DECIDED · The Keyframe ring: the console keys a transform row where the playhead
+stands, and the Timeline shows the key it made.**
+From the owner (2026-08-09): "maybe on the radial menu having a keyframe option, which opens
+up all properties on that layer you could add a keyframe to in that position, and clicking
+adds one and opens that property row in the timeline if it's not already". So the
+layer-selected ring gains a sixth slice, **Keyframe ▸** (the ring is now at K-325's cap of
+six), whose sub-ring is one slice per transform row: Anchor point, Position, Scale, Rotation,
+Opacity — the five everyday rows, not the 3D extras, both for the cap and because Rotation
+X/Y remain the fold-out's business. A row driven by an expression is dimmed rather than
+dropped: writing keys over an expression would delete it.
+
+**Choosing a slice plants a key at the playhead holding the value already there** — nothing
+moves, the same invariant the stopwatch keeps — with every axis of the row keyed together
+and the key inserted in time order. A row already keyed at the playhead skips the write; in
+both cases the Timeline is fronted with **that row open**, so the key just made (or found)
+is on screen. The reveal is a new `revealPropertyRequest` on the shell state, speaking the
+same `reveal.*` words the P/S/R/T/A keys use so one mapping serves both — but it
+**ensures open** rather than toggling, because asking to see a row twice must never hide it.
+
+Regression tests (fx_console_context_frb_test.dart, against the real engine): the ring is
+exactly the five rows; a slice plants one key at the playhead and fires the reveal; the same
+frame never duplicates a key while a new frame inserts in order; an expressed row is dimmed;
+the Timeline opens exactly the asked row, consumes the request, and a second ask never
+closes it.

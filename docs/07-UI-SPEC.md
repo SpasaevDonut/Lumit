@@ -1735,12 +1735,14 @@ every command by name, the console is **effects, fast** — plus the thing you w
 about to do. Modelled on Video Copilot's FX Console, which is what After Effects users
 install first. It supersedes the radial menu K-102 deferred.
 
-**Where it opens (K-325).** The ring MUST open **centred on the pointer** — pulled in just
-enough that the whole ring stays on screen — so the flick can start the instant the chord
-lands. The search bar floats **above** the ring, or **below** it when the top of the window
-would clip it; its dropdown always opens downward from the bar. The console is not a boxed
-window and MUST NOT dim the frame behind it: its surfaces are the standard menu float made
-slightly translucent, because what it acts on is what the user should keep seeing.
+**Where it opens (K-325).** The ring MUST open **centred on the pointer** — anywhere in the
+window, the Viewer included, pulled in just enough that the whole ring stays on screen — so
+the flick can start the instant the chord lands. The search bar floats **above** the ring,
+or **below** it when the top of the window would clip it; its dropdown always opens downward
+from the bar. The console is not a boxed window: its surfaces are the standard menu float
+made slightly translucent, over a **half-strength scrim** — enough darkening that every
+slice reads over any frame, never so much that the work it acts on disappears. `Esc` MUST
+close it from anywhere, whatever has focus.
 
 **The search bar starts empty and lists nothing** — the ring is the offer. Typing opens a
 dropdown below the bar, which MUST rank **effects first and compositions after a divider**,
@@ -1776,6 +1778,10 @@ never saved — never the working directory. It MUST grey out with no compositio
   caret on the slice says it will, and the centre — or `Esc` — steps back out. This is how
   the selected-layer ring reaches creation: a **New ▸** slice opens Layer ▸ New's items, in
   the menu's order, so the two surfaces teach the same thing.
+- The selected-layer ring also carries **Keyframe ▸** (K-326): one slice per everyday
+  transform row. Choosing one plants a key at the playhead holding the value already there —
+  nothing moves — and fronts the Timeline with that row open, so the key just made is on
+  screen. A row already keyed there just reveals; a row driven by an expression is dimmed.
 - Each ring MUST be at most **six** entries. A ring of twelve is a ring nobody learns, and
   the long tail is the search bar beside it.
 - A slice that cannot run right now MUST be drawn dimmed rather than dropped, so a direction
