@@ -79,7 +79,11 @@ undo step:
 - **A drag stages rather than commits.** `render_frame_with_preview` renders a
     patched *clone* of the document engine-side, so a hundred drag ticks produce
     pixels without producing a hundred commits, journal writes and undo entries.
-    Only the release commits.
+    Only the release commits. Everything editable on a staged
+    `BridgeEffectInstance` follows that shape, not `set_value` alone:
+    `set_custom_name` (the instance's own display name, K-321) stages onto the
+    copy and `LayerReference::set_effects` is the commit, so a rename is one op
+    and one undo step like any other stack edit.
 
 ### The four binding rules
 

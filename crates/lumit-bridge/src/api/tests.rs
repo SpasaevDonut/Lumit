@@ -712,6 +712,7 @@ fn effect_with_every_kind() -> lumit_core::model::EffectInstance {
             param("layer", EffectValue::Layer(Some(Uuid::now_v7()))),
         ],
         sample_temporally: true,
+        custom_name: None,
         extra: serde_json::Map::new(),
     }
 }

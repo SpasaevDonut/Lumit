@@ -7230,3 +7230,169 @@ outline; on a 22px bar that is a whisper. It now lerps its label colour 35 % tow
 `textPrimary` — the hue still says which layer it is (K-188's rule survives), and the
 lit bar is what AE does and reads at any zoom. No spec pinned the outline, so nothing
 else moves.
+
+**K-318 · DECIDED · Submenus survive the diagonal: the safe hover triangle.**
+From the owner (2026-08-09): "when going through menus of any kind, I think we need to add
+safe hover triangles — like how JavaScript has intent plugins." A flyout opens beside the
+row that owns it, so the natural path to its first entry crosses the rows *below* that row;
+the menu switched on whichever row the pointer merely passed over, and the flyout vanished
+before it could be reached. The fix is the classic one: while a flyout is open, a hover
+report from another row of the same surface is **held** while the pointer is inside the
+triangle from where it left the owning row to the flyout's near edge. The held switch lands
+when the pointer leaves the triangle, or after a 300ms grace if the pointer simply stops
+there — resting on a row still means that row, which is the property a plain delay would
+lose. Reaching the flyout voids anything pending; a move that is not travel at all (straight
+down the menu) switches with no delay. The geometry lives in
+`flutter_ui/lib/widgets/hover_intent.dart` as pure arithmetic (`SafeTriangle`, tested as
+such), with the timers and hover state in `FloatSurface` — so every popup on the shared menu
+surface gets it at once: the menu bar, the Add effect browser's category flyouts, and every
+right-click menu. No animation, no toolkit dependency. Regression tests:
+`hover_intent_test.dart` (the geometry, and three submenu journeys — crossing, settling,
+leaving).
+
+**K-318a · NOTE · What Flutter already gives, and what it does not (the wheel check).**
+Asked by the owner before merging K-318/K-319: are we reinventing things the toolkit ships?
+Checked against Flutter 3.44.7's own source, and worth recording so it is not re-argued.
+
+**Already Flutter's, and used as such:** `ReadingOrderTraversalPolicy` is the traversal K-319
+installs — not a hand-written comparator. `TextSelectionGestureDetectorBuilder` is the
+press-to-caret/drag-to-highlight the value and timecode editors gained; the earlier code's
+fault was a bare `EditableText` with no gesture builder around it, not a missing feature.
+`DismissIntent` is now what Escape means in a modal (see below).
+
+**Flutter has a weaker answer, so ours stands.** `SubmenuButton` offers `hoverOpenDelay`
+(`material/menu_anchor.dart`) — a plain delay before a flyout *opens*. That is the naive fix
+K-318 rejected: it makes every submenu feel sluggish, and it does not address the actual
+complaint, which is that crossing a sibling row **closes** the flyout you are travelling to.
+There is no safe triangle anywhere in the framework (no hit for `safeTriangle`/`hoverIntent`
+in `packages/flutter`). The K-318 geometry is therefore not a reimplementation.
+
+**Flutter has nothing:** a radial/pie menu (no decision number yet). Correct to build.
+
+**We did duplicate one thing, mildly.** `WidgetsApp` already binds Enter/numpadEnter/Space to
+`ActivateIntent`, and `FocusableActionDetector` bundles focus + hover + shortcuts + actions —
+so the per-control `Focus(onKeyEvent:)` in `HouseButton`/`HouseCheckbox`/`HouseRadio` is about
+eight lines each that the Actions system could carry. It is left as it is *for now*, on
+purpose: the house controls are deliberately not Material (K-084), the hand-rolled version is
+tested, and — the part that matters — it does **not** take focus on a mouse click, so a
+clicked button shows no focus ring. Moving to `ActivateIntent` means opting into the standard
+focus-highlight behaviour and re-deciding that. Worth doing as its own change with its own
+look, not folded into this one.
+
+**The check found a real bug, which is why it was worth doing.** `showLumitModal`'s comment
+claimed dismissal happened on "Escape, via the route" — but a Lumit modal is an
+`OverlayEntry`, not a route, so **nothing listened and Escape did nothing in every dialogue
+in the application**. Fixed the framework's way rather than with a tenth key handler: the
+window contributes an `Actions` entry for `DismissIntent`, which `WidgetsApp` has already
+bound Escape to, and dismissing means completing with null exactly as a click on the scrim
+does. Regression test: `Escape closes a modal, the same as clicking the scrim`
+(dialog_keys_test.dart), which fails without the `Actions` entry.
+
+**K-319 · DECIDED · Every window has a default action; every control answers the keyboard;
+Tab reads left-to-right, top-to-bottom.**
+From the owner (2026-08-09), three complaints in one shape — "opening any confirmation
+window should have the okay button selected by default, and pressing enter presses whatever
+is currently the selected button", "tabbing through menus needs to be improved… left to
+right then top to bottom", and "when a user clicks a text/value box but immediately starts
+dragging without lifting up, it should still just be like they've selected the box". All
+three were the same gap: house controls were painted, not focusable. `HouseButton`,
+`HouseCheckbox`, `HouseRadio` and the idle `DragValueField` now hold a `ControlFocusNode`,
+draw the accent focus ring (docs/15 §6.5) and answer `Enter`/`Space`; the global shortcut
+handler stands down while one holds focus, exactly as it already did for a focused text
+field, so a dialogue's `Enter` can never also fire a panel command. Each confirmation window
+names one **default action** — affirmative, or safe where the affirmative is destructive —
+which is `primary: true` *and* `autofocus: true`; K-243 had established that shape for the
+Pre-compose dialogue alone, and it is now all of them (disk-cache clear, composition
+settings, export, project settings, theme name, theme-editor save, marker label, update
+offer, restart). Modals wrap their body in a `FocusScope` + `ReadingOrderTraversalPolicy`, so
+Tab cycles inside the window in *visual* reading order rather than widget-tree order — the
+two disagree wherever a layout nests columns inside rows. For the value boxes: a drag that
+never crosses one increment now cancels as a drag and then opens the editor (a click that
+wobbled is a click); the editor opens with the value **selected**, since a value is retyped
+far more often than amended; the numeric and timecode editors gained the desktop selection
+gestures they never had, so press-and-drag highlights; and `HouseTextField` takes focus on
+the pointer's *down* stroke so a press that slides into a drag selects text from the first
+pixel. Regression tests: `dialog_keys_test.dart`.
+
+**K-320 · DECIDED · A dragged zoom slider anchors once.**
+Same report ("zooming in the timeline with the slider can still ping around a lot"), and
+K-293's anchoring was right but measured at the wrong moment. `_setZoom` re-measured the
+anchor on every drag update, reading `_hLane.offset` *before* layout had corrected it for
+the zoom just applied — a fresh zoom against a stale offset — so each update re-anchored
+somewhere slightly wrong and the lanes lurched; near the viewport edges the in-view/recentre
+branch flip-flopped as well. The slider's drag now brackets the gesture (`onChangeStart`/
+`onChangeEnd` on `HouseSlider`): the anchor is chosen once, at the start, and held to the
+end, which is the invariant the flight already assumed. The anchor's per-frame width is also
+taken from the scroll position's own content extent — the same numbers `zoomAnchorOffset`
+applies it with — rather than from the build-time viewport cache, which disagreed by a
+little at every zoom and by more the further in you were. Landed with K-319, from the same
+report; the zoom rule it amends is docs/07 §4.6.
+
+**K-321 · DECIDED · `Enter` renames the selection; nothing renames on a double-click; effects
+can carry their own name.**
+From the owner (2026-08-09): "if there's anywhere still allowing double click or click a
+selected item to rename, drop that behaviour and instead enable pressing enter to edit the
+name of the selected item (this also needs to work for effect names in the effect control,
+but not property rows, just effect name)." K-191 had already moved compositions off the
+second-click rename and K-243 had given the Timeline `Enter`; the Project panel still
+renamed footage, solids and folders on a second click, which is the same gesture as a slow
+double-click and opened editors under people's pointers. That is gone: a second click
+*opens* (K-191's rule, now without exception), and `Enter` renames whatever the focused panel
+has selected. Two new actions join the keymap — `item.rename` (Project) and `effect.rename`
+(Effect controls) — bound to `Enter` in their own contexts, so the binding is live in the
+focused panel alone and one press can never open two editors (the Timeline's handler gained
+the same guard). **An effect instance gains `custom_name: Option<String>`**
+(`serde(default, skip_serializing_if = "Option::is_none")`, so a project without one is
+byte-for-byte unchanged and an older file reads as `None`). It is a display name only:
+`match_name`, the schema, the parameters and every lookup are untouched, and it shows in
+place of the effect's label in both the Effect controls heading and the Timeline's fold-out.
+`BridgeEffectInstance::set_custom_name` stages it and `set_effects` commits, so a rename is
+one op and one undo step; an empty or whitespace name clears back to the label. Parameter
+rows are not renameable — a parameter's name is the schema's. Regression tests:
+`custom_name_roundtrips_and_defaults_to_none` (lumit-core),
+`enter_renames_the_selection_in_each_panel_that_has_one` (lumit-keymap), `Enter renames the
+selected item` (project_panel_frb_test.dart), `Enter renames the selected effect, and the
+name persists` (effect_controls_frb_test.dart).
+
+**K-322 · DECIDED · The default workspace puts Effects & presets in the right-hand column.**
+From the owner (2026-08-09): "the default workspace layout should move the effect and preset
+panel to the right side panel." It also settles a disagreement between code and spec that
+had stood since the port: docs/07 §1.6 always described the Edit workspace as having
+"right column Effects & Presets", while `defaultLayout()` made it the *third tab of the left
+group* — behind Project and Effect controls, so it was never visible on a fresh install —
+and fronted the **Debug** view in the right column instead, which is a developer panel. The
+left group is now Project (fronted), Effect controls, Hierarchy; the right group is Effects
+& presets (fronted), Scopes, Debug. Shares are unchanged (0.68/0.32; 0.22/0.58/0.20), and
+the other three presets are untouched. A saved workspace is unaffected — this is the factory
+layout, which Reset workspace restores. Regression test: the amended `default layout matches
+default_layout() structure and shares` (dock_test.dart), which now also pins which tab each
+group opens on.
+
+**K-323 · DECIDED · `Escape` is the way out of an inline editor, and it writes nothing.**
+From the owner (2026-08-09), testing K-321: "escape still doesn't exit the rename dialogue".
+It never did, and the reason is worth recording because K-319 looked like it had covered
+this. K-319 gave *modals* an Escape by contributing an `Actions` entry for Flutter's own
+`DismissIntent`, which `WidgetsApp` already binds the key to. An inline rename is not a
+modal — it is a text field that replaced a label in place — so there was no `DismissIntent`
+handler anywhere above it and the key reached nothing.
+
+**The gap was the shape of the contract, not one missing handler.** K-243 established that
+every way out of an inline rename *commits*: Enter commits, clicking away commits (that was
+the point of K-243), losing focus commits. That is right — a rename typed and then abandoned
+by clicking elsewhere should not be thrown away. But it left no way to change your mind at
+all, on any of the three inline renames (an effect's name, a layer's name, a Project item's
+name) or in the value boxes, which have the same all-roads-commit shape.
+
+**So `Escape` cancels: the editor shuts and nothing is written.** `HouseTextField` gains an
+`onCancelled` callback and the two renames that use it pass one; the Project row's editor is
+a bare `EditableText`, so it wires the same key on its own focus node; `DragValueField`'s
+open editor does the same for typed numbers. In every case the key is handled on the field's
+**own focus node**, which sees it before the `Shortcuts`/`Actions` system — deliberately,
+because `EditableText` has its own `DismissIntent` handling and a handler placed above it
+could be swallowed. Clearing the editing flag *before* the editor closes is load-bearing in
+the value box: closing it is what loses focus, and the focus listener commits on focus loss.
+
+Regression tests, one per surface, each failing without the fix: `Enter renames the selected
+effect, and the name persists` and `Enter renames the selected item` (extended with an
+Escape leg), `Enter renames the selected layer` (timeline_panel_frb_test.dart), and `a value
+box opens its editor with the text selected` (dialog_keys_test.dart).

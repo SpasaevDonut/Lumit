@@ -1667,6 +1667,14 @@
   "@keyRenameTheLayer": {
     "description": "Settings → Keymap: what a shortcut does, in the table’s left column."
   },
+  "keyRenameTheSelectedEffect": "Rename the selected effect",
+  "@keyRenameTheSelectedEffect": {
+    "description": "Settings → Keymap: what a shortcut does, in the table’s left column."
+  },
+  "keyRenameTheSelectedItem": "Rename the selected item",
+  "@keyRenameTheSelectedItem": {
+    "description": "Settings → Keymap: what a shortcut does, in the table’s left column."
+  },
   "keyRevealAnchorPoint": "Reveal Anchor point",
   "@keyRevealAnchorPoint": {
     "description": "Settings → Keymap: what a shortcut does, in the table’s left column."

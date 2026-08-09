@@ -31,6 +31,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/footage.dart';
+import 'package:lumit_flutter/src/rust/api/keymap.dart';
+import 'package:lumit_flutter/state/dock.dart';
 import 'package:lumit_flutter/src/rust/api/project_item.dart';
 import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:provider/provider.dart';
@@ -129,14 +131,44 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
       final needle = _searchController.text.trim().toLowerCase();
       if (needle != _search) setState(() => _search = needle);
     });
+    // Enter renames the lone selected item (K-321) — the same key the
+    // Timeline gives its layers. Registered on the hardware keyboard like the
+    // Timeline's commands; the handler stands down for modals, focused
+    // fields, and whenever this panel is not the active one.
+    HardwareKeyboard.instance.addHandler(_onKey);
   }
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_onKey);
     _changes?.cancel();
     _searchController.dispose();
     _dropThumbs();
     super.dispose();
+  }
+
+  /// The Project panel's keyboard commands — just `item.rename` today.
+  bool _onKey(KeyEvent event) {
+    if (event is! KeyDownEvent || !mounted) return false;
+    if (lumitModalOpen) return false;
+    final focused = FocusManager.instance.primaryFocus?.context;
+    if (focused != null &&
+        (focused.widget is EditableText ||
+            focused.findAncestorWidgetOfExactType<EditableText>() != null)) {
+      return false;
+    }
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    // A per-panel binding is live in the *focused* panel (docs/07 §15); this
+    // handler hears every key wherever it lands, so the panel checks that it
+    // is the active one itself.
+    if (ui.activePanel.value != Panel.project) return false;
+    final action = ui.keymap.actionFor(BridgeKeyContext.project, event);
+    if (action == 'item.rename') {
+      if (_selectedIds.length != 1 || _renamingId != null) return false;
+      setState(() => _renamingId = _selectedIds.first);
+      return true;
+    }
+    return false;
   }
 
   /// The items currently selected, by id, in the order the panel lists them.
@@ -821,7 +853,19 @@ class _ProjectRowFrb extends StatefulWidget {
 class _ProjectRowFrbState extends State<_ProjectRowFrb> {
   bool _hover = false;
   TextEditingController? _rename;
-  final FocusNode _renameFocus = FocusNode();
+  // Escape on the field's own node, ahead of the shortcut system (K-323): the
+  // row's editor is a bare EditableText rather than a HouseTextField, so it
+  // wires the same key itself instead of inheriting it.
+  late final FocusNode _renameFocus = FocusNode(onKeyEvent: _onRenameKey);
+
+  KeyEventResult _onRenameKey(FocusNode node, KeyEvent event) {
+    if (event is KeyDownEvent &&
+        event.logicalKey == LogicalKeyboardKey.escape) {
+      _cancelRename();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
 
   ItemReference get item => widget.item;
 
@@ -839,6 +883,13 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
       _rename = TextEditingController(text: widget.name);
       _renameFocus.requestFocus();
     }
+  }
+
+  /// Escape: shut the editor, rename nothing (K-323).
+  void _cancelRename() {
+    _rename?.dispose();
+    _rename = null;
+    widget.onEndRename();
   }
 
   void _commitRename() {
@@ -919,7 +970,11 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
         widget.onToggleFolder();
         return;
       }
-      widget.onStartRename();
+      // Nothing for the other kinds: a second click used to rename them in
+      // place (K-191), which meant a slow double-click and a deliberate click
+      // on a selected row were the same gesture and names opened editors
+      // under people's pointers. Renaming is `Enter` on the selection now
+      // (K-321), with the row menu's Rename as the mouse path.
       return;
     }
     widget.onSelect(SelectMode.replace);

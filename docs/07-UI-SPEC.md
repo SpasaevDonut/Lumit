@@ -106,9 +106,12 @@ the panel arrangement is the local user's own.
 
 Structure only; every preset uses the same panel inventory.
 
-- **Edit** (default): Project panel left (Effect Controls tabbed behind it); Viewer centre;
-  right column Effects & Presets above Preview and Audio; Timeline across the full bottom at
-  roughly one-third window height.
+- **Edit** (default): Project panel left, fronted, with Effect Controls and Hierarchy tabbed
+  behind it; Viewer centre; **right column Effects & Presets, fronted**, with Scopes and the
+  Debug view tabbed behind (K-322 — the panel used to be a fourth tab on the *left*, buried
+  behind Project, with Debug fronting the right column instead); Timeline across the full
+  bottom at roughly one-third window height. Shares: 0.68/0.32 vertically, 0.22/0.58/0.20
+  across the upper band.
 - **Effects**: Effect Controls promoted to its own left column beside the Project panel;
   Effects & Presets expanded on the right with Scopes tabbed behind; Timeline slightly
   shorter than Edit.
@@ -215,6 +218,18 @@ panel layout is.
 
 - Every command the finished application will carry MUST be listed, whether or not it is built.
   An unbuilt one MUST read "(Not implemented)" after its name and MUST be disabled.
+- **A submenu MUST survive the diagonal to itself — the safe triangle (K-318).** A flyout
+  opens beside the row that owns it, so the natural path to its first entry crosses the rows
+  *below* that row. Switching on the row merely passed over takes the flyout away before it
+  can be reached, and the user has to travel the corner instead. So while a flyout is open,
+  a hover report from another row of the same surface is **held** while the pointer is inside
+  the triangle from where it left the owning row to the flyout's near edge; the held switch
+  lands when the pointer leaves that triangle, or after a short grace (300ms) if it simply
+  stops there — resting on a row still means that row. Reaching the flyout voids anything
+  pending. A move that is plainly *not* travel — straight down the menu, outside the triangle
+  — switches at once, with no delay to feel. The rule holds for every popup that uses the
+  shared menu surface, not the menu bar alone: the Add effect browser's category flyouts and
+  every right-click menu get it from the same place.
 - A command whose preconditions are absent (no project, no composition, no selected layer) MUST
   grey out rather than fail when pressed.
 - A row MUST show the chord the keymap currently binds to its action, and MUST take it from the
@@ -678,11 +693,11 @@ The library of assets: footage items, audio items, comps, folders.
 - **Hover-scrub thumbnails**: hovering a footage item's thumbnail and moving horizontally
   scrubs a low-resolution preview. This MUST be served from proxy/thumbnail data only and
   MUST NOT trigger full decodes. Double-click opens the item in a Viewer (footage mode).
-  **Shipped (owner request, 2026-07-28):** selection lands on the pointer's *down* stroke,
-  and a click on the lone selected row opens the in-place rename immediately — so a
-  double-click is "select, then rename" in one motion, on any row. Double-clicking empty
-  panel space imports. The footage-Viewer double-click above is deferred until footage
-  mode exists; comps front via the Timeline's comp tabs.
+  **Shipped (owner request, 2026-07-28):** selection lands on the pointer's *down* stroke.
+  A second click on the lone selected row **opens** it (§4.2); it no longer renames
+  (K-321) — `Enter` on the selection does, as it does in every panel. Double-clicking
+  empty panel space imports. The footage-Viewer double-click above is deferred until
+  footage mode exists; comps front via the Timeline's comp tabs.
 - Drag an item into a comp's Timeline or Viewer to create a layer; drag onto the
   **New comp** button to create a comp matching the footage (dimensions, fps, duration).
   **Shipped:** rows multi-select — `Ctrl`/`Cmd`-click adds or removes one, `Shift`-click takes
@@ -825,9 +840,20 @@ item's own answer:
 - a **folder** shows or hides what is in it. A caret on the row says which it is, and a
   search still looks inside a shut folder.
 
-Items are therefore renamed from the row menu (**Rename**) — and a comp also from its
-settings dialogue — rather than by a second click on the row. Dropping footage
-on a Timeline with nothing open raises the same **New composition** dialogue.
+Items are therefore renamed with **`Enter` on the selection** (K-321, §15) or from the row
+menu (**Rename**) — and a comp also from its settings dialogue — never by a second click on
+the row. Dropping footage on a Timeline with nothing open raises the same **New
+composition** dialogue.
+
+**One rename gesture, everywhere (K-321).** No surface renames on a double-click or on a
+click on an already-selected thing: both gestures mean *open*, and a rename that shared
+them opened editors under people's pointers. `Enter` renames whatever the focused panel has
+selected — a layer in the Timeline, an item in the Project panel, an **effect** in Effect
+controls (the effect's heading only; parameter rows are not renameable). The binding is
+per-panel and live in the focused panel alone, so one press can never open two editors. An
+effect's given name is stored on the instance and shown in place of the effect's label
+wherever the stack is drawn, in the panel and in the Timeline's fold-out alike; clearing it
+falls back to the label.
 
 **Opening a layer (K-243).** Double-clicking a layer in the Timeline outline opens it the
 same way: a **Precomp** layer fronts the comp it draws, and every other kind will open in a
@@ -836,8 +862,36 @@ It is never a rename; `Enter` is (§15) — and an inline rename commits when th
 down anywhere else, not only on `Enter`.
 
 **A modal window's keys are its own (K-243).** Panel commands stand down while a dialogue is
-open. A dialogue's default action — Pre-compose in §13.4 — takes focus when the window opens,
-is drawn with the accent edge, and `Enter` presses it.
+open. A dialogue's default action takes focus when the window opens, is drawn with the accent
+edge, and `Enter` presses it.
+
+**Escape dismisses (K-319).** Every modal MUST answer Escape by dismissing — the same
+answer a click on the scrim gives. It is Flutter's own `DismissIntent`, which the app binds
+Escape to above everything, so a window contributes only what dismissing *means* rather than
+another key handler.
+
+**Escape cancels an inline editor too, and writes nothing (K-323).** An inline rename or an
+open value box is not a modal, so `DismissIntent` reaches nothing above it; each such editor
+MUST therefore answer Escape on its **own focus node**, ahead of the shortcut system. Every
+other exit commits (§4.3, K-243) — Enter, clicking away, losing focus — so Escape is the one
+way out that keeps the old name or value. It applies to all four surfaces that have one: an
+effect's name, a layer's name, a Project item's name, and any value box being typed into.
+
+**Every window, not just one (K-319).** That rule is now the shape of *all* of them: each
+confirmation or settings window names one **default action** — the affirmative one, or the
+safe one where the affirmative is destructive — and that button carries the accent edge and
+holds focus from the moment the window opens. `Enter` presses **whatever is focused**, not a
+hard-wired button: Tab moves the focus and Enter presses the control it landed on, so a
+window is fully operable without the mouse. Every house control is focusable and shows the
+accent focus ring while it holds focus (docs/15 §6.5); buttons, checkboxes and radios answer
+`Enter` and `Space`, and a focused value box opens its editor on `Enter`. While a house
+control holds focus its keys are its own, exactly as a text field's are — a panel command
+never fires underneath it.
+
+**Tab order is reading order (K-319).** Focus moves left to right, then top to bottom, by
+where controls actually *are* on screen — not by the order the layout code happened to
+compose them. A modal is its own focus scope, so Tab cycles within the window and never
+wanders into the panels behind it.
 
 1. **Index** (render order; bottom layer renders first).
 2. **Name / source toggle**: click the column header to flip between the user-given layer
@@ -1088,6 +1142,13 @@ wiring job rather than a design one.
   (K-293). The slider has no pointer to zoom about, and the playhead is where the work is —
   the same thing After Effects zooms its timeline about. A playhead in view keeps the screen
   position it has; a playhead out of view is brought to the middle of the lanes.
+- **A dragged slider MUST choose its anchor once, at the start of the gesture, and hold it
+  to the end** (K-320). Re-measuring per update reads the scroll offset *before* layout has
+  corrected it for the zoom just applied — a fresh zoom against a stale offset — so every
+  update anchors somewhere slightly different and the lanes ping about under the finger. It
+  MUST also measure the per-frame width from the scroll position's own content extent, the
+  same numbers the correction is applied with: a width taken from anywhere else disagrees a
+  little at every zoom, and that disagreement grows with magnification.
 - **The scroll correction that holds the anchor MUST happen inside layout** (K-293): the
   offset that keeps a frame still is only valid for the width the zoom has just produced, so
   moving it before that width is laid out leaves the view scrolled past its own end for a
@@ -1342,6 +1403,15 @@ Shows the **effect stack** of the selected layer (tab per recently viewed layer,
   heading's **Copy effect** act on. Source and Transform are not part of a stack and so are
   not selectable; their headings twirl as they always did.
 
+  **An effect can be given its own name** (K-321). `Enter` on the selected effect turns its
+  heading into an inline editor holding the current name, selected; committing writes the
+  name onto the *instance* and it is shown in place of the effect's label wherever the stack
+  is drawn — this panel and the Timeline's fold-out — so "Blur the sign" replaces "Gaussian
+  blur" for that one instance. Clearing the field falls back to the label. It is a display
+  name only: the effect's `match_name`, its schema, its parameters and every lookup by name
+  are untouched, and a project saved without a given name is byte-for-byte as it was.
+  Parameter rows are **not** renameable — a parameter's name comes from the schema.
+
   **Round shape keeps its bubble** (K-092): the same rows, wrapped in floating-card chrome.
   The two shapes differ in chrome, not in layout.
 
@@ -1439,6 +1509,29 @@ answer to a question about a few pixels, not a picture.
 
 Still to build here: the x/y **position** pick for coordinate-valued parameter pairs (the
 the T14 viewfinder), and the on-Viewer crosshair handle for point parameters.
+
+### 6.2 Value boxes and text fields (K-319)
+
+Every scrubbable number in Lumit — a parameter row's value, a dialogue's field, the transport
+timecode — is one control with two modes: **drag it** sideways to adjust, **click it** to
+type. The rules that keep those two from stealing each other's gestures are shared by all of
+them, and apply to the plain text fields too.
+
+- **A press that never crosses one increment is a click, not a scrub.** A drag that ends
+  without ticking a single step MUST cancel as a drag and then do what the click meant —
+  open the editor. Before this rule a click that wandered two pixels did nothing at all, and
+  the boxes read as swallowing clicks.
+- **The editor opens with the whole value selected.** A value is retyped far more often than
+  it is amended, so the first keystroke MUST replace it rather than append to it.
+- **Focus lands on the pointer's down stroke, not on the resolved tap.** Someone who presses
+  in a text field and slides straight into a drag is selecting text in one motion; the field
+  MUST already be theirs when the highlight starts, or the gesture selects nothing.
+- **An open editor MUST support real text selection** — press to place the caret, drag to
+  highlight, the desktop selection handles — in every field, including the numeric ones and
+  the timecode readouts.
+- **`Enter` on a focused value box opens its editor**, and while it is focused its keys are
+  its own (no panel command fires underneath it). The accent focus ring says which box has
+  focus, per docs/15 §6.5.
 
 ---
 
@@ -1989,6 +2082,8 @@ app-wide, so a list, a field or a canvas is free to use them for moving within i
 | Timeline | `=` / `-` | Zoom time in / out (`Ctrl+wheel` at pointer) |
 | Timeline | `\` | Toggle full-comp zoom / previous zoom |
 | Timeline | `Enter` | Rename selected layer |
+| Project panel | `Enter` | Rename the selected item (K-321) |
+| Effect controls | `Enter` | Rename the selected effect (K-321; the heading, not a parameter row) |
 | Timeline | `X` | Toggle selected layer visible switch |
 | Graph editor | `Shift+F3` | Toggle graph editor |
 | Graph editor | `F9` / `Shift+F9` / `Ctrl+Shift+F9` | Ease / ease in / ease out |

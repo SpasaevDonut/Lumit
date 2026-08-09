@@ -122,12 +122,12 @@ List<BridgeKeyframe> laneKeysOf(LayerFoldRow row) => switch (row) {
             read(transform, group.axes.first.prop)) {
           BridgeScalar_Keyframed(:final field0) => field0,
           BridgeScalar_Static() => const [],
-          BridgeScalar_Expression() => const[],
+          BridgeScalar_Expression() => const [],
         },
       FoldRetimeRow(:final scalar) => switch (scalar) {
           BridgeScalar_Keyframed(:final field0) => field0,
           BridgeScalar_Static() => const [],
-          BridgeScalar_Expression() => const[],
+          BridgeScalar_Expression() => const [],
         },
       FoldEffectParamRow(:final value) => switch (value) {
           BridgeEffectValue_Float(
@@ -445,7 +445,9 @@ List<LayerFoldRow> layerFoldRows({
         final effectOpen = open.contains(path);
         rows.add(FoldGroupRow(
           path: path,
-          label: effectLabelOf(fx.name),
+          // The user's own name where one is set (K-321), so the fold-out
+          // and the Effect controls read the same.
+          label: fx.customName ?? effectLabelOf(fx.name),
           open: effectOpen,
           depth: 2,
         ));

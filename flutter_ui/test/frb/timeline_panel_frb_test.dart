@@ -3453,6 +3453,18 @@ void main() {
       expect(layer.getInfo().name, 'Hero solid');
       expect(find.byKey(ValueKey<String>('tl-rename-$id')), findsNothing,
           reason: 'submitting leaves the editor');
+
+      // Escape leaves it the other way (K-323): editor shut, nothing written.
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      await tester.enterText(
+          find.byKey(ValueKey<String>('tl-rename-$id')), 'Regretted');
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byKey(ValueKey<String>('tl-rename-$id')), findsNothing,
+          reason: 'Escape closes the editor');
+      expect(layer.getInfo().name, 'Hero solid',
+          reason: 'and the layer keeps the name it had');
     });
 
     /// Clicking away from the rename editor finishes the edit and keeps what
