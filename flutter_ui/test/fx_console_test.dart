@@ -110,6 +110,44 @@ void main() {
           reason: 'the console owns the keyboard while it is open');
     });
 
+    /// The first letter hides the ring, which changes the Stack's children —
+    /// and an unkeyed Stack matches its children by index, so the bar's
+    /// element was recycled onto the ring's old slot and the field rebuilt
+    /// from nothing. Its text-input connection died with it and typing
+    /// stopped dead after one letter (K-328).
+    ///
+    /// The second letter is delivered through the **connection already
+    /// open**, not via `enterText`, which re-attaches one and would hide
+    /// exactly this fault.
+    testWidgets('typing keeps going after the ring steps aside',
+        (tester) async {
+      await open(
+        tester,
+        FxConsoleModel(
+          radialTitle: 'Scene',
+          radial: [RadialEntry(label: 'Solid', run: () {})],
+          entries: [effect('Glow'), effect('Gaussian blur')],
+        ),
+      );
+      final field = tester.state<EditableTextState>(find.byType(EditableText));
+
+      await tester.enterText(query(), 'g');
+      await tester.pumpAndSettle();
+      expect(centre(), findsNothing, reason: 'the ring has stepped aside');
+      expect(tester.state<EditableTextState>(find.byType(EditableText)),
+          same(field),
+          reason: 'the field must survive the ring leaving, not be rebuilt');
+
+      tester.testTextInput.updateEditingValue(const TextEditingValue(
+        text: 'ga',
+        selection: TextSelection.collapsed(offset: 2),
+      ));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('fx-console-item-Gaussian blur')),
+          findsOneWidget,
+          reason: 'the second letter reached the box and narrowed the list');
+    });
+
     testWidgets('an empty bar lists nothing — the ring is the offer',
         (tester) async {
       await open(

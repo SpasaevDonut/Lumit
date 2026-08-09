@@ -4229,6 +4229,13 @@ behind it.
   rebuilds anything whose shape changed, taking scroll position and in-flight
   drags with it. Focus outlines and hover borders are always present and merely
   transparent when unseen.
+- **A child that comes and goes beside a child that holds state needs a key**
+  (K-328). Flutter matches the children of a `Stack` or `Column` by *position in
+  the list* unless they carry keys, so removing one shifts every later sibling
+  onto its neighbour's element — and anything living in that element (a text
+  field's editing session, a scroll position) is quietly rebuilt from nothing.
+  In the FX console this cost the search box its keyboard connection the moment
+  the ring was hidden, so typing worked for exactly one letter.
 - **Throttle by holding the newest, never by dropping it**
   (`state/preview_throttle.dart`, mirrored by the engine's worker).
 - **Register the new texture before releasing the old one** — never show less

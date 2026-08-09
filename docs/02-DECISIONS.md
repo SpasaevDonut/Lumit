@@ -7569,7 +7569,21 @@ re-taken the moment anything steals it, for as long as the console is open. Ther
 keyboard route out of the console except Escape; the pointer route is a click outside.
 `HouseTextField` gains an optional caller-owned `focusNode` to make that steering possible.
 
-Regression tests: the field has focus on open and takes it back when unfocused
-(fx_console_test.dart); with the console open the space bar types instead of playing, and
-plays again once Escape closes it (shortcuts_frb_test.dart — the existing Ctrl+Space test
-now closes the console before asserting the bare space bar).
+**And the console's `Stack` children are keyed, which is load-bearing rather than tidiness.**
+Owner-found immediately after the above: typing worked for exactly one letter and then
+stopped. The ring is hidden while the query is non-empty, so the first keystroke *removes a
+child from the middle of the stack* — and Flutter matches unkeyed children by index and
+runtime type, both of these being `Positioned`. The bar's element was recycled onto the
+ring's old slot and the field beneath it rebuilt from nothing; a fresh `EditableText` whose
+focus node is **already** focused never opens a text-input connection, so every later
+keystroke had nowhere to land. Keying each child matches by identity instead, and the field
+survives the ring coming and going untouched. The general rule this is an instance of: any
+conditional child in a `Stack` whose siblings hold state needs a key.
+
+Regression tests: the field has focus on open and takes it back when unfocused; **typing
+keeps going after the ring steps aside** — the field's state object must be the same
+instance across the change, and the second letter is delivered through the connection
+already open (`updateEditingValue`) rather than `enterText`, which re-attaches one and would
+hide exactly this fault (fx_console_test.dart). With the console open the space bar types
+instead of playing, and plays again once Escape closes it (shortcuts_frb_test.dart — the
+existing Ctrl+Space test now closes the console before asserting the bare space bar).

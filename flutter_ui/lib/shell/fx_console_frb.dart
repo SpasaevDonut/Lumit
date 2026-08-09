@@ -385,6 +385,15 @@ class _FxConsoleState extends State<_FxConsole> {
             barWidth: _barWidth,
             barHeight: _barHeight,
           );
+          // **Every child is keyed, and that is load-bearing** (K-328). The
+          // ring comes and goes with the query, so without keys the bar
+          // shifts index the moment a letter is typed — and Flutter matches
+          // unkeyed children by index and type, both of these being
+          // `Positioned`. The bar's element was recycled onto the ring's old
+          // slot, the field beneath it rebuilt from nothing, and a fresh
+          // `EditableText` whose focus node is *already* focused never opens
+          // a text-input connection: typing stopped dead after one letter.
+          // Keys make the match by identity, so the field survives untouched.
           return Stack(
             children: [
               // A hush, not a blackout: the modal scrim at half its strength,
@@ -392,6 +401,7 @@ class _FxConsoleState extends State<_FxConsole> {
               // part of the picture. It also catches the click that means
               // "never mind".
               Positioned.fill(
+                key: const ValueKey('fx-console-scrim'),
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
                   onTap: widget.onClose,
@@ -406,6 +416,7 @@ class _FxConsoleState extends State<_FxConsole> {
               // way in.
               if (!_typing && _rings.last.entries.isNotEmpty)
                 Positioned(
+                  key: const ValueKey('fx-console-ring'),
                   left: at.centreX - radialExtent,
                   top: at.centreY - radialExtent,
                   width: radialExtent * 2,
@@ -413,6 +424,7 @@ class _FxConsoleState extends State<_FxConsole> {
                   child: _ring(t),
                 ),
               Positioned(
+                key: const ValueKey('fx-console-bar'),
                 left: at.barLeft,
                 top: at.barTop,
                 width: _barWidth,
@@ -421,6 +433,7 @@ class _FxConsoleState extends State<_FxConsole> {
               ),
               if (_typing)
                 Positioned(
+                  key: const ValueKey('fx-console-dropdown'),
                   left: at.barLeft,
                   top: at.barTop + _barHeight + 4,
                   width: _barWidth,
