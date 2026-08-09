@@ -166,7 +166,7 @@
   "@cornersRound": {
     "description": "Settings window: the rounded choice for the Corners setting."
   },
-  "cornersSharp": "Sharp",
+  "cornersSharp": "直角",
   "@cornersSharp": {
     "description": "Settings window: the square-cornered choice for the Corners setting."
   },
@@ -495,7 +495,7 @@
   "@foldPaint": {
     "description": "Heading in a layer's fold-out, over its brush strokes."
   },
-  "foldWaveform": "Waveform",
+  "foldWaveform": "波形图",
   "@foldWaveform": {
     "description": "Heading in a layer's fold-out, over the picture of its sound; also the name of a scope."
   },
@@ -543,7 +543,7 @@
   "@fxAmount": {
     "description": "Effect controls — a control on Radial blur."
   },
-  "fxAmplitude": "Amplitude",
+  "fxAmplitude": "振幅",
   "@fxAmplitude": {
     "description": "Effect controls — a control on Shake."
   },
