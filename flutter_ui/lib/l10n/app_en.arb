@@ -1955,6 +1955,23 @@
   "@maskModeSubtract": {
     "description": "Mask mode: this mask takes its shape away from what the masks above it let through."
   },
+  "maskNumbered": "Mask {n}",
+  "@maskNumbered": {
+    "description": "Default name for a mask drawn with the Pen. {n} counts up from 1 within the layer.",
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "maskOpacity": "Opacity",
+  "@maskOpacity": {
+    "description": "The name of a mask's opacity row in the Timeline fold-out."
+  },
+  "maskPath": "Path",
+  "@maskPath": {
+    "description": "The name of a mask's shape row in the Timeline fold-out — the row that keyframes the drawn shape itself."
+  },
   "menu3dLayer": "3D layer",
   "@menu3dLayer": {
     "description": "Menu item."
@@ -3571,6 +3588,10 @@
   "tipMarkOpacity": "Mark opacity",
   "@tipMarkOpacity": {
     "description": "Tooltip. Keep it to the control's name — under five words."
+  },
+  "tipMaskMode": "Mask mode",
+  "@tipMaskMode": {
+    "description": "Tooltip on the picker choosing how a mask combines with the ones above it — Add, Subtract, Intersect, Difference. Under five words."
   },
   "tipMasterMotionBlurOff": "Master motion blur off",
   "@tipMasterMotionBlurOff": {

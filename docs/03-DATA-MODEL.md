@@ -380,17 +380,17 @@ is never serialised as authority.
 ## 7. Masks
 
 ```rust
-// A mask with an animatable path, a mode, a uniform feather and a uniform expansion.
+// A mask: an animatable path, a mode, and three animatable numbers (K-340).
 struct Mask {
     id: Uuid,
     name: String,
     path: BezierPath,                 // the shape when path_keys is empty
     path_keys: Vec<PathKeyframe>,     // empty = not animated (absent from the file)
     inverted: bool,
-    opacity: f64,                     // 0..100, static
+    opacity: Property,                // 0..100
     mode: MaskMode,                   // None | Add | Subtract | Intersect | Difference
-    feather: f64,                     // layer px, total ramp width (0 = hard edge)
-    expansion: f64,                   // layer px, + grows the shape, − shrinks it
+    feather: Property,                // layer px, total ramp width (0 = hard edge)
+    expansion: Property,              // layer px, + grows the shape, − shrinks it
 }
 
 struct PathKeyframe {
@@ -417,6 +417,16 @@ resolution. A mask with neither takes a fast path and is used exactly as rasteri
 `mode`, `feather`, `expansion` and `path_keys` are omitted from the file when they hold their
 defaults (`Add`, 0, 0, empty), so a project that predates them reads and writes
 byte-identically and keeps the frames its cache has already banked.
+
+`opacity`, `feather` and `expansion` are `Property`s but **do not write themselves as one
+while they are still** (K-340): a static value writes as the bare number it always wrote,
+and only a mask somebody has keyed writes the animation object. Reading takes either. The
+same promise, for the same reason — the frame key names a mask by the bytes its list
+serialises to, so an unkeyed mask must be byte-identical to what it was.
+
+A mask whose `mode` is `None` **or** whose opacity is zero at the time being drawn does
+nothing at all, and a layer whose masks are all in that state is unmasked and whole — not
+blank (K-340).
 
 ### 7.0 The animated path
 
@@ -458,8 +468,7 @@ as it was.
 
 The op is still `SetLayerMasks`, the whole list, exactly invertible.
 
-**Future:** an animatable `opacity`/`feather`/`expansion`, and the `Lighten` / `Darken` modes,
-deliberately left out of the first mode set. Variable-width feather is later still; the model
+**Future:** the `Lighten` / `Darken` modes, deliberately left out of the first mode set. Variable-width feather is later still; the model
 will reserve per-vertex feather data.
 
 ### 7.1 Paint strokes (K-227)

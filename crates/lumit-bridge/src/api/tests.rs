@@ -5371,10 +5371,11 @@ fn editing_a_mask_keeps_what_the_bridge_cannot_describe() {
         vertices: vertices.clone(),
         closed: true,
         inverted: false,
-        opacity: 100.0,
+        opacity: BridgeScalar::Static(100.0),
         mode: BridgeMaskMode::Add,
-        feather: 0.0,
-        expansion: 0.0,
+        feather: BridgeScalar::Static(0.0),
+        expansion: BridgeScalar::Static(0.0),
+        path_key_times: Vec::new(),
     };
     layer.add_mask(mask.clone()).expect("added");
 
@@ -5405,12 +5406,16 @@ fn editing_a_mask_keeps_what_the_bridge_cannot_describe() {
         state.store.replace_document(doc);
     }
 
-    // An ordinary edit: the same thing dragging the opacity slider does.
+    // An ordinary edit: the same thing dragging the opacity slider does. No
+    // time, because an opacity drag is not a shape edit.
     layer
-        .set_mask(BridgeMask {
-            opacity: 40.0,
-            ..mask
-        })
+        .set_mask(
+            BridgeMask {
+                opacity: BridgeScalar::Static(40.0),
+                ..mask.clone()
+            },
+            None,
+        )
         .expect("edited");
 
     let state = project.state().expect("state");
@@ -5425,7 +5430,10 @@ fn editing_a_mask_keeps_what_the_bridge_cannot_describe() {
         .find(|m| m.id == mask.id)
         .expect("the mask survives its own edit");
 
-    assert!((stored.opacity - 40.0).abs() < 1e-9, "the edit landed");
+    assert!(
+        (stored.opacity.value_at(0.0) - 40.0).abs() < 1e-9,
+        "the edit landed"
+    );
     assert_eq!(
         stored.path_keys.len(),
         1,
@@ -5436,5 +5444,48 @@ fn editing_a_mask_keeps_what_the_bridge_cannot_describe() {
         stored.extra.get("fromTheFuture"),
         Some(&serde_json::json!(7)),
         "a field a newer Lumit wrote must survive an edit from this one"
+    );
+    drop(state);
+
+    // **A shape edit on a keyed mask lands on the key** (K-340). Once a path is
+    // animated `path` is not what the mask draws, so writing the dragged
+    // vertices there would move nothing at all and the shape would look frozen
+    // under the pointer.
+    let dragged: Vec<BridgeVertex> = mask
+        .vertices
+        .iter()
+        .map(|v| BridgeVertex {
+            x: v.x + 25.0,
+            ..*v
+        })
+        .collect();
+    layer
+        .set_mask(
+            BridgeMask {
+                vertices: dragged,
+                ..mask.clone()
+            },
+            Some(BridgeRational {
+                num: key_time.num(),
+                den: key_time.den(),
+            }),
+        )
+        .expect("shape edited");
+
+    let state = project.state().expect("state");
+    let state = state.read().expect("read");
+    let doc = state.store.snapshot();
+    let stored = doc
+        .comp(layer.comp_id)
+        .expect("the comp")
+        .layers
+        .iter()
+        .flat_map(|l| l.masks.iter())
+        .find(|m| m.id == mask.id)
+        .expect("the mask is still there");
+    assert_eq!(stored.path_keys.len(), 1, "the drag reused the key there");
+    assert!(
+        (stored.path_keys[0].path.vertices[0].pos.0 - (mask.vertices[0].x + 25.0)).abs() < 1e-9,
+        "the dragged shape went into the key, not the ignored static path"
     );
 }

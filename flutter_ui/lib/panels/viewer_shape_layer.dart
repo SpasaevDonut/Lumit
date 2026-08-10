@@ -493,7 +493,7 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
       box.layer.addMask(
         mask: shapeMask(
           vertices: path,
-          name: shapeMaskName(widget.tool),
+          name: maskName(widget.tool, box.masks.length),
         ),
       );
       widget.onChanged();

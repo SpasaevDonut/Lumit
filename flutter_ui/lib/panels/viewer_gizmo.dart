@@ -460,6 +460,7 @@ BridgeMask? maskWithPointsMoved(
     mode: mask.mode,
     feather: mask.feather,
     expansion: mask.expansion,
+    pathKeyTimes: mask.pathKeyTimes,
   );
 }
 
@@ -529,8 +530,10 @@ LayerBox? layerToDragAt(
 }
 
 /// Every layer wholly inside [rect] — what a released marquee selects.
-List<LayerBox> layersInsideRect(List<LayerBox> boxes, Rect rect) =>
-    [for (final box in boxes) if (box.insideRect(rect)) box];
+List<LayerBox> layersInsideRect(List<LayerBox> boxes, Rect rect) => [
+      for (final box in boxes)
+        if (box.insideRect(rect)) box
+    ];
 
 /// The scale percentages a handle drag implies.
 ///
@@ -688,7 +691,10 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
   /// The boxes of the selected layers, in stacking order.
   List<LayerBox> get _selected {
     final ids = widget.uiState.selectedLayerIds;
-    return [for (final box in widget.boxes) if (ids.contains(box.id)) box];
+    return [
+      for (final box in widget.boxes)
+        if (ids.contains(box.id)) box
+    ];
   }
 
   @override
@@ -1066,8 +1072,8 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
     final box = _acting;
     final scale = _scaleNow();
     if (box == null || scale == null) return;
-    _throttle
-        .request(() => _sendPreview(box, (tf) => transformWithScale(tf, scale.$1, scale.$2)));
+    _throttle.request(() =>
+        _sendPreview(box, (tf) => transformWithScale(tf, scale.$1, scale.$2)));
   }
 
   void _commitScale() {
@@ -1106,8 +1112,8 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
     final box = _acting;
     final rotation = _rotationNow();
     if (box == null || rotation == null) return;
-    _throttle
-        .request(() => _sendPreview(box, (tf) => transformWithRotation(tf, rotation)));
+    _throttle.request(
+        () => _sendPreview(box, (tf) => transformWithRotation(tf, rotation)));
   }
 
   void _commitRotate() {
@@ -1218,7 +1224,14 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
         final moved = maskWithPointsMoved(box, mask, _points, d);
         if (moved == null) continue;
         try {
-          box.layer.setMask(mask: moved);
+          // The playhead goes with it: on a mask whose shape is keyed, the
+          // drag belongs to the key sitting there rather than to the static
+          // path, which `path_at` would ignore (K-340).
+          box.layer.setMask(
+            mask: moved,
+            at: widget.comp
+                .timeOfFrame(frame: widget.uiState.playheadFrame.value),
+          );
           landed = true;
         } catch (_) {
           // The mask went away mid-drag; the rest still move.
@@ -1270,8 +1283,7 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
         // bounding box, so a preview of the art alone would slide the untouched
         // half of it and the commit would slide it back.
         final art = shapeContentsRect(contents);
-        final shift =
-            art == null ? Offset.zero : art.topLeft - box.artOrigin;
+        final shift = art == null ? Offset.zero : art.topLeft - box.artOrigin;
         widget.comp.renderFrameWithShapePreview(
           frame: BigInt.from(widget.uiState.playheadFrame.value),
           scale: widget.uiState.viewerScale,
@@ -1576,13 +1588,13 @@ class _GizmoPainter extends CustomPainter {
 
     final path = Path()..moveTo(at(0).dx, at(0).dy);
     for (var i = 1; i < vertices.length; i++) {
-      path.cubicTo(
-          out(i - 1).dx, out(i - 1).dy, into(i).dx, into(i).dy, at(i).dx, at(i).dy);
+      path.cubicTo(out(i - 1).dx, out(i - 1).dy, into(i).dx, into(i).dy,
+          at(i).dx, at(i).dy);
     }
     if (closed && vertices.length > 2) {
       final last = vertices.length - 1;
-      path.cubicTo(
-          out(last).dx, out(last).dy, into(0).dx, into(0).dy, at(0).dx, at(0).dy);
+      path.cubicTo(out(last).dx, out(last).dy, into(0).dx, into(0).dy, at(0).dx,
+          at(0).dy);
       path.close();
     }
     canvas.drawPath(

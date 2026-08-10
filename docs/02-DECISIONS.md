@@ -8006,3 +8006,58 @@ cannot mis-serve an exposed frame to something expecting the composite.
 K-245 already writes into the `.lum`, which is not undoable and does not mark the project
 dirty. A way of looking is not an edit to the work, so Ctrl+Z must never undo an exposure
 nudge, and a comp reopens looking how it was left.
+
+**K-340 · DECIDED · Every one of a mask's values animates, and a still mask still writes
+bare numbers.** From the owner, testing K-338 in the app (2026-08-10): "currently no mask
+property has the clock icon to enable keyframing. This should be the same as any
+transform/effect etc. and all the properties should be able to be keyframed." K-339 had
+given the *path* its keys and left the three numbers static, and had exposed neither to the
+frontend — so the branch claimed keyframing that nothing in the interface could reach.
+
+**Opacity, feather and expansion become ordinary `Property`s**, not a second key-list
+carrier beside each value. K-339 argued the other way for the *path*, and that argument
+still holds there: a shape is not a scalar, and making `Property` generic to hold one would
+churn two hundred call sites to buy nothing. A number is a scalar. Making these three what
+every other animatable number already is means the Timeline row reuses the stopwatch, the
+◄ ◆ ► navigator, the keyed-value field and the lane diamonds exactly as they stand —
+"the same as any transform/effect" is then true by construction rather than by a parallel
+implementation that would drift.
+
+**The file keeps its old shape while the mask is still.** A `Property` normally serialises
+as an object, and switching to that would have migrated every `.lum` ever written and —
+worse — retired every frame every project has banked, because the frame key names a mask by
+the bytes its list serialises to. So the three fields carry their own encoding
+(`still_or_keyed`): a static value writes as the bare number it always wrote, and only a
+mask somebody has actually keyed grows the object. Reading takes either. An unkeyed mask is
+therefore byte-identical to what it was, which is the same promise K-338 and K-339 each
+made and is why the cache survives all three.
+
+**The frame key learns the evaluated numbers, for the same reason it learned the evaluated
+path.** A keyed opacity serialises identically at every frame while the key deliberately
+carries no timeline position of its own (K-214), so without the value at the layer's local
+time a moving mask would name every frame alike and playback would hand back the first one
+drawn. Fed only for properties that actually hold keys.
+
+**Clamping an animation clamps its keys.** The bridge has always held a mask's opacity into
+0..100 and its feather and expansion into a sane span rather than trusting the frontend. A
+key three seconds away at −40 % is exactly as wrong as one now, so the clamp walks the
+keyframes rather than the value under the playhead.
+
+**Opacity moves off the mask's header onto a row of its own**, joining Path, Feather and
+Expansion. A property with no row has nowhere to put a stopwatch, and the header now carries
+only what the mask *is*: its name, its invert switch and its mode.
+
+**The shape's row keys through its own ops.** `toggle_mask_path_key` and
+`clear_mask_path_keys` plant, remove and stop — a key holds the shape the mask is *already*
+showing at that moment, so pressing ◆ never moves anything, and switching animation off
+keeps the shape under the playhead rather than snapping to the first key. That is what the
+stopwatch does everywhere else. `MaskPathKeyframesFrb` sits in the same file as the scalar
+controls so the two cannot drift into different ideas of what a diamond means.
+
+**Two switches mean a mask does nothing, and neither hides the layer.** Mode `None` and
+opacity zero both used to blank the layer outright when the mask was the only one on it —
+the fold started from an empty stack and then skipped the very mask it had started from.
+`Mask::does_something_at` is now the single question every caller routes through, and it
+takes a time because opacity animates: a mask keyed up from zero is off for the first half
+of the shot and on for the second.
+

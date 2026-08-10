@@ -94,15 +94,19 @@ final class FoldMaskRow extends LayerFoldRow {
   const FoldMaskRow(this.mask, {required int depth}) : super(depth);
 }
 
-/// Which of a mask's two pixel values a [FoldMaskValueRow] carries.
-enum MaskValue { feather, expansion }
+/// Which of a mask's animatable values a [FoldMaskValueRow] carries (K-340).
+///
+/// [path] is the shape itself: a value with no number, so its row carries a
+/// stopwatch and diamonds but no field (K-339).
+enum MaskValue { path, opacity, feather, expansion }
 
-/// One of a mask's pixel values — its feather, or its expansion — on a row of
-/// its own under the mask (K-222).
+/// One of a mask's values — its shape, opacity, feather or expansion — on a
+/// row of its own under the mask (K-222, K-340).
 ///
 /// A row rather than another control squeezed onto the mask's own row: the
-/// value column holds one field, and every other number in the fold-out has a
-/// row with its name on it.
+/// value column holds one field, every other number in the fold-out has a row
+/// with its name on it, and a property without a row of its own has nowhere to
+/// put the stopwatch that animates it.
 final class FoldMaskValueRow extends LayerFoldRow {
   final BridgeMask mask;
   final MaskValue value;
@@ -490,12 +494,12 @@ List<LayerFoldRow> layerFoldRows({
     if (masksOpen) {
       for (final mask in info.masks) {
         rows.add(FoldMaskRow(mask, depth: 2));
-        // Its two pixel values sit under it, the way an effect's parameters sit
-        // under the effect: the mask row's value column already holds the
-        // invert switch and the opacity, and a number without its name on the
-        // row is a number nobody can identify.
-        rows.add(FoldMaskValueRow(mask, MaskValue.feather, depth: 3));
-        rows.add(FoldMaskValueRow(mask, MaskValue.expansion, depth: 3));
+        // Its values sit under it, the way an effect's parameters sit under
+        // the effect — shape first, because it is what the mask *is*, then the
+        // numbers in the order they apply.
+        for (final value in MaskValue.values) {
+          rows.add(FoldMaskValueRow(mask, value, depth: 3));
+        }
       }
     }
   }

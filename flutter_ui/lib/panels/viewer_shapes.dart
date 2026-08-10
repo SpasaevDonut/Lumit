@@ -23,6 +23,7 @@
 import 'dart:math' as math;
 
 import 'package:lumit_flutter/l10n/strings.dart';
+import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/state/tools.dart';
 import 'package:uuid/uuid.dart';
@@ -249,15 +250,18 @@ BridgeMask shapeMask({
       vertices: vertices,
       closed: closed,
       inverted: false,
-      opacity: 100,
+      opacity: const BridgeScalar.static_(100),
       mode: BridgeMaskMode.add,
-      feather: 0,
-      expansion: 0,
+      feather: const BridgeScalar.static_(0),
+      expansion: const BridgeScalar.static_(0),
+      // A shape just drawn has no keys; a mask being edited keeps its own,
+      // which the engine patches back.
+      pathKeyTimes: const [],
     );
 
-/// What a mask made by [tool] is called. Named for the shape rather than
-/// numbered, because a layer's mask list reads better as "Ellipse, Star" than
-/// as "Mask 1, Mask 2" — and the Timeline lets either be renamed.
+/// What a shape drawn by [tool] is called. Named for the shape rather than
+/// numbered, because a layer's list reads better as "Ellipse, Star" than as
+/// "Mask 1, Mask 2" — and the Timeline lets either be renamed.
 String shapeMaskName(ToolMode tool) => switch (tool) {
       ToolMode.shapeRectangle => l10n.toolShapeRectangle,
       ToolMode.shapeRoundedRectangle => l10n.toolShapeRoundedRectangle,
@@ -267,6 +271,22 @@ String shapeMaskName(ToolMode tool) => switch (tool) {
       ToolMode.pen => l10n.shapePath,
       _ => l10n.shapeMask,
     };
+
+/// What a *mask* drawn by [tool] on a layer that already has [existing] of them
+/// is called.
+///
+/// The shapes keep their shape names, as above. **The Pen numbers instead:**
+/// every path it draws is a path, so calling them all "Path" says nothing about
+/// which row is which, where the number does. [existing] is the count the
+/// layer already carries, so the first is "Mask 1"; counting rather than
+/// reading the highest name means a deleted mask's number comes round again,
+/// which is what makes this a *default* — the row can be renamed at once.
+///
+/// Separate from [shapeMaskName] because the Pen also names shape *layers*,
+/// and a shape layer is not a mask.
+String maskName(ToolMode tool, int existing) => tool == ToolMode.pen
+    ? l10n.maskNumbered(existing + 1)
+    : shapeMaskName(tool);
 
 /// A path being drawn with the **Pen** (K-223): the vertices placed so far.
 ///
