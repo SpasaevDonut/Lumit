@@ -19,8 +19,9 @@ import 'package:lumit_flutter/panels/project_panel_frb.dart';
 import 'package:lumit_flutter/src/rust/api/footage.dart'
     show FootageReference, LumitMediaStatus;
 import 'package:lumit_flutter/src/rust/api/project_item.dart'
-    show ItemReference_Footage;
+    show ItemReference_Composition, ItemReference_Footage;
 import 'package:lumit_flutter/src/rust/api/state.dart' show ScopedChange;
+import 'package:lumit_flutter/state/dock.dart';
 import 'package:lumit_flutter/state/drag_payloads.dart';
 
 import 'frb_test_support.dart';
@@ -154,6 +155,34 @@ void main() {
       expect(comp, isNotNull, reason: 'the new comp is fronted');
       expect(comp!.getLayers(), hasLength(1),
           reason: 'the clip it was made from is in it');
+    });
+
+    testWidgets('a click publishes the picked item for the FX console',
+        (tester) async {
+      final p = freshProject();
+      p.state.project!.importFootage(path: 'C:/clips/shot.mov');
+      p.state.project!.newComposition(name: 'Scene');
+
+      await tester.pumpWidget(hostPanel(
+        child: const ProjectPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+
+      expect(p.uiState.selectedProjectItem.value, isNull,
+          reason: 'nothing picked, nothing published');
+      // The pumps ride out the rows' double-tap window, which arms a timer on
+      // every tap.
+      await tester.tap(rowText('shot.mov'));
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(p.uiState.selectedProjectItem.value, isA<ItemReference_Footage>(),
+          reason: 'the anchor item is mirrored to the shell (K-327)');
+      await tester.tap(rowText('Scene'));
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(p.uiState.selectedProjectItem.value,
+          isA<ItemReference_Composition>(),
+          reason: 'and follows the click');
     });
 
     /// Opening a folder is showing what is in it, so a second click shuts it
@@ -979,6 +1008,60 @@ void main() {
       await tester.pumpAndSettle();
       expect(asked, 2,
           reason: 'the blank space below the rows takes the gesture too');
+    });
+
+    /// Enter renames the lone selected item (K-321) — the keyboard path that
+    /// replaced the old second-click rename, live for every item kind.
+    testWidgets('Enter renames the selected item', (tester) async {
+      final p = freshProject();
+      p.state.project!.importFootage(path: 'C:/clips/shot.mov');
+
+      await tester.pumpWidget(hostPanel(
+        child: const ProjectPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+      p.uiState.activePanel.value = Panel.project;
+
+      await tester.tap(rowText('shot.mov'));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const ValueKey('rename-field')), findsNothing);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('rename-field')), findsOneWidget,
+          reason: 'Enter on the selection opens the inline rename');
+
+      await tester.enterText(
+          find.byKey(const ValueKey('rename-field')), 'Hero shot');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+      expect(rowText('Hero shot'), findsOneWidget,
+          reason: 'the rename reached the document');
+
+      // Escape throws the edit away (K-323): the editor closes and the item
+      // keeps the name it had. Every other way out of an inline rename
+      // commits, so without this there is no way to change your mind.
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.byKey(const ValueKey('rename-field')), 'Typed then regretted');
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('rename-field')), findsNothing,
+          reason: 'Escape closes the editor');
+      expect(rowText('Hero shot'), findsOneWidget,
+          reason: 'and writes nothing: the old name stands');
+
+      // While another panel is the active one, the key is not this panel's.
+      p.uiState.activePanel.value = Panel.timeline;
+      await tester.tap(rowText('Hero shot'));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(find.byKey(const ValueKey('rename-field')), findsNothing,
+          reason: 'a per-panel binding is live in the focused panel only');
     });
   }, skip: !engineAvailable);
 }

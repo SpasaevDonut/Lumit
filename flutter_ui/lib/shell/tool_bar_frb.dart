@@ -29,6 +29,7 @@ import 'package:flutter/widgets.dart';
 import 'package:provider/provider.dart';
 
 import '../icons/icons.dart';
+import '../l10n/strings.dart';
 import '../main.dart';
 import '../state/dock.dart';
 import '../state/tools.dart';
@@ -180,15 +181,15 @@ class _ToolOptions extends StatelessWidget {
     return Row(
       children: [
         _Swatch(
-          label: 'Fill',
+          label: l10n.toolFill,
           colour: tools.fill,
           onPicked: (colour) => tools.fill = colour,
         ),
         const SizedBox(width: 6),
         if (shows == ToolOptions.paint) ...[
           _Number(
-            label: 'Size',
-            tip: 'Brush size, in layer pixels',
+            label: l10n.toolSize,
+            tip: l10n.tipBrushSize,
             value: tools.brushSize,
             min: 1,
             max: 2000,
@@ -196,8 +197,8 @@ class _ToolOptions extends StatelessWidget {
             onChanged: (v) => tools.brushSize = v,
           ),
           _Number(
-            label: 'Hardness',
-            tip: 'How hard the brush\'s edge is',
+            label: l10n.toolHardness,
+            tip: l10n.tipEdgeHardness,
             value: tools.brushHardness,
             min: 0,
             max: 100,
@@ -205,8 +206,8 @@ class _ToolOptions extends StatelessWidget {
             onChanged: (v) => tools.brushHardness = v,
           ),
           _Number(
-            label: 'Opacity',
-            tip: 'How opaque the mark it leaves is',
+            label: l10n.toolOpacity,
+            tip: l10n.tipMarkOpacity,
             value: tools.brushOpacity,
             min: 0,
             max: 100,
@@ -217,7 +218,7 @@ class _ToolOptions extends StatelessWidget {
           SizedBox(
             width: 62,
             child: LumitTooltip(
-              message: 'Size of new text, in pixels',
+              message: l10n.tipTextSize,
               child: DragValueField(
                 value: tools.textSize,
                 min: 1,
@@ -229,14 +230,14 @@ class _ToolOptions extends StatelessWidget {
           )
         else ...[
           _Swatch(
-            label: 'Stroke',
+            label: l10n.toolStroke,
             colour: tools.stroke,
             onPicked: (colour) => tools.stroke = colour,
           ),
           const SizedBox(width: 6),
           _Number(
-            label: 'Width',
-            tip: 'Outline width of a new shape, in pixels. Zero draws none.',
+            label: l10n.toolWidth,
+            tip: l10n.tipOutlineWidth,
             value: tools.strokeWidth,
             min: 0,
             max: 1000,
@@ -330,7 +331,7 @@ class _Swatch extends StatelessWidget {
     );
     if (onPicked == null) return row;
     return LumitTooltip(
-      message: '$label colour',
+      message: l10n.tipSwatchColour(label),
       child: Builder(
         builder: (context) => MouseRegion(
           cursor: SystemMouseCursors.click,
@@ -417,9 +418,8 @@ class _ToolButtonState extends State<_ToolButton> {
           // Both routes to the hidden tools, because both are muscle memory:
           // After Effects opens the flyout on a press-and-hold, and every other
           // toolbar on this machine opens a menu on the right button.
-          onLongPress: enabled && members.length > 1
-              ? () => _openFlyout(context)
-              : null,
+          onLongPress:
+              enabled && members.length > 1 ? () => _openFlyout(context) : null,
           onSecondaryTapUp: enabled && members.length > 1
               ? (_) => _openFlyout(context)
               : null,
@@ -469,8 +469,8 @@ class _ToolButtonState extends State<_ToolButton> {
         context.read<LumitUiState>().keymap.chordFor(_actionFor(widget.group));
     final parts = <String>[
       chord == null ? member.label : '${member.label} ($chord)',
-      if (hasHidden) 'Hold or right-click for the rest of the group',
-      if (!member.ready) 'Not built yet — it cannot be armed until it is',
+      if (hasHidden) l10n.tipMoreInGroup,
+      if (!member.ready) l10n.tipNotBuiltYet,
     ];
     return parts.join(' · ');
   }
@@ -542,7 +542,8 @@ class _ToolFlyout extends StatelessWidget {
                     ),
                   ),
                   if (!member.ready)
-                    Text('Not built', style: t.small.copyWith(color: t.textDisabled)),
+                    Text(l10n.notBuilt,
+                        style: t.small.copyWith(color: t.textDisabled)),
                 ],
               ),
             ),
@@ -586,7 +587,7 @@ class _WorkspaceStrip extends StatelessWidget {
       children: [
         for (final preset in WorkspacePreset.values)
           LumitTooltip(
-            message: 'Arrange the panels for ${preset.title}',
+            message: l10n.tipPanelLayout,
             child: HouseButton(
               key: ValueKey<String>('workspace-${preset.name}'),
               frameless: true,

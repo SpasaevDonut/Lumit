@@ -22,6 +22,7 @@ import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:provider/provider.dart';
 
 import '../icons/icons.dart';
+import '../l10n/strings.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 import 'placeholder.dart';
@@ -94,10 +95,10 @@ class _ScopesPanelFrbState extends State<ScopesPanelFrb> {
     final ui_ = Provider.of<LumitUiState>(context);
     final comp = ui_.selectedComp;
     if (comp == null) {
-      return const PlaceholderPanel(
+      return PlaceholderPanel(
         icon: LumitIcon.graphCurve,
-        title: 'Scopes',
-        hint: 'Select a composition in the Project panel.',
+        title: l10n.panelScopes,
+        hint: l10n.selectACompositionFirst,
       );
     }
 
@@ -146,7 +147,7 @@ class _ScopesPanelFrbState extends State<ScopesPanelFrb> {
                 color: t.surface0,
                 child: Center(
                   child: _trace == null
-                      ? Text('Waiting for a trace', style: t.small)
+                      ? Text(l10n.scopesWaiting, style: t.small)
                       : AspectRatio(
                           aspectRatio: 1,
                           child: Stack(
@@ -210,10 +211,10 @@ class _ScopesPanelFrbState extends State<ScopesPanelFrb> {
   }
 
   static String _label(ScopeKind kind) => switch (kind) {
-        ScopeKind.waveform => 'Waveform',
+        ScopeKind.waveform => l10n.foldWaveform,
         ScopeKind.parade => 'RGB parade',
-        ScopeKind.vectorscope => 'Vectorscope',
-        ScopeKind.histogram => 'Histogram',
+        ScopeKind.vectorscope => l10n.scopeVectorscope,
+        ScopeKind.histogram => l10n.scopeHistogram,
       };
 }
 
@@ -304,10 +305,10 @@ class _GraticulePainter extends CustomPainter {
         for (final r in const [0.25, 0.5, 0.75, 1.0]) {
           canvas.drawCircle(centre, radius * r, paint);
         }
-        canvas.drawLine(Offset(centre.dx, 0),
-            Offset(centre.dx, size.height), paint);
-        canvas.drawLine(Offset(0, centre.dy),
-            Offset(size.width, centre.dy), paint);
+        canvas.drawLine(
+            Offset(centre.dx, 0), Offset(centre.dx, size.height), paint);
+        canvas.drawLine(
+            Offset(0, centre.dy), Offset(size.width, centre.dy), paint);
         // The six primary and secondary targets at their standard angles,
         // measured anticlockwise from the +x axis, and the skin-tone line at
         // 123 degrees — the one every colourist actually looks for.
@@ -345,8 +346,8 @@ class _GraticulePainter extends CustomPainter {
         ]) {
           final x = size.width * frac;
           canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
-          _text(canvas, name,
-              Offset(x + 2, size.height - 12).translate(0, 0), size);
+          _text(canvas, name, Offset(x + 2, size.height - 12).translate(0, 0),
+              size);
         }
     }
   }

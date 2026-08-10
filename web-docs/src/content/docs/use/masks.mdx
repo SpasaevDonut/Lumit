@@ -1,0 +1,41 @@
+---
+title: Masks
+description: Cut a layer down to a shape you draw.
+sidebar:
+  order: 10
+---
+
+import Shot from "../../../components/Shot.astro";
+
+A **mask** is a bezier path on a layer that gates the layer's alpha. Use one to show
+part of a layer and hide the rest.
+
+## Draw a mask
+
+<Shot file="mask.png" caption="A mask on a layer, gating its alpha." />
+
+1. Select the layer.
+2. Pick a shape tool or the pen tool.
+3. Draw in the Viewer.
+
+The mask belongs to the layer you had selected. With no layer selected, the same tools
+make a [shape layer](/use/shapes/) instead.
+
+## Mask properties
+
+| Property | What it does |
+| --- | --- |
+| **Path** | The bezier path itself. Drag its points in the Viewer. |
+| **Expansion** | Grows or shrinks the mask from its path. |
+| **Opacity** | How strongly the mask gates. |
+
+:::note[Not built yet]
+Mask **feather**, animating the path with keyframes, and combine **modes**
+(add, subtract, intersect) are specified but not built. A layer can carry several
+masks, and today each one adds.
+:::
+
+## Related
+
+- [Mattes](/use/mattes/) - gate a layer using another layer instead.
+- [Shapes](/use/shapes/)

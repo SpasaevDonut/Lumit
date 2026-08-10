@@ -135,6 +135,7 @@ void main() {
         'Save as…',
         'Import…',
         'Export…',
+        'Project settings…',
         'Close project (Not implemented)',
       ]) {
         expect(find.text(item), findsOneWidget, reason: 'File ▸ $item');
@@ -142,6 +143,21 @@ void main() {
       await dismiss(tester);
       expect(find.text('New'), findsNothing,
           reason: 'the barrier closes the menu without choosing anything');
+    });
+
+    /// The project's own settings are not in Settings (K-286): Settings is
+    /// this machine's, and a value saved in the `.lum` is not.
+    testWidgets('File ▸ Project settings… opens a window of its own',
+        (tester) async {
+      await mount(tester);
+      await choose(tester, 'File', 'Project settings…');
+      await tester.pumpAndSettle();
+
+      expect(
+          find.byKey(const ValueKey('project-anti-aliasing')), findsOneWidget);
+      expect(
+          find.byKey(const ValueKey('settings-page-appearance')), findsNothing,
+          reason: 'it is its own window, not a page of Settings');
     });
 
     testWidgets('Edit and Composition show their items', (tester) async {
@@ -157,6 +173,67 @@ void main() {
       await tester.pump();
       expect(find.text('New composition'), findsOneWidget);
       expect(find.text('Composition settings…'), findsOneWidget);
+    });
+
+    testWidgets('Copy and Paste carry a layer, landing it at the playhead',
+        (tester) async {
+      // K-275: Copy takes the selected layer whole and Paste puts it in the
+      // comp on screen, at the playhead. The engine does the carrying; what is
+      // tested here is that the menu is wired to it and to the setting.
+      final p = await mount(tester);
+      await makeComp(tester);
+      final comp = p.uiState.selectedComp!;
+      final source = comp.addSolidLayer();
+      source.rename(name: 'Hero');
+      source.addEffect(name: 'blur');
+      p.uiState.setSelection([source]);
+      await tester.pump();
+
+      await choose(tester, 'Edit', 'Copy');
+      p.uiState.playheadFrame.value = 30;
+      await choose(tester, 'Edit', 'Paste');
+      await tester.pump();
+
+      final layers = comp.getLayers();
+      expect(layers.length, 2, reason: 'the paste made a second layer');
+      final pasted = p.uiState.selectedLayer.value!;
+      expect(pasted.internallayerId, isNot(source.internallayerId),
+          reason: 'and selected it, as every editor does');
+      expect(pasted.getName(), 'Hero', reason: 'the name travels');
+      expect(pasted.getEffects().length, 1, reason: 'and so does the stack');
+      // Frame 30 in seconds, on whatever rate the comp actually runs at.
+      final settings = comp.getSettings();
+      final atFrame30 = 30 * settings.fpsDen / settings.fpsNum;
+      final span = pasted.getSpan();
+      expect(span.inPoint.num / span.inPoint.den, closeTo(atFrame30, 1e-9),
+          reason: 'the in point lands on the playhead');
+
+      // The setting sends it to the time it was copied from instead.
+      p.uiState.workspace.interface.pasteLayersAtOriginalTime = true;
+      p.uiState.playheadFrame.value = 60;
+      await choose(tester, 'Edit', 'Paste');
+      await tester.pump();
+      final atOriginal = p.uiState.selectedLayer.value!.getSpan();
+      expect(atOriginal.inPoint.num, 0,
+          reason: 'with the setting on it keeps the time it was copied at');
+    });
+
+    testWidgets('Cut copies the layer before removing it', (tester) async {
+      final p = await mount(tester);
+      await makeComp(tester);
+      final comp = p.uiState.selectedComp!;
+      final source = comp.addSolidLayer();
+      p.uiState.setSelection([source]);
+      await tester.pump();
+
+      await choose(tester, 'Edit', 'Cut');
+      await tester.pump();
+      expect(comp.getLayers(), isEmpty, reason: 'the layer went');
+
+      await choose(tester, 'Edit', 'Paste');
+      await tester.pump();
+      expect(comp.getLayers().length, 1,
+          reason: 'and came back, so Cut did copy before deleting');
     });
 
     testWidgets('New composition creates one, fronts it, and names it for you',
@@ -540,10 +617,10 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey<String>('menu-Animation')));
       await tester.pump();
-      expect(find.text('Keyframe velocity… (Not implemented)'), findsOneWidget);
+      expect(find.text('Keyframe speed… (Not implemented)'), findsOneWidget);
       expect(
         tester
-            .widget<Text>(find.text('Keyframe velocity… (Not implemented)'))
+            .widget<Text>(find.text('Keyframe speed… (Not implemented)'))
             .style
             ?.color,
         t.textDisabled,
@@ -569,7 +646,8 @@ void main() {
 
     /// Shortcuts are the engine's (K-199): a row shows whatever the keymap
     /// currently binds to its action, so a rebind changes the menus too.
-    testWidgets('a row teaches the chord its action answers to', (tester) async {
+    testWidgets('a row teaches the chord its action answers to',
+        (tester) async {
       final p = await mount(tester);
 
       await tester.tap(find.byKey(const ValueKey<String>('menu-File')));
@@ -646,9 +724,23 @@ void main() {
       expect(bar.left, 0, reason: 'flush to the left edge, not centred');
       expect(bar.width, 1280,
           reason: 'the full width of the window, so one colour spans it');
-      expect(tester.getTopLeft(find.byKey(const ValueKey<String>('menu-File'))).dx,
+      expect(
+          tester.getTopLeft(find.byKey(const ValueKey<String>('menu-File'))).dx,
           lessThan(20),
           reason: 'File is the first heading, at the left');
+    });
+
+    /// The update row is live rather than listed-and-dead (K-296). It is not
+    /// *pressed* here: pressing it asks GitHub, and a test suite has no
+    /// business on the network — what the press does is `updates_test.dart`,
+    /// against a service whose seams are stopped up.
+    testWidgets('Help ▸ Check for updates is a built command', (tester) async {
+      await mount(tester);
+      await tester.tap(find.byKey(const ValueKey<String>('menu-Help')));
+      await tester.pump();
+      expect(find.text('Check for updates'), findsOneWidget);
+      expect(find.text('Check for updates (Not implemented)'), findsNothing);
+      await dismiss(tester);
     });
 
     testWidgets('Help ▸ About Lumit opens the About window', (tester) async {
@@ -704,8 +796,7 @@ void main() {
     /// by hover as much as by clicks, and a test's synthetic taps carry no
     /// pointer at all unless one is added.
     Future<TestGesture> mouse(WidgetTester tester) async {
-      final gesture =
-          await tester.createGesture(kind: PointerDeviceKind.mouse);
+      final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
       await gesture.addPointer(location: Offset.zero);
       addTearDown(gesture.removePointer);
       return gesture;
@@ -714,7 +805,8 @@ void main() {
     /// **Once a menu is open the bar is in menus.** Crossing another heading
     /// hands over to it, rather than leaving the first menu up until it is
     /// clicked away and the second one clicked open.
-    testWidgets('a heading hands over to the next one on hover', (tester) async {
+    testWidgets('a heading hands over to the next one on hover',
+        (tester) async {
       await mount(tester);
       final pointer = await mouse(tester);
 

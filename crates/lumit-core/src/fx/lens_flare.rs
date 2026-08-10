@@ -106,14 +106,167 @@ pub struct LensFlareParams {
     /// less) without changing wavelength count or buffer resolution.
     /// Frame-time — never rebakes.
     pub detail: f32,
-    /// 0 Transparent (the layer's own alpha carries the flare — today's
-    /// behaviour), 1 Black (the output is made opaque, the flare-element-
-    /// over-black export the Screen/Add workflow wants). Applies only while
-    /// the effect is live: the Intensity-0 / Mix-0 passthroughs stay
-    /// bit-exact whatever this holds.
-    pub background: u32,
+    /// How the flare element combines with the layer under it — an index
+    /// into [`BLEND_OPTIONS`] (K-289, replacing the old Transparent/Black
+    /// Background choice). Default [`BLEND_ADD`], the old Transparent
+    /// behaviour exactly; [`BLEND_NORMAL`] shows the flare alone on its own
+    /// opaque black background, which is what the old Black option was for.
+    /// Applies only while the effect is live: the Intensity-0 / Mix-0
+    /// passthroughs stay bit-exact whatever this holds.
+    pub blend: u32,
     /// 0..1.
     pub mix: f32,
+}
+
+/// The Blend menu's options, in code order (K-289, docs/08 §3.27). The
+/// flare is a black-backed light *element*: everything the effect renders
+/// lands on a frame that is pure black where there is no flare, and this
+/// menu says how that element combines with the layer beneath it — the same
+/// question a layer's own Mode dropdown asks, and the same curated set Echo
+/// offers for the same reason (K-149, T21: the HSL / burn / dodge modes are
+/// ill-defined on a premultiplied light overlay, so they are not listed).
+///
+/// [`BLEND_NORMAL`] heads the list because it is the odd one out: the flare
+/// element *replaces* the layer, black background and all, which is exactly
+/// the "flare over black" the old Background = Black option existed to
+/// export. Everything from Add down leaves the layer visible.
+pub const BLEND_OPTIONS: &[&str] = &[
+    "Normal",
+    "Add",
+    "Screen",
+    "Multiply",
+    "Overlay",
+    "Soft light",
+    "Hard light",
+    "Lighten",
+    "Darken",
+    "Difference",
+    "Exclusion",
+    "Subtract",
+    "Divide",
+];
+
+/// The flare element alone on its opaque black background — index 0 of
+/// [`BLEND_OPTIONS`].
+pub const BLEND_NORMAL: u32 = 0;
+/// Light addition — index 1 of [`BLEND_OPTIONS`], and the default a fresh
+/// effect carries (the behaviour every flare had before the menu existed).
+pub const BLEND_ADD: u32 = 1;
+
+/// Combine the flare element `e` with the layer under it `d` by
+/// [`BLEND_OPTIONS`] index `mode` — the CPU twin of
+/// `fx_lens_flare_combine.wgsl`'s `flare_blend`, written in the same
+/// arithmetic order so the two agree bit-for-bit (§1.6).
+///
+/// Both sides are **premultiplied linear RGBA** and every mode runs per
+/// channel on all four, exactly as Echo's combine does (K-149) and for the
+/// same reason: this is light being added to light, not a perceptual
+/// re-encode of a finished picture. `e` is the flare element — its RGB is
+/// what the trace and starburst put on the frame, its alpha the coverage
+/// that light implies — and `d` is the layer.
+///
+/// [`BLEND_NORMAL`] ignores `d` entirely and returns the element on opaque
+/// black; the alpha clamp at the end is the caller's, not this function's.
+pub fn flare_blend(mode: u32, d: [f32; 4], e: [f32; 4]) -> [f32; 4] {
+    let mut o = [0.0_f32; 4];
+    match mode {
+        // Normal: the element replaces the layer, on the opaque black it
+        // was rendered against. The old Background = Black, as a blend.
+        BLEND_NORMAL => {
+            o = [e[0], e[1], e[2], 1.0];
+        }
+        // Add (the default): light sums. Bit-identical to the pre-menu
+        // behaviour, so a project that never touched this renders the same.
+        1 => {
+            for c in 0..4 {
+                o[c] = d[c] + e[c];
+            }
+        }
+        // Screen.
+        2 => {
+            for c in 0..4 {
+                o[c] = d[c] + e[c] - d[c] * e[c];
+            }
+        }
+        // Multiply.
+        3 => {
+            for c in 0..4 {
+                o[c] = d[c] * e[c];
+            }
+        }
+        // Overlay = hard light with the LAYER as the switch.
+        4 => {
+            for c in 0..4 {
+                o[c] = if d[c] <= 0.5 {
+                    2.0 * d[c] * e[c]
+                } else {
+                    1.0 - 2.0 * (1.0 - d[c]) * (1.0 - e[c])
+                };
+            }
+        }
+        // Soft light (W3C), source = the element, backdrop = the layer.
+        5 => {
+            for c in 0..4 {
+                let dd = if d[c] <= 0.25 {
+                    ((16.0 * d[c] - 12.0) * d[c] + 4.0) * d[c]
+                } else {
+                    d[c].sqrt()
+                };
+                o[c] = if e[c] <= 0.5 {
+                    d[c] - (1.0 - 2.0 * e[c]) * d[c] * (1.0 - d[c])
+                } else {
+                    d[c] + (2.0 * e[c] - 1.0) * (dd - d[c])
+                };
+            }
+        }
+        // Hard light: the element is the switch.
+        6 => {
+            for c in 0..4 {
+                o[c] = if e[c] <= 0.5 {
+                    2.0 * d[c] * e[c]
+                } else {
+                    1.0 - 2.0 * (1.0 - d[c]) * (1.0 - e[c])
+                };
+            }
+        }
+        // Lighten (per-channel max).
+        7 => {
+            for c in 0..4 {
+                o[c] = d[c].max(e[c]);
+            }
+        }
+        // Darken (per-channel min).
+        8 => {
+            for c in 0..4 {
+                o[c] = d[c].min(e[c]);
+            }
+        }
+        // Difference.
+        9 => {
+            for c in 0..4 {
+                o[c] = (d[c] - e[c]).abs();
+            }
+        }
+        // Exclusion.
+        10 => {
+            for c in 0..4 {
+                o[c] = d[c] + e[c] - 2.0 * d[c] * e[c];
+            }
+        }
+        // Subtract.
+        11 => {
+            for c in 0..4 {
+                o[c] = (d[c] - e[c]).max(0.0);
+            }
+        }
+        // Divide, and the catch-all for an index no menu can produce.
+        _ => {
+            for c in 0..4 {
+                o[c] = (d[c] / e[c].max(1e-6)).max(0.0);
+            }
+        }
+    }
+    o
 }
 
 /// Per-quality pupil grid side, traced wavelength count, and flare-buffer
@@ -1656,7 +1809,7 @@ pub fn bake_with(p: &LensFlareParams, lens_text: Option<&str>) -> FlareBaked {
         anamorphic: 1.0,
         quality: 0,
         detail: 1.0,
-        background: 0,
+        blend: BLEND_ADD,
         mix: 1.0,
     };
     let (pw, ph) = (96u32, 54u32);
@@ -2474,23 +2627,20 @@ pub fn cpu_combine(
             let i = ((y * w + x) * 4) as usize;
             let o = [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]];
             let luma = 0.2126 * add[0] + 0.7152 * add[1] + 0.0722 * add[2];
-            let flared = [
-                o[0] + add[0],
-                o[1] + add[1],
-                o[2] + add[2],
-                (o[3] + luma).min(1.0),
-            ];
+            // The flare element (K-289): the light this frame drew, with the
+            // coverage that light implies as its alpha — a premultiplied
+            // black-backed overlay. Blend it with the layer, then saturate
+            // alpha at 1. Add reduces to `o + add` with alpha `min(o.a +
+            // luma, 1)`, which is exactly what the effect did before the
+            // menu existed. Only reached while live: the Intensity-0/Mix-0
+            // early return above keeps the passthroughs bit-exact.
+            let e = [add[0], add[1], add[2], luma];
+            let mut flared = flare_blend(p.blend, o, e);
+            flared[3] = flared[3].min(1.0);
             rgba[i] = o[0] * (1.0 - p.mix) + flared[0] * p.mix;
             rgba[i + 1] = o[1] * (1.0 - p.mix) + flared[1] * p.mix;
             rgba[i + 2] = o[2] * (1.0 - p.mix) + flared[2] * p.mix;
             rgba[i + 3] = o[3] * (1.0 - p.mix) + flared[3] * p.mix;
-            // Black background (K-258): the output is made opaque — laying
-            // the premultiplied result over black changes nothing but alpha.
-            // Only while live: the Intensity-0/Mix-0 early return above keeps
-            // the passthroughs bit-exact.
-            if p.background == 1 {
-                rgba[i + 3] = 1.0;
-            }
         }
     }
 }

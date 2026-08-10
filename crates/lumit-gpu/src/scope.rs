@@ -460,6 +460,8 @@ impl ScopeEngine {
             ],
         });
 
+        // The picture being measured may still be in the frame batch.
+        ctx.flush();
         let mut encoder = ctx
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -488,7 +490,7 @@ impl ScopeEngine {
             pass.set_bind_group(0, &colourise_bind, &[]);
             pass.dispatch_workgroups(GRID.div_ceil(8), GRID.div_ceil(8), 1);
         }
-        ctx.queue.submit([encoder.finish()]);
+        ctx.submit([encoder.finish()]);
         dst
     }
 }
@@ -553,7 +555,7 @@ fn readback_trace(ctx: &GpuContext, tex: &wgpu::Texture) -> Result<Vec<u8>, GpuE
             depth_or_array_layers: 1,
         },
     );
-    ctx.queue.submit([encoder.finish()]);
+    ctx.submit([encoder.finish()]);
 
     let slice = buffer.slice(..);
     let (tx, rx) = std::sync::mpsc::channel();
@@ -664,7 +666,7 @@ mod tests {
         });
         let mut enc = ctx.device.create_command_encoder(&Default::default());
         enc.copy_buffer_to_buffer(&engine.counts, 0, &staging, 0, (len * 4) as u64);
-        ctx.queue.submit([enc.finish()]);
+        ctx.submit([enc.finish()]);
         let slice = staging.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |r| {
@@ -688,7 +690,7 @@ mod tests {
     #[test]
     fn luma_waveform_counts_match_the_cpu_oracle() {
         let Some(ctx) = ctx() else {
-            eprintln!("skipping: no GPU adapter");
+            crate::no_adapter();
             return;
         };
         let engine = ScopeEngine::new(&ctx);
@@ -708,7 +710,7 @@ mod tests {
     #[test]
     fn histogram_counts_match_the_cpu_oracle() {
         let Some(ctx) = ctx() else {
-            eprintln!("skipping: no GPU adapter");
+            crate::no_adapter();
             return;
         };
         let engine = ScopeEngine::new(&ctx);
@@ -729,7 +731,7 @@ mod tests {
     #[test]
     fn vectorscope_centres_a_neutral_grey() {
         let Some(ctx) = ctx() else {
-            eprintln!("skipping: no GPU adapter");
+            crate::no_adapter();
             return;
         };
         let engine = ScopeEngine::new(&ctx);
@@ -749,7 +751,7 @@ mod tests {
     #[test]
     fn luma_trace_pixels_match_within_tolerance() {
         let Some(ctx) = ctx() else {
-            eprintln!("skipping: no GPU adapter");
+            crate::no_adapter();
             return;
         };
         let engine = ScopeEngine::new(&ctx);
@@ -795,7 +797,7 @@ mod tests {
     #[test]
     fn a_short_frame_is_calm() {
         let Some(ctx) = ctx() else {
-            eprintln!("skipping: no GPU adapter");
+            crate::no_adapter();
             return;
         };
         let engine = ScopeEngine::new(&ctx);

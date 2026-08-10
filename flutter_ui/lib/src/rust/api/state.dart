@@ -18,7 +18,7 @@ import 'solid.dart';
 part 'state.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `handle_change_callback`, `journal_for`, `op_scope`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitBridgeState>>
 abstract class LumitBridgeState implements RustOpaqueInterface {
@@ -35,6 +35,142 @@ abstract class LumitBridgeState implements RustOpaqueInterface {
           RustStreamSink<ScopedChange>? onChangeStream}) =>
       BridgeLib.instance.api.crateApiStateLumitBridgeStateOpenProject(
           path: path, onChangeStream: onChangeStream);
+}
+
+/// One effect's measured cost within its layer, in milliseconds.
+class BridgeEffectTiming {
+  /// The effect *instance* id, as a string — the row in the layer's stack.
+  final String effect;
+  final double ms;
+
+  const BridgeEffectTiming({
+    required this.effect,
+    required this.ms,
+  });
+
+  @override
+  int get hashCode => effect.hashCode ^ ms.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeEffectTiming &&
+          runtimeType == other.runtimeType &&
+          effect == other.effect &&
+          ms == other.ms;
+}
+
+/// What one measured frame cost, per layer and per effect — the Timeline's
+/// render-time column and the Effect controls panel's readouts (docs/13 §7.1).
+///
+/// Published only while the frontend has asked to be measuring
+/// (`set_render_profiling`), because measuring is not free: it fences the
+/// graphics card at each node so a millisecond means the work rather than the
+/// paperwork.
+class BridgeFrameProfile {
+  final BigInt frame;
+
+  /// The whole frame, wall-clock, including the stages no layer owns.
+  final double totalMs;
+
+  /// The composition's top-level layers, bottom-most first.
+  final List<BridgeLayerTiming> layers;
+
+  const BridgeFrameProfile({
+    required this.frame,
+    required this.totalMs,
+    required this.layers,
+  });
+
+  @override
+  int get hashCode => frame.hashCode ^ totalMs.hashCode ^ layers.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeFrameProfile &&
+          runtimeType == other.runtimeType &&
+          frame == other.frame &&
+          totalMs == other.totalMs &&
+          layers == other.layers;
+}
+
+/// One layer's measured cost for the frame just made.
+class BridgeLayerTiming {
+  final String layer;
+
+  /// The layer's own picture: its source (a Precomp's whole comp included)
+  /// and its effect stack. The final composite is one pass over the whole
+  /// stack rather than a per-layer act, so it lands in `total_ms` and on no
+  /// row — see `lumit_render::profile`.
+  final double ms;
+  final List<BridgeEffectTiming> effects;
+
+  const BridgeLayerTiming({
+    required this.layer,
+    required this.ms,
+    required this.effects,
+  });
+
+  @override
+  int get hashCode => layer.hashCode ^ ms.hashCode ^ effects.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeLayerTiming &&
+          runtimeType == other.runtimeType &&
+          layer == other.layer &&
+          ms == other.ms &&
+          effects == other.effects;
+}
+
+/// How far the frame the user is waiting for has got (docs/13 §7.1).
+///
+/// Sent only for a frame somebody is *waiting on* — a scrub, a value drag, a
+/// playhead move — and never during playback, where a frame due in 16 ms has
+/// neither the need for a bar nor the time to describe itself. A frame served
+/// from the cache reports nothing at all, because there was nothing to wait
+/// for: it simply arrives.
+class BridgeRenderProgress {
+  /// Which frame this is about, so a report that arrives after the playhead
+  /// has moved on can be recognised as stale rather than drawn.
+  final BigInt frame;
+
+  /// The stage's wire code — 0 planning, 1 decoding, 2 building, 3
+  /// compositing, 4 presenting ([`lumit_render::RenderStage::code`]).
+  final int stage;
+
+  /// How much of the whole frame is done, 0..=1. An estimate built from
+  /// fixed stage weights, which is what a progress bar needs and all it can
+  /// honestly claim.
+  final double fraction;
+
+  /// True on the last report of a frame — the render is finished (or was
+  /// abandoned) and the bar should go. Sent by the worker rather than the
+  /// engine, so a frame that failed still ends its own bar.
+  final bool done;
+
+  const BridgeRenderProgress({
+    required this.frame,
+    required this.stage,
+    required this.fraction,
+    required this.done,
+  });
+
+  @override
+  int get hashCode =>
+      frame.hashCode ^ stage.hashCode ^ fraction.hashCode ^ done.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeRenderProgress &&
+          runtimeType == other.runtimeType &&
+          frame == other.frame &&
+          stage == other.stage &&
+          fraction == other.fraction &&
+          done == other.done;
 }
 
 /// A small still picture as plain pixels — the thumbnail payload
@@ -373,4 +509,16 @@ sealed class WorkerResponse with _$WorkerResponse {
   /// `cached_frames` itself. Without this the fill worked invisibly — the
   /// bar only redrew when a frame arrived, and a fill shows no frame.
   const factory WorkerResponse.cacheFilled() = WorkerResponse_CacheFilled;
+
+  /// How far the frame being waited for has got — the Viewer's preview
+  /// progress bar (docs/07 §2.5).
+  const factory WorkerResponse.renderProgress(
+    BridgeRenderProgress field0,
+  ) = WorkerResponse_RenderProgress;
+
+  /// What the frame just made cost, layer by layer and effect by effect —
+  /// the render-time indicators (docs/13 §7.1).
+  const factory WorkerResponse.frameProfile(
+    BridgeFrameProfile field0,
+  ) = WorkerResponse_FrameProfile;
 }

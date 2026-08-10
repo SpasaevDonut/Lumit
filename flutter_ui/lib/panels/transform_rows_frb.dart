@@ -22,14 +22,17 @@
 
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
+import 'package:lumit_flutter/panels/effect_param_row_frb.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:provider/provider.dart';
 
+import '../l10n/strings.dart';
 import '../state/comp_time.dart';
 import '../state/preview_throttle.dart';
 import '../state/timeline_columns.dart';
+import '../widgets/angle_dial.dart';
 import '../widgets/controls.dart';
 import 'fx_section.dart';
 import 'keyframe_controls_frb.dart';
@@ -72,31 +75,31 @@ class TransformGroup {
 /// know *how many* rows a layer will take before it draws them — its lanes have
 /// to leave exactly that much room or the bars stop lining up with the names.
 List<TransformGroup> transformGroups({required bool threeD}) => [
-      const TransformGroup('Anchor point', [
+      TransformGroup(l10n.transformAnchorPoint, const [
         TransformAxis(BridgeTransformProp.anchorX),
         TransformAxis(BridgeTransformProp.anchorY),
       ]),
-      TransformGroup('Position', [
+      TransformGroup(l10n.transformPosition, [
         const TransformAxis(BridgeTransformProp.positionX),
         const TransformAxis(BridgeTransformProp.positionY),
         if (threeD) const TransformAxis(BridgeTransformProp.positionZ),
       ]),
-      const TransformGroup('Scale', [
+      TransformGroup(l10n.transformScale, const [
         TransformAxis(BridgeTransformProp.scaleX, suffix: '%'),
         TransformAxis(BridgeTransformProp.scaleY, suffix: '%'),
       ]),
-      const TransformGroup('Rotation', [
+      TransformGroup(l10n.transformRotation, const [
         TransformAxis(BridgeTransformProp.rotation, suffix: '°', speed: 0.5),
       ]),
       if (threeD) ...[
-        const TransformGroup('Rotation x', [
+        TransformGroup(l10n.transformRotationX, const [
           TransformAxis(BridgeTransformProp.rotationX, suffix: '°', speed: 0.5),
         ]),
-        const TransformGroup('Rotation y', [
+        TransformGroup(l10n.transformRotationY, const [
           TransformAxis(BridgeTransformProp.rotationY, suffix: '°', speed: 0.5),
         ]),
       ],
-      const TransformGroup('Opacity', [
+      TransformGroup(l10n.transformOpacity, [
         TransformAxis(BridgeTransformProp.opacity,
             suffix: '%', min: 0, max: 100, decimals: 0, speed: 0.5),
       ]),
@@ -144,7 +147,7 @@ class TransformRowsFrb extends StatelessWidget {
     required this.onChanged,
     this.keyPrefix = 'tf',
     this.rowHeight,
-    this.rowPadding = const EdgeInsets.symmetric(vertical: 3),
+    this.rowPadding = const EdgeInsets.symmetric(vertical: 2),
     this.twoColumn = false,
   });
 
@@ -221,7 +224,7 @@ class TransformRowFrb extends StatefulWidget {
     required this.onChanged,
     this.keyPrefix = 'tf',
     this.rowHeight,
-    this.rowPadding = const EdgeInsets.symmetric(vertical: 3),
+    this.rowPadding = const EdgeInsets.symmetric(vertical: 2),
     this.valueColumn,
     this.onLabelTap,
     this.graphColours,
@@ -379,8 +382,54 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
     // An animated property stays editable (docs/07 §4.3): the field shows the
     // value under the playhead, and a change writes it into the key sitting
     // there — or plants a new one — never flattening the curve.
+
+    if (scalar case BridgeScalar_Expression scalar) {
+      return Flexible(
+        child: EffectParamRowExpression(
+            value: scalar,
+            set: (value) {
+
+
+             final field = (value as BridgeEffectValue_Float).field0;
+
+             if ( field is BridgeScalar_Expression ) {
+              _commitExpression(axis.prop, field.field0);
+             }
+
+             if(field is BridgeScalar_Static) {
+              _commit(axis.prop, field.field0);
+             }
+
+            },
+            setLive: (value) {
+              _liveExpression(
+                  axis.prop,
+                  ((value as BridgeEffectValue_Float).field0
+                          as BridgeScalar_Expression)
+                      .field0);
+            },
+            comp: widget.comp,
+            frame: widget.playheadFrame,
+            layer: widget.layer),
+      );
+    }
+
+    // A rotation shows its whole turns beside its degrees (docs/07 §6.1): 30°
+    // and 390° are the same picture but not the same animation, and a single
+    // box cannot say which of the two a key holds. The value written is still
+    // the one angle — see `TurnsAndDegreesField`.
+    final isRotation = axis.suffix == '°';
+
     if (scalar is! BridgeScalar_Keyframed) {
       final static_ = (scalar as BridgeScalar_Static).field0;
+      if (isRotation) {
+        return TurnsAndDegreesField(
+          keyName: '${widget.keyPrefix}-${axis.prop.name}',
+          degrees: static_,
+          onChanged: (v) => _live(axis.prop, v),
+          onCommit: (v) => _commit(axis.prop, v),
+        );
+      }
       return SizedBox(
         width: fixed ? transformCellWidth : null,
         child: DragValueField(
@@ -396,6 +445,9 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
           onChangeLive: (v) => _live(axis.prop, v.toDouble()),
           onChangeEnd: (v) => _commit(axis.prop, v.toDouble()),
           onDragCancel: () => setState(() => _staged = null),
+          setExpression: () {
+            _commitExpression(axis.prop, static_.toString());
+          },
         ),
       );
     }
@@ -405,6 +457,13 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
     // No live preview mid-drag: staging a keyframed transform through the
     // static-preview path would lie about the curve. The release commits one
     // op — the key at the playhead updated or planted.
+    if (isRotation) {
+      return TurnsAndDegreesField(
+        keyName: '${widget.keyPrefix}-${axis.prop.name}',
+        degrees: sampled,
+        onCommit: (v) => _commitKeyed(axis.prop, scalar, v, frame),
+      );
+    }
     return SizedBox(
       width: fixed ? transformCellWidth : null,
       child: KeyedValueField(
@@ -445,12 +504,35 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
         ));
   }
 
+  void _liveExpression(BridgeTransformProp prop, String value) {
+    final staged = writeExpression(_staged ?? widget.transform, prop, value);
+    setState(() => _staged = staged);
+
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    _throttle.request(() => widget.comp.renderFrameWithTransformPreview(
+          frame: BigInt.from(ui.playheadFrame.value),
+          scale: ui.viewerScale,
+          layer: widget.layer,
+          transform: _staged ?? staged,
+        ));
+  }
+
   /// Release, or a typed value: one op for the one property that changed.
   void _commit(BridgeTransformProp prop, double value) {
     // The commit is the last word on this gesture: a held preview tick after it
     // would put the provisional picture back.
     _throttle.cancel();
     widget.layer.setTransform(prop: prop, value: BridgeScalar.static_(value));
+    setState(() => _staged = null);
+    widget.onChanged();
+  }
+
+  void _commitExpression(BridgeTransformProp prop, String value) {
+    // The commit is the last word on this gesture: a held preview tick after it
+    // would put the provisional picture back.
+    _throttle.cancel();
+    widget.layer
+        .setTransform(prop: prop, value: BridgeScalar.expression(value));
     setState(() => _staged = null);
     widget.onChanged();
   }
@@ -479,6 +561,27 @@ BridgeScalar read(BridgeTransform tf, BridgeTransformProp prop) =>
 BridgeTransform write(
     BridgeTransform tf, BridgeTransformProp prop, double value) {
   final replacement = BridgeScalar.static_(value);
+  BridgeScalar pick(BridgeTransformProp p, BridgeScalar current) =>
+      p == prop ? replacement : current;
+
+  return BridgeTransform(
+    anchorX: pick(BridgeTransformProp.anchorX, tf.anchorX),
+    anchorY: pick(BridgeTransformProp.anchorY, tf.anchorY),
+    positionX: pick(BridgeTransformProp.positionX, tf.positionX),
+    positionY: pick(BridgeTransformProp.positionY, tf.positionY),
+    positionZ: pick(BridgeTransformProp.positionZ, tf.positionZ),
+    scaleX: pick(BridgeTransformProp.scaleX, tf.scaleX),
+    scaleY: pick(BridgeTransformProp.scaleY, tf.scaleY),
+    rotation: pick(BridgeTransformProp.rotation, tf.rotation),
+    rotationX: pick(BridgeTransformProp.rotationX, tf.rotationX),
+    rotationY: pick(BridgeTransformProp.rotationY, tf.rotationY),
+    opacity: pick(BridgeTransformProp.opacity, tf.opacity),
+  );
+}
+
+BridgeTransform writeExpression(
+    BridgeTransform tf, BridgeTransformProp prop, String expression) {
+  final replacement = BridgeScalar.expression(expression);
   BridgeScalar pick(BridgeTransformProp p, BridgeScalar current) =>
       p == prop ? replacement : current;
 

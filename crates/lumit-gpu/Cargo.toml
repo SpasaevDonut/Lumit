@@ -1,8 +1,11 @@
 [package]
 name = "lumit-gpu"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 license = "GPL-3.0-only"
+# Never goes to crates.io: these crates are the application, and they
+# reference each other by path (docs/05-ARCHITECTURE.md).
+publish = false
 
 [dependencies]
 bytemuck = { version = "1", features = ["derive"] }
@@ -10,7 +13,12 @@ glam = "0.29"
 half = "2"
 pollster = "0.4"
 thiserror = "2"
-wgpu = "24"
+# `counters` turns on wgpu's live-object tallies — how many textures and
+# buffers the driver is holding right now, which is what says whether a frame
+# the engine dropped was actually destroyed (K-294). Every backend keeps them;
+# unlike the allocator report, which is Vulkan and D3D12 only and answers
+# nothing at all on Metal, where the memory question was asked.
+wgpu = { version = "24", features = ["counters"] }
 
 # The Windows-only, zero-copy Viewer path (K-177). Off by default so every
 # existing build is byte-for-byte unchanged; the bridge turns it on to build the

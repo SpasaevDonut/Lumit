@@ -25,16 +25,22 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../icons/icons.dart';
+import '../l10n/engine_labels.dart';
+import '../l10n/strings.dart';
 import '../state/comp_time.dart';
 import '../state/dropper.dart';
 import '../state/file_dialogs.dart';
 import '../state/preview_throttle.dart';
 import '../state/timeline_columns.dart';
 import '../theme/theme.dart';
+import '../widgets/angle_dial.dart';
 import '../widgets/colour_picker.dart';
 import '../widgets/controls.dart';
 import 'fx_section.dart';
 import 'keyframe_controls_frb.dart';
+import 'package:lumit_flutter/src/rust/api/state.dart';
+import 'package:lumit_flutter/widgets/autofill.dart';
+import 'package:syntax_highlight/syntax_highlight.dart';
 
 /// How wide one value cell is.
 const double effectCellWidth = 78;
@@ -81,10 +87,20 @@ class EffectParamRowFrb extends StatelessWidget {
   final bool twoColumn;
 
   /// The layer this effect sits on, and every layer in the comp — what a
-  /// layer-valued parameter picks from, minus the owner itself (K-194). Both
+  /// layer-valued parameter picks from (K-194). The owner is offered too
+  /// (K-288): picking it means "this layer", the effect's own input. Both
   /// ride in from the read model, so the closed picker costs nothing.
   final UuidValue ownerLayerId;
   final List<BridgeLayerEntry> ownerLayers;
+
+  /// Whether this row is editable, per the effect's conditional-enablement
+  /// rules (`EnabledWhen` in the schema, `listParamLayout` across the bridge).
+  ///
+  /// A greyed row still draws its value — you can read what focus distance
+  /// *would* be — but takes no gesture, because while Use focus point is ticked
+  /// the number decides nothing and offering it to drag would be a lie about
+  /// what is in charge.
+  final bool enabled;
 
   /// Clicking the parameter's *name* selects it for the graph editor
   /// (docs/07 §4.3) — the name, not the whole row.
@@ -114,11 +130,12 @@ class EffectParamRowFrb extends StatelessWidget {
     required this.ownerLayerId,
     required this.ownerLayers,
     this.valueColumn,
-    this.rowPadding = const EdgeInsets.symmetric(vertical: 3),
+    this.rowPadding = const EdgeInsets.symmetric(vertical: 2),
     this.onLabelTap,
     this.graphColour,
     this.twoColumn = false,
     this.siblings = const {},
+    this.enabled = true,
   });
 
   @override
@@ -152,17 +169,23 @@ class EffectParamRowFrb extends StatelessWidget {
           );
 
     // The name is the row's handle for the graph editor, so it is built once
-    // and drawn by whichever layout the row takes.
+    // and drawn by whichever layout the row takes. A greyed row's name is
+    // muted with it: half a row going quiet reads as a rendering fault rather
+    // than as "this control is not the one in charge".
+    final labelStyle = !enabled
+        ? t.body.copyWith(color: t.textDisabled)
+        : (graphColour == null ? t.body : t.body.copyWith(color: graphColour));
     final label = GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onLabelTap,
       child: Text(
-        param.label,
-        style:
-            graphColour == null ? t.body : t.body.copyWith(color: graphColour),
+        engineLabel(param.label),
+        style: labelStyle,
         overflow: TextOverflow.ellipsis,
       ),
     );
+
+    final control = _greyed(_control(context, t, id, value, frame));
 
     if (twoColumn && valueColumn == null) {
       return Padding(
@@ -170,8 +193,8 @@ class EffectParamRowFrb extends StatelessWidget {
         child: fxTwoColumnRow(
           context: context,
           name: label,
-          keyframeControls: keyframes,
-          control: _control(context, t, id, value, frame),
+          keyframeControls: keyframes == null ? null : _greyed(keyframes),
+          control: control,
         ),
       );
     }
@@ -180,7 +203,7 @@ class EffectParamRowFrb extends StatelessWidget {
       padding: rowPadding,
       child: Row(
         children: [
-          if (keyframes != null) keyframes,
+          if (keyframes != null) _greyed(keyframes),
           const SizedBox(width: 4),
           Expanded(child: label),
           if (valueColumn case final col?) ...[
@@ -188,13 +211,13 @@ class EffectParamRowFrb extends StatelessWidget {
               width: col.width,
               child: Align(
                 alignment: Alignment.centerLeft,
-                child: _control(context, t, id, value, frame),
+                child: control,
               ),
             ),
             SizedBox(width: col.rightInset),
           ] else ...[
             const SizedBox(width: 10),
-            _control(context, t, id, value, frame),
+            control,
           ],
         ],
       ),
@@ -204,10 +227,22 @@ class EffectParamRowFrb extends StatelessWidget {
   /// The scalar behind this row when the kind is one that can animate, else
   /// null. Float is the only single-scalar animatable kind the schema declares;
   /// a colour animates per channel, which the swatch has no room to key.
+  /// Draw `child` as a greyed row when another parameter has taken it over.
+  ///
+  /// Faded **and** deaf: [IgnorePointer] is what makes the greying honest, since
+  /// a control that still answers a drag while looking disabled is worse than
+  /// one that never dimmed. The value stays legible — you can read what Focus
+  /// distance *would* be — because greying says "this is not the one in charge",
+  /// not "this is gone".
+  Widget _greyed(Widget child) => enabled
+      ? child
+      : IgnorePointer(child: Opacity(opacity: 0.4, child: child));
+
   BridgeScalar? _animatableScalarOf(BridgeEffectValue? value) {
     // Int is a Float value with integer display (docs/08 §1.2), so it
     // animates exactly like Float.
-    if (param.kind is! BridgeParamKind_Float && param.kind is! BridgeParamKind_Int) {
+    if (param.kind is! BridgeParamKind_Float &&
+        param.kind is! BridgeParamKind_Int) {
       return null;
     }
     return switch (value) {
@@ -236,9 +271,34 @@ class EffectParamRowFrb extends StatelessWidget {
           :final hardMax
         ):
         if (value case BridgeEffectValue_Float(:final field0)) {
+          // A driven parameter is a line of code, not a number to drag, so it
+          // gets the editor row instead of the value field.
+          if (field0 case BridgeScalar_Expression expr) {
+            return EffectParamRowExpression(
+              key: ValueKey<String>(
+                  'fx-expression-$id-${param.id}-${param.hashCode}'),
+              value: expr,
+              comp: comp,
+              frame: frame,
+              layer: currentLayer,
+              set: _set,
+              setLive: _setLive,
+            );
+          }
+
           final field = _scalarField(
             context,
             scalar: field0,
+            setExpression: () {
+              // Seed the expression with the value showing now, so turning one
+              // on does not move the picture until it is edited.
+              final sampled = sampleScalarWithContext(
+                  scalar: field0,
+                  time: timeOfFrame(comp, frame),
+                  layer: currentLayer);
+              _set(BridgeEffectValue.float(
+                  BridgeScalar.expression(sampled.toString())));
+            },
             frame: frame,
             sliderMin: sliderMin,
             sliderMax: sliderMax,
@@ -276,6 +336,18 @@ class EffectParamRowFrb extends StatelessWidget {
             keyName: '$id-${param.id}',
             integer: true,
             write: (s) => _set(BridgeEffectValue.float(s)),
+          );
+        }
+        return Text('—', style: t.small);
+
+      case BridgeParamKind_Angle(:final dialStep):
+        if (value case BridgeEffectValue_Float(:final field0)) {
+          return _angleControl(
+            context,
+            scalar: field0,
+            frame: frame,
+            step: dialStep,
+            keyName: '$id-${param.id}',
           );
         }
         return Text('—', style: t.small);
@@ -322,14 +394,15 @@ class EffectParamRowFrb extends StatelessWidget {
                       final i = label.indexOf(' · ');
                       return i > 0 ? label.substring(0, i) : null;
                     },
-                    hint: 'Search ${param.label.toLowerCase()}',
+                    hint:
+                        l10n.searchFor(engineLabel(param.label).toLowerCase()),
                     onChanged: (i) => _set(BridgeEffectValue.choice(i)),
                   )
                 : BareDropdown<int>(
                     key: ValueKey<String>('fx-choice-$id-${param.id}'),
                     value: index,
                     options: [for (var i = 0; i < options.length; i++) i],
-                    label: (i) => options[i],
+                    label: (i) => engineLabel(options[i]),
                     onChanged: (i) => _set(BridgeEffectValue.choice(i)),
                   ),
           );
@@ -375,7 +448,7 @@ class EffectParamRowFrb extends StatelessWidget {
                 Flexible(
                   child: LumitTooltip(
                     message:
-                        paths.isEmpty ? 'Choose a $filterName' : paths.first,
+                        paths.isEmpty ? l10n.chooseA(filterName) : paths.first,
                     child: HouseButton(
                       key: ValueKey<String>('fx-file-$id-${param.id}'),
                       onPressed: () async {
@@ -388,7 +461,9 @@ class EffectParamRowFrb extends StatelessWidget {
                         )));
                       },
                       child: Text(
-                        paths.isEmpty ? 'Choose…' : _basename(paths.first),
+                        paths.isEmpty
+                            ? l10n.chooseEllipsis
+                            : _basename(paths.first),
                         style: t.small,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -397,13 +472,12 @@ class EffectParamRowFrb extends StatelessWidget {
                 ),
                 if (paths.isNotEmpty)
                   LumitTooltip(
-                    message: 'Clear',
+                    message: l10n.clear,
                     child: HouseButton(
                       key: ValueKey<String>('fx-file-clear-$id-${param.id}'),
                       onPressed: () => _set(BridgeEffectValue.file(
                           const BridgeFileParam(
-                              paths: [],
-                              index: BridgeScalar.static_(0)))),
+                              paths: [], index: BridgeScalar.static_(0)))),
                       child: Text('×', style: t.small),
                     ),
                   ),
@@ -414,6 +488,15 @@ class EffectParamRowFrb extends StatelessWidget {
         return Text('—', style: t.small);
     }
   }
+
+  /// The layer this row's effect sits on.
+  ///
+  /// An expression is evaluated about a particular layer — `time`, `cut_in`,
+  /// `layer()` all mean something only relative to one — so the row has to say
+  /// which, and the effect stack it was drawn from knows.
+  LayerReference get currentLayer => ownerLayers
+      .firstWhere((i) => i.layer.internallayerId == ownerLayerId)
+      .layer;
 
   /// A number field for a scalar. A static value drags with live preview; an
   /// animated one shows the value under the playhead and a change writes it
@@ -429,6 +512,7 @@ class EffectParamRowFrb extends StatelessWidget {
     required double? hardMax,
     required String keyName,
     required void Function(BridgeScalar) write,
+    void Function()? setExpression,
     bool integer = false,
   }) {
     // The drag paces itself by the declared slider span, so a 0–1 parameter and
@@ -453,7 +537,8 @@ class EffectParamRowFrb extends StatelessWidget {
           min: hardMin ?? -1000000,
           max: hardMax ?? 1000000,
           speed: speed,
-          onCommit: (v) => write(scalarWithValueAt(scalar, snap(v), comp, frame)),
+          onCommit: (v) =>
+              write(scalarWithValueAt(scalar, snap(v), comp, frame)),
         ),
       );
     }
@@ -473,6 +558,7 @@ class EffectParamRowFrb extends StatelessWidget {
         onChangeLive: (v) =>
             _setLive(BridgeEffectValue.float(BridgeScalar.static_(snap(v)))),
         onChangeEnd: (v) => write(BridgeScalar.static_(snap(v))),
+        setExpression: setExpression,
       ),
     );
   }
@@ -501,11 +587,11 @@ class EffectParamRowFrb extends StatelessWidget {
       };
       return _DropperButton(
         id: 'fx-$id-${param.id}',
-        tip: 'Read the focal point off ${entry.info.name} in the Viewer',
+        tip: l10n.tipPickFocalPoint,
         arm: (ui) => ui.armDropper(DropperArm(
           id: 'fx-$id-${param.id}',
           reads: DropperReads.depth,
-          label: param.label,
+          label: engineLabel(param.label),
           sampleLayer: entry.layer,
           sampleLayerName: entry.info.name,
           onPick: (sample) {
@@ -518,6 +604,70 @@ class EffectParamRowFrb extends StatelessWidget {
       );
     }
     return null;
+  }
+
+  /// A number in degrees with the dial under it (docs/07 §6).
+  ///
+  /// The dial drags live and commits on release, exactly as the number does, so
+  /// the two are interchangeable. It is unbounded in both: an angle animates
+  /// through full turns rather than wrapping, and a keyframe pair that wrapped
+  /// would spin backwards through the whole circle on the way to the next key.
+  Widget _angleControl(
+    BuildContext context, {
+    required BridgeScalar scalar,
+    required int frame,
+    required double step,
+    required String keyName,
+  }) {
+    final animated = scalar is! BridgeScalar_Static;
+    final shown = animated
+        ? sampleScalar(scalar: scalar, time: timeOfFrame(comp, frame))
+        : scalar.field0;
+
+    void write(double v) {
+      // On a curve the edit lands in the key under the playhead, or plants one
+      // — never flattening what is already there.
+      final next = animated
+          ? scalarWithValueAt(scalar, v, comp, frame)
+          : BridgeScalar.static_(v);
+      _set(BridgeEffectValue.float(next));
+    }
+
+    // Turns, degrees, dial — one row. The dial is a second grip on the same
+    // value, not a second control, so it sits beside the numbers rather than
+    // under them: a two-storey row is taller than every other row in the panel
+    // and reads as two settings.
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        TurnsAndDegreesField(
+          keyName: keyName,
+          degrees: shown,
+          enabled: enabled,
+          onChanged: animated
+              ? null
+              : (v) => _setLive(BridgeEffectValue.float(BridgeScalar.static_(v))),
+          onCommit: write,
+        ),
+        const SizedBox(width: 6),
+        AngleDial(
+          key: ValueKey<String>('fx-dial-$keyName'),
+          // Row height, not the standalone 34: it is a grip beside a number.
+          size: 20,
+          degrees: shown,
+          step: step,
+          enabled: enabled,
+          // A dial drag is a drag like any other: preview each tick, commit
+          // the release. On a curve there is no live preview, for the same
+          // reason the numbers have none — the value being previewed is not
+          // the one that will be stored.
+          onChanged: (v) => animated
+              ? null
+              : _setLive(BridgeEffectValue.float(BridgeScalar.static_(v))),
+          onChangeEnd: write,
+        ),
+      ],
+    );
   }
 
   /// A colour swatch. The four channels animate independently in the model, so a
@@ -605,11 +755,11 @@ class EffectParamRowFrb extends StatelessWidget {
           // it (docs/07 §6.1).
           _DropperButton(
             id: 'fx-$id-${param.id}',
-            tip: 'Sample ${param.label} from the Viewer',
+            tip: l10n.tipSampleFromViewer,
             arm: (ui) => ui.armDropper(DropperArm(
               id: 'fx-$id-${param.id}',
               reads: DropperReads.colour,
-              label: param.label,
+              label: engineLabel(param.label),
               onPick: (sample) => _set(BridgeEffectValue.colour(BridgeColour(
                 // Scene-linear, exactly as the parameter stores it, so the
                 // sample passes through without a conversion to disagree over.
@@ -635,6 +785,10 @@ class EffectParamRowFrb extends StatelessWidget {
   /// container with FFmpeg while drawing a row.
   Widget _layerPicker(BuildContext context, UuidValue id, UuidValue? current) {
     final chosen = current?.toString();
+    // The layer the effect is on says so, so "everything below" is readable
+    // on an adjustment layer rather than an unexplained self-reference.
+    String named(String name, UuidValue layerId) =>
+        layerId == ownerLayerId ? l10n.thisLayerSuffix(name) : name;
     return SizedBox(
       width: effectCellWidth + 40,
       child: BareLazyDropdown<UuidValue?>(
@@ -642,22 +796,30 @@ class EffectParamRowFrb extends StatelessWidget {
         // Named from the read model when it can be, so the closed button
         // costs nothing; a reference to a layer since deleted says so.
         label: chosen == null
-            ? 'None'
+            ? l10n.none
             : (ownerLayers
                     .where((l) => l.layer.internallayerId == current)
-                    .map((l) => l.info.name)
+                    .map((l) => named(l.info.name, l.layer.internallayerId))
                     .firstOrNull ??
-                'Missing layer'),
+                l10n.missingLayer),
         options: () => [
-          (null, 'None'),
+          (null, l10n.none),
           for (final entry in ownerLayers)
-            // A layer-valued parameter samples another layer's *picture* — a
-            // depth map, a displacement source — so a layer with none (a
-            // camera, an audio-only clip) is not offered, and neither is the
-            // layer the effect is on: sampling itself is not defined.
-            if (entry.layer.internallayerId != ownerLayerId &&
+            // A layer-valued parameter samples a *picture*, so a layer with
+            // none (a camera, an audio-only clip) is not offered.
+            //
+            // The layer the effect is ON is always offered, picture or not
+            // (K-288): picking it does not re-render that layer, it reads
+            // the effect's own input at its point in the stack. That is the
+            // whole point on an **adjustment layer** — which has no picture
+            // of its own, and whose input is the composite of everything
+            // below it. A Lens flare added to one starts here.
+            if (entry.layer.internallayerId == ownerLayerId ||
                 entry.layer.hasPicture())
-              (entry.layer.internallayerId, entry.info.name),
+              (
+                entry.layer.internallayerId,
+                named(entry.info.name, entry.layer.internallayerId)
+              ),
         ],
         onChanged: (picked) => _set(BridgeEffectValue.layer(picked)),
       ),
@@ -692,6 +854,11 @@ class EffectPointRowFrb extends StatelessWidget {
   /// the K-260 convention every new point pair uses).
   final bool? pickPixels;
 
+  /// Whether the pair is editable, per the effect's greying rules — the same
+  /// affordance [EffectParamRowFrb.enabled] draws, over a row that happens to
+  /// carry two parameters.
+  final bool enabled;
+
   const EffectPointRowFrb({
     super.key,
     required this.effectId,
@@ -706,6 +873,7 @@ class EffectPointRowFrb extends StatelessWidget {
     required this.onLive,
     this.twoColumn = false,
     this.pickPixels,
+    this.enabled = true,
   });
 
   BridgeScalar? _scalar(BridgeEffectValue? v) => switch (v) {
@@ -752,7 +920,17 @@ class EffectPointRowFrb extends StatelessWidget {
             },
           );
 
-    final label = Text(stem, style: t.body, overflow: TextOverflow.ellipsis);
+    final label = Text(
+      stem,
+      style: enabled ? t.body : t.body.copyWith(color: t.textDisabled),
+      overflow: TextOverflow.ellipsis,
+    );
+
+    // Faded and deaf together: a control that still answers a drag while
+    // looking disabled is worse than one that never dimmed.
+    Widget greyed(Widget child) => enabled
+        ? child
+        : IgnorePointer(child: Opacity(opacity: 0.4, child: child));
 
     Widget field(BridgeParamInfo param, BridgeScalar? scalar) {
       if (scalar == null) return Text('—', style: t.small);
@@ -774,7 +952,8 @@ class EffectPointRowFrb extends StatelessWidget {
             onCommit: (v) => onWrite(
               id,
               param.id,
-              BridgeEffectValue.float(scalarWithValueAt(scalar, v, comp, frame)),
+              BridgeEffectValue.float(
+                  scalarWithValueAt(scalar, v, comp, frame)),
             ),
           ),
         );
@@ -788,12 +967,12 @@ class EffectPointRowFrb extends StatelessWidget {
           max: kind.hardMax ?? 1000000,
           speed: speed,
           decimals: 2,
-          onChanged: (v) => onWrite(
-              id, param.id, BridgeEffectValue.float(BridgeScalar.static_(v.toDouble()))),
-          onChangeLive: (v) => onLive(
-              id, param.id, BridgeEffectValue.float(BridgeScalar.static_(v.toDouble()))),
-          onChangeEnd: (v) => onWrite(
-              id, param.id, BridgeEffectValue.float(BridgeScalar.static_(v.toDouble()))),
+          onChanged: (v) => onWrite(id, param.id,
+              BridgeEffectValue.float(BridgeScalar.static_(v.toDouble()))),
+          onChangeLive: (v) => onLive(id, param.id,
+              BridgeEffectValue.float(BridgeScalar.static_(v.toDouble()))),
+          onChangeEnd: (v) => onWrite(id, param.id,
+              BridgeEffectValue.float(BridgeScalar.static_(v.toDouble()))),
         ),
       );
     }
@@ -808,7 +987,7 @@ class EffectPointRowFrb extends StatelessWidget {
           const SizedBox(width: 4),
           _DropperButton(
             id: 'fx-$id-${xParam.id}',
-            tip: 'Pick $stem on the Viewer',
+            tip: l10n.tipPickOnViewer,
             arm: (ui) => ui.armDropper(DropperArm(
               id: 'fx-$id-${xParam.id}',
               reads: DropperReads.position,
@@ -841,24 +1020,24 @@ class EffectPointRowFrb extends StatelessWidget {
 
     if (twoColumn) {
       return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
+        padding: const EdgeInsets.symmetric(vertical: 2),
         child: fxTwoColumnRow(
           context: context,
           name: label,
-          keyframeControls: keyframes,
-          control: control,
+          keyframeControls: keyframes == null ? null : greyed(keyframes),
+          control: greyed(control),
         ),
       );
     }
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
+      padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         children: [
-          if (keyframes != null) keyframes,
+          if (keyframes != null) greyed(keyframes),
           const SizedBox(width: 4),
           Expanded(child: label),
           const SizedBox(width: 10),
-          control,
+          greyed(control),
         ],
       ),
     );
@@ -871,6 +1050,10 @@ class EffectPointRowFrb extends StatelessWidget {
 const Map<String, bool> pickablePointParams = {
   'light_x': true,
   'centre_x': false,
+  // Depth of field's Focus point (K-313): px@comp, and the reason the control
+  // exists at all — clicking the thing you want sharp beats reading a depth
+  // value off the Depth map view and typing it in.
+  'focus_point_x': true,
 };
 
 /// The effect schema, fetched once per session and then answered from here.
@@ -894,11 +1077,54 @@ final Map<String, List<BridgeParamGroup>> _groupSchema = {};
 List<BridgeParamGroup> cachedListParameterGroups(String effect) =>
     _groupSchema[effect] ??= listParameterGroups(effect: effect);
 
+final Map<String, List<BridgeEnabledWhen>> _enabledWhenSchema = {};
+
+/// An effect's greying rules (`EnabledWhen` in the schema), memoised like the
+/// groups: which rows go quiet while another control has taken them over.
+List<BridgeEnabledWhen> cachedListEnabledWhen(String effect) =>
+    _enabledWhenSchema[effect] ??= listEnabledWhen(effect: effect);
+
+/// Which of `effect`'s parameters are currently NOT editable, given the values
+/// the panel is showing.
+///
+/// Mirrors `lumit_core::fx::param_enabled`, which is the authority: the rules
+/// are evaluated here rather than asked for across the bridge because the panel
+/// already holds every value they read, and a round trip per row per rebuild for
+/// an answer it can compute is exactly the hover-hot bridge traffic the budget
+/// test forbids. Several rules may name the same parameter; every one of them
+/// has to be satisfied, so one unsatisfied rule greys the row.
+///
+/// A rule naming a parameter the instance does not carry cannot be judged, so it
+/// greys nothing — an older instance that predates the deciding control stays
+/// fully editable rather than locking a row it can never unlock.
+Set<String> disabledParams(
+  String effect,
+  Map<String, BridgeEffectValue> values,
+) {
+  final out = <String>{};
+  for (final rule in cachedListEnabledWhen(effect)) {
+    final on = values[rule.on_];
+    if (on == null) continue;
+    final ok = switch ((rule.cond, on)) {
+      (BridgeEnabledCond_BoolIs(:final field0), BridgeEffectValue_Bool(field0: final v)) => v == field0,
+      (BridgeEnabledCond_ChoiceIs(:final field0), BridgeEffectValue_Choice(field0: final v)) => v == field0,
+      (BridgeEnabledCond_ChoiceIsNot(:final field0), BridgeEffectValue_Choice(field0: final v)) => v != field0,
+      (BridgeEnabledCond_LayerSet(), BridgeEffectValue_Layer(field0: final v)) => v != null,
+      // A rule pointed at the wrong kind of parameter is a schema mistake the
+      // Rust-side test fails the build for; here it leaves the row live rather
+      // than locking one the owner can never reach.
+      _ => true,
+    };
+    if (!ok) out.add(rule.param);
+  }
+  return out;
+}
+
 /// An effect's display label from the schema, falling back to its match name
 /// for an effect this build does not know.
 String effectLabelOf(String name) {
   for (final info in cachedListEffects()) {
-    if (info.name == name) return info.label;
+    if (info.name == name) return engineLabel(info.label);
   }
   return name;
 }
@@ -915,6 +1141,9 @@ BridgeEffectValue defaultEffectValue(BridgeParamKind kind) => switch (kind) {
         BridgeEffectValue.float(BridgeScalar.static_(default_)),
       BridgeParamKind_Int(:final default_) =>
         BridgeEffectValue.float(BridgeScalar.static_(default_.toDouble())),
+      // An angle is a number of degrees, so it resets like any other scalar.
+      BridgeParamKind_Angle(:final default_) =>
+        BridgeEffectValue.float(BridgeScalar.static_(default_)),
       BridgeParamKind_Choice(:final default_) =>
         BridgeEffectValue.choice(default_),
       BridgeParamKind_Bool(:final default_) => BridgeEffectValue.bool(default_),
@@ -1044,7 +1273,8 @@ class _DropperButton extends StatelessWidget {
   final String tip;
   final void Function(LumitUiState ui) arm;
 
-  const _DropperButton({required this.id, required this.tip, required this.arm});
+  const _DropperButton(
+      {required this.id, required this.tip, required this.arm});
 
   @override
   Widget build(BuildContext context) {
@@ -1077,6 +1307,242 @@ class _DropperButton extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+
+
+class EffectParamRowExpression extends StatefulWidget {
+  const EffectParamRowExpression(
+      {required this.value,
+      required this.set,
+      required this.comp,
+      required this.frame,
+      required this.setLive,
+      required this.layer,
+      super.key});
+  final BridgeScalar_Expression value;
+  final CompositionReference comp;
+  final int frame;
+  final void Function(BridgeEffectValue value) set;
+  final void Function(BridgeEffectValue value) setLive;
+  final LayerReference layer;
+
+  @override
+  State<EffectParamRowExpression> createState() =>
+      _EffectParamRowExpressionState();
+}
+
+const _defaultLightThemeFiles = [
+  'packages/syntax_highlight/themes/light_vs.json',
+  'packages/syntax_highlight/themes/light_plus.json',
+];
+
+const _defaultDarkThemeFiles = [
+  'packages/syntax_highlight/themes/dark_vs.json',
+  'packages/syntax_highlight/themes/dark_plus.json',
+];
+
+class ExpressionTextEditingController extends TextEditingController {
+  static HighlighterTheme? darkTheme;
+  static HighlighterTheme? lightTheme;
+
+  static Future<void> initSyntaxHighlighting() async {
+    await Highlighter.initialize(["dart"]);
+
+    darkTheme = await HighlighterTheme.loadFromAssets(
+        _defaultDarkThemeFiles, LumitTheme.dark().mono);
+
+    lightTheme = await HighlighterTheme.loadFromAssets(
+        _defaultLightThemeFiles, LumitTheme.light().mono);
+  }
+
+  ExpressionTextEditingController({super.text});
+
+  @override
+  TextSpan buildTextSpan(
+      {required BuildContext context,
+      TextStyle? style,
+      required bool withComposing}) {
+    final theme = ThemeScope.of(context).theme.mode == ThemeMode2.dark
+        ? darkTheme
+        : lightTheme;
+
+    // Highlighting is loaded asynchronously at startup by
+    // `initSyntaxHighlighting`, so there is a window in which it is not there
+    // yet — and a widget test never runs that startup at all. Draw the line
+    // plainly until it is ready rather than throwing, which is the same choice
+    // the completion list already makes when the engine has not answered.
+    if (theme == null) {
+      return super.buildTextSpan(
+          context: context, style: style, withComposing: withComposing);
+    }
+
+    var highlighter = Highlighter(
+      language: 'dart',
+      theme: theme,
+    );
+
+
+
+    var span = highlighter.highlight(text);
+    return span;
+  }
+}
+
+class _EffectParamRowExpressionState extends State<EffectParamRowExpression> {
+  late TextEditingController controller;
+
+  double value = 0.0;
+  late ValueNotifier<int> playhead;
+
+  String lastText = "";
+
+  @override
+  void initState() {
+    playhead = Provider.of<LumitUiState>(context, listen: false).playheadFrame;
+
+    Provider.of<LumitState>(context, listen: false)
+        .onChange
+        .listen(onProjectChanged);
+
+    playhead.addListener(onFrameChanged);
+
+    controller = ExpressionTextEditingController(text: widget.value.field0);
+    controller.addListener(onTextChanged);
+    lastText = controller.text;
+
+    value = sampleScalarWithContext(
+        scalar: widget.value,
+        time: timeOfFrame(widget.comp, playhead.value),
+        layer: widget.layer);
+    super.initState();
+  }
+
+  void onProjectChanged(ScopedChange event) {
+    // print(event.layer);
+    // print("Project changed!");
+
+    // setState(() {
+    //   controller.text = widget.value.field0;
+    // });
+  }
+
+  @override
+  void dispose() {
+    playhead.removeListener(onFrameChanged);
+    controller.removeListener(onTextChanged);
+
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant EffectParamRowExpression oldWidget) {
+    if (widget.value.field0 != controller.text) {
+      // we dont want to trigger the update when setting text manually, so remove it then add it back
+      controller.removeListener(onTextChanged);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        controller.text = widget.value.field0;
+        controller.addListener(onTextChanged);
+      });
+    }
+    super.didUpdateWidget(oldWidget);
+  }
+
+  void onFrameChanged() {
+    final expr = controller.text;
+
+    setState(() {
+      value = sampleScalarWithContext(
+          scalar: BridgeScalar_Expression(expr),
+          time: timeOfFrame(widget.comp, playhead.value),
+          layer: widget.layer);
+    });
+  }
+
+  void onTextChanged() {
+    final expr = controller.text;
+    if (expr != lastText) {
+      widget.setLive(BridgeEffectValue.float(BridgeScalar.expression(expr)));
+
+      setState(() {
+        value = sampleScalarWithContext(
+            scalar: BridgeScalar_Expression(expr),
+            time: timeOfFrame(widget.comp, playhead.value),
+            layer: widget.layer);
+      });
+    }
+
+    lastText = expr;
+  }
+
+  void removeExpression() {
+    final expr = controller.text;
+
+    var v = sampleScalarWithContext(
+        scalar: BridgeScalar_Expression(expr),
+        time: timeOfFrame(widget.comp, playhead.value),
+        layer: widget.layer);
+
+    widget.set(BridgeEffectValue.float(BridgeScalar_Static(v)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _build(context);
+  }
+
+  Widget _build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+
+    return Row(
+      spacing: 4,
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Flexible(
+            child: HouseContextMenu(
+          itemBuilder: (close) {
+            return [
+              MenuRow(
+                onPressed: () {
+                  removeExpression();
+                  close();
+                },
+                child: Text("Remove Expression"),
+              )
+            ];
+          },
+          child: HouseTextField(
+            controller: controller,
+            width: double.infinity,
+            style: t.mono,
+            submitOnLostFocus: true,
+            autofill: ExpressionAutofillGenerator(),
+            onSubmitted: (value) {
+              widget
+                  .set(BridgeEffectValue.float(BridgeScalar_Expression(value)));
+              onTextChanged();
+            },
+          ),
+        )),
+        SizedBox(
+          width: 78,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                " = ",
+                style: t.body.copyWith(color: t.textMuted),
+              ),
+              Text(
+                value.toStringAsPrecision(6),
+                style: t.mono.copyWith(color: t.textMuted),
+              ),
+            ],
+          ),
+        )
+      ],
     );
   }
 }

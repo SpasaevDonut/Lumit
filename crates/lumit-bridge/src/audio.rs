@@ -184,6 +184,7 @@ fn hash_animation(
                 k.value.to_bits().hash(h);
             }
         }
+        lumit_core::anim::Animation::Expression(expr) => expr.hash(h),
     }
 }
 

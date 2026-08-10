@@ -860,6 +860,454 @@ class _$BridgeEffectValue_LayerCopyWithImpl<$Res>
 }
 
 /// @nodoc
+mixin _$BridgeEnabledCond {
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is BridgeEnabledCond);
+  }
+
+  @override
+  int get hashCode => runtimeType.hashCode;
+
+  @override
+  String toString() {
+    return 'BridgeEnabledCond()';
+  }
+}
+
+/// @nodoc
+class $BridgeEnabledCondCopyWith<$Res> {
+  $BridgeEnabledCondCopyWith(
+      BridgeEnabledCond _, $Res Function(BridgeEnabledCond) __);
+}
+
+/// Adds pattern-matching-related methods to [BridgeEnabledCond].
+extension BridgeEnabledCondPatterns on BridgeEnabledCond {
+  /// A variant of `map` that fallback to returning `orElse`.
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case final Subclass value:
+  ///     return ...;
+  ///   case _:
+  ///     return orElse();
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult maybeMap<TResult extends Object?>({
+    TResult Function(BridgeEnabledCond_BoolIs value)? boolIs,
+    TResult Function(BridgeEnabledCond_ChoiceIs value)? choiceIs,
+    TResult Function(BridgeEnabledCond_ChoiceIsNot value)? choiceIsNot,
+    TResult Function(BridgeEnabledCond_LayerSet value)? layerSet,
+    required TResult orElse(),
+  }) {
+    final _that = this;
+    switch (_that) {
+      case BridgeEnabledCond_BoolIs() when boolIs != null:
+        return boolIs(_that);
+      case BridgeEnabledCond_ChoiceIs() when choiceIs != null:
+        return choiceIs(_that);
+      case BridgeEnabledCond_ChoiceIsNot() when choiceIsNot != null:
+        return choiceIsNot(_that);
+      case BridgeEnabledCond_LayerSet() when layerSet != null:
+        return layerSet(_that);
+      case _:
+        return orElse();
+    }
+  }
+
+  /// A `switch`-like method, using callbacks.
+  ///
+  /// Callbacks receives the raw object, upcasted.
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case final Subclass value:
+  ///     return ...;
+  ///   case final Subclass2 value:
+  ///     return ...;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult map<TResult extends Object?>({
+    required TResult Function(BridgeEnabledCond_BoolIs value) boolIs,
+    required TResult Function(BridgeEnabledCond_ChoiceIs value) choiceIs,
+    required TResult Function(BridgeEnabledCond_ChoiceIsNot value) choiceIsNot,
+    required TResult Function(BridgeEnabledCond_LayerSet value) layerSet,
+  }) {
+    final _that = this;
+    switch (_that) {
+      case BridgeEnabledCond_BoolIs():
+        return boolIs(_that);
+      case BridgeEnabledCond_ChoiceIs():
+        return choiceIs(_that);
+      case BridgeEnabledCond_ChoiceIsNot():
+        return choiceIsNot(_that);
+      case BridgeEnabledCond_LayerSet():
+        return layerSet(_that);
+    }
+  }
+
+  /// A variant of `map` that fallback to returning `null`.
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case final Subclass value:
+  ///     return ...;
+  ///   case _:
+  ///     return null;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult? mapOrNull<TResult extends Object?>({
+    TResult? Function(BridgeEnabledCond_BoolIs value)? boolIs,
+    TResult? Function(BridgeEnabledCond_ChoiceIs value)? choiceIs,
+    TResult? Function(BridgeEnabledCond_ChoiceIsNot value)? choiceIsNot,
+    TResult? Function(BridgeEnabledCond_LayerSet value)? layerSet,
+  }) {
+    final _that = this;
+    switch (_that) {
+      case BridgeEnabledCond_BoolIs() when boolIs != null:
+        return boolIs(_that);
+      case BridgeEnabledCond_ChoiceIs() when choiceIs != null:
+        return choiceIs(_that);
+      case BridgeEnabledCond_ChoiceIsNot() when choiceIsNot != null:
+        return choiceIsNot(_that);
+      case BridgeEnabledCond_LayerSet() when layerSet != null:
+        return layerSet(_that);
+      case _:
+        return null;
+    }
+  }
+
+  /// A variant of `when` that fallback to an `orElse` callback.
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case Subclass(:final field):
+  ///     return ...;
+  ///   case _:
+  ///     return orElse();
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult maybeWhen<TResult extends Object?>({
+    TResult Function(bool field0)? boolIs,
+    TResult Function(int field0)? choiceIs,
+    TResult Function(int field0)? choiceIsNot,
+    TResult Function()? layerSet,
+    required TResult orElse(),
+  }) {
+    final _that = this;
+    switch (_that) {
+      case BridgeEnabledCond_BoolIs() when boolIs != null:
+        return boolIs(_that.field0);
+      case BridgeEnabledCond_ChoiceIs() when choiceIs != null:
+        return choiceIs(_that.field0);
+      case BridgeEnabledCond_ChoiceIsNot() when choiceIsNot != null:
+        return choiceIsNot(_that.field0);
+      case BridgeEnabledCond_LayerSet() when layerSet != null:
+        return layerSet();
+      case _:
+        return orElse();
+    }
+  }
+
+  /// A `switch`-like method, using callbacks.
+  ///
+  /// As opposed to `map`, this offers destructuring.
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case Subclass(:final field):
+  ///     return ...;
+  ///   case Subclass2(:final field2):
+  ///     return ...;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult when<TResult extends Object?>({
+    required TResult Function(bool field0) boolIs,
+    required TResult Function(int field0) choiceIs,
+    required TResult Function(int field0) choiceIsNot,
+    required TResult Function() layerSet,
+  }) {
+    final _that = this;
+    switch (_that) {
+      case BridgeEnabledCond_BoolIs():
+        return boolIs(_that.field0);
+      case BridgeEnabledCond_ChoiceIs():
+        return choiceIs(_that.field0);
+      case BridgeEnabledCond_ChoiceIsNot():
+        return choiceIsNot(_that.field0);
+      case BridgeEnabledCond_LayerSet():
+        return layerSet();
+    }
+  }
+
+  /// A variant of `when` that fallback to returning `null`
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case Subclass(:final field):
+  ///     return ...;
+  ///   case _:
+  ///     return null;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult? whenOrNull<TResult extends Object?>({
+    TResult? Function(bool field0)? boolIs,
+    TResult? Function(int field0)? choiceIs,
+    TResult? Function(int field0)? choiceIsNot,
+    TResult? Function()? layerSet,
+  }) {
+    final _that = this;
+    switch (_that) {
+      case BridgeEnabledCond_BoolIs() when boolIs != null:
+        return boolIs(_that.field0);
+      case BridgeEnabledCond_ChoiceIs() when choiceIs != null:
+        return choiceIs(_that.field0);
+      case BridgeEnabledCond_ChoiceIsNot() when choiceIsNot != null:
+        return choiceIsNot(_that.field0);
+      case BridgeEnabledCond_LayerSet() when layerSet != null:
+        return layerSet();
+      case _:
+        return null;
+    }
+  }
+}
+
+/// @nodoc
+
+class BridgeEnabledCond_BoolIs extends BridgeEnabledCond {
+  const BridgeEnabledCond_BoolIs(this.field0) : super._();
+
+  final bool field0;
+
+  /// Create a copy of BridgeEnabledCond
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $BridgeEnabledCond_BoolIsCopyWith<BridgeEnabledCond_BoolIs> get copyWith =>
+      _$BridgeEnabledCond_BoolIsCopyWithImpl<BridgeEnabledCond_BoolIs>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is BridgeEnabledCond_BoolIs &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode => Object.hash(runtimeType, field0);
+
+  @override
+  String toString() {
+    return 'BridgeEnabledCond.boolIs(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $BridgeEnabledCond_BoolIsCopyWith<$Res>
+    implements $BridgeEnabledCondCopyWith<$Res> {
+  factory $BridgeEnabledCond_BoolIsCopyWith(BridgeEnabledCond_BoolIs value,
+          $Res Function(BridgeEnabledCond_BoolIs) _then) =
+      _$BridgeEnabledCond_BoolIsCopyWithImpl;
+  @useResult
+  $Res call({bool field0});
+}
+
+/// @nodoc
+class _$BridgeEnabledCond_BoolIsCopyWithImpl<$Res>
+    implements $BridgeEnabledCond_BoolIsCopyWith<$Res> {
+  _$BridgeEnabledCond_BoolIsCopyWithImpl(this._self, this._then);
+
+  final BridgeEnabledCond_BoolIs _self;
+  final $Res Function(BridgeEnabledCond_BoolIs) _then;
+
+  /// Create a copy of BridgeEnabledCond
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(BridgeEnabledCond_BoolIs(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as bool,
+    ));
+  }
+}
+
+/// @nodoc
+
+class BridgeEnabledCond_ChoiceIs extends BridgeEnabledCond {
+  const BridgeEnabledCond_ChoiceIs(this.field0) : super._();
+
+  final int field0;
+
+  /// Create a copy of BridgeEnabledCond
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $BridgeEnabledCond_ChoiceIsCopyWith<BridgeEnabledCond_ChoiceIs>
+      get copyWith =>
+          _$BridgeEnabledCond_ChoiceIsCopyWithImpl<BridgeEnabledCond_ChoiceIs>(
+              this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is BridgeEnabledCond_ChoiceIs &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode => Object.hash(runtimeType, field0);
+
+  @override
+  String toString() {
+    return 'BridgeEnabledCond.choiceIs(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $BridgeEnabledCond_ChoiceIsCopyWith<$Res>
+    implements $BridgeEnabledCondCopyWith<$Res> {
+  factory $BridgeEnabledCond_ChoiceIsCopyWith(BridgeEnabledCond_ChoiceIs value,
+          $Res Function(BridgeEnabledCond_ChoiceIs) _then) =
+      _$BridgeEnabledCond_ChoiceIsCopyWithImpl;
+  @useResult
+  $Res call({int field0});
+}
+
+/// @nodoc
+class _$BridgeEnabledCond_ChoiceIsCopyWithImpl<$Res>
+    implements $BridgeEnabledCond_ChoiceIsCopyWith<$Res> {
+  _$BridgeEnabledCond_ChoiceIsCopyWithImpl(this._self, this._then);
+
+  final BridgeEnabledCond_ChoiceIs _self;
+  final $Res Function(BridgeEnabledCond_ChoiceIs) _then;
+
+  /// Create a copy of BridgeEnabledCond
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(BridgeEnabledCond_ChoiceIs(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as int,
+    ));
+  }
+}
+
+/// @nodoc
+
+class BridgeEnabledCond_ChoiceIsNot extends BridgeEnabledCond {
+  const BridgeEnabledCond_ChoiceIsNot(this.field0) : super._();
+
+  final int field0;
+
+  /// Create a copy of BridgeEnabledCond
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $BridgeEnabledCond_ChoiceIsNotCopyWith<BridgeEnabledCond_ChoiceIsNot>
+      get copyWith => _$BridgeEnabledCond_ChoiceIsNotCopyWithImpl<
+          BridgeEnabledCond_ChoiceIsNot>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is BridgeEnabledCond_ChoiceIsNot &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode => Object.hash(runtimeType, field0);
+
+  @override
+  String toString() {
+    return 'BridgeEnabledCond.choiceIsNot(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $BridgeEnabledCond_ChoiceIsNotCopyWith<$Res>
+    implements $BridgeEnabledCondCopyWith<$Res> {
+  factory $BridgeEnabledCond_ChoiceIsNotCopyWith(
+          BridgeEnabledCond_ChoiceIsNot value,
+          $Res Function(BridgeEnabledCond_ChoiceIsNot) _then) =
+      _$BridgeEnabledCond_ChoiceIsNotCopyWithImpl;
+  @useResult
+  $Res call({int field0});
+}
+
+/// @nodoc
+class _$BridgeEnabledCond_ChoiceIsNotCopyWithImpl<$Res>
+    implements $BridgeEnabledCond_ChoiceIsNotCopyWith<$Res> {
+  _$BridgeEnabledCond_ChoiceIsNotCopyWithImpl(this._self, this._then);
+
+  final BridgeEnabledCond_ChoiceIsNot _self;
+  final $Res Function(BridgeEnabledCond_ChoiceIsNot) _then;
+
+  /// Create a copy of BridgeEnabledCond
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(BridgeEnabledCond_ChoiceIsNot(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as int,
+    ));
+  }
+}
+
+/// @nodoc
+
+class BridgeEnabledCond_LayerSet extends BridgeEnabledCond {
+  const BridgeEnabledCond_LayerSet() : super._();
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is BridgeEnabledCond_LayerSet);
+  }
+
+  @override
+  int get hashCode => runtimeType.hashCode;
+
+  @override
+  String toString() {
+    return 'BridgeEnabledCond.layerSet()';
+  }
+}
+
+/// @nodoc
 mixin _$BridgeParamKind {
   @override
   bool operator ==(Object other) {
@@ -900,6 +1348,7 @@ extension BridgeParamKindPatterns on BridgeParamKind {
   TResult maybeMap<TResult extends Object?>({
     TResult Function(BridgeParamKind_Float value)? float,
     TResult Function(BridgeParamKind_Int value)? int,
+    TResult Function(BridgeParamKind_Angle value)? angle,
     TResult Function(BridgeParamKind_Choice value)? choice,
     TResult Function(BridgeParamKind_Bool value)? bool,
     TResult Function(BridgeParamKind_Colour value)? colour,
@@ -914,6 +1363,8 @@ extension BridgeParamKindPatterns on BridgeParamKind {
         return float(_that);
       case BridgeParamKind_Int() when int != null:
         return int(_that);
+      case BridgeParamKind_Angle() when angle != null:
+        return angle(_that);
       case BridgeParamKind_Choice() when choice != null:
         return choice(_that);
       case BridgeParamKind_Bool() when bool != null:
@@ -948,6 +1399,7 @@ extension BridgeParamKindPatterns on BridgeParamKind {
   TResult map<TResult extends Object?>({
     required TResult Function(BridgeParamKind_Float value) float,
     required TResult Function(BridgeParamKind_Int value) int,
+    required TResult Function(BridgeParamKind_Angle value) angle,
     required TResult Function(BridgeParamKind_Choice value) choice,
     required TResult Function(BridgeParamKind_Bool value) bool,
     required TResult Function(BridgeParamKind_Colour value) colour,
@@ -961,6 +1413,8 @@ extension BridgeParamKindPatterns on BridgeParamKind {
         return float(_that);
       case BridgeParamKind_Int():
         return int(_that);
+      case BridgeParamKind_Angle():
+        return angle(_that);
       case BridgeParamKind_Choice():
         return choice(_that);
       case BridgeParamKind_Bool():
@@ -992,6 +1446,7 @@ extension BridgeParamKindPatterns on BridgeParamKind {
   TResult? mapOrNull<TResult extends Object?>({
     TResult? Function(BridgeParamKind_Float value)? float,
     TResult? Function(BridgeParamKind_Int value)? int,
+    TResult? Function(BridgeParamKind_Angle value)? angle,
     TResult? Function(BridgeParamKind_Choice value)? choice,
     TResult? Function(BridgeParamKind_Bool value)? bool,
     TResult? Function(BridgeParamKind_Colour value)? colour,
@@ -1005,6 +1460,8 @@ extension BridgeParamKindPatterns on BridgeParamKind {
         return float(_that);
       case BridgeParamKind_Int() when int != null:
         return int(_that);
+      case BridgeParamKind_Angle() when angle != null:
+        return angle(_that);
       case BridgeParamKind_Choice() when choice != null:
         return choice(_that);
       case BridgeParamKind_Bool() when bool != null:
@@ -1046,6 +1503,7 @@ extension BridgeParamKindPatterns on BridgeParamKind {
             PlatformInt64? hardMin,
             PlatformInt64? hardMax)?
         int,
+    TResult Function(double default_, double dialStep)? angle,
     TResult Function(
             List<String> options, int default_, Uint32List dividersAfter)?
         choice,
@@ -1064,6 +1522,8 @@ extension BridgeParamKindPatterns on BridgeParamKind {
       case BridgeParamKind_Int() when int != null:
         return int(_that.default_, _that.sliderMin, _that.sliderMax,
             _that.hardMin, _that.hardMax);
+      case BridgeParamKind_Angle() when angle != null:
+        return angle(_that.default_, _that.dialStep);
       case BridgeParamKind_Choice() when choice != null:
         return choice(_that.options, _that.default_, _that.dividersAfter);
       case BridgeParamKind_Bool() when bool != null:
@@ -1106,6 +1566,7 @@ extension BridgeParamKindPatterns on BridgeParamKind {
             PlatformInt64? hardMin,
             PlatformInt64? hardMax)
         int,
+    required TResult Function(double default_, double dialStep) angle,
     required TResult Function(
             List<String> options, int default_, Uint32List dividersAfter)
         choice,
@@ -1124,6 +1585,8 @@ extension BridgeParamKindPatterns on BridgeParamKind {
       case BridgeParamKind_Int():
         return int(_that.default_, _that.sliderMin, _that.sliderMax,
             _that.hardMin, _that.hardMax);
+      case BridgeParamKind_Angle():
+        return angle(_that.default_, _that.dialStep);
       case BridgeParamKind_Choice():
         return choice(_that.options, _that.default_, _that.dividersAfter);
       case BridgeParamKind_Bool():
@@ -1163,6 +1626,7 @@ extension BridgeParamKindPatterns on BridgeParamKind {
             PlatformInt64? hardMin,
             PlatformInt64? hardMax)?
         int,
+    TResult? Function(double default_, double dialStep)? angle,
     TResult? Function(
             List<String> options, int default_, Uint32List dividersAfter)?
         choice,
@@ -1180,6 +1644,8 @@ extension BridgeParamKindPatterns on BridgeParamKind {
       case BridgeParamKind_Int() when int != null:
         return int(_that.default_, _that.sliderMin, _that.sliderMax,
             _that.hardMin, _that.hardMax);
+      case BridgeParamKind_Angle() when angle != null:
+        return angle(_that.default_, _that.dialStep);
       case BridgeParamKind_Choice() when choice != null:
         return choice(_that.options, _that.default_, _that.dividersAfter);
       case BridgeParamKind_Bool() when bool != null:
@@ -1415,6 +1881,83 @@ class _$BridgeParamKind_IntCopyWithImpl<$Res>
           ? _self.hardMax
           : hardMax // ignore: cast_nullable_to_non_nullable
               as PlatformInt64?,
+    ));
+  }
+}
+
+/// @nodoc
+
+class BridgeParamKind_Angle extends BridgeParamKind {
+  const BridgeParamKind_Angle({required this.default_, required this.dialStep})
+      : super._();
+
+  final double default_;
+
+  /// Snapping increment in degrees while a modifier is held.
+  final double dialStep;
+
+  /// Create a copy of BridgeParamKind
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $BridgeParamKind_AngleCopyWith<BridgeParamKind_Angle> get copyWith =>
+      _$BridgeParamKind_AngleCopyWithImpl<BridgeParamKind_Angle>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is BridgeParamKind_Angle &&
+            (identical(other.default_, default_) ||
+                other.default_ == default_) &&
+            (identical(other.dialStep, dialStep) ||
+                other.dialStep == dialStep));
+  }
+
+  @override
+  int get hashCode => Object.hash(runtimeType, default_, dialStep);
+
+  @override
+  String toString() {
+    return 'BridgeParamKind.angle(default_: $default_, dialStep: $dialStep)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $BridgeParamKind_AngleCopyWith<$Res>
+    implements $BridgeParamKindCopyWith<$Res> {
+  factory $BridgeParamKind_AngleCopyWith(BridgeParamKind_Angle value,
+          $Res Function(BridgeParamKind_Angle) _then) =
+      _$BridgeParamKind_AngleCopyWithImpl;
+  @useResult
+  $Res call({double default_, double dialStep});
+}
+
+/// @nodoc
+class _$BridgeParamKind_AngleCopyWithImpl<$Res>
+    implements $BridgeParamKind_AngleCopyWith<$Res> {
+  _$BridgeParamKind_AngleCopyWithImpl(this._self, this._then);
+
+  final BridgeParamKind_Angle _self;
+  final $Res Function(BridgeParamKind_Angle) _then;
+
+  /// Create a copy of BridgeParamKind
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? default_ = null,
+    Object? dialStep = null,
+  }) {
+    return _then(BridgeParamKind_Angle(
+      default_: null == default_
+          ? _self.default_
+          : default_ // ignore: cast_nullable_to_non_nullable
+              as double,
+      dialStep: null == dialStep
+          ? _self.dialStep
+          : dialStep // ignore: cast_nullable_to_non_nullable
+              as double,
     ));
   }
 }
@@ -1842,6 +2385,7 @@ extension BridgeScalarPatterns on BridgeScalar {
   TResult maybeMap<TResult extends Object?>({
     TResult Function(BridgeScalar_Static value)? static_,
     TResult Function(BridgeScalar_Keyframed value)? keyframed,
+    TResult Function(BridgeScalar_Expression value)? expression,
     required TResult orElse(),
   }) {
     final _that = this;
@@ -1850,6 +2394,8 @@ extension BridgeScalarPatterns on BridgeScalar {
         return static_(_that);
       case BridgeScalar_Keyframed() when keyframed != null:
         return keyframed(_that);
+      case BridgeScalar_Expression() when expression != null:
+        return expression(_that);
       case _:
         return orElse();
     }
@@ -1872,6 +2418,7 @@ extension BridgeScalarPatterns on BridgeScalar {
   TResult map<TResult extends Object?>({
     required TResult Function(BridgeScalar_Static value) static_,
     required TResult Function(BridgeScalar_Keyframed value) keyframed,
+    required TResult Function(BridgeScalar_Expression value) expression,
   }) {
     final _that = this;
     switch (_that) {
@@ -1879,6 +2426,8 @@ extension BridgeScalarPatterns on BridgeScalar {
         return static_(_that);
       case BridgeScalar_Keyframed():
         return keyframed(_that);
+      case BridgeScalar_Expression():
+        return expression(_that);
     }
   }
 
@@ -1898,6 +2447,7 @@ extension BridgeScalarPatterns on BridgeScalar {
   TResult? mapOrNull<TResult extends Object?>({
     TResult? Function(BridgeScalar_Static value)? static_,
     TResult? Function(BridgeScalar_Keyframed value)? keyframed,
+    TResult? Function(BridgeScalar_Expression value)? expression,
   }) {
     final _that = this;
     switch (_that) {
@@ -1905,6 +2455,8 @@ extension BridgeScalarPatterns on BridgeScalar {
         return static_(_that);
       case BridgeScalar_Keyframed() when keyframed != null:
         return keyframed(_that);
+      case BridgeScalar_Expression() when expression != null:
+        return expression(_that);
       case _:
         return null;
     }
@@ -1926,6 +2478,7 @@ extension BridgeScalarPatterns on BridgeScalar {
   TResult maybeWhen<TResult extends Object?>({
     TResult Function(double field0)? static_,
     TResult Function(List<BridgeKeyframe> field0)? keyframed,
+    TResult Function(String field0)? expression,
     required TResult orElse(),
   }) {
     final _that = this;
@@ -1934,6 +2487,8 @@ extension BridgeScalarPatterns on BridgeScalar {
         return static_(_that.field0);
       case BridgeScalar_Keyframed() when keyframed != null:
         return keyframed(_that.field0);
+      case BridgeScalar_Expression() when expression != null:
+        return expression(_that.field0);
       case _:
         return orElse();
     }
@@ -1956,6 +2511,7 @@ extension BridgeScalarPatterns on BridgeScalar {
   TResult when<TResult extends Object?>({
     required TResult Function(double field0) static_,
     required TResult Function(List<BridgeKeyframe> field0) keyframed,
+    required TResult Function(String field0) expression,
   }) {
     final _that = this;
     switch (_that) {
@@ -1963,6 +2519,8 @@ extension BridgeScalarPatterns on BridgeScalar {
         return static_(_that.field0);
       case BridgeScalar_Keyframed():
         return keyframed(_that.field0);
+      case BridgeScalar_Expression():
+        return expression(_that.field0);
     }
   }
 
@@ -1982,6 +2540,7 @@ extension BridgeScalarPatterns on BridgeScalar {
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function(double field0)? static_,
     TResult? Function(List<BridgeKeyframe> field0)? keyframed,
+    TResult? Function(String field0)? expression,
   }) {
     final _that = this;
     switch (_that) {
@@ -1989,6 +2548,8 @@ extension BridgeScalarPatterns on BridgeScalar {
         return static_(_that.field0);
       case BridgeScalar_Keyframed() when keyframed != null:
         return keyframed(_that.field0);
+      case BridgeScalar_Expression() when expression != null:
+        return expression(_that.field0);
       case _:
         return null;
     }
@@ -2130,6 +2691,72 @@ class _$BridgeScalar_KeyframedCopyWithImpl<$Res>
           ? _self._field0
           : field0 // ignore: cast_nullable_to_non_nullable
               as List<BridgeKeyframe>,
+    ));
+  }
+}
+
+/// @nodoc
+
+class BridgeScalar_Expression extends BridgeScalar {
+  const BridgeScalar_Expression(this.field0) : super._();
+
+  @override
+  final String field0;
+
+  /// Create a copy of BridgeScalar
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $BridgeScalar_ExpressionCopyWith<BridgeScalar_Expression> get copyWith =>
+      _$BridgeScalar_ExpressionCopyWithImpl<BridgeScalar_Expression>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is BridgeScalar_Expression &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode => Object.hash(runtimeType, field0);
+
+  @override
+  String toString() {
+    return 'BridgeScalar.expression(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $BridgeScalar_ExpressionCopyWith<$Res>
+    implements $BridgeScalarCopyWith<$Res> {
+  factory $BridgeScalar_ExpressionCopyWith(BridgeScalar_Expression value,
+          $Res Function(BridgeScalar_Expression) _then) =
+      _$BridgeScalar_ExpressionCopyWithImpl;
+  @useResult
+  $Res call({String field0});
+}
+
+/// @nodoc
+class _$BridgeScalar_ExpressionCopyWithImpl<$Res>
+    implements $BridgeScalar_ExpressionCopyWith<$Res> {
+  _$BridgeScalar_ExpressionCopyWithImpl(this._self, this._then);
+
+  final BridgeScalar_Expression _self;
+  final $Res Function(BridgeScalar_Expression) _then;
+
+  /// Create a copy of BridgeScalar
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(BridgeScalar_Expression(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as String,
     ));
   }
 }

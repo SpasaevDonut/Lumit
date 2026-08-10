@@ -7,7 +7,10 @@
 // one another with a tab bar; a *pane* is one panel. A pane that sits alone —
 // not inside a tabs node — renders bare, with no tab bar (K-086).
 
+import 'package:lumit_flutter/l10n/strings.dart';
+
 /// The dockable panels — glossary names (docs/01-GLOSSARY.md §7).
+
 enum Panel {
   project,
   viewer,
@@ -19,14 +22,14 @@ enum Panel {
   hierarchy;
 
   String get title => switch (this) {
-        Panel.project => 'Project',
-        Panel.viewer => 'Viewer',
-        Panel.timeline => 'Timeline',
-        Panel.effectControls => 'Effect controls',
-        Panel.effectsAndPresets => 'Effects & presets',
-        Panel.scopes => 'Scopes',
-        Panel.hierarchy => 'Hierarchy',
-        Panel.debug => 'Debug View'
+        Panel.project => l10n.panelProject,
+        Panel.viewer => l10n.panelViewer,
+        Panel.timeline => l10n.panelTimeline,
+        Panel.effectControls => l10n.effectControls,
+        Panel.effectsAndPresets => l10n.panelEffectsAndPresets,
+        Panel.scopes => l10n.panelScopes,
+        Panel.hierarchy => l10n.panelHierarchy,
+        Panel.debug => l10n.panelDebug
       };
 }
 
@@ -104,11 +107,14 @@ class DockSplit extends DockNode {
       };
 }
 
-/// The default workspace, matching `default_layout()` share-for-share:
-/// a vertical root (upper band 0.68, Timeline 0.32 across the full width);
-/// the upper band horizontal (left tab group 0.22, Viewer 0.58, Scopes 0.20);
-/// the left group tabs Project (fronted), Effect controls, Effects & presets,
-/// Hierarchy. Viewer, Scopes and Timeline sit alone and render bare.
+/// The default workspace (docs/07 §1.6 "Edit"): a vertical root (upper band
+/// 0.68, Timeline 0.32 across the full width); the upper band horizontal
+/// (left tab group 0.22, Viewer 0.58, right tab group 0.20). The left group
+/// tabs Project (fronted), Effect controls, Hierarchy; the right group tabs
+/// Effects & presets (fronted), Scopes, Debug — the spec's right-hand
+/// Effects & presets column, which this layout used to bury as a left tab
+/// behind Project while fronting Debug on the right. Viewer and Timeline sit
+/// alone and render bare.
 DockSplit defaultLayout() => DockSplit(
       DockAxis.vertical,
       [
@@ -118,13 +124,13 @@ DockSplit defaultLayout() => DockSplit(
             DockTabs([
               DockPane(Panel.project),
               DockPane(Panel.effectControls),
-              DockPane(Panel.effectsAndPresets),
               DockPane(Panel.hierarchy),
             ]),
             DockPane(Panel.viewer),
             DockTabs([
-              DockPane(Panel.debug),
+              DockPane(Panel.effectsAndPresets),
               DockPane(Panel.scopes),
+              DockPane(Panel.debug),
             ]),
           ],
           [0.22, 0.58, 0.20],
@@ -145,10 +151,10 @@ enum WorkspacePreset {
   audio;
 
   String get title => switch (this) {
-        WorkspacePreset.edit => 'Edit',
-        WorkspacePreset.effects => 'Effects',
-        WorkspacePreset.colour => 'Colour',
-        WorkspacePreset.audio => 'Audio',
+        WorkspacePreset.edit => l10n.workspaceEdit,
+        WorkspacePreset.effects => l10n.workspaceEffects,
+        WorkspacePreset.colour => l10n.workspaceColour,
+        WorkspacePreset.audio => l10n.workspaceAudio,
       };
 }
 

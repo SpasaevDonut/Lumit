@@ -4,20 +4,28 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show File;
+import 'dart:io' show File, Platform;
 import 'dart:ui' show AppExitResponse;
 
+import 'package:flutter/gestures.dart' show GestureBinding;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
+import 'package:lumit_flutter/data/expressions_metadata.dart';
+import 'package:lumit_flutter/panels/effect_param_row_frb.dart';
+import 'package:lumit_flutter/l10n/strings.dart';
 import 'package:lumit_flutter/panels/panels_frb.dart';
 import 'package:lumit_flutter/panels/timeline_extras_frb.dart';
 import 'package:lumit_flutter/panels/viewer_texture_controller.dart';
 import 'package:lumit_flutter/shell/comp_settings_frb.dart';
 import 'package:lumit_flutter/shell/precompose_dialog_frb.dart';
 import 'package:lumit_flutter/shell/dock_widget.dart';
+import 'package:lumit_flutter/shell/about_window_frb.dart';
 import 'package:lumit_flutter/shell/first_run_frb.dart';
+import 'package:lumit_flutter/shell/fx_console_frb.dart'
+    show lastKnownPointerPosition;
 import 'package:lumit_flutter/shell/menu_bar_frb.dart';
+import 'package:lumit_flutter/shell/project_settings_frb.dart';
 import 'package:lumit_flutter/shell/settings_window_frb.dart';
 import 'package:lumit_flutter/shell/status_line_frb.dart';
 import 'package:lumit_flutter/shell/tool_bar_frb.dart';
@@ -30,14 +38,19 @@ import 'package:lumit_flutter/src/rust/api/project_item.dart';
 import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:lumit_flutter/src/rust/frb_generated.dart';
 import 'package:lumit_flutter/state/comp_model.dart';
+import 'package:lumit_flutter/state/clipboard.dart';
 import 'package:lumit_flutter/state/comp_time.dart';
 import 'package:lumit_flutter/state/dock.dart';
 import 'package:lumit_flutter/state/dropper.dart';
 import 'package:lumit_flutter/state/keymap.dart';
 import 'package:lumit_flutter/src/rust/api/keymap.dart';
 import 'package:lumit_flutter/state/layer_bounds.dart';
+import 'package:lumit_flutter/state/preview_progress.dart';
+import 'package:lumit_flutter/state/render_timings.dart';
 import 'package:lumit_flutter/state/settings.dart';
+import 'package:lumit_flutter/state/install_site.dart';
 import 'package:lumit_flutter/state/tools.dart';
+import 'package:lumit_flutter/state/updates.dart';
 import 'package:lumit_flutter/state/workspace.dart';
 import 'package:lumit_flutter/theme/theme.dart';
 import 'package:lumit_flutter/widgets/controls.dart';
@@ -188,8 +201,15 @@ String? projectPathFromArgs(List<String> args) {
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await BridgeLib.init(handler: CustomHandler());
+  // Sweep up after an update before anything else happens (K-297): delete the
+  // version we have just replaced, now that nothing is holding its files, and
+  // put it back if a swap was cut in half. Never throws and never blocks — a
+  // tidying problem is not a reason for an editor not to open.
+  tidyAfterUpdate(InstallSite.detect());
 
+  await BridgeLib.init(handler: CustomHandler());
+  await ExpressionsMetadata.load();
+  await ExpressionTextEditingController.initSyntaxHighlighting();
   final state = LumitState();
   // Start with an empty project rather than nothing at all. Every document
   // command — import, new composition, save — is disabled while there is no
@@ -241,7 +261,7 @@ class LumitState extends ChangeNotifier {
     final opened =
         LumitBridgeState.openProject(path: path, onChangeStream: _changeSink());
     if (opened == null) {
-      postNotice('Could not open $path', error: true);
+      postNotice(l10n.couldNotOpen(path), error: true);
       return;
     }
     _adopt(opened);
@@ -426,6 +446,15 @@ class LumitUiState extends ChangeNotifier {
   /// The keyboard map every shortcut is looked up in (docs/07 §15, K-199).
   late final KeymapState keymap;
 
+  /// Whether there is a newer Lumit, and fetching it (K-296).
+  ///
+  /// One for the session, here, because the Help menu and Settings ▸ General
+  /// are two views of the same check and neither owns it. The version is passed
+  /// as a function, not a string: it comes over the bridge, and a widget test
+  /// that builds this state must not call the engine merely by existing.
+  late final UpdateService updates =
+      UpdateService(currentVersion: () => versionFromBootLine(lumitVersion()));
+
   /// How big each layer's content is, for the Viewer's boxes and hit-testing
   /// (K-217). Held here because the answer is the document's, not a panel's,
   /// and probing a clip is disk work that must happen once rather than per
@@ -454,6 +483,13 @@ class LumitUiState extends ChangeNotifier {
   /// chord simply by handling it.
   bool Function()? deleteClaim;
 
+  /// The same claim, for Copy and Paste (K-300). The Timeline sets these while
+  /// it is mounted: with keyframes selected, `Mod+C` means those keyframes, and
+  /// `Mod+V` puts them back — the layer clipboard is what the chord falls
+  /// through to. Each returns whether it took the chord.
+  bool Function()? copyClaim;
+  bool Function()? pasteClaim;
+
   /// The appearance the shell is drawing in.
   ///
   /// Scheme and shape are held rather than the built theme, because the theme is
@@ -475,6 +511,23 @@ class LumitUiState extends ChangeNotifier {
 
   void requestTogglePlay() => togglePlayRequest.value++;
 
+  /// Look for a newer Lumit on launch, if that is switched on and it has been
+  /// a day since the last look (K-296).
+  ///
+  /// Only ever a *look*: what it finds ends up as the wording of the Help menu
+  /// row, and downloading anything still waits for a click. Failure is silent —
+  /// a machine with no network has not done anything wrong, and an editor that
+  /// opened with a complaint about the internet would be insufferable.
+  Future<void> maybeCheckForUpdates() async {
+    if (!workspace.autoUpdate) return;
+    // Never under `flutter test`: a suite that mounts the shell would otherwise
+    // reach the network, which is slow, flaky, and none of a test's business.
+    if (Platform.environment.containsKey('FLUTTER_TEST')) return;
+    if (!updates.dueForCheck(workspace.lastUpdateCheckMs)) return;
+    await updates.check();
+    workspace.rememberUpdateCheck(DateTime.now().millisecondsSinceEpoch);
+  }
+
   /// Bumped when `Ctrl+Shift+P` asks for the command palette.
   ///
   /// A notifier for the same reason as [togglePlayRequest]: the palette's list
@@ -485,6 +538,33 @@ class LumitUiState extends ChangeNotifier {
   final ValueNotifier<int> paletteRequest = ValueNotifier(0);
 
   void requestPalette() => paletteRequest.value++;
+
+  /// Bumped when `Ctrl+Space` asks for the FX console (K-324). Its effects,
+  /// comps and radial entries are the menu bar's, for the same reason the
+  /// palette's commands are.
+  final ValueNotifier<int> consoleRequest = ValueNotifier(0);
+
+  void requestConsole() => consoleRequest.value++;
+
+  /// A property row the Timeline has been asked to show — the layer and one of
+  /// the `reveal.*` actions (docs/07 §4.3's P/S/R/T/A family). Set by the FX
+  /// console's Keyframe ring (K-326) after it plants a key, so the key just
+  /// made is on screen. The Timeline listens and *ensures* the row is open —
+  /// no toggle, unlike the reveal keys, because asking to see a row twice
+  /// should never hide it.
+  final ValueNotifier<(UuidValue, String)?> revealPropertyRequest =
+      ValueNotifier(null);
+
+  void requestRevealProperty(UuidValue layer, String action) =>
+      revealPropertyRequest.value = (layer, action);
+
+  /// The Project panel's picked item — its selection anchor, published by the
+  /// panel on every click (K-327). The full selection stays the panel's own;
+  /// this is the one item the FX console acts on, so a Ctrl+Space over the
+  /// Project panel offers "add this to the comp" rather than the new-layer
+  /// ring it used to fall through to. Null with nothing picked there.
+  final ValueNotifier<ItemReference?> selectedProjectItem =
+      ValueNotifier(null);
 
   /// Bumped each time a rendered frame reaches the Viewer, on any of the three
   /// transports. Watched by anything that redraws when the picture does — the
@@ -505,6 +585,29 @@ class LumitUiState extends ChangeNotifier {
   /// across the boundary for each frame of playback, ~48 a second at 24 fps,
   /// for a number that only a new frame can change.
   final ValueNotifier<int> previewTier = ValueNotifier(1);
+
+  /// How far the frame the Viewer is waiting for has got, when that is worth
+  /// drawing (docs/07 §2.5). Fed from the worker stream below; the Viewer's
+  /// progress bar listens to it and nothing else does.
+  final PreviewProgressTracker previewProgress = PreviewProgressTracker();
+
+  /// The last measured frame's per-layer and per-effect render times
+  /// (docs/13 §7.1). Empty — and the engine not measuring — until a column or
+  /// a panel that shows the numbers asks for them.
+  ///
+  /// Switching it on asks for the frame under the playhead again, because
+  /// numbers only exist for a frame the engine actually composites: without
+  /// this the column sat empty until something else happened to want a render,
+  /// which on a comp the idle fill had already made could be for ever.
+  late final RenderTimings renderTimings = RenderTimings(
+    onMeasuringStarted: requestFrame,
+    // An engine that refuses the switch says so in the status line rather than
+    // leaving a lit stopwatch over a column that will never fill.
+    onEngineError: (error) => _app.postNotice(
+      l10n.couldNotMeasureRenderTimes('$error'),
+      error: true,
+    ),
+  );
 
   /// Whether the engine is playing.
   ///
@@ -534,6 +637,11 @@ class LumitUiState extends ChangeNotifier {
             end: comp.frameAtTime(time: set.outPoint)
           );
     _playedFrom = playheadFrame.value;
+    // Whatever the scrub before this was waiting for, it is not what the user
+    // is watching now: playback draws no progress bar (docs/07 §2.5), and one
+    // left standing from the frame that started the run would be the only bar
+    // that ever appeared during playback.
+    previewProgress.stop();
     _playFrom(comp, playheadFrame.value);
     playing.value = true;
   }
@@ -658,6 +766,24 @@ class LumitUiState extends ChangeNotifier {
         (playheadFrame.value + delta).clamp(0, last < 0 ? 0 : last);
   }
 
+  /// The locale the interface is currently drawn in — the saved choice, or the
+  /// machine's own language when nothing has been chosen.
+  Locale get locale {
+    final saved = workspace.interface.language;
+    return saved == null ? systemLocale() : localeFromTag(saved);
+  }
+
+  /// Point `t` at the current language. Cheap and idempotent, which is why it
+  /// can hang off every workspace change rather than needing to know which
+  /// setting moved.
+  void _applyLanguage() => useLocale(locale);
+
+  /// Settings → Interface → Language. Null means follow the machine.
+  void setLanguage(String? tag) {
+    workspace.interface.language = tag;
+    workspace.settingsChanged();
+  }
+
   /// Put the panels back where they started (Window → Reset workspace).
   void resetLayout() => workspace.resetWorkspaceLayout();
 
@@ -691,6 +817,56 @@ class LumitUiState extends ChangeNotifier {
   /// commands, the Timeline's fold-out. The *primary* of the selection below.
   ValueNotifier<LayerReference?> selectedLayer = ValueNotifier(null);
 
+  /// What Copy put down, for Paste to pick up (K-275). One tray for the
+  /// session, shared by the Edit menu and the panels.
+  ///
+  /// Read directly; **written through the two methods below**, because Paste is
+  /// greyed out while it is empty and a menu that never hears about the copy
+  /// stays greyed until something else happens to repaint it. That is exactly
+  /// how it behaved before those methods existed.
+  final LumitClipboard clipboard = LumitClipboard();
+
+  /// Copy a layer, and tell the interface so Paste ungreys.
+  ///
+  /// **Mirrored to the system clipboard** (K-302): a copy that leaves no trace
+  /// anywhere the machine can see reads exactly like a copy that did nothing —
+  /// paste into a text editor and nothing arrives. The document is the text.
+  void copyLayerToClipboard(String text) {
+    clipboard.putLayer(text);
+    Clipboard.setData(ClipboardData(text: text));
+    notifyListeners();
+  }
+
+  /// Copy one effect or a whole stack, same repaint, same mirror.
+  void copyEffectsToClipboard(String text) {
+    clipboard.putEffects(text);
+    Clipboard.setData(ClipboardData(text: text));
+    notifyListeners();
+  }
+
+  /// Take a Lumit document off the **system** clipboard into the tray, if
+  /// there is one there and the tray has nothing of its own (K-302).
+  ///
+  /// This is how a copy made in another Lumit window arrives, and how a paste
+  /// still works after something else on the machine has been copied in
+  /// between. Ordinary text is left alone — [lumitDocumentKind] only answers
+  /// for the two shapes the engine's paste calls accept.
+  Future<bool> adoptSystemClipboard() async {
+    final text = (await Clipboard.getData(Clipboard.kTextPlain))?.text;
+    if (text == null) return false;
+    if (text == clipboard.text) return !clipboard.isEmpty;
+    switch (lumitDocumentKind(text)) {
+      case ClipboardKind.layer:
+        clipboard.putLayer(text);
+      case ClipboardKind.effects:
+        clipboard.putEffects(text);
+      case null:
+        return false;
+    }
+    notifyListeners();
+    return true;
+  }
+
   /// The whole selection, primary first (K-217).
   ///
   /// Kept beside [selectedLayer] rather than replacing it, because almost
@@ -712,6 +888,86 @@ class LumitUiState extends ChangeNotifier {
   void setSelection(List<LayerReference> layers) {
     selectedLayers.value = List.unmodifiable(layers);
     selectedLayer.value = layers.isEmpty ? null : layers.first;
+    // An effect belongs to a layer, so picking a different layer cannot leave
+    // the old layer's effects picked (K-300) — Copy would then act on something
+    // no longer on screen.
+    clearEffectSelection();
+  }
+
+  /// The effects picked out of one layer's stack (K-300), as instance ids in
+  /// **stack order** — what Copy and Cut act on when it is not empty.
+  ///
+  /// Held here rather than in either panel because an effect is picked in two
+  /// places — the Effect controls panel's heading and the Timeline fold-out's
+  /// row — and one selection shown in both is what makes those two places one
+  /// interface rather than two. [selectedEffectsLayer] is the layer they are
+  /// on: the effect ids alone name nothing the engine can find.
+  final ValueNotifier<List<UuidValue>> selectedEffects =
+      ValueNotifier(const []);
+  LayerReference? selectedEffectsLayer;
+
+  /// Replace the effect selection outright — what the Timeline hands over,
+  /// having already applied the click rules to its own rows.
+  void setEffectSelection(LayerReference layer, List<UuidValue> effects) {
+    if (effects.isEmpty) {
+      clearEffectSelection();
+      return;
+    }
+    selectedEffectsLayer = layer;
+    selectedEffects.value = List.unmodifiable(effects);
+    notifyListeners();
+  }
+
+  /// Pick [id] by click: plain replaces, Ctrl toggles, Shift extends the run
+  /// along [order] (the layer's stack, top to bottom) — the same three rules a
+  /// layer row and a property row follow, because a selection that behaved one
+  /// way here and another there would be two selections to learn.
+  void pickEffect(
+    LayerReference layer,
+    UuidValue id, {
+    required List<UuidValue> order,
+  }) {
+    final keys = HardwareKeyboard.instance;
+    final held = selectedEffectsLayer?.internallayerId == layer.internallayerId
+        ? [...selectedEffects.value]
+        : <UuidValue>[];
+    if (keys.isControlPressed || keys.isMetaPressed) {
+      if (!held.remove(id)) held.add(id);
+    } else if (keys.isShiftPressed && held.isNotEmpty) {
+      final a = order.indexOf(held.last);
+      final b = order.indexOf(id);
+      if (a < 0 || b < 0) {
+        if (!held.contains(id)) held.add(id);
+      } else {
+        for (var i = a < b ? a : b; i <= (a < b ? b : a); i++) {
+          if (!held.contains(order[i])) held.add(order[i]);
+        }
+      }
+    } else {
+      held
+        ..clear()
+        ..add(id);
+    }
+    setEffectSelection(layer, held);
+  }
+
+  /// What **Copy effect** on [id]'s heading takes: the whole picked run when
+  /// this effect is part of it, else just this one (K-300). Right-clicking a
+  /// heading outside the selection copies what was right-clicked, which is what
+  /// every list in the application does.
+  List<UuidValue> effectsToCopy(LayerReference layer, UuidValue id) =>
+      selectedEffectsLayer?.internallayerId == layer.internallayerId &&
+              selectedEffects.value.contains(id)
+          ? selectedEffects.value
+          : [id];
+
+  /// Nothing picked out of any stack — a layer chosen, a parameter chosen,
+  /// empty space clicked.
+  void clearEffectSelection() {
+    selectedEffectsLayer = null;
+    if (selectedEffects.value.isEmpty) return;
+    selectedEffects.value = const [];
+    notifyListeners();
   }
 
   /// Add [layer] to the selection, or take it out again — Shift-click.
@@ -889,6 +1145,13 @@ class LumitUiState extends ChangeNotifier {
   LumitUiState(LumitState state, {Workspace? workspace})
       : _app = state,
         workspace = workspace ?? (Workspace()..load()) {
+    // The language, before anything is built: `t` is a plain global
+    // (l10n/strings.dart), so it has to hold the right strings by the time the
+    // first widget asks for one. Registered ahead of `notifyListeners` below so
+    // that a language change has already landed when the rebuild it triggers
+    // runs — listeners fire in the order they were added.
+    _applyLanguage();
+    this.workspace.addListener(_applyLanguage);
     // Appearance and layout live in the workspace, so a change there is a
     // change here as far as any listening widget is concerned.
     this.workspace.addListener(notifyListeners);
@@ -981,6 +1244,15 @@ class LumitUiState extends ChangeNotifier {
         // picks reads it from here.
         case WorkerResponse_Sampled(:final field0):
           dropperPatch.value = field0;
+        // How far the frame being waited on has got. The engine sends these
+        // only for a frame somebody is waiting on — never during playback —
+        // and the tracker decides whether it is slow enough to draw.
+        case WorkerResponse_RenderProgress(:final field0):
+          previewProgress.report(field0);
+        // What the frame just made cost. Only sent while something is showing
+        // the numbers (`RenderTimings.setMeasuring`).
+        case WorkerResponse_FrameProfile(:final field0):
+          renderTimings.report(field0);
       }
     });
   }
@@ -1027,6 +1299,14 @@ class LumitUiState extends ChangeNotifier {
     _changes?.cancel();
     tools.dispose();
     layerBounds.dispose();
+    // The progress tracker owns a timer — the delay that decides whether a
+    // slow frame is slow enough to draw a bar for. Cancelling the subscription
+    // above stops new reports, but a report that arrived a moment earlier has
+    // already started one, and an uncancelled timer outlives the thing that
+    // set it. In the application that is a small leak per project session; in
+    // the frb tests it is a failure, and one that lands on whichever test
+    // happens to be running when it fires rather than the one that caused it.
+    previewProgress.dispose();
     model.dispose();
     cacheChanged.dispose();
     previewTier.dispose();
@@ -1036,6 +1316,7 @@ class LumitUiState extends ChangeNotifier {
     selectedLayers.dispose();
     activePanel.dispose();
     paletteRequest.dispose();
+    consoleRequest.dispose();
     super.dispose();
   }
 
@@ -1293,6 +1574,14 @@ class LumitAppNew extends StatelessWidget {
     // in it rather than as Lumit. The backdrop is `surface0` from the theme.
     return MaterialApp(
       debugShowCheckedModeBanner: false,
+      // Lumit's own strings come from the `l10n` global rather than from
+      // context (l10n/strings.dart); these delegates are still needed for the
+      // parts of Flutter that do ask the tree — text selection menus, the
+      // Material and Cupertino widgets under a dialogue, and the text direction
+      // a right-to-left language would want.
+      locale: uiState.locale,
+      localizationsDelegates: Strings.localizationsDelegates,
+      supportedLocales: Strings.supportedLocales,
       home: ChangeNotifierProvider.value(
         value: state,
         child: ChangeNotifierProvider.value(
@@ -1346,18 +1635,49 @@ class _LumitAppViewState extends State<LumitAppView> {
     // funeral). A hardware-keyboard handler fires wherever focus is; the
     // focused-text-field guard inside _onKey keeps typing safe.
     HardwareKeyboard.instance.addHandler(_handleKey);
+    // The pointer is tracked the same way — globally, not through the widget
+    // tree. The Ctrl+Space console opens its ring at the mouse (K-325), and a
+    // key event carries no position; a widget `Listener` missed everywhere no
+    // widget claims the hit (the Viewer's texture, above all), so the console
+    // kept opening at wherever the pointer had last crossed a panel. A global
+    // route sees every pointer event regardless. One field write per event —
+    // no setState, no bridge.
+    GestureBinding.instance.pointerRouter.addGlobalRoute(_trackPointer);
+    // A Lumit document copied while this window was away — in another Lumit
+    // window, most of all — is picked up when the window comes back (K-302), so
+    // Paste is live rather than greyed over something that is genuinely there.
+    _clipboardWatch = AppLifecycleListener(
+      onShow: () => context.read<LumitUiState>().adoptSystemClipboard(),
+      onRestart: () => context.read<LumitUiState>().adoptSystemClipboard(),
+    );
     // The first-run question (K-246), after the first frame so there is an
     // Overlay to put it in. It asks nothing on any later launch.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      maybeShowFirstRunFrb(context, context.read<LumitUiState>().workspace);
+      final ui = context.read<LumitUiState>();
+      // The update check follows the question rather than racing it: the
+      // setup screen is where somebody may have just switched it off (K-296).
+      maybeShowFirstRunFrb(context, ui.workspace)
+          .then((_) => ui.maybeCheckForUpdates());
     });
   }
+
+  AppLifecycleListener? _clipboardWatch;
 
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_handleKey);
+    GestureBinding.instance.pointerRouter.removeGlobalRoute(_trackPointer);
+    _clipboardWatch?.dispose();
     super.dispose();
+  }
+
+  void _trackPointer(PointerEvent event) {
+    if (event is PointerHoverEvent ||
+        event is PointerMoveEvent ||
+        event is PointerDownEvent) {
+      lastKnownPointerPosition = event.position;
+    }
   }
 
   bool _handleKey(KeyEvent event) {
@@ -1419,6 +1739,11 @@ class _LumitAppViewState extends State<LumitAppView> {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
     }
+    // A modal surface is up — a dialogue, or the FX console (K-328): its keys
+    // are its own, exactly as the panels' handlers already treat it (K-243).
+    // Without this, a keystroke aimed at the console's search box also ran
+    // whatever shell command it happened to spell.
+    if (lumitModalOpen) return KeyEventResult.ignored;
     // A field with focus keeps its keys, or typing a layer name would also run
     // commands. The focused context's own widget is the `Focus` that
     // `EditableText` builds, not the `EditableText` — so the check has to look
@@ -1427,6 +1752,13 @@ class _LumitAppViewState extends State<LumitAppView> {
     if (focused != null &&
         (focused.widget is EditableText ||
             focused.findAncestorWidgetOfExactType<EditableText>() != null)) {
+      return KeyEventResult.ignored;
+    }
+    // A focused house control (a dialog's OK button, a tabbed-to checkbox)
+    // keeps its keys the same way a text field does: Enter or Space there
+    // presses the control, and must not also run a panel command underneath
+    // it (K-319).
+    if (FocusManager.instance.primaryFocus is ControlFocusNode) {
       return KeyEventResult.ignored;
     }
 
@@ -1491,6 +1823,10 @@ class _LumitAppViewState extends State<LumitAppView> {
         } else {
           state.toggleRetime(layer);
         }
+      case 'console.open':
+        // The menu bar owns the console's lists too, so the key asks for it
+        // rather than assembling a second one (K-324).
+        ui.requestConsole();
       case 'palette.open':
         // The menu bar owns the palette's list of commands, so the key asks
         // for it rather than assembling a second one (docs/07 §12).
@@ -1541,6 +1877,17 @@ class _LumitAppViewState extends State<LumitAppView> {
         } else {
           newCompositionFrb(context, state);
         }
+      // Cut, copy and paste (K-300). The same three functions the Edit menu's
+      // rows call — the chords had no handler at all before, which is why
+      // `Ctrl+C` on a selected layer did nothing while the menu row worked.
+      case 'edit.copy':
+        handled = copySelectionFrb(ui);
+      case 'edit.cut':
+        handled = cutSelectionFrb(state, ui);
+      case 'edit.paste':
+        // Reading the system clipboard is asynchronous, so the chord is taken
+        // and the paste lands a frame later rather than being declined here.
+        pasteSelectionFrb(state, ui, comp, ui.selectedLayer.value);
       case 'edit.select.all':
         if (comp == null) {
           handled = false;
@@ -1551,6 +1898,12 @@ class _LumitAppViewState extends State<LumitAppView> {
         ui.clearSelection();
       case 'app.settings':
         showSettingsWindowFrb(context);
+      case 'project.settings':
+        if (project == null) {
+          handled = false;
+        } else {
+          showProjectSettingsFrb(context, project);
+        }
       case 'file.save':
         // Ctrl+S goes through exactly the same call the File menu's Save does
         // (K-203) — a shortcut with its own path to disk is a second save to

@@ -16,6 +16,9 @@
 // only the one you want — which is what the spec asks for and what keeps a busy
 // comp from becoming a wall of numbers.
 
+import 'package:flutter/services.dart';
+
+import 'package:lumit_flutter/l10n/strings.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
@@ -105,7 +108,7 @@ final class FoldStrokeRow extends LayerFoldRow {
   const FoldStrokeRow(this.stroke, {required int depth}) : super(depth);
 }
 
-/// One control of a footage layer's Flow group (K-088, K-268). Which control
+/// One control of a footage layer's Flow group (K-088, K-331). Which control
 /// is the [kind]; all of them read and write the whole group in one op, so a
 /// row needs nothing but its own identity.
 ///
@@ -152,10 +155,12 @@ List<BridgeKeyframe> laneKeysOf(LayerFoldRow row) => switch (row) {
             read(transform, group.axes.first.prop)) {
           BridgeScalar_Keyframed(:final field0) => field0,
           BridgeScalar_Static() => const [],
+          BridgeScalar_Expression() => const [],
         },
       FoldRetimeRow(:final scalar) => switch (scalar) {
           BridgeScalar_Keyframed(:final field0) => field0,
           BridgeScalar_Static() => const [],
+          BridgeScalar_Expression() => const [],
         },
       FoldFlowRow(:final rate) => switch (rate) {
           BridgeScalar_Keyframed(:final field0) => field0,
@@ -330,6 +335,26 @@ String effectsPath(String layerId) => '$layerId/effects';
 String effectPath(String layerId, String effectId) =>
     '$layerId/effects/$effectId';
 
+/// The effect instance a fold path names, or null when the path is not one
+/// effect's heading (it is the Effects group itself, one parameter under an
+/// effect, or something else entirely). Used by the render-time indicator to
+/// put an effect's measured cost on its own row (docs/13 §7.1), and by the
+/// Timeline's heading menu to know which rows can be copied from (K-275).
+/// Whether a click is carrying one of the selection modifiers — Ctrl (Cmd) or
+/// Shift. A heading twirls on a plain click and only *picks* on a modified one
+/// (K-300): a Shift-click running over a stack of effects must not open every
+/// heading it passes.
+bool get isModifiedClick =>
+    HardwareKeyboard.instance.isControlPressed ||
+    HardwareKeyboard.instance.isMetaPressed ||
+    HardwareKeyboard.instance.isShiftPressed;
+
+String? effectIdOfPath(String path) {
+  final parts = path.split('/');
+  if (parts.length != 3 || parts[1] != 'effects') return null;
+  return parts[2];
+}
+
 /// The path of a layer's Masks group.
 String masksPath(String layerId) => '$layerId/masks';
 
@@ -403,7 +428,7 @@ List<LayerFoldRow> layerFoldRows({
 
   rows.add(FoldGroupRow(
     path: transformPath(id),
-    label: 'Transform',
+    label: l10n.transformSection,
     open: transformOpen,
     depth: 1,
   ));
@@ -420,7 +445,7 @@ List<LayerFoldRow> layerFoldRows({
     final contentsOpen = open.contains(contentsPath(id));
     rows.add(FoldGroupRow(
       path: contentsPath(id),
-      label: 'Contents',
+      label: l10n.foldContents,
       open: contentsOpen,
       depth: 1,
     ));
@@ -440,7 +465,7 @@ List<LayerFoldRow> layerFoldRows({
     final masksOpen = open.contains(masksPath(id));
     rows.add(FoldGroupRow(
       path: masksPath(id),
-      label: 'Masks',
+      label: l10n.foldMasks,
       open: masksOpen,
       depth: 1,
     ));
@@ -458,7 +483,7 @@ List<LayerFoldRow> layerFoldRows({
     final paintOpen = open.contains(paintPath(id));
     rows.add(FoldGroupRow(
       path: paintPath(id),
-      label: 'Paint',
+      label: l10n.foldPaint,
       open: paintOpen,
       depth: 1,
     ));
@@ -475,7 +500,7 @@ List<LayerFoldRow> layerFoldRows({
     final effectsOpen = open.contains(effectsPath(id));
     rows.add(FoldGroupRow(
       path: effectsPath(id),
-      label: 'Effects',
+      label: l10n.workspaceEffects,
       open: effectsOpen,
       depth: 1,
     ));
@@ -485,7 +510,9 @@ List<LayerFoldRow> layerFoldRows({
         final effectOpen = open.contains(path);
         rows.add(FoldGroupRow(
           path: path,
-          label: effectLabelOf(fx.name),
+          // The user's own name where one is set (K-321), so the fold-out
+          // and the Effect controls read the same.
+          label: fx.customName ?? effectLabelOf(fx.name),
           open: effectOpen,
           depth: 2,
         ));
@@ -503,7 +530,7 @@ List<LayerFoldRow> layerFoldRows({
     final audioOpen = open.contains(audioPath(id));
     rows.add(FoldGroupRow(
       path: audioPath(id),
-      label: 'Audio',
+      label: l10n.workspaceAudio,
       open: audioOpen,
       depth: 1,
     ));
@@ -514,7 +541,7 @@ List<LayerFoldRow> layerFoldRows({
       final waveOpen = open.contains(waveformPath(id));
       rows.add(FoldGroupRow(
         path: waveformPath(id),
-        label: 'Waveform',
+        label: l10n.foldWaveform,
         open: waveOpen,
         depth: 2,
       ));

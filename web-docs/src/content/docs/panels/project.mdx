@@ -1,0 +1,46 @@
+---
+title: Project
+description: Assets, folders, and what Lumit knows about each file.
+sidebar:
+  order: 3
+---
+
+import Shot from "../../../components/Shot.astro";
+
+The Project panel holds everything you have imported, plus every composition.
+
+| Thing | What it is |
+| --- | --- |
+| **Footage item** | A reference to a media file on disk. |
+| **Audio item** | A reference to an audio file. |
+| **Composition** | A timeline. Compositions live here beside your footage. |
+| **Folder** | A grouping node. It does not exist on disk. |
+| **Solid** | A flat colour, stored as an asset so copies share one definition. |
+
+
+<Shot file="project-panel.png" caption="The Project panel, holding footage, a folder and a composition." />
+
+## Columns
+
+Each row reports what Lumit knows: name, type, size, duration, and frame rate. Sort by
+any of them.
+
+## Hover-scrub thumbnails
+
+Move the pointer across a footage item's thumbnail to scrub through it, without opening
+it.
+
+## New composition
+
+The panel has a **New composition** button. Dragging footage onto it makes a composition
+matching that footage's resolution and rate.
+
+## Interpretation
+
+Right-click an item to change how Lumit reads it - frame rate, alpha, colour space. See
+[Importing media](/use/importing/).
+
+## Related
+
+- [Importing media](/use/importing/)
+- [Compositions](/use/compositions/)

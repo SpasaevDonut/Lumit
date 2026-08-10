@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
+import 'package:lumit_flutter/state/clipboard.dart';
 
 import 'frb_test_support.dart';
 
@@ -67,6 +68,60 @@ void main() {
       expect(asked, 1);
     });
 
+    /// `Ctrl+Space` asks the same bar for the FX console (K-324) — and the
+    /// bare space bar must still reach the transport, which is the thing a
+    /// modified space bar is most likely to have broken.
+    testWidgets('Ctrl+Space asks for the FX console, and space still plays',
+        (tester) async {
+      final p = await mount(tester);
+      var console = 0;
+      var play = 0;
+      p.uiState.consoleRequest.addListener(() => console++);
+      p.uiState.togglePlayRequest.addListener(() => play++);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+      expect(console, 1);
+      expect(play, 0, reason: 'the modified chord is not the transport');
+
+      // The console that just opened owns the keyboard (K-328), so it is
+      // closed before the bare space bar can mean the transport again.
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pumpAndSettle();
+      expect(play, 1, reason: 'the bare space bar still plays');
+      expect(console, 1);
+    });
+
+    /// With the console up, the keyboard is the console's (K-328): a
+    /// keystroke aimed at its search box must never also run a shell command
+    /// — the exact bug was typing over the open console renaming and adding
+    /// layers underneath it.
+    testWidgets('with the console open, typing cannot run shell commands',
+        (tester) async {
+      final p = await mount(tester);
+      var play = 0;
+      p.uiState.togglePlayRequest.addListener(() => play++);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pumpAndSettle();
+      expect(play, 0, reason: 'the space bar is typing, not the transport');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pumpAndSettle();
+      expect(play, 1, reason: 'closed, the keys are the shell again');
+    });
+
     /// **The recurring space-bar funeral.** Menus, popups and the palette all
     /// live in the Overlay outside the shell's focus scope; any of them could
     /// walk focus away for good, and every shortcut died until something was
@@ -88,21 +143,35 @@ void main() {
           reason: 'shortcuts must not depend on where focus is sitting');
     });
 
-    testWidgets('the arrows step the playhead within the comp', (tester) async {
+    /// `Mod`+arrow steps the playhead (K-282). The **bare** arrows do not: they
+    /// belong to whatever has focus — a list moving its highlight, a field
+    /// moving its cursor — which is the whole reason the step took a modifier.
+    testWidgets('Ctrl and the arrows step the playhead within the comp',
+        (tester) async {
       final p = await mount(tester);
 
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
-      await tester.pump();
+      Future<void> step(LogicalKeyboardKey arrow) async {
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+        await tester.sendKeyEvent(arrow);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+        await tester.pump();
+      }
+
+      await step(LogicalKeyboardKey.arrowRight);
       expect(p.uiState.playheadFrame.value, 1);
 
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
-      await tester.pump();
+      await step(LogicalKeyboardKey.arrowLeft);
       expect(p.uiState.playheadFrame.value, 0);
 
       // A frame before the comp is not a frame.
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
-      await tester.pump();
+      await step(LogicalKeyboardKey.arrowLeft);
       expect(p.uiState.playheadFrame.value, 0);
+
+      // And a bare arrow leaves the playhead where it is.
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pump();
+      expect(p.uiState.playheadFrame.value, 0,
+          reason: 'the bare arrows are free for whatever has focus');
     });
 
     testWidgets('Home and End go to the ends of the comp', (tester) async {
@@ -390,6 +459,104 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.digit7);
       await tester.pump();
       expect(p.uiState.playheadFrame.value, 15);
+    });
+
+    /// **`Ctrl+C` on a selected layer copied nothing** (K-300). Cut, copy and
+    /// paste had menu rows and no chord in the keymap at all, and no case in
+    /// the shell's handler either — so the three keys everyone reaches for
+    /// first did nothing, and the only way to copy a layer was the Edit menu.
+    testWidgets('Ctrl+C copies the selected layer, Ctrl+V pastes it',
+        (tester) async {
+      final p = await mount(tester);
+      final comp = p.uiState.selectedComp!;
+      final layer = comp.addSolidLayer();
+      p.uiState.setSelection([layer]);
+      await tester.pump();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+      await tester.pump();
+      expect(p.uiState.clipboard.kind, ClipboardKind.layer,
+          reason: 'the chord reached the same call the Edit menu makes');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyV);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+      expect(comp.getLayers(), hasLength(2),
+          reason: 'and Ctrl+V put the copy back into the composition');
+    });
+
+    /// **A copy has to leave a trace the machine can see** (K-302). The layer
+    /// and effect clipboard was in-app only, so copying a layer and pasting
+    /// into a text editor produced nothing — which reads exactly like Copy
+    /// having done nothing at all, and was the first thing the owner tried.
+    testWidgets('a copied layer is on the system clipboard too',
+        (tester) async {
+      // The plugin channel is not wired in a widget test; stand in for the
+      // platform's clipboard so what Lumit writes can be read back.
+      String? written;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            written = (call.arguments as Map)['text'] as String?;
+          }
+          if (call.method == 'Clipboard.getData') return {'text': written};
+          return null;
+        },
+      );
+      addTearDown(() => tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null));
+
+      final p = await mount(tester);
+      final comp = p.uiState.selectedComp!;
+      p.uiState.setSelection([comp.addSolidLayer()]);
+      await tester.pump();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+
+      expect(written, isNotNull,
+          reason: 'something reached the system clipboard');
+      expect(lumitDocumentKind(written!), ClipboardKind.layer,
+          reason: 'and it is the layer document, which another Lumit window '
+              'can take straight back off it');
+
+      // The round trip: an empty tray, a document on the system clipboard —
+      // the state a second Lumit window is in — still pastes.
+      p.uiState.clipboard.clear();
+      expect(await p.uiState.adoptSystemClipboard(), isTrue);
+      expect(p.uiState.clipboard.kind, ClipboardKind.layer);
+    });
+
+    /// With an effect picked out of a stack, the chord takes *that*, not the
+    /// layer under it (K-300) — the finest selection wins, exactly as Delete
+    /// has done since K-234.
+    testWidgets('Ctrl+C takes the picked effect, not the layer it sits on',
+        (tester) async {
+      final p = await mount(tester);
+      final comp = p.uiState.selectedComp!;
+      final layer = comp.addSolidLayer();
+      layer.addEffect(name: 'blur');
+      layer.addEffect(name: 'invert');
+      p.uiState.setSelection([layer]);
+      final second = layer.getEffects()[1];
+      p.uiState.setEffectSelection(layer, [second.id()]);
+      await tester.pump();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+
+      expect(p.uiState.clipboard.kind, ClipboardKind.effects);
+      final bare = comp.addSolidLayer();
+      bare.pasteEffects(text: p.uiState.clipboard.text!, atFrame: 0);
+      expect(bare.getEffects(), hasLength(1));
+      expect(bare.getEffects().single.name(), second.name(),
+          reason: 'the effect that was picked, and only it');
     });
 
     /// `M` still reveals Masks in the Timeline, which is why the plain marker

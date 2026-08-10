@@ -48,8 +48,51 @@ class FxSection extends StatelessWidget {
   /// Hard right — the close mark.
   final Widget? trailing;
 
+  /// A right-click on the heading, with the pointer's global position — where
+  /// the actions that are not worth a permanent button live (an effect's
+  /// reordering, K-276). Null leaves the secondary click unclaimed.
+  final void Function(Offset at)? onContextMenu;
+
+  /// A click on the heading's name **picks this section** (K-300) — an effect
+  /// is a thing that can be selected, copied and cut, and the click that says
+  /// which one is the one on its name. Null (Source, Transform: sections that
+  /// are not one of several) leaves the name doing what the twirl does, which
+  /// is what the whole heading did before.
+  final VoidCallback? onSelect;
+
+  /// Drawn picked: the heading takes the selection fill, as a Timeline row
+  /// does, so one effect chosen in either place reads the same in both.
+  final bool selected;
+
+  /// The twirl mark's own key — it is the only thing that folds a selectable
+  /// section, so it is worth being able to point at.
+  final Key? twirlKey;
+
+  /// This section's place in its list, when the heading may be **dragged** to
+  /// another place in it (docs/07 §6's drag-to-reorder). Null — Source,
+  /// Transform, anything that does not sit in a reorderable stack — leaves the
+  /// heading undraggable and accepting nothing.
+  final int? dragIndex;
+
+  /// A heading dropped on this one: the place it came from. Called only when
+  /// [dragIndex] is set and the two differ.
+  final void Function(int from)? onDropped;
+
   /// The rows under the heading, drawn only while [open].
   final List<Widget> rows;
+
+  /// While true the heading's name is an inline editor instead of a label —
+  /// how an effect is renamed (`Enter` on the selected effect, K-321).
+  /// Sections that cannot be renamed (Source, Transform) never set it.
+  final bool renaming;
+
+  /// The rename's commit: the typed name, empty to clear back to the
+  /// effect's own label. Called on Enter and on clicking away, the same
+  /// contract every inline rename in the application has (K-243).
+  final ValueChanged<String>? onRenamed;
+
+  /// `Escape` while renaming: close the editor and keep the old name (K-323).
+  final VoidCallback? onRenameCancelled;
 
   const FxSection({
     super.key,
@@ -60,6 +103,15 @@ class FxSection extends StatelessWidget {
     this.leading,
     this.actions = const [],
     this.trailing,
+    this.onContextMenu,
+    this.onSelect,
+    this.selected = false,
+    this.twirlKey,
+    this.dragIndex,
+    this.onDropped,
+    this.renaming = false,
+    this.onRenamed,
+    this.onRenameCancelled,
   });
 
   @override
@@ -68,7 +120,7 @@ class FxSection extends StatelessWidget {
     final column = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _heading(t),
+        _draggableHeading(t),
         if (open)
           for (final row in rows)
             Container(
@@ -95,11 +147,57 @@ class FxSection extends StatelessWidget {
     );
   }
 
+  /// The heading, wrapped in the drag-and-drop that reorders the stack when
+  /// this section has a place in one. Dragging the *name* is how a stack is
+  /// reordered everywhere else in the application (layers in the Timeline,
+  /// items in the Project panel), so an effect stack reorders the same way; the
+  /// heading also stays a drop target, and the one under the pointer lights up
+  /// so it is clear which place is being taken.
+  Widget _draggableHeading(LumitTheme t) {
+    final index = dragIndex;
+    if (index == null || onDropped == null) return _heading(t);
+    return DragTarget<int>(
+      onWillAcceptWithDetails: (d) => d.data != index,
+      onAcceptWithDetails: (d) => onDropped!(d.data),
+      builder: (context, candidate, _) => Draggable<int>(
+        data: index,
+        // The pointer carries the effect's name and nothing else: a full-width
+        // card under the cursor hides the stack it is being placed into.
+        feedback: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: t.surface2,
+            borderRadius: BorderRadius.circular(t.tokens.controlRadius),
+            border: Border.all(color: t.accent),
+          ),
+          child: Text(title, style: t.small),
+        ),
+        childWhenDragging: Opacity(opacity: 0.4, child: _heading(t)),
+        child: candidate.isEmpty
+            ? _heading(t)
+            : DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border(top: BorderSide(color: t.accent, width: 2)),
+                ),
+                child: _heading(t),
+              ),
+      ),
+    );
+  }
+
   Widget _heading(LumitTheme t) => GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: onToggle,
+        // **The name picks the effect; only the twirl folds it** (K-300). A
+        // click that both picked and collapsed took the parameters away at the
+        // moment you said which effect you meant, which is the opposite of what
+        // selecting one is for. A section that cannot be picked (Source,
+        // Transform) twirls on its name as it always did.
+        onTap: onSelect ?? onToggle,
+        onSecondaryTapUp: onContextMenu == null
+            ? null
+            : (details) => onContextMenu!(details.globalPosition),
         child: Container(
-          color: t.surface2,
+          color: selected ? t.selectionFill : t.surface2,
           padding: const EdgeInsets.fromLTRB(4, 4, 6, 4),
           child: Row(
             children: [
@@ -107,10 +205,19 @@ class FxSection extends StatelessWidget {
                 width: fxNameColumnWidth,
                 child: Row(
                   children: [
-                    lumitIcon(
-                      open ? LumitIcon.twirlOpen : LumitIcon.twirlClosed,
-                      size: iconSize,
-                      color: open ? t.textPrimary : t.textMuted,
+                    GestureDetector(
+                      key: twirlKey,
+                      behavior: HitTestBehavior.opaque,
+                      onTap: onToggle,
+                      child: Padding(
+                        // Room to aim at, now that it is the only way in.
+                        padding: const EdgeInsets.symmetric(horizontal: 2),
+                        child: lumitIcon(
+                          open ? LumitIcon.twirlOpen : LumitIcon.twirlClosed,
+                          size: iconSize,
+                          color: open ? t.textPrimary : t.textMuted,
+                        ),
+                      ),
                     ),
                     const SizedBox(width: 2),
                     if (leading case final widget?) ...[
@@ -118,9 +225,15 @@ class FxSection extends StatelessWidget {
                       const SizedBox(width: 6),
                     ],
                     Expanded(
-                      child: Text(title,
-                          style: t.bodyPrimary,
-                          overflow: TextOverflow.ellipsis),
+                      child: renaming && onRenamed != null
+                          ? _RenameField(
+                              initial: title,
+                              onDone: onRenamed!,
+                              onCancel: onRenameCancelled ?? () {},
+                            )
+                          : Text(title,
+                              style: t.bodyPrimary,
+                              overflow: TextOverflow.ellipsis),
                     ),
                   ],
                 ),
@@ -132,6 +245,47 @@ class FxSection extends StatelessWidget {
             ],
           ),
         ),
+      );
+}
+
+/// The heading's inline rename editor (K-321): opens with the current name
+/// selected — a name is retyped far more often than amended — commits on
+/// Enter or on clicking away, like every inline rename (K-243), and throws the
+/// edit away on Escape (K-323).
+class _RenameField extends StatefulWidget {
+  final String initial;
+  final ValueChanged<String> onDone;
+  final VoidCallback onCancel;
+  const _RenameField(
+      {required this.initial, required this.onDone, required this.onCancel});
+
+  @override
+  State<_RenameField> createState() => _RenameFieldState();
+}
+
+class _RenameFieldState extends State<_RenameField> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initial,
+  )..selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: widget.initial.length,
+    );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => HouseTextField(
+        key: const ValueKey('fx-rename-field'),
+        controller: _controller,
+        width: fxNameColumnWidth - 40,
+        autofocus: true,
+        submitOnLostFocus: true,
+        onSubmitted: widget.onDone,
+        onCancelled: widget.onCancel,
       );
 }
 
@@ -169,6 +323,61 @@ Widget fxTwoColumnRow({
         ),
       ],
     );
+
+/// A parameter group's own twirl inside a section (P4, K-145): the sub-heading
+/// an effect tucks its advanced controls behind — Bokeh's Depth map, Shake's
+/// Per-axis wobble, Matte key's Screen matte.
+///
+/// **Why it is a row and not a nested section.** The panel is one list
+/// (docs/07 §6), and a group is a fold *within* a section, not a section of its
+/// own: it keeps the same hairline, the same name column and the same padding
+/// as the rows around it, and differs only by a twirl and a heavier label. A
+/// nested [FxSection] would bring its own heading bar and — in round mode — its
+/// own card, which would read as an effect inside an effect.
+///
+/// It is indented by the keyframe gutter so its twirl sits where the parameter
+/// stopwatches sit, which is what makes the fold read as belonging to the rows
+/// beneath it rather than to the effect heading above.
+Widget fxGroupHeaderRow(
+  BuildContext context, {
+  required String label,
+  required bool open,
+  required VoidCallback onToggle,
+  Key? key,
+}) {
+  final t = ThemeScope.of(context).theme;
+  return GestureDetector(
+    key: key,
+    behavior: HitTestBehavior.opaque,
+    onTap: onToggle,
+    child: Row(
+      children: [
+        SizedBox(
+          width: fxNameColumnWidth,
+          child: Row(
+            children: [
+              const SizedBox(width: 2),
+              lumitIcon(
+                open ? LumitIcon.twirlOpen : LumitIcon.twirlClosed,
+                size: iconSize,
+                color: open ? t.textPrimary : t.textMuted,
+              ),
+              const SizedBox(width: 2),
+              Expanded(
+                child: Text(
+                  label,
+                  style: t.bodyPrimary,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const Expanded(child: SizedBox.shrink()),
+      ],
+    ),
+  );
+}
 
 /// A section heading's text action — Reset. Sits in the value column, so it
 /// reads as an action *on* the values rather than on the panel.

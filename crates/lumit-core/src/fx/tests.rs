@@ -1,6 +1,68 @@
+use std::sync::Arc;
+
 use super::*;
 use crate::anim::{Animation, Property};
+use crate::expression::ExpressionContext;
 use crate::model::{Composition, EffectInstance, EffectNamespace, EffectValue, Layer};
+
+// These tests are about *parameter resolution*, not about expressions, so they
+// call the resolvers without an expression context and get the detached one.
+// Shadowing the two entry points here keeps that out of every call below —
+// otherwise the same argument would be spelled out ninety times.
+fn resolve_stack(
+    effects: &[EffectInstance],
+    lt: f64,
+    diag_px: f32,
+    px_scale: f32,
+    markers: &MarkerContext,
+) -> Vec<Resolved> {
+    super::resolve_stack(
+        effects,
+        lt,
+        diag_px,
+        px_scale,
+        markers,
+        Arc::new(ExpressionContext::detached()),
+    )
+}
+
+fn resolve_stack_temporal_named(
+    effects: &[EffectInstance],
+    sample_lt: f64,
+    frame_lt: f64,
+    diag_px: f32,
+    px_scale: f32,
+    markers: &MarkerContext,
+) -> Vec<(uuid::Uuid, Resolved)> {
+    super::resolve_stack_temporal_named(
+        effects,
+        sample_lt,
+        frame_lt,
+        diag_px,
+        px_scale,
+        markers,
+        Arc::new(ExpressionContext::detached()),
+    )
+}
+
+fn resolve_stack_temporal(
+    effects: &[EffectInstance],
+    sample_lt: f64,
+    frame_lt: f64,
+    diag_px: f32,
+    px_scale: f32,
+    markers: &MarkerContext,
+) -> Vec<Resolved> {
+    super::resolve_stack_temporal(
+        effects,
+        sample_lt,
+        frame_lt,
+        diag_px,
+        px_scale,
+        markers,
+        Arc::new(ExpressionContext::detached()),
+    )
+}
 
 // Posterize time (docs/08 §3.25): the held comp time snaps down to the coarser
 // grid. The two comp times that share a held frame MUST return the exact same
@@ -277,6 +339,40 @@ fn resolve_stack_evaluates_converts_and_skips_dead_effects() {
     );
 }
 
+// The render-time indicator (docs/13 §7.1) puts a measured millisecond on the
+// row of the effect stack that spent it, and the only thing that can say which
+// row an op came from is the walk that resolved it: `resolve_one` drops
+// placeholders, unknown names and the orchestration-only effects, so filtering
+// the effect list afterwards would misalign the moment a stack held one of
+// those. The named walk must therefore stay op-for-op identical to the plain
+// one, and carry the id beside each op.
+#[test]
+fn the_named_resolve_is_the_plain_one_with_the_ids_kept() {
+    let blur = instantiate("blur").unwrap();
+    let mut off = instantiate("glow").unwrap();
+    off.enabled = false;
+    // Posterize Time is an orchestration-only effect: it is enabled, built in,
+    // and resolves to no op at all — the case a list filter would get wrong.
+    let posterize = instantiate("posterize_time").unwrap();
+    let glow = instantiate("glow").unwrap();
+    let stack = [blur.clone(), off, posterize, glow.clone()];
+
+    let plain = resolve_stack(&stack, 0.0, 1000.0, 1.0, &MarkerContext::NONE);
+    let named = resolve_stack_temporal_named(&stack, 0.0, 0.0, 1000.0, 1.0, &MarkerContext::NONE);
+
+    assert_eq!(
+        named.iter().map(|(_, op)| *op).collect::<Vec<_>>(),
+        plain,
+        "the same ops, in the same order"
+    );
+    assert_eq!(
+        named.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+        vec![blur.id, glow.id],
+        "each op carries the id of the effect that wrote it, disabled and \
+         orchestration-only effects skipped"
+    );
+}
+
 // docs/impl/temporal-rerender.md §5: in a held/sub-frame re-render an effect
 // flagged sample_temporally == false resolves at the true frame time, while the
 // rest of the stack samples the held time. resolve_stack_temporal is the
@@ -355,6 +451,39 @@ fn resolve_stack_temporal_pins_non_sampling_effects_to_the_frame_time() {
     );
 }
 
+/// A neutral resolved Depth of field with the given per-side radii: every
+/// control the aperture and highlight groups added at the value that makes the
+/// kernel take its historical path (K-313). Spelled once here because
+/// functional-update syntax does not reach inside an enum variant.
+fn resolved_dof(near_aperture: f32, far_aperture: f32, focus_point: [f32; 2]) -> Resolved {
+    let (blade_normals, apothem2) = crate::fx::aperture_blades(6, 0.0);
+    Resolved::Dof {
+        focus: 0.5,
+        range: 0.1,
+        near_aperture,
+        far_aperture,
+        depth_invert: false,
+        blade_normals,
+        blade_count: 6,
+        apothem2,
+        roundness: 1.0,
+        rim: 0.0,
+        aspect_scale: [1.0, 1.0],
+        threshold: 1.0,
+        bokeh_power: 1.0,
+        repeat_edge: true,
+        depth_bound: false,
+        depth_channel: 0,
+        use_focus_point: false,
+        focus_point,
+        gamma: 1.0,
+        remove_edge_leak: 0.0,
+        detect_edge_threshold: 0.1,
+        display: 0,
+        mix: 1.0,
+    }
+}
+
 #[test]
 fn dof_instantiates_unset_and_resolves_its_floats() {
     let e = instantiate("dof").unwrap();
@@ -386,18 +515,7 @@ fn dof_instantiates_unset_and_resolves_its_floats() {
     // Resolved::Dof, so it stays 1:1 and in order with the depth-input list
     // even when the depth reference is unset.
     let r = resolve_stack(&[e], 0.0, 1000.0, 0.5, &MarkerContext::NONE);
-    assert_eq!(
-        r,
-        vec![Resolved::Dof {
-            focus: 0.5,
-            range: 0.1,
-            near_aperture: 4.0,
-            far_aperture: 4.0,
-            depth_invert: false,
-            display: 0,
-            mix: 1.0,
-        }]
-    );
+    assert_eq!(r, vec![resolved_dof(4.0, 4.0, [480.0, 270.0])]);
 }
 
 #[test]
@@ -420,18 +538,7 @@ fn dof_near_far_override_and_fall_back_to_the_aperture_master() {
         1.0,
         &MarkerContext::NONE,
     );
-    assert_eq!(
-        r,
-        vec![Resolved::Dof {
-            focus: 0.5,
-            range: 0.1,
-            near_aperture: 20.0, // 10 · (16/8)
-            far_aperture: 8.0,   // 4 · (16/8)
-            depth_invert: false,
-            display: 0,
-            mix: 1.0,
-        }]
-    );
+    assert_eq!(r, vec![resolved_dof(20.0, 8.0, [960.0, 540.0])]);
 
     // A legacy instance saved before the Near/Far pair existed has only
     // `aperture`; both sides then fall back to it, reproducing the old
@@ -452,18 +559,7 @@ fn dof_near_far_override_and_fall_back_to_the_aperture_master() {
         1.0,
         &MarkerContext::NONE,
     );
-    assert_eq!(
-        r,
-        vec![Resolved::Dof {
-            focus: 0.5,
-            range: 0.1,
-            near_aperture: 12.0, // 8 (default) · (12/8)
-            far_aperture: 12.0,
-            depth_invert: false,
-            display: 0,
-            mix: 1.0,
-        }]
-    );
+    assert_eq!(r, vec![resolved_dof(12.0, 12.0, [960.0, 540.0])]);
 }
 
 #[test]
@@ -5206,12 +5302,12 @@ fn lens_flare_backfill_restores_missing_params() {
     let mut inst = instantiate("lens_flare").unwrap();
     // Simulate a pre-K-257 save: strip the params that pass added.
     inst.params
-        .retain(|p| !matches!(p.id.as_str(), "source_type" | "background"));
+        .retain(|p| !matches!(p.id.as_str(), "source_type" | "blend"));
     assert!(inst.params.iter().all(|p| p.id != "source_type"));
     let mut effects = vec![inst];
     backfill_builtin_params(&mut effects);
     let inst = &effects[0];
-    for id in ["source_type", "background"] {
+    for id in ["source_type", "blend"] {
         assert!(
             inst.params.iter().any(|p| p.id == id),
             "{id} must be backfilled"
@@ -5223,13 +5319,70 @@ fn lens_flare_backfill_restores_missing_params() {
     assert_eq!(effects[0].params.len(), count);
 }
 
-// Background (K-258): Black makes the live output opaque and changes nothing
-// else; the Intensity-0 passthrough stays bit-exact whatever it holds.
+// The Background → Blend migration (K-289, superseding K-258). A project
+// saved with Transparent lands on Add — the same pixels it always rendered —
+// and one saved with Black lands on Normal, the flare on opaque black that
+// option existed to produce. The dead parameter goes, because the schema no
+// longer declares it and the panel cannot draw a row `set_value` refuses.
 #[test]
-fn lens_flare_black_background_sets_alpha_only_while_live() {
+fn lens_flare_background_migrates_to_the_blend_menu() {
+    use crate::fx::lens_flare::{BLEND_ADD, BLEND_NORMAL};
+    for (saved, want) in [(0u32, BLEND_ADD), (1, BLEND_NORMAL)] {
+        let mut inst = instantiate("lens_flare").unwrap();
+        inst.params.retain(|p| p.id != "blend");
+        inst.params.push(crate::model::EffectParam {
+            id: "background".to_owned(),
+            value: EffectValue::Choice(saved),
+            extra: serde_json::Map::new(),
+        });
+        let mut effects = vec![inst];
+        backfill_builtin_params(&mut effects);
+        assert!(
+            effects[0].params.iter().all(|p| p.id != "background"),
+            "the legacy parameter must be dropped"
+        );
+        assert!(
+            matches!(effects[0].param("blend"), Some(EffectValue::Choice(c)) if *c == want),
+            "background {saved} must migrate to blend {want}"
+        );
+        // Idempotent: loading twice cannot re-migrate or duplicate.
+        let count = effects[0].params.len();
+        backfill_builtin_params(&mut effects);
+        assert_eq!(effects[0].params.len(), count);
+        assert!(matches!(effects[0].param("blend"), Some(EffectValue::Choice(c)) if *c == want));
+    }
+}
+
+// "This layer" (K-288): a fresh Lens flare added to a layer points its Matte
+// source at that layer, so switching Source to Matte flares the lights in
+// the picture the effect is already on — and on an adjustment layer, the
+// composite below. Plain `instantiate` (presets, tests) leaves it unset, the
+// labelled no-op it always was, and no other effect's Layer parameter moves.
+#[test]
+fn lens_flare_matte_defaults_to_the_layer_it_is_added_to() {
+    let owner = uuid::Uuid::now_v7();
+
+    let bare = instantiate("lens_flare").unwrap();
+    assert_eq!(bare.layer_ref("matte"), None, "a preset stays unset");
+
+    let mut inst = instantiate("lens_flare").unwrap();
+    point_self_layer_params_at(&mut inst, owner);
+    assert_eq!(inst.layer_ref("matte"), Some(owner));
+
+    // DoF's depth pass is never the picture itself, so it is untouched.
+    let mut dof = instantiate("dof").unwrap();
+    point_self_layer_params_at(&mut dof, owner);
+    assert_eq!(dof.layer_ref("depth"), None);
+}
+
+// Blend (K-289, replacing K-258's Background pair): Normal shows the flare
+// element alone on opaque black, Add is the historical behaviour bit for
+// bit, and every mode keeps the Intensity-0 passthrough exact.
+#[test]
+fn lens_flare_blend_normal_is_the_element_on_opaque_black() {
     use crate::fx::lens_flare::*;
     let p = LensFlareParams {
-        background: 1,
+        blend: BLEND_NORMAL,
         ..default_flare_params()
     };
     let baked = bake(&p);
@@ -5240,19 +5393,28 @@ fn lens_flare_black_background_sets_alpha_only_while_live() {
     let flare = vec![0.25f32; (w * h * 3) as usize];
     let lights = manual_light(&p, w, h);
 
-    let mut black = src.clone();
-    cpu_combine(&mut black, w, h, &p, &baked, &flare, w, h, &lights);
-    let mut transparent = src.clone();
-    let pt = LensFlareParams { background: 0, ..p };
-    cpu_combine(&mut transparent, w, h, &pt, &baked, &flare, w, h, &lights);
+    let mut normal = src.clone();
+    cpu_combine(&mut normal, w, h, &p, &baked, &flare, w, h, &lights);
+    let mut add = src.clone();
+    let pa = LensFlareParams {
+        blend: BLEND_ADD,
+        ..p
+    };
+    cpu_combine(&mut add, w, h, &pa, &baked, &flare, w, h, &lights);
     for i in 0..(w * h) as usize {
-        assert_eq!(black[i * 4 + 3], 1.0, "alpha must be opaque");
+        assert_eq!(normal[i * 4 + 3], 1.0, "alpha must be opaque");
         for c in 0..3 {
-            assert_eq!(black[i * 4 + c], transparent[i * 4 + c], "rgb untouched");
+            // Add lays the same element over the layer, so Normal is Add
+            // minus the layer: the element by itself.
+            let element = add[i * 4 + c] - src[i * 4 + c];
+            assert!(
+                (normal[i * 4 + c] - element).abs() < 1e-6,
+                "Normal must show the element alone"
+            );
         }
     }
 
-    // Neutral points ignore the background: bit-exact passthrough.
+    // Neutral points ignore the blend: bit-exact passthrough.
     let mut neutral = src.clone();
     let p0 = LensFlareParams {
         intensity: 0.0,
@@ -5260,6 +5422,120 @@ fn lens_flare_black_background_sets_alpha_only_while_live() {
     };
     cpu_combine(&mut neutral, w, h, &p0, &baked, &flare, w, h, &lights);
     assert_eq!(neutral, src);
+}
+
+// The default Blend is Add, and Add is exactly what the effect did before
+// the menu existed (K-289): `out = in + flare`, alpha saturating at 1. A
+// regression here would silently move every flare anyone has already built.
+#[test]
+fn lens_flare_add_blend_is_the_historical_combine() {
+    use crate::fx::lens_flare::*;
+    let p = LensFlareParams {
+        blend: BLEND_ADD,
+        ..default_flare_params()
+    };
+    let baked = bake(&p);
+    let (w, h) = (8u32, 6u32);
+    let src: Vec<f32> = (0..(w * h * 4) as usize)
+        .map(|i| (i % 13) as f32 / 24.0)
+        .collect();
+    let flare = vec![0.25f32; (w * h * 3) as usize];
+    let lights = manual_light(&p, w, h);
+
+    let mut out = src.clone();
+    cpu_combine(&mut out, w, h, &p, &baked, &flare, w, h, &lights);
+    for i in 0..(w * h) as usize {
+        let add: Vec<f32> = (0..3).map(|c| out[i * 4 + c] - src[i * 4 + c]).collect();
+        let luma = 0.2126 * add[0] + 0.7152 * add[1] + 0.0722 * add[2];
+        assert!(
+            (out[i * 4 + 3] - (src[i * 4 + 3] + luma).min(1.0)).abs() < 1e-6,
+            "alpha must be the historical saturating sum"
+        );
+    }
+
+    // And the schema default really is Add.
+    let inst = instantiate("lens_flare").unwrap();
+    assert!(matches!(
+        inst.param("blend"),
+        Some(EffectValue::Choice(c)) if *c == BLEND_ADD
+    ));
+}
+
+// Every Blend option is reachable, and the resolve clamps an index past the
+// menu rather than faulting (K-289).
+#[test]
+fn lens_flare_blend_options_all_resolve() {
+    use crate::fx::lens_flare::*;
+    let last = BLEND_OPTIONS.len() as u32 - 1;
+    for mode in 0..=last + 3 {
+        let mut inst = instantiate("lens_flare").unwrap();
+        for p in &mut inst.params {
+            if p.id == "blend" {
+                p.value = EffectValue::Choice(mode);
+            }
+        }
+        let ops = resolve_stack(&[inst], 0.0, 2202.9, 1.0, &MarkerContext::NONE);
+        let [Resolved::LensFlare(p)] = ops.as_slice() else {
+            panic!("lens_flare must resolve to exactly one op");
+        };
+        assert_eq!(p.blend, mode.min(last));
+    }
+}
+
+// The blend table itself (K-289), against the formulas written out by hand.
+// The CPU twin is the oracle the WGSL `flare_blend` is pinned to, so it has
+// to be right on its own terms first.
+#[test]
+fn flare_blend_matches_its_formulas() {
+    use crate::fx::lens_flare::*;
+    let d = [0.30_f32, 0.60, 0.10, 0.80];
+    let e = [0.40_f32, 0.20, 0.70, 0.25];
+    let close = |got: [f32; 4], want: [f32; 4], what: &str| {
+        for c in 0..4 {
+            assert!(
+                (got[c] - want[c]).abs() < 1e-6,
+                "{what} channel {c}: {} vs {}",
+                got[c],
+                want[c]
+            );
+        }
+    };
+    close(
+        flare_blend(BLEND_NORMAL, d, e),
+        [e[0], e[1], e[2], 1.0],
+        "Normal",
+    );
+    close(
+        flare_blend(BLEND_ADD, d, e),
+        [0.70, 0.80, 0.80, 1.05],
+        "Add",
+    );
+    close(
+        flare_blend(2, d, e),
+        [
+            d[0] + e[0] - d[0] * e[0],
+            d[1] + e[1] - d[1] * e[1],
+            d[2] + e[2] - d[2] * e[2],
+            d[3] + e[3] - d[3] * e[3],
+        ],
+        "Screen",
+    );
+    close(
+        flare_blend(3, d, e),
+        [d[0] * e[0], d[1] * e[1], d[2] * e[2], d[3] * e[3]],
+        "Multiply",
+    );
+    close(flare_blend(7, d, e), [0.40, 0.60, 0.70, 0.80], "Lighten");
+    close(flare_blend(8, d, e), [0.30, 0.20, 0.10, 0.25], "Darken");
+    close(flare_blend(9, d, e), [0.10, 0.40, 0.60, 0.55], "Difference");
+    close(
+        flare_blend(11, d, e),
+        [0.0, 0.40, 0.0, 0.55],
+        "Subtract clamps at black",
+    );
+    // Divide by a zero element cannot produce a NaN or an infinity.
+    let z = flare_blend(12, d, [0.0; 4]);
+    assert!(z.iter().all(|v| v.is_finite()), "Divide must stay finite");
 }
 
 // Light tint and Use source colour (K-259): the tint multiplies every mode's
@@ -5574,7 +5850,7 @@ fn default_flare_params() -> crate::fx::lens_flare::LensFlareParams {
         anamorphic: 1.0,
         quality: 1,
         detail: 1.0,
-        background: 0,
+        blend: crate::fx::lens_flare::BLEND_ADD,
         mix: 1.0,
     }
 }
@@ -5704,4 +5980,904 @@ fn zz_debug_cells() {
                 pair, dmax * st, (bx1 - bx0) * st, (by1 - by0) * st);
         }
     }
+}
+
+// Every piece of schema metadata that names a parameter by string can rot:
+// rename the parameter and the group or the enablement rule quietly stops
+// matching anything, with no compiler to catch it. This sweeps the whole
+// catalogue so a rename fails the build instead of silently un-grouping a
+// twirl or un-greying a row.
+#[test]
+fn every_enablement_rule_names_a_parameter_of_its_kind() {
+    for s in BUILTINS {
+        let kind_of = |id: &str| s.params.iter().find(|p| p.id == id).map(|p| p.kind);
+
+        for rule in s.enabled_when {
+            assert!(
+                kind_of(rule.param).is_some(),
+                "{}: rule greys `{}`, which it does not declare",
+                s.match_name,
+                rule.param
+            );
+            let on = kind_of(rule.on).unwrap_or_else(|| {
+                panic!(
+                    "{}: rule reads `{}`, which it does not declare",
+                    s.match_name, rule.on
+                )
+            });
+            // A rule pointed at the wrong kind of parameter can never fire —
+            // `param_enabled` leaves the row live rather than locking it
+            // unreachably — so the mistake has to be caught here.
+            match rule.cond {
+                EnabledCond::BoolIs(_) => assert!(
+                    matches!(on, ParamKind::Bool { .. }),
+                    "{}: `{}` is read as a Bool but is not one",
+                    s.match_name,
+                    rule.on
+                ),
+                EnabledCond::ChoiceIs(i) | EnabledCond::ChoiceIsNot(i) => {
+                    let ParamKind::Choice { options, .. } = on else {
+                        panic!(
+                            "{}: `{}` is read as a Choice but is not one",
+                            s.match_name, rule.on
+                        );
+                    };
+                    assert!(
+                        (i as usize) < options.len(),
+                        "{}: rule names option {i} of `{}`, which has {}",
+                        s.match_name,
+                        rule.on,
+                        options.len()
+                    );
+                }
+                EnabledCond::LayerSet => assert!(
+                    matches!(on, ParamKind::Layer { .. }),
+                    "{}: `{}` is read as a Layer reference but is not one",
+                    s.match_name,
+                    rule.on
+                ),
+            }
+            assert_ne!(
+                rule.param, rule.on,
+                "{}: `{}` cannot gate itself",
+                s.match_name, rule.param
+            );
+        }
+
+        // K-145 requires a group's members to be a contiguous run of `params`,
+        // because the twirl renders in place where its first member sits — a
+        // gap would swallow whatever sat in it.
+        for g in s.groups {
+            let mut positions = g.params.iter().map(|id| {
+                s.params
+                    .iter()
+                    .position(|p| p.id == *id)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "{}: group `{}` names `{id}`, which it does not declare",
+                            s.match_name, g.label
+                        )
+                    })
+            });
+            let first = positions
+                .next()
+                .unwrap_or_else(|| panic!("{}: group `{}` is empty", s.match_name, g.label));
+            let mut prev = first;
+            for pos in positions {
+                assert_eq!(
+                    pos,
+                    prev + 1,
+                    "{}: group `{}` is not a contiguous run of params",
+                    s.match_name,
+                    g.label
+                );
+                prev = pos;
+            }
+        }
+    }
+}
+
+// Depth of field's folded parameter surface (K-313): the aperture, highlight
+// and depth-map controls landed *inside* the shipped effect rather than beside
+// it as a second one, so the surface itself is the thing under test — the order
+// rows appear in, which twirl each sits behind, and above all the factory
+// defaults, because every one of those has to be the value that leaves the
+// effect rendering what it always rendered.
+#[test]
+fn dof_declares_the_folded_aperture_surface() {
+    let s = schema("dof").unwrap();
+    assert_eq!(s.label, "Depth of field");
+    // There is no second effect: the aperture folded into this one.
+    assert!(
+        schema("bokeh").is_none(),
+        "the aperture belongs to Depth of field, not to a second effect"
+    );
+
+    let ids: Vec<&str> = s.params.iter().map(|p| p.id).collect();
+    assert_eq!(
+        ids,
+        vec![
+            // Where focus IS: the layer, the number, the switch that takes it
+            // over, and the point that takes over from it — adjacent, because a
+            // toggle three twirls away from the row it governs reads as
+            // unrelated to it.
+            "depth",
+            "focus",
+            "use_focus_point",
+            "focus_point_x",
+            "focus_point_y",
+            "range",
+            "aperture",
+            "near_aperture",
+            "far_aperture",
+            // Iris.
+            "blades",
+            "roundness",
+            "rotation",
+            "aspect",
+            "rim",
+            // Highlights.
+            "threshold",
+            "exposure",
+            // Depth map: how the pass is READ.
+            "depth_channel",
+            "depth_invert",
+            "gamma",
+            "remove_edge_leak",
+            "detect_edge_threshold",
+            // Back out of the twirls.
+            "repeat_edge_pixels",
+            "display",
+            "mix",
+        ],
+        "row order is what the panel draws"
+    );
+
+    let kind = |id: &str| s.params.iter().find(|p| p.id == id).unwrap().kind;
+    let float_default = |id: &str| match kind(id) {
+        ParamKind::Float { default, .. } => default,
+        other => panic!("{id} is {other:?}, not a Float"),
+    };
+
+    // **Every added control is neutral at its default.** This is the fold's
+    // whole licence: a project saved before any of them renders bit-identically,
+    // which `the_default_aperture_is_the_historical_disc_bit_for_bit` in the
+    // lumit-gpu tests pins on the pixels. Here it is pinned on the schema, so a
+    // default drifting fails the build rather than silently re-rendering
+    // everyone's work.
+    assert_eq!(float_default("roundness"), 1.0, "1 is the circle");
+    assert_eq!(float_default("aspect"), 0.0);
+    assert_eq!(float_default("rim"), 0.0);
+    assert_eq!(float_default("exposure"), 0.0, "0 is the plain mean");
+    assert_eq!(float_default("gamma"), 0.0, "0 is a multiplier of 1");
+    assert_eq!(float_default("remove_edge_leak"), 0.0);
+    assert_eq!(float_default("detect_edge_threshold"), 0.10);
+    assert_eq!(float_default("threshold"), 1.0, "scene white");
+    // The historical rows keep their historical defaults.
+    assert_eq!(float_default("focus"), 0.5);
+    assert_eq!(float_default("range"), 0.1);
+    assert_eq!(float_default("aperture"), 8.0);
+    assert!(matches!(
+        kind("repeat_edge_pixels"),
+        ParamKind::Bool { default: true },
+    ));
+    assert!(matches!(
+        kind("use_focus_point"),
+        ParamKind::Bool { default: false },
+    ));
+    assert!(matches!(
+        kind("rotation"),
+        ParamKind::Angle { default: 0.0, .. }
+    ));
+    // Luminance: right for a grey depth map whatever channels it was written
+    // to, and the shortlist has no entry that cannot explain itself.
+    assert!(matches!(
+        kind("depth_channel"),
+        ParamKind::Choice {
+            options: CHANNEL_OPTIONS,
+            default: 0,
+            ..
+        }
+    ));
+    assert_eq!(CHANNEL_OPTIONS[0], "Luminance");
+
+    // Roundness reaches concave — five blades at −1 is a star — which is why it
+    // is not a 0..1 curvature.
+    assert!(matches!(
+        kind("roundness"),
+        ParamKind::Float {
+            hard: (Some(-1.0), Some(1.0)),
+            ..
+        }
+    ));
+    // The blade count is bounded by the kernel's uniform array in both
+    // directions: below 3 there is no polygon, above MAX_BLADES there is no room
+    // in the uniform. An Int, so a keyframe steps rather than growing half a
+    // blade.
+    assert!(matches!(
+        kind("blades"),
+        ParamKind::Int {
+            default: 6,
+            hard: (Some(3), Some(m)),
+            ..
+        } if m == MAX_BLADES as i64
+    ));
+    // The focus point is an `_x`/`_y` Float pair, which is the panel's point row
+    // (docs/07 §6.1) — there is no Point schema kind and this is why one is not
+    // needed. px@comp, open on both sides (K-260).
+    for id in ["focus_point_x", "focus_point_y"] {
+        assert!(matches!(
+            kind(id),
+            ParamKind::Float {
+                hard: (None, None),
+                ..
+            }
+        ));
+    }
+    assert!(matches!(
+        kind("depth"),
+        ParamKind::Layer {
+            self_default: false
+        }
+    ));
+
+    // The twirls, all closed by default: the rows above them are the effect and
+    // these are how it is shaped.
+    let labels: Vec<&str> = s.groups.iter().map(|g| g.label).collect();
+    assert_eq!(labels, vec!["Iris", "Highlights", "Depth map"]);
+    assert!(s.groups.iter().all(|g| g.collapsed));
+    // Display sits OUTSIDE the twirls: a diagnostic is not part of the depth
+    // plumbing, and tucking it away is the opposite of what it is for.
+    assert!(s
+        .groups
+        .iter()
+        .all(|g| !g.params.contains(&"display") && !g.params.contains(&"mix")));
+    assert!(matches!(
+        kind("display"),
+        ParamKind::Choice {
+            options: &["Rendered", "Depth map", "Focus map"],
+            default: 0,
+            ..
+        }
+    ));
+}
+
+// The greyed rows. `param_enabled` is the authority on the question and the
+// panel draws from it, so the semantics are pinned here rather than left to the
+// Dart side to rediscover.
+#[test]
+fn dof_greys_the_rows_its_switches_take_over() {
+    let mut e = instantiate("dof").unwrap();
+
+    // A fresh instance: no depth layer, so everything that reads one is greyed,
+    // and Use focus point is off, so the point is greyed and the distance is
+    // live.
+    assert!(param_enabled(&e, "focus"));
+    for id in [
+        "depth_channel",
+        "use_focus_point",
+        "remove_edge_leak",
+        "detect_edge_threshold",
+    ] {
+        assert!(
+            !param_enabled(&e, id),
+            "{id} needs a depth pass to mean anything"
+        );
+    }
+    assert!(!param_enabled(&e, "focus_point_x"));
+    assert!(!param_enabled(&e, "focus_point_y"));
+    // Everything without a rule against it stays live, which is most rows.
+    for id in ["aperture", "blades", "exposure", "roundness", "mix"] {
+        assert!(param_enabled(&e, id), "{id} has no rule and must stay live");
+    }
+
+    // Picking a depth layer gives the depth rows their subject.
+    set_layer(&mut e, "depth", Some(uuid::Uuid::now_v7()));
+    assert!(param_enabled(&e, "depth_channel"));
+    assert!(param_enabled(&e, "use_focus_point"));
+    assert!(param_enabled(&e, "remove_edge_leak"));
+
+    // Tick Use focus point and the two swap: the point decides, the number does
+    // not.
+    set_bool(&mut e, "use_focus_point", true);
+    assert!(!param_enabled(&e, "focus"));
+    assert!(param_enabled(&e, "focus_point_x"));
+    assert!(param_enabled(&e, "focus_point_y"));
+    set_bool(&mut e, "use_focus_point", false);
+    assert!(param_enabled(&e, "focus"));
+    assert!(!param_enabled(&e, "focus_point_x"));
+
+    // Clearing the layer greys the depth rows again — a dangling reference reads
+    // as unset.
+    set_layer(&mut e, "depth", None);
+    assert!(!param_enabled(&e, "depth_channel"));
+
+    // An instance that predates the deciding parameter must not lock a row it
+    // can never unlock: the rule cannot be judged, so it greys nothing. This is
+    // the `backfill_builtin_params` trap from the other side.
+    let mut old = instantiate("dof").unwrap();
+    old.params.retain(|p| p.id != "use_focus_point");
+    assert!(param_enabled(&old, "focus"));
+
+    // An effect with no built-in schema at all (an OFX or placeholder instance)
+    // has no rules, so nothing is greyed.
+    let mut foreign = instantiate("dof").unwrap();
+    foreign.effect.match_name = "not_a_builtin".to_owned();
+    assert!(param_enabled(&foreign, "focus"));
+}
+
+// A fresh Depth of field focuses on the middle of the frame, the way a fresh
+// Transform rotates about the middle (T23). The schema cannot know the raster,
+// so the apply site fills it in; landing focus in the top-left corner would be
+// exactly the §1.2 failure the raster-aware constructor exists to prevent.
+#[test]
+fn a_fresh_dof_focuses_on_the_middle_of_the_frame() {
+    let e = instantiate_for_raster("dof", 1920.0, 1440.0).unwrap();
+    assert_eq!(e.float_at("focus_point_x", 0.0), Some(960.0));
+    assert_eq!(e.float_at("focus_point_y", 0.0), Some(720.0));
+
+    // Plain `instantiate` keeps the pure schema default (nominal 1080p), which
+    // is what presets and tests want.
+    let pure = instantiate("dof").unwrap();
+    assert_eq!(pure.float_at("focus_point_x", 0.0), Some(960.0));
+    assert_eq!(pure.float_at("focus_point_y", 0.0), Some(540.0));
+}
+
+// The fold's contract in the resolve step: a saved instance that predates every
+// added control resolves to exactly the op the effect always produced, with each
+// new field at the value the kernel branches around.
+#[test]
+fn a_legacy_dof_resolves_to_the_neutral_aperture() {
+    let mut legacy = instantiate("dof").unwrap();
+    // Strip everything the fold added, as a project saved before it would be.
+    legacy.params.retain(|p| {
+        !matches!(
+            p.id.as_str(),
+            "blades"
+                | "roundness"
+                | "rotation"
+                | "aspect"
+                | "rim"
+                | "threshold"
+                | "exposure"
+                | "depth_channel"
+                | "use_focus_point"
+                | "focus_point_x"
+                | "focus_point_y"
+                | "gamma"
+                | "remove_edge_leak"
+                | "detect_edge_threshold"
+                | "repeat_edge_pixels"
+        )
+    });
+    let r = resolve_stack(
+        std::slice::from_ref(&legacy),
+        0.0,
+        1000.0,
+        1.0,
+        &MarkerContext::NONE,
+    );
+    assert_eq!(r, vec![resolved_dof(8.0, 8.0, [0.0, 0.0])]);
+}
+
+// **The fold's load-bearing promise** (K-313): at the shipped defaults the
+// gather computes exactly the box-weighted disc average this effect computed
+// before it grew an aperture, a tonal mean or a weighting — to the bit, not to a
+// tolerance.
+//
+// That is the whole licence for folding the Bokeh control surface *into* Depth
+// of field rather than shipping it beside it as a second effect, so it is pinned
+// on the arithmetic rather than asserted in a comment. The reference below is
+// the historical kernel written out longhand; both sides are f32, so the
+// comparison is exact equality and not a ULP bound. Any drift in the branches
+// that skip the weighting, the split or the polygon test fails here.
+#[test]
+fn the_default_aperture_is_the_historical_disc_bit_for_bit() {
+    let (w, h) = (24u32, 18u32);
+    let (wi, hi) = (w as i32, h as i32);
+    let n = (w * h) as usize;
+
+    // A picture with real structure, and highlights above the 1.0 threshold so
+    // the tonal branch would show if it were taken.
+    let mut img = vec![0.0f32; n * 4];
+    let mut depth = vec![0.0f32; n * 4];
+    for y in 0..hi {
+        for x in 0..wi {
+            let i = (y * wi + x) as usize;
+            let t = (x as f32 * 0.37 + y as f32 * 0.11).sin() * 0.5 + 0.5;
+            img[i * 4] = t * 3.0;
+            img[i * 4 + 1] = 1.0 - t;
+            img[i * 4 + 2] = t * t;
+            img[i * 4 + 3] = 1.0;
+            // A left-to-right ramp, so the circle of confusion sweeps its whole
+            // range across the frame.
+            depth[i * 4] = x as f32 / (wi - 1) as f32;
+            depth[i * 4 + 3] = 1.0;
+        }
+    }
+
+    let (focus, range, near, far, mix) = (0.5f32, 0.1f32, 6.0f32, 6.0f32, 1.0f32);
+    let (blade_normals, apothem2) = crate::fx::aperture_blades(6, 0.0);
+    let p = cpu::DofParams {
+        focus,
+        range,
+        near_aperture: near,
+        far_aperture: far,
+        blade_normals,
+        blade_count: 6,
+        apothem2,
+        roundness: 1.0,
+        rim: 0.0,
+        aspect_scale: [1.0, 1.0],
+        threshold: 1.0,
+        bokeh_power: 1.0,
+        repeat_edge: true,
+        // Red explicitly: this test pins the GATHER, and the depth below is
+        // written to red alone. Which channel is read by default is a different
+        // question, asked in `dof_declares_the_folded_aperture_surface`.
+        depth_channel: 2,
+        depth_invert: false,
+        use_focus_point: false,
+        focus_point: [0.0, 0.0],
+        gamma: 1.0,
+        remove_edge_leak: 0.0,
+        detect_edge_threshold: 0.1,
+        display: 0,
+        mix,
+    };
+    let mut got = img.clone();
+    cpu::dof(&mut got, Some(&depth), w, h, &p);
+
+    // The historical kernel, longhand: smoothstep ramp, per-side aperture,
+    // box-weighted integer disc, edges clamped, `o*(1-mix) + v*mix`.
+    let mut want = img.clone();
+    for y in 0..hi {
+        for x in 0..wi {
+            let pi = (y * wi + x) as usize;
+            let d = depth[pi * 4];
+            let dist = (d - focus).abs();
+            let denom = (1.0f32 - range).max(1e-4);
+            let e = ((dist - range) / denom).clamp(0.0, 1.0);
+            let s = e * e * (3.0 - 2.0 * e);
+            let ap = if d < focus { near } else { far };
+            let coc = ap * s;
+            let coc2 = coc * coc;
+            let ri = coc.ceil() as i32;
+            let mut acc = [0.0f32; 4];
+            let mut wsum = 0.0f32;
+            for dy in -ri..=ri {
+                for dx in -ri..=ri {
+                    let r2 = (dx * dx + dy * dy) as f32;
+                    if r2 <= coc2 {
+                        let sx = (x + dx).clamp(0, wi - 1);
+                        let sy = (y + dy).clamp(0, hi - 1);
+                        let si = ((sy * wi + sx) * 4) as usize;
+                        for c in 0..4 {
+                            acc[c] += img[si + c];
+                        }
+                        wsum += 1.0;
+                    }
+                }
+            }
+            for c in 0..4 {
+                let v = acc[c] / wsum;
+                want[pi * 4 + c] = img[pi * 4 + c] * (1.0 - mix) + v * mix;
+            }
+        }
+    }
+
+    assert_eq!(
+        got, want,
+        "the shipped defaults must reproduce the historical disc bit for bit"
+    );
+
+    // And each control on its own really does change the picture, so the
+    // equality above is a property of the neutrals rather than of a gather that
+    // ignores them.
+    for changed in [
+        cpu::DofParams {
+            roundness: 0.0,
+            ..p
+        },
+        cpu::DofParams { rim: 0.7, ..p },
+        cpu::DofParams {
+            threshold: 0.5,
+            bokeh_power: 4.0,
+            ..p
+        },
+        cpu::DofParams {
+            aspect_scale: [1.0, 2.0],
+            roundness: 0.0,
+            ..p
+        },
+    ] {
+        let mut other = img.clone();
+        cpu::dof(&mut other, Some(&depth), w, h, &changed);
+        assert_ne!(other, want, "a shaped aperture must change the picture");
+    }
+}
+
+fn set_bool(e: &mut EffectInstance, id: &str, v: bool) {
+    for p in &mut e.params {
+        if p.id == id {
+            p.value = EffectValue::Bool(v);
+        }
+    }
+}
+
+fn set_layer(e: &mut EffectInstance, id: &str, v: Option<uuid::Uuid>) {
+    for p in &mut e.params {
+        if p.id == id {
+            p.value = EffectValue::Layer(v);
+        }
+    }
+}
+
+// The aperture's two load-bearing geometric claims, because the kernel's scan
+// box depends on both and neither is obvious from the formula.
+//
+// **It stays inscribed in the circle at every setting.** The gather scans a
+// `ceil(coc)` box and tests each integer offset; that box is only a correct
+// bound if no accepted tap lies outside the circle of radius `coc`. Roundness
+// reaching below zero and Deform squeezing an axis both had to preserve that,
+// and a change that broke it would not fail the oracle — both paths would
+// simply miss the same taps — so it is pinned here instead.
+//
+// **Negative Roundness really is a star.** The vertices stay on the circle while
+// the edge midpoints pull in, which is what makes the shape a star rather than
+// just a smaller polygon.
+#[test]
+fn the_dof_aperture_stays_inside_its_circle() {
+    let coc = 12.0f32;
+    let coc2 = coc * coc;
+    let ri = coc.ceil() as i32;
+
+    for sides in [3u32, 5, 6, 8] {
+        let (blade_normals, apothem2) = aperture_blades(sides, 17.0);
+        for roundness in [-1.0f32, -0.5, 0.0, 0.5, 1.0] {
+            for deform in [[1.0f32, 1.0], [2.0, 1.0], [1.0, 3.0]] {
+                let p = cpu::DofParams {
+                    focus: 0.5,
+                    range: 0.0,
+                    near_aperture: coc,
+                    far_aperture: coc,
+                    blade_normals,
+                    blade_count: sides,
+                    apothem2,
+                    roundness,
+                    rim: 0.0,
+                    aspect_scale: deform,
+                    threshold: 0.0,
+                    bokeh_power: 1.0,
+                    repeat_edge: true,
+                    depth_channel: 5,
+                    depth_invert: false,
+                    use_focus_point: false,
+                    focus_point: [0.0, 0.0],
+                    gamma: 1.0,
+                    remove_edge_leak: 0.0,
+                    detect_edge_threshold: 0.1,
+                    display: 0,
+                    mix: 1.0,
+                };
+                let mut accepted = 0;
+                for dy in -ri..=ri {
+                    for dx in -ri..=ri {
+                        if cpu::dof_tap_inside(dx as f32, dy as f32, coc2, &p) {
+                            accepted += 1;
+                            let r2 = (dx * dx + dy * dy) as f32;
+                            assert!(
+                                r2 <= coc2 + 1e-3,
+                                "n{sides} roundness {roundness} deform {deform:?}: \
+                                 tap ({dx},{dy}) is outside the circle of confusion, \
+                                 so ceil(coc) no longer bounds the gather"
+                            );
+                        }
+                    }
+                }
+                // The centre tap is always in, which is what keeps the running
+                // weight non-zero at any radius.
+                assert!(accepted > 0);
+                assert!(cpu::dof_tap_inside(0.0, 0.0, coc2, &p));
+            }
+        }
+    }
+
+    // The star property, on a hexagon with a vertex placed on the +x axis so the
+    // two directions are exactly where they are expected. `aperture_blades`
+    // puts an edge normal at `rotation`, so rotating by half a step (30° for
+    // six sides) moves a vertex there instead.
+    let (blade_normals, apothem2) = aperture_blades(6, 30.0);
+    let star = |roundness: f32| cpu::DofParams {
+        focus: 0.5,
+        range: 0.0,
+        near_aperture: coc,
+        far_aperture: coc,
+        blade_normals,
+        blade_count: 6,
+        apothem2,
+        roundness,
+        rim: 0.0,
+        aspect_scale: [1.0, 1.0],
+        threshold: 0.0,
+        bokeh_power: 1.0,
+        repeat_edge: true,
+        depth_channel: 5,
+        depth_invert: false,
+        use_focus_point: false,
+        focus_point: [0.0, 0.0],
+        gamma: 1.0,
+        remove_edge_leak: 0.0,
+        detect_edge_threshold: 0.1,
+        display: 0,
+        mix: 1.0,
+    };
+    // How far the aperture reaches along a ray, by bisection on the inside test.
+    let reach = |p: &cpu::DofParams, ux: f32, uy: f32| {
+        let (mut lo, mut hi) = (0.0f32, coc * 1.5);
+        for _ in 0..40 {
+            let mid = 0.5 * (lo + hi);
+            if cpu::dof_tap_inside(ux * mid, uy * mid, coc2, p) {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        lo
+    };
+    // Which direction happens to be a vertex depends on the rotation phase, so
+    // the extremes are found rather than assumed: the farthest direction is a
+    // vertex and the nearest is an edge midpoint, whatever the phase.
+    let extremes = |p: &cpu::DofParams| {
+        let (mut lo, mut hi) = (f32::MAX, 0.0f32);
+        for i in 0..360 {
+            let a = (i as f32).to_radians();
+            let r = reach(p, a.cos(), a.sin());
+            lo = lo.min(r);
+            hi = hi.max(r);
+        }
+        (lo, hi)
+    };
+
+    let (poly_min, poly_max) = extremes(&star(0.0));
+    let (star_min, star_max) = extremes(&star(-1.0));
+    let (round_min, round_max) = extremes(&star(1.0));
+
+    // The vertices sit on the circle at any roundness: along a vertex both terms
+    // carry the same k²r², so the test collapses to r ≤ coc whatever the
+    // coefficient. This is what keeps the aperture inscribed rather than merely
+    // small.
+    assert!(
+        (poly_max - coc).abs() < 0.05 && (star_max - coc).abs() < 0.05,
+        "a vertex must reach the circle at any roundness: {poly_max} vs {star_max}"
+    );
+    // A plain polygon's nearest point is its apothem, k·coc.
+    let apothem = coc * apothem2.sqrt();
+    assert!(
+        (poly_min - apothem).abs() < 0.05,
+        "roundness 0 must be the inscribed polygon: {poly_min} vs {apothem}"
+    );
+    // Negative roundness pulls the edge midpoints in past the apothem, which is
+    // the difference between a star and a smaller hexagon.
+    assert!(
+        star_min < poly_min * 0.95,
+        "negative roundness must pinch the edge midpoints in ({star_min} vs {poly_min})"
+    );
+
+    // Roundness 1 is the circle, which is why the reference panel needs no
+    // Circle entry: every direction reaches the same distance.
+    assert!(
+        (round_max - round_min).abs() < 0.05 && (round_max - coc).abs() < 0.05,
+        "roundness 1 must be the circle: {round_min} to {round_max}"
+    );
+}
+
+// The defocus ramp is continuous in depth — a value nearer the focus depth is
+// never blurred more than one further from it, and there are no steps.
+//
+// **The regression this guards.** Resolution was read as a band count that
+// quantised this ramp into (by default) seven levels. On a real depth pass —
+// nearly all the content in a narrow band, one near object well outside it —
+// that put the entire band in level zero and the object in level five, so focus
+// was all-or-nothing and no shape of ramp could recover it. The guess is
+// withdrawn (docs/08 §3.27); this is what stops it coming back by accident.
+#[test]
+fn the_defocus_ramp_is_continuous_in_depth() {
+    let focus = 0.78f32;
+    // However many bands are asked for, the ramp does not step.
+    for bands in [1.0f32, 6.0, 32.0] {
+        let mut seen: Vec<f32> = Vec::new();
+        for i in 0..=200 {
+            let d = i as f32 / 200.0;
+            let r = cpu::dof_falloff(d, focus, 0.0, 1.0);
+            if !seen.iter().any(|s| (s - r).abs() < 1e-7) {
+                seen.push(r);
+            }
+        }
+        assert!(
+            seen.len() > 100,
+            "the ramp must be continuous, got {} distinct levels at bands {bands}",
+            seen.len()
+        );
+    }
+
+    // The narrow band a real depth pass occupies must separate rather than move
+    // as one — the complaint that found this.
+    let scene = [0.70f32, 0.74, 0.78, 0.82, 0.86];
+    let mut levels: Vec<f32> = scene
+        .iter()
+        .map(|d| cpu::dof_falloff(*d, focus, 0.0, 1.0))
+        .collect();
+    levels.dedup_by(|a, b| (*a - *b).abs() < 1e-7);
+    assert!(
+        levels.len() >= 3,
+        "a narrow depth band must not collapse to one blur amount: {levels:?}"
+    );
+
+    // In focus is exactly zero, and the ramp still reaches full blur.
+    assert_eq!(cpu::dof_falloff(focus, focus, 0.0, 1.0), 0.0);
+    assert_eq!(cpu::dof_falloff(1.0, 0.0, 0.0, 1.0), 1.0);
+}
+
+#[test]
+fn profile_moves_the_focus_transition_where_the_content_is() {
+    // A scene band around 0.75 and a near object at 0.05 — the shape a real
+    // depth pass has.
+    let focus = 0.78;
+    let scene = [0.70f32, 0.75, 0.80, 0.85];
+    let near = 0.05f32;
+
+    // At the neutral falloff the scene is essentially untouched and the near
+    // object is essentially gone: the two ends, nothing between them.
+    let plain_scene: Vec<f32> = scene.iter().map(|d| ramp_at(*d, focus, 1.0)).collect();
+    let plain_near = ramp_at(near, focus, 1.0);
+    assert!(
+        plain_scene.iter().all(|s| *s < 0.05),
+        "the scene band should barely blur at the neutral falloff: {plain_scene:?}"
+    );
+    assert!(
+        plain_near > 0.8,
+        "the near object is already all but gone: {plain_near}"
+    );
+
+    // Tightening it (a positive Profile) brings the transition into the scene
+    // band itself, so the scene now separates front-to-back instead of moving
+    // as one.
+    let tight = (2.0f32 * 0.8).exp2();
+    let tight_scene: Vec<f32> = scene.iter().map(|d| ramp_at(*d, focus, tight)).collect();
+    let spread = tight_scene.iter().cloned().fold(0.0f32, f32::max)
+        - tight_scene.iter().cloned().fold(1.0f32, f32::min);
+    let plain_spread = plain_scene.iter().cloned().fold(0.0f32, f32::max)
+        - plain_scene.iter().cloned().fold(1.0f32, f32::min);
+    assert!(
+        spread > plain_spread * 2.0,
+        "a tighter profile must separate the scene band, got {tight_scene:?}"
+    );
+
+    // Loosening it (a negative Profile) softens the near object instead of
+    // obliterating it — the far extreme is no longer automatically full blur.
+    let loose = (-2.0f32).exp2();
+    let loose_near = ramp_at(near, focus, loose);
+    assert!(
+        loose_near < plain_near * 0.5,
+        "a looser profile must soften rather than obliterate: {loose_near} vs {plain_near}"
+    );
+    assert!(loose_near > 0.0, "and it must still blur something");
+
+    // The ramp is monotone in depth distance at every falloff — a further thing
+    // is never sharper than a nearer one.
+    for falloff in [0.25f32, 1.0, 4.0] {
+        let mut prev = -1.0f32;
+        for i in 0..=100 {
+            let d = focus + i as f32 / 100.0;
+            let s = ramp_at(d.min(1.0), focus, falloff);
+            assert!(
+                s >= prev - 1e-6,
+                "the ramp must not go back down at {falloff}"
+            );
+            prev = s;
+        }
+    }
+}
+
+fn ramp_at(d: f32, focus: f32, falloff: f32) -> f32 {
+    cpu::dof_falloff(d, focus, 0.0, falloff)
+}
+
+// Profile must reach far enough for a depth pass whose content is squeezed into
+// a fraction of its range — which is what a real one looks like.
+//
+// **The case that set the range.** A linear depth channel off game footage put
+// the sky at 1.0 and compressed an entire room into 0.0–0.2, so the depth
+// differences that matter were a tenth of the range. At the original ±1 the
+// control could compress the falloff only fourfold, and focus stayed
+// all-or-nothing however it was set: the room moved as one block whichever end
+// it was focused on.
+#[test]
+fn profile_reaches_a_depth_pass_squeezed_into_a_fifth_of_its_range() {
+    // The distribution measured off the owner's footage through the Focus map:
+    // the room in the bottom fifth, the ceiling pinned at the far end.
+    let room = [0.02f32, 0.06, 0.10, 0.14, 0.18];
+    let ceiling = 1.0f32;
+    let focus = 0.10f32;
+
+    let spread = |falloff: f32| {
+        let levels: Vec<f32> = room
+            .iter()
+            .map(|d| cpu::dof_falloff(*d, focus, 0.0, falloff))
+            .collect();
+        levels.iter().cloned().fold(0.0f32, f32::max)
+            - levels.iter().cloned().fold(1.0f32, f32::min)
+    };
+
+    // At the neutral falloff the whole room is effectively one blur amount —
+    // the complaint.
+    assert!(
+        spread(1.0) < 0.05,
+        "the neutral falloff cannot separate this pass: {}",
+        spread(1.0)
+    );
+    // The old ceiling (fourfold) still could not.
+    assert!(
+        spread(4.0) < 0.4,
+        "fourfold was not enough, which is why the range widened: {}",
+        spread(4.0)
+    );
+    // 64× — Profile 6 on the current scale, the middle of the slider — spreads
+    // the room across most of the range, which is what makes the control usable
+    // on real depth.
+    assert!(
+        spread(64.0) > 0.9,
+        "the widened range must separate the room: {}",
+        spread(64.0)
+    );
+
+    // And the far extreme is still all but fully blurred at every setting —
+    // widening the reach must not cost the background its defocus.
+    for falloff in [1.0f32, 4.0, 64.0] {
+        let far = cpu::dof_falloff(ceiling, focus, 0.0, falloff);
+        assert!(
+            far > 0.95,
+            "the background must stay defocused at {falloff}: {far}"
+        );
+    }
+
+    // The schema must actually offer the range the maths needs.
+    let s = schema("dof").unwrap();
+    let profile = s.params.iter().find(|p| p.id == "gamma").unwrap();
+    assert!(matches!(
+        profile.kind,
+        ParamKind::Float {
+            hard: (Some(-10.0), Some(10.0)),
+            ..
+        }
+    ));
+    // And the scale must put that 64× in the middle of the slider, not at its
+    // end: one doubling per unit means Profile 6.
+    assert!(((6.0f32).exp2() - 64.0).abs() < 1e-3);
+}
+
+/// K-321: an instance may carry the user's own name. `None` — every older
+/// project — serialises to nothing at all, so documents without the feature
+/// are byte-for-byte unchanged, and a named instance round-trips exactly.
+#[test]
+fn custom_name_roundtrips_and_defaults_to_none() {
+    let e = instantiate("blur").unwrap();
+    assert_eq!(e.custom_name, None);
+    let bare = serde_json::to_string(&e).unwrap();
+    assert!(
+        !bare.contains("custom_name"),
+        "an unnamed instance writes no field, so older files are unchanged"
+    );
+    let back: EffectInstance = serde_json::from_str(&bare).unwrap();
+    assert_eq!(
+        back.custom_name, None,
+        "a file without the field reads None"
+    );
+
+    let mut named = e;
+    named.custom_name = Some("Blur the sign".into());
+    let json = serde_json::to_string(&named).unwrap();
+    let back: EffectInstance = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.custom_name.as_deref(), Some("Blur the sign"));
 }

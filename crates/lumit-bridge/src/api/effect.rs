@@ -17,17 +17,20 @@
 //! unchanged. That is what lets the panel treat "read the value, change one
 //! field, write it" as safe — the ordinary way every control in it works.
 
+use std::sync::Arc;
+
 use flutter_rust_bridge::frb;
 pub use lumit_core::model::EffectInstance;
 use lumit_core::{
     anim::{Animation, Keyframe, Property, SideInterp},
+    expression::ExpressionContext,
     model::{EffectParam, EffectValue, FileParam},
     time::Rational,
 };
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::api::BridgeError;
+use crate::api::{layer::LayerReference, state::PROJECTS, BridgeError};
 
 /// One built-in effect as the Add-effect menu needs it: the stable `name` to
 /// pass to [`crate::api::layer::LayerReference::add_effect`], the sentence-case
@@ -169,6 +172,111 @@ pub fn sample_scalar(scalar: BridgeScalar, time: BridgeRational) -> f64 {
                 .collect();
             lumit_core::anim::evaluate(&keys, seconds).unwrap_or(0.0)
         }
+        BridgeScalar::Expression(expr) => lumit_core::expression::evaluate(&expr, None),
+    }
+}
+
+#[frb(sync)]
+pub fn sample_scalar_with_context(
+    scalar: BridgeScalar,
+    time: BridgeRational,
+    layer: LayerReference,
+) -> f64 {
+    let seconds = if time.den == 0 {
+        0.0
+    } else {
+        time.num as f64 / time.den as f64
+    };
+    match scalar {
+        BridgeScalar::Static(value) => value,
+        BridgeScalar::Keyframed(keys) => {
+            let keys: Vec<Keyframe> = keys
+                .iter()
+                .map(|k| Keyframe {
+                    time: Rational::new(k.time.num, k.time.den).unwrap_or(Rational::ZERO),
+                    value: k.value,
+                    interp_in: k.interp_in.write(),
+                    interp_out: k.interp_out.write(),
+                })
+                .collect();
+            lumit_core::anim::evaluate(&keys, seconds).unwrap_or(0.0)
+        }
+        BridgeScalar::Expression(expr) => {
+            let Some(doc) = document_for(&layer) else {
+                return 0.0;
+            };
+
+            lumit_core::expression::evaluate(
+                &expr,
+                Some(Arc::new(ExpressionContext {
+                    document: doc.clone(),
+                    comp: Some(layer.comp_id),
+                    layer: Some(layer.layer_id),
+                    comp_time: Rational::new(time.num, time.den)
+                        .unwrap_or(Rational::ZERO)
+                        .to_f64(),
+                    current_depth: 0,
+                })),
+            )
+        }
+    }
+}
+
+/// The project document a layer reference points into.
+///
+/// `None` when the project has gone — closed between the panel asking and this
+/// answering, or a lock poisoned by an unrelated panic. Neither is worth taking
+/// the app down for from inside an FFI call, where a panic unwinds across the
+/// language boundary rather than into a handler, so the samplers below fall
+/// back to the un-driven value instead.
+fn document_for(layer: &LayerReference) -> Option<Arc<lumit_core::Document>> {
+    let projects = PROJECTS.read().ok()?;
+    let project = projects.get(&layer.project_id)?.clone();
+    drop(projects);
+    let state = project.read().ok()?;
+    Some(state.store.snapshot())
+}
+
+#[frb(sync)]
+pub fn sample_scalar_range_with_context(
+    scalar: BridgeScalar,
+    layer: LayerReference,
+    start: BridgeRational,
+    end: BridgeRational,
+    samples: i64,
+) -> Vec<f64> {
+    match scalar {
+        BridgeScalar::Expression(expr) => {
+            let Some(doc) = document_for(&layer) else {
+                return Vec::new();
+            };
+
+            let start = Rational::new(start.num, start.den)
+                .unwrap_or(Rational::ZERO)
+                .to_f64();
+
+            let end = Rational::new(end.num, end.den)
+                .unwrap_or(Rational::ZERO)
+                .to_f64();
+
+            lumit_core::expression::evaluate_range(
+                &expr,
+                Some(&ExpressionContext {
+                    document: doc.clone(),
+                    comp: Some(layer.comp_id),
+                    layer: Some(layer.layer_id),
+                    comp_time: 0.0, // this time will be overwritten internally,
+                    current_depth: 0,
+                }),
+                start,
+                end,
+                samples,
+            )
+        }
+        // Only an expression needs sampling by evaluation. A static value is
+        // flat and a keyframed one is drawn from its keys, both of which the
+        // graph editor already has without asking the engine.
+        _ => Vec::new(),
     }
 }
 
@@ -218,6 +326,15 @@ pub enum BridgeParamKind {
         slider_max: i64,
         hard_min: Option<i64>,
         hard_max: Option<i64>,
+    },
+    /// Degrees, drawn as a dial beneath the number (docs/07 §6). The value
+    /// crossing the bridge is a [`BridgeEffectValue::Float`] — an angle is a
+    /// number of degrees, and this kind only says which control to draw.
+    /// Unbounded, so the dial winds through full turns.
+    Angle {
+        default: f64,
+        /// Snapping increment in degrees while a modifier is held.
+        dial_step: f64,
     },
     Choice {
         options: Vec<String>,
@@ -317,7 +434,13 @@ pub fn list_parameters(effect: String) -> Vec<BridgeParamInfo> {
                     filter: filter.iter().map(|f| (*f).to_owned()).collect(),
                     filter_name: filter_name.to_owned(),
                 },
-                ParamKind::Layer {} => BridgeParamKind::Layer,
+                ParamKind::Angle { default, dial_step } => {
+                    BridgeParamKind::Angle { default, dial_step }
+                }
+                // `self_default` is an engine-side instantiation detail
+                // (K-288) — the panel draws the same picker either way, and
+                // the value it edits already carries the layer id.
+                ParamKind::Layer { .. } => BridgeParamKind::Layer,
             },
         })
         .collect()
@@ -367,6 +490,63 @@ pub fn list_parameter_groups(effect: String) -> Vec<BridgeParamGroup> {
                 .visible_when
                 .map(|(_, vs)| vs.to_vec())
                 .unwrap_or_default(),
+        })
+        .collect()
+}
+
+/// One greying rule: `param`'s row is editable only while `on` satisfies
+/// `cond`. The panel evaluates it against values it already holds, so ticking
+/// a switch greys its dependent row without a round trip;
+/// `lumit_core::fx::param_enabled` is the same rule in Rust and the authority
+/// the tests pin.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeEnabledWhen {
+    pub param: String,
+    pub on: String,
+    pub cond: BridgeEnabledCond,
+}
+
+/// The condition half of a [`BridgeEnabledWhen`], mirroring
+/// [`lumit_core::fx::EnabledCond`].
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub enum BridgeEnabledCond {
+    /// Editable while the named bool holds this value.
+    BoolIs(bool),
+    /// Editable while the named choice is on this option index.
+    ChoiceIs(u32),
+    /// Editable while the named choice is on anything but this index.
+    ChoiceIsNot(u32),
+    /// Editable while the named layer reference actually names a layer.
+    LayerSet,
+}
+
+/// Every greying rule `effect` declares (empty for an effect whose controls are
+/// all independent, which is most of them, or for an unknown name — a project
+/// carrying an effect this build does not know still opens).
+#[frb(sync)]
+pub fn list_enabled_when(effect: String) -> Vec<BridgeEnabledWhen> {
+    use lumit_core::fx::EnabledCond;
+
+    let Some(schema) = lumit_core::fx::BUILTINS
+        .iter()
+        .find(|s| s.match_name == effect)
+    else {
+        return Vec::new();
+    };
+    schema
+        .enabled_when
+        .iter()
+        .map(|r| BridgeEnabledWhen {
+            param: r.param.to_owned(),
+            on: r.on.to_owned(),
+            cond: match r.cond {
+                EnabledCond::BoolIs(v) => BridgeEnabledCond::BoolIs(v),
+                EnabledCond::ChoiceIs(i) => BridgeEnabledCond::ChoiceIs(i),
+                EnabledCond::ChoiceIsNot(i) => BridgeEnabledCond::ChoiceIsNot(i),
+                EnabledCond::LayerSet => BridgeEnabledCond::LayerSet,
+            },
         })
         .collect()
 }
@@ -491,6 +671,7 @@ pub enum BridgeScalar {
     /// At least one key, strictly ascending in time — the invariant the
     /// engine's keyframe ops maintain, enforced here on the way in.
     Keyframed(Vec<BridgeKeyframe>),
+    Expression(String),
 }
 
 impl BridgeScalar {
@@ -515,6 +696,7 @@ impl BridgeScalar {
                     .map(|k| BridgeKeyframe::read_at(k, offset))
                     .collect(),
             ),
+            Animation::Expression(expr) => BridgeScalar::Expression(expr.clone()),
         }
     }
 
@@ -545,6 +727,7 @@ impl BridgeScalar {
                 }
                 Ok(Animation::Keyframed(out))
             }
+            BridgeScalar::Expression(expr) => Ok(Animation::Expression(expr.clone())),
         }
     }
 }
@@ -736,6 +919,10 @@ pub struct BridgeParamValue {
 pub struct BridgeEffectInstanceInfo {
     pub id: Uuid,
     pub name: String,
+    /// The user's own name for the instance (K-321), or `None` to show the
+    /// effect's label. `name` stays the `match_name` either way — it is the
+    /// schema key, not a display string.
+    pub custom_name: Option<String>,
     pub enabled: bool,
     pub values: Vec<BridgeParamValue>,
 }
@@ -747,9 +934,21 @@ pub(crate) fn read_instance_info(
     effect: &EffectInstance,
     offset: Rational,
 ) -> BridgeEffectInstanceInfo {
+    // Report every parameter the schema declares, not only the ones this
+    // instance happens to carry — the same filling [`BridgeEffectInstance::new`]
+    // does, for the other way in: the comp read model (K-184) hands raw
+    // `EffectInstance`s straight here without a handle. Without it a parameter
+    // added after the instance was saved draws a blank row.
+    //
+    // Filled on a clone, because reading may not edit the document. The value
+    // lands for real when the user changes it, through the staged copy.
+    let mut filled = effect.clone();
+    lumit_core::fx::backfill_builtin_params(std::slice::from_mut(&mut filled));
+    let effect = &filled;
     BridgeEffectInstanceInfo {
         id: effect.id,
         name: effect.effect.match_name.clone(),
+        custom_name: effect.custom_name.clone(),
         enabled: effect.enabled,
         values: effect
             .params
@@ -770,6 +969,21 @@ impl BridgeEffectInstance {
     /// honest offset to take.
     #[frb(ignore)]
     pub fn new(effect: EffectInstance, offset: Rational) -> BridgeEffectInstance {
+        // Give the staged copy every parameter its schema declares before the
+        // frontend touches it. `instantiate` copies the schema at the
+        // moment an effect is created and nothing has ever brought an older
+        // instance up to a schema that grew afterwards, so a parameter added
+        // later read as absent and refused writes — the row drew blank and the
+        // control was dead. Filling here rather than in each accessor is what
+        // makes that true for `get_info`, `get_value`, `get_parameters` and
+        // `set_value` alike, since all four read this one field.
+        //
+        // This is a staged copy: `LayerReference::set_effects` is what commits,
+        // so a filled parameter reaches the document only alongside an edit the
+        // user actually made. An effect with no built-in schema (OFX, a
+        // placeholder) is left exactly as it is.
+        let mut effect = effect;
+        lumit_core::fx::backfill_builtin_params(std::slice::from_mut(&mut effect));
         BridgeEffectInstance { effect, offset }
     }
 
@@ -796,6 +1010,15 @@ impl BridgeEffectInstance {
     #[frb(sync)]
     pub fn enabled(&self) -> bool {
         self.effect.enabled
+    }
+
+    /// Stage the user's own name for this instance (K-321) — an empty or
+    /// whitespace name clears it back to the effect's label. Staging only, like
+    /// `set_value`: `LayerReference::set_effects` is the commit.
+    #[frb(sync)]
+    pub fn set_custom_name(&mut self, name: String) {
+        let trimmed = name.trim();
+        self.effect.custom_name = (!trimmed.is_empty()).then(|| trimmed.to_string());
     }
 
     #[frb(ignore)]
@@ -836,6 +1059,9 @@ impl BridgeEffectInstance {
     /// control can never quietly change what a parameter *is*.
     #[frb(sync)]
     pub fn set_value(&mut self, id: String, value: BridgeEffectValue) -> Result<(), BridgeError> {
+        // Every parameter the schema declares is already present: `new` fills
+        // the staged copy. A name that is still missing is one no schema
+        // declares — a caller bug, not an old project — and stays refused.
         let offset = self.offset;
         let param = self
             .effect

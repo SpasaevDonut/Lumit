@@ -22,6 +22,7 @@
 // Zero bridge calls to draw: every clip and its map ride in on the comp read
 // model (K-184). The bridge is crossed only when a gesture commits.
 
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/gestures.dart';
@@ -31,11 +32,13 @@ import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 
+import '../l10n/strings.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 import 'graph_maths.dart';
 import 'layer_fold_frb.dart';
 import 'timeline_extras_frb.dart';
+import 'waveform_frb.dart';
 
 /// One timeline row's height — the unit the whole view is measured in, so it
 /// lands on the table's own grid.
@@ -86,10 +89,21 @@ class SequenceViewFrb extends StatefulWidget {
   /// with nothing naming them. The graph editor solved this the same way.
   final ScrollController? hScroll;
 
+  /// How waveforms draw (K-280, K-285). Passed in rather than read here: the
+  /// Timeline already reads the setting for its own lanes, and a clip and a
+  /// layer disagreeing about it would be two answers to one question.
+  final WaveformStyle style;
+
   /// Whether the razor is armed, and how to cut this layer at a frame — the
   /// open view stands in for the layer's bar, so it carries the bar's razor.
   final bool razor;
   final void Function(int frame)? onRazor;
+
+  /// Where a cut at screen x lands, in comp frames — the same function the
+  /// Timeline's blade line is drawn with, so a cut inside a sequence agrees
+  /// with the mark above it (docs/07 §4.5). Null falls back to the axis's own
+  /// rounding, which is what it always did.
+  final double Function(double x)? razorFrameAt;
 
   /// Select this layer, and close the view — the bar's other duties, which
   /// the view takes on while it is standing in for it.
@@ -117,8 +131,10 @@ class SequenceViewFrb extends StatefulWidget {
     required this.fpsNum,
     required this.fpsDen,
     this.hScroll,
+    this.style = const WaveformStyle(),
     this.razor = false,
     this.onRazor,
+    this.razorFrameAt,
     this.onSelect,
     this.onClose,
     this.graphHeight = sequenceEnvelopeStrip,
@@ -141,6 +157,19 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
   /// so a rebuild mid-flight does not ask twice.
   final Map<String, ui.Image?> _thumbs = {};
 
+  /// Each clip's waveform peaks, by clip id (K-280) — the sound *inside* the
+  /// cut, which is what a beat-checked edit is actually aimed at (docs/09 §4).
+  ///
+  /// Bucketed in the clip's own placed time by the engine, so a ramped clip's
+  /// transients land where they are heard, and so sliding the clip along the
+  /// row carries the picture with it with nothing refetched.
+  final Map<String, BridgeAudioPeaks> _peaks = {};
+
+  /// What each clip's peaks were fetched for — the window, the buckets and the
+  /// wave style. Equal keys mean the answer in hand still fits, so a rebuild
+  /// asks nothing.
+  final Map<String, String> _peakKeys = {};
+
   @override
   void dispose() {
     for (final image in _thumbs.values) {
@@ -156,9 +185,7 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
     final key = '${clip.id}@${clip.startFrame}@${clip.retimed}';
     if (_thumbs.containsKey(key)) return;
     _thumbs[key] = null;
-    widget.entry.layer
-        .clipThumbnail(clip: clip.id, maxEdge: 96)
-        .then((frame) {
+    widget.entry.layer.clipThumbnail(clip: clip.id, maxEdge: 96).then((frame) {
       if (!mounted || frame == null || frame.width == 0) return;
       ui.decodeImageFromPixels(
         frame.rgba,
@@ -173,6 +200,56 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
           setState(() => _thumbs[key] = image);
         },
       );
+    });
+  }
+
+  /// Ask for the waveform of the part of `clip` that is on screen, at one
+  /// bucket per pixel column of it — so a clip's wave gains detail as the
+  /// Timeline zooms in, rather than stretching the summary it was given first
+  /// (K-280).
+  ///
+  /// Off the build, and claimed before the fetch starts, exactly as the
+  /// thumbnails are: the first ask for a file decodes it.
+  void _wantPeaks(BridgeClip clip, double left, double width) {
+    final id = clip.id.toString();
+    final axis = widget.axis;
+    if (axis.width <= 0 || widget.fps <= 0 || width <= 0) return;
+    final secondsPerPixel = axis.frames / widget.fps / axis.width;
+    // The visible slice of this clip, in the clip's own placed clock.
+    final scroll = widget.hScroll;
+    final viewLeft = scroll != null && scroll.hasClients ? scroll.offset : 0.0;
+    final viewWidth = scroll != null && scroll.hasClients
+        ? scroll.position.viewportDimension
+        : axis.width;
+    final from = math.max(left, viewLeft);
+    final to = math.min(left + width, viewLeft + viewWidth);
+    if (!(to > from)) return;
+    // Clip-local placed seconds start at the clip's own place_start, which is
+    // the clock `clipAudioPeaks` buckets in.
+    final localStart = clip.placeStart.num / clip.placeStart.den.toDouble();
+    final request = WaveformRequest.forView(
+      startSeconds: localStart + (from - left) * secondsPerPixel,
+      endSeconds: localStart + (to - left) * secondsPerPixel,
+      pixels: to - from,
+    );
+    if (request == null) return;
+    // The trim and the map are part of the key: both change which source
+    // moments the buckets stand for, and neither moves the clip's box.
+    final key = '${request.key}|${clip.startFrame}|${clip.endFrame}'
+        '|${clip.retimed}|${widget.style.needsBands}';
+    if (_peakKeys[id] == key) return;
+    _peakKeys[id] = key;
+    widget.entry.layer
+        .clipAudioPeaks(
+      clip: clip.id,
+      startSeconds: request.startSeconds,
+      endSeconds: request.endSeconds,
+      buckets: request.buckets,
+      multiwave: widget.style.needsBands,
+    )
+        .then((peaks) {
+      if (!mounted || _peakKeys[id] != key) return;
+      setState(() => _peaks[id] = peaks);
     });
   }
 
@@ -223,7 +300,10 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
             // where it was clicked (docs/07 §4.4).
             onTapUp: (d) {
               if (widget.razor) {
-                widget.onRazor?.call(widget.axis.frameAt(d.localPosition.dx));
+                widget.onRazor?.call(
+                  widget.razorFrameAt?.call(d.localPosition.dx).round() ??
+                      widget.axis.frameAt(d.localPosition.dx),
+                );
                 return;
               }
               widget.onSelect?.call();
@@ -303,6 +383,14 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
     final left = _xOf(start);
     final width = (_xOf(end) - left).clamp(2.0, double.infinity);
     final speed = clip.speedPercent;
+    _wantPeaks(clip, left, width);
+    // The clip's own placed clock at its left edge. Sliding the whole clip
+    // moves box and content together, so this does not change and the wave
+    // rides along; dragging the *start* edge moves the box over content that
+    // stays put, so the origin travels with it and the wave holds still until
+    // the trim commits and the peaks are asked for again.
+    final originSeconds = clip.placeStart.num / clip.placeStart.den.toDouble() +
+        (moving && drag.grab == _Grab.start ? shift / widget.fps : 0);
 
     return Positioned(
       key: ValueKey<String>('seq-clip-${clip.id}'),
@@ -315,6 +403,7 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onSecondaryTapDown: (d) => _clipMenu(clip, d.globalPosition),
+          supportedDevices: dragDevices,
           onHorizontalDragStart: (d) => setState(() {
             final where = d.localPosition.dx;
             _drag = (
@@ -347,29 +436,59 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
             ),
             alignment: Alignment.center,
             clipBehavior: Clip.hardEdge,
-            child: Row(
+            child: Stack(
               children: [
-                // The frame this clip opens on, so a row of cuts can be told
-                // apart at a glance rather than by their timings (K-248).
-                if (_thumbs['${clip.id}@${clip.startFrame}@${clip.retimed}']
-                    case final image?)
-                  Padding(
-                    padding: const EdgeInsets.all(1),
-                    child: RawImage(image: image, fit: BoxFit.contain),
+                // The clip's own sound, under its label and thumbnail: a cut
+                // is aimed at what you can see, and on a Sequence layer what
+                // you are cutting is the clip (docs/09 §4). Drawn behind
+                // everything so the speed readout stays legible over it.
+                if (_peaks[clip.id.toString()] case final peaks?)
+                  Positioned.fill(
+                    child: CustomPaint(
+                      key: ValueKey<String>('seq-wave-${clip.id}'),
+                      painter: WaveformPainter(
+                        peaks: peaks,
+                        // Canvas x 0 is the clip's own left edge, and its
+                        // placed clock starts at `place_start` — so a slid
+                        // clip carries its wave with it and nothing refetches.
+                        originSeconds: originSeconds,
+                        secondsPerPixel: widget.axis.width <= 0
+                            ? 0.0
+                            : widget.axis.frames /
+                                widget.fps /
+                                widget.axis.width,
+                        left: 0,
+                        right: width,
+                        colours: t.waveform,
+                        style: widget.style,
+                      ),
+                    ),
                   ),
-                Expanded(
-                  child: Center(
-              child: ClipRect(
-              child: Text(
-                // A ramp has no single number to show, and printing one would
-                // be a lie about a curve — the envelope below reads it.
-                speed == null ? 'ramp' : '${speed.round()}%',
-                style: t.small.copyWith(color: t.textPrimary),
-                overflow: TextOverflow.clip,
-                softWrap: false,
-              ),
-            ),
-                  ),
+                Row(
+                  children: [
+                    // The frame this clip opens on, so a row of cuts can be told
+                    // apart at a glance rather than by their timings (K-248).
+                    if (_thumbs['${clip.id}@${clip.startFrame}@${clip.retimed}']
+                        case final image?)
+                      Padding(
+                        padding: const EdgeInsets.all(1),
+                        child: RawImage(image: image, fit: BoxFit.contain),
+                      ),
+                    Expanded(
+                      child: Center(
+                        child: ClipRect(
+                          child: Text(
+                            // A ramp has no single number to show, and printing one would
+                            // be a lie about a curve — the envelope below reads it.
+                            speed == null ? 'ramp' : '${speed.round()}%',
+                            style: t.small.copyWith(color: t.textPrimary),
+                            overflow: TextOverflow.clip,
+                            softWrap: false,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -394,19 +513,18 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
           children: [
             MenuRow(
                 onPressed: () => close('copy-clip'),
-                child: const Text('Copy this clip\'s shape')),
+                child: Text(l10n.clipCopyShape)),
             MenuRow(
                 onPressed: () => close('copy-row'),
-                child: const Text('Copy the whole row\'s shape')),
+                child: Text(l10n.clipCopyRowShape)),
             MenuRow(
                 onPressed: () => close('paste'),
-                child: const Text('Paste shape onto this layer')),
+                child: Text(l10n.clipPasteShape)),
             MenuRow(
                 onPressed: () => close('reset'),
-                child: const Text('Reset speed')),
+                child: Text(l10n.clipResetSpeed)),
             MenuRow(
-                onPressed: () => close('delete'),
-                child: const Text('Delete clip')),
+                onPressed: () => close('delete'), child: Text(l10n.clipDelete)),
           ],
         ),
       ),
@@ -417,8 +535,8 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
         // A gap, not a closed row: what follows keeps the beat it was cut to.
         widget.entry.layer.deleteClip(clip: clip.id);
       case 'reset':
-        widget.entry.layer.setClipSpeed(
-            clip: clip.id, percent: 100, endPercent: 100);
+        widget.entry.layer
+            .setClipSpeed(clip: clip.id, percent: 100, endPercent: 100);
       // The shape — where the cuts fall and how each piece is ramped — with
       // no media in it, so pasting it onto a depth pass cuts and ramps that
       // pass to match without touching what it plays (K-248).
@@ -504,6 +622,7 @@ class _GraphDividerState extends State<_GraphDivider> {
       child: GestureDetector(
         key: const ValueKey('seq-graph-divider'),
         behavior: HitTestBehavior.opaque,
+        supportedDevices: dragDevices,
         onVerticalDragStart: (_) {
           _from = widget.height;
           _travelled = 0;
@@ -650,8 +769,9 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
   }
 
   /// Where a clip's key sits on the comp's own clock, in x pixels.
-  double _xOfKey(BridgeClip clip, BridgeKeyframe key) => widget.axis
-      .xOf(clip.startFrame.toInt() + (rationalSeconds(key.time) * widget.fps).round());
+  double _xOfKey(BridgeClip clip, BridgeKeyframe key) =>
+      widget.axis.xOf(clip.startFrame.toInt() +
+          (rationalSeconds(key.time) * widget.fps).round());
 
   @override
   Widget build(BuildContext context) {
@@ -677,27 +797,27 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
                 // pointer is let go and the freeze lifts.
                 child: ClipRect(
                   child: CustomPaint(
-                  painter: _EnvelopePainter(
-                    lanes: [
-                      for (final c in _clips)
-                        (
-                          clip: c,
-                          keys: _shown(c),
-                        ),
-                    ],
-                    xOfKey: _xOfKey,
-                    y: (s) => _y(s, height),
-                    chosen: t.accent,
-                    selected: _selected,
-                    range: _range,
-                    line: t.hairline,
-                    curve: t.curve.first,
-                    label: t.small.copyWith(color: t.textMuted),
-                    viewportLeft: (widget.hScroll?.hasClients ?? false)
-                        ? widget.hScroll!.offset
-                        : 0,
+                    painter: _EnvelopePainter(
+                      lanes: [
+                        for (final c in _clips)
+                          (
+                            clip: c,
+                            keys: _shown(c),
+                          ),
+                      ],
+                      xOfKey: _xOfKey,
+                      y: (s) => _y(s, height),
+                      chosen: t.accent,
+                      selected: _selected,
+                      range: _range,
+                      line: t.hairline,
+                      curve: t.curve.first,
+                      label: t.small.copyWith(color: t.textMuted),
+                      viewportLeft: (widget.hScroll?.hasClients ?? false)
+                          ? widget.hScroll!.offset
+                          : 0,
+                    ),
                   ),
-                ),
                 ),
               ),
             ),
@@ -742,8 +862,8 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
                   if (_onALine(e.localPosition, height)) {
                     _startDrag(e.localPosition, height);
                   } else {
-                    setState(() => _box = Rect.fromPoints(
-                        e.localPosition, e.localPosition));
+                    setState(() => _box =
+                        Rect.fromPoints(e.localPosition, e.localPosition));
                   }
                 },
                 onPointerMove: (e) => setState(() {
@@ -763,7 +883,8 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
                     clip: held.clip,
                     index: held.index,
                     // Down is slower: the axis runs fast at the top.
-                    speed: _grabbedAt - _travelled / (height <= 0 ? 1 : height) * span,
+                    speed: _grabbedAt -
+                        _travelled / (height <= 0 ? 1 : height) * span,
                     dx: held.dx + e.delta.dx,
                   );
                   // The picture follows the point. A retime decides *which*
@@ -1126,8 +1247,8 @@ class _EnvelopePainter extends CustomPainter {
         ..color = line
         ..strokeWidth = 1;
       for (var x = 0.0; x < size.width; x += 6) {
-        canvas.drawLine(Offset(x, at), Offset((x + 3).clamp(0, size.width), at),
-            paint);
+        canvas.drawLine(
+            Offset(x, at), Offset((x + 3).clamp(0, size.width), at), paint);
       }
       final painter = TextPainter(
         text: TextSpan(text: text, style: label),

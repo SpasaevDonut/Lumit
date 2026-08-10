@@ -128,4 +128,29 @@ void main() {
     expect(animationDuration(AnimationLevel.minimal).inMilliseconds, 50);
     expect(animationDuration(AnimationLevel.none), Duration.zero);
   });
+
+  test('body text is regular weight; emphasis is medium and rationed', () {
+    // docs/15-DESIGN §7.1 sets 11px Inter (regular) for body copy, menus and
+    // buttons, with Medium reserved for emphasis (tab labels, dialog
+    // headings). Everything used to render Medium because only that face was
+    // bundled — this pins the lighter default so it cannot regress.
+    final t = LumitTheme.dark();
+    expect(t.body.fontWeight, FontWeight.w400);
+    expect(t.bodyPrimary.fontWeight, FontWeight.w400);
+    expect(t.small.fontWeight, FontWeight.w400);
+    expect(t.caption.fontWeight, FontWeight.w400);
+    expect(t.heading.fontWeight, FontWeight.w500);
+    expect(t.bodyStrong.fontWeight, FontWeight.w500);
+  });
+
+  test('the type scale sits at the K-317 sizes', () {
+    // docs/15-DESIGN §7.1: 11px body, 10px small, 9px caption — one step
+    // tighter than the original scale, by owner request.
+    final t = LumitTheme.dark();
+    expect(t.body.fontSize, 11);
+    expect(t.bodyPrimary.fontSize, 11);
+    expect(t.small.fontSize, 10);
+    expect(t.caption.fontSize, 9);
+    expect(t.heading.fontSize, 16);
+  });
 }

@@ -14,6 +14,7 @@
 // them, while another rebuild-the-world regression does.
 
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
@@ -29,6 +30,8 @@ import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/frb_generated.dart';
 import 'package:lumit_flutter/state/comp_time.dart';
 import 'package:lumit_flutter/state/tools.dart';
+import 'package:lumit_flutter/src/rust/api/assets.dart';
+import 'package:uuid/uuid.dart';
 
 import 'frb_test_support.dart';
 
@@ -65,6 +68,12 @@ class CountingHandler extends BaseHandler {
     return super.executeSync(task);
   }
 }
+
+/// Tap a widget near its left end rather than at its centre. A Timeline
+/// fold-out row spans the whole outline, which is wider than the panels these
+/// tests mount, so `tap` — which aims at the centre — lands off screen.
+Future<void> tapNearLeft(WidgetTester tester, Finder finder) =>
+    tester.tapAt(tester.getTopLeft(finder) + const Offset(5, 8));
 
 void main() {
   final counter = CountingHandler();
@@ -120,7 +129,11 @@ void main() {
       final id = target.internallayerId.toString();
       await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
       await tester.pump();
-      await tester.tap(find.byKey(ValueKey<String>('tl-group-$id/transform')));
+      // Near its left end, not its centre: a fold row spans the whole outline,
+      // and the outline is wider than this panel (the render-time column
+      // widened it again, K-276), so the row's centre is off screen.
+      await tapNearLeft(
+          tester, find.byKey(ValueKey<String>('tl-group-$id/transform')));
       await tester.pump();
       await settleFrb(tester, minRounds: 4, maxRounds: 8);
 
@@ -245,6 +258,85 @@ void main() {
       );
     });
 
+    /// **Dragging the zoom slider used to re-read the world per frame.**
+    /// The zoom was a plain field, so every step of a drag — and every tick of
+    /// a flight — rebuilt the whole panel: the work area came back across the
+    /// bridge two to four times, the cache bar asked for the composition's
+    /// whole cache map, and the outline rebuilt every row for a change that
+    /// happens entirely to the right of the seam. That is the "super super
+    /// laggy" the owner reported (K-293). Only the lane side listens to the
+    /// zoom now, and the cache bar holds its read until a frame arrives.
+    testWidgets('dragging the zoom slider asks the engine almost nothing',
+        (tester) async {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      final layer = comp.addSolidLayer();
+      comp.addTextLayer();
+      p.uiState.setSelectedComp(comp);
+
+      tester.view.physicalSize = const Size(1280, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(hostPanel(
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(1280, 600),
+        child: const TimelinePanelFrb(),
+      ));
+      await settleFrb(tester, minRounds: 8);
+
+      double barWidth() => tester
+          .getRect(
+              find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}')))
+          .width;
+      final before = barWidth();
+      final track = tester.getRect(find.byKey(const ValueKey('tl-zoom-slider')));
+      counter
+        ..reset()
+        ..counting = true;
+      // Eight steps along the track, the way a hand moves it — not one jump,
+      // because the cost being guarded is *per step*. The first is spent
+      // crossing the drag slop, which is what starts the drag.
+      final gesture =
+          await tester.startGesture(Offset(track.left + 2, track.center.dy));
+      await tester.pump();
+      for (var i = 0; i < 8; i++) {
+        await gesture.moveBy(Offset(track.width / 10, 0));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+      counter.counting = false;
+
+      // A drag that did nothing would cost nothing too, so say that it moved.
+      expect(barWidth(), greaterThan(before),
+          reason: 'the drag actually zoomed');
+      // ignore: avoid_print
+      print('ZOOM DRAG COST ${counter.total} calls\n${counter.ranking()}');
+
+      expect(
+        counter.calls['composition_reference_cached_frames'] ?? 0,
+        lessThan(3),
+        reason: 'the cache map was re-read while only the zoom moved:\n'
+            '${counter.ranking()}',
+      );
+      expect(
+        counter.calls['composition_reference_get_work_area'] ?? 0,
+        lessThan(3),
+        reason: 'the work area was re-read per step of the drag:\n'
+            '${counter.ranking()}',
+      );
+      // Loose, in the house style, and the per-name budgets above are the
+      // teeth: what must not happen is a count that scales with the number of
+      // steps. The revision check the read model makes once a frame is most of
+      // what is left here.
+      expect(
+        counter.total,
+        lessThan(40),
+        reason: 'a zoom drag re-read far too much:\n${counter.ranking()}',
+      );
+    });
+
     /// Hovering the Project panel used to re-fetch names (and once, the
     /// thumbnail) on every enter/exit, because each row asked the engine
     /// again on rebuild. The names ride in on the panel's walk and the
@@ -320,7 +412,8 @@ void main() {
       await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
       await tester.pump();
       await settleFrb(tester, minRounds: 2, maxRounds: 6);
-      await tester.tap(find.byKey(ValueKey<String>('tl-group-$id/transform')));
+      await tapNearLeft(
+          tester, find.byKey(ValueKey<String>('tl-group-$id/transform')));
       await tester.pump();
       await settleFrb(tester, minRounds: 2, maxRounds: 6);
       counter.counting = false;
@@ -377,8 +470,8 @@ void main() {
         final id = layer.internallayerId.toString();
         await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
         await tester.pump();
-        await tester
-            .tap(find.byKey(ValueKey<String>('tl-group-$id/transform')));
+        await tapNearLeft(
+            tester, find.byKey(ValueKey<String>('tl-group-$id/transform')));
         await tester.pump();
       }
       await settleFrb(tester, minRounds: 4, maxRounds: 8);
@@ -469,6 +562,17 @@ void main() {
         counter.total,
         lessThanOrEqualTo(20),
         reason: 'a frame arriving re-read the engine:\n${counter.ranking()}',
+      );
+      // Ten renders were asked for; let the last of them come back before the
+      // test ends, or the progress tracker's timer is still pending. Waiting on
+      // the condition rather than a round count keeps this independent of how
+      // long a frame happens to take — which under the load of the whole suite
+      // is longer than for this file alone, and is why it failed there and
+      // passed here.
+      await settleFrb(
+        tester,
+        until: () => p.uiState.previewProgress.idle,
+        maxRounds: 100,
       );
     });
     /// **Panning the picture must ask the engine nothing (K-230).**
@@ -595,6 +699,111 @@ void main() {
         counter.total,
         0,
         reason: 'hovering re-found the camera:\n${counter.ranking()}',
+      );
+    });
+
+    /// **A path drag shows the picture it is making (K-308).**
+    ///
+    /// Dragging a point used to move the wireframe and leave the picture until
+    /// the release, so an edit to a shape was a guess right up to the moment it
+    /// was committed. The preview is throttled like every other live drag, so
+    /// what this pins is that it happens at all — and that it stays a preview
+    /// rather than a write.
+    testWidgets('dragging a path point previews the picture', (tester) async {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      final shape = comp.addShapeLayer(
+        name: 'Square',
+        contents: [
+          BridgeShapeItem(
+            id: UuidValue.fromString(const Uuid().v4()),
+            name: 'Rectangle',
+            vertices: const [
+              BridgeVertex(
+                  x: 400, y: 200, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+              BridgeVertex(
+                  x: 600, y: 200, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+              BridgeVertex(
+                  x: 600, y: 400, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+              BridgeVertex(
+                  x: 400, y: 400, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+            ],
+            closed: true,
+            fill: const BridgeColourRgba(r: 1, g: 1, b: 1, a: 1),
+            stroke: null,
+            strokeWidth: 0,
+            opacity: 100,
+          ),
+        ],
+      );
+      p.uiState
+        ..setSelectedComp(comp)
+        ..setSelection([shape]);
+      p.uiState.model.refresh();
+
+      await tester.pumpWidget(hostPanel(
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(900, 600),
+        child: const ViewerPanelFrb(),
+      ));
+      await settleFrb(tester, minRounds: 8);
+
+      // Where the art is drawn: its own coordinates, because a shape layer's
+      // box starts at the art's own corner (K-308).
+      const barHeight = 26.0;
+      final panel = tester.getRect(find.byType(ViewerPanelFrb));
+      final stage = Rect.fromLTWH(
+          panel.left, panel.top, panel.width, panel.height - barHeight);
+      final size = comp.getSize();
+      final w = size.width.toDouble();
+      final h = size.height.toDouble();
+      final scale = math.min(stage.width / w, stage.height / h);
+      final fitted = Rect.fromCenter(
+        center: stage.center,
+        width: w * scale,
+        height: h * scale,
+      );
+      final at = Offset(
+        fitted.left + 400 / w * fitted.width,
+        fitted.top + 200 / h * fitted.height,
+      );
+
+      final gesture = await tester.startGesture(at);
+      await settleFrb(tester, minRounds: 4);
+      counter
+        ..reset()
+        ..counting = true;
+      for (var i = 0; i < 20; i++) {
+        await gesture.moveBy(const Offset(3, 2));
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      counter.counting = false;
+      await gesture.up();
+      await tester.pump();
+
+      // ignore: avoid_print
+      print('POINT DRAG COST ${counter.total} calls\n${counter.ranking()}');
+      expect(
+        counter
+                .calls['composition_reference_render_frame_with_shape_preview'] ??
+            0,
+        greaterThan(0),
+        reason: 'the drag showed no picture until it was let go:\n'
+            '${counter.ranking()}',
+      );
+      expect(
+        counter.calls['layer_reference_set_shape_contents'] ?? 0,
+        0,
+        reason: 'a drag previews and commits once, on release',
+      );
+      // Twenty movements, throttled: the preview and the transform it reads,
+      // not a request per pointer report.
+      expect(
+        counter.total,
+        lessThan(30),
+        reason: 'a point drag asked the engine too often:\n'
+            '${counter.ranking()}',
       );
     });
   }, skip: !engineAvailable);

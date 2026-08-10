@@ -433,14 +433,16 @@ void main() {
 
       await tester.tap(find.byKey(ValueKey<String>(opacityKey(p.layer, 1))));
       await tester.pump();
-      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
-      await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+      // The chord itself is the shell's since K-300 — it asks the claim this
+      // panel registers, which is what a shell test drives end to end
+      // (`Ctrl+C with keyframes selected copies those`). Here the claim is
+      // called directly, because this test mounts the panel and not the shell.
+      expect(p.uiState.copyClaim!(), isTrue);
       await tester.pump();
 
       p.uiState.playheadFrame.value = 75;
       await tester.pump();
-      await tester.sendKeyEvent(LogicalKeyboardKey.keyV);
-      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      expect(p.uiState.pasteClaim!(), isTrue);
       await tester.pumpAndSettle();
 
       final frames = opacityKeys(p.layer)
@@ -449,6 +451,34 @@ void main() {
       expect(frames, contains(75),
           reason: 'the earliest pasted key lands on the playhead');
       expect(frames, hasLength(3));
+    });
+
+    /// **A row with no keyframes still has a value, and Copy takes it**
+    /// (K-301). With the row selected and no individual key picked, `Ctrl+C`
+    /// used to find nothing to copy, give up, and quietly copy the whole layer
+    /// instead — so the one thing the user was pointing at was the one thing
+    /// that did not travel.
+    testWidgets('a static row copies its value, and pasting puts it back',
+        (tester) async {
+      final p = withLayer();
+      p.layer.setTransform(
+          prop: BridgeTransformProp.opacity,
+          value: const BridgeScalar.static_(40));
+      await mountGraph(tester, p);
+
+      expect(p.uiState.copyClaim!(), isTrue,
+          reason: 'the selected row is what Copy takes, keys or no keys');
+
+      p.layer.setTransform(
+          prop: BridgeTransformProp.opacity,
+          value: const BridgeScalar.static_(90));
+      p.uiState.model.refresh();
+      await tester.pump();
+
+      expect(p.uiState.pasteClaim!(), isTrue);
+      await tester.pumpAndSettle();
+      expect(p.layer.getTransform().opacity, const BridgeScalar.static_(40),
+          reason: 'the copied value came back as a value, not as a keyframe');
     });
 
     /// Copy and paste belong to the keyframes, not to the graph: a selection
@@ -488,13 +518,11 @@ void main() {
       await gesture.up();
       await tester.pumpAndSettle();
 
-      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
-      await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+      expect(p.uiState.copyClaim!(), isTrue);
       await tester.pump();
       p.uiState.playheadFrame.value = 90;
       await tester.pump();
-      await tester.sendKeyEvent(LogicalKeyboardKey.keyV);
-      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      expect(p.uiState.pasteClaim!(), isTrue);
       await tester.pumpAndSettle();
 
       final frames = opacityKeys(p.layer)

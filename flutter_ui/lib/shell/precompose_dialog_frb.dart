@@ -20,6 +20,7 @@ import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/project_item.dart';
 import 'package:uuid/uuid.dart';
 
+import '../l10n/strings.dart';
 import '../main.dart';
 import '../state/workspace.dart';
 import '../theme/theme.dart';
@@ -71,15 +72,16 @@ Future<void> showPrecomposeDialogFrb({
         } catch (_) {
           // The dialogue stays open saying so, rather than closing on a move
           // that never happened.
-          return 'Those layers could not be pre-composed.';
+          return l10n.precomposeFailed;
         }
         // The Precomp layer is what the user is now working on.
         ui.setSelection([precomp]);
         ui.model.refresh();
         if (openNewComp) {
-          if (precomp.getSourceItem() case ItemReference_Composition(
-            :final field0,
-          )) {
+          if (precomp.getSourceItem()
+              case ItemReference_Composition(
+                :final field0,
+              )) {
             ui.setSelectedComp(field0);
           }
         }
@@ -196,7 +198,7 @@ class _PrecomposeBodyState extends State<_PrecomposeBody> {
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
             child: Text(
-              'Pre-compose',
+              l10n.precompose,
               style: t.bodyPrimary,
               textAlign: TextAlign.center,
             ),
@@ -205,7 +207,7 @@ class _PrecomposeBodyState extends State<_PrecomposeBody> {
           // wrapped label beside a box reads as two questions rather than one.
           Row(
             children: [
-              Text('New composition name', style: t.small, softWrap: false),
+              Text(l10n.precomposeNewName, style: t.small, softWrap: false),
               const SizedBox(width: 8),
               Expanded(
                 child: HouseTextField(
@@ -224,10 +226,8 @@ class _PrecomposeBodyState extends State<_PrecomposeBody> {
             selected: !_moveAttributes,
             enabled: _single,
             onPick: () => setState(() => _moveAttributes = false),
-            label: "Leave all attributes in '${widget.parentCompName}'",
-            caption: 'Use this option to create a new intermediate composition '
-                "with only '${widget.layerName}' in it. The new composition "
-                'will become the source to the current layer.',
+            label: l10n.precomposeLeave(widget.parentCompName),
+            caption: l10n.precomposeLeaveHelp(widget.layerName),
           ),
           const SizedBox(height: 12),
           _choice(
@@ -236,9 +236,8 @@ class _PrecomposeBodyState extends State<_PrecomposeBody> {
             selected: _moveAttributes,
             enabled: true,
             onPick: () => setState(() => _moveAttributes = true),
-            label: 'Move all attributes into the new composition',
-            caption: 'Use this option to place the currently selected layers '
-                'together into a new intermediate composition.',
+            label: l10n.precomposeMove,
+            caption: l10n.precomposeMoveHelp,
           ),
           const SizedBox(height: 14),
           // Indented under the choices above: it qualifies the new composition
@@ -250,7 +249,7 @@ class _PrecomposeBodyState extends State<_PrecomposeBody> {
               key: 'precompose-adjust-duration',
               value: _adjustDuration,
               onChanged: (v) => setState(() => _adjustDuration = v),
-              label: 'Adjust the duration to the span of the selected layers',
+              label: l10n.precomposeAdjustDuration,
             ),
           ),
           const SizedBox(height: 8),
@@ -259,7 +258,7 @@ class _PrecomposeBodyState extends State<_PrecomposeBody> {
             key: 'precompose-open-new-comp',
             value: _openNewComp,
             onChanged: (v) => setState(() => _openNewComp = v),
-            label: 'Open the new composition',
+            label: l10n.precomposeOpenNew,
           ),
           if (_refusal != null)
             Padding(
@@ -278,13 +277,13 @@ class _PrecomposeBodyState extends State<_PrecomposeBody> {
                 key: const ValueKey('precompose-confirm'),
                 primary: true,
                 onPressed: _confirm,
-                child: const Text('Pre-compose'),
+                child: Text(l10n.precompose),
               ),
               const SizedBox(width: 8),
               HouseButton(
                 key: const ValueKey('precompose-cancel'),
                 onPressed: widget.onCancel,
-                child: const Text('Cancel'),
+                child: Text(l10n.cancel),
               ),
             ],
           ),

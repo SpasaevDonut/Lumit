@@ -23,6 +23,10 @@ mod temporal;
 pub use blur::*;
 pub use colour::*;
 pub use common::*;
+// `dof` exposes its `impl FxEngine` methods, which are reachable without a
+// re-export — but it also houses the `DofOp` parameter struct that carries the
+// effect's two dozen scalars, and a public type does need naming.
+pub use dof::*;
 pub use lens_flare::*;
 pub use split::*;
 pub use stylise::*;
@@ -158,11 +162,7 @@ impl FxEngine {
                 },
             ],
         });
-        let mut enc = ctx
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("fx-enc"),
-            });
+        let mut enc = ctx.encoder("fx-enc");
         {
             let mut cpass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("fx-pass"),
@@ -172,7 +172,7 @@ impl FxEngine {
             cpass.set_bind_group(0, &bind, &[]);
             cpass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
         }
-        ctx.queue.submit([enc.finish()]);
+        drop(enc);
     }
 }
 

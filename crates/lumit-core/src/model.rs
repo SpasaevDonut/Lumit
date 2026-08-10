@@ -4,7 +4,10 @@
 //! layers with spans — no properties/keyframes yet (slice arrives in Phase 1).
 //! All mutation goes through operations (ops.rs); this module is data + queries.
 
+use std::sync::Arc;
+
 use crate::anim::Property;
+use crate::expression::ExpressionContext;
 use crate::time::{CompTime, Duration, FrameRate, Rational};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -570,6 +573,13 @@ pub struct EffectInstance {
     /// it N times. Ignored unless a temporal re-render effect is sampling.
     #[serde(default = "default_true")]
     pub sample_temporally: bool,
+    /// The user's own name for this instance, shown in place of the effect's
+    /// label wherever the stack is drawn (K-321) — "Blur the sign", not
+    /// "Gaussian blur". `None` (the default, and what every older project
+    /// deserialises to) shows the label; rendering, expressions and every
+    /// `match_name` lookup are untouched by it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_name: Option<String>,
     #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
@@ -589,6 +599,18 @@ impl EffectInstance {
         }
     }
 
+    pub fn float_at_with_context(
+        &self,
+        id: &str,
+        lt: f64,
+        context: Arc<ExpressionContext>,
+    ) -> Option<f64> {
+        match self.param(id)? {
+            EffectValue::Float(p) => Some(p.value_at_with_context(lt, context)),
+            _ => None,
+        }
+    }
+
     /// A colour parameter's evaluated scene-linear RGBA at layer time `lt`
     /// (channels animate independently), or None when absent or not a
     /// Colour.
@@ -599,6 +621,23 @@ impl EffectInstance {
                 ch[1].value_at(lt),
                 ch[2].value_at(lt),
                 ch[3].value_at(lt),
+            ]),
+            _ => None,
+        }
+    }
+
+    pub fn colour_at_with_context(
+        &self,
+        id: &str,
+        lt: f64,
+        context: Arc<ExpressionContext>,
+    ) -> Option<[f64; 4]> {
+        match self.param(id)? {
+            EffectValue::Colour(ch) => Some([
+                ch[0].value_at_with_context(lt, context.clone()),
+                ch[1].value_at_with_context(lt, context.clone()),
+                ch[2].value_at_with_context(lt, context.clone()),
+                ch[3].value_at_with_context(lt, context.clone()),
             ]),
             _ => None,
         }
@@ -875,11 +914,33 @@ impl Composition {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextDocument {
     pub text: String,
+    /// When set, the words come from this expression at each frame instead of
+    /// from `text` — the same expression language the numeric properties use,
+    /// printed rather than measured (K-210, docs/03-DATA-MODEL.md §9.1).
+    ///
+    /// `text` is left alone while an expression drives the layer, so switching
+    /// the expression off restores the words that were typed there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expression: Option<String>,
     /// Pixel size at natural scale.
     pub size: f64,
     pub fill: LinearColour,
     #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+impl TextDocument {
+    /// The words this document shows at layer time `lt`.
+    ///
+    /// **Every reader of a text layer's content goes through here**, so the
+    /// rasteriser and the cache key can never disagree about what the layer
+    /// says — a disagreement that would serve a cached frame of the old words.
+    pub fn resolved_text(&self, context: Arc<ExpressionContext>) -> std::borrow::Cow<'_, str> {
+        match &self.expression {
+            None => std::borrow::Cow::Borrowed(&self.text),
+            Some(e) => std::borrow::Cow::Owned(crate::expression::evaluate_text(e, Some(context))),
+        }
+    }
 }
 
 /// Per-layer composite operator (docs/06-RENDER-PIPELINE.md §blend domains).
@@ -1250,6 +1311,17 @@ pub struct Document {
     /// Where new solids/comps are filed (see [`AutoFolders`]).
     #[serde(default)]
     pub auto_folders: AutoFolders,
+    /// How hard the renderer works at the edges of transformed layers
+    /// (K-274, docs/impl/anti-aliasing.md).
+    ///
+    /// A **project** property, not a preference, and deliberately so: it
+    /// changes what a comp looks like, so it has to travel in the `.lum` and
+    /// match when the file is opened on another machine. One value serves both
+    /// preview and export — a preview that anti-aliased differently from the
+    /// file would break the K-031 preview-equals-export identity, which the
+    /// whole render path is built around.
+    #[serde(default)]
+    pub anti_aliasing: AntiAliasing,
     /// Where *this project's* rendered frames are parked, overriding the
     /// application-wide choice (docs/06-RENDER-PIPELINE.md §5.4, docs/07 §15).
     ///
@@ -1284,6 +1356,68 @@ pub struct Document {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
+/// How many coverage samples per pixel the composite is drawn with (K-274,
+/// docs/impl/anti-aliasing.md).
+///
+/// # In plain terms
+///
+/// A layer is drawn as a rectangle placed by its transform. Rotate it a few
+/// degrees and its edge crosses a pixel diagonally — but a pixel is either
+/// drawn or not, so the edge comes out as a staircase, and on a slow rotation
+/// the steps crawl. Asking about coverage more than once per pixel and
+/// averaging the answers is what smooths it, and these are the numbers of
+/// questions on offer. More is smoother and costs more memory; [`Self::Off`]
+/// is the picture Lumit made before this setting existed.
+///
+/// The named counts are the ones graphics hardware actually implements, which
+/// is why this is four choices rather than a free number. A card that will not
+/// give the count asked for falls back to the highest it will — down to
+/// [`Self::Off`] — and says which it used; that is a machine's limit, never a
+/// project's error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AntiAliasing {
+    /// One sample per pixel: no anti-aliasing.
+    Off,
+    X2,
+    /// Four samples: the standard trade, and what a card that will not give
+    /// eight falls back to.
+    X4,
+    /// The default (K-274: on by default; K-286). Eight samples smooths the
+    /// shallow diagonals four still steps on, which is where the crawl is
+    /// most visible, and it costs one more multisample attachment beside the
+    /// comp frame rather than more shading. A card that will not give eight
+    /// falls back to [`Self::X4`] and says so.
+    #[default]
+    X8,
+}
+
+impl AntiAliasing {
+    /// The sample count to hand the renderer.
+    #[must_use]
+    pub fn samples(self) -> u32 {
+        match self {
+            Self::Off => 1,
+            Self::X2 => 2,
+            Self::X4 => 4,
+            Self::X8 => 8,
+        }
+    }
+
+    /// The setting a sample count corresponds to; anything not one of the four
+    /// counts reads as [`Self::Off`], so a value from a newer build that this
+    /// one cannot draw degrades to the picture it can.
+    #[must_use]
+    pub fn from_samples(n: u32) -> Self {
+        match n {
+            2 => Self::X2,
+            4 => Self::X4,
+            8 => Self::X8,
+            _ => Self::Off,
+        }
+    }
+}
+
 /// Where a project's rendered frames are parked (docs/06 §5.4). The document's
 /// own answer; the application-wide setting has the same three choices.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1305,6 +1439,7 @@ impl Document {
             id: Uuid::now_v7(),
             items: Vec::new(),
             auto_folders: AutoFolders::default(),
+            anti_aliasing: AntiAliasing::default(),
             cache_location: None,
             ui_state: None,
             extra: serde_json::Map::new(),
@@ -1879,6 +2014,7 @@ mod tests {
         inner.kind = LayerKind::Text {
             document: TextDocument {
                 text: "m".into(),
+                expression: None,
                 size: 12.0,
                 fill: LinearColour([1.0, 1.0, 1.0, 1.0]),
                 extra: serde_json::Map::new(),

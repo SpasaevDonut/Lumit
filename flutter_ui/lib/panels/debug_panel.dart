@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/panels/performance_view.dart';
 import 'package:lumit_flutter/widgets/controls.dart';
+import 'package:lumit_flutter/widgets/hover_intent.dart';
 
 class DebugPanel extends StatefulWidget {
   const DebugPanel({super.key});
@@ -56,11 +57,11 @@ class _DebugPanelState extends State<DebugPanel> {
     final theme = ThemeScope.of(context).theme;
 
     if (ms > 8) {
-      return Colors.red;
+      return theme.error;
     }
 
     if (ms > 3) {
-      return Colors.amber;
+      return theme.warning;
     }
 
     return theme.textMuted;
@@ -79,6 +80,25 @@ class _DebugPanelState extends State<DebugPanel> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         PerformanceMonitor(),
+        // The menu guard is invisible by nature (K-318), so testing it means
+        // being able to see it. Amber while it is actually holding a row
+        // switch back; accent otherwise.
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            spacing: 8,
+            children: [
+              ValueListenableBuilder<bool>(
+                valueListenable: debugShowSafeTriangles,
+                builder: (_, on, __) => HouseCheckbox(
+                  value: on,
+                  onChanged: (v) => debugShowSafeTriangles.value = v,
+                ),
+              ),
+              Text('Show safe hover triangles', style: theme.body),
+            ],
+          ),
+        ),
         Text(
           "Statistics:",
           style: theme.body.copyWith(color: theme.textMuted),
@@ -145,7 +165,7 @@ class _DebugPanelState extends State<DebugPanel> {
             HouseButton(
               child: Text(
                 "$len in last second",
-                style: theme.body.copyWith(color: len > 20 ? Colors.red : null),
+                style: theme.body.copyWith(color: len > 20 ? theme.error : null),
               ),
             ),
             HouseButton(

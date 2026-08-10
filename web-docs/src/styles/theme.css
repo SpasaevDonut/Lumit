@@ -1,0 +1,38 @@
+/* Match the marketing site's ramp so lumitlab.com and docs.lumitlab.com read as
+   one product. Values come from docs/15-DESIGN.md via web/src/styles/global.css. */
+
+:root {
+  --sl-font: "Schibsted Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
+  --sl-font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+}
+
+:root[data-theme="dark"] {
+  --sl-color-bg: #0a0b0d;
+  --sl-color-bg-nav: rgb(10 11 13 / 0.72);
+  --sl-color-bg-sidebar: #0a0b0d;
+  --sl-color-bg-inline-code: rgb(255 255 255 / 0.06);
+  --sl-color-hairline: rgb(255 255 255 / 0.08);
+  --sl-color-hairline-light: rgb(255 255 255 / 0.14);
+  --sl-color-white: #f4f6f8;
+  --sl-color-gray-1: #e6e9ed;
+  --sl-color-gray-2: #b9c0c9;
+  --sl-color-gray-3: #8f96a1;
+  --sl-color-gray-4: #5d646e;
+  --sl-color-gray-5: #2a2f36;
+  --sl-color-gray-6: #16191d;
+  --sl-color-accent: #8a70ff;
+  --sl-color-accent-high: #86e2ff;
+  --sl-color-accent-low: #2a2350;
+  --sl-color-text-accent: #86e2ff;
+}
+
+.site-title {
+  letter-spacing: -0.035em;
+  font-weight: 600;
+}
+
+/* Starlight's header hairline, matched to the marketing site's */
+.header {
+  border-bottom: 1px solid var(--sl-color-hairline);
+  backdrop-filter: blur(12px);
+}

@@ -57,6 +57,7 @@ pub mod export;
 pub mod fxops;
 pub mod headless;
 pub mod plan;
+pub mod profile;
 pub mod realise;
 pub mod source;
 
@@ -67,12 +68,23 @@ pub use build::{
 pub use cache::{CacheTier, CachedCompFrame};
 pub use decode::{CompFrame, CompJob, CompLayerPixels, PreviewEngine, PreviewResult};
 pub use draw::{
-    AccumulationBelow, CompLayerDraw, DofInputDraw, DrawSource, MatteDraw, TemporalBelow,
+    AccumulationBelow, CompLayerDraw, DrawSource, LayerInputDraw, MatteDraw, TemporalBelow,
 };
 pub use headless::{
     preview_scale_q, DemotedFrame, FrameProvenance, HeadlessRenderer, PrefetchWant, PreparedFrame,
     Promotion, DEFAULT_VRAM_CACHE_BYTES,
 };
 pub use plan::{plan_comp_frame, Quality};
+pub use profile::{
+    EffectTiming, FrameProfile, FrameProgress, LayerTiming, ProfileSink, ProgressSink, RenderStage,
+};
 pub use realise::Realiser;
+
+/// The anti-aliasing count this machine will actually give for `requested`
+/// (K-274), or `None` before any adapter has been opened.
+///
+/// Re-exported so callers that already depend on the renderer — the bridge,
+/// reporting what the Settings row is really drawing at — need not take a
+/// direct dependency on `lumit-gpu` just to ask.
+pub use lumit_gpu::adapter_sample_count;
 pub use source::{SourceProbe, SourceProbes};

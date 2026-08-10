@@ -42,6 +42,8 @@ port notes). Read-only history; never update it.
 The engine is a Cargo workspace under `crates/` per `docs/05-ARCHITECTURE.md` (engine
 crates never depend on the UI or the bridge). The Flutter frontend is under `flutter_ui/`
 and talks to the engine through `crates/lumit-bridge` (`docs/17-BRIDGE-CONTRACT.md`).
+`web/` (lumitlab.com) and `web-docs/` (docs.lumitlab.com) are the public site — two small
+Astro projects, outside the Cargo workspace and depended on by nothing (K-279).
 
 ## Design
 
@@ -50,6 +52,30 @@ Lumit follows the household Aizome design language in its **dark-first** adaptat
 household `HOUSEHOLD-DESIGN.md`. All colours come from the theme struct; hex literals in
 widget code are a defect. Voice: British English, sentence case, calm, no exclamation
 marks, no emoji, no punishment UI.
+
+## Strings, translations and the engine's words (binding, K-005, K-303)
+
+**Every user-facing string goes through `flutter_ui/lib/l10n/app_en.arb`** — the Crowdin
+source file — and is read as `l10n.someKey`, never written inline in a widget. If a change
+adds, renames or reworks a string, the arb entry lands **in the same commit**, with its
+`@key` description saying where the string appears (a translator sees the phrase, not the
+screen). `flutter pub get` regenerates the Dart from it.
+
+Two things are easy to miss. The first fails CI; the second is worse, because nothing
+catches it:
+
+- **A string the *engine* can send needs two entries, not one.** Keymap action
+  descriptions, effect and category labels, and anything else Rust hands over as English
+  text must be added to `flutter_ui/lib/l10n/engine_labels.dart` **and** given a matching
+  `app_en.arb` key. `engine_labels_test.dart` walks the engine's own tables and fails on
+  any label with no entry — that is the gate, and it is easy to trip by adding a keymap
+  action without thinking of it as "a string".
+- **The other `app_*.arb` files are Crowdin's, not ours.** Never hand-edit a translation.
+  Adding an English key leaves the other languages short, which is expected and handled
+  (a missing translation falls back to English) — but it is not silent: **say so in the
+  commit message and in the pull request**, listing the new keys, so the Crowdin upload
+  is not forgotten. A shipped string nobody was told about is a string that stays English
+  in every other language for a release.
 
 ## Readability and coverage (binding, K-007)
 

@@ -74,7 +74,7 @@ synthesis itself moves GPU-side).
 4. **Smoothing**: one 3×3 edge-aware blur of the flow field — bilateral on luma *and* on
    flow difference, so vectors from the two sides of a motion boundary never average into
    a phantom in-between motion.
-5. **Variational refinement** — DIS part three, and **not optional** (K-269). This note
+5. **Variational refinement** — DIS part three, and **not optional** (K-332). This note
    previously said to skip it in v1 and "measure first"; the measurement happened and both
    halves of the reasoning were wrong. Untextured regions are not rare in game capture (smoke,
    sky, muzzle flash, water, darkness are most of a frame during the fast moments a montage
@@ -192,7 +192,7 @@ counts, the ±1 central difference and the destination-flow fixed point remain f
 ## 5. Parameters and defaults (user-facing, per [08-EFFECTS.md](../08-EFFECTS.md))
 
 Resist adding more knobs — Twixtor's manual is a warning, not a target. The set is closed at
-the §3.1 table, which ships in full as of K-268.
+the §3.1 table, which ships in full as of K-331.
 
 **Engine-side (`lumit_flow::FlowSettings`).** `lumit-flow` is an engine crate and knows
 nothing of the document, so the stored `FlowParams` are translated into plain numbers by
@@ -205,7 +205,7 @@ cannot translate the same parameters into two different measurements.
 | `iterations` | Vector detail | §1 step 2's cap: 6 / 12 / 20 / 32 (Medium is the paper's ≤ 12) |
 | `min_level_dim` | Vector detail | §1's pyramid floor: 48 / 24 / 24 / 16. Below ~24 the 8×8 patches go frame-scale — the failure §6.1 measured |
 | `smoothness` | Smoothness | Scales `FLOW_SIGMA2` in §1 step 4's bilateral, quadratically over a 4× span each way, clamped. 50 is exactly the tuned constant, so the default is bit-identical to the pre-parameter engine |
-| `refine_iters` | Vector detail | §1 step 5's fixed-point iterations per level: 1 / 1 / 2 / 3. `0` disables DIS part three and is **not user-reachable** — it is the two-part engine K-269 replaced, kept only so the A/B test and the GPU parity test can address it |
+| `refine_iters` | Vector detail | §1 step 5's fixed-point iterations per level: 1 / 1 / 2 / 3. `0` disables DIS part three and is **not user-reachable** — it is the two-part engine K-332 replaced, kept only so the A/B test and the GPU parity test can address it |
 | `occlusion` | Occlusion handling | §3's weights: Visible-only keeps the `(1 − occ)` terms, Blend drops them |
 | `fallback` | Fallback | §3's both-occluded branch: crossfade or the nearer endpoint |
 | `hud_guard` | HUD guard | Runs §3.1 step 5's `hud_weights` and mixes synthesis back toward the plain blend by it |
@@ -222,7 +222,7 @@ the algorithm again.
 **Measured (960×540 pair, dev machine):** GPU parts 1–2 4.3 ms, all three **8.9 ms**; CPU all
 three 1.9 s. The refinement roughly doubles GPU cost and is comfortably inside budget.
 
-## 5.5 Measured quality (the harness, K-269 follow-up)
+## 5.5 Measured quality (the harness, K-332 follow-up)
 
 `crates/lumit-render/tests/flow_quality.rs` scores the engine on real footage by
 rebuilding a frame from its two neighbours and comparing against the frame that

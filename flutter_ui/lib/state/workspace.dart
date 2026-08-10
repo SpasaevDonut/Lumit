@@ -9,6 +9,7 @@ import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
 
+import '../l10n/strings.dart';
 import '../theme/custom_theme.dart';
 import '../theme/theme.dart';
 import 'dock.dart';
@@ -173,6 +174,13 @@ class Workspace extends ChangeNotifier {
   /// the middle of a themed shell is a thing people want to turn off.
   bool themedViewerSurround = false;
 
+  /// Whether the Viewer smooths the picture when it is zoomed past 1:1. Off,
+  /// so a magnified pixel is a square and what is on screen is what is in the
+  /// frame — the reason to zoom in is usually to look at the pixels. On,
+  /// Flutter's bilinear filtering blends them, which is gentler on the eye
+  /// when the zoom is being used to frame rather than to inspect.
+  bool smoothZoomedViewer = false;
+
   /// Working preferences for the Pre-compose dialogue (Ctrl+Shift+C).
   /// Default: Move attributes = true, Adjust duration = true, Open new comp = false.
   /// If changed by the user, saved straight to the workspace store.
@@ -182,6 +190,19 @@ class Workspace extends ChangeNotifier {
 
   PerformanceSettings performance = PerformanceSettings();
   InterfaceSettings interface = InterfaceSettings();
+
+  /// Whether Lumit looks for a newer version on launch (K-296).
+  ///
+  /// On by default, and offered on the setup screen as well as in Settings: an
+  /// editor that quietly falls years behind is how people end up reporting bugs
+  /// that were fixed long ago. It is a *look*, not a download — the installer
+  /// is only fetched when the user asks for it, so leaving this on never costs
+  /// anybody a surprise few hundred megabytes.
+  bool autoUpdate = true;
+
+  /// When the last update check finished, in milliseconds since the epoch.
+  /// Zero means never. Kept so six launches in a morning ask GitHub once.
+  int lastUpdateCheckMs = 0;
 
   /// Whether the first-run screen has had its answer (K-246, docs/07 §13.1).
   ///
@@ -367,12 +388,81 @@ class Workspace extends ChangeNotifier {
     save();
   }
 
+  /// A name no saved theme holds: [wanted] itself when it is free, else the
+  /// same with a number after it. Two themes cannot share a name — the name
+  /// *is* the identity, both in the picker and in the workspace file — so
+  /// every route that adds one comes through here rather than overwriting
+  /// somebody's work by accident (K-298).
+  String availableThemeName(String wanted) {
+    final base = wanted.trim().isEmpty ? l10n.themeUnnamed : wanted.trim();
+    var tried = base;
+    for (var n = 2; customThemes.any((t) => t.name == tried); n++) {
+      tried = '$base $n';
+    }
+    return tried;
+  }
+
+  /// Copy the theme in use into one of the user's own, and select it (K-298).
+  /// Returns the name it landed under.
+  ///
+  /// Works from a built-in scheme as well as from a custom theme: "start from
+  /// this one and change a few things" is the same wish either way, and it is
+  /// how a built-in becomes editable without the editor having to ask for a
+  /// name first.
+  String duplicateActiveTheme() {
+    final name = availableThemeName('${themeChoice.label} copy');
+    saveCustomTheme(CustomTheme.from(name, theme));
+    return name;
+  }
+
+  /// Take an imported theme in and select it (K-298). Returns the name it
+  /// landed under, which differs from the file's when a theme already had it —
+  /// an import never overwrites one of the user's own.
+  String importCustomTheme(CustomTheme imported) {
+    final name = availableThemeName(imported.name);
+    saveCustomTheme(imported.renamed(name));
+    return name;
+  }
+
+  /// Rename one of the user's themes, keeping its place in the list and the
+  /// selection on it. Returns the name it now has — [to] when that was free,
+  /// else [to] with a number after it — or null when [from] is not a saved
+  /// theme.
+  String? renameCustomTheme(String from, String to) {
+    final at = customThemes.indexWhere((t) => t.name == from);
+    if (at < 0) return null;
+    final wanted = to.trim();
+    if (wanted.isEmpty || wanted == from) return from;
+    final name = availableThemeName(wanted);
+    customThemes[at] = customThemes[at].renamed(name);
+    if (customThemeName == from) customThemeName = name;
+    recompose();
+    save();
+    return name;
+  }
+
   /// Forget a custom theme. Selecting it afterwards is impossible, so a
   /// session using it falls back to its built-in scheme.
   void deleteCustomTheme(String name) {
     customThemes.removeWhere((t) => t.name == name);
     if (customThemeName == name) customThemeName = null;
     recompose();
+    save();
+  }
+
+  /// Turn automatic update checks on or off (K-296). Written straight out: it
+  /// is one boolean, and a setting that did not survive the restart it is about
+  /// would be a poor joke.
+  void setAutoUpdate(bool on) {
+    autoUpdate = on;
+    notifyListeners();
+    save();
+  }
+
+  /// Record that a check has just happened, so the next launch does not repeat
+  /// it. Saved without notifying — nothing on screen reads this.
+  void rememberUpdateCheck(int atMillis) {
+    lastUpdateCheckMs = atMillis;
     save();
   }
 
@@ -384,6 +474,12 @@ class Workspace extends ChangeNotifier {
 
   void setThemedViewerSurround(bool on) {
     themedViewerSurround = on;
+    notifyListeners();
+    save();
+  }
+
+  void setSmoothZoomedViewer(bool on) {
+    smoothZoomedViewer = on;
     notifyListeners();
     save();
   }
@@ -555,11 +651,14 @@ class Workspace extends ChangeNotifier {
         'performance': performance.toJson(),
         'interface': interface.toJson(),
         'first_run_done': firstRunDone,
+        'auto_update': autoUpdate,
+        'last_update_check_ms': lastUpdateCheckMs,
         'keymap': keymapJson,
         'custom_themes': [for (final t in customThemes) t.toJson()],
         'custom_theme': customThemeName,
         'themed_scopes': themedScopes,
         'themed_viewer_surround': themedViewerSurround,
+        'smooth_zoomed_viewer': smoothZoomedViewer,
         'precompose_move_attributes': precomposeMoveAttributes,
         'precompose_adjust_duration': precomposeAdjustDuration,
         'precompose_open_new_comp': precomposeOpenNewComp,
@@ -597,6 +696,11 @@ class Workspace extends ChangeNotifier {
     }
     // Absent means an existing user, not a new one — see the field.
     firstRunDone = j['first_run_done'] as bool? ?? true;
+    // Absent means a settings file written before there were updates to check
+    // for; the default is on, and an existing user gets the same offer a new
+    // one does.
+    autoUpdate = j['auto_update'] as bool? ?? true;
+    lastUpdateCheckMs = j['last_update_check_ms'] as int? ?? 0;
     keymapJson = j['keymap'] is String ? j['keymap'] as String : null;
     customThemes = [];
     final rawThemes = j['custom_themes'];
@@ -612,6 +716,7 @@ class Workspace extends ChangeNotifier {
         j['custom_theme'] is String ? j['custom_theme'] as String : null;
     themedScopes = j['themed_scopes'] == true;
     themedViewerSurround = j['themed_viewer_surround'] == true;
+    smoothZoomedViewer = j['smooth_zoomed_viewer'] == true;
     precomposeMoveAttributes = j['precompose_move_attributes'] as bool? ?? true;
     precomposeAdjustDuration = j['precompose_adjust_duration'] as bool? ?? true;
     precomposeOpenNewComp = j['precompose_open_new_comp'] as bool? ?? false;
@@ -690,10 +795,10 @@ class ThemeChoice {
   /// The heading this choice sits under. Light and dark first because that is
   /// what anyone is choosing by; the user's own last, because they are theirs.
   String get group => scheme == null
-      ? 'Custom'
+      ? l10n.custom
       : scheme!.mode == ThemeMode2.light
-          ? 'Light'
-          : 'Dark';
+          ? l10n.schemeLight
+          : l10n.schemeDark;
 
   @override
   bool operator ==(Object other) =>

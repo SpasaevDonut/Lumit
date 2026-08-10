@@ -54,7 +54,14 @@ type ChangeCallback = Arc<dyn Fn(DocumentChange) + Send + Sync>;
 pub struct DocumentStore {
     current: ArcSwap<Document>,
     journal: Mutex<Journal>,
-    on_change: Option<ChangeCallback>,
+    /// The change observer. Behind a `Mutex` rather than owned outright so it
+    /// can be attached to a store that is **already shared** (K-273): a
+    /// `&mut self` setter meant the observer had to be registered before the
+    /// store went into its `Arc`, which is an ordering rule no type enforced
+    /// and one every caller had to remember. The lock is only ever held to
+    /// clone the `Arc` out or to swap it — never across the callback itself,
+    /// which crosses into the frontend (docs/14 §3: no locks across FFI).
+    on_change: Mutex<Option<ChangeCallback>>,
     /// Bumped once per published snapshot (commit, undo, redo, replace).
     /// A reader that remembers the number it last saw can ask "has anything
     /// changed?" for the cost of one atomic load — the frontend's read model
@@ -67,7 +74,7 @@ impl DocumentStore {
         Self {
             current: ArcSwap::from_pointee(doc),
             journal: Mutex::new(Journal::default()),
-            on_change: None,
+            on_change: Mutex::new(None),
             revision: std::sync::atomic::AtomicU64::new(0),
         }
     }
@@ -84,11 +91,16 @@ impl DocumentStore {
             .fetch_add(1, std::sync::atomic::Ordering::Release);
     }
 
-    /// Register the change observer. Optional by construction: the egui shell
-    /// never sets one and reads snapshots directly, so every commit/undo/redo
-    /// path must stay a no-op when it is absent.
-    pub fn set_callback(&mut self, callback: ChangeCallback) {
-        self.on_change = Some(callback);
+    /// Register the change observer. Optional by construction: a frontend that
+    /// reads snapshots directly never sets one, so every commit/undo/redo path
+    /// must stay a no-op when it is absent.
+    ///
+    /// Takes `&self`, so it can be called on a store that is already shared —
+    /// the observer usually wants to refer back to the thing that owns the
+    /// store, which is impossible if it has to be attached first (K-273).
+    /// Registering a second observer replaces the first; there is one.
+    pub fn set_callback(&self, callback: ChangeCallback) {
+        *self.on_change.lock() = Some(callback);
     }
 
     /// Tell the observer, if there is one. Callers must drop the journal lock
@@ -97,7 +109,12 @@ impl DocumentStore {
     /// across FFI. Dropping it also lets the observer re-enter the store —
     /// notifying under the lock would deadlock on its first `commit`.
     fn notify(&self, op: Op) {
-        if let Some(callback) = &self.on_change {
+        // Cloned out under the lock and called after it is released: the
+        // callback re-enters the store (the bridge commits from inside it) and
+        // crosses FFI, and either under the lock would be a deadlock or a
+        // rule broken.
+        let callback = self.on_change.lock().clone();
+        if let Some(callback) = callback {
             callback(DocumentChange { op });
         }
     }
@@ -467,7 +484,7 @@ mod tests {
         let store = Arc::new(Mutex::new(Vec::<Op>::new()));
         let seen = store.clone();
 
-        let mut doc_store = DocumentStore::new(Document::new());
+        let doc_store = DocumentStore::new(Document::new());
         doc_store.set_callback(Arc::new(move |change| {
             seen.lock().push(change.op);
         }));
@@ -487,6 +504,52 @@ mod tests {
         );
     }
 
+    /// **An observer can be attached to a store that is already shared**
+    /// (K-273).
+    ///
+    /// The setter used to take `&mut self`, so the observer had to be
+    /// registered before the store went into its `Arc` — an ordering rule that
+    /// no type enforced and every caller had to remember, and one that the
+    /// natural shape of the thing fights: an observer usually wants to talk
+    /// about the object that *owns* the store, which does not exist yet at
+    /// that point. (`Arc::new_cyclic` is the workaround the test below still
+    /// uses for its own reason; it should not be the only way in.)
+    #[test]
+    fn an_observer_attaches_to_a_store_that_is_already_shared() {
+        let store = Arc::new(DocumentStore::new(Document::new()));
+        // Shared first, and shared *widely* — a second handle, as a frontend
+        // would hold.
+        let elsewhere = Arc::clone(&store);
+
+        let seen = Arc::new(Mutex::new(0usize));
+        let count = Arc::clone(&seen);
+        elsewhere.set_callback(Arc::new(move |_| {
+            *count.lock() += 1;
+        }));
+
+        let (ops, _) = scripted_ops(&store.snapshot());
+        let committed = ops.len();
+        for op in ops {
+            store.commit(op).unwrap();
+        }
+        assert_eq!(
+            *seen.lock(),
+            committed,
+            "an observer registered through a shared handle still hears every op"
+        );
+
+        // And registering a second one replaces the first: there is one
+        // observer, not a list.
+        let later = Arc::new(Mutex::new(0usize));
+        let count = Arc::clone(&later);
+        store.set_callback(Arc::new(move |_| {
+            *count.lock() += 1;
+        }));
+        store.undo().unwrap();
+        assert_eq!(*later.lock(), 1, "the new observer hears it");
+        assert_eq!(*seen.lock(), committed, "and the old one does not");
+    }
+
     /// An observer that reads back into the store must not deadlock.
     ///
     /// `journal_ops` takes the very mutex `commit` holds, and `parking_lot`'s
@@ -500,7 +563,7 @@ mod tests {
         let count = observed.clone();
 
         let store = Arc::new_cyclic(|weak: &std::sync::Weak<DocumentStore>| {
-            let mut store = DocumentStore::new(Document::new());
+            let store = DocumentStore::new(Document::new());
             let weak = weak.clone();
             store.set_callback(Arc::new(move |_| {
                 if let Some(store) = weak.upgrade() {
@@ -1066,6 +1129,7 @@ mod tests {
             enabled: true,
             params: Vec::new(),
             sample_temporally: true,
+            custom_name: None,
             extra: serde_json::Map::new(),
         }];
         store
@@ -1486,5 +1550,210 @@ mod tests {
 
         assert!(store.commit(Op::RemoveItem { id: Uuid::now_v7() }).is_err());
         assert_eq!(store.revision(), r3, "a refused op moves nothing");
+    }
+
+    /// A comp holding one layer, and its ids — the setting every lock test
+    /// needs before it can lock anything.
+    fn doc_with_layer() -> (DocumentStore, Uuid, Uuid) {
+        let comp = test_comp();
+        let comp_id = comp.id;
+        let layer = test_layer(Uuid::now_v7());
+        let layer_id = layer.id;
+        let store = DocumentStore::new(Document::new());
+        store
+            .commit(Op::AddItem {
+                index: 0,
+                item: Box::new(ProjectItem::Composition(comp)),
+            })
+            .expect("the comp goes in");
+        store
+            .commit(Op::AddLayer {
+                comp: comp_id,
+                index: 0,
+                layer: Box::new(layer),
+            })
+            .expect("the layer goes in");
+        (store, comp_id, layer_id)
+    }
+
+    fn lock(store: &DocumentStore, comp: Uuid, layer: Uuid, locked: bool) {
+        store
+            .commit(Op::SetLayerLocked {
+                comp,
+                layer,
+                locked,
+            })
+            .expect("the lock switch is never itself refused");
+    }
+
+    /// **A locked layer refuses the edits the interface used to let through**
+    /// (K-291). The Timeline guarded the *gestures* — the bar, the razor,
+    /// rename, reorder, delete — while the fold-out's transform, effect and
+    /// volume rows went on editing the layer, so the switch did not mean what
+    /// it says. The guard is in the op applier, so it covers every caller.
+    #[test]
+    fn a_locked_layer_refuses_an_edit_to_what_it_is() {
+        let (store, comp, layer) = doc_with_layer();
+        // Unlocked, the edit lands.
+        store
+            .commit(Op::RenameLayer {
+                comp,
+                layer,
+                name: "Before".into(),
+            })
+            .expect("an unlocked layer renames");
+
+        lock(&store, comp, layer, true);
+        let revision = store.revision();
+
+        let refused = store.commit(Op::RenameLayer {
+            comp,
+            layer,
+            name: "After".into(),
+        });
+        assert_eq!(refused, Err(OpError::LayerLocked));
+        assert_eq!(
+            store.revision(),
+            revision,
+            "a refused op moves nothing, so nothing to undo is left behind"
+        );
+        let doc = store.snapshot();
+        let l = &doc.comp(comp).expect("comp").layers[0];
+        assert_eq!(l.name, "Before", "the layer kept what it had");
+    }
+
+    /// The row families the backlog named — transform, effect and volume — plus
+    /// the structural edits, all refused through the one guard.
+    #[test]
+    fn a_locked_layer_refuses_every_family_of_edit() {
+        let (store, comp, layer) = doc_with_layer();
+        lock(&store, comp, layer, true);
+
+        let refused: Vec<Op> = vec![
+            Op::SetLayerVolume {
+                comp,
+                layer,
+                animation: crate::anim::Animation::Static(0.0),
+            },
+            Op::SetLayerEffects {
+                comp,
+                layer,
+                effects: Vec::new(),
+            },
+            Op::SetLayerVisible {
+                comp,
+                layer,
+                visible: false,
+            },
+            Op::SetLayerBlend {
+                comp,
+                layer,
+                blend: BlendMode::Multiply,
+            },
+            Op::SetLayerMasks {
+                comp,
+                layer,
+                masks: Vec::new(),
+            },
+            Op::RemoveLayer { comp, layer },
+            Op::ReorderLayer {
+                comp,
+                layer,
+                new_index: 0,
+            },
+        ];
+        for op in refused {
+            assert_eq!(
+                store.commit(op.clone()),
+                Err(OpError::LayerLocked),
+                "{op:?} must be refused while the layer is locked"
+            );
+        }
+    }
+
+    /// **Lock protects the work, not the housekeeping.** The lock itself has to
+    /// be accepted or it could never be undone; shy is a filter on the
+    /// Timeline's list and the label is a colour, and neither changes a pixel
+    /// or a frame.
+    #[test]
+    fn a_locked_layer_still_takes_the_lock_the_shy_flag_and_its_label() {
+        let (store, comp, layer) = doc_with_layer();
+        lock(&store, comp, layer, true);
+
+        store
+            .commit(Op::SetLayerShy {
+                comp,
+                layer,
+                shy: true,
+            })
+            .expect("shy is a view filter, not an edit to the work");
+        store
+            .commit(Op::SetLayerLabel {
+                comp,
+                layer,
+                label: 3,
+            })
+            .expect("a label colour is housekeeping");
+        // And the way back out.
+        lock(&store, comp, layer, false);
+        store
+            .commit(Op::RenameLayer {
+                comp,
+                layer,
+                name: "Unlocked".into(),
+            })
+            .expect("an unlocked layer edits again");
+    }
+
+    /// A batch is one undo step, so it is all or nothing: a member that names a
+    /// locked layer refuses the whole batch and leaves the document as it was.
+    #[test]
+    fn a_batch_touching_a_locked_layer_is_refused_whole() {
+        let (store, comp, layer) = doc_with_layer();
+        lock(&store, comp, layer, true);
+        let revision = store.revision();
+
+        let refused = store.commit(Op::Batch {
+            ops: vec![
+                Op::SetWorkArea {
+                    comp,
+                    work_area: None,
+                },
+                Op::RenameLayer {
+                    comp,
+                    layer,
+                    name: "Sneaked in".into(),
+                },
+            ],
+        });
+        assert_eq!(refused, Err(OpError::LayerLocked));
+        assert_eq!(store.revision(), revision, "the batch left nothing behind");
+    }
+
+    /// **Undo still works across a lock**, which is the property that makes the
+    /// guard safe to put in the applier at all: an edit can only have been made
+    /// while the layer was unlocked, so walking backwards always meets the
+    /// unlock before it meets the edit.
+    #[test]
+    fn undo_walks_back_past_a_lock_to_the_edit_beneath_it() {
+        let (store, comp, layer) = doc_with_layer();
+        store
+            .commit(Op::RenameLayer {
+                comp,
+                layer,
+                name: "Edited".into(),
+            })
+            .expect("edit while unlocked");
+        lock(&store, comp, layer, true);
+
+        // Back past the lock…
+        store.undo().expect("undo the lock");
+        // …and then past the edit, which is only reachable because the layer is
+        // unlocked again by the time the inverse is applied.
+        store.undo().expect("undo the edit under it");
+        let doc = store.snapshot();
+        let l = &doc.comp(comp).expect("comp").layers[0];
+        assert!(!l.switches.locked, "the lock came off first");
+        assert_ne!(l.name, "Edited", "and the edit under it came back out");
     }
 }

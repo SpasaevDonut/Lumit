@@ -11,13 +11,16 @@
 // does.
 
 import 'package:flutter/widgets.dart';
+import 'package:lumit_flutter/panels/effect_param_row_frb.dart';
 import 'package:lumit_flutter/src/rust/api/assets.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/project_item.dart';
 import 'package:lumit_flutter/src/rust/api/retime.dart';
 import 'package:lumit_flutter/src/rust/api/solid.dart';
+import 'package:lumit_flutter/widgets/autofill.dart';
 
+import '../l10n/strings.dart';
 import '../theme/theme.dart';
 import '../widgets/colour_picker.dart';
 import '../widgets/controls.dart';
@@ -47,10 +50,12 @@ class SourceRowsFrb extends StatefulWidget {
 
 class _SourceRowsFrbState extends State<SourceRowsFrb> {
   TextEditingController? _text;
+  TextEditingController? _expression;
 
   @override
   void dispose() {
     _text?.dispose();
+    _expression?.dispose();
     super.dispose();
   }
 
@@ -70,7 +75,7 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
     if (rows.isEmpty) return const SizedBox.shrink();
 
     return FxSection(
-      title: 'Source',
+      title: l10n.sourceSection,
       open: widget.open,
       onToggle: widget.onToggle,
       rows: rows,
@@ -92,11 +97,25 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
       _text?.dispose();
       _text = TextEditingController(text: document.text);
     }
+    final expression = document.expression ?? '';
+    if (_expression == null ||
+        (_expression!.text != expression && !_expression!.selection.isValid)) {
+      _expression?.dispose();
+      _expression = ExpressionTextEditingController(text: expression);
+    }
 
-    void write({String? body, double? size, BridgeColourRgba? fill}) {
+    void write({
+      String? body,
+      String? expression,
+      double? size,
+      BridgeColourRgba? fill,
+    }) {
       widget.layer.setText(
         document: BridgeTextDocument(
           text: body ?? _text!.text,
+          // An empty box is no expression at all, which the engine settles —
+          // so emptying the field simply hands the layer back to its words.
+          expression: expression ?? _expression!.text,
           size: size ?? document.size,
           fill: fill ?? document.fill,
         ),
@@ -107,7 +126,7 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
     return [
       _row(
         t,
-        'Text',
+        l10n.sourceText,
         SizedBox(
           width: _cellWidth + 60,
           child: HouseTextField(
@@ -118,9 +137,29 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
           ),
         ),
       ),
+      // The words can come from an expression instead — the same language the
+      // numeric properties use, printed rather than measured, which is how a
+      // caption shows a live value. The Text box above stays as it was: it is
+      // what the layer says again once this one is empty.
       _row(
         t,
-        'Size',
+        'Expression',
+        SizedBox(
+          //width: _cellWidth + 60,
+          child: HouseTextField(
+            key: const ValueKey('src-text-expression'),
+            controller: _expression!,
+            width: double.infinity,
+            style: t.mono,
+            submitOnLostFocus: true,
+            autofill: ExpressionAutofillGenerator(),
+            onSubmitted: (value) => write(expression: value),
+          ),
+        ),
+      ),
+      _row(
+        t,
+        l10n.size,
         SizedBox(
           width: _cellWidth,
           child: DragValueField(
@@ -135,7 +174,7 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
       ),
       _row(
         t,
-        'Fill',
+        l10n.toolFill,
         _swatch(
           t,
           keyName: 'src-text-fill',
@@ -150,13 +189,13 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
     if (zoom is! BridgeScalar_Static) {
       return _row(
         t,
-        'Zoom',
-        Text('animated', style: t.small.copyWith(color: t.textMuted)),
+        l10n.sourceZoom,
+        Text(l10n.animated, style: t.small.copyWith(color: t.textMuted)),
       );
     }
     return _row(
       t,
-      'Zoom',
+      l10n.sourceZoom,
       SizedBox(
         width: _cellWidth,
         child: DragValueField(
@@ -194,7 +233,7 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
     return [
       _row(
         t,
-        'Solid colour',
+        l10n.sourceSolidColour,
         _swatch(
           t,
           keyName: 'src-solid-colour',
@@ -204,7 +243,7 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
       ),
       _row(
         t,
-        'Solid size',
+        l10n.sourceSolidSize,
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -235,7 +274,7 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
       Padding(
         padding: const EdgeInsets.only(top: 2),
         child: Text(
-          'This is an asset — every layer using it changes.',
+          l10n.sourceAssetNote,
           style: t.small.copyWith(color: t.textMuted),
         ),
       ),
@@ -259,7 +298,7 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
   /// card on screen at all, so an offer here would give an adjustment layer a
   /// source card describing a source it does not have.
   ///
-  /// **Flow is not one of the choices here (K-268).** It used to be a third
+  /// **Flow is not one of the choices here (K-331).** It used to be a third
   /// entry in this dropdown, which made it look like a peer of Nearest and
   /// Blend — a small setting you pick and forget. It is not: it carries eight
   /// parameters of its own and is the most expensive thing a layer can ask for.
@@ -275,7 +314,7 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
     return [
       _row(
         t,
-        'In-between frames',
+        l10n.sourceInBetweenFrames,
         SizedBox(
           width: _cellWidth + 40,
           child: BareDropdown<BridgeRetimeInterp>(
@@ -283,9 +322,9 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
             value: choices.contains(live) ? live : BridgeRetimeInterp.nearest,
             options: choices,
             label: (i) => switch (i) {
-              BridgeRetimeInterp.nearest => 'Nearest',
-              BridgeRetimeInterp.blend => 'Blend',
-              BridgeRetimeInterp.flow => 'Optical flow',
+              BridgeRetimeInterp.nearest => l10n.interpNearest,
+              BridgeRetimeInterp.blend => l10n.interpBlend,
+              BridgeRetimeInterp.flow => l10n.interpOpticalFlow,
             },
             onChanged: (i) {
               widget.layer.setInterpolation(interpolation: i);
@@ -352,7 +391,7 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
   }
 
   Widget _row(LumitTheme t, String label, Widget control) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
+        padding: const EdgeInsets.symmetric(vertical: 2),
         child: fxTwoColumnRow(
           context: context,
           // A source row is not a keyable property, so its name is plain text —

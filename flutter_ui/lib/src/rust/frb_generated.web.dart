@@ -13,6 +13,7 @@ import 'api/cache.dart';
 import 'api/composition.dart';
 import 'api/effect.dart';
 import 'api/export.dart';
+import 'api/expressions.dart';
 import 'api/folder.dart';
 import 'api/footage.dart';
 import 'api/keymap.dart';
@@ -47,6 +48,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
           .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError;
 
   CrossPlatformFinalizerArg
+      get rust_arc_decrement_strong_count_ExpressionsPtr => wire
+          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerExpressions;
+
+  CrossPlatformFinalizerArg
       get rust_arc_decrement_strong_count_LumitBridgeStatePtr => wire
           .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitBridgeState;
 
@@ -61,6 +66,11 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   BridgeError
       dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError(
+          dynamic raw);
+
+  @protected
+  Expressions
+      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerExpressions(
           dynamic raw);
 
   @protected
@@ -86,6 +96,11 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   BridgeError
       dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError(
+          dynamic raw);
+
+  @protected
+  Expressions
+      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerExpressions(
           dynamic raw);
 
   @protected
@@ -135,6 +150,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeFlowParams dco_decode_box_autoadd_bridge_flow_params(dynamic raw);
 
   @protected
+  BridgeFrameProfile dco_decode_box_autoadd_bridge_frame_profile(dynamic raw);
+
+  @protected
   BridgeMask dco_decode_box_autoadd_bridge_mask(dynamic raw);
 
   @protected
@@ -152,6 +170,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeRational dco_decode_box_autoadd_bridge_rational(dynamic raw);
+
+  @protected
+  BridgeRenderProgress dco_decode_box_autoadd_bridge_render_progress(
+      dynamic raw);
 
   @protected
   BridgeRenderedFrame dco_decode_box_autoadd_bridge_rendered_frame(dynamic raw);
@@ -265,7 +287,16 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeEffectInstanceInfo dco_decode_bridge_effect_instance_info(dynamic raw);
 
   @protected
+  BridgeEffectTiming dco_decode_bridge_effect_timing(dynamic raw);
+
+  @protected
   BridgeEffectValue dco_decode_bridge_effect_value(dynamic raw);
+
+  @protected
+  BridgeEnabledCond dco_decode_bridge_enabled_cond(dynamic raw);
+
+  @protected
+  BridgeEnabledWhen dco_decode_bridge_enabled_when(dynamic raw);
 
   @protected
   BridgeExportPreset dco_decode_bridge_export_preset(dynamic raw);
@@ -283,6 +314,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeFlowParams dco_decode_bridge_flow_params(dynamic raw);
 
   @protected
+  BridgeFrameProfile dco_decode_bridge_frame_profile(dynamic raw);
+
+  @protected
   BridgeHistory dco_decode_bridge_history(dynamic raw);
 
   @protected
@@ -293,6 +327,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeKeyContext dco_decode_bridge_key_context(dynamic raw);
+
+  @protected
+  BridgeKeyShadow dco_decode_bridge_key_shadow(dynamic raw);
 
   @protected
   BridgeKeyframe dco_decode_bridge_keyframe(dynamic raw);
@@ -322,6 +359,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeLayerSwitches dco_decode_bridge_layer_switches(dynamic raw);
 
   @protected
+  BridgeLayerTiming dco_decode_bridge_layer_timing(dynamic raw);
+
+  @protected
   BridgeMarker dco_decode_bridge_marker(dynamic raw);
 
   @protected
@@ -332,6 +372,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeMediaInfo dco_decode_bridge_media_info(dynamic raw);
+
+  @protected
+  BridgeMemoryReport dco_decode_bridge_memory_report(dynamic raw);
 
   @protected
   BridgePaintMode dco_decode_bridge_paint_mode(dynamic raw);
@@ -369,6 +412,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeRecovery dco_decode_bridge_recovery(dynamic raw);
+
+  @protected
+  BridgeRenderProgress dco_decode_bridge_render_progress(dynamic raw);
 
   @protected
   BridgeRenderedFrame dco_decode_bridge_rendered_frame(dynamic raw);
@@ -486,10 +532,19 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       dynamic raw);
 
   @protected
+  List<BridgeEffectTiming> dco_decode_list_bridge_effect_timing(dynamic raw);
+
+  @protected
+  List<BridgeEnabledWhen> dco_decode_list_bridge_enabled_when(dynamic raw);
+
+  @protected
   List<BridgeKeyBinding> dco_decode_list_bridge_key_binding(dynamic raw);
 
   @protected
   List<BridgeKeyConflict> dco_decode_list_bridge_key_conflict(dynamic raw);
+
+  @protected
+  List<BridgeKeyShadow> dco_decode_list_bridge_key_shadow(dynamic raw);
 
   @protected
   List<BridgeKeyframe> dco_decode_list_bridge_keyframe(dynamic raw);
@@ -502,6 +557,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   List<BridgeLayerMarker> dco_decode_list_bridge_layer_marker(dynamic raw);
+
+  @protected
+  List<BridgeLayerTiming> dco_decode_list_bridge_layer_timing(dynamic raw);
 
   @protected
   List<BridgeMarker> dco_decode_list_bridge_marker(dynamic raw);
@@ -608,6 +666,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       dynamic raw);
 
   @protected
+  BridgeTransform? dco_decode_opt_box_autoadd_bridge_transform(dynamic raw);
+
+  @protected
   double? dco_decode_opt_box_autoadd_f_64(dynamic raw);
 
   @protected
@@ -663,6 +724,11 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
           SseDeserializer deserializer);
 
   @protected
+  Expressions
+      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerExpressions(
+          SseDeserializer deserializer);
+
+  @protected
   LumitBridgeState
       sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitBridgeState(
           SseDeserializer deserializer);
@@ -685,6 +751,11 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   BridgeError
       sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError(
+          SseDeserializer deserializer);
+
+  @protected
+  Expressions
+      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerExpressions(
           SseDeserializer deserializer);
 
   @protected
@@ -742,6 +813,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  BridgeFrameProfile sse_decode_box_autoadd_bridge_frame_profile(
+      SseDeserializer deserializer);
+
+  @protected
   BridgeMask sse_decode_box_autoadd_bridge_mask(SseDeserializer deserializer);
 
   @protected
@@ -761,6 +836,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeRational sse_decode_box_autoadd_bridge_rational(
+      SseDeserializer deserializer);
+
+  @protected
+  BridgeRenderProgress sse_decode_box_autoadd_bridge_render_progress(
       SseDeserializer deserializer);
 
   @protected
@@ -895,7 +974,19 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  BridgeEffectTiming sse_decode_bridge_effect_timing(
+      SseDeserializer deserializer);
+
+  @protected
   BridgeEffectValue sse_decode_bridge_effect_value(
+      SseDeserializer deserializer);
+
+  @protected
+  BridgeEnabledCond sse_decode_bridge_enabled_cond(
+      SseDeserializer deserializer);
+
+  @protected
+  BridgeEnabledWhen sse_decode_bridge_enabled_when(
       SseDeserializer deserializer);
 
   @protected
@@ -916,6 +1007,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeFlowParams sse_decode_bridge_flow_params(SseDeserializer deserializer);
 
   @protected
+  BridgeFrameProfile sse_decode_bridge_frame_profile(
+      SseDeserializer deserializer);
+
+  @protected
   BridgeHistory sse_decode_bridge_history(SseDeserializer deserializer);
 
   @protected
@@ -927,6 +1022,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeKeyContext sse_decode_bridge_key_context(SseDeserializer deserializer);
+
+  @protected
+  BridgeKeyShadow sse_decode_bridge_key_shadow(SseDeserializer deserializer);
 
   @protected
   BridgeKeyframe sse_decode_bridge_keyframe(SseDeserializer deserializer);
@@ -961,6 +1059,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  BridgeLayerTiming sse_decode_bridge_layer_timing(
+      SseDeserializer deserializer);
+
+  @protected
   BridgeMarker sse_decode_bridge_marker(SseDeserializer deserializer);
 
   @protected
@@ -971,6 +1073,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeMediaInfo sse_decode_bridge_media_info(SseDeserializer deserializer);
+
+  @protected
+  BridgeMemoryReport sse_decode_bridge_memory_report(
+      SseDeserializer deserializer);
 
   @protected
   BridgePaintMode sse_decode_bridge_paint_mode(SseDeserializer deserializer);
@@ -1010,6 +1116,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeRecovery sse_decode_bridge_recovery(SseDeserializer deserializer);
+
+  @protected
+  BridgeRenderProgress sse_decode_bridge_render_progress(
+      SseDeserializer deserializer);
 
   @protected
   BridgeRenderedFrame sse_decode_bridge_rendered_frame(
@@ -1140,11 +1250,23 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  List<BridgeEffectTiming> sse_decode_list_bridge_effect_timing(
+      SseDeserializer deserializer);
+
+  @protected
+  List<BridgeEnabledWhen> sse_decode_list_bridge_enabled_when(
+      SseDeserializer deserializer);
+
+  @protected
   List<BridgeKeyBinding> sse_decode_list_bridge_key_binding(
       SseDeserializer deserializer);
 
   @protected
   List<BridgeKeyConflict> sse_decode_list_bridge_key_conflict(
+      SseDeserializer deserializer);
+
+  @protected
+  List<BridgeKeyShadow> sse_decode_list_bridge_key_shadow(
       SseDeserializer deserializer);
 
   @protected
@@ -1161,6 +1283,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   List<BridgeLayerMarker> sse_decode_list_bridge_layer_marker(
+      SseDeserializer deserializer);
+
+  @protected
+  List<BridgeLayerTiming> sse_decode_list_bridge_layer_timing(
       SseDeserializer deserializer);
 
   @protected
@@ -1288,6 +1414,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  BridgeTransform? sse_decode_opt_box_autoadd_bridge_transform(
+      SseDeserializer deserializer);
+
+  @protected
   double? sse_decode_opt_box_autoadd_f_64(SseDeserializer deserializer);
 
   @protected
@@ -1348,6 +1478,11 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   void
+      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerExpressions(
+          Expressions self, SseSerializer serializer);
+
+  @protected
+  void
       sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitBridgeState(
           LumitBridgeState self, SseSerializer serializer);
 
@@ -1370,6 +1505,11 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   void
       sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError(
           BridgeError self, SseSerializer serializer);
+
+  @protected
+  void
+      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerExpressions(
+          Expressions self, SseSerializer serializer);
 
   @protected
   void
@@ -1426,6 +1566,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeFlowParams self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_bridge_frame_profile(
+      BridgeFrameProfile self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_bridge_mask(
       BridgeMask self, SseSerializer serializer);
 
@@ -1448,6 +1592,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_box_autoadd_bridge_rational(
       BridgeRational self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_bridge_render_progress(
+      BridgeRenderProgress self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_bridge_rendered_frame(
@@ -1591,8 +1739,20 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeEffectInstanceInfo self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_effect_timing(
+      BridgeEffectTiming self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_effect_value(
       BridgeEffectValue self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_enabled_cond(
+      BridgeEnabledCond self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_enabled_when(
+      BridgeEnabledWhen self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_export_preset(
@@ -1615,6 +1775,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeFlowParams self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_frame_profile(
+      BridgeFrameProfile self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_history(BridgeHistory self, SseSerializer serializer);
 
   @protected
@@ -1628,6 +1792,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_bridge_key_context(
       BridgeKeyContext self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_key_shadow(
+      BridgeKeyShadow self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_keyframe(
@@ -1666,6 +1834,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeLayerSwitches self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_layer_timing(
+      BridgeLayerTiming self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_marker(BridgeMarker self, SseSerializer serializer);
 
   @protected
@@ -1677,6 +1849,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_bridge_media_info(
       BridgeMediaInfo self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_memory_report(
+      BridgeMemoryReport self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_paint_mode(
@@ -1724,6 +1900,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_bridge_recovery(
       BridgeRecovery self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_render_progress(
+      BridgeRenderProgress self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_rendered_frame(
@@ -1864,12 +2044,24 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       List<BridgeEffectInstanceInfo> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_bridge_effect_timing(
+      List<BridgeEffectTiming> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_bridge_enabled_when(
+      List<BridgeEnabledWhen> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_bridge_key_binding(
       List<BridgeKeyBinding> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_bridge_key_conflict(
       List<BridgeKeyConflict> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_bridge_key_shadow(
+      List<BridgeKeyShadow> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_bridge_keyframe(
@@ -1886,6 +2078,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_list_bridge_layer_marker(
       List<BridgeLayerMarker> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_bridge_layer_timing(
+      List<BridgeLayerTiming> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_bridge_marker(
@@ -2018,6 +2214,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeTextDocument? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_bridge_transform(
+      BridgeTransform? self, SseSerializer serializer);
+
+  @protected
   void sse_encode_opt_box_autoadd_f_64(double? self, SseSerializer serializer);
 
   @protected
@@ -2096,6 +2296,18 @@ class BridgeLibWire implements BaseWire {
           .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError(
               ptr);
 
+  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerExpressions(
+          int ptr) =>
+      wasmModule
+          .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerExpressions(
+              ptr);
+
+  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerExpressions(
+          int ptr) =>
+      wasmModule
+          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerExpressions(
+              ptr);
+
   void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitBridgeState(
           int ptr) =>
       wasmModule
@@ -2129,6 +2341,14 @@ extension type BridgeLibWasmModule._(JSObject _) implements JSObject {
 
   external void
       rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError(
+          int ptr);
+
+  external void
+      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerExpressions(
+          int ptr);
+
+  external void
+      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerExpressions(
           int ptr);
 
   external void

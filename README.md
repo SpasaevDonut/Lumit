@@ -1,85 +1,161 @@
+[English](./README.md) | [中文](./README.zh-CN.md) |
+<div align="center">
+
+<a href="https://lumitlab.com">
+<img src="assets/brand/lumit-mark.svg" alt="lumitlab.com" width="96">
+</a>
+
 # Lumit
 
-A native motion-graphics and compositing editor — After Effects' depth, Vegas' retiming
-soul, one application. Built first for gaming-edit and montage editors; growing into a full
-After Effects replacement. Rust · wgpu · Flutter · GPLv3.
+**A native motion-graphics and compositing editor.**
+After Effects' depth, Vegas' retiming, one application. Free and open source.
 
-**Status: design phase.** The complete system is specified in [docs/](docs/) before the
-first line of application code; the specs are canonical and implementation follows them.
+[![CI](https://github.com/luminalmvm/Lumit/actions/workflows/ci.yml/badge.svg)](https://github.com/luminalmvm/Lumit/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/luminalmvm/Lumit?sort=semver&label=release)](https://github.com/luminalmvm/Lumit/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/luminalmvm/Lumit/total?label=downloads)](https://github.com/luminalmvm/Lumit/releases)
+[![Crowdin](https://badges.crowdin.net/lumit/localized.svg)](https://crowdin.com/project/lumit)
+[![Licence: GPL v3](https://img.shields.io/badge/licence-GPLv3-blue)](LICENSE)
 
-## Why
+[Website](https://lumitlab.com) ·
+[Download](https://lumitlab.com/download) ·
+[Documentation](https://docs.lumitlab.com) ·
+[Releases](https://lumitlab.com/releases) ·
+[Roadmap](docs/16-ROADMAP.md)
 
-The montage scene edits in After Effects plus an expensive third-party plugin stack, and
-lives with preview lag, crashes, and a retiming workflow many of them fight. Lumit's
-promises: playback at speed, degrade-never-crash, retiming as a first-class citizen with a
-beat-sync covenant, and the genre's staple effects in the box. The full pitch:
-[docs/00-VISION.md](docs/00-VISION.md).
+</div>
 
-## The documentation set
+<!-- A screenshot of the editor goes here. -->
 
-| Doc | What it specifies |
-|---|---|
-| [00-VISION](docs/00-VISION.md) | Why Lumit exists, pillars, non-goals, the v1 milestone |
-| [01-GLOSSARY](docs/01-GLOSSARY.md) | Canonical terminology — binding on all docs, UI, and code |
-| [02-DECISIONS](docs/02-DECISIONS.md) | Numbered decision log with rationale |
-| [03-DATA-MODEL](docs/03-DATA-MODEL.md) | Project/comp/layer/clip/property/keyframe object model |
-| [04-RETIMING](docs/04-RETIMING.md) | The Retime system: segments, two graph lenses, the covenant |
-| [05-ARCHITECTURE](docs/05-ARCHITECTURE.md) | Crates, threads, document snapshots, evaluation graph, GPU |
-| [06-RENDER-PIPELINE](docs/06-RENDER-PIPELINE.md) | Render order, colour, caching, preview, export |
-| [07-UI-SPEC](docs/07-UI-SPEC.md) | Panels, workspaces, Viewer, Timeline, graph editor, keymap |
-| [08-EFFECTS](docs/08-EFFECTS.md) | Built-in effect suite (the montage staples in-box) |
-| [09-AUDIO](docs/09-AUDIO.md) | v1 sync toolkit; the future Composer |
-| [10-FILE-FORMAT](docs/10-FILE-FORMAT.md) | The .lum container, sidecar caches, autosave |
-| [11-AE-IMPORT](docs/11-AE-IMPORT.md) | After Effects project import and the fidelity matrix |
-| [12-PLUGINS](docs/12-PLUGINS.md) | OFX hosting, the LFX native API, expressions |
-| [13-PERFORMANCE-RULES](docs/13-PERFORMANCE-RULES.md) | Budgets, resource governor, degradation ladder |
-| [14-ENGINEERING-RULES](docs/14-ENGINEERING-RULES.md) | Binding rules for all code |
-| [15-DESIGN](docs/15-DESIGN.md) | Dark-first Aizome design language |
-| [16-ROADMAP](docs/16-ROADMAP.md) | Phases and their gates |
+## What is Lumit
 
-Three companion pieces:
-- [docs/GUIDE.md](docs/GUIDE.md) — the plain-English guide to the codebase: what each crate
-  does, Rust and threading explained in editing terms, and the safe-change recipe. Start
-  here if you aren't a Rust developer.
-- [docs/impl/](docs/impl/) — implementation notes for the genuinely hard, low-level parts
-  (rational time, cubic solving, wgpu patterns, hardware decode interop, the scheduler,
-  optical flow, OFX hosting, beat detection, expression embedding): exact algorithms,
-  reference code, traps, and test plans.
-- [docs/research/](docs/research/) — the research notes that informed the specs.
+Lumit aims to bring the best of After Effects and Vegas to provide a way to
+composite, cut, and retime all in a single editor. We hope to bring in an
+audio editing view, as well as node editing in the future as well to let you
+work your way.
 
-## Building
+Lumit was built as an alternative to after effects. The goal of which is a 
+responsive application, that no matter the number of keyframes or layers in
+your project, doesn't slow down to a crawl and become unresponsive.
 
-Lumit's engine builds on Windows, macOS, and Linux with the stable Rust
-toolchain. The one external dependency is **FFmpeg 7.X** (video and audio decode),
-plus **LLVM 18** for the binding generator (newer LLVM silently generates broken
-bindings, so 18 is pinned on every platform). Development is Windows-first.
+We want to keep this open-source to allow anyone in the scene to contribute and
+help support other's who want to create. Please bear in mind Lumit is still 
+very early-access, if you discover bugs or issues, or even additional features
+you want implemented, please raise an issue or work on it yourself and make a PR.
 
-- **Windows**: unzip a [BtbN FFmpeg 7.1 shared/GPL build](https://github.com/BtbN/FFmpeg-Builds/releases)
-under `%USERPROFILE%\ffmpeg\` , run `winget install LLVM. LLVM -- version 18.1.8`,
-then `. .\scripts\win-dev-env.ps1 -Persist` to wire it up.
-**macOS**: `brew install ffmpeg@7`, then, because that formula is keg-only,
-`export FFMPEG_PKG_CONFIG_PATH="$(brew --prefix ffmpeg@7)/lib/pkgconfig"` in the
-shell you build from (K-204). Then `cargo test --workspace`.
-**Linux** (K-082): install the FFmpeg 7 development packages plus `pkg-config`
-and `clang`. Debian 13 / Ubuntu 24.10 or newer:
-`sudo apt install pkg-config clang libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev libavdevice-dev`
-Arch / Artix: `sudo pacman -S ffmpeg pkgconf clang18 llvm18` (the unversioned
-`clang` package is LLVM 19+ and produces broken bindings).
-FFmpeg needs no environment variable on Linux — the development packages put
-their `.pc` files on `pkg-config`'s default search path, which is where the
-build looks. One variable may still be needed, in the shell you build from:
+## Why it exists
+
+This was made due to my issues frag editing in after effects and most of the time
+spent working was waiting for previews. This originally was meant to be aimed at
+frag and montage editors, but it has vastly expanded in scope to become a fully 
+built out composite editor.
+
+There were a couple of goals Lumit aims to provide for editors as well to make
+it an editor you never need to leave:
+- **Retiming with multiple options.** Whether you prefer After effect's time 
+  remapping, or vegas' velocity, you can change the default graph view as you see
+  fit, and sequence layers allow you to cut and splice clips together within a 
+  single layer, whilst still allowing retiming per clip
+- **Effect staples builtin** Glow, motion blur, camera shake, RGB
+  split, smooth zoom, grades with a LUT loader, a physically-modelled lens
+  flare. and many more. All built-in with no external plugins required. 
+  OFX support, as well as our own custom plugin and scripting are planned.
+
+## Installing
+
+Installer's can be found at [lumitlab.com/download](https://lumitlab.com/download) or
+the [latest GitHub release](https://github.com/luminalmvm/Lumit/releases/latest).
+Lumit can check for updates and installs them automatically or when you want.
+
+## Building from source
+
+Rust stable (pinned by `rust-toolchain.toml`) plus two external dependencies:
+**FFmpeg 7.x** for media, and **LLVM 18** for the binding generator — newer LLVM
+silently generates broken bindings, so 18 is pinned on every platform.
+
+<details>
+<summary><b>Windows</b> (my primary development platform)</summary>
+
+Unzip a [BtbN FFmpeg 7.1 shared/GPL build](https://github.com/BtbN/FFmpeg-Builds/releases)
+under `%USERPROFILE%\ffmpeg\`, then:
+
+```powershell
+winget install LLVM.LLVM --version 18.1.8
+. .\scripts\win-dev-env.ps1 -Persist
+cargo test --workspace
+```
+</details>
+
+<details>
+<summary><b>macOS</b></summary>
+
+```sh
+brew install ffmpeg@7
+# The formula is keg-only, so point the build at it (K-204):
+export FFMPEG_PKG_CONFIG_PATH="$(brew --prefix ffmpeg@7)/lib/pkgconfig"
+cargo test --workspace
+```
+</details>
+
+<details>
+<summary><b>Linux</b> (K-082)</summary>
+
+FFmpeg needs no environment variable here — the development packages put their
+`.pc` files where the build already looks.
+
+```sh
+# Debian 13 / Ubuntu 24.10 or newer
+sudo apt install pkg-config clang libavcodec-dev libavformat-dev libavutil-dev \
+  libswscale-dev libswresample-dev libavfilter-dev libavdevice-dev
+
+# Arch / Artix — the unversioned clang is LLVM 19+ and produces broken bindings
+sudo pacman -S ffmpeg pkgconf clang18 llvm18
+```
+
+If your default `clang` is newer than 18, point the build at 18 in the shell you
+build from:
+
 ```sh
 export LIBCLANG_PATH=/usr/lib/llvm18/lib          # Debian/Ubuntu: /usr/lib/llvm-18/lib
+cargo test --workspace
 ```
-It is only required where the default `clang` is newer than 18. FFmpeg **7.x** is required;
-distributions still shipping FFmpeg 6 (Ubuntu 24.04 LTS included) need a newer
-release or a self-built FFmpeg first.
 
-The Flutter frontend lives in [flutter_ui/](flutter_ui/) and is built with the
-Flutter SDK; see [flutter_ui/README.md](flutter_ui/README.md).
+FFmpeg **7.x** is required; distributions still on FFmpeg 6 (including Ubuntu
+24.04 LTS) need a newer release or a self-built FFmpeg first.
+</details>
 
-Step-by-step build notes in plain English are in [docs/GUIDE.md](docs/GUIDE.md) §8.
+
+The interface is in [flutter_ui/](flutter_ui/) and requires the Flutter SDK —
+see [flutter_ui/README.md](flutter_ui/README.md). Step-by-step build notes in
+plain English are in [docs/GUIDE.md](docs/GUIDE.md) §8.
+
+## How the repository works
+
+| | |
+|---|---|
+| [docs/README.md](docs/README.md) | The index — start here. Eighteen numbered specs, from the vision to the roadmap. |
+| [docs/GUIDE.md](docs/GUIDE.md) | Used to be Plain English, no Rust assumed. What each crate does, and how to change things safely. However has become a monster of a file and some sections are worth ignoring completely. If you are looking for info I'd now recommend [docs.lumitlab.com](docs.lumitlab.com) |
+| [docs/02-DECISIONS.md](docs/02-DECISIONS.md) | Every design decision with its reasoning, append-only. Search it, don't read it. |
+| [docs/impl/](docs/impl/) | The implementation notes for more difficult area's. |
+| [docs/TODO.md](docs/TODO.md) | What is next to work on now, next and later. |
+
+The engine is a Cargo workspace under `crates/`; the interface is
+`flutter_ui/`; they meet at `crates/lumit-bridge`
+([17-BRIDGE-CONTRACT.md](docs/17-BRIDGE-CONTRACT.md)). `web/` and `web-docs/`
+are the public site [lumitlab.com](lumitlab.com), and depend on nothing else here.
+
+## Contributing
+
+Issues and pull requests are welcome.
+
+- [docs/01-GLOSSARY.md](docs/01-GLOSSARY.md) is binding on code, UI text and
+  commit messages, please make sure to use the correct terms detailed here.
+- Everything lands with tests, and CI runs must succeed.
+
+Translators especially welcome: the interface is fully externalised but nothing
+is translated yet. That work happens on
+[Crowdin](https://crowdin.com/project/lumit), not in this repository — the only
+language file edited here is the British-English source.
 
 ## Licence
 
-[GPLv3](LICENSE). Forks remain open source; contributions are welcome.
+[GPLv3](LICENSE). Forks stay open source.

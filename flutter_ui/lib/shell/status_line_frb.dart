@@ -16,8 +16,11 @@ import 'package:lumit_flutter/src/rust/api/cache.dart';
 import 'package:lumit_flutter/src/rust/api/export.dart';
 import 'package:provider/provider.dart';
 
+import '../l10n/strings.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
+import 'package:lumit_flutter/panels/timeline_timings.dart';
+
 import 'cache_confirm_frb.dart';
 
 class StatusLineFrb extends StatefulWidget {
@@ -85,6 +88,12 @@ class _StatusLineFrbState extends State<StatusLineFrb> {
             ),
           ),
           _divider(t),
+          // The render-time switch, beside the meters for the same reason they
+          // are here: it governs the whole session and it costs something to
+          // have on (K-276). It began life as a glyph in the Timeline's column
+          // header, which is where nobody found it.
+          const RenderTimingsToggle(),
+          _divider(t),
           Expanded(
             child: Row(
               children: [
@@ -113,12 +122,12 @@ class _StatusLineFrbState extends State<StatusLineFrb> {
     final project = state.project;
     final dirty = project?.isDirty() ?? false;
     final label = project == null
-        ? 'No project'
+        ? l10n.noProject
         : dirty
-            ? 'Unsaved changes'
+            ? l10n.unsavedChanges
             : project.path() == null
-                ? 'Not saved yet'
-                : 'Saved';
+                ? l10n.notSavedYet
+                : l10n.saved;
     return Text(
       label,
       key: const ValueKey('status-saved'),
@@ -164,7 +173,7 @@ class _StatusLineFrbState extends State<StatusLineFrb> {
           [
             Flexible(
               child: Text(
-                'Exporting frame $frame of $total ($encoder)',
+                l10n.exportingFrame('$frame', '$total', encoder),
                 key: const ValueKey('status-export-progress'),
                 style: t.small,
                 overflow: TextOverflow.ellipsis,
@@ -189,13 +198,13 @@ class _StatusLineFrbState extends State<StatusLineFrb> {
               small: true,
               frameless: true,
               onPressed: exportCancel,
-              child: Text('Cancel', style: t.small),
+              child: Text(l10n.cancel, style: t.small),
             ),
           ],
         BridgeExportState_Done(:final path) => [
             Flexible(
               child: Text(
-                'Exported to $path',
+                l10n.exportedTo(path),
                 key: const ValueKey('status-export-done'),
                 style: t.small,
                 overflow: TextOverflow.ellipsis,
@@ -206,8 +215,8 @@ class _StatusLineFrbState extends State<StatusLineFrb> {
             Flexible(
               child: Text(
                 error == 'cancelled'
-                    ? 'Export cancelled'
-                    : 'Export failed: $error',
+                    ? l10n.exportCancelled
+                    : l10n.exportFailed(error),
                 key: const ValueKey('status-export-failed'),
                 style: t.small.copyWith(color: t.warning),
                 overflow: TextOverflow.ellipsis,
@@ -252,7 +261,7 @@ class CacheMeterFrb extends StatelessWidget {
       key: const ValueKey('cache-meter'),
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text('Cache', style: t.small.copyWith(color: t.textMuted)),
+        Text(l10n.cache, style: t.small.copyWith(color: t.textMuted)),
         const SizedBox(width: 6),
         _TierMeter(
           keyName: 'cache-meter-ram',
@@ -260,10 +269,8 @@ class CacheMeterFrb extends StatelessWidget {
           used: ram.usedBytes.toInt(),
           budget: ram.budgetBytes.toInt(),
           tip: requests == 0
-              ? 'Frames held in memory, of ${_mibText(ram.budgetBytes.toInt())} '
-                  'MB — nothing rendered yet. Click to clear'
-              : '${ram.hits} served from memory, ${ram.misses} rendered, of '
-                  '${_mibText(ram.budgetBytes.toInt())} MB — click to clear',
+              ? l10n.tipCacheEmpty
+              : l10n.tipCacheRam('${ram.hits}', '${ram.misses}'),
           onClear: clearCache,
         ),
         const SizedBox(width: 8),
@@ -272,22 +279,18 @@ class CacheMeterFrb extends StatelessWidget {
           label: 'VRAM',
           used: vram.usedBytes.toInt(),
           budget: vram.budgetBytes.toInt(),
-          tip: 'Frames held on the graphics card, ready to show without '
-              'compositing, of ${_mibText(vram.budgetBytes.toInt())} MB '
-              '— click to clear',
+          tip: l10n.tipCacheVram,
           onClear: clearVramCache,
         ),
         const SizedBox(width: 8),
         _TierMeter(
           keyName: 'cache-meter-disk',
-          label: 'Disk',
+          label: l10n.diskTier,
           used: disk.usedBytes.toInt(),
           budget: disk.budgetBytes.toInt(),
           tip: disk.root.isEmpty
-              ? 'Nowhere to park frames on this machine'
-              : 'Frames parked on disk, one promotion from playing, of '
-                  '${_mibText(disk.budgetBytes.toInt())} MB in ${disk.root} '
-                  '— click to delete them',
+              ? l10n.tipCacheDiskNone
+              : l10n.tipCacheDisk(disk.root),
           // The one tier whose clear destroys files rather than costing a
           // re-render, so it asks first (docs/07 §15).
           onClear: () => confirmClearDiskCache(context),
@@ -351,7 +354,6 @@ class _TierMeter extends StatelessWidget {
       ),
     );
   }
-
 }
 
 /// Bytes as whole megabytes, for the meter's readouts and its tooltips.

@@ -21,7 +21,12 @@
 //! - **Algorithm version** (`ALGO_VERSION`) is bumped whenever rendering
 //!   output changes, invalidating every old entry by construction.
 
-use lumit_core::model::{Composition, Document, LayerKind, MatteChannel};
+use std::sync::Arc;
+
+use lumit_core::{
+    expression::ExpressionContext,
+    model::{Composition, Document, LayerKind, MatteChannel},
+};
 use uuid::Uuid;
 
 pub mod epoch;
@@ -39,7 +44,11 @@ pub mod schedule;
 ///   [`feed_layer`]). Under version 1 a hidden parent could be moved without
 ///   renaming its children's frames, so those frames were served stale; every
 ///   version-1 entry has to stop being addressed for the fix to mean anything.
-pub const ALGO_VERSION: u32 = 2;
+/// * 3 — anti-aliasing (K-274). Two reasons at once, either sufficient: the key
+///   now covers the project's sample count, and turning the setting on by
+///   default changes what every comp renders to. Every version-2 frame was made
+///   without anti-aliasing, so none of them may be served again.
+pub const ALGO_VERSION: u32 = 3;
 
 /// A 128-bit content hash addressing one rendered comp frame (docs/06 §5.2:
 /// collisions are treated as impossible; no structural comparison at lookup).
@@ -69,7 +78,7 @@ pub trait SourceStamper {
     /// still unprobed — an unknown source makes the whole frame unkeyable.
     ///
     /// `native` asks for the source at its own width regardless of the preview
-    /// quality tier: a layer whose flow engages decodes natively (K-268),
+    /// quality tier: a layer whose flow engages decodes natively (K-331),
     /// because full-resolution flow cannot be measured on a shrunk decode. The
     /// identity this returns embeds the decode width, and **the width in the
     /// name must be the width the pixels were decoded at** — the plan and this
@@ -80,7 +89,7 @@ pub trait SourceStamper {
 
     /// The source's own frame rate, when known.
     ///
-    /// Only the flow engagement gate needs this (K-268): flow that cannot help
+    /// Only the flow engagement gate needs this (K-331): flow that cannot help
     /// renders as plain Nearest, and a key that did not know that would hash
     /// the sub-frame position of a frame which is bit-identical to its
     /// neighbours — re-rendering, on a fast section of a ramp, frames it
@@ -104,7 +113,12 @@ pub fn comp_frame_key(
 ) -> Option<FrameKey> {
     let mut visited = Vec::new();
     let mut h = blake3::Hasher::new();
-    feed_comp(&mut h, doc, comp, t, quality, stamper, &mut visited)?;
+    // Taken once per key, not once per layer. An expression context needs an
+    // owned handle on the document, and cloning the project per layer is
+    // quadratic in layer count — 30ms a frame at two hundred layers, which is
+    // twice the whole 60fps budget spent before anything is drawn.
+    let doc = Arc::new(doc.clone());
+    feed_comp(&mut h, &doc, comp, t, quality, stamper, &mut visited)?;
     let bytes = h.finalize();
     let mut k = [0u8; 16];
     k.copy_from_slice(&bytes.as_bytes()[..16]);
@@ -113,7 +127,7 @@ pub fn comp_frame_key(
 
 fn feed_comp(
     h: &mut blake3::Hasher,
-    doc: &Document,
+    doc: &Arc<Document>,
     comp: &Composition,
     t: f64,
     quality: Quality,
@@ -125,6 +139,11 @@ fn feed_comp(
     h.update(&comp.width.to_le_bytes());
     h.update(&comp.height.to_le_bytes());
     h.update(&quality.divisor.to_le_bytes());
+    // The project's anti-aliasing count (K-274). It changes the pixels of every
+    // comp, so it belongs in the name of every frame: without it a frame banked
+    // before the setting moved would be handed back after it, and the picture
+    // would silently disagree with the setting.
+    h.update(&doc.anti_aliasing.samples().to_le_bytes());
     for c in comp.background.0 {
         h.update(&c.to_le_bytes());
     }
@@ -201,7 +220,7 @@ fn feed_effect_stack(
     effects: &[lumit_core::model::EffectInstance],
     marker_layer: &lumit_core::model::Layer,
     comp: &Composition,
-    doc: &Document,
+    doc: &Arc<Document>,
     t: f64,
     lt: f64,
     quality: Quality,
@@ -212,8 +231,8 @@ fn feed_effect_stack(
     if !(fx_on && effects.iter().any(|e| e.enabled)) {
         return Some(());
     }
-    let comp_fps = comp.frame_rate.fps();
     h.update(b"effects/");
+
     // The §1.4 marker context, built lazily (only marker-driven effects read
     // it) by the same shared constructor resolution uses (K-031), so the key
     // hashes exactly the beat times resolution sees.
@@ -290,6 +309,20 @@ fn feed_effect_stack(
                     // recurse; `visited` still guards any precomp cycle
                     // inside that source. An unset or dangling reference
                     // feeds a distinct 0 marker (the effect is a no-op).
+                    //
+                    // **This layer** (K-288) feeds its own marker and stops.
+                    // The reference names the effect's own input, not a
+                    // second render, and that input is already in the key:
+                    // this layer's source and the stack above this effect
+                    // are hashed by the walk we are inside, and on an
+                    // adjustment layer the composite below is hashed by the
+                    // other layers' own `feed_layer` calls (draw order is
+                    // content). Recursing here would re-hash the same
+                    // source for no gain.
+                    if *lref == Some(marker_layer.id) {
+                        h.update(&[2]);
+                        continue;
+                    }
                     match lref
                         .as_ref()
                         .and_then(|id| comp.layers.iter().find(|l| l.id == *id))
@@ -298,7 +331,7 @@ fn feed_effect_stack(
                             h.update(&[1]);
                             h.update(src.id.as_bytes());
                             let slt = t - src.start_offset.0.to_f64();
-                            feed_source(h, doc, src, slt, comp_fps, quality, stamper, visited)?;
+                            feed_source(h, doc, comp, src, slt, t, quality, stamper, visited)?;
                             let dtr = &src.transform;
                             for v in [
                                 dtr.position_x.value_at(slt),
@@ -407,7 +440,7 @@ fn feed_effect_stack(
 #[allow(clippy::too_many_arguments)]
 fn feed_layer(
     h: &mut blake3::Hasher,
-    doc: &Document,
+    doc: &Arc<Document>,
     comp: &Composition,
     layer: &lumit_core::model::Layer,
     t: f64,
@@ -417,23 +450,30 @@ fn feed_layer(
     visited: &mut Vec<Uuid>,
 ) -> Option<()> {
     h.update(b"layer/");
-    let comp_fps = comp.frame_rate.fps();
-    feed_source(h, doc, layer, lt, comp_fps, quality, stamper, visited)?;
+    feed_source(h, doc, comp, layer, lt, t, quality, stamper, visited)?;
+
+    let context = Arc::new(ExpressionContext {
+        document: doc.clone(),
+        comp: Some(comp.id),
+        layer: Some(layer.id),
+        comp_time: t,
+        current_depth: 0,
+    });
 
     // Evaluated transform at the layer's local time — never keyframe data.
     let tr = &layer.transform;
     for v in [
-        tr.position_x.value_at(lt),
-        tr.position_y.value_at(lt),
-        tr.position_z.value_at(lt),
-        tr.anchor_x.value_at(lt),
-        tr.anchor_y.value_at(lt),
-        tr.scale_x.value_at(lt),
-        tr.scale_y.value_at(lt),
-        tr.rotation.value_at(lt),
-        tr.rotation_x.value_at(lt),
-        tr.rotation_y.value_at(lt),
-        tr.opacity.value_at(lt),
+        tr.position_x.value_at_with_context(lt, context.clone()),
+        tr.position_y.value_at_with_context(lt, context.clone()),
+        tr.position_z.value_at_with_context(lt, context.clone()),
+        tr.anchor_x.value_at_with_context(lt, context.clone()),
+        tr.anchor_y.value_at_with_context(lt, context.clone()),
+        tr.scale_x.value_at_with_context(lt, context.clone()),
+        tr.scale_y.value_at_with_context(lt, context.clone()),
+        tr.rotation.value_at_with_context(lt, context.clone()),
+        tr.rotation_x.value_at_with_context(lt, context.clone()),
+        tr.rotation_y.value_at_with_context(lt, context.clone()),
+        tr.opacity.value_at_with_context(lt, context.clone()),
     ] {
         feed_f64(h, v);
     }
@@ -564,7 +604,7 @@ fn feed_layer(
                 let nlt = lt + f64::from(o) * comp_dt;
                 let nst = layer.source_time_at(nlt);
                 // These neighbours are what the flow field is measured
-                // against, so they follow the same native-decode rule (K-268).
+                // against, so they follow the same native-decode rule (K-331).
                 let native = wants_flow(layer, &layer.interpolation);
                 if let Some((identity, frame)) = stamper.stamp(*item, nst, native) {
                     h.update(&o.to_le_bytes());
@@ -620,7 +660,7 @@ fn feed_layer(
                     mr.source.key_byte(),
                 ]);
                 let mlt = t - src.start_offset.0.to_f64();
-                feed_source(h, doc, src, mlt, comp_fps, quality, stamper, visited)?;
+                feed_source(h, doc, comp, src, mlt, t, quality, stamper, visited)?;
                 let mtr = &src.transform;
                 for v in [
                     mtr.position_x.value_at(mlt),
@@ -709,21 +749,29 @@ fn blend_tag(b: lumit_core::model::BlendMode) -> u8 {
 #[allow(clippy::too_many_arguments)] // one hasher walk; bundling would hide it
 fn feed_source(
     h: &mut blake3::Hasher,
-    doc: &Document,
+    doc: &Arc<Document>,
+    // The comp the layer sits in — the expression context a text layer's words
+    // may be resolved through, so the key hashes the line the rasteriser will
+    // actually draw.
+    owner: &Composition,
     layer: &lumit_core::model::Layer,
     lt: f64,
-    comp_fps: f64,
+    comp_time: f64,
     quality: Quality,
     stamper: &dyn SourceStamper,
     visited: &mut Vec<Uuid>,
 ) -> Option<()> {
+    // The comp's own rate, which is what a flow conform rate is judged against
+    // (K-331). Read from the comp the caller passes rather than carried as a
+    // parameter of its own: one fewer thing two call paths can disagree about.
+    let comp_fps = owner.frame_rate.fps();
     match &layer.kind {
         LayerKind::Footage { item } => {
             // The retime maps local time → source time; the cache key must key
             // the RETIMED source frame, so two different ramps never collide.
             let source_time = layer.source_time_at(lt);
             // Decided before the stamp, because a flow layer decodes natively
-            // and the identity embeds the width it was decoded at (K-268).
+            // and the identity embeds the width it was decoded at (K-331).
             let effective = flow_effective_at(
                 &layer.interpolation,
                 layer.retime.as_ref(),
@@ -753,7 +801,7 @@ fn feed_source(
             // distinctly; identical times reuse, so it never over-renders a
             // truly repeated position.
             {
-                // Flow that cannot help renders as plain Nearest (K-268), and
+                // Flow that cannot help renders as plain Nearest (K-331), and
                 // that must be what the key says: otherwise a flow layer on a
                 // 100%-or-faster stretch would hash its sub-frame position and
                 // re-render frames identical to ones it already holds.
@@ -783,7 +831,18 @@ fn feed_source(
         },
         LayerKind::Text { document } => {
             h.update(b"text/");
-            h.update(document.text.as_bytes());
+            // The *resolved* line, not the stored one: an expression-driven
+            // caption says something different at every frame, and hashing the
+            // stored text would key them all the same and freeze the first
+            // frame it rendered on screen for the rest of the comp.
+            let context = ExpressionContext {
+                document: doc.clone(),
+                comp: Some(owner.id),
+                layer: Some(layer.id),
+                comp_time,
+                current_depth: 0,
+            };
+            h.update(document.resolved_text(Arc::new(context)).as_bytes());
             h.update(&[0]); // length delimiter: text then size never collide
             feed_f64(h, document.size);
             for c in document.fill.0 {
@@ -836,7 +895,7 @@ fn feed_source(
                     h.update(&frame.to_le_bytes());
                     {
                         // Gated exactly as the Footage case: flow that cannot
-                        // help keys as the Nearest it renders as (K-268). The
+                        // help keys as the Nearest it renders as (K-331). The
                         // clip's own retime supplied the speed, since a
                         // Sequence layer's clips each carry their own.
                         let interpolation = seq_interp;
@@ -900,11 +959,11 @@ fn feed_source(
 /// retime Flow option engaging, or a live flow-consuming effect (Fast motion
 /// blur, Datamosh) asking for a field.
 ///
-/// Such a layer decodes at native width whatever the preview tier says (K-268).
+/// Such a layer decodes at native width whatever the preview tier says (K-331).
 /// The rule is deliberately "whoever asks", not "the retime option only": flow
 /// measured on a shrunk decode is a *different measurement*, not the same one
 /// smaller, and a preview that quietly measures differently from the export is
-/// the exact fault K-268 set out to remove. Making the rule uniform is also what
+/// the exact fault K-331 set out to remove. Making the rule uniform is also what
 /// lets the two consumers share one cached field — they ask for the same frame
 /// pair at the same resolution, so they get the same answer once.
 fn wants_flow(
@@ -916,7 +975,7 @@ fn wants_flow(
 }
 
 /// The policy as it will actually render: `Flow` whose engagement gate declines
-/// at this moment (K-268) is the `Nearest` it degrades to, so it keys like one.
+/// at this moment (K-331) is the `Nearest` it degrades to, so it keys like one.
 ///
 /// Returns a borrowed policy in the common case (nothing to decide) and the
 /// `Nearest` constant when the gate declines. An unknown source rate keeps the
@@ -971,7 +1030,7 @@ fn feed_interp(h: &mut blake3::Hasher, i: &lumit_core::retime::Interpolation, lt
         }
         Interpolation::Flow(p) => {
             // Tag 3 was half-res flow and 4 full-res flow before the params
-            // existed (K-268); both are retired rather than reused, and the
+            // existed (K-331); both are retired rather than reused, and the
             // fixed-width block that follows makes a new Flow key strictly
             // longer than either, so no old key can be re-addressed.
             h.update(&[5]);
@@ -1056,6 +1115,7 @@ mod tests {
             kind: LayerKind::Text {
                 document: TextDocument {
                     text: text.into(),
+                    expression: None,
                     size: 72.0,
                     fill: LinearColour([1.0, 1.0, 1.0, 1.0]),
                     extra: serde_json::Map::new(),
@@ -1460,6 +1520,7 @@ mod tests {
                 extra: serde_json::Map::new(),
             }],
             sample_temporally: true,
+            custom_name: None,
             extra: serde_json::Map::new(),
         };
         let mut with_fx = plain.clone();
@@ -1566,6 +1627,7 @@ mod tests {
                 extra: serde_json::Map::new(),
             }],
             sample_temporally: true,
+            custom_name: None,
             extra: serde_json::Map::new(),
         };
 
@@ -1919,6 +1981,41 @@ mod tests {
         assert_ne!(base, key(&doc2, &parent, 1.0));
     }
 
+    /// An expression-driven caption says something different at every frame, so
+    /// consecutive frames must key differently — otherwise the cache serves the
+    /// first line it rendered for the whole comp and the number on screen never
+    /// moves. This is the regression test for hashing the stored text.
+    #[test]
+    fn expression_driven_text_keys_per_frame() {
+        let doc = Document::new();
+        let mut l = text_layer("ignored", 0.0, 10.0, 0.0);
+        if let LayerKind::Text { document } = &mut l.kind {
+            document.expression = Some("time".into());
+        }
+        let comp = comp_with(vec![l]);
+        assert_ne!(key(&doc, &comp, 1.0), key(&doc, &comp, 2.0));
+        // Same time, same words, same key — the resolution stays deterministic.
+        assert_eq!(key(&doc, &comp, 1.0), key(&doc, &comp, 1.0));
+    }
+
+    /// The stored `text` is dead while an expression drives the layer: editing
+    /// it must not retire cached frames that look exactly the same.
+    #[test]
+    fn stored_text_is_inert_under_an_expression() {
+        let doc = Document::new();
+        let with_expression = |body: &str| {
+            let mut l = text_layer(body, 0.0, 10.0, 0.0);
+            if let LayerKind::Text { document } = &mut l.kind {
+                document.expression = Some("1 + 1".into());
+            }
+            comp_with(vec![l])
+        };
+        assert_eq!(
+            key(&doc, &with_expression("one"), 1.0),
+            key(&doc, &with_expression("another"), 1.0)
+        );
+    }
+
     /// Unprobed footage → unkeyable (None), never a wrong key.
     #[test]
     fn unknown_footage_makes_the_frame_unkeyable() {
@@ -1990,7 +2087,7 @@ mod tests {
         assert_ne!(blend, native);
         assert_ne!(native, half);
         // Every §3.1 knob is content: it changes the synthesised picture, so
-        // two frames that differ only in one must not share a name (K-268).
+        // two frames that differ only in one must not share a name (K-331).
         let knobs = [
             FlowParams {
                 detail: lumit_core::retime::VectorDetail::Ultra,

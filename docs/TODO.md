@@ -17,20 +17,12 @@ this file is the concrete backlog underneath it.
 
 These sit above everything else: they are what the editor feels like in the hand.
 
-- **Show how far through a preview frame the engine is.** Asked for by the owner
-    while testing the Lens flare: a heavy effect makes a change land seconds
-    later, and with nothing on screen saying so, a slow frame and a hung one look
-    identical - which is exactly the confusion the K-263 device-loss bug caused.
-    A thin bar (Viewer or status line, per [15-DESIGN.md](15-DESIGN.md)'s calm
-    voice - progress, never a punishment) fed by the worker as it walks the
-    layer/effect stack. The obvious feed is the realise walk in
-    `lumit-render/src/realise.rs` reporting "n of m stack steps" on the existing
-    worker response stream ([17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md)); it
-    must cost nothing when nothing is watching. **Pairs with taking the flare's
-    bake off the render thread**: choosing a lens blocks the picture for about
-    half a second of pure CPU optics (measured, K-263) and that is the single
-    longest stall the effect has - a bake that runs beside the render, with the
-    bar showing it, turns a freeze into a wait you can see.
+- **Take the lens flare's bake off the render thread.** Choosing a lens blocks
+    the picture for about half a second of pure CPU optics (measured, K-263) -
+    the single longest stall the effect has - and the bake is still a closure the
+    render thread runs inside the frame (`lumit-render/src/fxops.rs`, the
+    `Resolved::LensFlare` arm). Run it beside the render and a freeze becomes a
+    wait you can see.
 - **The flare's raster still draws the cells it culled.** After K-263 a batch
     draws exactly its own cells, but a cell the guards kill is still stored and
     still submitted as a degenerate off-screen triangle. Compacting to just the
@@ -41,16 +33,6 @@ These sit above everything else: they are what the editor feels like in the hand
     Same shape of win in Matte mode from skipping dead light slots with an
     indirect dispatch: eight slots are always dispatched, however many sources
     the detection actually found.
-- **Mattes that decode footage.** A precomp referenced ONLY as a matte
-    renders solids/text/shapes but not footage: the decode planner never
-    visits it (K-266 boundary in `pixels_for`) — teach `collect_comp_jobs`
-    to walk matte references. (Area sources themselves landed in K-267:
-    per-tile flux onto the nearest of up to sixteen anchors.)
-- **The Precomp-layer twin of the K-266 adjustment fix.** Effects ON a
-    Precomp layer also resolve px@comp with factor 1 (`DrawSource::Nested`'s
-    arm in build.rs) while running on whatever raster the nested comp
-    realises at — same preview-only drift `fx::rescale_px` fixed for
-    Adjust; wire the same factor through the nested arm.
 - **Replace `poll(Maintain::Wait)` with a keyed mutex** - every present waits for
     the card to go idle before handing the texture over (`shared.rs`,
     `shared_linux.rs`, `shared_metal.rs`; find it by the call, not a line number).
@@ -64,21 +46,6 @@ These sit above everything else: they are what the editor feels like in the hand
     `sample_scalar` per animated row plus one `time_of_frame`. Batch per frame if
     it ever bites, the way `time_of_frame` already was.
     (`bridge_call_budget_test.dart` is the gate.)
-- **A frame gives the card one command buffer per layer, where one would do.**
-    Measured 2026-07-31: submits per frame = layers + 2 (3 at one layer, 10 at
-    eight, 34 at thirty-two). Every pass in `lumit-gpu` makes and submits its own
-    encoder (`composite.rs`, `fx/*`, the display pass), yet all of a frame's
-    passes are in order on one queue, so they can be encoded once and handed over
-    once. Each submit is a round trip to the driver, a cost that does not depend
-    on the card - which is why this is worth doing even though it cannot be
-    *timed* on a software rasteriser. It takes
-    [impl/playback-scheduler.md](impl/playback-scheduler.md) §2's one-submit-thread
-    rule further rather than conflicting with it. The shape: pass a
-    `&mut wgpu::CommandEncoder` down the realise walk and submit once at the top,
-    leaving the read-backs (`start_readback8`) and shared-texture copies alone -
-    both need their own submission to be waited on. **Re-measure on real hardware
-    either side**: the stopwatch that found it was on the dropped worker-pool
-    branch, and a change made for a number needs the number.
 
 ---
 
@@ -87,38 +54,26 @@ These sit above everything else: they are what the editor feels like in the hand
 Flutter is the only frontend (K-174, K-182); git history is the parity reference.
 These are v1-scope surfaces it does not yet match.
 
-**Audio ([07-UI-SPEC.md](07-UI-SPEC.md) §10, [09-AUDIO.md](09-AUDIO.md)):**
-- Sequence-clip waveforms - a Sequence layer's clips draw none, so a clip in
-    the sequence view is a coloured box with its opening frame and its speed
-    on it. `audio_peaks` answers for a Footage layer only; a clip wants peaks
-    over its own trim of its own source, which is a new engine path beside the
-    decode-at-a-moment one the clip thumbnails already use (K-248).
-
 **Viewer bar ([07-UI-SPEC.md](07-UI-SPEC.md) §2.2):**
 - The wireframe/overlay *menu*; guides menu; region-of-interest;
     colour-management indicator; background-colour swatch.
-- Click-to-edit timecode (read-only today) - decide whether it moves to the
-    Timeline's clock rather than being built twice.
 
 **Toolbar tools ([07-UI-SPEC.md](07-UI-SPEC.md) §1.7):** what is armed is a
 *tool*; what each tool then does is the backlog.
 - **Razor** - a Sequence layer's eased ramps refuse a cut (`UncuttableClip`).
-- **Shape layers** - built (K-237, [impl/shape-layers.md](impl/shape-layers.md)):
-    with nothing selected a shape tool or the Pen makes a layer holding the art,
-    in the toolbar's fill and stroke, listed in the Timeline under Contents.
-    Still owed: nested groups and the shape **modifiers** (repeater, trim paths,
-    wiggle, offset paths), gradient fills, dashed strokes, joins and caps other
-    than round, animated paths, and dragging a shape's points on the picture the
-    way a mask's drag.
-- **Path editing on the picture** - a *mask's* points drag (K-224); a **shape
-    layer's** and a **stroke's** do not, so art can be drawn but not reshaped
-    without redrawing it. No path's bezier **handles** can be dragged either, so
-    the `Alt`-drag that re-links a broken tangent pair exists only while a point
-    is being *placed*. One piece of work with the Pen's add/delete/convert-vertex
-    siblings and dragging a whole path by a segment: all of them edit a path that
-    already exists, and none of them can today.
-- **Wireframes over a shape layer's own art** - a shape layer draws the box its
-    art fills, like every other layer, rather than the paths inside it.
+- **Shape layers** ([impl/shape-layers.md](impl/shape-layers.md)) - owed: nested
+    groups and the shape **modifiers** (repeater, trim paths, wiggle, offset
+    paths), gradient fills, dashed strokes, joins and caps other than round, and
+    animated paths.
+- **Path editing on the picture** - mask and shape-layer points drag (K-224,
+    K-307). Still owed: a **paint stroke's** points, which are a stored gesture
+    rather than a path and so are their own piece of work; no path's bezier
+    **handles** can be dragged, so the `Alt`-drag that re-links a broken tangent
+    pair exists only while a point is being *placed* - and the model has no
+    linked/broken flag, so adding one is a
+    [03-DATA-MODEL.md](03-DATA-MODEL.md) change and a decision, not just a
+    gesture; and the Pen's add/delete/convert-vertex siblings and dragging a
+    whole path by a segment.
 - **Mask paths cannot be keyframed** ([03-DATA-MODEL.md](03-DATA-MODEL.md) has
     them as animatable); there is no mask **mode** (add/subtract/intersect) -
     every mask adds; **mask feather** has neither a control nor a renderer path.
@@ -128,11 +83,8 @@ These are v1-scope surfaces it does not yet match.
     all three); multiple lines and a character panel (font, tracking, leading,
     alignment - the document is one styled run, [03-DATA-MODEL.md](03-DATA-MODEL.md)
     §9.1); per-character and per-word animators.
-- **Paint** (brush/clone stamp/eraser) - built (K-227, [impl/paint.md](impl/paint.md)):
-    strokes are stored as the gesture in layer space and stamped into the layer's
-    pixels before its masks, with the brush's size, hardness and opacity on the
-    toolbar, a Paint heading in the Timeline, and one undo step per stroke. Still
-    owed: **pressure and tilt** from a tablet, **brush shapes** other than round,
+- **Paint** (brush/clone stamp/eraser, [impl/paint.md](impl/paint.md)) - owed:
+    **pressure and tilt** from a tablet, **brush shapes** other than round,
     **spacing** and **scatter**; **write-on** (a stroke's own start and end times,
     which is what makes paint animate in After Effects - nothing in the model
     yet); **per-stroke blending modes**; painting in **Layer view** rather than on
@@ -148,14 +100,10 @@ These are v1-scope surfaces it does not yet match.
 - **Roto** and **Puppet** - disabled on the strip until there is an engine behind
     them ([16-ROADMAP.md](16-ROADMAP.md)). Roto wants a segmentation model and
     per-frame stroke propagation; Puppet wants a mesh, pins and a deformer.
-- **The workspace strip shows no preset after a restart** -
-    `Workspace.activePreset` is session-only.
-
-**Smooth zooming everywhere else.** The Viewer's magnification flies; the
-Timeline's time zoom (`=`/`-`, `Ctrl+wheel`, `\`), the graph editor's zoom and
-auto-fit, and the Project panel's thumbnail scaling all still cut. Lift the
-Viewer's shape into one shared helper rather than writing it three more times.
-The Timeline matters most - it is zoomed constantly while cutting.
+**Smooth zooming everywhere else.** The shared helper is built
+(`widgets/smooth_zoom.dart`, K-293) and the Timeline reads it. Still cutting
+rather than flying: the **graph editor's** zoom and auto-fit — a matter of
+holding a `SmoothZoom` and reading its value, with no design left in it.
 
 **Layer controls in the Viewer ([07-UI-SPEC.md](07-UI-SPEC.md) §2.3):**
 - **Motion paths** (§2.4) - a keyed position draws no path and its keys cannot be
@@ -188,8 +136,6 @@ The Timeline matters most - it is zoomed constantly while cutting.
 - **`ProjectReference::state()` hands the raw `Arc<RwLock<…>>` out**, so a caller
     can hold a project lock as long as it likes and in any order. The order is
     written down and tested; nothing enforces it at the type level.
-- **`DocumentStore::set_callback` takes `&mut self`**, so the observer can only be
-    attached before the store is shared.
 - **The macOS IOSurface Viewer path is unproven** - CI links the bundle but
     nobody has launched the .app (K-033).
 - **The macOS .app is not relocatable** - the podspec links keg-only FFmpeg by
@@ -214,38 +160,36 @@ The Timeline matters most - it is zoomed constantly while cutting.
 - **The Linux DMA-BUF path has never run on a Linux machine with a GPU** (K-033).
     It fails calmly on the adapter-less CI runner, which proves the failure is
     calm and nothing about the path working.
-- **`cargo build -p lumit_bridge --no-default-features` does not build** - the
-    render worker is part of the API surface, which is deliberately one shape
-    whatever the features ([17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md) §Feature
-    gates). Either make the worker feature-clean or drop the pretence that the
-    features are independent.
 - **frb's SSE codec encodes `Vec<u8>` one byte at a time** - now taxes only
     thumbnails and scope traces, but worth the bulk codec if traces feel late.
-- **Engine subsystems with no frb API** - masks (`add_mask`,
-    `add_mask_geometry`); the Retime **graph** (`segment_to_rate`,
-    `set_segment_preset`, `drag_boundary`) and the curve view that makes ramps
-    editable; `trim_to_source_end`.
+- **Engine subsystems with no frb API** - the Retime **graph**
+    (`with_segment_ease`, `with_segment_speeds`, `with_segment_as_rate` in
+    `lumit-core/src/retime.rs`) and the curve view that makes ramps editable;
+    `trim_to_source_end`.
 - **The audio mix is rebuilt from scratch** whenever the comp's audio signature
     changes, rather than patched.
 
 **Retime follow-up after K-249.** **The eased ramp shapes are gone from
 clips** — `Clip::with_ramp` takes two speeds and runs straight between them,
 which is what the envelope authors. Slow/Fast/Smooth/Sharp come back with the
-preset-shelf rework above, rebuilt on the property like everything else K-249
+preset-shelf rework below, rebuilt on the property like everything else K-249
 moved.
 
-**System memory is only read on Windows.** `system_memory_bytes` and
-`video_memory_bytes` answer 0 elsewhere and the settings fall back to a 16 GB
-ceiling. macOS/Linux want `sysctl hw.memsize` and `/proc/meminfo` (K-033).
+**Video memory is only read on Windows.** `video_memory_bytes` answers the
+first DXGI adapter's dedicated memory there and 0 everywhere else, so the GPU
+cache ceiling falls back to the frontend's documented figure on macOS and
+Linux. Wants Metal's `recommendedMaxWorkingSetSize` and the Vulkan adapter's
+device-local heap (K-033).
 
-**Bound keys with nothing behind them.** The **Tools**, **Project**, **Panels**
-and **Effects** keymap contexts have real bindings and no commands. Either build
-the commands or drop the bindings; do not leave the two disagreeing for long.
+**Bound keys with nothing behind them.** The **Panels** context's three bindings
+(`panel.focus.next`, `panel.focus.prev`, `panel.search.focus`) have no commands.
+Either build them or drop the bindings.
 
-**Appearance.** Custom themes are per-machine - they live in the workspace file
-with no import/export *of a theme* (the keymap has one). No preview swatch strip
-and no duplicate-a-theme button. The seven built-in schemes still restate every
-colour individually; only the two Timeline tokens default from the mode.
+**Appearance.** The seven built-in schemes still restate every colour
+individually; only the two Timeline tokens default from the mode. Owed after
+K-298: a swatch strip per row **inside** the picker's menu (it previews the
+selection only), and a place to keep themes other than the workspace file, so an
+imported theme travels with the user rather than the machine's settings.
 
 **Shell and onboarding:**
 - **The boot splash is not mounted.** `flutter_ui/lib/shell/splash.dart` exists
@@ -257,10 +201,10 @@ colour individually; only the two Timeline tokens default from the mode.
 - **Workspace machinery beyond the presets** ([07-UI-SPEC.md](07-UI-SPEC.md)
     §1.6) - user workspaces (save-as/rename/export), the chrome switcher strip,
     and Alt+Shift+1-9.
-- **First-run setup screen** (K-006, K-251) - v1 ships minimal in the Vegas PR:
-    one AE-style / Vegas-style choice writing the two K-251 settings. Still owed
-    after that lands: the four-card version with a small image over each choice
-    ([07-UI-SPEC.md](07-UI-SPEC.md) §13.1).
+- **First-run setup screen: the four-card version** (K-006, K-246,
+    [07-UI-SPEC.md](07-UI-SPEC.md) §13.1) - §13.1's four cards, a small image over
+    each choice. The plain one-question screen is built
+    (`shell/first_run_frb.dart`).
 - **Command palette** - recents are session-lived, and only genuinely bound
     shortcuts are taught (today just undo/redo).
 
@@ -269,21 +213,30 @@ colour individually; only the two Timeline tokens default from the mode.
     value and speed graphs, nothing extra. Retime-specific affordances come later
     (see *Retime UI wiring* under Next); the parity rule itself is spec, and lives
     in [04-RETIMING.md](04-RETIMING.md).
-- **The Flow column is reserved, not wired** - the engine model now exists
-    (K-268), so what remains is the surface: the switch-cluster toggle replacing
-    the Source rows' "Optical flow" dropdown entry, and the fold-out's Flow group.
-- **Lock guards the gestures, not the property rows** - a locked layer's bar,
-    razor, rename, reorder and delete refuse; its transform/effect/volume rows are
-    still editable. Guard the rows or enforce in the engine ops; decide which.
-- **The Timeline's two halves are built twice and kept in step by hand.**
-    `_Outline` and `_LayerArea` are separate widget trees walking the same layer
-    list, aligned only because both read the same numbers, with vertical scroll
-    mirrored behind a reentrancy flag. Building a layer **once** as a row holding
-    both halves inside one vertical scrollable (the lane side keeping its own
-    horizontal controller) gives alignment by construction. It deletes
-    `blockHeights`, both controllers' sync and the guard flag rather than adding
-    anything. A session's refactor, no behaviour change, alignment tests as the
-    net.
+- **The Timeline's two halves are still two widget trees, and one vertical
+    scrollable cannot hold both.** This was once written down here as a session's
+    refactor — build each layer as a row holding both halves inside a single
+    vertical scrollable, and alignment holds by construction. It does not work,
+    and the reason is worth keeping so it is not re-derived. The ruler and the
+    cache bar scroll sideways with the lanes but must not scroll with the rows,
+    which means the lanes' horizontal scroll view has to sit *above* the vertical
+    one; a single `Scrollable` has a single subtree, so everything inside that
+    vertical scroll view then scrolls sideways with the lanes — including the
+    outline, which must not move (`timeline_alignment_test.dart` says so, and the
+    outline has a horizontal scroll of its own for narrow panels). Putting the
+    horizontal scrolls underneath instead gives one per row, and `_hLane` asserts
+    the moment a second position attaches to it, which is what `_positionOf`
+    exists to survive. The only arrangement that satisfies both is to drop the
+    lanes' horizontal *viewport* and offset them by a transform, with `_hLane`
+    anchored on the ruler band — and that costs horizontal trackpad panning over
+    the lanes, the very fault the `dragDevices` comment in the panel records as
+    invisible to anyone using a mouse. Not worth it. `blockHeights` stays
+    whichever way it goes: `layerDropSlot`, `layerDragTarget` and `LayerDragSlide`
+    each want every block's height, not one row's. What the merge was really
+    reaching for has landed instead — each layer is now decided **once** into a
+    `LayerRow` (its fold rows, its open Sequence view, its height) and both halves
+    read that, so they can differ in what they draw but no longer in what a layer
+    is. The scroll mirror and its guard flag stay.
 - **The lane keyframe selection selects and eases, nothing more** - moving or
     deleting a *whole lane selection* is not built (the graph view has both), nor
     are `=`/`-`/`\` or edge-follow during playback.
@@ -295,28 +248,33 @@ colour individually; only the two Timeline tokens default from the mode.
     shared engine (audio device, render worker) across test *files*. Give those
     files a serial marker or make the engine per-file - the serial run is a
     mitigation, not the fix, and it costs wall-clock.
-- **`set_markers` flattens every marker to `MarkerKind::User`** - so dragging or
-    renaming one on the ruler turns detected beats into ordinary cues and *Clear
-    beat markers* stops finding them (`crates/lumit-bridge/src/api/composition.rs`).
-    Carry the kind across the bridge (`BridgeMarker`) and map it back. Pre-dates
-    K-254's ruler markers, which made it far easier to hit.
 - **Beat tap has no key left** - [07-UI-SPEC.md](07-UI-SPEC.md) §10 wants `8`
     during playback to tap a beat, and K-254 gave the bare digits to the numbered
     markers. Needs its own chord or a modal reading.
-- **The magnet snaps keyframes to frames and nothing else**
-    ([07-UI-SPEC.md](07-UI-SPEC.md) §4.5 wants edit points, in/out points,
-    markers, beat markers, the playhead and work-area edges, plus `Ctrl`-hold to
-    suspend mid-drag).
+- **Snapping covers the lane key drag and the razor only** (K-292). Still landing
+    where the pointer puts them: the layer **bar** drag, the work-area handles
+    and marker drags. The arithmetic is shared and pure
+    (`panels/timeline_snap.dart`), so each is wiring rather than design.
 - **Volume keyframes draw no lane diamonds and no graph curve** - volume is not
     in the comp read model; fold it into `BridgeLayerInfo` if either matters.
-- **Effects on a Null are accepted and never run** - either refuse the drop or
-    say plainly that the stack is inert.
 
-**Layer and effect render-time indicator.** Per-layer total render time in ms on
-the layer row, and per-effect time on each effect's title row, both as a Timeline
-sub-column like the other sub-columns; the same per-effect value on its title row
-in the Effect controls panel ([13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md)
-§7.1).
+**Render-time indicator follow-ups (K-276 landed the column).** What ships measures by
+*fencing* — the render waits for the card at each layer and each effect before reading
+the clock, and re-renders held frames to do it — so it is opt-in and never runs during
+playback. §7.1's target is continuous collection at negligible cost, which wants **GPU
+timestamp queries**: a query set per frame, timestamps written around each node's own
+submission (every effect kernel already submits its own command buffer, so nothing
+inside `lumit-gpu`'s kernels changes), resolved a frame later. With those in the switch
+could go. Also owed from §7.1: **sorting** the Timeline column, a **profiler panel**
+with the recording mode (totals, percentiles, cache hit rates, time per
+degradation-ladder step), and per-layer numbers for the layers *inside* a Precomp.
+
+**The preview progress bar's fractions are stage weights, not measurements**
+(K-276). Decode is assumed the long pole and each top-level layer an equal share of
+the composite, so a comp whose one adjustment layer outcosts the twenty layers below
+it fills unevenly; feeding the profiler's measured costs back as the weights is the
+fix. Also unbuilt: an **export**'s progress still has its own path
+([07-UI-SPEC.md](07-UI-SPEC.md) §14) rather than sharing this one.
 
 ## Next - engine/bridge follow-ups
 
@@ -337,7 +295,7 @@ converting an RGBA texture to the luma buffer the pyramid starts from, after
 which the whole measurement stays on the card. Doing it by reading the two
 composites back to the CPU would work and would cost more than the flow does.
 
-**Flow's remaining K-268 work.** The engine, the GPU port, the cache and the
+**Flow's remaining K-331 work.** The engine, the GPU port, the cache and the
 controls have landed. What is left:
 1. **Turning the flow switch off discards the Flow group.** `FlowParams` lives
     inside the `Flow` variant of `Interpolation`, so there is nowhere to keep it
@@ -352,8 +310,8 @@ controls have landed. What is left:
 3. **The remaining CPU work in synthesis is the luma conversion and the frame
     uploads** — about 70 ms of the 79 ms a 1080p interpolation costs, against
     8 ms for the flow itself. Both would go if the decoded frame reached the
-    card once and stayed there, which is the `DrawSource` change K-268 sketched.
-4. **A measurement harness on real gameplay** (K-269 follow-up), so the learned
+    card once and stayed there, which is the `DrawSource` change K-331 sketched.
+4. **A measurement harness on real gameplay** (K-332 follow-up), so the learned
     ceiling — RIFE-class synthesis, WAFT-class flow — is judged against numbers
     rather than impressions. A learned synthesiser emits no flow field, so Fast
     motion blur and Datamosh need DIS vectors regardless.
@@ -370,15 +328,35 @@ silently wrong. Pass the six domain floats through `LutParams`, or refuse
 non-default-domain cubes as a labelled no-op. The LUT caches also key by path
 alone - no mtime, no LRU bound (§4).
 
+**Localisation follow-ups (K-303).** The seam is built and the strings are out of the
+code (`flutter_ui/lib/l10n/`, `crowdin.yml`); what is left is other people's turn and
+three small gaps:
+
+- **Confirm the Crowdin language settings took, on the next pull (K-311).** The project
+  exists and the first pull has landed: German, Kazakh, Ukrainian, Simplified and
+  Traditional Chinese. That pull also reddened main twice over, and both causes were
+  settings rather than code: Crowdin wrote its own `zh-CN` into `@@locale`, which Flutter's
+  generator refuses when it disagrees with the file name, and en-US was on as a target
+  language, which lands a copy of the British source (K-303). Both have since been changed
+  on Crowdin — the language mapping now sends `zh` and `zh_Hant`, and en-US is off — but
+  neither has been through a sync yet. What is owed is the check: after the next
+  `crowdin pull translations`, `test/l10n/arb_test.dart` passing is the proof. If the
+  `@@locale` values come back hyphenated anyway, Crowdin ignores its mapping for file
+  content and the fix moves into CI, as a step on the sync branch that rewrites the key.
+- **The two numbered shortcut labels stay English.** `lumit-keymap` builds "Add marker
+  {n} at the playhead" and "Go to marker {n}" with `format!`, so they are not literals
+  the lookup table can hold (`lib/l10n/engine_labels.dart`). Give the bridge the number
+  separately, or the label a stable id, and they join the rest.
+- **No CI check that the source file was pushed.** A string added here is invisible to
+  translators until somebody runs `crowdin push sources` by hand. Worth a release-time
+  step once the project exists.
+
 **Lens flare follow-ups (K-256..K-264, [impl/lens-flare.md](impl/lens-flare.md))** — the
-shipped core is docs/08 §3.27 (FlareSim model + 1299-lens library, K-261; artefact and
-picker pass K-262; bounded-submission and batching pass K-263; smooth-shading,
-curation and custom-file pass K-264 — the remaining
-performance items sit in **Now** above, being preview-responsiveness work);
-still owed, each stable against the shipped parameters: the
+shipped core is docs/08 §3.27; its performance items sit in **Now** above. Still owed,
+each stable against the shipped parameters: the
 **Lights source wiring** (the mode is in the
-dropdown and resolves as Manual until light layers can act as flare sources); aperture
-**dirt / scratches** overlays and an **image aperture** file parameter; the **lens
+dropdown and resolves as Manual until light layers can act as flare sources); an
+**image aperture** file parameter; the **lens
 designer** (a window building a prescription element by element with a live lens
 diagram — the `lens_file` parameter landed in K-264, so the designer's output has a
 place to go); an **Occlusion layer** reference fading the flare when the light is
@@ -391,14 +369,6 @@ folds is the real cure for both. The panel side owes the pair row's dropper to
 Light uses it; Transform's rows just aren't wired to it), **Radial blur's centre
 migration** from the grandfathered % of frame to px@comp (K-260 convention), and one-op
 writes for a paired keyframe toggle (two ops today).
-
-**Anti-aliasing in the renderer.** Edges of transformed layers, shape strokes and
-text stair-step, worst on a slow rotation. Two questions decide where the setting
-lives: whether the sample count is a **project** property (it changes what a comp
-looks like, so it must match on another machine and in export) or a
-**preference** (it trades quality for speed on this machine), and whether preview
-and export share one value. Sample counts must be checked against the adapter
-rather than assumed.
 
 **The stale-fd race on a Linux Viewer resize** (`lumit-render/src/headless.rs`'s
 `shared_dmabuf` re-create, with `lumit-gpu/src/shared_linux.rs`'s `Drop`). The
@@ -422,8 +392,10 @@ are the reference for behaviour, not wiring targets):
     interpolation toggle; Flow-params UI and the source-rate advisory badge.
 - Precomp retiming - Precomp layers carry no Retime today; decide the intended
     scope before building.
-- The Time-lens **vertical (source-position) boundary drag** has no bridge op
-    (`SetLayerRetime`/`from_source_keyframes` unexposed).
+- The Time-lens **vertical (source-position) boundary drag** has no bridge op -
+    `Retime::from_source_keyframes` (`lumit-core/src/retime.rs`) is unexposed, and
+    the `SetLayerRetime` op this entry used to name alongside it no longer exists
+    at all, K-249 having moved Retime onto the property path.
 
 **Bridge reads left outside the read model** - the Source card's text/camera
 fields for the selected layer, the Viewer's missing-file probe, and the
@@ -457,30 +429,43 @@ plugins/decoder page; autosave interval/keep; export defaults (preset + filename
 template). Each lands wired to the engine through the bridge, not as a Dart-side
 setting nothing reads.
 
-**The no-hex lint only greps Rust** ([15-DESIGN.md](15-DESIGN.md) §4.1) - a Dart-side gate
-over `flutter_ui/lib` outside `theme/` would catch the literals where widgets actually live.
-
 **Engineering-rules tooling still owed** ([14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md)):
-`cargo deny` in CI (§9); fuzz targets for the `.lum` deserialiser and journal replayer (§6);
-a `rust-toolchain.toml` pin and the edition-2024 move (§9); the `indexing_slicing` /
-`arithmetic_side_effects` clippy denies after a hot-path sweep (§4); `clippy::pedantic`
-with curated allows (§7); the golden-frame EXR export corpus (§6).
+fuzz targets for the `.lum` deserialiser and journal replayer (§6); the **edition-2024
+move** (§9 - the toolchain pin landed in K-272, the edition did not); the
+`indexing_slicing` / `arithmetic_side_effects` clippy denies after a hot-path sweep (§4);
+`clippy::pedantic` with curated allows (§7); the golden-frame EXR export corpus (§6).
+
+**Three unmaintained dependencies are deliberately ignored in `deny.toml`** (K-272).
+`ttf-parser` (via fontdue, via `lumit-text`) is the one with a real successor: moving
+the rasteriser to `skrifa` is its own piece of work with its own glyph-metric tests.
+`bincode` 1.x and `paste` leave when the dependencies that pull them update.
+
+**A genuinely FFmpeg-free build is not possible yet (K-273).** `lumit_bridge
+--no-default-features` compiles the bridge's own decode paths out, but `lumit-render` and
+`lumit-audio` depend on `lumit-media` unconditionally, so the library is still linked and
+the build still needs it installed. Making those two deps optional — and the render/audio
+paths that use them — is what "builds without FFmpeg" would actually take.
+
+**The three-tier cache's remaining sharp edges.** K-277 bounded the disk tier's write
+queue after it reached 81 GB on an idle Mac; the same shape of question is worth asking of
+the *other* unbounded `mpsc` channels the worker owns (the loaded-frame return, the
+prefetcher's results) — none carries whole frames as freely as the park queue did, but none
+counts its depth either. Also owed from that hunt: nothing reports how deep the park queue
+is running, so a machine whose disk cannot keep up degrades silently (frames simply stop
+reaching disk).
 
 **The performance harness and its CI gates are not built**
 ([13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md) §7.3): no reference comp in the
 repository, no headless benchmark scenarios, no budget gates per merge. The per-node
-profiler (§7.1) is likewise unbuilt - the render-time indicator entry above is its first
-visible piece.
+profiler (§7.1) now has its first visible piece - the render-time column (K-276) - and the
+rest of it (continuous timestamp-query collection, the recording mode, the panel) is in the
+entry above.
 
 **CI coverage the Flutter port left thin:**
-- **The WGSL/CPU-oracle parity tests skip silently without an adapter** - they
-    print "no GPU adapter; skipping" and the run still goes green, so a job
-    without one proves nothing about the kernels. Installing Mesa's software
-    Vulkan driver (`mesa-vulkan-drivers`, the `lvp` ICD) is enough to make them
-    all run: verified 2026-08-03 on a container with no graphics hardware, where
-    the whole `lumit-gpu` suite passed in about five seconds. Worth adding to any
-    Linux job, and worth making the skip loud (an env var that turns "no adapter"
-    into a failure on the machines that should have one).
+- **macOS and Windows CI do not require an adapter.** `LUMIT_REQUIRE_GPU` turns
+    a "no adapter" skip into a failure and the Linux job sets it (K-269); the
+    other two do not, because nobody has confirmed those runners enumerate one.
+    One run with the variable set says whether they can.
 - **Nothing in CI proves a Viewer frame arrives.** The Linux job is the only one
     running the Flutter suite and has no GPU, so the six Viewer tests that wait
     for a frame skip there on `LUMIT_NO_ZERO_COPY_VIEWER=1`. They still fail on a
@@ -512,14 +497,53 @@ visible piece.
 - **Export status still speaks the old idiom** - `export.rs` replies in JSON
     strings (`err_json`) polled on a timer; follow the worker's typed-stream way.
 
+- **Viewer-only exposure and auto tone mapping (asked for by the owner,
+    2026-08-06).** Two controls in the Viewer bar
+    ([07-UI-SPEC.md](07-UI-SPEC.md) §2.2, which gains their entries when they
+    land), both **preview only - neither may change the export**, the same
+    promise preview resolution and the region of interest already make.
+    **(1) Exposure**: a small box that scrubs on drag and takes a typed number,
+    with an aperture icon beside it, reading signed stops to one decimal -
+    `+0.0`, `+1.4`, `-2.3`. The number must mean what the Exposure effect's does
+    (K-106): the same `2^stops` gain in scene-linear, so the two agree.
+    **(2) Auto tone mapping**: an icon that toggles it on and off, nothing more -
+    no curve picker in the bar. It is the "what will this actually look like"
+    switch for a comp whose values run past 1, keeping the low end readable
+    instead of watching the highlights clip flat.
+    Both belong **inside the display transform**, which
+    [06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md) §3.3 already reserves for
+    exactly this ("the exposure control and channel isolation are viewer-only and
+    sit inside this stage") - the display blit in `crates/lumit-gpu/src/lib.rs`
+    (`display`, `display_bgra`, `display_scaled`), not the effect stack. Check
+    before building that the frame cache holds pre-display frames: if it does,
+    changing either control is a re-blit and must not throw a cached frame away.
+    Three things to settle. **The curve is decision-sized** - Reinhard, an
+    ACES fit and AgX all look different, and picking one is a
+    [02-DECISIONS.md](02-DECISIONS.md) entry, not a code comment. **"Auto"
+    needs a definition**: if it adapts to each frame's content the picture
+    breathes as the shot cuts, so say whether it is a fixed curve or a measured
+    one, and if measured, how it is smoothed. **Persistence is an owner call** -
+    per comp in the project like preview resolution, or view state that resets.
+    Whatever they are, the Viewer must say when the picture is not the export:
+    the colour-management badge (§2.2 item 8) is where that lives, in
+    [15-DESIGN.md](15-DESIGN.md)'s calm voice - a statement, never a warning.
+    A tone mapping *effect* is separate work and sits in **Later** below.
+
 - **The menu bar names its own backlog (K-244).** Every row marked
     "(Not implemented)" in File/Edit/Composition/Layer/Animation/View/Help is a
-    command with a place waiting for it: Close project, History, Cut/Copy/Paste,
+    command with a place waiting for it: Close project, History,
     layer settings and the mask/transform/blending/matte/style families, the
     whole Animation menu, the View menu's zoom/resolution/grid/ruler rows,
-    Trim and Crop comp to work area, Add to export queue, Check for updates and
-    the help links. Delete each mark as the command lands. Suggested chords for
-    the AE-shaped ones are in K-244.
+    Trim and Crop comp to work area, Add to export queue and the help links
+    (Check for updates is built — K-296). Delete each mark as the command
+    lands. Suggested chords for the AE-shaped ones are in K-244.
+
+- **A Flatpak remote, so `flatpak update` has something to update from (K-297).**
+    Releases ship a single-file `.flatpak` bundle, which installs perfectly well
+    and then never updates: `flatpak update` needs a remote. Export an OSTree
+    repo in `release.yml`, publish it (Cloudflare Pages beside the site, K-279)
+    and ship a `.flatpakref`, or submit to Flathub and let it host. Until then
+    Lumit tells Flatpak users the install command rather than offering a button.
 
 ## Later - roadmap features not yet built
 
@@ -533,9 +557,10 @@ list, not a re-statement of the roadmap.
     v2 colour management and its UI.
 - **Audio - the largest gap** ([07-UI-SPEC.md](07-UI-SPEC.md) §10,
     [09-AUDIO.md](09-AUDIO.md)): the whole **Audio panel** and level meters; the
-    beat-marker tuning controls (sensitivity, BPM-grid, range); **Beat tap**
-    (`8` during playback); persistent waveform peak files (peaks are computed on
-    demand today).
+    beat-marker tuning controls (sensitivity, BPM-grid, range); persistent
+    waveform peak files (the multi-zoom summary is built on demand and cached for
+    the session, K-280 — never written to the project sidecar, so it is rebuilt
+    next time the project opens).
 - **File format ([10-FILE-FORMAT.md](10-FILE-FORMAT.md)).** Embedded `thumbs/`
     previews in the `.lum`; the per-project sidecar `proxies/`, `peaks/` and
     `flow/` directories (only `frames/` and the global media index exist).
@@ -543,21 +568,32 @@ list, not a re-statement of the roadmap.
     Grotesk and Source Serif 4 (only Inter is wired); add the 13/14/20 px
     type-scale steps to the theme; identity colour tokens for Shape and Null
     layers (§6.1 reserves the values; both kinds borrow today).
-- **Platform.** The macOS pass - native menu bar, VideoToolbox, ProRes,
-    notarisation (K-033); it also owes `application:openFile:` (a double-clicked
-    `.lum` opening, K-252) and adding `packaging/macos/*.icns` to the bundle's
-    resources. The Metal/IOSurface Viewer path is unverified on real hardware.
-    The release workflow's macOS job stays `continue-on-error` until the pass
-    verifies the Metal Viewer on real hardware and adds signing/notarisation
-    (the DMG bundles its FFmpeg dylibs but is ad-hoc signed, so Gatekeeper
-    warns); signing the Windows installer; Linux distro packages
-    (deb/rpm/Flatpak) beyond `install.sh` and the release tarball.
+- **Platform.** The macOS pass - native menu bar, VideoToolbox, ProRes
+    (K-033); it also owes `application:openFile:` (a double-clicked
+    `.lum` opening, K-252). The document `.icns` files now ship inside the
+    bundle, so the icons themselves are done.
+    The Metal/IOSurface Viewer path is unverified on real hardware.
+    Developer ID signing and notarisation landed (K-310) but have never run —
+    the first tag after that entry is their first execution, and a pre-release
+    tag is the way to rehearse it. Signing the Windows installer is still
+    blocked on buying a certificate, so the installer ships unsigned and
+    SmartScreen still warns.
+- **Website.** The release-notes page at `/releases` is built and empty: the notes
+    themselves are written by hand, one Markdown file per version under
+    `web/src/content/releases` (copy `_template.md`; see `web/README.md`). Until
+    the first one lands the page points at GitHub releases. Delete this line when
+    v0.1.0's notes are written.
 - **Phase 2 - Retime.** Flow interpolation policies; automatic beat snapping
     across edit/retime points ([04-RETIMING.md](04-RETIMING.md),
     [09-AUDIO.md](09-AUDIO.md)).
 - **Phase 3 - The look.** Per-layer motion blur polish and the scopes GPU pass
     ([08-EFFECTS.md](08-EFFECTS.md)); importing a preset file from outside the
-    presets folder is still a manual copy. This gate is the v1.0 milestone.
+    presets folder is still a manual copy. A **tone mapping effect** belongs here
+    too (owner, 2026-08-06): the grade that actually lands in the export, distinct
+    from the Viewer's preview-only toggle in **Next** above, and it wants
+    [08-EFFECTS.md](08-EFFECTS.md) §3 to gain its entry and a curve chosen in
+    [02-DECISIONS.md](02-DECISIONS.md) - the same choice both then share.
+    This gate is the v1.0 milestone.
 - **Phase 4 - Extensibility** (whole docs, nothing built -
     [11-AE-IMPORT.md](11-AE-IMPORT.md), [12-PLUGINS.md](12-PLUGINS.md)). AE
     import (Bridge panel, `.aep` parser, Lottie, fidelity report); the OFX host;
@@ -587,5 +623,11 @@ Recorded so they are not re-proposed as gaps:
     processor half has not grown, this entry still stands.
 - **Rotation gizmo affordance** - the previous frontend never offered one; not a
     regression.
+- **The workspace strip ticks nothing after a restart.** `Workspace.activePreset`
+    is session-only on purpose: what persists is the arrangement, which the user
+    is free to drag about, so a ticked preset could claim a layout the panels no
+    longer match (`state/workspace.dart`).
+- **No progress for the idle cache fill** - it is not a frame anyone is waiting
+    for, so the bar stays quiet for it.
 - The two recorded behavioural deviations (export queue-snapshot timing;
     share-export VBR cap) - see [02-DECISIONS.md](02-DECISIONS.md).

@@ -31,7 +31,10 @@ import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 
+import '../l10n/engine_labels.dart';
+import '../l10n/strings.dart';
 import '../panels/timeline_extras_frb.dart';
+import '../state/clipboard.dart';
 import '../state/dock.dart';
 import '../state/file_dialogs.dart';
 import '../state/keymap.dart';
@@ -40,10 +43,14 @@ import '../widgets/controls.dart';
 import 'about_window_frb.dart';
 import 'command_palette_frb.dart';
 import 'comp_settings_frb.dart';
+import 'fx_console_context.dart';
+import 'fx_console_frb.dart';
 import 'precompose_dialog_frb.dart';
 import 'export_dialog_frb.dart';
 import 'recovery_dialog_frb.dart';
+import 'project_settings_frb.dart';
 import 'settings_window_frb.dart';
+import 'update_dialog_frb.dart';
 
 /// One row of a menu: a label with an action, a submenu, or a divider.
 ///
@@ -60,41 +67,79 @@ class MenuEntry {
   final bool todo;
   final bool? checked;
 
-  const MenuEntry(
+  /// What this row watches, for the few rows whose wording changes while the
+  /// menu is open. Null for every ordinary row — see [MenuEntry.live].
+  final Listenable? live;
+
+  /// How to rebuild this row when [live] fires. Null unless [live] is set.
+  final MenuEntry Function()? rebuild;
+
+  MenuEntry(
     this.label,
     this.onPressed, {
     this.action,
     this.checked,
   })  : isDivider = false,
         children = null,
-        todo = false;
+        todo = false,
+        live = null,
+        rebuild = null;
 
-  const MenuEntry.divider()
+  MenuEntry.divider()
       : label = null,
         onPressed = null,
         children = null,
         isDivider = true,
         action = null,
         todo = false,
-        checked = null;
+        checked = null,
+        live = null,
+        rebuild = null;
 
-  const MenuEntry.submenu(this.label, this.children)
+  MenuEntry.submenu(this.label, this.children)
       : onPressed = null,
+        isDivider = false,
+        action = null,
+        todo = false,
+        checked = null,
+        live = null,
+        rebuild = null;
+
+  /// A command the specification has and the build has not.
+  MenuEntry.todo(this.label, {this.action})
+      : onPressed = null,
+        children = null,
+        isDivider = false,
+        todo = true,
+        checked = null,
+        live = null,
+        rebuild = null;
+
+  /// A row that redraws itself while its menu is open, from [rebuild], every
+  /// time [live] fires — and which does *not* close the menu when pressed.
+  ///
+  /// Only for rows where the press has visible consequences in the row itself:
+  /// Check for updates is the one, and it is the whole reason this exists
+  /// (K-296). Pressing it starts a check, the row greys and says so, and the
+  /// answer arrives in the same row a second or two later. A row that closed
+  /// the menu would leave the user pressing Help again to find out what
+  /// happened, and one that did not redraw would still say "Check for updates"
+  /// while it was checking.
+  MenuEntry.live(Listenable this.live, MenuEntry Function() this.rebuild)
+      : label = null,
+        onPressed = null,
+        children = null,
         isDivider = false,
         action = null,
         todo = false,
         checked = null;
 
-  /// A command the specification has and the build has not.
-  const MenuEntry.todo(this.label, {this.action})
-      : onPressed = null,
-        children = null,
-        isDivider = false,
-        todo = true,
-        checked = null;
+  /// This row as it currently reads. The same row for everything except a
+  /// [MenuEntry.live] one, which asks its builder.
+  MenuEntry get current => rebuild == null ? this : rebuild!();
 
   /// What the row reads as, suffix and all.
-  String get text => todo ? '$label (Not implemented)' : (label ?? '');
+  String get text => todo ? l10n.notImplemented(label ?? '') : (label ?? '');
 
   /// Whether pressing this row does anything. A submenu is never "pressed" but
   /// is still live, so it counts as enabled when it has children.
@@ -128,9 +173,15 @@ class LumitMenuBarFrb extends StatelessWidget {
     // ValueNotifier that does not notify the shell state. Without this the bar
     // would keep whatever selection it was last built with, and every one of
     // those rows would be greyed out with a layer plainly selected.
+    // The updater is the second thing outside the shell state that a menu row
+    // reads (K-296): the Help row says what it is doing, and on macOS the whole
+    // tree is handed to the system, where there is no rebuilding a single row.
     return ValueListenableBuilder<List<LayerReference>>(
       valueListenable: context.read<LumitUiState>().selectedLayers,
-      builder: (context, _, __) => _bar(context),
+      builder: (context, _, __) => ListenableBuilder(
+        listenable: context.read<LumitUiState>().updates,
+        builder: (context, _) => _bar(context),
+      ),
     );
   }
 
@@ -150,7 +201,10 @@ class LumitMenuBarFrb extends StatelessWidget {
     if (defaultTargetPlatform == TargetPlatform.macOS) {
       return PlatformMenuBar(
         menus: platformMenusFor(context, menus),
-        child: _PaletteHotkey(onRequested: () => _palette(context)),
+        child: Stack(children: [
+          _PaletteHotkey(onRequested: () => _palette(context)),
+          _ConsoleHotkey(onRequested: () => _console(context)),
+        ]),
       );
     }
 
@@ -177,6 +231,9 @@ class LumitMenuBarFrb extends StatelessWidget {
             // palette this bar builds, rather than the shell building a second
             // one from a list that would drift out of step with these menus.
             _PaletteHotkey(onRequested: () => _palette(context)),
+            // The same, for Ctrl+Space (K-324): the console's effects and comps
+            // come from this file for the same reason the palette's commands do.
+            _ConsoleHotkey(onRequested: () => _console(context)),
           ],
         ),
       ),
@@ -197,62 +254,62 @@ class LumitMenuBarFrb extends StatelessWidget {
       context: context,
       commands: [
         PaletteCommand(
-          label: 'New',
-          category: 'File',
+          label: l10n.menuNew,
+          category: l10n.menuFile,
           run: app.newProject,
         ),
         if (project != null) ...[
           PaletteCommand(
-            label: 'Save',
-            category: 'File',
+            label: l10n.menuSave,
+            category: l10n.menuFile,
             run: () => saveProjectFrb(app, ui, picker: savePicker),
           ),
           PaletteCommand(
-            label: 'Save as…',
-            category: 'File',
+            label: l10n.menuSaveAs,
+            category: l10n.menuFile,
             run: () =>
                 saveProjectFrb(app, ui, forcePicker: true, picker: savePicker),
           ),
           PaletteCommand(
-            label: 'Import…',
-            category: 'File',
+            label: l10n.menuImport,
+            category: l10n.menuFile,
             run: () => importFootageFrb(app, picker: footagePicker),
           ),
           PaletteCommand(
-            label: 'New composition',
-            category: 'Composition',
+            label: l10n.newComposition,
+            category: l10n.menuComposition,
             run: () => newCompositionFrb(context, app),
           ),
           PaletteCommand(
-            label: 'Undo',
-            category: 'Edit',
+            label: l10n.menuUndo,
+            category: l10n.menuEdit,
             shortcut: 'Ctrl+Z',
             run: () => undoFrb(app),
           ),
           PaletteCommand(
-            label: 'Redo',
-            category: 'Edit',
+            label: l10n.menuRedo,
+            category: l10n.menuEdit,
             shortcut: 'Ctrl+Shift+Z',
             run: () => redoFrb(app),
           ),
           PaletteCommand(
-            label: 'Export…',
-            category: 'File',
+            label: l10n.menuExport,
+            category: l10n.menuFile,
             run: () => exportFrb(context),
           ),
           // Every comp, by name: Enter fronts it in the Viewer and Timeline.
           for (final (comp, name) in app.comps())
             PaletteCommand(
               label: name,
-              category: 'Comp',
+              category: l10n.paletteComps,
               run: () => ui.setSelectedComp(comp),
             ),
           // Every built-in effect: Enter applies it to the selected layer;
           // with none selected it does nothing, exactly like the browser.
           for (final effect in listEffects())
             PaletteCommand(
-              label: effect.label,
-              category: 'Effect',
+              label: engineLabel(effect.label),
+              category: l10n.menuEffect,
               run: () => ui.selectedLayer.value?.addEffect(name: effect.name),
             ),
         ],
@@ -260,15 +317,68 @@ class LumitMenuBarFrb extends StatelessWidget {
         for (final panel in Panel.values)
           PaletteCommand(
             label: panel.title,
-            category: 'Panel',
+            category: l10n.palettePanels,
             run: () => ui.activePanel.value = panel,
           ),
         PaletteCommand(
-          label: 'Settings…',
-          category: 'Edit',
+          label: l10n.menuSettings,
+          category: l10n.menuEdit,
           run: () => showSettingsWindowFrb(context),
         ),
+        if (app.project case final project?)
+          PaletteCommand(
+            label: l10n.menuProjectSettings,
+            category: l10n.menuFile,
+            run: () => showProjectSettingsFrb(context, project),
+          ),
       ],
+    );
+  }
+
+  /// The Ctrl+Space console (K-324). Its two halves are built here beside the
+  /// menus for the same reason the palette's list is: the effects it applies
+  /// and the comps it fronts must be the ones the menus mean.
+  Future<void> _console(BuildContext context) async {
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    final comp = ui.selectedComp;
+
+    void applyEffect(String name) {
+      final layers = ui.selectedLayers.value;
+      if (layers.isEmpty) return;
+      // Every selected layer, as the Effect menu does (K-217).
+      for (final target in layers) {
+        target.addEffect(name: name);
+      }
+      app.notifyDocumentChanged();
+    }
+
+    await showFxConsoleFrb(
+      context: context,
+      // The ring opens around the mouse (K-325): the shell records where the
+      // pointer last was, because the key event itself has no position.
+      anchor: lastKnownPointerPosition,
+      model: FxConsoleModel(
+        radialTitle: fxConsoleContextTitle(ui),
+        radial: fxConsoleRadial(context, app, ui),
+        onSnapshot: comp == null ? null : () => saveSnapshotFrb(app, ui),
+        entries: [
+          // Effects first — the overwhelmingly common reason to open this.
+          for (final effect in listEffects())
+            FxConsoleEntry(
+              label: engineLabel(effect.label),
+              kind: FxConsoleKind.effect,
+              group: engineLabel(effect.categoryLabel),
+              run: () => applyEffect(effect.name),
+            ),
+          // Then the comps, under the list's divider.
+          for (final (each, name) in app.comps())
+            FxConsoleEntry(
+              label: name,
+              kind: FxConsoleKind.composition,
+              run: () => ui.setSelectedComp(each),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -313,291 +423,340 @@ List<MenuSection> lumitMenus(
   }
 
   return [
-    (title: 'File', items: [
-      MenuEntry('New', app.newProject, action: 'file.new'),
-      MenuEntry('Open project…', () => openProjectFrb(app, picker: openPicker),
-          action: 'file.open'),
-      MenuEntry.submenu('Open recent', [
-        if (ui.workspace.recentProjects.isEmpty)
-          const MenuEntry('Nothing yet', null)
-        else
-          for (final path in ui.workspace.recentProjects)
-            MenuEntry(path, () => app.openProject(path)),
-      ]),
-      const MenuEntry.divider(),
-      const MenuEntry.todo('Close project'),
-      // Save is only meaningful once there is a project; without a path it
-      // behaves as Save as, which is what the engine's empty-path refusal
-      // makes us handle explicitly.
-      MenuEntry(
-          'Save',
-          project == null
-              ? null
-              : () => saveProjectFrb(app, ui, picker: savePicker),
-          action: 'file.save'),
-      MenuEntry(
-          'Save as…',
-          project == null
-              ? null
-              : () =>
-                  saveProjectFrb(app, ui, forcePicker: true, picker: savePicker),
-          action: 'file.save.as'),
-      const MenuEntry.divider(),
-      MenuEntry(
-          'Import…',
-          project == null
-              ? null
-              : () => importFootageFrb(app, picker: footagePicker),
-          action: 'file.import'),
-      MenuEntry('Export…', comp == null ? null : () => exportFrb(context),
-          action: 'file.export'),
-      const MenuEntry.divider(),
-      // Not in the specified list, and kept: recovering work beside a project
-      // is the one command whose absence costs a day's work.
-      MenuEntry('Recover…',
-          project?.path() == null ? null : () => _recover(context, app)),
-    ]),
-    (title: 'Edit', items: [
-      MenuEntry('Undo', (history?.canUndo ?? false) ? () => undoFrb(app) : null,
-          action: 'edit.undo'),
-      MenuEntry('Redo', (history?.canRedo ?? false) ? () => redoFrb(app) : null,
-          action: 'edit.redo'),
-      const MenuEntry.todo('History'),
-      const MenuEntry.divider(),
-      const MenuEntry.todo('Cut'),
-      const MenuEntry.todo('Copy'),
-      const MenuEntry.todo('Paste'),
-      MenuEntry(
-          'Delete',
-          layers.isEmpty
-              ? null
-              : () {
-                  for (final l in layers) {
-                    l.delete();
-                  }
-                  ui.clearSelection();
-                  app.notifyDocumentChanged();
-                },
-          action: 'edit.delete.selection'),
-      const MenuEntry.divider(),
-      MenuEntry(
-          'Duplicate',
-          onLayer((l) {
-            l.duplicate();
-            app.notifyDocumentChanged();
-          }),
-          action: 'layer.duplicate'),
-      MenuEntry('Split layer', onComp((c) => _splitAtPlayhead(ui)),
-          action: 'layer.split'),
-      MenuEntry(
-          'Select all',
-          comp == null ? null : () => ui.setSelection(comp.getLayers()),
-          action: 'edit.select.all'),
-      MenuEntry('Deselect all', ui.clearSelection,
-          action: 'edit.deselect.all'),
-      const MenuEntry.divider(),
-      // Windows and Linux keep Preferences under Edit, which is where every
-      // application those users know puts it. macOS moves this same row into
-      // the application menu (see [platformMenusFor]), which is where every
-      // application *those* users know puts it.
-      MenuEntry('Settings…', () => showSettingsWindowFrb(context),
-          action: 'app.settings'),
-    ]),
-    (title: 'Composition', items: [
-      MenuEntry('New composition',
-          project == null ? null : () => newCompositionFrb(context, app),
-          action: 'comp.new'),
-      const MenuEntry.divider(),
-      MenuEntry('Composition settings…',
-          comp == null ? null : () => _compSettings(context, app),
-          action: 'comp.settings'),
-      const MenuEntry.todo('Trim comp to work area'),
-      const MenuEntry.todo('Crop comp to work area'),
-      const MenuEntry.divider(),
-      // "Export", never "render", for anything the user sees (glossary §9).
-      const MenuEntry.todo('Add to export queue', action: 'export.queue.add'),
-      const MenuEntry.divider(),
-      // Comp-level markers, including the beat pass, which makes them
-      // (docs/09 §10) — the layer's own markers are Layer ▸ Markers.
-      MenuEntry('Add marker at playhead', onComp((c) => _markerAtPlayhead(ui, c)),
-          action: 'marker.add'),
-      // Beat detection reads the whole comp's audio and can take seconds, so
-      // it runs off-thread; a comp with no audio does nothing rather than
-      // alarming.
-      MenuEntry(
-          'Detect beats',
-          onComp((c) => c
-              .detectBeats(sensitivityPercent: 50)
-              .then((_) {}, onError: (_) {}))),
-      MenuEntry('Clear beat markers', onComp((c) => c.clearBeatMarkers())),
-    ]),
-    (title: 'Layer', items: [
-      MenuEntry.submenu('New', [
-        MenuEntry('Solid', onComp((c) => c.addSolidLayer())),
-        MenuEntry('Text', onComp((c) => c.addTextLayer())),
-        MenuEntry('Camera', onComp((c) => c.addCameraLayer())),
-        MenuEntry('Adjustment', onComp((c) => c.addAdjustmentLayer())),
-        MenuEntry('Null', onComp((c) => c.addNullLayer())),
-        MenuEntry('Sequence', onComp((c) => c.addSequenceLayer())),
-      ]),
-      const MenuEntry.todo('Layer settings…'),
-      const MenuEntry.divider(),
-      const MenuEntry.todo('Mask'),
-      const MenuEntry.todo('Mask and shape path'),
-      const MenuEntry.todo('Transform'),
-      // The selected layer's Retime (K-197). In the menu as well as on the
-      // keyboard (K-198's lesson: a command whose only route is a chord has no
-      // route the day something intercepts the chord). The command names what
-      // it will do, so a layer that already has one offers to take it away.
-      // Greyed out on a Sequence layer: its clips carry the retiming and are
-      // ramped in the sequence view (K-075), so there is nothing here for the
-      // command to switch on. Said with a disabled row rather than an error
-      // after the click.
-      MenuEntry(
-          _retimeLabel(layer),
-          _retimeable(layer) ? onLayer((l) => app.toggleRetime(l)) : null,
-          action: 'layer.retime.enable'),
-      // In and out of the clip-editing surface, for anyone — the Vegas
-      // preference decides what an *import* becomes (K-246), never what a
-      // layer is allowed to be. Offered here and on a layer's right-click.
-      // Coming back out is offered whenever going in is, because a user who
-      // tries it has to be able to change their mind.
-      MenuEntry(
-          _sequenced(layer)
-              ? 'Convert to footage layer'
-              : 'Convert to sequence layer',
-          _convertible(layer)
-              ? onLayer((l) {
-                  try {
-                    if (_sequenced(layer)) {
-                      l.convertFromSequenced();
-                    } else {
-                      l.convertToSequenced();
-                    }
-                    app.notifyDocumentChanged();
-                  } catch (_) {
-                    // A row of several clips refuses, and says so through the
-                    // status line rather than taking the interface down.
-                  }
-                })
-              : null,
-          action: 'layer.sequence.convert'),
-      const MenuEntry.todo('Flow'),
-      const MenuEntry.todo('3D layer'),
-      const MenuEntry.todo('Markers'),
-      const MenuEntry.divider(),
-      const MenuEntry.todo('Preserve transparency'),
-      const MenuEntry.todo('Blending mode'),
-      const MenuEntry.todo('Next blending mode'),
-      const MenuEntry.todo('Previous blending mode'),
-      const MenuEntry.todo('Track matte'),
-      const MenuEntry.todo('Layer styles'),
-      const MenuEntry.divider(),
-      const MenuEntry.todo('Reveal'),
-      const MenuEntry.todo('Create'),
-      const MenuEntry.divider(),
-      const MenuEntry.todo('Camera'),
-      const MenuEntry.todo('Auto-outline'),
-      // Pre-compose… is live only with a comp open and something selected in
-      // it — the menu says so by greying out rather than by failing.
-      MenuEntry(
-          'Pre-compose…',
-          comp == null || layers.isEmpty
-              ? null
-              : () => showPrecomposeDialogFrb(
-                    context: context,
-                    comp: comp,
-                    selectedLayers: layers,
-                    ui: ui,
-                    workspace: ui.workspace,
-                  ),
-          action: 'layer.precompose'),
-    ]),
-    (title: 'Effect', items: _effectMenu(app, layers)),
-    (title: 'Animation', items: const [
-      MenuEntry.todo('Save animation preset'),
-      MenuEntry.todo('Apply animation preset'),
-      MenuEntry.divider(),
-      MenuEntry.todo('Set keyframe'),
-      MenuEntry.todo('Toggle hold keyframe'),
-      MenuEntry.todo('Keyframe interpolation…'),
-      MenuEntry.todo('Keyframe velocity…'),
-      MenuEntry.divider(),
-      MenuEntry.todo('Animate text'),
-      MenuEntry.todo('Add text selector'),
-      MenuEntry.divider(),
-      MenuEntry.todo('Add expression'),
-      MenuEntry.todo('Separate dimensions'),
-      MenuEntry.todo('Track camera'),
-      MenuEntry.todo('Track motion'),
-      MenuEntry.divider(),
-      MenuEntry.todo('Reveal properties with keyframes',
-          action: 'reveal.animated'),
-      MenuEntry.todo('Reveal properties with animation'),
-      MenuEntry.todo('Reveal all modified properties'),
-    ]),
-    (title: 'View', items: const [
-      MenuEntry.todo('Zoom in', action: 'viewer.zoom.in'),
-      MenuEntry.todo('Zoom out', action: 'viewer.zoom.out'),
-      MenuEntry.todo('Fit', action: 'viewer.zoom.fit'),
-      MenuEntry.divider(),
-      MenuEntry.submenu('Resolution', [
-        MenuEntry.todo('Full', action: 'viewer.res.full'),
-        MenuEntry.todo('Half', action: 'viewer.res.half'),
-        MenuEntry.todo('Quarter', action: 'viewer.res.quarter'),
-      ]),
-      MenuEntry.divider(),
-      MenuEntry.todo('Show grid', action: 'viewer.grid.toggle'),
-      MenuEntry.todo('Show ruler', action: 'viewer.rulers.toggle'),
-      MenuEntry.todo('Show wireframe'),
-      MenuEntry.todo('Snap to grid'),
-    ]),
-    (title: 'Window', items: [
-      MenuEntry.submenu('Workspace', [
-        for (final preset in WorkspacePreset.values)
-          MenuEntry(preset.title,
-              () => ui.workspace.applyWorkspacePreset(preset),
-              checked: ui.workspace.activePreset == preset),
-        const MenuEntry.divider(),
-        MenuEntry('Reset workspace', ui.resetLayout),
-      ]),
-      MenuEntry.todo(
-          'Assign shortcut to ${ui.workspace.activePreset?.title ?? 'this'} '
-          'workspace'),
-      const MenuEntry.divider(),
-      // Every panel, ticked when it is in the arrangement. Toggling one adds
-      // or drops its pane and persists the layout, so a panel you closed stays
-      // closed across a restart.
-      for (final panel in Panel.values)
+    (
+      title: l10n.menuFile,
+      items: [
+        MenuEntry(l10n.menuNew, app.newProject, action: 'file.new'),
         MenuEntry(
-          panel.title,
+            l10n.menuOpenProject, () => openProjectFrb(app, picker: openPicker),
+            action: 'file.open'),
+        MenuEntry.submenu(l10n.menuOpenRecent, [
+          if (ui.workspace.recentProjects.isEmpty)
+            MenuEntry(l10n.menuNothingYet, null)
+          else
+            for (final path in ui.workspace.recentProjects)
+              MenuEntry(path, () => app.openProject(path)),
+        ]),
+        MenuEntry.divider(),
+        MenuEntry.todo(l10n.menuCloseProject),
+        // Save is only meaningful once there is a project; without a path it
+        // behaves as Save as, which is what the engine's empty-path refusal
+        // makes us handle explicitly.
+        MenuEntry(
+            l10n.menuSave,
+            project == null
+                ? null
+                : () => saveProjectFrb(app, ui, picker: savePicker),
+            action: 'file.save'),
+        MenuEntry(
+            l10n.menuSaveAs,
+            project == null
+                ? null
+                : () => saveProjectFrb(app, ui,
+                    forcePicker: true, picker: savePicker),
+            action: 'file.save.as'),
+        MenuEntry.divider(),
+        MenuEntry(
+            l10n.menuImport,
+            project == null
+                ? null
+                : () => importFootageFrb(app, picker: footagePicker),
+            action: 'file.import'),
+        MenuEntry(
+            l10n.menuExport, comp == null ? null : () => exportFrb(context),
+            action: 'file.export'),
+        MenuEntry.divider(),
+        // The project's own settings, kept apart from Settings because Settings
+        // is this machine's and these travel in the `.lum` (K-286).
+        MenuEntry(
+            l10n.menuProjectSettings,
+            project == null
+                ? null
+                : () => showProjectSettingsFrb(context, project),
+            action: 'project.settings'),
+        MenuEntry.divider(),
+        // Not in the specified list, and kept: recovering work beside a project
+        // is the one command whose absence costs a day's work.
+        MenuEntry(l10n.menuRecover,
+            project?.path() == null ? null : () => _recover(context, app)),
+      ]
+    ),
+    (
+      title: l10n.menuEdit,
+      items: [
+        MenuEntry(l10n.menuUndo,
+            (history?.canUndo ?? false) ? () => undoFrb(app) : null,
+            action: 'edit.undo'),
+        MenuEntry(l10n.menuRedo,
+            (history?.canRedo ?? false) ? () => redoFrb(app) : null,
+            action: 'edit.redo'),
+        MenuEntry.todo(l10n.menuHistory),
+        MenuEntry.divider(),
+        // Copy takes the finest thing that is selected (K-300): the keyframes a
+        // panel has claimed, else the picked effects, else the selected layer
+        // whole — transform, keyframes, masks, paint, effects and switches — as
+        // the document text the engine hands back (K-275). Cut is that plus the
+        // delete, so the two can never disagree about what "the selection" was.
+        MenuEntry(l10n.menuCut,
+            _somethingSelected(ui) ? () => cutSelectionFrb(app, ui) : null,
+            action: 'edit.cut'),
+        MenuEntry(l10n.menuCopy,
+            _somethingSelected(ui) ? () => copySelectionFrb(ui) : null,
+            action: 'edit.copy'),
+        // Paste puts a layer at the playhead — or at the time it was copied
+        // from, for the person rebuilding a moment in a second comp (Settings →
+        // Interface). An effect always lands with its first keyframe at the
+        // playhead, whichever way that setting is: what is being placed is an
+        // animation rather than a position.
+        MenuEntry(l10n.menuPaste, _pasteAction(app, ui, comp, layer),
+            action: 'edit.paste'),
+        MenuEntry(
+            l10n.delete,
+            layers.isEmpty
+                ? null
+                : () {
+                    for (final l in layers) {
+                      l.delete();
+                    }
+                    ui.clearSelection();
+                    app.notifyDocumentChanged();
+                  },
+            action: 'edit.delete.selection'),
+        MenuEntry.divider(),
+        MenuEntry(l10n.menuDuplicate, onLayer((l) {
+          l.duplicate();
+          app.notifyDocumentChanged();
+        }), action: 'layer.duplicate'),
+        MenuEntry(l10n.menuSplitLayer, onComp((c) => _splitAtPlayhead(ui)),
+            action: 'layer.split'),
+        MenuEntry(l10n.menuSelectAll,
+            comp == null ? null : () => ui.setSelection(comp.getLayers()),
+            action: 'edit.select.all'),
+        MenuEntry(l10n.menuDeselectAll, ui.clearSelection,
+            action: 'edit.deselect.all'),
+        MenuEntry.divider(),
+        // Windows and Linux keep Preferences under Edit, which is where every
+        // application those users know puts it. macOS moves this same row into
+        // the application menu (see [platformMenusFor]), which is where every
+        // application *those* users know puts it.
+        MenuEntry(l10n.menuSettings, () => showSettingsWindowFrb(context),
+            action: 'app.settings'),
+      ]
+    ),
+    (
+      title: l10n.menuComposition,
+      items: [
+        MenuEntry(l10n.newComposition,
+            project == null ? null : () => newCompositionFrb(context, app),
+            action: 'comp.new'),
+        MenuEntry.divider(),
+        MenuEntry(l10n.compositionSettingsEllipsis,
+            comp == null ? null : () => _compSettings(context, app),
+            action: 'comp.settings'),
+        MenuEntry.todo(l10n.menuTrimCompToWorkArea),
+        MenuEntry.todo(l10n.menuCropCompToWorkArea),
+        MenuEntry.divider(),
+        // "Export", never "render", for anything the user sees (glossary §9).
+        MenuEntry.todo(l10n.menuAddToExportQueue, action: 'export.queue.add'),
+        MenuEntry.divider(),
+        // Comp-level markers, including the beat pass, which makes them
+        // (docs/09 §10) — the layer's own markers are Layer ▸ Markers.
+        MenuEntry(l10n.menuAddMarkerAtPlayhead,
+            onComp((c) => _markerAtPlayhead(ui, c)),
+            action: 'marker.add'),
+        // Beat detection reads the whole comp's audio and can take seconds, so
+        // it runs off-thread; a comp with no audio does nothing rather than
+        // alarming.
+        MenuEntry(
+            l10n.menuDetectBeats,
+            onComp((c) => c
+                .detectBeats(sensitivityPercent: 50)
+                .then((_) {}, onError: (_) {}))),
+        MenuEntry(
+            l10n.menuClearBeatMarkers, onComp((c) => c.clearBeatMarkers())),
+      ]
+    ),
+    (
+      title: l10n.menuLayer,
+      items: [
+        MenuEntry.submenu(l10n.menuNew, [
+          MenuEntry(l10n.menuSolid, onComp((c) => c.addSolidLayer())),
+          MenuEntry(l10n.menuText, onComp((c) => c.addTextLayer())),
+          MenuEntry(l10n.menuCamera, onComp((c) => c.addCameraLayer())),
+          MenuEntry(l10n.menuAdjustment, onComp((c) => c.addAdjustmentLayer())),
+          MenuEntry(l10n.menuNull, onComp((c) => c.addNullLayer())),
+          MenuEntry(l10n.menuSequence, onComp((c) => c.addSequenceLayer())),
+        ]),
+        MenuEntry.todo(l10n.menuLayerSettings),
+        MenuEntry.divider(),
+        MenuEntry.todo(l10n.menuMask),
+        MenuEntry.todo(l10n.menuMaskAndShapePath),
+        MenuEntry.todo(l10n.menuTransform),
+        // The selected layer's Retime (K-197). In the menu as well as on the
+        // keyboard (K-198's lesson: a command whose only route is a chord has no
+        // route the day something intercepts the chord). The command names what
+        // it will do, so a layer that already has one offers to take it away.
+        // Greyed out on a Sequence layer: its clips carry the retiming and are
+        // ramped in the sequence view (K-075), so there is nothing here for the
+        // command to switch on. Said with a disabled row rather than an error
+        // after the click.
+        MenuEntry(_retimeLabel(layer),
+            _retimeable(layer) ? onLayer((l) => app.toggleRetime(l)) : null,
+            action: 'layer.retime.enable'),
+        // In and out of the clip-editing surface, for anyone — the Vegas
+        // preference decides what an *import* becomes (K-246), never what a
+        // layer is allowed to be. Offered here and on a layer's right-click.
+        // Coming back out is offered whenever going in is, because a user who
+        // tries it has to be able to change their mind.
+        MenuEntry(
+            _sequenced(layer)
+                ? l10n.menuConvertToFootageLayer
+                : l10n.menuConvertToSequenceLayer,
+            _convertible(layer)
+                ? onLayer((l) {
+                    try {
+                      if (_sequenced(layer)) {
+                        l.convertFromSequenced();
+                      } else {
+                        l.convertToSequenced();
+                      }
+                      app.notifyDocumentChanged();
+                    } catch (_) {
+                      // A row of several clips refuses, and says so through the
+                      // status line rather than taking the interface down.
+                    }
+                  })
+                : null,
+            action: 'layer.sequence.convert'),
+        MenuEntry.todo(l10n.menuFlow),
+        MenuEntry.todo(l10n.menu3dLayer),
+        MenuEntry.todo(l10n.menuMarkers),
+        MenuEntry.divider(),
+        MenuEntry.todo(l10n.menuPreserveTransparency),
+        MenuEntry.todo(l10n.menuBlendingMode),
+        MenuEntry.todo(l10n.menuNextBlendingMode),
+        MenuEntry.todo(l10n.menuPreviousBlendingMode),
+        MenuEntry.todo(l10n.menuTrackMatte),
+        MenuEntry.todo(l10n.menuLayerStyles),
+        MenuEntry.divider(),
+        MenuEntry.todo(l10n.menuReveal),
+        MenuEntry.todo(l10n.menuCreate),
+        MenuEntry.divider(),
+        MenuEntry.todo(l10n.menuCamera),
+        MenuEntry.todo(l10n.menuAutoOutline),
+        // Pre-compose… is live only with a comp open and something selected in
+        // it — the menu says so by greying out rather than by failing.
+        MenuEntry(
+            l10n.menuPreCompose,
+            comp == null || layers.isEmpty
+                ? null
+                : () => showPrecomposeDialogFrb(
+                      context: context,
+                      comp: comp,
+                      selectedLayers: layers,
+                      ui: ui,
+                      workspace: ui.workspace,
+                    ),
+            action: 'layer.precompose'),
+      ]
+    ),
+    (title: l10n.menuEffect, items: _effectMenu(app, layers)),
+    (
+      title: l10n.menuAnimation,
+      items: [
+        MenuEntry.todo(l10n.menuSaveAnimationPreset),
+        MenuEntry.todo(l10n.menuApplyAnimationPreset),
+        MenuEntry.divider(),
+        MenuEntry.todo(l10n.menuSetKeyframe),
+        MenuEntry.todo(l10n.menuToggleHoldKeyframe),
+        MenuEntry.todo(l10n.menuKeyframeInterpolation),
+        MenuEntry.todo(l10n.menuKeyframeSpeed),
+        MenuEntry.divider(),
+        MenuEntry.todo(l10n.menuAnimateText),
+        MenuEntry.todo(l10n.menuAddTextSelector),
+        MenuEntry.divider(),
+        MenuEntry.todo(l10n.menuAddExpression),
+        MenuEntry.todo(l10n.menuSeparateDimensions),
+        MenuEntry.todo(l10n.menuTrackCamera),
+        MenuEntry.todo(l10n.menuTrackMotion),
+        MenuEntry.divider(),
+        MenuEntry.todo(l10n.menuRevealPropertiesWithKeyframes,
+            action: 'reveal.animated'),
+        MenuEntry.todo(l10n.menuRevealPropertiesWithAnimation),
+        MenuEntry.todo(l10n.menuRevealAllModifiedProperties),
+      ]
+    ),
+    (
+      title: l10n.menuView,
+      items: [
+        MenuEntry.todo(l10n.menuZoomIn, action: 'viewer.zoom.in'),
+        MenuEntry.todo(l10n.menuZoomOut, action: 'viewer.zoom.out'),
+        MenuEntry.todo(l10n.menuFit, action: 'viewer.zoom.fit'),
+        MenuEntry.divider(),
+        MenuEntry.submenu(l10n.menuResolution, [
+          MenuEntry.todo(l10n.menuFull, action: 'viewer.res.full'),
+          MenuEntry.todo(l10n.menuHalf, action: 'viewer.res.half'),
+          MenuEntry.todo(l10n.menuQuarter, action: 'viewer.res.quarter'),
+        ]),
+        MenuEntry.divider(),
+        MenuEntry.todo(l10n.menuShowGrid, action: 'viewer.grid.toggle'),
+        MenuEntry.todo(l10n.menuShowRuler, action: 'viewer.rulers.toggle'),
+        MenuEntry.todo(l10n.menuShowWireframe),
+        MenuEntry.todo(l10n.menuSnapToGrid),
+      ]
+    ),
+    (
+      title: l10n.menuWindow,
+      items: [
+        MenuEntry.submenu(l10n.menuWorkspace, [
+          for (final preset in WorkspacePreset.values)
+            MenuEntry(
+                preset.title, () => ui.workspace.applyWorkspacePreset(preset),
+                checked: ui.workspace.activePreset == preset),
+          MenuEntry.divider(),
+          MenuEntry(l10n.menuResetWorkspace, ui.resetLayout),
+        ]),
+        MenuEntry.todo(l10n.menuAssignWorkspaceShortcut),
+        MenuEntry.divider(),
+        // Every panel, ticked when it is in the arrangement. Toggling one adds
+        // or drops its pane and persists the layout, so a panel you closed stays
+        // closed across a restart.
+        for (final panel in Panel.values)
+          MenuEntry(
+            panel.title,
+            () {
+              setPanelVisible(ui.split, panel, !panelVisible(ui.split, panel));
+              ui.workspace.touch();
+            },
+            checked: panelVisible(ui.split, panel),
+          ),
+        MenuEntry.divider(),
+        MenuEntry(l10n.menuCommandPalette, palette, action: 'palette.open'),
+      ]
+    ),
+    (
+      title: l10n.menuHelp,
+      items: [
+        MenuEntry(l10n.menuAboutLumit, () => showAboutWindowFrb(context)),
+        MenuEntry.live(
+          ui.updates,
+          () => updateMenuEntry(context, app, ui, savePicker: savePicker),
+        ),
+        MenuEntry.divider(),
+        MenuEntry.todo(l10n.menuLumitHelp),
+        MenuEntry.todo(l10n.menuLumitOnlineGuides),
+        MenuEntry.divider(),
+        MenuEntry(
+          l10n.menuEnableDebugPanel,
           () {
             setPanelVisible(
-                ui.split, panel, !panelVisible(ui.split, panel));
+                ui.split, Panel.debug, !panelVisible(ui.split, Panel.debug));
             ui.workspace.touch();
           },
-          checked: panelVisible(ui.split, panel),
+          checked: panelVisible(ui.split, Panel.debug),
         ),
-      const MenuEntry.divider(),
-      MenuEntry('Command palette…', palette, action: 'palette.open'),
-    ]),
-    (title: 'Help', items: [
-      MenuEntry('About Lumit', () => showAboutWindowFrb(context)),
-      const MenuEntry.todo('Check for updates'),
-      const MenuEntry.divider(),
-      const MenuEntry.todo('Lumit help'),
-      const MenuEntry.todo('Lumit online guides'),
-      const MenuEntry.divider(),
-      MenuEntry(
-        'Enable debug panel',
-        () {
-          setPanelVisible(
-              ui.split, Panel.debug, !panelVisible(ui.split, Panel.debug));
-          ui.workspace.touch();
-        },
-        checked: panelVisible(ui.split, Panel.debug),
-      ),
-    ]),
+      ]
+    ),
   ];
 }
 
@@ -606,10 +765,10 @@ List<MenuSection> lumitMenus(
 /// there is nowhere for an effect to go.
 List<MenuEntry> _effectMenu(LumitState app, List<LayerReference> layers) => [
       for (final group in _effectGroups().entries)
-        MenuEntry.submenu(group.key, [
+        MenuEntry.submenu(engineLabel(group.key), [
           for (final effect in group.value)
             MenuEntry(
-              effect.label,
+              engineLabel(effect.label),
               layers.isEmpty
                   ? null
                   : () {
@@ -673,16 +832,16 @@ bool _retimeable(LayerReference? layer) {
 
 /// What the Retime item says.
 String _retimeLabel(LayerReference? layer) {
-  if (layer == null) return 'Enable Retime';
+  if (layer == null) return l10n.menuEnableRetime;
   try {
     if (layer.getKind() == BridgeLayerKind.sequence) {
-      return 'Retime (open the layer to ramp its clips)';
+      return l10n.menuRetimeSequence;
     }
     return layer.getRetimeProperty() == null
-        ? 'Enable Retime'
-        : 'Disable Retime';
+        ? l10n.menuEnableRetime
+        : l10n.menuDisableRetime;
   } catch (_) {
-    return 'Enable Retime';
+    return l10n.menuEnableRetime;
   }
 }
 
@@ -730,6 +889,130 @@ void redoFrb(LumitState app) {
   app.notifyDocumentChanged();
 }
 
+/// Whether Cut and Copy have anything to act on — an effect picked out of a
+/// stack, or a layer. Keyframes are not counted: the panel holding them claims
+/// the chord, and a menu row that ungreyed on a selection the menu cannot see
+/// would be guessing.
+bool _somethingSelected(LumitUiState ui) =>
+    ui.selectedEffects.value.isNotEmpty || ui.selectedLayer.value != null;
+
+/// What Copy takes, finest selection first (K-300): the keyframes a panel has
+/// claimed, else the picked effects, else the selected layer. Returns whether
+/// anything was copied, so the keyboard can leave the chord unhandled when
+/// there was nothing to take.
+///
+/// One function for the Edit menu and the `Mod+C` chord, because a menu row and
+/// a shortcut that disagreed about what "the selection" is would be the bug
+/// this fixes, one layer down.
+bool copySelectionFrb(LumitUiState ui) {
+  if (ui.copyClaim?.call() ?? false) return true;
+  if (ui.selectedEffectsLayer case final layer?
+      when ui.selectedEffects.value.isNotEmpty) {
+    try {
+      ui.copyEffectsToClipboard(
+          layer.copyEffects(effects: ui.selectedEffects.value));
+      return true;
+    } catch (_) {
+      // The effects went away under the selection; the clipboard keeps what it
+      // had, and the layer below is not a silent substitute for what was asked.
+      return false;
+    }
+  }
+  final layer = ui.selectedLayer.value;
+  if (layer == null) return false;
+  ui.copyLayerToClipboard(layer.copyLayer());
+  return true;
+}
+
+/// Cut is Copy plus the removal, so the two can never disagree about what the
+/// selection was (K-275, extended to effects by K-300).
+bool cutSelectionFrb(LumitState app, LumitUiState ui) {
+  final effects = ui.selectedEffects.value;
+  final effectsLayer = ui.selectedEffectsLayer;
+  final layer = ui.selectedLayer.value;
+  if (!copySelectionFrb(ui)) return false;
+  if (effectsLayer != null && effects.isNotEmpty) {
+    for (final instance in effectsLayer.getEffects()) {
+      if (effects.contains(instance.getInfo().id)) {
+        effectsLayer.removeEffect(effect: instance);
+      }
+    }
+    ui.clearEffectSelection();
+    app.notifyDocumentChanged();
+    return true;
+  }
+  if (layer == null) return false;
+  layer.delete();
+  ui.clearSelection();
+  app.notifyDocumentChanged();
+  return true;
+}
+
+/// What Paste does with whatever is on the clipboard (K-275), or `null` when
+/// there is nothing to paste — or nowhere to put it.
+///
+/// A layer goes into the composition on screen: at the playhead by default, or
+/// at the time it was copied from when Settings → Interface says so. An effect
+/// goes onto the selected layer, always with its first keyframe at the
+/// playhead.
+/// Paste for the `Mod+V` chord: a panel holding keyframes takes it first
+/// (K-300, the same claim Delete has used since K-234), else the clipboard's
+/// layer or effects go in. Returns whether anything was pasted.
+///
+/// The Edit menu's own row stays on [_pasteAction]: keyframes have never been
+/// one of its cases, and a row that greys on the clipboard being empty must not
+/// ungrey merely because the Timeline is open.
+Future<bool> pasteSelectionFrb(
+  LumitState app,
+  LumitUiState ui,
+  CompositionReference? comp,
+  LayerReference? layer,
+) async {
+  if (ui.pasteClaim?.call() ?? false) return true;
+  // Nothing in the tray: something may have been copied in another Lumit
+  // window, or in this one before something else on the machine overwrote the
+  // tray's mirror (K-302).
+  if (ui.clipboard.isEmpty) await ui.adoptSystemClipboard();
+  final paste = _pasteAction(app, ui, comp, layer);
+  if (paste == null) return false;
+  paste();
+  return true;
+}
+
+VoidCallback? _pasteAction(
+  LumitState app,
+  LumitUiState ui,
+  CompositionReference? comp,
+  LayerReference? layer,
+) {
+  final text = ui.clipboard.text;
+  if (text == null) return null;
+  switch (ui.clipboard.kind) {
+    case ClipboardKind.layer:
+      if (comp == null) return null;
+      return () {
+        final pasted = comp.pasteLayer(
+          text: text,
+          atFrame: ui.workspace.interface.pasteLayersAtOriginalTime
+              ? null
+              : ui.playheadFrame.value,
+        );
+        // Selecting what was just pasted is what every editor does, and it is
+        // also what makes a second paste land somewhere you can see.
+        ui.setSelection([pasted]);
+        app.notifyDocumentChanged();
+      };
+    case ClipboardKind.effects:
+      if (layer == null) return null;
+      return () {
+        layer.pasteEffects(text: text, atFrame: ui.playheadFrame.value);
+        app.notifyDocumentChanged();
+      };
+    case null:
+      return null;
+  }
+}
+
 /// Razor the selected layer at the playhead. Only Sequence layers hold clips,
 /// so on anything else the engine declines and nothing happens.
 void _splitAtPlayhead(LumitUiState ui) {
@@ -760,8 +1043,7 @@ Future<void> _compSettings(BuildContext context, LumitState app) async {
 Future<void> _recover(BuildContext context, LumitState app) async {
   final path = app.project?.path();
   if (path == null) return;
-  await showRecoveryDialogFrb(
-      context: context, state: app, projectPath: path);
+  await showRecoveryDialogFrb(context: context, state: app, projectPath: path);
 }
 
 /// Save the project, asking for a location only when there is not one already
@@ -795,7 +1077,7 @@ Future<void> saveProjectFrb(
   project.setUiState(uiState: ui.sessionJson());
   try {
     final written = await project.save(path: target);
-    app.postNotice('Saved to $written');
+    app.postNotice(l10n.savedTo(written));
     // Save as gives the project a new path, and the session is filed by path —
     // and the title bar carries the name.
     ui.rememberSession();
@@ -803,9 +1085,37 @@ Future<void> saveProjectFrb(
   } catch (_) {
     // The work is still in the document and the journal; say so calmly and let
     // the user pick somewhere writable.
-    app.postNotice('Could not save the project', error: true);
+    app.postNotice(l10n.couldNotSaveProject, error: true);
   }
   app.notifyDocumentChanged();
+}
+
+/// The Help ▸ Check for updates row, reading whatever the updater is doing
+/// (K-296).
+///
+/// Built fresh every time the service notifies, which is what makes one row
+/// carry the whole sequence: check, offer, download, restart. Disabled while
+/// something is in flight — a second press during a check would start a second
+/// one, and there is nothing useful for it to do.
+MenuEntry updateMenuEntry(
+  BuildContext context,
+  LumitState app,
+  LumitUiState ui, {
+  Future<String?> Function()? savePicker,
+}) {
+  final updates = ui.updates;
+  return MenuEntry(
+    updates.menuLabel,
+    updates.busy
+        ? null
+        : () => pressUpdateRow(
+              context,
+              updates: updates,
+              notice: app.postNotice,
+              projectIsDirty: () => app.project?.isDirty() ?? false,
+              saveProject: () => saveProjectFrb(app, ui, picker: savePicker),
+            ),
+  );
 }
 
 // --- The macOS renderer ---------------------------------------------------
@@ -833,11 +1143,16 @@ List<PlatformMenuItem> platformMenusFor(
       group = [];
     }
 
-    for (final item in items) {
-      if (item.isDivider) {
+    for (final raw in items) {
+      if (raw.isDivider) {
         flush();
         continue;
       }
+      // A live row resolves to whatever it currently reads. The Mac menu is
+      // rebuilt whenever the bar is, and the bar watches the same object the
+      // row does, so this stays in step without the in-app renderer's
+      // rebuild-in-place machinery.
+      final item = raw.current;
       final label = switch (item.checked) {
         true => '✓ ${item.text}',
         false => '  ${item.text}',
@@ -847,7 +1162,8 @@ List<PlatformMenuItem> platformMenusFor(
         group.add(PlatformMenu(label: label, menus: rows(children)));
         continue;
       }
-      final chord = item.action == null ? null : keymap.rawChordFor(item.action!);
+      final chord =
+          item.action == null ? null : keymap.rawChordFor(item.action!);
       group.add(PlatformMenuItem(
         label: label,
         // A null callback is how the platform menu draws a row disabled.
@@ -871,31 +1187,34 @@ List<PlatformMenuItem> platformMenusFor(
     return null;
   }
 
-  final settings = take('Edit', 'Settings…');
-  final about = take('Help', 'About Lumit');
+  final settings = take(l10n.menuEdit, l10n.menuSettings);
+  final about = take(l10n.menuHelp, l10n.menuAboutLumit);
 
   return [
     PlatformMenu(label: 'Lumit', menus: [
       PlatformMenuItemGroup(members: [
         PlatformMenuItem(
-            label: 'About Lumit', onSelected: about?.onPressed),
+            label: l10n.menuAboutLumit, onSelected: about?.onPressed),
       ]),
       PlatformMenuItemGroup(members: [
         if (settings != null)
           PlatformMenuItem(
-            label: 'Settings…',
+            label: l10n.menuSettings,
             onSelected: settings.onPressed,
-            shortcut: activatorForChord(
-                keymap.rawChordFor('app.settings') ?? ''),
+            shortcut:
+                activatorForChord(keymap.rawChordFor('app.settings') ?? ''),
           ),
       ]),
       const PlatformMenuItemGroup(members: [
-        PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.servicesSubmenu),
+        PlatformProvidedMenuItem(
+            type: PlatformProvidedMenuItemType.servicesSubmenu),
       ]),
       const PlatformMenuItemGroup(members: [
         PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.hide),
-        PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.hideOtherApplications),
-        PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.showAllApplications),
+        PlatformProvidedMenuItem(
+            type: PlatformProvidedMenuItemType.hideOtherApplications),
+        PlatformProvidedMenuItem(
+            type: PlatformProvidedMenuItemType.showAllApplications),
       ]),
       const PlatformMenuItemGroup(members: [
         PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.quit),
@@ -935,6 +1254,41 @@ class _PaletteHotkeyState extends State<_PaletteHotkey> {
     // of the shell state would be pure cost. The state itself outlives the
     // window, so the notifier it hands over never changes under us.
     final requests = context.read<LumitUiState>().paletteRequest;
+    if (requests != _bound) {
+      _bound?.removeListener(_open);
+      _bound = requests..addListener(_open);
+    }
+    return const SizedBox.shrink();
+  }
+
+  void _open() {
+    if (mounted) widget.onRequested();
+  }
+
+  @override
+  void dispose() {
+    _bound?.removeListener(_open);
+    super.dispose();
+  }
+}
+
+/// The same for the Ctrl+Space console (K-324): holds the subscription to
+/// [LumitUiState.consoleRequest] and draws nothing.
+class _ConsoleHotkey extends StatefulWidget {
+  final VoidCallback onRequested;
+
+  const _ConsoleHotkey({required this.onRequested});
+
+  @override
+  State<_ConsoleHotkey> createState() => _ConsoleHotkeyState();
+}
+
+class _ConsoleHotkeyState extends State<_ConsoleHotkey> {
+  ValueNotifier<int>? _bound;
+
+  @override
+  Widget build(BuildContext context) {
+    final requests = context.read<LumitUiState>().consoleRequest;
     if (requests != _bound) {
       _bound?.removeListener(_open);
       _bound = requests..addListener(_open);
@@ -1078,6 +1432,19 @@ class _MenuList extends StatelessWidget {
                     submenu: (dismiss) =>
                         _MenuList(items: children, close: dismiss),
                     child: _label(t, item, ticks: ticks, shortcut: null),
+                  )
+                else if (item.live case final listenable?)
+                  // Stays open and redraws in place: the point of a live row is
+                  // to watch what pressing it did (K-296).
+                  ListenableBuilder(
+                    listenable: listenable,
+                    builder: (context, _) {
+                      final row = item.current;
+                      return MenuRow(
+                        onPressed: row.onPressed ?? () {},
+                        child: _label(t, row, ticks: ticks, shortcut: null),
+                      );
+                    },
                   )
                 else
                   MenuRow(

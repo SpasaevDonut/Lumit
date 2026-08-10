@@ -148,6 +148,49 @@ the AE 2023 model). Four combinations: alpha or luma, normal or inverted.
   before blending.
 - A matte layer keeps its own visibility switch; being a matte does not disable it. A layer MAY
   matte a layer that is itself matted; cycles are rejected at compile time.
+- A **Precomp** matte source has no pixels of its own: its nested comp is rendered (the same
+  recursion §1.4 performs for a Precomp layer's picture, under the same cycle guard) and that
+  render is the matte signal (K-268). The matte **source mode** (§none/masks/effects, K-142)
+  does not apply to a comp reference — a comp already carries its own layers' masks and
+  effects. Footage inside such a comp decodes with the rest of the frame: the decode plan
+  follows matte and layer-input references whether or not the referenced layer is visible.
+
+### 1.7 Anti-aliasing the composite (K-274)
+
+A layer is drawn as a rectangle placed by its transform. Where the transform turns that
+rectangle off-axis its edge crosses pixels diagonally, and a pixel is either drawn or not —
+so the edge is a staircase, and on a slow rotation the steps crawl. **Multisampling** fixes
+it: the card keeps N coverage samples per pixel, shades once, and averages by how many samples
+the shape actually covered.
+
+- **The count is a project property** (`Document::anti_aliasing`,
+  [03-DATA-MODEL.md](03-DATA-MODEL.md) §2), default 4, and **one value serves preview and
+  export**. Both drive the same realise walk with the same count, which is what keeps the
+  K-031 identity true with anti-aliasing on.
+- **It is orthogonal to preview resolution.** A reduced-resolution preview is a smaller
+  picture with the same edge treatment; the count does not change with the scale.
+- **The composite target is multisampled, the working texture is not.** One multisample
+  colour texture lives beside the single-sample comp frame for the whole composite; every
+  pass attaches the former and resolves into the latter. Every reader downstream — the
+  snapshot copy for shader-computed blends, read-backs, the Scopes trace, the shared-texture
+  hand-off and the display blit — takes the resolved texture, because a multisample texture
+  cannot be sampled or copied to a buffer.
+- **Per-layer motion blur takes the same count**, because its sub-frame placements are the
+  same geometry the composite draws; an aliased smear under an anti-aliased composite would
+  show the seam on every blurring layer.
+- **The count is asked of the adapter, never assumed.** A card that will not multisample the
+  working format at the count asked for falls back to the highest it will, down to 1, and the
+  interface reports which is in use. That is a machine's limit, never a render error.
+- **It is part of a frame's content hash** (§5.2), so a frame banked at one count is never
+  served at another.
+
+What multisampling does *not* fix is worth stating: the inside of a layer's picture is a
+texture lookup and its quality is the sampler's business. A shape's own curves, a mask's edge
+and a glyph's outline are already anti-aliased where they are rasterised. What stair-steps is
+the layer's quad edge, and that is what this addresses.
+
+The *how* — the traps in the composite loop as it stands, and the test plan — is
+[impl/anti-aliasing.md](impl/anti-aliasing.md).
 
 ## 2. ROI and DoD
 
@@ -362,6 +405,15 @@ Playback reads VRAM first, promotes RAM→VRAM, and promotes disk→RAM→VRAM a
 (never plays directly from disk). Writes are write-behind on background IO threads; a disk
 write never blocks a render.
 
+**A write-behind queue MUST be bounded and de-duplicated (K-277).** Its entries are whole
+frames, so its depth is a memory budget: at most eight frames may be waiting to be written,
+and a frame already on its way down is never handed over a second time. A frame counts as
+parked only when its write has *finished*, so anything deciding what to copy down MUST ask
+"is it on its way?" as well as "is it there?" — asking only the second is how the idle
+backup re-queued the same frames every few milliseconds until the application held tens of
+gigabytes. A refused park costs that frame its place on disk and nothing else: it is still
+on the card and in memory, and it is offered again later.
+
 **Shipped (K-214).** All three tiers run. The VRAM tier holds finished display textures
 (K-187), the RAM tier holds their bytes, and the disk tier parks them in a folder that
 outlives the session. The rungs between them are built both ways: a frame evicted from VRAM
@@ -435,7 +487,7 @@ Normative details:
 - **Algorithm version** is bumped whenever an effect's output changes, invalidating stale
   entries by construction.
 - Seeded randomness (wiggle, noise) hashes its seed and time inputs; expressions are
-  deterministic (K-063), so their outputs are hashable values like any other.
+  deterministic (K-305), so their outputs are hashable values like any other.
 
 **Invalidation is pure hash mismatch.** There is no invalidation machinery, no dirty flags, no
 dependency walker: an edit changes evaluated values, values change hashes, old entries simply
@@ -696,7 +748,7 @@ Nothing baked ever appears in the project document or is observable in the file 
 
 Same project, same Lumit version, same machine, same preset → identical output pixels, every
 run. Therefore, normatively: adaptive degradation never applies to export; motion-blur sample
-counts come from the deterministic formula (§4); expressions are deterministic (K-063); every
+counts come from the deterministic formula (§4); expressions are deterministic (K-305); every
 frame renders at full chosen quality regardless of load — under resource pressure export gets
 slower, never different. Bit-exactness across different GPUs/driver versions is not promised
 (floating-point variance); cross-machine consistency is visually lossless, same-machine

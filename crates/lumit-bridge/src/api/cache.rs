@@ -55,6 +55,115 @@ pub fn cache_stats() -> BridgeCacheStats {
     read()
 }
 
+/// Where this process's memory has gone: what each tier admits to holding, and
+/// what the operating system says the process holds (K-294).
+///
+/// **The field that matters is [`Self::unaccounted_bytes`].** Every tier here
+/// is byte-budgeted and evicts to stay inside its budget, so a report where the
+/// tiers add up to their budgets and the process is a hundred times larger is
+/// not a cache problem at all — it is memory nobody in this list is counting,
+/// which is a different search entirely. Lumit has twice been reported holding
+/// tens of gigabytes (K-277 and after it), and both times that question took
+/// days to answer from the outside. It is one call from the inside.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BridgeMemoryReport {
+    /// What the operating system says this process holds — Activity Monitor's
+    /// **Memory** on macOS, the working set on Windows, `VmRSS` on Linux. 0
+    /// where the platform will not say ([`crate::api::system::resident_memory_bytes`]).
+    pub process_bytes: u64,
+    /// Finished frames held in ordinary memory.
+    pub frame_cache_bytes: u64,
+    /// Frames held on the graphics card.
+    pub vram_cache_bytes: u64,
+    /// Whether the card's memory *is* this process's memory — true on every
+    /// Apple Silicon Mac and on any integrated adapter.
+    ///
+    /// When it is, `vram_cache_bytes` is counted against `process_bytes` like
+    /// any other tier; when it is not, the card's frames are somewhere else
+    /// entirely and counting them would understate what is unaccounted for.
+    /// Getting this backwards is how a cache doing exactly its job read as
+    /// gigabytes nobody could explain.
+    pub unified_memory: bool,
+    /// Decoded source frames held for the compositor.
+    pub decode_cache_bytes: u64,
+    /// How many media decoders are open. Counted, not weighed: what a decoder
+    /// holds is FFmpeg's and the driver's business, and a made-up number of
+    /// bytes would be worse than an honest count.
+    pub open_decoders: u64,
+    /// How many frames are waiting to be written to disk — the write-behind
+    /// queue K-277 bounded at eight. A count rather than bytes on purpose: each
+    /// waiting frame shares its allocation with the frame cache above (one
+    /// `Arc`, both tiers), so charging it twice would make the report lie in
+    /// the one direction that matters.
+    pub park_queue_frames: u64,
+    /// What the graphics driver holds for the render device, in use. On
+    /// unified memory (every Apple Silicon Mac) this is inside
+    /// `process_bytes`; on a discrete card it is not.
+    pub gpu_allocated_bytes: u64,
+    /// What the graphics driver has **reserved** — the blocks those
+    /// allocations were carved from, including the free room inside them.
+    ///
+    /// The gap between this and `gpu_allocated_bytes` is memory that has been
+    /// released by the engine and not handed back by the driver: free, and
+    /// still ours.
+    ///
+    /// **Both byte figures are 0 on macOS**, where Metal keeps no such
+    /// accounting and wgpu therefore reports none — which is the platform the
+    /// question was asked on. Read the two counts below there.
+    pub gpu_reserved_bytes: u64,
+    /// How many textures the driver is holding for the render device right now.
+    ///
+    /// **This is the figure that works everywhere, Metal included.** The engine
+    /// holds a handful at rest — the frames in the card's cache, the pooled
+    /// upload textures, the shared present targets, and each frame's
+    /// intermediates while it is being made. Thousands of them means frames the
+    /// engine dropped were never destroyed, which is a different fault from any
+    /// cache being too large and is not visible in any other number here.
+    pub gpu_textures: u64,
+    /// How many buffers the driver is holding, for the same reason.
+    pub gpu_buffers: u64,
+    /// `process_bytes` less everything above that lives in ordinary memory.
+    /// Saturating at zero, since the platform's number and ours are read a
+    /// moment apart and a small negative is meaningless.
+    pub unaccounted_bytes: u64,
+}
+
+/// Read the memory report. Cheap: five atomics, one lock and one syscall.
+#[frb(sync)]
+#[must_use]
+pub fn memory_report() -> BridgeMemoryReport {
+    let (frame_cache, _, _, _, _) = crate::framecache::stats();
+    let (vram, _) = crate::framecache::vram::stats();
+    let (decode, decoders) = crate::framecache::decode::stats();
+    let park = crate::framecache::disk::pending_parks();
+    let (gpu_allocated, gpu_reserved, gpu_textures, gpu_buffers) = crate::framecache::gpu::stats();
+    let process = crate::api::system::resident_memory_bytes();
+    // On unified memory the card's frames are inside this process, so they are
+    // accounted like any other tier; on a discrete card they are not in it at
+    // all and must not be. The adapter says which, rather than the platform:
+    // a Mac with an external card would answer differently, and so should the
+    // report.
+    let unified = crate::framecache::gpu::unified();
+    let accounted = (frame_cache as u64)
+        .saturating_add(decode)
+        .saturating_add(if unified { vram } else { 0 });
+    BridgeMemoryReport {
+        process_bytes: process,
+        frame_cache_bytes: frame_cache as u64,
+        vram_cache_bytes: vram,
+        unified_memory: unified,
+        decode_cache_bytes: decode,
+        open_decoders: decoders,
+        park_queue_frames: park,
+        gpu_allocated_bytes: gpu_allocated,
+        gpu_reserved_bytes: gpu_reserved,
+        gpu_textures,
+        gpu_buffers,
+        unaccounted_bytes: process.saturating_sub(accounted),
+    }
+}
+
 /// Resize the cache, returning what it holds afterwards.
 ///
 /// Shrinking evicts oldest-first straight away rather than waiting for the next
@@ -290,4 +399,21 @@ pub fn viewer_transport() -> BridgeViewerTransport {
     {
         BridgeViewerTransport::ReadBack
     }
+}
+
+/// Ask the render worker to measure what each frame costs, per layer and per
+/// effect (docs/13 §7.1), or to stop.
+///
+/// **Not free, which is why it is a switch.** A measured frame waits for the
+/// graphics card at every node, so a millisecond on a Timeline row means the
+/// work rather than the paperwork — and that wait is exactly the overlap a
+/// brisk preview lives on. So the numbers are collected while something is
+/// showing them and not otherwise, and playback is never measured whatever
+/// this says.
+///
+/// Takes effect from the next frame; frames already in flight finish as they
+/// started.
+#[frb(sync)]
+pub fn set_render_profiling(on: bool) {
+    crate::profiling::set_wanted(on);
 }

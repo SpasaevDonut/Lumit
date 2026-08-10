@@ -1,0 +1,19 @@
+{
+  "name": "lumitlab",
+  "type": "module",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check"
+  },
+  "dependencies": {
+    "@fontsource-variable/jetbrains-mono": "^5.2.0",
+    "@fontsource-variable/schibsted-grotesk": "^5.2.0",
+    "@tailwindcss/vite": "^4.1.0",
+    "astro": "^5.14.0",
+    "tailwindcss": "^4.1.0"
+  }
+}

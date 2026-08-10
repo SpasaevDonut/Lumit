@@ -29,12 +29,12 @@ pub enum BridgeRetimeInterp {
     Nearest,
     /// Crossfade the two neighbours.
     Blend,
-    /// Optical-flow synthesis (K-268/K-269): the engine measures how everything
+    /// Optical-flow synthesis (K-331/K-332): the engine measures how everything
     /// moved between the two frames and paints the one in between.
     Flow,
 }
 
-/// A footage layer's Flow group (docs/08 §3.1, K-268), flat for the bridge.
+/// A footage layer's Flow group (docs/08 §3.1, K-331), flat for the bridge.
 ///
 /// Every field is a picture-changing parameter, so every field is part of the
 /// frame's identity — see `feed_interp`. Read and written whole: a group of

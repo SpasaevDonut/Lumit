@@ -31,6 +31,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
 
+import '../l10n/strings.dart';
 import '../theme/theme.dart';
 import 'controls.dart';
 
@@ -488,7 +489,7 @@ class _ColourPickerBodyState extends State<_ColourPickerBody> {
         if (!bytes && _colour.outOfGamut) ...[
           const SizedBox(height: 4),
           Text(
-            'Outside 0–1: the swatch and hex are clipped',
+            l10n.colourOutsideRange,
             key: const Key('colour-picker-clipped'),
             style: t.small.copyWith(color: t.textMuted),
           ),
@@ -510,7 +511,7 @@ class _ColourPickerBodyState extends State<_ColourPickerBody> {
                 widget.onCommit(widget.initial);
                 widget.onClose();
               },
-              child: const Text('Cancel'),
+              child: Text(l10n.cancel),
             ),
             const SizedBox(width: 6),
             HouseButton(
@@ -520,7 +521,7 @@ class _ColourPickerBodyState extends State<_ColourPickerBody> {
                 widget.onCommit(_colour);
                 widget.onClose();
               },
-              child: const Text('Apply'),
+              child: Text(l10n.apply),
             ),
           ],
         ),

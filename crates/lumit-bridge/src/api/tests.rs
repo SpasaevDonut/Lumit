@@ -282,6 +282,9 @@ fn a_footage_item_pointing_at_nothing_reports_missing() {
         .expect("imported");
 
     let status = footage.get_status().expect("status");
+    // The same answer in every build: whether a file is on disk is a question
+    // for the filesystem, not for the decoder (K-273). Before that, a
+    // media-less build called this path Ready.
     assert!(matches!(status, LumitMediaStatus::Missing));
 }
 
@@ -660,7 +663,13 @@ fn effect_with_every_kind() -> lumit_core::model::EffectInstance {
         id: Uuid::now_v7(),
         effect: EffectKey {
             namespace: EffectNamespace::Builtin,
-            match_name: "blur".into(),
+            // Deliberately a name no schema declares. This fixture exists to
+            // exercise the *value type* — one parameter per kind — not any real
+            // effect, and its parameters are invented to match. Borrowing a
+            // shipped effect's name would mean `BridgeEffectInstance::new`
+            // filling in that effect's own declared parameters beside these
+            // which is right for a real instance and pure noise here.
+            match_name: "test_every_value_kind".into(),
             version: 1,
             extra: serde_json::Map::new(),
         },
@@ -703,6 +712,7 @@ fn effect_with_every_kind() -> lumit_core::model::EffectInstance {
             param("layer", EffectValue::Layer(Some(Uuid::now_v7()))),
         ],
         sample_temporally: true,
+        custom_name: None,
         extra: serde_json::Map::new(),
     }
 }
@@ -778,6 +788,106 @@ fn every_effect_value_kind_round_trips_through_the_document() {
     layer.set_effects(staged).expect("committed");
 
     assert_eq!(stack_of(&layer), vec![original]);
+}
+
+/// An effect saved before its schema grew a parameter must still be able to
+/// reach it.
+///
+/// `instantiate` copies the schema's parameters at the moment an effect is
+/// created, and nothing brings an older instance up to a schema that grew after
+/// it. Every such parameter therefore *rendered* right — the resolve step falls
+/// back to the declared default — while being **uneditable**, because the read
+/// that draws the row and the write behind it both looked only at what the
+/// instance already carried. The row came out blank and the write was refused.
+///
+/// Depth of field is the case that forced this: an instance saved before the
+/// aperture folded in (K-313) could not reach Blades, Roundness, Rotation or
+/// Exposure — which is the entire feature.
+#[test]
+fn an_old_instance_reaches_a_parameter_its_schema_grew_later() {
+    let (project, layer) = project_with_layer();
+    // A Depth of field as it would have been saved before its aperture controls
+    // existed: the schema's instance with those parameters taken back out.
+    let mut old = lumit_core::fx::instantiate("dof").expect("dof");
+    let grown = [
+        "blades",
+        "roundness",
+        "rotation",
+        "exposure",
+        "depth_channel",
+    ];
+    old.params.retain(|p| !grown.contains(&p.id.as_str()));
+    // Something the user had already set must survive untouched.
+    let radius_before = old
+        .params
+        .iter()
+        .find(|p| p.id == "aperture")
+        .expect("aperture")
+        .value
+        .clone();
+    seed_stack(&project, &layer, vec![old]);
+
+    // The read reports every parameter the schema declares, at its default.
+    let mut staged = layer.get_effects().expect("stack");
+    let info = staged[0].get_info();
+    for id in grown {
+        assert!(
+            info.values.iter().any(|v| v.id == id),
+            "{id} must be reported so its row has something to draw"
+        );
+    }
+    assert!(
+        matches!(
+            staged[0].get_value("depth_channel".into()),
+            Ok(BridgeEffectValue::Choice(0))
+        ),
+        "a grown parameter reads at its declared default (Red)"
+    );
+
+    // And the write lands: the parameter is added to the instance rather than
+    // refused, and committing keeps it.
+    staged[0]
+        .set_value(
+            "rotation".into(),
+            BridgeEffectValue::Float(BridgeScalar::Static(30.0)),
+        )
+        .expect("a grown parameter must be writable");
+    layer.set_effects(staged).expect("committed");
+
+    let after = stack_of(&layer);
+    let stored = after[0]
+        .params
+        .iter()
+        .find(|p| p.id == "rotation")
+        .expect("the written parameter is now on the instance");
+    assert!(
+        matches!(&stored.value, lumit_core::model::EffectValue::Float(f)
+            if (f.value_at(0.0) - 30.0).abs() < 1e-9),
+        "the value written is the value stored"
+    );
+    assert_eq!(
+        after[0]
+            .params
+            .iter()
+            .find(|p| p.id == "aperture")
+            .expect("aperture")
+            .value,
+        radius_before,
+        "filling absences must never rewrite a value the instance already held"
+    );
+
+    // A name no schema declares is still refused — that is a caller bug, not an
+    // old project.
+    let mut staged = layer.get_effects().expect("stack");
+    assert!(
+        staged[0]
+            .set_value(
+                "no_such_param".into(),
+                BridgeEffectValue::Float(BridgeScalar::Static(1.0))
+            )
+            .is_err(),
+        "an undeclared parameter is still refused"
+    );
 }
 
 /// A keyframed Float must read as its curve, not as its value at time zero. The
@@ -1232,6 +1342,108 @@ fn every_builtin_lists_its_parameters() {
     }
 }
 
+/// The twirls and greying rules cross too, and every rule still names rows the
+/// panel will actually be drawing.
+///
+/// `EffectSchema::groups` existed in the core schema from K-145 but never
+/// crossed the bridge, so Shake and Matte key declared twirls the panel could
+/// not know about and drew flat. This is the sweep that keeps the layout side
+/// honest now that something depends on it.
+#[test]
+fn every_builtin_lists_its_layout() {
+    for info in crate::api::effect::list_effects() {
+        let groups = crate::api::effect::list_parameter_groups(info.name.clone());
+        let enabled_when = crate::api::effect::list_enabled_when(info.name.clone());
+        let ids: Vec<String> = crate::api::effect::list_parameters(info.name.clone())
+            .into_iter()
+            .map(|p| p.id)
+            .collect();
+        let declared = lumit_core::fx::BUILTINS
+            .iter()
+            .find(|s| s.match_name == info.name)
+            .expect("listed effects are built in");
+
+        assert_eq!(groups.len(), declared.groups.len());
+        for g in &groups {
+            for member in &g.params {
+                assert!(
+                    ids.contains(member),
+                    "{}: twirl `{}` names `{member}`, which the panel never sees",
+                    info.name,
+                    g.label
+                );
+            }
+        }
+        assert_eq!(enabled_when.len(), declared.enabled_when.len());
+        for rule in &enabled_when {
+            assert!(ids.contains(&rule.param) && ids.contains(&rule.on));
+        }
+    }
+}
+
+/// Depth of field is what the greying crossing exists for, so it is what pins
+/// it: the folded twirls and the rules that grey a row arrive on the far side
+/// intact (K-313).
+#[test]
+fn dofs_twirls_and_greying_rules_cross_the_bridge() {
+    use crate::api::effect::{BridgeEnabledCond, BridgeParamKind};
+
+    let groups = crate::api::effect::list_parameter_groups("dof".into());
+    let labels: Vec<&str> = groups.iter().map(|g| g.label.as_str()).collect();
+    assert_eq!(labels, vec!["Iris", "Highlights", "Depth map"]);
+    assert!(groups.iter().all(|g| g.collapsed));
+
+    let enabled_when = crate::api::effect::list_enabled_when("dof".into());
+    let rule = |param: &str| {
+        enabled_when
+            .iter()
+            .find(|r| r.param == param)
+            .unwrap_or_else(|| panic!("no rule for {param}"))
+            .clone()
+    };
+    // Focus distance and the focus point take each other over.
+    let distance = rule("focus");
+    assert_eq!(distance.on, "use_focus_point");
+    assert_eq!(distance.cond, BridgeEnabledCond::BoolIs(false));
+    let point = rule("focus_point_x");
+    assert_eq!(point.on, "use_focus_point");
+    assert_eq!(point.cond, BridgeEnabledCond::BoolIs(true));
+    // And everything that reads the depth pass greys without one.
+    let channel = rule("depth_channel");
+    assert_eq!(channel.on, "depth");
+    assert_eq!(channel.cond, BridgeEnabledCond::LayerSet);
+
+    // The dial crosses as itself, not flattened into a Float row.
+    let params = crate::api::effect::list_parameters("dof".into());
+    let kind = |id: &str| {
+        params
+            .iter()
+            .find(|p| p.id == id)
+            .unwrap_or_else(|| panic!("no {id}"))
+            .kind
+            .clone()
+    };
+    assert!(matches!(
+        kind("rotation"),
+        BridgeParamKind::Angle { default, .. } if default == 0.0
+    ));
+    // The focus point is an `_x`/`_y` Float pair the panel folds into one row
+    // (docs/07 §6.1), not a kind of its own.
+    assert!(matches!(
+        kind("focus_point_x"),
+        BridgeParamKind::Float { .. }
+    ));
+}
+
+/// An unknown effect gets an empty layout rather than an error, for the same
+/// reason its parameter list is empty: a project carrying an effect this build
+/// does not know still opens.
+#[test]
+fn the_layout_of_an_unknown_effect_is_empty() {
+    assert!(crate::api::effect::list_parameter_groups("not-an-effect".into()).is_empty());
+    assert!(crate::api::effect::list_enabled_when("not-an-effect".into()).is_empty());
+}
+
 // --- Transform ------------------------------------------------------------
 
 /// Reading the group and writing one property back leaves the document
@@ -1481,6 +1693,290 @@ fn the_pixel_less_kinds_report_no_picture() {
     assert!(solid.has_picture().expect("has_picture"));
     let adjustment = comp.add_adjustment_layer().expect("adjustment added");
     assert!(adjustment.has_picture().expect("has_picture"));
+}
+
+/// **An effect on a Null keeps its values, animation and all** (K-274).
+///
+/// A Null draws nothing, so an image effect on one changes no picture — which
+/// is why the drop is *labelled inert* rather than refused. The parameters are
+/// the point: a control put on a Null is how a value is meant to be published
+/// for other layers to read (a Slider driving an expression, once expressions
+/// land). So the stack must survive a commit, keep its keyframes, and sample
+/// like any other curve — nothing may quietly strip an effect from a layer that
+/// has no pixels.
+#[test]
+fn an_effect_on_a_null_layer_keeps_its_animated_value() {
+    use crate::api::effect::{sample_scalar, BridgeEffectValue, BridgeRational, BridgeScalar};
+
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let null = comp.add_null_layer().expect("null added");
+
+    null.add_effect("blur".into())
+        .expect("the drop is accepted");
+    assert_eq!(
+        null.get_effects().expect("effects").len(),
+        1,
+        "an effect on a Null is stored like any other"
+    );
+
+    // Animate it, and commit through the ordinary staged-copy path.
+    let mut staged = null.get_effects().expect("effects");
+    let key = |num: i64, value: f64| crate::api::effect::BridgeKeyframe {
+        time: BridgeRational { num, den: 1 },
+        value,
+        interp_in: crate::api::effect::BridgeSideInterp::Linear,
+        interp_out: crate::api::effect::BridgeSideInterp::Linear,
+    };
+    let keys = BridgeScalar::Keyframed(vec![key(0, 0.0), key(1, 10.0)]);
+    staged[0]
+        .set_value("radius".into(), BridgeEffectValue::Float(keys))
+        .expect("a Null's parameter takes a value like any other");
+    null.set_effects(staged).expect("committed");
+
+    // Read it back and sample it: halfway along the ramp is five, on a layer
+    // that will never draw a pixel.
+    let Ok(BridgeEffectValue::Float(scalar)) = null
+        .get_effects()
+        .expect("effects")
+        .first()
+        .expect("the effect survived the commit")
+        .get_value("radius".into())
+    else {
+        panic!("a Null's effect parameter must read back as the Float it is");
+    };
+    let half = sample_scalar(scalar, BridgeRational { num: 1, den: 2 });
+    assert!(
+        (half - 5.0).abs() < 1e-9,
+        "the curve on a Null evaluates like any other: got {half}"
+    );
+}
+
+/// **A copied layer arrives whole, and lands where the playhead is** (K-275).
+///
+/// Copy and paste is the one edit that has to carry *everything* — the transform
+/// with its keyframes, the effects with theirs, the switches, the name — because
+/// a paste that quietly dropped a property would be found much later, on a shot
+/// that looked almost right. So the payload is the document's own `Layer`, and
+/// this checks the pieces most likely to be lost by a hand-written conversion.
+#[test]
+fn a_copied_layer_pastes_whole_and_lands_at_the_playhead() {
+    use crate::api::effect::{BridgeEffectValue, BridgeRational, BridgeScalar};
+
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let source = comp.add_solid_layer().expect("a layer to copy");
+    source.rename("Hero".into()).expect("named");
+    source.add_effect("blur".into()).expect("an effect on it");
+
+    // An animated parameter, so the keyframes have something to lose.
+    let mut staged = source.get_effects().expect("effects");
+    let key = |num: i64, value: f64| crate::api::effect::BridgeKeyframe {
+        time: BridgeRational { num, den: 1 },
+        value,
+        interp_in: crate::api::effect::BridgeSideInterp::Linear,
+        interp_out: crate::api::effect::BridgeSideInterp::Linear,
+    };
+    staged[0]
+        .set_value(
+            "radius".into(),
+            BridgeEffectValue::Float(BridgeScalar::Keyframed(vec![key(0, 0.0), key(2, 40.0)])),
+        )
+        .expect("animated");
+    source.set_effects(staged).expect("committed");
+
+    let text = source.copy_layer().expect("copied");
+
+    // Pasted into the same comp at frame 30 (one second at 30 fps).
+    let pasted = comp.paste_layer(text.clone(), Some(30)).expect("pasted");
+    assert_ne!(
+        pasted.layer_id, source.layer_id,
+        "a paste is a new layer, not a second name for the old one"
+    );
+    assert_eq!(pasted.get_name().expect("name"), "Hero", "the name travels");
+
+    let span = pasted.get_span().expect("span");
+    assert_eq!(
+        (span.in_point.num, span.in_point.den),
+        (1, 1),
+        "the in point lands on the playhead — frame 30 of a 30 fps comp is 1 s"
+    );
+
+    // The effect came too, animated, with an id of its own.
+    let fx = pasted.get_effects().expect("effects");
+    assert_eq!(fx.len(), 1, "the stack travels");
+    assert_ne!(
+        fx[0].id(),
+        source.get_effects().expect("effects")[0].id(),
+        "with a fresh instance id, so no op is ambiguous"
+    );
+    let Ok(BridgeEffectValue::Float(BridgeScalar::Keyframed(keys))) =
+        fx[0].get_value("radius".into())
+    else {
+        panic!("the animation must survive the round trip");
+    };
+    assert_eq!(keys.len(), 2, "both keys, unshifted — a layer moves as one");
+
+    // And the original is untouched by any of it.
+    assert_eq!(
+        source.get_span().expect("span").in_point,
+        BridgeRational { num: 0, den: 1 }
+    );
+}
+
+/// A layer pasted into **another** composition keeps everything that is its own
+/// and drops what pointed at the comp it left (K-275).
+#[test]
+fn a_layer_pasted_into_another_comp_drops_the_references_it_left_behind() {
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let parent = comp.add_null_layer().expect("a parent");
+    let source = comp.add_solid_layer().expect("a layer to copy");
+    source.set_parent(Some(parent.layer_id)).expect("parented");
+
+    let text = source.copy_layer().expect("copied");
+
+    // Back into its own comp: the parent is still there, so it is kept.
+    let same = comp.paste_layer(text.clone(), None).expect("pasted");
+    assert_eq!(
+        same.get_parent().expect("parent"),
+        Some(parent.layer_id),
+        "pasting where the parent lives keeps the parenting"
+    );
+    assert_eq!(
+        same.get_span().expect("span").in_point,
+        source.get_span().expect("span").in_point,
+        "None keeps the time it was copied at"
+    );
+
+    // Into a different comp: the parent means nothing there, so it goes.
+    let elsewhere = project
+        .new_composition("Second".into(), None)
+        .expect("another comp");
+    let there = elsewhere.paste_layer(text, Some(0)).expect("pasted");
+    assert_eq!(
+        there.get_parent().expect("parent"),
+        None,
+        "a parent from another comp is dropped, not left dangling"
+    );
+    assert_eq!(
+        elsewhere.get_layers().expect("layers").len(),
+        1,
+        "and the layer itself did arrive"
+    );
+}
+
+/// **A pasted effect lands with its first keyframe under the playhead** (K-275,
+/// the owner's rule). An effect copied from a layer that flashes at 4 s and
+/// pasted while the playhead sits at 12 s must flash at 12 s.
+#[test]
+fn a_pasted_effect_starts_its_animation_at_the_playhead() {
+    use crate::api::effect::{BridgeEffectValue, BridgeRational, BridgeScalar};
+
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let source = comp.add_solid_layer().expect("a layer");
+    source.add_effect("blur".into()).expect("an effect");
+
+    let key = |num: i64, value: f64| crate::api::effect::BridgeKeyframe {
+        time: BridgeRational { num, den: 1 },
+        value,
+        interp_in: crate::api::effect::BridgeSideInterp::Linear,
+        interp_out: crate::api::effect::BridgeSideInterp::Linear,
+    };
+    let mut staged = source.get_effects().expect("effects");
+    staged[0]
+        .set_value(
+            "radius".into(),
+            // Two keys a second apart, starting at 4 s.
+            BridgeEffectValue::Float(BridgeScalar::Keyframed(vec![key(4, 0.0), key(5, 40.0)])),
+        )
+        .expect("animated");
+    source.set_effects(staged).expect("committed");
+
+    let text = source.copy_effects(Vec::new()).expect("copied");
+    let target = comp.add_solid_layer().expect("somewhere to paste");
+    // 12 seconds at 30 fps.
+    target.paste_effects(text, 360).expect("pasted");
+
+    let fx = target.get_effects().expect("effects");
+    assert_eq!(fx.len(), 1);
+    let Ok(BridgeEffectValue::Float(BridgeScalar::Keyframed(keys))) =
+        fx[0].get_value("radius".into())
+    else {
+        panic!("the pasted effect must still be animated");
+    };
+    assert_eq!(
+        keys[0].time,
+        BridgeRational { num: 12, den: 1 },
+        "the first key sits under the playhead"
+    );
+    assert_eq!(
+        keys[1].time,
+        BridgeRational { num: 13, den: 1 },
+        "and the rest keep their spacing"
+    );
+}
+
+/// **Several picked effects copy as one document, in stack order** (K-300).
+/// The Effect controls panel and the Timeline both let a Shift-click take a run
+/// of headings, so the call takes a list — and what comes back is the order the
+/// stack is drawn in, not the order the clicks happened in, or a copied group
+/// would paste back shuffled.
+#[test]
+fn copying_several_effects_takes_them_in_stack_order() {
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let source = comp.add_solid_layer().expect("a layer");
+    source.add_effect("blur".into()).expect("first");
+    source.add_effect("sharpen".into()).expect("second");
+    source.add_effect("vignette".into()).expect("third");
+    let stack = source.get_effects().expect("effects");
+    let ids: Vec<_> = stack.iter().map(|e| e.id()).collect();
+
+    // Picked bottom-up: the third, then the first.
+    let text = source
+        .copy_effects(vec![ids[2], ids[0]])
+        .expect("copied both");
+    let target = comp.add_solid_layer().expect("somewhere to paste");
+    target.paste_effects(text, 0).expect("pasted");
+
+    let pasted: Vec<_> = target
+        .get_effects()
+        .expect("effects")
+        .iter()
+        .map(|e| e.get_info().name)
+        .collect();
+    assert_eq!(
+        pasted,
+        vec!["blur".to_string(), "vignette".to_string()],
+        "the two picked effects arrive, in the order the stack held them"
+    );
+
+    // Naming nothing that is on this layer is a refusal, not a whole-stack copy.
+    assert!(source.copy_effects(vec![Uuid::nil()]).is_err());
+}
+
+/// An effect with no animation at all pastes unchanged — there is no timing to
+/// place, and inventing one would move a look that was never in motion (K-275).
+#[test]
+fn a_pasted_effect_with_no_keyframes_is_left_where_it_is() {
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let source = comp.add_solid_layer().expect("a layer");
+    source.add_effect("blur".into()).expect("an effect");
+    let before = source.get_effects().expect("effects")[0]
+        .get_value("radius".into())
+        .expect("radius");
+
+    let text = source.copy_effects(Vec::new()).expect("copied");
+    let target = comp.add_solid_layer().expect("somewhere to paste");
+    target.paste_effects(text, 120).expect("pasted");
+
+    let after = target.get_effects().expect("effects")[0]
+        .get_value("radius".into())
+        .expect("radius");
+    assert_eq!(format!("{before:?}"), format!("{after:?}"));
 }
 
 /// Each switch is its own op, so a click is one undo step and toggling one
@@ -1839,6 +2335,82 @@ fn the_razor_cuts_and_deletes_without_moving_the_other_clips() {
     assert_eq!(
         remaining[0].place_start, after[0].place_start,
         "deleting leaves a gap; the survivor does not ripple back"
+    );
+}
+
+/// The memory report answers without a project, and its arithmetic holds
+/// (K-294).
+///
+/// The point of the report is the *unaccounted* figure — what the process holds
+/// that no tier here admits to — so what is pinned is that it is derived from
+/// the two numbers it claims to be derived from, and that a platform which will
+/// not say how big the process is says so with a zero rather than a guess.
+#[test]
+fn the_memory_report_answers_and_its_arithmetic_holds() {
+    use crate::api::cache::memory_report;
+
+    let report = memory_report();
+
+    // Every desktop this ships on can answer; a platform that cannot returns 0
+    // rather than inventing, and then there is nothing to check.
+    if report.process_bytes == 0 {
+        return;
+    }
+
+    let accounted = report.frame_cache_bytes
+        + report.decode_cache_bytes
+        + if report.unified_memory {
+            report.vram_cache_bytes
+        } else {
+            0
+        };
+    assert_eq!(
+        report.unaccounted_bytes,
+        report.process_bytes.saturating_sub(accounted),
+        "unaccounted is the process less the tiers that live in ordinary memory"
+    );
+    assert!(
+        report.unaccounted_bytes <= report.process_bytes,
+        "a part cannot exceed the whole"
+    );
+    // The card's frames count against the process only where they are in it.
+    // Getting this backwards makes a cache doing its job read as a leak, which
+    // is the one way this report can actively mislead.
+    if !report.unified_memory {
+        assert_eq!(
+            report.unaccounted_bytes,
+            report
+                .process_bytes
+                .saturating_sub(report.frame_cache_bytes + report.decode_cache_bytes),
+            "a discrete card's frames are not in this process, so they are not \
+             subtracted from it"
+        );
+    }
+    assert!(
+        report.park_queue_frames <= lumit_render::diskio::MAX_PENDING_PARKS as u64,
+        "the write-behind queue is bounded (K-277), and the report shows it"
+    );
+}
+
+/// A process that is holding memory answers a plausible size for itself — the
+/// syscall behind the report is wired, not a stub returning zero on the
+/// platform running the tests.
+#[test]
+fn the_process_reports_its_own_size() {
+    let bytes = crate::api::system::resident_memory_bytes();
+    // Bound rather than asserted inline: `cfg!` is a literal, and an assert on
+    // one is a constant expression clippy rightly refuses.
+    let desktop = cfg!(any(windows, target_os = "linux", target_os = "macos"));
+    if bytes == 0 {
+        // Only an unsupported platform may answer nothing.
+        assert!(!desktop, "every desktop target answers its own size");
+        return;
+    }
+    // A test process holding less than a megabyte, or more than a terabyte, is
+    // a misread struct rather than a real reading.
+    assert!(
+        bytes > (1 << 20) && bytes < (1 << 40),
+        "a plausible process size, not a misread field: {bytes} bytes"
     );
 }
 
@@ -2525,6 +3097,70 @@ fn shape_contents_are_replaced_as_a_whole_and_undone_in_one_step() {
     );
 }
 
+/// Dragging the left-most point left grows the art's box leftwards, and the
+/// layer's origin **is** that box's corner — so without the position following
+/// it, every point nobody touched would slide the other way (K-308).
+#[test]
+fn moving_a_point_past_the_arts_edge_leaves_the_rest_of_it_where_it_was() {
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let shape = comp
+        .add_shape_layer(
+            "Art".into(),
+            vec![shape_item("Rectangle", 200.0, 100.0, 50.0)],
+        )
+        .expect("a shape layer");
+
+    let still = |s: &BridgeScalar| match s {
+        BridgeScalar::Static(v) => *v,
+        _ => panic!("not keyframed"),
+    };
+    // Where an untouched point is drawn: the layer's position plus its offset
+    // into the art's box.
+    let drawn_at = |index: usize| {
+        let contents = shape.get_shape_contents().expect("contents");
+        let items: Vec<_> = contents.iter().map(|i| i.write_item()).collect();
+        let (x0, y0, _, _) = lumit_core::shape::contents_bounds(&items).expect("a box");
+        let tf = shape.get_transform().expect("transform");
+        let v = &contents[0].vertices[index];
+        (
+            still(&tf.position_x) + v.x - x0,
+            still(&tf.position_y) + v.y - y0,
+        )
+    };
+    let before = drawn_at(2);
+
+    let mut contents = shape.get_shape_contents().expect("contents");
+    contents[0].vertices[0].x -= 30.0;
+    contents[0].vertices[0].y -= 20.0;
+    shape.set_shape_contents(contents).expect("set");
+
+    let tf = shape.get_transform().expect("transform");
+    assert_eq!(
+        still(&tf.position_x),
+        170.0,
+        "the layer followed the corner"
+    );
+    assert_eq!(still(&tf.position_y), 80.0);
+    let after = drawn_at(2);
+    assert!(
+        (after.0 - before.0).abs() < 1e-9 && (after.1 - before.1).abs() < 1e-9,
+        "the art nobody dragged stayed where it was: {before:?} became {after:?}"
+    );
+
+    project.undo().expect("undone");
+    let tf = shape.get_transform().expect("transform");
+    assert_eq!(
+        (still(&tf.position_x), still(&tf.position_y)),
+        (200.0, 100.0),
+        "the art and the layer went back together, in one step"
+    );
+    assert_eq!(
+        shape.get_shape_contents().expect("contents")[0].vertices[0].x,
+        200.0
+    );
+}
+
 #[test]
 fn shape_contents_ride_the_read_model() {
     let (project, layer) = project_with_layer();
@@ -2769,6 +3405,7 @@ fn a_text_layer_round_trips_its_document() {
 
     text.set_text(BridgeTextDocument {
         text: "Hello".into(),
+        expression: None,
         size: 48.0,
         fill: BridgeColourRgba {
             r: 1.0,
@@ -2797,6 +3434,7 @@ fn a_text_layer_round_trips_its_document() {
     assert!(matches!(
         layer.set_text(BridgeTextDocument {
             text: "no".into(),
+            expression: None,
             size: 1.0,
             fill: BridgeColourRgba {
                 r: 0.0,
@@ -2807,6 +3445,44 @@ fn a_text_layer_round_trips_its_document() {
         }),
         Err(BridgeError::NotText)
     ));
+}
+
+/// A text layer's words can be driven by an expression, and clearing the box
+/// hands the layer back to the words that were typed — an empty string is not
+/// an expression that says nothing, which would leave the layer blank forever.
+#[test]
+fn a_text_expression_round_trips_and_clears() {
+    use crate::api::assets::{BridgeColourRgba, BridgeTextDocument};
+
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let text = comp.add_text_layer().expect("a text layer");
+
+    let document = |expression: Option<&str>| BridgeTextDocument {
+        text: "typed".into(),
+        expression: expression.map(str::to_owned),
+        size: 48.0,
+        fill: BridgeColourRgba {
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+            a: 1.0,
+        },
+    };
+
+    text.set_text(document(Some("time * 2"))).expect("set");
+    let after = text.get_text().expect("text").expect("still text");
+    assert_eq!(after.expression.as_deref(), Some("time * 2"));
+    assert_eq!(after.text, "typed", "the typed words survive underneath");
+
+    text.set_text(document(Some("   "))).expect("cleared");
+    assert_eq!(
+        text.get_text().expect("text").expect("text").expression,
+        None,
+        "an empty box means no expression"
+    );
+    let _ = project;
+    let _ = layer;
 }
 
 /// A camera's zoom is animatable, so it takes a whole scalar like every other
@@ -3737,6 +4413,114 @@ fn clearing_beats_keeps_the_markers_a_person_made() {
 
     // Clearing again is a calm no-op — something a user does without thinking.
     comp.clear_beat_markers().expect("no-op");
+    assert_eq!(comp.get_markers().expect("markers").len(), 1);
+}
+
+/// **Dragging or renaming a beat marker must leave it a beat marker** (K-270).
+///
+/// The regression: the panel writes the whole list back through `set_markers`,
+/// and a bridge marker carries only id, time and label — so every marker was
+/// rebuilt with the *default* kind, no duration, and an empty `extra`. Moving a
+/// detected beat one frame turned it into an ordinary cue, and *Clear beat
+/// markers* then walked straight past it: nothing was left to say it had ever
+/// been detected. K-254's ruler markers made that a drag away.
+///
+/// The same merge protects a spanning marker's duration and the unknown fields
+/// a newer Lumit wrote (docs/10 §1.1), which the panel equally cannot see.
+#[test]
+fn dragging_a_beat_marker_leaves_it_a_beat_marker() {
+    use crate::api::composition::BridgeMarker;
+    use crate::api::effect::BridgeRational;
+
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+
+    // A beat marker with a duration and a field from a newer version, placed
+    // the way detection and a forward-compatible load place them.
+    let beat_id = Uuid::now_v7();
+    {
+        let mut beat = lumit_core::markers::Marker::beat(
+            beat_id,
+            lumit_core::Rational::new(1, 1).expect("1 s"),
+            0.9,
+        );
+        beat.duration = Some(lumit_core::Rational::new(1, 4).expect("a quarter second"));
+        beat.extra
+            .insert("from_a_newer_lumit".into(), serde_json::json!(true));
+        let state = project.state().expect("state");
+        let state = state.write().expect("write");
+        state
+            .store
+            .commit(lumit_core::Op::SetCompMarkers {
+                comp: comp.id,
+                markers: vec![beat],
+            })
+            .expect("seeded");
+    }
+
+    // The panel's write-back: same marker, moved and renamed.
+    comp.set_markers(vec![BridgeMarker {
+        id: beat_id,
+        time: BridgeRational { num: 3, den: 2 },
+        label: "Moved".into(),
+    }])
+    .expect("dragged");
+
+    let stored = comp.composition().expect("comp").markers;
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].label, "Moved", "the edit landed");
+    assert_eq!(
+        stored[0].time.0,
+        lumit_core::Rational::new(3, 2).expect("1.5 s"),
+        "and so did the move"
+    );
+    assert!(
+        matches!(
+            stored[0].kind,
+            lumit_core::markers::MarkerKind::Beat { confidence }
+                if (confidence - 0.9).abs() < 1e-6
+        ),
+        "it is still the beat it was, confidence and all: {:?}",
+        stored[0].kind
+    );
+    assert_eq!(
+        stored[0].duration,
+        Some(lumit_core::Rational::new(1, 4).expect("a quarter second")),
+        "a spanning marker keeps its span"
+    );
+    assert_eq!(
+        stored[0].extra.get("from_a_newer_lumit"),
+        Some(&serde_json::json!(true)),
+        "and the forward-compatibility promise holds across an edit"
+    );
+
+    // Which is the whole point: clearing beats still finds it.
+    comp.clear_beat_markers().expect("cleared");
+    assert!(comp.get_markers().expect("markers").is_empty());
+}
+
+/// A marker the panel has just made is a plain user marker — the merge above
+/// must not invent provenance for one the document has never seen.
+#[test]
+fn a_marker_the_panel_just_made_is_a_user_marker() {
+    use crate::api::composition::BridgeMarker;
+    use crate::api::effect::BridgeRational;
+
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    comp.set_markers(vec![BridgeMarker {
+        id: Uuid::now_v7(),
+        time: BridgeRational { num: 1, den: 2 },
+        label: "Mine".into(),
+    }])
+    .expect("marked");
+
+    let stored = comp.composition().expect("comp").markers;
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].kind, lumit_core::markers::MarkerKind::User);
+    assert_eq!(stored[0].duration, None);
+    assert!(stored[0].extra.is_empty());
+    comp.clear_beat_markers().expect("no beats to clear");
     assert_eq!(comp.get_markers().expect("markers").len(), 1);
 }
 

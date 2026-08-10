@@ -46,7 +46,7 @@ pub struct CompJob {
     pub blend: Option<(usize, f32)>,
     /// Set when `blend`'s pair is combined by optical-flow synthesis rather
     /// than a plain crossfade (K-021 Flow policy), carrying the parameters the
-    /// synthesis runs with (K-268).
+    /// synthesis runs with (K-331).
     ///
     /// `None` covers both "the policy is not Flow" and "it is, but the
     /// engagement gate declined" — flow that cannot help renders as Nearest,
@@ -188,7 +188,9 @@ impl Default for PreviewEngine {
                         media_epoch,
                         ..
                     } => pool
-                        .decode_comp(comp, frame, &jobs, media_epoch)
+                        // Nobody watches a background decode's progress: the
+                        // bar belongs to the frame the Viewer is waiting for.
+                        .decode_comp(comp, frame, &jobs, media_epoch, &|_| {})
                         .map(PreviewResult::Comp),
                     Message::SetCacheBudget(_) => continue, // handled above
                 };
@@ -237,12 +239,12 @@ pub struct DecodePool {
     /// Flow backend, created on the first Flow-policy frame. Uses [`Self::gpu`]
     /// — the renderer's own device — when the pool was given one, so flow runs
     /// where the frames are already going rather than on a second device of its
-    /// own (K-268). Falls back to a headless device, then to the CPU oracle;
+    /// own (K-331). Falls back to a headless device, then to the CPU oracle;
     /// lumit-flow degrades by itself and never faults.
     flow_engine: Option<lumit_flow::FlowEngine>,
     /// The renderer's GPU, when the owner shared it.
     gpu: Option<lumit_gpu::GpuContext>,
-    /// Measured flow pairs (K-268), so a scrub does not remeasure and the two
+    /// Measured flow pairs (K-331), so a scrub does not remeasure and the two
     /// consumers of a layer's motion share one measurement.
     flow_cache: lumit_cache::ByteLru<FlowKey, CachedFlow>,
     /// How many comp frames this pool has actually decoded. Diagnostic, and the
@@ -255,7 +257,7 @@ pub struct DecodePool {
 /// Performance moves it.
 pub const DEFAULT_DECODE_CACHE_BYTES: usize = 512 * 1024 * 1024;
 
-/// The measured-flow cache's share of RAM (K-268).
+/// The measured-flow cache's share of RAM (K-331).
 ///
 /// A 1080p field pair is about 37 MB at native flow resolution, so this holds
 /// roughly seven of them — a scrub window, which is what it is for. Smaller than
@@ -287,7 +289,7 @@ impl lumit_cache::ByteSized for CachedFlow {
 
 /// What a cached flow pair is filed under: which source, which two frames of
 /// it, and the settings it was measured with — every one of which changes the
-/// field (K-268).
+/// field (K-331).
 type FlowKey = (Uuid, usize, usize, u64);
 
 /// A stable hash of the settings that shape a measurement.
@@ -325,7 +327,7 @@ impl DecodePool {
     }
 
     /// A pool that runs flow on the renderer's device rather than one of its
-    /// own (K-268). The handles are reference-counted clones, so this shares
+    /// own (K-331). The handles are reference-counted clones, so this shares
     /// the device rather than duplicating it — flow work then queues behind the
     /// same driver as everything else instead of competing with it from a
     /// second context.
@@ -344,6 +346,17 @@ impl DecodePool {
     #[must_use]
     pub fn comp_decodes(&self) -> u64 {
         self.comp_decodes
+    }
+
+    /// What the decoded-frame cache is holding, and how many decoders are
+    /// open — the pool's share of the memory report (K-294).
+    ///
+    /// The decoders are counted rather than measured: what a `VideoDecoder`
+    /// holds is FFmpeg's business (and, with hardware decode, the driver's), so
+    /// a number of them is honest where a number of bytes would be invented.
+    #[must_use]
+    pub fn memory(&self) -> (usize, usize) {
+        (self.frame_cache.used_bytes(), self.decoders.len())
     }
 
     /// Resize the decoded-frame cache (its slice of the one RAM budget).
@@ -386,13 +399,17 @@ impl DecodePool {
     }
 
     /// Decode every layer of one comp frame from its plan — the pixels
-    /// [`crate::build`] then turns into a draw list.
+    /// [`crate::build`] then turns into a draw list. `progress` is called with
+    /// the number of jobs finished as each one lands, which is what lets a
+    /// Viewer draw an honest bar through the slowest stage of a frame; pass
+    /// `&|_| {}` where nobody is watching.
     pub fn decode_comp(
         &mut self,
         comp: Uuid,
         frame: usize,
         jobs: &[CompJob],
         media_epoch: u64,
+        progress: &dyn Fn(usize),
     ) -> Result<CompFrame, String> {
         self.comp_decodes += 1;
         decode_comp(
@@ -405,6 +422,7 @@ impl DecodePool {
             frame,
             jobs,
             media_epoch,
+            progress,
         )
     }
 }
@@ -515,7 +533,7 @@ impl PreviewEngine {
 }
 
 /// Measure the flow between two source frames, or return the pair already
-/// measured for them (K-268).
+/// measured for them (K-331).
 ///
 /// **The one door both consumers go through.** A layer can want motion for two
 /// reasons at once — the retime policy inventing an in-between frame, and Fast
@@ -566,7 +584,7 @@ fn clone_field(f: &lumit_flow::FlowField) -> lumit_flow::FlowField {
 }
 
 /// The flow engine for this pool: on the renderer's device when one was shared
-/// (K-268), otherwise a headless device of its own, otherwise the CPU oracle.
+/// (K-331), otherwise a headless device of its own, otherwise the CPU oracle.
 fn flow_engine_for(gpu: Option<&lumit_gpu::GpuContext>) -> lumit_flow::FlowEngine {
     match gpu {
         Some(ctx) => lumit_flow::FlowEngine::with_context(ctx),
@@ -575,7 +593,7 @@ fn flow_engine_for(gpu: Option<&lumit_gpu::GpuContext>) -> lumit_flow::FlowEngin
 }
 
 /// Translate a layer's stored [`lumit_core::retime::FlowParams`] into the
-/// plain-numbers [`lumit_flow::FlowSettings`] the engine takes (K-268).
+/// plain-numbers [`lumit_flow::FlowSettings`] the engine takes (K-331).
 ///
 /// `lumit-flow` is an engine crate that knows nothing of the document, so the
 /// mapping has to live somewhere that sees both — here, once, so preview,
@@ -612,6 +630,7 @@ fn decode_comp(
     frame: usize,
     jobs: &[CompJob],
     media_epoch: u64,
+    progress: &dyn Fn(usize),
 ) -> Result<CompFrame, String> {
     let decode_started = std::time::Instant::now();
     let mut layers = Vec::with_capacity(jobs.len());
@@ -680,7 +699,7 @@ fn decode_comp(
                     //
                     // Half resolution, though, not the retime default of
                     // native. Retime measures natively so that preview and
-                    // export agree about the picture (K-268); an effect has no
+                    // export agree about the picture (K-331); an effect has no
                     // such argument, and a smaller working size is *better*
                     // here rather than merely cheaper. Between consecutive
                     // frames of a fast camera move the displacement is large,
@@ -775,6 +794,9 @@ fn decode_comp(
             temporal,
             flow_field,
         });
+        // One more source frame in hand. Reported after the layer is filed, so
+        // "n of m done" is true of what has actually been decoded.
+        progress(layers.len());
     }
     Ok(CompFrame {
         comp,
@@ -825,7 +847,7 @@ mod tests {
             .is_err());
     }
 
-    /// K-268: the flow cache is keyed by content — the source, the two frames,
+    /// K-331: the flow cache is keyed by content — the source, the two frames,
     /// and the settings that shape the measurement — so a second ask for the
     /// same pair is answered rather than remeasured, and a changed setting is
     /// a different entry rather than a stale one.

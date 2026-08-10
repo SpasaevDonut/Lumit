@@ -1,7 +1,7 @@
 // The Flow group: what a footage layer does when it has to invent a frame.
 //
 // K-088 made flow a layer *option* rather than an effect or a dropdown entry,
-// and K-268 built the parameters behind it. This is that group — it sits beside
+// and K-331 built the parameters behind it. This is that group — it sits beside
 // Transform and Effects, and appears only while the layer's flow switch is on.
 //
 // Every control here changes the picture, which is why every one of them is
@@ -100,7 +100,8 @@ class FlowRowsFrb extends StatelessWidget {
               value: p.smoothness,
               min: 0,
               max: 100,
-              onChanged: (v) => write(flowParamsWith(p, smoothness: v.toDouble())),
+              onChanged: (v) =>
+                  write(flowParamsWith(p, smoothness: v.toDouble())),
             ),
           ),
         ),
@@ -200,7 +201,10 @@ class FlowRowsFrb extends StatelessWidget {
     // implementation of the interpolation living in the view.
     final shown = switch (rate) {
       BridgeScalar_Static(:final field0) => field0,
-      BridgeScalar_Keyframed() =>
+      // An expression is sampled engine-side too, so it needs no case of its
+      // own here — `sampleScalar` is the one place either is evaluated.
+      BridgeScalar_Keyframed() ||
+      BridgeScalar_Expression() =>
         sampleScalar(scalar: rate, time: timeOfFrame(comp, playheadFrame)),
     };
 
@@ -226,7 +230,8 @@ class FlowRowsFrb extends StatelessWidget {
           onSeek: onSeek,
           rowKey: 'flow-input-rate',
         ),
-        name: Text('Input rate', style: t.body, overflow: TextOverflow.ellipsis),
+        name:
+            Text('Input rate', style: t.body, overflow: TextOverflow.ellipsis),
         control: Row(
           children: [
             SizedBox(

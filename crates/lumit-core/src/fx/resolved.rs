@@ -1,6 +1,12 @@
+use std::sync::Arc;
+
 use super::markers::flash_nth;
 use super::*;
-use crate::model::{EffectInstance, EffectNamespace, EffectValue};
+use crate::{
+    expression::ExpressionContext,
+    model::{EffectInstance, EffectNamespace, EffectValue},
+};
+use uuid::Uuid;
 
 /// The Fast motion blur output view (docs/08 §3.2, FX-19): the finished blurred
 /// picture, or a diagnostic look at the motion field or the confidence that
@@ -609,8 +615,19 @@ pub enum Resolved {
     /// missing or cyclic depth reference leaves that slot empty and the op is
     /// a passthrough. `aperture == 0`, an all-in-band depth, or `mix == 0` are
     /// bit-exact passthroughs.
+    ///
+    /// **Every control the aperture and highlight groups added is neutral at
+    /// its default, and the kernel reaches that by *branching* rather than by
+    /// multiplying by one** (K-313): Roundness 1 takes the plain `r² ≤ coc²`
+    /// circle test, Concentration 0 and Remove edge leak 0 take the unweighted
+    /// accumulation, and Exposure 0 takes the unsplit sum — because
+    /// `Σ(c·w)/Σw` is not an identity in IEEE 754 even when every `w` is one,
+    /// and neither is splitting a tap at a threshold and adding it back. A
+    /// project saved before any of this therefore renders bit-identically,
+    /// which is what let the aperture fold into the shipped effect rather than
+    /// arrive as a second one beside it.
     Dof {
-        /// The in-focus depth, 0..1.
+        /// The in-focus depth, 0..1. Ignored while `use_focus_point` is set.
         focus: f32,
         /// Half-width of the sharp band around `focus`, 0..1.
         range: f32,
@@ -626,13 +643,88 @@ pub enum Resolved {
         /// circle-of-confusion, swapping near and far. A `Copy` scalar, so the
         /// enum stays `Copy` and threads beside the depth texture unchanged.
         depth_invert: bool,
+        /// The aperture polygon's outward edge normals, unit length, the first
+        /// `blade_count` entries live. Host-computed: WGSL's transcendentals
+        /// carry no guarantee of matching Rust's, which is exactly what the
+        /// §1.6 oracle measures.
+        blade_normals: [[f32; 2]; MAX_BLADES],
+        /// 3..=[`MAX_BLADES`]. Inert while `roundness` is 1 — a circle has no
+        /// blades — which is why the schema needs no Circle entry.
+        blade_count: u32,
+        /// `cos²(π/N)`, host-computed.
+        apothem2: f32,
+        /// Roundness, −1..1. Positive bows the blades outward toward the
+        /// circle; **negative goes concave** — the same inside test with the
+        /// sign flipped pulls the edge midpoints in while the vertices stay on
+        /// the circle, which is a star. The aperture therefore stays inscribed
+        /// in the circle at every value, so the kernel's `ceil(radius)` scan
+        /// box remains a correct bound on the taps. 1 takes the plain circle
+        /// test and is the shipped default.
+        roundness: f32,
+        /// Radial weighting inside the aperture, −1..1. 0 is the flat disc and
+        /// takes the unweighted branch.
+        rim: f32,
+        /// Anamorphic squeeze as a pair of multipliers on the tap offset before
+        /// the inside test, computed host-side (K-137's precedent for a
+        /// host-side single division). Both are ≥ 1 and exactly one is > 1, so
+        /// the aperture only ever *shrinks* on one axis — it can never exceed
+        /// the circle, and the scan box is untouched. `[1.0, 1.0]` at Deform 0.
+        aspect_scale: [f32; 2],
+        /// The tonal split level, and the power the excess is raised to — the
+        /// split-at-threshold power mean. `bokeh_power` is
+        /// `2^(Exposure/EXPOSURE_STOPS_PER_DOUBLING)`, host-computed; **1 is
+        /// the plain arithmetic mean and takes the unsplit branch**.
+        threshold: f32,
+        bokeh_power: f32,
+        /// Clamp the gather to the frame edge instead of pulling in
+        /// transparency (Repeat edge pixels). True is the shipped default and
+        /// the historical behaviour.
+        repeat_edge: bool,
+        /// Whether a depth layer is bound. False defocuses the whole frame
+        /// uniformly at the far-side radius — the "no depth, one radius"
+        /// reading, which is also what makes the effect usable as a plain
+        /// aperture blur.
+        depth_bound: bool,
+        /// Which channel of the depth layer is read as depth — an index into
+        /// [`CHANNEL_OPTIONS`](super::CHANNEL_OPTIONS). 0 (Red) is the channel
+        /// this effect has always read.
+        depth_channel: u32,
+        /// When set, focus is whatever depth sits under `focus_point` and
+        /// `focus` is ignored — the greyed row in the panel.
+        use_focus_point: bool,
+        /// Where to read that depth, in the consuming layer's raster pixels
+        /// (already scaled by the preview factor). Authored in layer space —
+        /// the frame the effect stack and its resampled depth both live in.
+        focus_point: [f32; 2],
+        /// The Profile control, resolved to a multiplier on the depth distance
+        /// before the ramp (`2^profile`, computed host-side so the kernel sees
+        /// a plain multiply). 1 is the neutral, and multiplying by exactly 1 is
+        /// exact in IEEE 754, so this one needs no branch. Above 1 the
+        /// transition bites sooner, below 1 it stretches out past the range so
+        /// even the far extreme is softened rather than obliterated. This is
+        /// what stops focus being all-or-nothing on a real depth pass, whose
+        /// content sits in a narrow band with one near object well outside it.
+        gamma: f32,
+        /// How hard a tap across a depth discontinuity **and in front of** this
+        /// pixel is pulled back, and how big a depth jump counts as one. 0 leak
+        /// takes the unweighted branch.
+        remove_edge_leak: f32,
+        detect_edge_threshold: f32,
         /// Diagnostic view: 0 = Rendered (the blurred output), 1 = Depth map
         /// (post-invert greyscale), 2 = Focus map (the smooth in-focus mask).
         /// Modes 1/2 ignore the blur and Mix and write the view directly.
+        /// Forced to 0 when `depth_bound` is false — there is nothing to show.
         display: u32,
         /// 0..1.
         mix: f32,
     },
+    /// Lens flare (docs/08 §3.27, docs/impl/lens-flare.md, K-256): traced
+    /// ghosts and the Fourier starburst. The op carries its full parameter
+    /// bundle ([`LensFlareParams`], all plain numbers); the baked resources
+    /// (disc/starburst textures, ghost ranking) derive from those numbers
+    /// through `lens_flare::bake`, cached GPU-side by [`lens_flare::bake_key`]
+    /// — so nothing travels beside the op. GPU-only: the CPU degradation rung
+    /// renders it as a labelled no-op (the K-114 LUT precedent).
     /// Lens flare (docs/08 §3.27, docs/impl/lens-flare.md, K-256): traced
     /// ghosts and the Fourier starburst. The op carries its full parameter
     /// bundle ([`LensFlareParams`], all plain numbers); the baked resources
@@ -736,10 +828,17 @@ pub fn rescale_px(ops: &mut [Resolved], f: f32) {
             Resolved::Dof {
                 near_aperture,
                 far_aperture,
+                focus_point,
                 ..
             } => {
                 *near_aperture *= f;
                 *far_aperture *= f;
+                // The focus point is px@comp too (K-260), so it travels with
+                // the radii: a stack resolved against the comp raster and run
+                // on a smaller preview target must read its focus depth from
+                // the same *place* in the picture, not the same pixel index.
+                focus_point[0] *= f;
+                focus_point[1] *= f;
             }
             Resolved::LensFlare(p) => {
                 p.light[0] *= f;
@@ -755,11 +854,12 @@ pub fn resolve_stack(
     diag_px: f32,
     px_scale: f32,
     markers: &MarkerContext,
+    context: Arc<ExpressionContext>,
 ) -> Vec<Resolved> {
     effects
         .iter()
         .filter(|e| e.enabled && e.effect.namespace == EffectNamespace::Builtin)
-        .filter_map(|e| resolve_one(e, lt, diag_px, px_scale, markers))
+        .filter_map(|e| resolve_one(e, lt, diag_px, px_scale, markers, context.clone()))
         .collect()
 }
 
@@ -778,7 +878,37 @@ pub fn resolve_stack_temporal(
     diag_px: f32,
     px_scale: f32,
     markers: &MarkerContext,
+    context: Arc<ExpressionContext>,
 ) -> Vec<Resolved> {
+    resolve_stack_temporal_named(
+        effects, sample_lt, frame_lt, diag_px, px_scale, markers, context,
+    )
+    .into_iter()
+    .map(|(_, op)| op)
+    .collect()
+}
+
+/// [`resolve_stack_temporal`] with each op paired with the id of the effect
+/// instance it came from.
+///
+/// **Why the ids matter.** A [`Resolved`] op is a flat bag of numbers: by
+/// design it has forgotten which effect wrote it, because the kernels do not
+/// care. The render-time indicator does care — a measured millisecond has to
+/// land on the right row of the effect stack — and the mapping cannot be
+/// reconstructed afterwards by filtering the effect list, because
+/// [`resolve_one`] also drops placeholders, unknown names and the
+/// orchestration-only effects. So the one walk that knows both answers reports
+/// both, and everything else stays 1:1 by construction.
+#[allow(clippy::too_many_arguments)]
+pub fn resolve_stack_temporal_named(
+    effects: &[EffectInstance],
+    sample_lt: f64,
+    frame_lt: f64,
+    diag_px: f32,
+    px_scale: f32,
+    markers: &MarkerContext,
+    context: Arc<ExpressionContext>,
+) -> Vec<(Uuid, Resolved)> {
     effects
         .iter()
         .filter(|e| e.enabled && e.effect.namespace == EffectNamespace::Builtin)
@@ -788,7 +918,7 @@ pub fn resolve_stack_temporal(
             } else {
                 frame_lt
             };
-            resolve_one(e, lt, diag_px, px_scale, markers)
+            resolve_one(e, lt, diag_px, px_scale, markers, context.clone()).map(|op| (e.id, op))
         })
         .collect()
 }
@@ -803,6 +933,7 @@ fn resolve_one(
     diag_px: f32,
     px_scale: f32,
     markers: &MarkerContext,
+    expression_context: Arc<ExpressionContext>,
 ) -> Option<Resolved> {
     match e.effect.match_name.as_str() {
         "blur" => {
@@ -812,8 +943,13 @@ fn resolve_one(
             // (its now-unread mode/length/centre params are simply ignored).
             // Fixed Repeat edge (K-137 dropped the Gaussian Edges control; 1 was
             // its default).
-            let radius_pct = e.float_at("radius", lt)? as f32;
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let radius_pct =
+                e.float_at_with_context("radius", lt, expression_context.clone())? as f32;
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             Some(Resolved::Blur {
                 radius_px: (radius_pct / 100.0 * diag_px).max(0.0),
                 edge: 1,
@@ -823,9 +959,17 @@ fn resolve_one(
         "directional_blur" => {
             // Directional blur (docs/08 §3.8, K-137): Length/Angle only, fixed
             // Repeat edge (the Edges control is Radial's alone now).
-            let length_pct = e.float_at("length", lt).unwrap_or(0.0) as f32;
-            let angle_deg = e.float_at("angle", lt).unwrap_or(0.0) as f32;
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let length_pct = e
+                .float_at_with_context("length", lt, expression_context.clone())
+                .unwrap_or(0.0) as f32;
+            let angle_deg = e
+                .float_at_with_context("angle", lt, expression_context.clone())
+                .unwrap_or(0.0) as f32;
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             Some(Resolved::DirBlur {
                 length_px: (length_pct / 100.0 * diag_px).max(0.0),
                 angle_deg,
@@ -836,9 +980,17 @@ fn resolve_one(
         "radial_blur" => {
             // Radial blur (docs/08 §3.8, K-137): Centre/Amount/Type, plus the
             // family's own Edges control (kept only here).
-            let cx = (e.float_at("centre_x", lt).unwrap_or(50.0) / 100.0) as f32;
-            let cy = (e.float_at("centre_y", lt).unwrap_or(50.0) / 100.0) as f32;
-            let amount_pct = e.float_at("amount", lt).unwrap_or(0.0) as f32;
+            let cx = (e
+                .float_at_with_context("centre_x", lt, expression_context.clone())
+                .unwrap_or(50.0)
+                / 100.0) as f32;
+            let cy = (e
+                .float_at_with_context("centre_y", lt, expression_context.clone())
+                .unwrap_or(50.0)
+                / 100.0) as f32;
+            let amount_pct = e
+                .float_at_with_context("amount", lt, expression_context.clone())
+                .unwrap_or(0.0) as f32;
             let spin = !matches!(e.param("radial_type"), Some(EffectValue::Choice(1)));
             // The reusable Edges control (P3, K-145): the stored Choice maps
             // through EdgesMode (clamped to the known set, default Repeat).
@@ -848,7 +1000,11 @@ fn resolve_one(
                 }
                 _ => EdgesMode::Repeat,
             };
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             Some(Resolved::RadialBlur {
                 centre_frac: [cx, cy],
                 amount_px: (amount_pct / 100.0 * diag_px).max(0.0),
@@ -858,14 +1014,24 @@ fn resolve_one(
             })
         }
         "sharpen" => {
-            let amount = (e.float_at("amount", lt)? as f32 / 100.0).clamp(0.0, 3.0);
-            let radius_pct = e.float_at("radius", lt)? as f32;
-            let threshold = (e.float_at("threshold", lt).unwrap_or(0.05) as f32).clamp(0.0, 1.0);
+            let amount =
+                (e.float_at_with_context("amount", lt, expression_context.clone())? as f32 / 100.0)
+                    .clamp(0.0, 3.0);
+            let radius_pct =
+                e.float_at_with_context("radius", lt, expression_context.clone())? as f32;
+            let threshold = (e
+                .float_at_with_context("threshold", lt, expression_context.clone())
+                .unwrap_or(0.05) as f32)
+                .clamp(0.0, 1.0);
             let luma_only = match e.param("luminance_only") {
                 Some(EffectValue::Bool(b)) => *b,
                 _ => true,
             };
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             Some(Resolved::Sharpen {
                 amount,
                 radius_px: (radius_pct / 100.0 * diag_px).max(0.0),
@@ -877,9 +1043,18 @@ fn resolve_one(
         "sharpen_simple" => {
             // The plain 3×3 sharpen (docs/08 §3.9, K-138): Amount is a raw
             // high-pass strength (not a per-cent), clamped ≥ 0.
-            let amount = (e.float_at("amount", lt)? as f32).max(0.0);
-            let radius = (e.float_at("radius", lt).unwrap_or(1.0) as f32).max(1.0);
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let amount = (e.float_at_with_context("amount", lt, expression_context.clone())?
+                as f32)
+                .max(0.0);
+            let radius = (e
+                .float_at_with_context("radius", lt, expression_context.clone())
+                .unwrap_or(1.0) as f32)
+                .max(1.0);
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             Some(Resolved::SharpenSimple {
                 amount,
                 radius,
@@ -887,15 +1062,22 @@ fn resolve_one(
             })
         }
         "rgb_split" => {
-            let amount_pct = e.float_at("amount", lt)? as f32;
-            let angle_deg = e.float_at("angle", lt).unwrap_or(0.0) as f32;
+            let amount_pct =
+                e.float_at_with_context("amount", lt, expression_context.clone())? as f32;
+            let angle_deg = e
+                .float_at_with_context("angle", lt, expression_context.clone())
+                .unwrap_or(0.0) as f32;
             // Instances saved before the Wavelength mode existed carry
             // no such parameter and resolve as the classic split.
             let wavelength = match e.param("wavelength") {
                 Some(EffectValue::Bool(b)) => *b,
                 _ => false,
             };
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             let amount_px = (amount_pct / 100.0 * diag_px).max(0.0);
             // The three tap tints (T17/K-161): absent on pre-feature projects →
             // the classic red / green / blue, which reproduce the historical
@@ -916,7 +1098,10 @@ fn resolve_one(
                 // default 16, denser than the historical 9). RGB split is now
                 // linear-only (T17), so the spectral sibling is never radial here.
                 // The picker drives the dispersion gradient (A1/K-163).
-                let samples = e.float_at("samples", lt).unwrap_or(16.0).round() as i32;
+                let samples = e
+                    .float_at_with_context("samples", lt, expression_context.clone())
+                    .unwrap_or(16.0)
+                    .round() as i32;
                 Resolved::SpectralSplit {
                     amount_px,
                     angle_deg,
@@ -928,8 +1113,11 @@ fn resolve_one(
             } else {
                 // Per-tap scales (FX-9): per cent → factor. Absent on
                 // pre-feature projects → the classic 1 / 0 / 1 defaults.
-                let scale =
-                    |id: &str, default: f64| (e.float_at(id, lt).unwrap_or(default) / 100.0) as f32;
+                let scale = |id: &str, default: f64| {
+                    (e.float_at_with_context(id, lt, expression_context.clone())
+                        .unwrap_or(default)
+                        / 100.0) as f32
+                };
                 Resolved::RgbSplit {
                     amount_px,
                     angle_deg,
@@ -946,8 +1134,16 @@ fn resolve_one(
             })
         }
         "chromatic_aberration" => {
-            let amount_px = (e.float_at("amount", lt).unwrap_or(4.0) as f32 * px_scale).max(0.0);
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let amount_px = (e
+                .float_at_with_context("amount", lt, expression_context.clone())
+                .unwrap_or(4.0) as f32
+                * px_scale)
+                .max(0.0);
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             // Wavelength mode (K-144) reuses RGB split's spectral machinery as
             // a radial spectral split; off (and absent on pre-feature
             // projects) keeps the three tinted radial taps.
@@ -966,7 +1162,10 @@ fn resolve_one(
                 tint("channel_colour_3", [0.0, 0.0, 1.0, 1.0]),
             ];
             Some(if wavelength {
-                let samples = e.float_at("samples", lt).unwrap_or(16.0).round() as i32;
+                let samples = e
+                    .float_at_with_context("samples", lt, expression_context.clone())
+                    .unwrap_or(16.0)
+                    .round() as i32;
                 Resolved::SpectralSplit {
                     amount_px,
                     angle_deg: 0.0,
@@ -997,25 +1196,42 @@ fn resolve_one(
                 // from the §1.4 context; Strobe thins the beat list to
                 // every Nth.
                 1 | 2 => {
-                    let duration = e.float_at("duration", lt).unwrap_or(2.0).max(0.0);
+                    let duration = e
+                        .float_at_with_context("duration", lt, expression_context.clone())
+                        .unwrap_or(2.0)
+                        .max(0.0);
                     let fade = matches!(e.param("shape"), Some(EffectValue::Choice(1)));
                     let nth = if mode == 2 { flash_nth(e, lt) } else { 1 };
-                    let phase = e.float_at("phase", lt).unwrap_or(0.0);
+                    let phase = e
+                        .float_at_with_context("phase", lt, expression_context.clone())
+                        .unwrap_or(0.0);
                     flash_beat_envelope(markers, lt, duration, fade, nth, phase)
                 }
                 // Manual: keyframed hits on Trigger, decaying over
                 // Decay — the original form, untouched.
                 _ => {
-                    let decay_s = (e.float_at("decay", lt).unwrap_or(120.0) / 1000.0).max(0.0);
+                    let decay_s = (e
+                        .float_at_with_context("decay", lt, expression_context.clone())
+                        .unwrap_or(120.0)
+                        / 1000.0)
+                        .max(0.0);
                     match e.param("trigger") {
                         Some(EffectValue::Float(p)) => flash_envelope(p, lt, decay_s),
                         _ => 0.0,
                     }
                 }
             };
-            let intensity = e.float_at("intensity", lt).unwrap_or(100.0).max(0.0) / 100.0;
+            let intensity = e
+                .float_at_with_context("intensity", lt, expression_context.clone())
+                .unwrap_or(100.0)
+                .max(0.0)
+                / 100.0;
             let colour = e.colour_at("colour", lt).unwrap_or([1.0; 4]);
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             Some(Resolved::Flash {
                 strength: (envelope * intensity).clamp(0.0, 1.0) as f32,
                 colour: colour.map(|c| c as f32),
@@ -1027,7 +1243,11 @@ fn resolve_one(
                 let c = e.colour_at(id, lt).unwrap_or([neutral; 4]);
                 [c[0] as f32, c[1] as f32, c[2] as f32]
             };
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             Some(Resolved::ColourBalance {
                 lift: rgb("lift", 0.0),
                 gamma: rgb("gamma", 1.0).map(|g| g.max(0.01)),
@@ -1038,16 +1258,31 @@ fn resolve_one(
         "saturation" => {
             // Floored at 0 (greyscale), open above (K-135): the luma/colour
             // mix extrapolates past 200 % cleanly, so no upper clamp.
-            let saturation =
-                (e.float_at("saturation", lt).unwrap_or(100.0) as f32 / 100.0).max(0.0);
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let saturation = (e
+                .float_at_with_context("saturation", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .max(0.0);
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             Some(Resolved::Saturation { saturation, mix })
         }
         "vibrancy" => {
             // Floored at 0 (neutral), open above (K-135): the per-pixel factor
             // extrapolates cleanly, so no upper clamp.
-            let amount = (e.float_at("amount", lt).unwrap_or(0.0) as f32 / 100.0).max(0.0);
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let amount = (e
+                .float_at_with_context("amount", lt, expression_context.clone())
+                .unwrap_or(0.0) as f32
+                / 100.0)
+                .max(0.0);
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             Some(Resolved::Vibrancy { amount, mix })
         }
         "matte_key" => {
@@ -1067,23 +1302,47 @@ fn resolve_one(
                 Some(EffectValue::Choice(c)) => *c,
                 _ => 0,
             };
-            let gain = (e.float_at("screen_gain", lt).unwrap_or(100.0) as f32 / 100.0).max(0.0);
-            let balance =
-                (e.float_at("screen_balance", lt).unwrap_or(50.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let gain = (e
+                .float_at_with_context("screen_gain", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .max(0.0);
+            let balance = (e
+                .float_at_with_context("screen_balance", lt, expression_context.clone())
+                .unwrap_or(50.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             // Despill defaults on (Keylight-like); an older instance carrying a
             // Spill value keeps it, an even older one without the param reads 0.
-            let spill = (e.float_at("spill", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
-            let clip_black =
-                (e.float_at("clip_black", lt).unwrap_or(0.0) as f32 / 100.0).clamp(0.0, 1.0);
-            let clip_white =
-                (e.float_at("clip_white", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
-            let clip_rollback =
-                (e.float_at("clip_rollback", lt).unwrap_or(0.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let spill = (e
+                .float_at_with_context("spill", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
+            let clip_black = (e
+                .float_at_with_context("clip_black", lt, expression_context.clone())
+                .unwrap_or(0.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
+            let clip_white = (e
+                .float_at_with_context("clip_white", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
+            let clip_rollback = (e
+                .float_at_with_context("clip_rollback", lt, expression_context.clone())
+                .unwrap_or(0.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             let replace_method = match e.param("replace_method") {
                 Some(EffectValue::Choice(c)) => ReplaceMethod::from_code(*c).code(),
                 _ => ReplaceMethod::SoftColour.code(),
             };
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             Some(Resolved::MatteKey(MatteKeyParams {
                 view: MatteKeyView::from_code(view).code(),
                 key: colour("key", [0.0, 0.6, 0.0, 1.0]),
@@ -1101,14 +1360,33 @@ fn resolve_one(
             }))
         }
         "vignette" => {
-            let amount = (e.float_at("amount", lt).unwrap_or(0.5) as f32).clamp(0.0, 1.0);
-            let radius = (e.float_at("radius", lt).unwrap_or(0.75) as f32).clamp(0.0, 1.0);
+            let amount = (e
+                .float_at_with_context("amount", lt, expression_context.clone())
+                .unwrap_or(0.5) as f32)
+                .clamp(0.0, 1.0);
+            let radius = (e
+                .float_at_with_context("radius", lt, expression_context.clone())
+                .unwrap_or(0.75) as f32)
+                .clamp(0.0, 1.0);
             // Floored at 0, open above (K-135): softness > 1 is a legal wider
             // feather in the normalised metric, no upper clamp.
-            let softness = (e.float_at("softness", lt).unwrap_or(0.5) as f32).max(0.0);
-            let roundness = (e.float_at("roundness", lt).unwrap_or(1.0) as f32).clamp(0.0, 1.0);
-            let ramp = (e.float_at("ramp", lt).unwrap_or(1.0) as f32).max(0.05);
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let softness = (e
+                .float_at_with_context("softness", lt, expression_context.clone())
+                .unwrap_or(0.5) as f32)
+                .max(0.0);
+            let roundness = (e
+                .float_at_with_context("roundness", lt, expression_context.clone())
+                .unwrap_or(1.0) as f32)
+                .clamp(0.0, 1.0);
+            let ramp = (e
+                .float_at_with_context("ramp", lt, expression_context.clone())
+                .unwrap_or(1.0) as f32)
+                .max(0.05);
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             Some(Resolved::Vignette {
                 amount,
                 radius,
@@ -1119,13 +1397,21 @@ fn resolve_one(
             })
         }
         "exposure" => {
-            let stops = e.float_at("stops", lt).unwrap_or(0.0);
+            let stops = e
+                .float_at_with_context("stops", lt, expression_context.clone())
+                .unwrap_or(0.0);
             let factor = 2f64.powf(stops) as f32;
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             Some(Resolved::Exposure { factor, mix })
         }
         "hue_shift" => {
-            let angle = e.float_at("angle", lt).unwrap_or(0.0);
+            let angle = e
+                .float_at_with_context("angle", lt, expression_context.clone())
+                .unwrap_or(0.0);
             // Preserve luminance (K-136): on (default, and absent on old
             // projects) → the Rec.709 constant-luminance rotation; off → the
             // plain-RGB spin about the grey axis. The bool only picks which
@@ -1139,21 +1425,40 @@ fn resolve_one(
             } else {
                 hue_matrix_rgb(angle)
             };
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             Some(Resolved::HueShift { m, mix })
         }
         "contrast" => {
             // k = contrast_percent / 100; hard min 0 (no inversion),
             // unbounded above — the schema's own honest shape.
-            let k = (e.float_at("contrast", lt).unwrap_or(100.0) as f32 / 100.0).max(0.0);
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let k = (e
+                .float_at_with_context("contrast", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .max(0.0);
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             Some(Resolved::Contrast { k, mix })
         }
         "gamma" => {
             // Hard floor 0.01 keeps 1/gamma finite; no ceiling — the
             // schema's own honest shape.
-            let gamma = (e.float_at("gamma", lt).unwrap_or(1.0) as f32).max(0.01);
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let gamma = (e
+                .float_at_with_context("gamma", lt, expression_context.clone())
+                .unwrap_or(1.0) as f32)
+                .max(0.01);
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             Some(Resolved::Gamma { gamma, mix })
         }
         "temperature" => {
@@ -1164,10 +1469,18 @@ fn resolve_one(
             // WGSL kernel multiply by byte-identical f32 factors (§1.6);
             // Temperature 0 → k 0 → gains exactly (1.0, 1.0), the neutral
             // point (the .max(0.0) leaves 1.0 untouched).
-            let k = (e.float_at("temperature", lt).unwrap_or(0.0) as f32 / 100.0).clamp(-2.0, 2.0);
+            let k = (e
+                .float_at_with_context("temperature", lt, expression_context.clone())
+                .unwrap_or(0.0) as f32
+                / 100.0)
+                .clamp(-2.0, 2.0);
             let gain_r = (1.0 + 0.75 * k).max(0.0);
             let gain_b = (1.0 - 0.75 * k).max(0.0);
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             Some(Resolved::Temperature {
                 gain_r,
                 gain_b,
@@ -1175,7 +1488,11 @@ fn resolve_one(
             })
         }
         "invert" => {
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             Some(Resolved::Invert { mix })
         }
         "tint" => {
@@ -1186,7 +1503,11 @@ fn resolve_one(
                 let c = e.colour_at(id, lt).unwrap_or(default);
                 [c[0] as f32, c[1] as f32, c[2] as f32]
             };
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             Some(Resolved::Tint {
                 black: rgb("black", [0.0, 0.0, 0.0, 1.0]),
                 white: rgb("white", [1.0, 1.0, 1.0, 1.0]),
@@ -1200,7 +1521,11 @@ fn resolve_one(
             // effect always resolves to exactly one Resolved::Lut, so the
             // ordered enabled-builtin-`lut` list stays 1:1 and in order with
             // the Resolved::Lut ops — the whole threading contract.
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             Some(Resolved::Lut { mix })
         }
         "lens_flare" => {
@@ -1229,9 +1554,15 @@ fn resolve_one(
                 _ => 1,
             };
             let detail = (e.float_at("detail", lt).unwrap_or(1.0) as f32).clamp(0.25, 4.0);
-            let background = match e.param("background") {
-                Some(EffectValue::Choice(c)) => (*c).min(1),
-                _ => 0,
+            // Blend menu (K-289). An index past the menu clamps to the last
+            // option rather than faulting; a project saved before the menu
+            // existed is migrated by `backfill_builtin_params`, so the
+            // fallback here is simply the default.
+            let blend = match e.param("blend") {
+                Some(EffectValue::Choice(c)) => {
+                    (*c).min(crate::fx::lens_flare::BLEND_OPTIONS.len() as u32 - 1)
+                }
+                _ => crate::fx::lens_flare::BLEND_ADD,
             };
             // Source mode (K-257): Lights resolves as Manual until light
             // layers land (the option is prepared, not wired).
@@ -1296,7 +1627,7 @@ fn resolve_one(
                     anamorphic,
                     quality,
                     detail,
-                    background,
+                    blend,
                     mix,
                 },
             ))
@@ -1307,8 +1638,14 @@ fn resolve_one(
             // the LUT cube is. A `dof` effect always resolves to exactly one
             // Resolved::Dof, so the ordered enabled-builtin-`dof` list stays
             // 1:1 and in order with the Dof ops — the threading contract.
-            let focus = (e.float_at("focus", lt).unwrap_or(0.5) as f32).clamp(0.0, 1.0);
-            let range = (e.float_at("range", lt).unwrap_or(0.1) as f32).clamp(0.0, 1.0);
+            let focus = (e
+                .float_at_with_context("focus", lt, expression_context.clone())
+                .unwrap_or(0.5) as f32)
+                .clamp(0.0, 1.0);
+            let range = (e
+                .float_at_with_context("range", lt, expression_context.clone())
+                .unwrap_or(0.1) as f32)
+                .clamp(0.0, 1.0);
             // Aperture is the px@comp master; Near/Far are the per-side
             // radii it scales about its default 8 (unity). A pre-feature
             // project has only `aperture` and lacks Near/Far, which then
@@ -1316,9 +1653,16 @@ fn resolve_one(
             // 8·(aperture/8)·px_scale = aperture·px_scale — identical to the
             // old single-aperture behaviour. px@comp is scaled by the §2.3
             // preview factor so a Half preview blurs the same disc as Full.
-            let master = e.float_at("aperture", lt).unwrap_or(8.0) as f32 / 8.0;
-            let near = e.float_at("near_aperture", lt).unwrap_or(8.0) as f32;
-            let far = e.float_at("far_aperture", lt).unwrap_or(8.0) as f32;
+            let master = e
+                .float_at_with_context("aperture", lt, expression_context.clone())
+                .unwrap_or(8.0) as f32
+                / 8.0;
+            let near = e
+                .float_at_with_context("near_aperture", lt, expression_context.clone())
+                .unwrap_or(8.0) as f32;
+            let far = e
+                .float_at_with_context("far_aperture", lt, expression_context.clone())
+                .unwrap_or(8.0) as f32;
             // Budget cap (docs/13, docs/14): the disc gather is O(coc²) taps
             // per pixel, and the Aperture master MULTIPLIES the per-side radii
             // (so Aperture 150 × Near 55 becomes a ~1000 px circle of
@@ -1332,19 +1676,174 @@ fn resolve_one(
             // Depth invert (a plain Bool; absent on pre-feature projects,
             // where it reads false — the historical, unchanged behaviour).
             let depth_invert = matches!(e.param("depth_invert"), Some(EffectValue::Bool(true)));
-            // Diagnostic view (clamped to the shipped modes; absent on
-            // pre-feature projects → 0 Rendered, the normal output).
-            let display = match e.param("display") {
-                Some(EffectValue::Choice(c)) => (*c).min(2),
-                _ => 0,
+
+            // ---- The aperture (K-313) ----
+            //
+            // The blade count floors to an integer, so a keyframe sweeping
+            // 5 → 6 steps rather than growing half a blade — a pentagon does
+            // not interpolate into a hexagon, and the difference is only where
+            // that truth is enforced.
+            let blade_count = (e
+                .float_at_with_context("blades", lt, expression_context.clone())
+                .unwrap_or(6.0) as f32)
+                .floor()
+                .clamp(3.0, MAX_BLADES as f32) as u32;
+            let rotation_deg = e
+                .float_at_with_context("rotation", lt, expression_context.clone())
+                .unwrap_or(0.0) as f32;
+            let (blade_normals, apothem2) = super::aperture_blades(blade_count, rotation_deg);
+            // 1 is the circle, and the circle is what this effect has always
+            // gathered — so it is the default and the kernel's fast path.
+            let roundness = (e
+                .float_at_with_context("roundness", lt, expression_context.clone())
+                .unwrap_or(1.0) as f32)
+                .clamp(-1.0, 1.0);
+            let rim = (e
+                .float_at_with_context("rim", lt, expression_context.clone())
+                .unwrap_or(0.0) as f32)
+                .clamp(-1.0, 1.0);
+
+            // Deform squeezes one axis and leaves the other alone, so the
+            // aperture only ever shrinks inside the circle and the kernel's
+            // scan box stays a correct bound. The reciprocal is taken here, not
+            // per tap (K-137's host-side single division), and the magnitude is
+            // held below 1 so it cannot divide by zero at the range's ends.
+            let deform = (e
+                .float_at_with_context("aspect", lt, expression_context.clone())
+                .unwrap_or(0.0) as f32)
+                .clamp(-1.0, 1.0);
+            let squeeze = 1.0 / (1.0 - deform.abs().min(0.95));
+            let aspect_scale = if deform > 0.0 {
+                [1.0, squeeze] // a wide oval: pull y in
+            } else if deform < 0.0 {
+                [squeeze, 1.0]
+            } else {
+                [1.0, 1.0]
             };
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+
+            // ---- The highlights ----
+            //
+            // Exposure 0 gives a power of exactly 1, which the kernel reads as
+            // "do not split at all" and takes the plain sum — the arithmetic
+            // this effect has always done. That exactness is the reason the
+            // power is computed here rather than in the kernel: neither path
+            // then evaluates its own `exp2` (§1.6).
+            //
+            // **The constant is fitted, not measured.** 6 (the stops-per-stop
+            // reading) puts the top of the slider at a power of 32, which is a
+            // maximum filter rather than a mean: it renders hard-edged flat
+            // polygons instead of bokeh discs and erases everything below the
+            // local peak. 12 puts the top at about 5.7 and the point where
+            // balls begin at about 2 — strong, but still an average. docs/08
+            // §3.22 records it as open; turn it if the onset feels early or
+            // late.
+            const EXPOSURE_STOPS_PER_DOUBLING: f32 = 12.0;
+            let exposure = (e
+                .float_at_with_context("exposure", lt, expression_context.clone())
+                .unwrap_or(0.0) as f32)
+                .clamp(-30.0, 30.0);
+            let bokeh_power = (exposure / EXPOSURE_STOPS_PER_DOUBLING).exp2();
+            let threshold = (e
+                .float_at_with_context("threshold", lt, expression_context.clone())
+                .unwrap_or(1.0) as f32)
+                .max(0.0);
+
+            let repeat_edge = !matches!(
+                e.param("repeat_edge_pixels"),
+                Some(EffectValue::Bool(false))
+            );
+
+            // ---- The depth model ----
+            //
+            // An unset, missing or cyclic reference defocuses the frame
+            // uniformly at the far-side radius, so the rest of the depth group
+            // has nothing to describe and resolve neutralises it rather than
+            // letting the kernel read a garbage sample.
+            let depth_bound = matches!(e.param("depth"), Some(EffectValue::Layer(Some(_))));
+            let depth_channel = match e.param("depth_channel") {
+                Some(EffectValue::Choice(c)) => (*c).min(CHANNEL_OPTIONS.len() as u32 - 1),
+                _ => 0, // Red — the channel this effect has always read
+            };
+            let use_focus_point =
+                depth_bound && matches!(e.param("use_focus_point"), Some(EffectValue::Bool(true)));
+            // The point is authored in the consuming layer's pixels — the frame
+            // the stack runs in — so it scales by the preview factor exactly as
+            // a px@comp radius does (§2.3). An `_x`/`_y` Float pair, which is
+            // the panel's point row (docs/07 §6.1); there is no Point schema
+            // kind and this is why one is not needed.
+            let focus_point = [
+                e.float_at_with_context("focus_point_x", lt, expression_context.clone())
+                    .unwrap_or(0.0) as f32
+                    * px_scale,
+                e.float_at_with_context("focus_point_y", lt, expression_context.clone())
+                    .unwrap_or(0.0) as f32
+                    * px_scale,
+            ];
+            // Profile shapes the focus falloff. Host-side `exp2` for the same
+            // reason the tonal power is host-side: neither path then evaluates
+            // its own (§1.6). 0 is the neutral multiplier of exactly 1, and
+            // multiplying by exactly 1 is exact, so this one needs no branch.
+            // One doubling per unit, so the slider's useful zone sits in its
+            // middle rather than its first third (see the schema's note).
+            let profile = (e
+                .float_at_with_context("gamma", lt, expression_context.clone())
+                .unwrap_or(0.0) as f32)
+                .clamp(-10.0, 10.0);
+            let gamma = profile.exp2();
+            // Edge-leak suppression reads two depths per tap, so it is dead
+            // weight without a depth pass — and its neutral is what keeps the
+            // gather bit-identical to the historical one.
+            let remove_edge_leak = if depth_bound {
+                (e.float_at_with_context("remove_edge_leak", lt, expression_context.clone())
+                    .unwrap_or(0.0) as f32)
+                    .clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let detect_edge_threshold = (e
+                .float_at_with_context("detect_edge_threshold", lt, expression_context.clone())
+                .unwrap_or(0.10) as f32)
+                .clamp(0.0, 1.0);
+            // Diagnostic view (clamped to the shipped modes; absent on
+            // pre-feature projects → 0 Rendered, the normal output). With no
+            // depth bound there is nothing for the depth or focus views to
+            // draw, so resolve forces Rendered rather than letting the kernel
+            // display the stand-in texture that occupies the depth slot.
+            let display = if depth_bound {
+                match e.param("display") {
+                    Some(EffectValue::Choice(c)) => (*c).min(2),
+                    _ => 0,
+                }
+            } else {
+                0
+            };
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             Some(Resolved::Dof {
                 focus,
                 range,
                 near_aperture,
                 far_aperture,
                 depth_invert,
+                blade_normals,
+                blade_count,
+                apothem2,
+                roundness,
+                rim,
+                aspect_scale,
+                threshold,
+                bokeh_power,
+                repeat_edge,
+                depth_bound,
+                depth_channel,
+                use_focus_point,
+                focus_point,
+                gamma,
+                remove_edge_leak,
+                detect_edge_threshold,
                 display,
                 mix,
             })
@@ -1352,12 +1851,27 @@ fn resolve_one(
         "glow" => {
             // Radius is px@comp (K-135), scaled by the §2.3 preview factor so
             // a Half preview blurs the same halo as Full, only softer.
-            let radius = e.float_at("radius", lt).unwrap_or(24.0) as f32;
-            let threshold = (e.float_at("threshold", lt).unwrap_or(0.8) as f32).max(0.0);
-            let knee = (e.float_at("knee", lt).unwrap_or(0.5) as f32).clamp(0.0, 1.0);
-            let intensity = (e.float_at("intensity", lt).unwrap_or(1.0) as f32).max(0.0);
+            let radius = e
+                .float_at_with_context("radius", lt, expression_context.clone())
+                .unwrap_or(24.0) as f32;
+            let threshold = (e
+                .float_at_with_context("threshold", lt, expression_context.clone())
+                .unwrap_or(0.8) as f32)
+                .max(0.0);
+            let knee = (e
+                .float_at_with_context("knee", lt, expression_context.clone())
+                .unwrap_or(0.5) as f32)
+                .clamp(0.0, 1.0);
+            let intensity = (e
+                .float_at_with_context("intensity", lt, expression_context.clone())
+                .unwrap_or(1.0) as f32)
+                .max(0.0);
             let tint = e.colour_at("tint", lt).unwrap_or([1.0; 4]);
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             Some(Resolved::Glow {
                 radius_px: (radius * px_scale).max(0.0),
                 threshold,
@@ -1368,23 +1882,47 @@ fn resolve_one(
             })
         }
         "shake" => {
-            let amp_pct = (e.float_at("amplitude", lt).unwrap_or(1.5) as f32).max(0.0);
-            let freq = e.float_at("frequency", lt).unwrap_or(8.0).max(0.0);
-            let rot_amount = (e.float_at("rotation", lt).unwrap_or(1.0) as f32).max(0.0);
+            let amp_pct = (e
+                .float_at_with_context("amplitude", lt, expression_context.clone())
+                .unwrap_or(1.5) as f32)
+                .max(0.0);
+            let freq = e
+                .float_at_with_context("frequency", lt, expression_context.clone())
+                .unwrap_or(8.0)
+                .max(0.0);
+            let rot_amount = (e
+                .float_at_with_context("rotation", lt, expression_context.clone())
+                .unwrap_or(1.0) as f32)
+                .max(0.0);
             // Per-axis wobble (twirl group, K-146): amount multipliers scale
             // the master Amplitude, frequency multipliers the master rate.
             // Defaults of 1 reproduce the old uniform x/y shake exactly.
-            let x_amp = (e.float_at("x_amp", lt).unwrap_or(1.0) as f32).max(0.0);
-            let y_amp = (e.float_at("y_amp", lt).unwrap_or(1.0) as f32).max(0.0);
-            let x_freq = e.float_at("x_freq", lt).unwrap_or(1.0).max(0.0);
-            let y_freq = e.float_at("y_freq", lt).unwrap_or(1.0).max(0.0);
-            let z_freq = e.float_at("z_freq", lt).unwrap_or(1.0).max(0.0);
+            let x_amp = (e
+                .float_at_with_context("x_amp", lt, expression_context.clone())
+                .unwrap_or(1.0) as f32)
+                .max(0.0);
+            let y_amp = (e
+                .float_at_with_context("y_amp", lt, expression_context.clone())
+                .unwrap_or(1.0) as f32)
+                .max(0.0);
+            let x_freq = e
+                .float_at_with_context("x_freq", lt, expression_context.clone())
+                .unwrap_or(1.0)
+                .max(0.0);
+            let y_freq = e
+                .float_at_with_context("y_freq", lt, expression_context.clone())
+                .unwrap_or(1.0)
+                .max(0.0);
+            let z_freq = e
+                .float_at_with_context("z_freq", lt, expression_context.clone())
+                .unwrap_or(1.0)
+                .max(0.0);
             // z (depth/scale) amount: the new id, else the old `zoom_pump`
             // (migration — a project saved before FX-11 keeps its pump), a
             // scale-pump per cent either way.
             let z_pct = e
-                .float_at("z_amp", lt)
-                .or_else(|| e.float_at("zoom_pump", lt))
+                .float_at_with_context("z_amp", lt, expression_context.clone())
+                .or_else(|| e.float_at_with_context("zoom_pump", lt, expression_context.clone()))
                 .unwrap_or(0.0) as f32;
             let z_amp = (z_pct / 100.0).clamp(0.0, 1.0);
             // Edges (P3, K-145): the new `edge` Choice, else migrate the old
@@ -1403,7 +1941,11 @@ fn resolve_one(
                 Some(EffectValue::Seed(s)) => *s,
                 _ => 0,
             };
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             // The wobble: independent noise channels sampled at local time ×
             // frequency (per axis, §3.4) — deterministic, hop-free, identical
             // on every machine (§2.4). One sampler drives the frame-time wobble
@@ -1428,7 +1970,9 @@ fn resolve_one(
             // (the bit-exact passthrough). The centre offset is 0, so the middle
             // sample equals the frame-time wobble exactly.
             let motion_blur = e.bool_of("motion_blur").unwrap_or(false);
-            let mb_amount = e.float_at("mb_amount", lt).unwrap_or(0.5);
+            let mb_amount = e
+                .float_at_with_context("mb_amount", lt, expression_context.clone())
+                .unwrap_or(0.5);
             let mb = (motion_blur && mb_amount > 0.0).then(|| {
                 let mut samples = [ShakeSample::IDENTITY; SHAKE_MB_SAMPLES];
                 for (s, db) in samples.iter_mut().zip(shake_mb_offsets(mb_amount)) {
@@ -1451,7 +1995,10 @@ fn resolve_one(
             })
         }
         "block_glitch" => {
-            let intensity = (e.float_at("intensity", lt).unwrap_or(0.35) as f32).clamp(0.0, 1.0);
+            let intensity = (e
+                .float_at_with_context("intensity", lt, expression_context.clone())
+                .unwrap_or(0.35) as f32)
+                .clamp(0.0, 1.0);
             let seed = match e.param("seed") {
                 Some(EffectValue::Seed(s)) => *s,
                 _ => 0,
@@ -1459,15 +2006,32 @@ fn resolve_one(
             // Local time discretised at the fixed tick rate (§3.12
             // status note): block hashing reads this, never raw time.
             let tick = (lt * GLITCH_TICK_HZ).floor() as i32;
-            let block_size_px =
-                (e.float_at("block_size", lt).unwrap_or(24.0) as f32 * px_scale).max(1.0);
-            let jitter_frac =
-                (e.float_at("block_jitter", lt).unwrap_or(25.0) as f32 / 100.0).clamp(0.0, 1.0);
-            let amount_pct = e.float_at("block_amount", lt).unwrap_or(3.0) as f32;
-            let chan_pct = e.float_at("channel_offset", lt).unwrap_or(1.0) as f32;
-            let slice_frac =
-                (e.float_at("slice_repeat", lt).unwrap_or(20.0) as f32 / 100.0).clamp(0.0, 1.0);
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let block_size_px = (e
+                .float_at_with_context("block_size", lt, expression_context.clone())
+                .unwrap_or(24.0) as f32
+                * px_scale)
+                .max(1.0);
+            let jitter_frac = (e
+                .float_at_with_context("block_jitter", lt, expression_context.clone())
+                .unwrap_or(25.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
+            let amount_pct = e
+                .float_at_with_context("block_amount", lt, expression_context.clone())
+                .unwrap_or(3.0) as f32;
+            let chan_pct = e
+                .float_at_with_context("channel_offset", lt, expression_context.clone())
+                .unwrap_or(1.0) as f32;
+            let slice_frac = (e
+                .float_at_with_context("slice_repeat", lt, expression_context.clone())
+                .unwrap_or(20.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             Some(Resolved::BlockGlitch {
                 intensity,
                 seed,
@@ -1486,15 +2050,26 @@ fn resolve_one(
             // param (0..100): fold it in, so the loaded look is the old
             // Intensity × Darkness product exactly. A new project has no
             // Darkness param, so the raw Intensity stands.
-            let raw = e.float_at("intensity", lt).unwrap_or(0.35);
-            let folded = match e.float_at("scanline_darkness", lt) {
+            let raw = e
+                .float_at_with_context("intensity", lt, expression_context.clone())
+                .unwrap_or(0.35);
+            let folded = match e.float_at_with_context(
+                "scanline_darkness",
+                lt,
+                expression_context.clone(),
+            ) {
                 Some(darkness_pct) => raw * (darkness_pct / 100.0),
                 None => raw,
             };
             let intensity = (folded as f32).clamp(0.0, 1.0);
-            let period_px =
-                (e.float_at("scanline_period", lt).unwrap_or(3.0) as f32 * px_scale).max(1.0);
-            let roll_speed = e.float_at("scanline_roll", lt).unwrap_or(0.0);
+            let period_px = (e
+                .float_at_with_context("scanline_period", lt, expression_context.clone())
+                .unwrap_or(3.0) as f32
+                * px_scale)
+                .max(1.0);
+            let roll_speed = e
+                .float_at_with_context("scanline_roll", lt, expression_context.clone())
+                .unwrap_or(0.0);
             // The scanline pattern's pixel offset at this frame (roll
             // speed × local time × period), so the kernel never sees
             // raw time or does its own time maths (§2.4: the CPU/GPU
@@ -1505,7 +2080,11 @@ fn resolve_one(
                 Some(EffectValue::Bool(b)) => *b,
                 _ => false,
             };
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             Some(Resolved::Scanlines {
                 intensity,
                 period_px,
@@ -1519,20 +2098,31 @@ fn resolve_one(
             // > 1 extrapolates past the moshed frame. Displacement supersedes
             // the K-148 `streak_length` id (read as a fallback so an old
             // project keeps its reach); default 4 frames.
-            let intensity = (e.float_at("intensity", lt).unwrap_or(0.5) as f32).max(0.0);
+            let intensity = (e
+                .float_at_with_context("intensity", lt, expression_context.clone())
+                .unwrap_or(0.5) as f32)
+                .max(0.0);
             let displacement = e
-                .float_at("displacement", lt)
-                .or_else(|| e.float_at("streak_length", lt))
+                .float_at_with_context("displacement", lt, expression_context.clone())
+                .or_else(|| {
+                    e.float_at_with_context("streak_length", lt, expression_context.clone())
+                })
                 .unwrap_or(4.0)
                 .max(1.0) as f32;
-            let bloom = (e.float_at("bloom", lt).unwrap_or(0.6) as f32).clamp(0.0, 1.0);
+            let bloom = (e
+                .float_at_with_context("bloom", lt, expression_context.clone())
+                .unwrap_or(0.6) as f32)
+                .clamp(0.0, 1.0);
             // Periodic I-frame reset (K-164): the melt ramps from a clean frame
             // just after each reset up to full by the next. A pure function of
             // layer time `lt` (seconds), so the kernel stays time-agnostic and
             // the frame-cache key already covers it (a param+time function, the
             // K-093/K-094 reasoning). 0 = off (a constant melt); the content-
             // driven reset at stills/cuts (zero flow) fires regardless.
-            let interval = (e.float_at("reset_interval", lt).unwrap_or(0.0)).max(0.0);
+            let interval = (e
+                .float_at_with_context("reset_interval", lt, expression_context.clone())
+                .unwrap_or(0.0))
+            .max(0.0);
             let ramp = if interval > 0.0 {
                 (lt / interval).rem_euclid(1.0) as f32
             } else {
@@ -1548,7 +2138,11 @@ fn resolve_one(
             } else {
                 (eff_displacement.round() as i32).clamp(2, 64)
             };
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             Some(Resolved::Datamosh {
                 intensity: eff_intensity,
                 displacement: eff_displacement,
@@ -1562,8 +2156,15 @@ fn resolve_one(
             // decay^k (v1 fixed one-frame spacing); the render supplies
             // the neighbour frame at each offset. weights[i] is the echo
             // at offset -(i+1). Up to 16 echoes (FX-17/K-149).
-            let count = (e.float_at("echoes", lt).unwrap_or(4.0).round() as i32).clamp(1, 16);
-            let decay = (e.float_at("decay", lt).unwrap_or(0.6) as f32).clamp(0.0, 1.0);
+            let count = (e
+                .float_at_with_context("echoes", lt, expression_context.clone())
+                .unwrap_or(4.0)
+                .round() as i32)
+                .clamp(1, 16);
+            let decay = (e
+                .float_at_with_context("decay", lt, expression_context.clone())
+                .unwrap_or(0.6) as f32)
+                .clamp(0.0, 1.0);
             // Combine blend mode; the default when the param is absent matches
             // the schema default (Screen, index 3). Clamped to the 0..=13 range
             // the CPU oracle and WGSL kernel branch over (T21).
@@ -1571,7 +2172,11 @@ fn resolve_one(
                 Some(EffectValue::Choice(c)) => (*c).min(13),
                 _ => 3,
             };
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             let mut weights = [0.0f32; 16];
             for (i, w) in weights.iter_mut().enumerate() {
                 if (i as i32) < count {
@@ -1585,10 +2190,21 @@ fn resolve_one(
             // (the motion itself) is threaded to the kernel separately.
             // Samples is the spec's integer carried as a Float row —
             // rounded and clamped to the same 2..64 the kernel loops.
-            let shutter_frac =
-                (e.float_at("shutter_angle", lt).unwrap_or(180.0) as f32 / 360.0).max(0.0);
-            let samples = (e.float_at("samples", lt).unwrap_or(16.0).round() as i32).clamp(2, 64);
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let shutter_frac = (e
+                .float_at_with_context("shutter_angle", lt, expression_context.clone())
+                .unwrap_or(180.0) as f32
+                / 360.0)
+                .max(0.0);
+            let samples = (e
+                .float_at_with_context("samples", lt, expression_context.clone())
+                .unwrap_or(16.0)
+                .round() as i32)
+                .clamp(2, 64);
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             // View (FX-19): a diagnostic look at the flow or confidence, else the
             // blurred picture. An older project without the row reads Rendered.
             let view = match e.param("view") {
@@ -1606,20 +2222,38 @@ fn resolve_one(
         "transform" => {
             // px@comp parameters scale by the preview factor (§2.3) so
             // Half preview frames exactly like Full, only softer.
-            let px = |id: &str| e.float_at(id, lt).unwrap_or(0.0) as f32 * px_scale;
-            let pct = |id: &str| e.float_at(id, lt).unwrap_or(100.0) as f32 / 100.0;
-            let opacity =
-                (e.float_at("opacity", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
-            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let px = |id: &str| {
+                e.float_at_with_context(id, lt, expression_context.clone())
+                    .unwrap_or(0.0) as f32
+                    * px_scale
+            };
+            let pct = |id: &str| {
+                e.float_at_with_context(id, lt, expression_context.clone())
+                    .unwrap_or(100.0) as f32
+                    / 100.0
+            };
+            let opacity = (e
+                .float_at_with_context("opacity", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
+            let mix = (e
+                .float_at_with_context("mix", lt, expression_context.clone())
+                .unwrap_or(100.0) as f32
+                / 100.0)
+                .clamp(0.0, 1.0);
             Some(Resolved::Transform {
                 anchor: [px("anchor_x"), px("anchor_y")],
                 position: [px("position_x"), px("position_y")],
                 scale: [pct("scale_x"), pct("scale_y")],
-                rotation_deg: e.float_at("rotation", lt).unwrap_or(0.0) as f32,
+                rotation_deg: e
+                    .float_at_with_context("rotation", lt, expression_context.clone())
+                    .unwrap_or(0.0) as f32,
                 opacity,
                 mix,
             })
         }
+
         _ => None,
     }
 }

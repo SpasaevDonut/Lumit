@@ -13,6 +13,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/src/rust/api/cache.dart';
 
+import '../l10n/strings.dart';
 import '../widgets/controls.dart';
 
 /// Ask, then clear. Returns true when frames were actually thrown away, so a
@@ -58,8 +59,7 @@ class _ConfirmClearDisk extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.all(10),
-            child: Text('Delete the frames parked on disk?',
-                style: t.bodyPrimary),
+            child: Text(l10n.cacheDeleteTitle, style: t.bodyPrimary),
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -80,14 +80,19 @@ class _ConfirmClearDisk extends StatelessWidget {
                   key: const ValueKey('disk-clear-cancel'),
                   small: true,
                   onPressed: () => onChoose(false),
-                  child: Text('Keep them', style: t.small),
+                  child: Text(l10n.cacheKeepThem, style: t.small),
                 ),
                 const SizedBox(width: 8),
                 HouseButton(
                   key: const ValueKey('disk-clear-confirm'),
                   small: true,
+                  // The window's default action: focused on open, so Enter
+                  // confirms, and drawn with the accent edge that says so
+                  // (K-319).
+                  primary: true,
+                  autofocus: true,
                   onPressed: () => onChoose(true),
-                  child: Text('Delete', style: t.small),
+                  child: Text(l10n.delete, style: t.small),
                 ),
               ],
             ),

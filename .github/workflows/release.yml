@@ -1,17 +1,23 @@
-# Release pipeline (K-252): push a tag like v0.1.0 and this builds the Windows
-# installer and the Linux bundle on GitHub's own runners and attaches both to a
+# Release pipeline (K-252, K-304): push a tag like v0.1.0 and this builds all
+# three platform artefacts on GitHub's own runners and attaches them to a
 # GitHub Release — no local cross-building, which Flutter cannot do anyway.
+#
+# Three things are *installed* (K-304): a Windows setup .exe, a macOS .dmg and a
+# Linux .flatpak — one per platform, and the Linux tarball is withdrawn. Beside
+# them ride the plain application archives the in-place updater fetches (K-297):
+# a Windows .zip and a macOS .zip, which are not installers and are not offered
+# as a way to install. Every job gates the release; nothing is
+# continue-on-error, so a partial release is never published quietly.
 #
 # Toolchain steps mirror ci.yml's `windows` and `flutter-linux` jobs exactly
 # (same FFmpeg 7.1 shared build, same LLVM 18 pin, same Flutter 3.44.7); when
 # one changes, change the other.
 #
-# The macOS job is EXPERIMENTAL (continue-on-error): make-dmg.sh bundles the
-# Homebrew FFmpeg dylibs into the .app and re-signs ad hoc, so the DMG runs
-# without Homebrew — but it is unsigned (Gatekeeper warns) and the Metal
-# Viewer is unverified on real hardware. Signing and notarisation land with
-# the macOS pass (K-033, docs/TODO.md); a release still publishes if this job
-# fails, just without the DMG.
+# The macOS artefacts are Developer ID signed, notarised and stapled (K-310)
+# when the six signing secrets are present; without them make-dmg.sh falls back
+# to the ad-hoc signature it always used, so forks and a secretless repository
+# still build. The Windows installer is unsigned either way — that waits on a
+# code-signing certificate, which is a purchase and not code.
 
 name: release
 
@@ -65,10 +71,26 @@ jobs:
           $version = "$env:GITHUB_REF_NAME".TrimStart('v')
           if (-not $version) { $version = '0.0.0' }
           & packaging/windows/build-installer.ps1 -Version $version
+      # The same files the installer lays down, as a plain archive (K-297).
+      # This is what a per-user installation fetches to update itself: no
+      # installer to run, no elevation, no questions already answered once.
+      - name: Package the app for in-place updates
+        shell: pwsh
+        run: |
+          $version = "$env:GITHUB_REF_NAME".TrimStart('v')
+          if (-not $version) { $version = '0.0.0' }
+          $stage = "$env:RUNNER_TEMP\lumit-package"
+          New-Item -ItemType Directory -Force -Path "$stage\icons" | Out-Null
+          Copy-Item -Recurse -Force flutter_ui\build\windows\x64\runner\Release\* $stage
+          Copy-Item assets\brand\lumit-project.ico, assets\brand\lumit-preset.ico "$stage\icons"
+          Compress-Archive -Path "$stage\*" -Force `
+            -DestinationPath "packaging/windows/dist/lumit-$version-windows-x64.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: windows-installer
-          path: packaging/windows/dist/*.exe
+          path: |
+            packaging/windows/dist/*.exe
+            packaging/windows/dist/*.zip
           if-no-files-found: error
 
   linux-bundle:
@@ -126,27 +148,34 @@ jobs:
           cp packaging/linux/io.github.luminalmvm.Lumit.desktop \
              packaging/linux/lumit-mime.xml "$stage/share/"
           cp assets/brand/lumit-mark.svg assets/brand/lumit-project.svg \
-             assets/brand/lumit-preset.svg "$stage/share/"
-          printf '%s\n' \
-            "Run ./lumit_flutter from this directory." \
-            "For a menu entry and .lum/.lumfx file associations, clone the" \
-            "repository and run packaging/linux/install.sh after copying this" \
-            "bundle over flutter_ui/build/linux/x64/release/bundle, or place" \
-            "the files in share/ yourself (icons go to hicolor scalable)." \
-            > "$stage/INSTALL.txt"
-          tar czf "$stage.tar.gz" "$stage"
+             assets/brand/lumit-preset.svg assets/brand/lumit-theme.svg \
+             "$stage/share/"
       - name: Build the Flatpak
         # Repacks the staged bundle (FFmpeg libs included) via the manifest in
         # packaging/flatpak/ into a single-file .flatpak anyone can install
-        # with `flatpak install lumit-*.flatpak`. continue-on-error: this job
-        # gates the whole release (publish needs it), and a Flatpak hiccup
-        # should cost the release the .flatpak, not the tar.gz and setup.exe.
-        continue-on-error: true
+        # with `flatpak install lumit-*.flatpak`. This is the whole Linux
+        # release (K-304), so a failure here fails the release rather than
+        # publishing a Linux-shaped hole.
         run: |
           version="${GITHUB_REF_NAME#v}"
           version="${version:-0.0.0}"
           stage="lumit-$version-linux-x64"
-          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder
+          # Two packages flatpak-builder needs but does not depend on, both of
+          # which --no-install-recommends would otherwise drop:
+          #   elfutils         supplies eu-strip, which flatpak-builder shells
+          #                    out to when splitting debug symbols out of the
+          #                    binaries; without it the build dies at the first
+          #                    .so it tries to strip.
+          #   librsvg2-common  supplies the gdk-pixbuf SVG loader. The app icon
+          #                    ships as scalable SVG only, and `appstreamcli
+          #                    compose` reads icons through gdk-pixbuf, so
+          #                    without the loader it cannot read the icon
+          #                    (file-read-error), emits no component at all
+          #                    (filters-but-no-output) and fails the build.
+          #                    librsvg2-2 alone is not enough — that is the
+          #                    library, not the loader plugin.
+          sudo apt-get install -y --no-install-recommends \
+            flatpak flatpak-builder elfutils librsvg2-common
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak install --user -y --noninteractive flathub \
             org.gnome.Platform//49 org.gnome.Sdk//49
@@ -160,15 +189,19 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: linux-bundle
-          path: |
-            lumit-*-linux-x64.tar.gz
-            lumit-*-linux-x64.flatpak
+          path: lumit-*-linux-x64.flatpak
           if-no-files-found: error
 
   macos-dmg:
-    name: macOS disk image (experimental)
+    name: macOS disk image
     runs-on: macos-latest
-    continue-on-error: true
+    env:
+      # A step's `if` cannot read the `secrets` context, only `env`, so the
+      # signing gate below tests these. Absent secrets leave them empty and
+      # make-dmg.sh signs ad hoc exactly as it did before K-310.
+      MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -184,14 +217,69 @@ jobs:
           flutter-version: 3.44.7
           channel: stable
           cache: true
+      # The app icon is an Icon Composer document (K-309): actool needs Xcode 26
+      # or newer to compile it. Mirrors ci.yml's `flutter-macos` job.
+      - name: Select the newest Xcode (26+ for the .icon)
+        run: |
+          latest="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          sudo xcode-select -s "$latest"
+          ver="$(xcodebuild -version | head -1 | awk '{print $2}')"
+          echo "Using Xcode $ver ($latest)"
+          [ "${ver%%.*}" -ge 26 ] || {
+            echo "::error::Xcode $ver cannot compile assets/brand/lumit-icon.icon (needs 26+)"
+            exit 1
+          }
+      - name: Import the Developer ID certificate
+        if: env.MACOS_SIGN_IDENTITY != ''
+        env:
+          CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+        run: |
+          # The keychain is thrown away with the runner, so its password is a
+          # literal rather than a seventh secret to rotate.
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          security create-keychain -p ci "$keychain"
+          # Default keychains re-lock after five minutes of idling, which is
+          # less than a release build takes; -lut 21600 outlasts the job.
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p ci "$keychain"
+          echo "$CERT_P12_BASE64" | base64 -d > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" \
+            -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/cert.p12"
+          # Without this, the first codesign raises a GUI password prompt that
+          # nothing on a runner can answer, and the job hangs until it times out.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k ci "$keychain"
+          # codesign and trust evaluation both search the keychain *list*, not
+          # the default keychain alone: off the list, the Developer ID
+          # intermediate is invisible and the identity reads as untrusted.
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          echo "$API_KEY_P8_BASE64" | base64 -d > "$RUNNER_TEMP/apple-api-key.p8"
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/apple-api-key.p8" >> "$GITHUB_ENV"
       - name: Build the disk image
         run: |
           version="${GITHUB_REF_NAME#v}"
           packaging/macos/make-dmg.sh "${version:-0.0.0}"
+      # The bundle on its own, for in-place updates (K-297). `ditto` rather than
+      # `zip`: an .app carries symbolic links, code signatures and executable
+      # bits, and an archiver that drops those produces a bundle macOS refuses
+      # to open.
+      - name: Package the bundle for in-place updates
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          version="${version:-0.0.0}"
+          app="flutter_ui/build/macos/Build/Products/Release/Lumit.app"
+          mkdir -p packaging/macos/dist
+          ditto -c -k --keepParent "$app" \
+            "packaging/macos/dist/lumit-$version-macos-$(uname -m).zip"
       - uses: actions/upload-artifact@v4
         with:
           name: macos-dmg
-          path: packaging/macos/dist/*.dmg
+          path: |
+            packaging/macos/dist/*.dmg
+            packaging/macos/dist/*.zip
           if-no-files-found: error
 
   publish:
@@ -208,6 +296,32 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # A tag with a suffix (v0.2.0-rc1) publishes as a pre-release, so a
+          # dry run of the whole pipeline never becomes the download page's
+          # "latest". Plain v0.2.0 is the real thing.
+          case "$GITHUB_REF_NAME" in *-*) prerelease=--prerelease ;; *) prerelease= ;; esac
           gh release create "$GITHUB_REF_NAME" dist/* \
             --title "Lumit $GITHUB_REF_NAME" \
-            --generate-notes
+            --generate-notes $prerelease
+
+  announce:
+    name: Discord announcement
+    needs: publish
+    # Only a plain vX.Y.Z tag is announced. A suffixed one (v0.2.0-rc1) is a
+    # pre-release, and a dry run of the pipeline should not tell the community
+    # a release has happened.
+    if: ${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    env:
+      # A step's `if` cannot read the `secrets` context, only `env`. Without the
+      # secret — on a fork, or before it is set — the release still succeeds and
+      # simply goes unannounced.
+      DISCORD_RELEASE_WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Post the release notes to Discord
+        if: env.DISCORD_RELEASE_WEBHOOK != ''
+        run: node scripts/discord-release.mjs "${GITHUB_REF_NAME#v}"
+      - name: Say why nothing was posted
+        if: env.DISCORD_RELEASE_WEBHOOK == ''
+        run: echo "::warning::DISCORD_RELEASE_WEBHOOK is not set, so this release was not announced in Discord."

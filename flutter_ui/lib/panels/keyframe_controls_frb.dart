@@ -29,6 +29,7 @@ import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:provider/provider.dart';
 
 import '../icons/icons.dart';
+import '../l10n/strings.dart';
 import '../state/comp_time.dart';
 import '../widgets/controls.dart';
 
@@ -188,6 +189,7 @@ class KeyframeControlsFrb extends StatelessWidget {
   List<BridgeKeyframe> _keysOf(BridgeScalar scalar) => switch (scalar) {
         BridgeScalar_Keyframed(:final field0) => field0,
         BridgeScalar_Static() => const [],
+        BridgeScalar_Expression() => const [],
       };
 
   List<BridgeKeyframe> get _keys => _keysOf(_lead);
@@ -236,7 +238,7 @@ class KeyframeControlsFrb extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         LumitTooltip(
-          message: _animated ? 'Stop animating this' : 'Animate this',
+          message: _animated ? l10n.tipStopAnimating : l10n.tipAnimate,
           child: _button(
             context,
             keyName: 'kf-stopwatch-$rowKey',
@@ -258,7 +260,7 @@ class KeyframeControlsFrb extends StatelessWidget {
             onPressed: () => _seekTo(_neighbour(frame, before: true)),
           ),
           LumitTooltip(
-            message: onKey ? 'Remove this keyframe' : 'Add a keyframe here',
+            message: onKey ? l10n.tipRemoveKeyframe : l10n.tipAddKeyframe,
             child: _button(
               context,
               keyName: 'kf-toggle-$rowKey',

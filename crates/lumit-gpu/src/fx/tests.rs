@@ -61,7 +61,7 @@ fn worst_f16_ulp(a: &[f32], b: &[f32]) -> i32 {
 #[test]
 fn wgsl_blur_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -130,7 +130,7 @@ fn wgsl_blur_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_sharpen_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -183,7 +183,7 @@ fn wgsl_sharpen_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_sharpen_simple_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -227,7 +227,7 @@ fn wgsl_sharpen_simple_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_rgb_split_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -283,7 +283,7 @@ fn wgsl_rgb_split_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_spectral_split_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -348,7 +348,7 @@ fn wgsl_spectral_split_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_chromatic_aberration_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -403,7 +403,7 @@ fn wgsl_chromatic_aberration_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_flash_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -447,7 +447,7 @@ fn wgsl_flash_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_colour_balance_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -502,7 +502,7 @@ fn wgsl_colour_balance_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_saturation_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -576,7 +576,7 @@ fn wgsl_saturation_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_vibrancy_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -646,7 +646,7 @@ fn wgsl_vibrancy_matches_the_cpu_oracle() {
 fn wgsl_matte_key_matches_the_cpu_oracle() {
     use lumit_core::fx::MatteKeyParams;
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -783,7 +783,7 @@ fn wgsl_matte_key_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_vignette_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -896,7 +896,7 @@ fn wgsl_vignette_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_exposure_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -971,7 +971,7 @@ fn wgsl_exposure_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_temperature_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1070,7 +1070,7 @@ fn corpus_with_partials(w: u32, h: u32) -> Vec<f32> {
 #[test]
 fn wgsl_invert_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1111,7 +1111,7 @@ fn wgsl_invert_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_tint_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1182,7 +1182,7 @@ fn wgsl_tint_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_contrast_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1242,7 +1242,7 @@ fn wgsl_contrast_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_gamma_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1329,7 +1329,7 @@ fn wgsl_gamma_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_hue_shift_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1383,7 +1383,7 @@ fn wgsl_hue_shift_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_transform_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1459,7 +1459,7 @@ fn wgsl_transform_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_shake_matches_the_cpu_oracle_through_the_transform_kernel() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1530,7 +1530,7 @@ fn wgsl_shake_motion_blur_matches_the_cpu_oracle() {
     assert_eq!(SHAKE_MB_SAMPLES, lumit_core::fx::SHAKE_MB_SAMPLES);
 
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1669,7 +1669,7 @@ fn wgsl_shake_motion_blur_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_glow_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1745,7 +1745,7 @@ fn wgsl_glow_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_block_glitch_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1857,7 +1857,7 @@ fn wgsl_block_glitch_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_scanlines_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1945,7 +1945,7 @@ fn wgsl_scanlines_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_dir_blur_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -1996,7 +1996,7 @@ fn wgsl_dir_blur_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_radial_blur_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -2053,7 +2053,7 @@ fn wgsl_radial_blur_matches_the_cpu_oracle() {
 #[test]
 fn adjust_blend_lerps_by_coverage_times_opacity() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -2142,7 +2142,7 @@ fn adjust_blend_lerps_by_coverage_times_opacity() {
 #[test]
 fn wgsl_echo_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -2281,7 +2281,7 @@ fn wgsl_echo_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_motion_blur_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -2428,7 +2428,7 @@ fn wgsl_motion_blur_matches_the_cpu_oracle() {
 #[test]
 fn wgsl_datamosh_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -2541,19 +2541,34 @@ fn wgsl_datamosh_matches_the_cpu_oracle() {
 /// pushed **red-fastest** (index `r + g*size + b*size*size`) — the layout
 /// `upload_lut_3d` and the shader assume.
 fn build_lut(size: usize, f: impl Fn([f32; 3]) -> [f32; 3]) -> lumit_core::lut::Lut3d {
+    build_lut_over(size, [0.0; 3], [1.0; 3], f)
+}
+
+/// The same, over an explicit `DOMAIN_MIN`/`DOMAIN_MAX` (K-271): the grid
+/// points are the domain's own even spacing, so a cube built here says the
+/// same thing as one exported by a grading tool that declares a domain.
+fn build_lut_over(
+    size: usize,
+    domain_min: [f32; 3],
+    domain_max: [f32; 3],
+    f: impl Fn([f32; 3]) -> [f32; 3],
+) -> lumit_core::lut::Lut3d {
     let maxf = (size - 1) as f32;
+    let at = |i: usize, ch: usize| {
+        domain_min[ch] + (domain_max[ch] - domain_min[ch]) * (i as f32 / maxf)
+    };
     let mut data = Vec::with_capacity(size * size * size);
     for b in 0..size {
         for g in 0..size {
             for r in 0..size {
-                data.push(f([r as f32 / maxf, g as f32 / maxf, b as f32 / maxf]));
+                data.push(f([at(r, 0), at(g, 1), at(b, 2)]));
             }
         }
     }
     lumit_core::lut::Lut3d {
         size,
-        domain_min: [0.0; 3],
-        domain_max: [1.0; 3],
+        domain_min,
+        domain_max,
         data,
     }
 }
@@ -2571,7 +2586,7 @@ fn build_lut(size: usize, f: impl Fn([f32; 3]) -> [f32; 3]) -> lumit_core::lut::
 #[test]
 fn wgsl_lut_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -2627,12 +2642,29 @@ fn wgsl_lut_matches_the_cpu_oracle() {
     // A non-separable swap of red and blue: out = [b, g, r].
     let swap = build_lut(2, |c| [c[2], c[1], c[0]]);
 
-    let cases: [(&str, &lumit_core::lut::Lut3d, f32); 5] = [
+    // A cube over a NON-DEFAULT domain (K-271): the shipped shader assumed
+    // 0..1 and skipped the `(c - lo) / (hi - lo)` remap the CPU applies, so a
+    // cube like this rendered silently wrong on the GPU while the oracle was
+    // right. Asymmetric per channel, and one axis deliberately narrower than
+    // 0..1 so mid-grey lands in a different cell on each path if the remap is
+    // missing.
+    let domained = build_lut_over(4, [-0.25, 0.0, 0.1], [1.5, 0.75, 1.0], |c| {
+        [c[2], c[0], c[1]]
+    });
+    // The degenerate domain a malformed file can declare: DOMAIN_MIN equal to
+    // DOMAIN_MAX. The CPU reads a zero span as 0 rather than dividing; the
+    // shader must do the same and not produce NaN.
+    let zero_span = build_lut_over(3, [0.5; 3], [0.5; 3], |c| [c[1], c[2], c[0]]);
+
+    let cases: [(&str, &lumit_core::lut::Lut3d, f32); 8] = [
         ("identity-full", &identity, 1.0),
         ("identity-mix0", &identity, 0.0),
         ("gamma-full", &gamma, 1.0),
         ("gamma-mixed", &gamma, 0.5),
         ("swap-rb", &swap, 1.0),
+        ("domained-full", &domained, 1.0),
+        ("domained-mixed", &domained, 0.5),
+        ("zero-span-domain", &zero_span, 1.0),
     ];
 
     for (name, lut, mix) in cases {
@@ -2652,7 +2684,17 @@ fn wgsl_lut_matches_the_cpu_oracle() {
 
         let tex = upload_linear_f32(&ctx, &img, w, h);
         let lut_tex = upload_lut_3d(&ctx, lut.size as u32, &lut.data);
-        let out = fx.lut(&ctx, &tex, w, h, &lut_tex, lut.size as u32, mix);
+        let out = fx.lut(
+            &ctx,
+            &tex,
+            w,
+            h,
+            &lut_tex,
+            lut.size as u32,
+            mix,
+            lut.domain_min,
+            lut.domain_max,
+        );
         let gpu = readback_linear_f32(&ctx, &out, w, h).unwrap();
 
         let worst = worst_f16_ulp(&cpu, &gpu);
@@ -2665,7 +2707,17 @@ fn wgsl_lut_matches_the_cpu_oracle() {
         }
 
         // Determinism: a second run is bit-identical to the first (§2.4).
-        let out2 = fx.lut(&ctx, &tex, w, h, &lut_tex, lut.size as u32, mix);
+        let out2 = fx.lut(
+            &ctx,
+            &tex,
+            w,
+            h,
+            &lut_tex,
+            lut.size as u32,
+            mix,
+            lut.domain_min,
+            lut.domain_max,
+        );
         let gpu2 = readback_linear_f32(&ctx, &out2, w, h).unwrap();
         assert_eq!(gpu, gpu2, "{name}: GPU LUT must be bit-stable");
     }
@@ -2678,7 +2730,17 @@ fn wgsl_lut_matches_the_cpu_oracle() {
     let tex = upload_linear_f32(&ctx, &img, w, h);
     let gpu = readback_linear_f32(
         &ctx,
-        &fx.lut(&ctx, &tex, w, h, &lut_tex, identity.size as u32, 1.0),
+        &fx.lut(
+            &ctx,
+            &tex,
+            w,
+            h,
+            &lut_tex,
+            identity.size as u32,
+            1.0,
+            identity.domain_min,
+            identity.domain_max,
+        ),
         w,
         h,
     )
@@ -2700,112 +2762,85 @@ fn wgsl_lut_matches_the_cpu_oracle() {
         }
     }
 }
-
-/// The CPU oracle for [`FxEngine::dof`]: byte-for-byte the WGSL kernel's
-/// maths (the same CoC ramp with explicit min/max/mul, the same integer
-/// disc taps in the same row-major order, box weighted, edges clamped,
-/// the same `o*(1-mix)+v*mix` final blend). Consumes the fp16-quantised
-/// image and the exact-f32 depth the GPU reads, so the two agree.
-#[allow(clippy::too_many_arguments)]
-fn dof_reference(
-    img: &[f32],
-    depth: &[f32],
-    w: u32,
-    h: u32,
-    focus: f32,
-    range: f32,
-    near_aperture: f32,
-    far_aperture: f32,
-    depth_invert: bool,
-    display: u32,
-    mix: f32,
-) -> Vec<f32> {
-    let wi = w as i32;
-    let hi = h as i32;
-    let mut out = vec![0.0f32; img.len()];
-    for y in 0..hi {
-        for x in 0..wi {
-            let pi = (y * wi + x) as usize;
-            let oi = pi * 4;
-            let raw = depth[pi];
-            // Depth invert (swap near and far): the shader's
-            // `select(raw, 1 - raw, invert)`, bit-identical here.
-            let d = if depth_invert { 1.0 - raw } else { raw };
-            let dist = (d - focus).abs();
-            let denom = (1.0f32 - range).max(1e-4);
-            // clamp(0,1) is bit-identical to the shader's min(max(·,0),1)
-            // for every finite input (the ±0 corner collapses to the same
-            // smoothstep zero and coincides in fp16), so parity holds.
-            let e = ((dist - range) / denom).clamp(0.0, 1.0);
-            let s = e * e * (3.0 - 2.0 * e);
-            // Diagnostic views (mirror the kernel): write the view directly,
-            // ignoring the disc gather and Mix.
-            if display == 1 {
-                // Depth map: post-invert depth as opaque greyscale.
-                out[oi] = d;
-                out[oi + 1] = d;
-                out[oi + 2] = d;
-                out[oi + 3] = 1.0;
-                continue;
-            }
-            if display == 2 {
-                // Focus map: 1 - s, white where sharp.
-                let m = 1.0 - s;
-                out[oi] = m;
-                out[oi + 1] = m;
-                out[oi + 2] = m;
-                out[oi + 3] = 1.0;
-                continue;
-            }
-            // Per-side aperture: the shader's
-            // `select(far, near, d < focus)`, far at equality.
-            let ap = if d < focus {
-                near_aperture
-            } else {
-                far_aperture
-            };
-            let coc = ap * s;
-            let coc2 = coc * coc;
-            let ri = coc.ceil() as i32;
-            let mut acc = [0.0f32; 4];
-            let mut wsum = 0.0f32;
-            for dy in -ri..=ri {
-                for dx in -ri..=ri {
-                    let r2 = (dx * dx + dy * dy) as f32;
-                    if r2 <= coc2 {
-                        let sx = (x + dx).clamp(0, wi - 1);
-                        let sy = (y + dy).clamp(0, hi - 1);
-                        let si = ((sy * wi + sx) * 4) as usize;
-                        acc[0] += img[si];
-                        acc[1] += img[si + 1];
-                        acc[2] += img[si + 2];
-                        acc[3] += img[si + 3];
-                        wsum += 1.0;
-                    }
-                }
-            }
-            for c in 0..4 {
-                let v = acc[c] / wsum;
-                let o = img[oi + c];
-                out[oi + c] = o * (1.0 - mix) + v * mix;
-            }
-        }
+/// One resolved depth-of-field setting, as both paths need it.
+///
+/// The two sides are built from **one** value rather than from two parallel
+/// argument lists: `lumit_core::fx::cpu::DofParams` is the oracle's input and
+/// `lumit_gpu::fx::DofOp` the kernel's, field for field, so a field added to one
+/// and forgotten on the other stops compiling instead of quietly diverging.
+fn dof_op(p: &lumit_core::fx::cpu::DofParams) -> crate::fx::DofOp {
+    crate::fx::DofOp {
+        focus: p.focus,
+        range: p.range,
+        near_aperture: p.near_aperture,
+        far_aperture: p.far_aperture,
+        blade_normals: p.blade_normals,
+        blade_count: p.blade_count,
+        apothem2: p.apothem2,
+        roundness: p.roundness,
+        rim: p.rim,
+        aspect_scale: p.aspect_scale,
+        threshold: p.threshold,
+        bokeh_power: p.bokeh_power,
+        repeat_edge: p.repeat_edge,
+        depth_bound: true,
+        depth_channel: p.depth_channel,
+        depth_invert: p.depth_invert,
+        use_focus_point: p.use_focus_point,
+        focus_point: p.focus_point,
+        gamma: p.gamma,
+        remove_edge_leak: p.remove_edge_leak,
+        detect_edge_threshold: p.detect_edge_threshold,
+        display: p.display,
+        mix: p.mix,
     }
-    out
 }
 
-/// The §1.6 oracle for the depth-of-field lens blur (foundation for the
-/// planned DoF effects): the WGSL variable-radius disc blur matches
-/// [`dof_reference`] over a depth ramp and several focus/aperture/mix
-/// settings. A tap-summing gather like Motion blur, reading exact
-/// (r32float) depth and the same fp16 source, so it holds to the cheap-
-/// class ≤ 2 fp16 ULP bound; the GPU is bit-stable (§2.4); Mix 0, a zero
-/// aperture, and a depth that sits everywhere inside the sharp band are
-/// all bit-exact passthroughs.
+/// The shipped defaults, resolved: the plain circle, no weighting, no tonal
+/// split — the aperture this effect gathered before it grew any of them.
+fn dof_defaults() -> lumit_core::fx::cpu::DofParams {
+    let (blade_normals, apothem2) = lumit_core::fx::aperture_blades(6, 0.0);
+    lumit_core::fx::cpu::DofParams {
+        focus: 0.5,
+        range: 0.1,
+        near_aperture: 6.0,
+        far_aperture: 6.0,
+        blade_normals,
+        blade_count: 6,
+        apothem2,
+        roundness: 1.0,
+        rim: 0.0,
+        aspect_scale: [1.0, 1.0],
+        threshold: 1.0,
+        bokeh_power: 1.0,
+        repeat_edge: true,
+        depth_channel: 2, // Red: the oracle writes its ramp to red alone
+        depth_invert: false,
+        use_focus_point: false,
+        focus_point: [0.0, 0.0],
+        gamma: 1.0,
+        remove_edge_leak: 0.0,
+        detect_edge_threshold: 0.1,
+        display: 0,
+        mix: 1.0,
+    }
+}
+
+/// The §1.6 oracle for the depth-of-field lens blur (docs/08 §3.22): the WGSL
+/// gather matches `lumit_core::fx::cpu::dof` over a depth ramp and a sweep of
+/// focus, aperture, aperture *shape*, tonal and Display settings.
+///
+/// The oracle is the shipping CPU reference itself, not a second copy of the
+/// maths written for the test (K-019): one function, two callers, so a change
+/// to the kernel that the reference does not follow shows up here rather than in
+/// a render. A tap-summing gather like Motion blur, reading exact (r32float)
+/// depth and the same fp16 source, so it holds to the cheap-class ≤ 2 fp16 ULP
+/// bound; the GPU is bit-stable (§2.4); Mix 0, a zero aperture, and a depth that
+/// sits everywhere inside the sharp band are all bit-exact passthroughs.
 #[test]
 fn wgsl_dof_matches_the_cpu_oracle() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -2824,51 +2859,218 @@ fn wgsl_dof_matches_the_cpu_oracle() {
         }
     }
     let depth_t = upload_depth_map(&ctx, &ramp, w, h);
+    // The CPU reference reads a whole RGBA picture and picks a channel, because
+    // which channel carries depth is one of the effect's controls; the GPU reads
+    // the same numbers out of an R32Float map. Red in both.
+    let mut depth_rgba = vec![0f32; n * 4];
+    for (i, d) in ramp.iter().enumerate() {
+        depth_rgba[i * 4] = *d;
+        depth_rgba[i * 4 + 3] = 1.0;
+    }
 
-    // (focus, range, near, far, invert, display, mix, name). Invert, an
-    // asymmetric near/far pair, and every shipped Display mode all stay
-    // continuous (the aperture select flips only where s == 0; Depth/Focus
-    // maps are smooth in depth), so the cheap-class ≤ 2 fp16 ULP bound holds
-    // across modes — none is excluded.
-    let cases = [
+    // Every case is continuous in depth — the near/far select flips only where
+    // s == 0, the aperture polygon and the tonal split are continuous in their
+    // own controls, and the Depth/Focus maps are smooth — so the cheap-class
+    // ≤ 2 fp16 ULP bound holds across all of them and none is excluded.
+    let star = lumit_core::fx::aperture_blades(5, 30.0);
+    let cases: Vec<(&str, lumit_core::fx::cpu::DofParams)> = vec![
+        ("centre-focus", dof_defaults()),
         (
-            0.5f32,
-            0.1f32,
-            6.0f32,
-            6.0f32,
-            false,
-            0u32,
-            1.0f32,
-            "centre-focus",
+            "near-focus",
+            lumit_core::fx::cpu::DofParams {
+                focus: 0.0,
+                range: 0.05,
+                near_aperture: 8.0,
+                far_aperture: 8.0,
+                ..dof_defaults()
+            },
         ),
-        (0.0, 0.05, 8.0, 8.0, false, 0, 1.0, "near-focus"),
-        (0.5, 0.1, 6.0, 6.0, false, 0, 0.5, "partial mix"),
-        (0.5, 0.2, 10.0, 10.0, false, 0, 1.0, "wide aperture"),
-        (0.2, 0.1, 8.0, 8.0, true, 0, 1.0, "inverted near-focus"),
-        (0.5, 0.1, 6.0, 6.0, true, 0, 1.0, "inverted centre-focus"),
-        (0.5, 0.05, 12.0, 3.0, false, 0, 1.0, "asymmetric near>far"),
-        (0.5, 0.05, 3.0, 12.0, false, 0, 1.0, "asymmetric far>near"),
-        (0.5, 0.05, 12.0, 3.0, true, 0, 1.0, "asymmetric inverted"),
-        (0.5, 0.1, 8.0, 8.0, false, 1, 1.0, "depth map"),
-        (0.5, 0.1, 8.0, 8.0, true, 1, 1.0, "depth map inverted"),
-        (0.5, 0.1, 8.0, 8.0, false, 2, 1.0, "focus map"),
-        (0.3, 0.15, 12.0, 4.0, false, 2, 1.0, "focus map asymmetric"),
+        (
+            "partial mix",
+            lumit_core::fx::cpu::DofParams {
+                mix: 0.5,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "wide aperture",
+            lumit_core::fx::cpu::DofParams {
+                range: 0.2,
+                near_aperture: 10.0,
+                far_aperture: 10.0,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "inverted near-focus",
+            lumit_core::fx::cpu::DofParams {
+                focus: 0.2,
+                depth_invert: true,
+                near_aperture: 8.0,
+                far_aperture: 8.0,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "asymmetric near>far",
+            lumit_core::fx::cpu::DofParams {
+                range: 0.05,
+                near_aperture: 12.0,
+                far_aperture: 3.0,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "asymmetric far>near",
+            lumit_core::fx::cpu::DofParams {
+                range: 0.05,
+                near_aperture: 3.0,
+                far_aperture: 12.0,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "depth map",
+            lumit_core::fx::cpu::DofParams {
+                display: 1,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "depth map inverted",
+            lumit_core::fx::cpu::DofParams {
+                display: 1,
+                depth_invert: true,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "focus map",
+            lumit_core::fx::cpu::DofParams {
+                display: 2,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "focus map asymmetric",
+            lumit_core::fx::cpu::DofParams {
+                focus: 0.3,
+                range: 0.15,
+                near_aperture: 12.0,
+                far_aperture: 4.0,
+                display: 2,
+                ..dof_defaults()
+            },
+        ),
+        // The aperture: a hexagon, a star (Roundness below zero), a squeezed
+        // oval, and rim/centre weighting.
+        (
+            "hexagonal iris",
+            lumit_core::fx::cpu::DofParams {
+                roundness: 0.0,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "five-point star",
+            lumit_core::fx::cpu::DofParams {
+                roundness: -1.0,
+                blade_count: 5,
+                blade_normals: star.0,
+                apothem2: star.1,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "anamorphic squeeze",
+            lumit_core::fx::cpu::DofParams {
+                roundness: 0.0,
+                aspect_scale: [1.0, 2.0],
+                ..dof_defaults()
+            },
+        ),
+        (
+            "rim-weighted",
+            lumit_core::fx::cpu::DofParams {
+                rim: 0.8,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "centre-weighted",
+            lumit_core::fx::cpu::DofParams {
+                rim: -0.8,
+                ..dof_defaults()
+            },
+        ),
+        // The highlights: the split-at-threshold power mean, at a threshold the
+        // corpus actually crosses.
+        (
+            "bloomed highlights",
+            lumit_core::fx::cpu::DofParams {
+                threshold: 0.2,
+                bokeh_power: 4.0,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "bloomed hexagons",
+            lumit_core::fx::cpu::DofParams {
+                threshold: 0.2,
+                bokeh_power: 4.0,
+                roundness: 0.0,
+                ..dof_defaults()
+            },
+        ),
+        // The depth model's own controls.
+        (
+            "focus point",
+            lumit_core::fx::cpu::DofParams {
+                use_focus_point: true,
+                focus_point: [24.0, 12.0],
+                ..dof_defaults()
+            },
+        ),
+        (
+            "profile squeezed",
+            lumit_core::fx::cpu::DofParams {
+                gamma: 4.0,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "edge leak removed",
+            lumit_core::fx::cpu::DofParams {
+                remove_edge_leak: 0.7,
+                detect_edge_threshold: 0.05,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "green channel",
+            lumit_core::fx::cpu::DofParams {
+                depth_channel: 1,
+                ..dof_defaults()
+            },
+        ),
+        (
+            "transparent edges",
+            lumit_core::fx::cpu::DofParams {
+                repeat_edge: false,
+                ..dof_defaults()
+            },
+        ),
     ];
-    for (focus, range, near, far, invert, display, mix, name) in cases {
-        let cpu = dof_reference(
-            &img, &ramp, w, h, focus, range, near, far, invert, display, mix,
-        );
-        let out = fx.dof(
-            &ctx, &src, w, h, &depth_t, focus, range, near, far, invert, display, mix,
-        );
+    for (name, p) in &cases {
+        let mut cpu = img.clone();
+        lumit_core::fx::cpu::dof(&mut cpu, Some(&depth_rgba), w, h, p);
+        let out = fx.dof(&ctx, &src, w, h, &depth_t, &dof_op(p));
         let gpu = readback_linear_f32(&ctx, &out, w, h).unwrap();
         let worst = worst_f16_ulp(&cpu, &gpu);
         eprintln!("dof {name}: worst {worst} ulp");
         assert!(worst <= 2, "{name}: worst {worst} fp16 ULP");
         // Determinism (§2.4): a second run is bit-identical to the first.
-        let out2 = fx.dof(
-            &ctx, &src, w, h, &depth_t, focus, range, near, far, invert, display, mix,
-        );
+        let out2 = fx.dof(&ctx, &src, w, h, &depth_t, &dof_op(p));
         assert_eq!(
             gpu,
             readback_linear_f32(&ctx, &out2, w, h).unwrap(),
@@ -2878,19 +3080,29 @@ fn wgsl_dof_matches_the_cpu_oracle() {
 
     // Mix 0 is the bit-exact input regardless of depth or aperture (Rendered
     // mode).
-    let out = fx.dof(
-        &ctx, &src, w, h, &depth_t, 0.5, 0.1, 10.0, 10.0, false, 0, 0.0,
-    );
+    let zero_mix = lumit_core::fx::cpu::DofParams {
+        near_aperture: 10.0,
+        far_aperture: 10.0,
+        mix: 0.0,
+        ..dof_defaults()
+    };
+    let out = fx.dof(&ctx, &src, w, h, &depth_t, &dof_op(&zero_mix));
     assert_eq!(
         readback_linear_f32(&ctx, &out, w, h).unwrap(),
         img,
         "Mix 0 must be the bit-exact input"
     );
 
-    // Both apertures zero collapses every disc to the centre tap — a
+    // Both apertures zero collapses every aperture to the centre tap — a
     // bit-exact passthrough at full Mix, whatever the depth (invert cannot
     // change a zero radius).
-    let out = fx.dof(&ctx, &src, w, h, &depth_t, 0.5, 0.1, 0.0, 0.0, true, 0, 1.0);
+    let zero_ap = lumit_core::fx::cpu::DofParams {
+        near_aperture: 0.0,
+        far_aperture: 0.0,
+        depth_invert: true,
+        ..dof_defaults()
+    };
+    let out = fx.dof(&ctx, &src, w, h, &depth_t, &dof_op(&zero_ap));
     assert_eq!(
         readback_linear_f32(&ctx, &out, w, h).unwrap(),
         img,
@@ -2901,12 +3113,25 @@ fn wgsl_dof_matches_the_cpu_oracle() {
     // zero for every pixel — also a bit-exact passthrough at full Mix,
     // even with large apertures. Inverting a flat 0.5 leaves it in-band.
     let flat = upload_depth_map(&ctx, &vec![0.5f32; n], w, h);
-    let out = fx.dof(&ctx, &src, w, h, &flat, 0.5, 0.1, 10.0, 10.0, false, 0, 1.0);
+    let in_band = lumit_core::fx::cpu::DofParams {
+        near_aperture: 10.0,
+        far_aperture: 10.0,
+        ..dof_defaults()
+    };
+    let out = fx.dof(&ctx, &src, w, h, &flat, &dof_op(&in_band));
     assert_eq!(
         readback_linear_f32(&ctx, &out, w, h).unwrap(),
         img,
         "an in-band depth must be a bit-exact passthrough"
     );
+}
+
+/// The kernel's blade ceiling and the document model's are the same number.
+/// `lumit-core` is only a dev-dependency of this crate, so the constant is
+/// declared twice; this is what stops the two drifting.
+#[test]
+fn max_blades_matches_the_core_constant() {
+    assert_eq!(crate::fx::MAX_BLADES, lumit_core::fx::MAX_BLADES);
 }
 
 // ---------------------------------------------------------------------------
@@ -2942,7 +3167,7 @@ fn flare_params() -> lumit_core::fx::lens_flare::LensFlareParams {
         anamorphic: 1.0,
         quality: 0,
         detail: 1.0,
-        background: 0,
+        blend: lumit_core::fx::lens_flare::BLEND_ADD,
         mix: 1.0,
     }
 }
@@ -2984,7 +3209,7 @@ fn flare_op(p: &lumit_core::fx::lens_flare::LensFlareParams, w: u32, h: u32) -> 
         threshold_softness: p.threshold_softness,
         light_tint: p.light_tint,
         use_source_colour: p.use_source_colour,
-        background: p.background,
+        blend: p.blend,
         mix: p.mix,
         bake_key: lf::bake_key(p),
     }
@@ -3180,7 +3405,7 @@ fn lens_flare_dump_frame() {
         return;
     };
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -3271,7 +3496,7 @@ fn lens_flare_dump_frame() {
 #[ignore = "a measurement, not a gate: prints a time, asserts nothing"]
 fn lens_flare_frame_cost() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -3331,7 +3556,7 @@ fn lens_flare_frame_cost() {
 #[test]
 fn wgsl_lens_flare_ghost_blur_matches_the_cpu_reference() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -3483,7 +3708,7 @@ fn lens_flare_bake_cache_evicts_the_oldest_not_everything() {
 #[test]
 fn wgsl_lens_flare_trace_matches_the_cpu_reference() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -3645,7 +3870,7 @@ fn wgsl_lens_flare_trace_matches_the_cpu_reference() {
 #[test]
 fn wgsl_lens_flare_matches_the_cpu_frame_reference_and_neutrals() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -3756,7 +3981,7 @@ fn wgsl_lens_flare_matches_the_cpu_frame_reference_and_neutrals() {
 #[test]
 fn wgsl_lens_flare_padded_anamorphic_matches_and_fills_the_edge() {
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);
@@ -3843,9 +4068,16 @@ fn wgsl_lens_flare_padded_anamorphic_matches_and_fills_the_edge() {
 #[test]
 fn wgsl_lens_flare_matte_mode_matches_the_cpu_reference() {
     assert_eq!(MAX_LIGHTS as usize, lumit_core::fx::lens_flare::MAX_LIGHTS);
+    // The combine kernel's `flare_blend` implements exactly the menu
+    // lumit-core declares (K-289) — a mode added to one and not the other
+    // would silently clamp to Divide.
+    assert_eq!(
+        crate::fx::lens_flare::BLEND_COUNT as usize,
+        lumit_core::fx::lens_flare::BLEND_OPTIONS.len()
+    );
 
     let Ok(ctx) = GpuContext::headless() else {
-        eprintln!("no GPU adapter; skipping WGSL parity test");
+        crate::no_adapter();
         return;
     };
     let fx = FxEngine::new(&ctx);

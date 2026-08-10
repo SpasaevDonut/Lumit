@@ -50,10 +50,28 @@ struct Document {
     id: Uuid,
     items: Vec<ProjectItem>,   // flat storage; Project-panel order = Vec order; folders hold children by id
     auto_folders: AutoFolders, // where new solids / comps are auto-filed (K-068)
+    anti_aliasing: AntiAliasing,           // coverage samples per pixel: Off/X2/X4/X8, default X4 (K-274)
     cache_location: Option<CacheLocation>, // this project's own frame-cache folder (K-215)
     ui_state: Option<serde_json::Value>,   // how the interface was arranged, opaque (K-245)
 }
 ```
+
+`anti_aliasing` is how hard the renderer works at the edges of transformed layers (K-274,
+[impl/anti-aliasing.md](impl/anti-aliasing.md)). It is a **project** property rather than a
+preference, and that is the decision, not an implementation detail: it changes what a comp
+looks like, so it must travel in the `.lum` and match when the file is opened on another
+machine. **One value serves preview and export** — a preview that anti-aliased differently
+from the file would break the K-031 preview-equals-export identity that the whole render path
+is built around. Default `X8`: on, eight coverage samples per pixel (K-286), falling back to four on a card
+that will not give eight. Set through an ordinary
+op, so it is undoable and journalled like any other change to the picture, and — unlike
+`cache_location` — it *does* change pixels, so the sample count is part of a frame's content
+hash (docs/06 §5.2) and a frame banked at one setting is never served at another.
+
+What a given graphics card will actually do is a separate question from what the project asks
+for. The count is asked of the adapter and never assumed; one that cannot manage the count
+falls back to the highest it will, down to off, and the interface says which is in use. That is
+a fact about the machine, never an error and never a rewrite of the project.
 
 `cache_location` is the one piece of *machine* preference the document carries, and it is here on
 purpose (K-215, docs/06 §5.4): where a project's rendered frames are parked belongs to the
@@ -322,21 +340,40 @@ The **expression** stage is future (§6.4); v1 evaluates keyframes/static only. 
 evaluated value at a time is pure regardless: same project, same time, same value — no wall
 clock, no external state ([14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md)).
 
-### 6.4 Expressions (future — no engine in v1)
+### 6.4 Expressions
 
-The expression engine (JavaScript on QuickJS, K-063 / [12-PLUGINS.md](12-PLUGINS.md)) is not in
-v1: `Property` has no expression slot yet. The intended shape:
+A property can hold a line of code instead of a number or a row of keyframes. The engine is
+**Rhai** (K-305, superseding K-063's choice of JavaScript on QuickJS-ng);
+[impl/expressions.md](impl/expressions.md) is the authority on how it works and
+[12-PLUGINS.md](12-PLUGINS.md) §4 on what it exposes.
+
+It is a third arm of `Animation`, alongside a static value and a keyframe list, so a
+property is *either* keyframed *or* driven — never both:
 
 ```rust
-struct Expression {
-    source: String,          // JavaScript, ES2018 surface — see 12-PLUGINS.md
-    enabled: bool,
-    last_error: Option<ExprError>,   // runtime state, not serialised as authority
+enum Animation {
+    Static(f64),
+    Keyframed(Vec<Keyframe>),
+    Expression(String),   // Rhai source; see 12-PLUGINS.md §4.2
 }
 ```
 
-An expression failure disables that expression with a badge and falls back to the
-pre-expression value. It never fails the render.
+The source is stored verbatim. There is no compiled form on disk and no separate
+`enabled` flag: clearing the text is how an expression is removed, and the property returns
+to the value it held before.
+
+**Scalars only.** `Animation::Expression` reaches the scalar transform properties and Float
+effect parameters. Point and colour properties cannot be driven yet. A text layer is the
+one non-scalar case, and it carries its own optional `expression` on the `TextDocument`
+(§9.1, K-306) rather than going through `Animation`, because its result is printed rather
+than measured and so may be of any type.
+
+**An expression failure never fails the render.** Today the fallbacks are blunt: a numeric
+expression that errors resolves to `-1.0`, and a text one prints nothing. The specified
+behaviour — the property falls back to its keyframed value and the expression is disabled
+with a badge naming the error — is not built, and is carried as a known gap in
+[impl/expressions.md](impl/expressions.md) §8. `last_error` is runtime state either way, and
+is never serialised as authority.
 
 ---
 
@@ -448,11 +485,25 @@ Effects and masks, K-142), the same three-way source a matte carries in §5.1.
 
 ### 9.1 Text
 
-v1 `TextDocument` is a **single run**: `{ text, size, fill }` — one font (embedded Inter), one
-size, one fill, single line. The styled-runs model — font family/weight, stroke, tracking,
-leading, point vs paragraph text, alignment, and per-character animators — is **future**; the
-document stays structured (never rasterised into the project) so runs and animators bolt on
-later.
+v1 `TextDocument` is a **single run**: `{ text, expression, size, fill }` — one font (embedded
+Inter), one size, one fill, single line. The styled-runs model — font family/weight, stroke,
+tracking, leading, point vs paragraph text, alignment, and per-character animators — is
+**future**; the document stays structured (never rasterised into the project) so runs and
+animators bolt on later.
+
+**The words can come from an expression (K-210).** `expression` is optional and absent from the file
+when unset. When it is set, the layer's line at layer time *t* is that expression evaluated at
+*t* and printed — the same language the numeric properties use (§6.4), except the answer is
+shown rather than measured, so any result type is accepted and an evaluation error prints
+nothing rather than failing the frame. `text` is untouched while an expression drives the
+layer and is what the layer says again once the expression is cleared; an empty or
+whitespace-only expression *is* "cleared", never "an expression that says nothing".
+
+The rasteriser and the frame cache key both read the line through one resolver, so they can
+never disagree about what the layer says — a disagreement would serve a cached frame of the
+previous line. A frame-varying expression therefore keys per frame by construction, and a
+constant one keys once. Per-character animation of an expression-driven line is **future**,
+with the styled-runs model.
 
 ### 9.2 Shape — how the shipped flat list grows
 

@@ -13,7 +13,7 @@ import 'layer.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:uuid/uuid.dart';
 
-// These functions are ignored because they are not marked as `pub`: `add_at_top`, `bridge_marker`, `commit`, `composition`, `core_marker`, `dispatch`, `document`, `footage_span_and_size`, `project`, `runs_as_video`, `to_engine`
+// These functions are ignored because they are not marked as `pub`: `add_at_top`, `bridge_marker`, `commit`, `composition`, `core_marker`, `core_markers`, `dispatch`, `document`, `footage_span_and_size`, `project`, `runs_as_video`, `to_engine`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `id`, `new`, `project_id`
 
@@ -185,9 +185,12 @@ class BridgeLayerEntry {
 
 /// One timeline marker (docs/03 §11): a cue on the comp's timebase.
 ///
-/// The engine's marker also carries a duration and a kind; neither has a
-/// control yet, so they are not carried across — a marker written back keeps
-/// what the panel can actually edit and does not pretend to round-trip the rest.
+/// The engine's marker also carries a duration, a kind and any unknown fields
+/// a newer Lumit wrote (docs/10 §1.1); none of the three has a control, so none
+/// of them crosses. They are **not** lost on a write-back: [`core_markers`]
+/// merges each incoming marker onto the one the document already holds under
+/// that id, so the panel edits what it can see and the rest survives untouched
+/// (K-270).
 class BridgeMarker {
   final UuidValue id;
   final BridgeRational time;
@@ -509,6 +512,31 @@ class CompositionReference {
         that: this,
       );
 
+  /// Paste a layer copied by [`crate::api::layer::LayerReference::copy_layer`]
+  /// into this composition, at the top of the stack (K-275).
+  ///
+  /// `at_frame` is where the layer's **in point** lands: the playhead, in the
+  /// ordinary case. `None` keeps the time it was copied at, which is the
+  /// setting for putting the same layer at the same moment in a second comp —
+  /// the two paste behaviours the owner asked for, decided by the caller
+  /// rather than by a mode this end has to remember.
+  ///
+  /// Whichever is chosen, the layer moves as one: in point, out point and
+  /// `start_offset` all shift together (`lumit_core::edit_layer_span`'s
+  /// `MoveIn`, the same rule the `[` key follows), so its keyframes and the
+  /// source frames it shows travel with it rather than sliding against it.
+  ///
+  /// **What is not copied is a reference to something that is not here.** The
+  /// pasted layer gets a fresh id and fresh effect ids — two layers sharing an
+  /// id would make every op that names one ambiguous — and its parent and
+  /// track matte are kept only when they still name a layer in *this* comp.
+  /// A parent that came from another composition is dropped rather than left
+  /// dangling: a layer parented to nothing visible would be a puzzle, and
+  /// re-parenting is one drag.
+  LayerReference pasteLayer({required String text, PlatformInt64? atFrame}) =>
+      BridgeLib.instance.api.crateApiCompositionCompositionReferencePasteLayer(
+          that: this, text: text, atFrame: atFrame);
+
   /// Play from `from` at this comp's own rate, with sound.
   ///
   /// The frontend calls this and then paints whatever frames arrive: each one
@@ -675,18 +703,25 @@ class CompositionReference {
 
   /// Ask for `frame` with `layer`'s art replaced by `contents` — the shape
   /// layer's half of the call above (K-239).
+  ///
+  /// `transform` is for the one caller that needs both at once: a point drag
+  /// that moves the art's bounding box has to move the layer with it, or the
+  /// preview shows the untouched art sliding and the commit puts it back
+  /// (K-308). Every other caller passes `None`.
   void renderFrameWithShapePreview(
           {required BigInt frame,
           required double scale,
           required LayerReference layer,
-          required List<BridgeShapeItem> contents}) =>
+          required List<BridgeShapeItem> contents,
+          BridgeTransform? transform}) =>
       BridgeLib.instance.api
           .crateApiCompositionCompositionReferenceRenderFrameWithShapePreview(
               that: this,
               frame: frame,
               scale: scale,
               layer: layer,
-              contents: contents);
+              contents: contents,
+              transform: transform);
 
   /// Ask for `frame` with `layer`'s text document replaced by `document` —
   /// the same live path as the two above, for the Type tool (K-225).

@@ -57,7 +57,7 @@ struct Pipelines {
     inverse_search: wgpu::ComputePipeline,
     densify: wgpu::ComputePipeline,
     smooth: wgpu::ComputePipeline,
-    // Variational refinement (K-269).
+    // Variational refinement (K-332).
     vr_warp: wgpu::ComputePipeline,
     vr_init_duv: wgpu::ComputePipeline,
     vr_deriv: wgpu::ComputePipeline,
@@ -88,7 +88,7 @@ struct LevelBinds {
     search: wgpu::BindGroup,
     densify: wgpu::BindGroup,
     smooth: wgpu::BindGroup,
-    /// The refinement passes (K-269), in dispatch order.
+    /// The refinement passes (K-332), in dispatch order.
     vr_warp: wgpu::BindGroup,
     vr_init_duv: wgpu::BindGroup,
     vr_deriv: wgpu::BindGroup,
@@ -158,7 +158,7 @@ impl GpuFlow {
     /// Build the pipelines on an existing device. Validation problems come
     /// back as `Err`, never a fault.
     pub fn new(ctx: &GpuContext) -> Result<Self, FlowError> {
-        let ctx = GpuContext::from_parts(ctx.device.clone(), ctx.queue.clone());
+        let ctx = ctx.clone_handle();
         ctx.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let shader = ctx
             .device
@@ -258,7 +258,7 @@ impl GpuFlow {
     /// Smoothness has no GPU expression yet. Refusing is the only honest answer:
     /// returning a field measured to different rules than the settings asked for
     /// would make the picture depend on which backend happened to be alive,
-    /// which is exactly the preview-≠-export class of fault K-268 exists to
+    /// which is exactly the preview-≠-export class of fault K-331 exists to
     /// remove. The caller degrades to the CPU oracle, which is correct and slow.
     ///
     /// ponytail: constants baked into dis.wgsl; push them into the per-level
@@ -343,7 +343,7 @@ impl GpuFlow {
                 pass.set_pipeline(&self.pipelines.smooth);
                 pass.set_bind_group(0, &lb.smooth, &[]);
                 pass.dispatch_workgroups(wg(lb.w), wg(lb.h), 1);
-                // DIS part three (K-269). Each fixed-point iteration
+                // DIS part three (K-332). Each fixed-point iteration
                 // re-linearises about the current warp, then sweeps the
                 // increment red-then-black VR_SOR times — the two colours are
                 // what make a sequential solver a parallel one.
@@ -600,7 +600,7 @@ impl GpuFlow {
                         &[(1, luma_t), (2, luma_o), (4, &init), (5, &patch), (6, &tmp)],
                     ),
                     smooth: self.bind(&lv.params, &[(1, luma_t), (4, &tmp), (6, dense)]),
-                    // Refinement (K-269). `grad_o` is the *other* frame's
+                    // Refinement (K-332). `grad_o` is the *other* frame's
                     // Sobel, which is what vr_warp samples along the flow;
                     // every later pass wants the template's instead.
                     vr_warp: self.bind(

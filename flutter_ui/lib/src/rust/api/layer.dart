@@ -17,25 +17,60 @@ import 'retime.dart';
 import 'solid.dart';
 import 'state.dart';
 
-// These functions are ignored because they are not marked as `pub`: `clip_under`, `clips_and_index`, `commit_clips_with_offset`, `commit_clips`, `commit_masks`, `commit_paint`, `commit`, `comp_time`, `composition`, `core`, `item`, `map_end_value`, `project`, `rational_of`, `read_at`, `read_layer_info`, `read`, `read`, `read`, `reanchored_span`, `source_length`, `unretime_op`, `with_effects`, `write_at`, `write_item`, `write`, `write`
+// These functions are ignored because they are not marked as `pub`: `bands_of`, `clip_under`, `clips_and_index`, `commit_clips_with_offset`, `commit_clips`, `commit_masks`, `commit_paint`, `commit`, `comp_time`, `composition`, `core`, `empty`, `item`, `map_end_value`, `project`, `rational_of`, `read_at`, `read_layer_info`, `read`, `read`, `read`, `reanchored_span`, `source_length`, `unretime_op`, `with_effects`, `write_at`, `write_item`, `write`, `write`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `comp_id`, `id`, `new`, `project_id`
 
-/// A footage layer's waveform peaks: the whole source bucketed to a fixed
-/// count, plus its length so the lane can map comp time onto buckets.
+/// One window of a source's waveform, summarised to exactly the buckets the
+/// lane asked for (K-280).
+///
+/// The **window** is the point: a lane asks for the stretch of audio it is
+/// currently showing at the number of buckets it has pixel columns, so the
+/// drawn detail follows the zoom instead of being fixed at import. Buckets that
+/// fall outside the audio come back silent rather than missing, so a caller's
+/// column index and a bucket index always agree.
+///
+/// One to four **bands** ride in the same answer. A single-wave lane asks for
+/// one (the whole signal); a multiwave lane asks for three (bass, middle,
+/// treble) and stacks them, which is what shows the difference between a kick
+/// and a hi-hat inside a loud passage that is otherwise one solid block.
 class BridgeAudioPeaks {
+  /// How long the whole source runs, so a lane can tell where its window sits.
   final double durationSeconds;
 
-  /// Interleaved `[min0, max0, min1, max1, …]`, each in −1..1.
-  final Float32List pairs;
+  /// The window these buckets span, in the caller's own clock — source
+  /// seconds for a layer, clip-local seconds for a clip.
+  final double startSeconds;
+  final double endSeconds;
+
+  /// How many bands are stacked here: 1 (the whole signal) or 3 (bass,
+  /// middle, treble, in that order).
+  final int bands;
+
+  /// Buckets per band.
+  final int buckets;
+
+  /// Band-major triples: band `b`'s bucket `i` is `min`, `max`, `rms` at
+  /// `3 * (b * buckets + i)`, each in −1..1.
+  final Float32List values;
 
   const BridgeAudioPeaks({
     required this.durationSeconds,
-    required this.pairs,
+    required this.startSeconds,
+    required this.endSeconds,
+    required this.bands,
+    required this.buckets,
+    required this.values,
   });
 
   @override
-  int get hashCode => durationSeconds.hashCode ^ pairs.hashCode;
+  int get hashCode =>
+      durationSeconds.hashCode ^
+      startSeconds.hashCode ^
+      endSeconds.hashCode ^
+      bands.hashCode ^
+      buckets.hashCode ^
+      values.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -43,7 +78,11 @@ class BridgeAudioPeaks {
       other is BridgeAudioPeaks &&
           runtimeType == other.runtimeType &&
           durationSeconds == other.durationSeconds &&
-          pairs == other.pairs;
+          startSeconds == other.startSeconds &&
+          endSeconds == other.endSeconds &&
+          bands == other.bands &&
+          buckets == other.buckets &&
+          values == other.values;
 }
 
 /// One clip on a Sequence layer, as the Timeline needs to draw it: where it
@@ -201,7 +240,7 @@ class BridgeLayerInfo {
   /// to remove.
   final List<BridgeLayerMarker> markers;
 
-  /// Whether optical flow is live on this layer (K-088/K-268) — the switch
+  /// Whether optical flow is live on this layer (K-088/K-331) — the switch
   /// cluster's Flow cell, and what decides whether the fold-out shows a Flow
   /// group. In the read model because the Timeline draws that cell on every
   /// rebuild, and asking per row per frame is exactly the cost K-184 removed.
@@ -933,26 +972,68 @@ class LayerReference {
   void addStroke({required BridgeStroke stroke}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceAddStroke(that: this, stroke: stroke);
 
-  /// Whether this layer's source actually carries sound.
+  /// The layer's source audio summarised across `[start_seconds,
+  /// end_seconds)` of the **source's own clock**, in `buckets` buckets
+  /// (K-280, superseding the fixed 2 048 of K-172).
   ///
-  /// What decides whether the Audio group appears under a layer at all
-  /// (docs/07 §4.3): every layer *has* a Volume property in the model, but on
-  /// a solid or a title it can never be heard, and a control that cannot do
-  /// anything is worse than no control. Footage is the case that matters, and
-  /// the answer is the container's own: a file with an audio stream.
+  /// Source time, not comp time, is what makes a trim or a drag free: the
+  /// peaks belong to the file, so the Timeline's lane maps them through the
+  /// live in/out/offset each paint and the transients travel with the bar. The
+  /// *window* is what makes the resolution follow the zoom — a lane showing
+  /// two seconds asks for two seconds, and gets a bucket per pixel column of
+  /// them, however far in the Timeline is zoomed.
   ///
-  /// Probing opens the file with FFmpeg, so this is deliberately **not**
-  /// `#[frb(sync)]`. A layer whose media cannot be resolved answers false —
-  /// a missing file is not a reason to offer a volume control.
-  /// The layer's source audio as `buckets` (min, max) peak pairs across the
-  /// WHOLE source, interleaved `[min0, max0, min1, max1, …]` (K-172). The
-  /// peaks belong to the file, not the placement, so a trim or a drag never
-  /// invalidates them — the Timeline's waveform lane maps them through the
-  /// live in/out/offset each paint. Deliberately not `#[frb(sync)]`: it
-  /// decodes the whole track. Empty when the layer has no decodable audio.
-  Future<BridgeAudioPeaks> audioPeaks({required int buckets}) =>
-      BridgeLib.instance.api
-          .crateApiLayerLayerReferenceAudioPeaks(that: this, buckets: buckets);
+  /// `multiwave` asks for the three-band stack (bass, middle, treble) instead
+  /// of the single full-range wave.
+  ///
+  /// Deliberately not `#[frb(sync)]`: the first ask for a file decodes it.
+  /// Every later ask, at every zoom, is served from the session's peak cache
+  /// ([`crate::peaks`]) and costs a walk over a few thousand summaries.
+  /// Empty when the layer has no decodable audio.
+  Future<BridgeAudioPeaks> audioPeaks(
+          {required double startSeconds,
+          required double endSeconds,
+          required int buckets,
+          required bool multiwave}) =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceAudioPeaks(
+          that: this,
+          startSeconds: startSeconds,
+          endSeconds: endSeconds,
+          buckets: buckets,
+          multiwave: multiwave);
+
+  /// One Sequence clip's audio, summarised in `buckets` across the clip's own
+  /// placed span — the waveform a clip draws inside itself (K-280).
+  ///
+  /// Bucketed in **clip-local placed time**, not source time, because a clip
+  /// is the one thing on the timeline whose source clock is not a straight
+  /// line: a ramp plays its middle slowly and its end fast, and buckets taken
+  /// evenly in source time would put the transients in the wrong columns. So
+  /// each bucket is mapped through the clip's own map here, where that map
+  /// lives, and the lane draws bucket `i` at column `i` of the clip's box.
+  /// Sliding the clip along the row moves the picture with it for free; a
+  /// trim changes the mapping, so the lane asks again when the trim commits.
+  ///
+  /// `[start_seconds, end_seconds)` is the stretch of the clip's own placed
+  /// clock to summarise, clamped to the clip; pass the clip's whole span for
+  /// the whole clip, or the visible part of it to keep the detail level with
+  /// the zoom. An empty or backwards range is read as the whole clip.
+  ///
+  /// `multiwave` asks for the three-band stack, exactly as for a layer. Empty
+  /// for a clip cut from a comp or from media with no sound.
+  Future<BridgeAudioPeaks> clipAudioPeaks(
+          {required UuidValue clip,
+          required double startSeconds,
+          required double endSeconds,
+          required int buckets,
+          required bool multiwave}) =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceClipAudioPeaks(
+          that: this,
+          clip: clip,
+          startSeconds: startSeconds,
+          endSeconds: endSeconds,
+          buckets: buckets,
+          multiwave: multiwave);
 
   /// A thumbnail of the **first frame this clip shows** (K-248).
   ///
@@ -995,6 +1076,40 @@ class LayerReference {
   /// makes it one undo step. Only footage converts.
   void convertToSequenced() =>
       BridgeLib.instance.api.crateApiLayerLayerReferenceConvertToSequenced(
+        that: this,
+      );
+
+  /// This layer's effects as a `.lumfx` document, for [`Self::paste_effects`]
+  /// (K-275). `effects` copies those; an empty list copies the whole stack.
+  ///
+  /// A list rather than one id (K-300), because an effect selection can hold
+  /// several — and they come out in **stack order**, not in the order they
+  /// were picked, so a copied group pastes back in the order it was drawn in.
+  /// Ids that name nothing on this layer are ignored; naming none of them at
+  /// all is [`BridgeError::InvalidEffect`] rather than a silent whole-stack
+  /// copy.
+  ///
+  /// Deliberately the **same document a preset is**, so an effect copied from
+  /// one layer can be saved as a preset and a preset can be pasted as an
+  /// effect — one shape, not two that drift.
+  String copyEffects({required List<UuidValue> effects}) =>
+      BridgeLib.instance.api
+          .crateApiLayerLayerReferenceCopyEffects(that: this, effects: effects);
+
+  /// This layer as text, for [`crate::api::composition::CompositionReference::
+  /// paste_layer`] — the clipboard's payload (K-275).
+  ///
+  /// The whole layer: its kind and source, its transform with every keyframe,
+  /// its masks, paint, effects, switches, markers and retime. It is the
+  /// document's own `Layer`, serialised, so anything the file format carries
+  /// travels — including fields a newer Lumit added, which ride in the
+  /// `extra` maps exactly as they do through a save (docs/10 §1.1).
+  ///
+  /// A *reference* it holds to another layer — its parent, its track matte —
+  /// is copied as it stands and resolved at the paste, which is the only end
+  /// that knows whether the layer being pointed at is there.
+  String copyLayer() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceCopyLayer(
         that: this,
       );
 
@@ -1265,6 +1380,17 @@ class LayerReference {
         that: this,
       );
 
+  /// Whether this layer's source actually carries sound.
+  ///
+  /// What decides whether the Audio group appears under a layer at all
+  /// (docs/07 §4.3): every layer *has* a Volume property in the model, but on
+  /// a solid or a title it can never be heard, and a control that cannot do
+  /// anything is worse than no control. Footage is the case that matters, and
+  /// the answer is the container's own: a file with an audio stream.
+  ///
+  /// Probing opens the file with FFmpeg, so this is deliberately **not**
+  /// `#[frb(sync)]`. A layer whose media cannot be resolved answers false —
+  /// a missing file is not a reason to offer a volume control.
   Future<bool> hasAudio() =>
       BridgeLib.instance.api.crateApiLayerLayerReferenceHasAudio(
         that: this,
@@ -1306,6 +1432,23 @@ class LayerReference {
   /// additions. Only text that is not a preset at all is refused.
   void loadPreset({required String text}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceLoadPreset(that: this, text: text);
+
+  /// Append copied effects to this layer's stack, **timed to the playhead**
+  /// (K-275): whatever the earliest keyframe among them was, it lands at
+  /// `at_frame` and the rest keep their spacing.
+  ///
+  /// The owner's rule, and the one that makes a copied animation useful: an
+  /// effect copied from a layer that flashes at 4 s and pasted while the
+  /// playhead sits at 12 s flashes at 12 s, not off the end of the comp.
+  /// Effects with no keyframes at all paste unchanged — there is no timing to
+  /// place. Each arrives with a fresh instance id, exactly as a preset does.
+  ///
+  /// `at_frame` is a **comp** frame; the shift is worked out in the target
+  /// layer's own local time, so pasting onto a layer that starts later does
+  /// not double-count its offset.
+  void pasteEffects({required String text, required PlatformInt64 atFrame}) =>
+      BridgeLib.instance.api.crateApiLayerLayerReferencePasteEffects(
+          that: this, text: text, atFrame: atFrame);
 
   /// Cut and ramp this Sequence layer to the shape in `text`, keeping its
   /// own media (K-248).
@@ -1508,6 +1651,13 @@ class LayerReference {
   ///
   /// A path of fewer than two vertices is refused, as a mask's is: it is not
   /// a shape, and it would be a Timeline row with nothing behind it.
+  ///
+  /// **The art that was not edited does not move** (K-308). A shape layer's
+  /// picture is its art's bounding box, and the layer's origin is that box's
+  /// top-left corner — so growing the box leftwards, which is what dragging
+  /// the left-most point left does, would slide every *other* point right by
+  /// the same amount. Position follows the corner to cancel that, in the same
+  /// op, so one drag is still one undo step.
   void setShapeContents({required List<BridgeShapeItem> contents}) =>
       BridgeLib.instance.api.crateApiLayerLayerReferenceSetShapeContents(
           that: this, contents: contents);

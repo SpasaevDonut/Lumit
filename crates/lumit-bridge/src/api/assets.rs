@@ -32,6 +32,10 @@ pub struct BridgeColourRgba {
 #[derive(Debug, Clone, PartialEq)]
 pub struct BridgeTextDocument {
     pub text: String,
+    /// When set, the layer's words come from this expression at each frame
+    /// rather than from `text`, which is kept so switching the expression off
+    /// restores what was typed.
+    pub expression: Option<String>,
     /// Pixel size at natural scale.
     pub size: f64,
     pub fill: BridgeColourRgba,
@@ -56,6 +60,7 @@ impl LayerReference {
         };
         Ok(Some(BridgeTextDocument {
             text: document.text,
+            expression: document.expression,
             size: document.size,
             fill: colour_of(document.fill),
         }))
@@ -202,6 +207,11 @@ pub(crate) fn colour_of(c: lumit_core::model::LinearColour) -> BridgeColourRgba 
 pub(crate) fn text_document_of(document: BridgeTextDocument) -> lumit_core::model::TextDocument {
     lumit_core::model::TextDocument {
         text: document.text,
+        // An empty box means no expression, not an expression that says
+        // nothing — otherwise clearing the field would leave the layer
+        // permanently blank with no way back to its words. Applied here, in
+        // the one conversion, so every writer of a text document gets it.
+        expression: document.expression.filter(|e| !e.trim().is_empty()),
         size: document.size,
         fill: linear_of(document.fill),
         extra: serde_json::Map::new(),

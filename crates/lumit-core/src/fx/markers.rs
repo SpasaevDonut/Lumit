@@ -29,6 +29,7 @@ pub fn flash_envelope(trigger: &Property, t: f64, decay_s: f64) -> f64 {
             }
             env
         }
+        Animation::Expression(_) => 0.0,
     }
 }
 

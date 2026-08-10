@@ -52,13 +52,23 @@ effect's maths in a release invalidates stale cached frames rather than mixing g
   until a file is chosen, the one sanctioned exception to the "no no-op default" rule above,
   since a file the user must supply cannot have a tasteful default.
 - **Layer-reference** parameters (K-123, [impl/layer-input.md](impl/layer-input.md)) name
-  **another layer** in the same composition as an auxiliary picture an effect samples — a
-  depth pass for Depth of field (§3.22). The stored value is an optional layer id (the shape
+  a layer in the same composition as an auxiliary picture an effect samples — a
+  depth pass for Depth of field (§3.22), a bright-source matte for the Lens flare (§3.27).
+  The stored value is an optional layer id (the shape
   a matte reference uses, §5.1 of [03-DATA-MODEL.md](03-DATA-MODEL.md)), static in v1. The
   host renders that layer alone and threads its texture to the effect, exactly as a matte
   layer is rendered alone. An **unset** or **dangling** reference resolves to identity — the
   same sanctioned exception to the "no no-op default" rule, since a layer the user must
-  supply cannot have a tasteful default. Beside the picker sits a **source** combobox
+  supply cannot have a tasteful default.
+  **This layer** (K-288): a reference may name the layer the effect is *on*, and then it is
+  not a second render at all — it is the effect's own input at its point in the stack. On an
+  ordinary layer that is the picture the effect is about to process; on an **adjustment
+  layer** it is the composite of everything below, which is the only picture an adjustment
+  layer has, and which is what makes a matte-sourced effect usable there. A schema may
+  declare this the *default* for one of its layer references (the Lens flare's Matte layer
+  does), in which case a fresh instance added to a layer starts pointed at that layer; the
+  source combobox below does not apply to a this-layer reference, since nothing is
+  re-rendered. Beside the picker sits a **source** combobox
   (K-142, revising K-125's before/after bool) choosing *what of* the referenced layer is
   read: **None** (its raw footage/solid — no masks, no effects), **Masks** (its source plus
   its masks) or **Effects and masks** (its finished picture — a graded or blurred input).
@@ -218,7 +228,7 @@ specified in §3.1's original text but surfaced as layer UI, not an effect. Summ
 | 3.19 | Gamma | stock CC pack gamma/levels | cheap | `{0}` |
 | 3.20 | Temperature | stock CC pack white-balance | cheap | `{0}` |
 | 3.21 | Matte key | Keylight-style colour-difference keyer | cheap | `{0}` |
-| 3.22 | Depth of field | Frischluft / Camera Lens Blur | moderate | `{0}` |
+| 3.22 | Depth of field | Frischluft / Camera Lens Blur, with an iris | moderate | `{0}` |
 | 3.23 | Invert | stock CC pack invert | cheap | `{0}` |
 | 3.24 | Tint | AE Tint / duotone | cheap | `{0}` |
 | 3.25 | Posterize time | AE Posterize Time | cheap | `{0}` |
@@ -274,7 +284,7 @@ bidirectional warping with occlusion-aware blending. This is what makes extreme 
    which the pixel is visible; inpaint the (rare) both-occluded holes from neighbours.
 5. HUD/overlay guard: static-region detection (near-zero flow with high texture) biases
    those pixels toward pure blending, reducing the classic Twixtor HUD smearing.
-   **Shipped (K-268)** as `lumit_flow::hud_weights`: per pixel, `stillness × texture`, where
+   **Shipped (K-331)** as `lumit_flow::hud_weights`: per pixel, `stillness × texture`, where
    stillness tapers over 0.25–1.0 px of measured motion and texture over 0.02–0.08 of Sobel
    magnitude in encoded luma. The texture term takes a **3×3 max** of the gradient before the
    taper, not the gradient itself — a gradient is zero inside every stroke of a glyph and
@@ -284,12 +294,12 @@ bidirectional warping with occlusion-aware blending. This is what makes extreme 
    is itself visible), and synthesis mixes each pixel back toward the plain blend by it.
 
 **Parameters** (surfaced per clip / per layer as render-policy options, not a stack entry).
-All of these ship as `FlowParams` fields (K-268); each is content in the frame-cache key,
+All of these ship as `FlowParams` fields (K-331); each is content in the frame-cache key,
 because each changes the synthesised picture.
 
 | Parameter | Range / type | Default | Notes |
 |---|---|---|---|
-| Flow resolution | Native / Half / Quarter | Native | The size flow is *measured* at. Independent of the preview quality tier (K-268) — see below |
+| Flow resolution | Native / Half / Quarter | Native | The size flow is *measured* at. Independent of the preview quality tier (K-331) — see below |
 | Vector detail | Low / Medium / High / Ultra | Medium | Pyramid depth + refinement iterations |
 | Smoothness | 0–100 | 50 | Regularisation weight; high = fewer tears, gloopier. Scales the smoothing pass's flow-range sigma, 50 being the tuned default the analytic tests were fitted against |
 | Occlusion handling | Blend / Visible-only | Visible-only | Blend trades ghosting for fewer holes |
@@ -298,7 +308,7 @@ because each changes the synthesised picture.
 | Always | bool | off | Force flow past the engagement gate below |
 | Input rate | fps, keyframeable | 0 (Auto) | The conform rate above (K-095, K-160). Shipped with cadence presets beside the field — Auto, On 2s (12), On 3s (8), On 4s (6), 24, 25, 30 — named for the cadence rather than the number, since an editor knows a cut is "on 2s" without doing 24 ÷ 2 |
 
-**Flow resolution is not the preview resolution (K-268).** Flow used to be measured on
+**Flow resolution is not the preview resolution (K-331).** Flow used to be measured on
 whatever the preview scale had shrunk the decode to, which made a draft scrub and an export
 two different *measurements* rather than one measurement at two sizes. The working resolution
 is now this parameter alone. Consequence, accepted deliberately: **a layer whose flow is live
@@ -308,7 +318,7 @@ user buys the speed back. The rule is "whoever asks": a layer with a live flow-c
 effect (§3.2, §3.12) decodes natively on the same grounds, which is also what lets the two
 consumers share one measured field.
 
-**Engagement gate (K-088, built in K-268).** Flow engages only where a source frame would
+**Engagement gate (K-088, built in K-331).** Flow engages only where a source frame would
 otherwise hold across two or more comp frames — i.e. where `|speed| · source_rate / comp_rate`
 is under 1, the source rate being the conform rate when one is set. Outside that (100% or
 faster, or a freeze) the policy degrades to Nearest and costs nothing. **Always** overrides.
@@ -1189,15 +1199,28 @@ pattern, §3.22); the **Colour correction** twirls (Foreground/Edge saturation, 
 brightness, colour balance); and the **Source crops** (per-axis edge method + crop amounts).
 The core keyer above is what "properly key footage" needs; these refine it.
 
-### 3.22 Depth of field — depth-driven lens blur (Frischluft / Camera Lens Blur-class)
+### 3.22 Depth of field — depth-driven lens blur with an iris (Frischluft / Camera Lens Blur-class)
 
 A variable-radius lens blur driven by a **depth pass**: pixels near the focus plane stay
 sharp, pixels far from it soften, the way a real lens throws the background out of focus.
 The depth comes from **another layer** (a **Layer-reference** parameter, §1.2,
 [impl/layer-input.md](impl/layer-input.md)) — the standard "footage + matching depth pass"
 workflow, and the first effect to take a whole layer as an input rather than a number or a
-file. The GPU kernel and its §1.6 CPU oracle predate the wiring (`lumit_gpu::fx::dof` /
-`fx_dof.wgsl`); this is the effect that feeds them a real depth.
+file. The GPU kernel and its §1.6 CPU oracle are `lumit_gpu::fx::dof` / `fx_dof.wgsl` and
+`lumit_core::fx::cpu::dof`.
+
+**In plain terms.** Open a hole the size of the blur around each pixel and average what you
+can see through it. Two things make that read as a *lens* rather than as a smudge, and both
+arrived with K-313:
+
+- **the hole is a polygon.** A real iris has blades, and a defocused highlight is a picture
+  of the hole — which is why bokeh balls are hexagons on some lenses and circles on others.
+- **the average is a power mean.** A flat average dissolves a small bright thing into its
+  dark surroundings; raising each tap to a power first is what lets it survive and bloom
+  into a ball instead.
+
+Both are **off at their defaults**, so an existing project renders exactly what it always
+rendered — see *Neutral means bit-identical* below.
 
 **Parameters:** Depth layer (a layer reference; unset until picked — a labelled no-op),
 Depth source (a combobox beside the Depth layer picker, K-142: **None** reads the depth layer's
@@ -1206,28 +1229,108 @@ masks** runs the depth layer's own effect stack into the depth pass first, a gra
 map — same v1 temporal boundary as the effects-and-masks matte; replaces K-125's "Depth after
 effects" checkbox), Depth invert (bool, default off — when on
 the depth is inverted, `d' = 1 − d`, before the circle-of-confusion, swapping near and far),
-Focus distance (0–1, default 0.5, the in-focus depth), Focus range (0–1, default 0.1, the
+Focus distance (0–1, default 0.5, the in-focus depth; greys out while Use focus
+point is on), Use focus point (bool, default off) and Focus point (an `_x`/`_y`
+px@comp pair drawn as one row with a **crosshair pick**, §6.1 of
+[07-UI-SPEC.md](07-UI-SPEC.md) — click the thing you want sharp instead of
+hunting for a number; centred on the raster by `instantiate_for_raster`). Those
+three sit together deliberately: a switch that hands one control's job to
+another belongs beside both, not three twirls away. Then
+Focus range (0–1, default 0.1, the
 half-width of the sharp band around focus), Aperture (px@comp, default 8, slider 0–40, the
 **master** maximum circle-of-confusion radius, scaling both per-side radii about its default 8),
 Near blur (px@comp, default 8, slider 0–40, the max circle-of-confusion on the **near** side,
 `d < focus`) and Far blur (px@comp, default 8, slider 0–40, the **far** side, `d ≥ focus`) — the
-owner's "adjust close/far blur separately", Display (choice, default Rendered — a diagnostic
-view: **Rendered** the normal blurred output, **Depth map** the post-invert depth as greyscale,
-**Focus map** the smooth in-focus mask, white where sharp), Mix.
+owner's "adjust close/far blur separately"; then three collapsed twirls:
 
-**Algorithm sketch.** Per output pixel, read the depth from the referenced layer's **red
-channel** (0..1; by convention 0 = near, 1 = far, though the effect is symmetric about
-Focus), and — when **Depth invert** is on — replace it with `1 − d` (swapping near and far).
-Its distance from Focus, beyond the sharp band `range`, ramps by a smoothstep `s` to a
-circle-of-confusion radius: `s ·` (**Near blur** where `d < focus`, else **Far blur**), each
-per-side radius already scaled by the **Aperture** master (`radius · Aperture / 8`). Because the
-near/far select flips only at `d = focus`, where `s = 0`, the radius is continuous, so the
-§1.6 ULP oracle still holds. A box-weighted integer disc of that radius is averaged from the
-source (edges clamped), then blended by Mix. The **Display** diagnostic modes (Depth map, Focus
-map) short-circuit before the gather and write their view directly, ignoring the blur and Mix;
-every shipped mode is continuous, so the §1.6 oracle covers them all (none excluded). Operates
-on **premultiplied** colour (the disc gathers the working premultiplied image, so coverage and
-colour blur together). `moderate`
+- **Iris** — Blades (int, 3–8, default 6: the aperture's blade count, inert while Roundness
+  is 1 because a circle has no blades), Roundness (−1…1, **default 1**: 1 is the circle, 0
+  the straight-edged polygon, and **negative is concave** — five blades at −1 is a star),
+  Rotation (degrees on a **dial** sitting beside its number, default 0, unbounded so it winds
+  through full turns), Aspect ratio (−1…1, default 0: 0 is round, positive stretches the
+  highlights wide and negative tall — the oval an anamorphic scope lens throws; a squeeze
+  either side of round rather than a 1.33-or-2.0 ratio, which is why it runs −1…1),
+  Rim brightness (−1…1, default 0: **where the light sits inside each ball**. A real lens does
+  not throw a flat disc — an under-corrected one rings the edge bright, the "soap bubble"
+  look, an over-corrected one pools light in the middle for creamy bokeh. That is spherical
+  aberration; negative is the soft centre, 0 the flat disc, positive the bright rim).
+- **Highlights** — Highlight threshold (default 1.0, scene white: the linear level each tap
+  is split at) and Highlight exposure (stops, **default 0**: how hard the over-threshold part
+  blooms). Exposure 0 is the plain arithmetic mean and the whole split is skipped.
+- **Depth map** — how the pass is *read*, as against where focus is: Depth channel
+  (**Luminance** by default, right for the grey map a depth pass usually is; the shortlist is
+  Luminance / Alpha / Red / Green / Blue, and every entry has to be able to explain itself —
+  nothing encodes a depth as a hue), Depth invert, Gamma (−10…10, default 0 — the gamma on the depth axis),
+  Remove edge leak (0–1, default 0) and Detect edge threshold (0–1, default 0.1).
+
+Then Repeat edge pixels (bool, default on), Display (choice, default Rendered — a diagnostic
+view: **Rendered** the normal blurred output, **Depth map** the post-invert, post-channel-pick
+depth as greyscale, **Focus map** the smooth in-focus mask, white where sharp), Mix.
+
+**Algorithm sketch.** Per output pixel, read the depth from the **Depth channel** of the
+referenced layer (0..1; by convention 0 = near, 1 = far, though the effect is symmetric about
+Focus), and — when **Depth invert** is on — replace it with `1 − d`. Focus is **Focus
+distance**, or the depth under **Focus point** when that is ticked. The depth's distance from
+focus, beyond the sharp band `range`, is **scaled by Gamma** (`2^gamma`,
+host-computed)
+and then ramps by a smoothstep `s` to a circle-of-confusion radius: `s ·` (**Near blur** where
+`d < focus`, else **Far blur**), each per-side radius already scaled by the **Aperture** master
+(`radius · Aperture / 8`). Because the near/far select flips only at `d = focus`, where
+`s = 0`, the radius is continuous, so the §1.6 ULP oracle still holds.
+
+An aperture of that radius is then gathered from the source, edges repeated or transparent per
+**Repeat edge pixels**, and blended back by Mix. The aperture is the
+inscribed **Roundness/Blades/Rotation/Aspect ratio** polygon, its taps optionally weighted by
+**Rim brightness** and pulled back across depth discontinuities by **Remove edge leak**, and the
+average is the split-at-threshold power mean when **Highlight exposure** is non-zero.
+
+**There is no composite menu.** The defocused result replaces the original, blended by Mix.
+An effect that wants its balls added over a sharp plate is an adjustment layer with a blend
+mode — the mechanism that already exists for exactly that, and does it in one obvious place
+rather than in a dropdown on every effect that could plausibly want one.
+
+**Why Gamma exists.** A real depth pass rarely spreads its content over 0..1: a linear depth
+channel puts the sky or a distant ceiling at 1.0 and compresses an entire room into the bottom
+fifth, so the depth *differences* that matter are a tenth of the range. Without scaling the
+distance first, focus is all-or-nothing — the scene stays almost sharp and the one near object
+is almost fully blurred, with nothing in between. The scale is **one doubling per unit**, so
+the setting that reads well on game footage lands around 6 (64×) — the middle of the slider
+rather than its end.
+
+**The power mean cannot be computed naively.** `(Σ c^p / n)^(1/p)` underflows f32: at a high
+Exposure a channel at scene-linear 0.08 raises to 8e-36 and one at 0.05 to 2e-42, below the
+smallest normal, so every channel below roughly 0.116 linear collapses to black *per channel*
+— black holes and saturated speckle rather than a blur. Both paths factor the brightest excess
+`M` out first, which is an exact identity
+(`(Σ w·c^p / Σw)^(1/p) = M · (Σ w·(c/M)^p / Σw)^(1/p)`) and puts every ratio in `[0, 1]`, so
+nothing underflows and no floor is needed. It costs a second walk of the aperture, which is
+why the gather is two loops when the split is on.
+
+**The aperture stays inscribed in the circle of confusion at every setting.** The gather scans
+a `ceil(coc)` box and tests each integer offset, which only bounds it if no accepted tap lies
+outside that circle. Negative Roundness keeps the *vertices* on the circle while pulling the
+edge midpoints in (at a vertex both terms of the inside test carry the same `k²r²`, so it
+collapses to `r ≤ coc` whatever the coefficient), and Aspect ratio's multipliers are always
+≥ 1 with exactly one > 1, so it can only shrink one axis. That is what keeps the ROI declaration honest,
+and it is pinned by `the_dof_aperture_stays_inside_its_circle` rather than left to the oracle,
+which would miss the same taps on both paths.
+
+**Neutral means bit-identical, and it is reached by branching** (K-313). Roundness 1 takes the
+plain `r² ≤ coc²` circle test, Rim brightness 0 and Remove edge leak 0 take the unweighted
+accumulation, and Exposure 0 takes the unsplit sum — rather than multiplying every tap by one
+and splitting it at a threshold it never crosses. None of those is an IEEE 754 identity:
+`Σ(c·w)/Σw` is not `Σc/n` when every `w` is 1, `min(c,t) + max(c−t,0)` is not reliably `c`, and
+scaling both sides of a comparison by `apothem2` can flip a boundary tap. At their defaults the
+three branches leave exactly the box-weighted disc average this effect computed before the
+iris existed, which is why the aperture could fold into the shipped effect rather than arrive
+beside it as a second one. `the_default_aperture_is_the_historical_disc_bit_for_bit` pins it.
+Gamma is the exception that proves the rule: its neutral is a multiply by exactly
+1, which *is* exact, so it needs no branch.
+
+Operates on **premultiplied** colour (the aperture gathers the working premultiplied image, so
+coverage and colour blur together). The **Display** diagnostic modes short-circuit before the
+gather and write their view directly, ignoring the blur, the composite and Mix; every shipped
+mode is continuous, so the §1.6 oracle covers them all (none excluded). `moderate`
 cost, ROI a padded gather (the static declaration covers the 40 px aperture at ≥ 1080p), `{0}`
 temporal. Category **Blur & sharpen**. A zero effective aperture (master or both sides at 0), a
 depth everywhere inside the sharp band, or `Mix 0` are all bit-exact passthroughs, pinned by
@@ -1241,21 +1344,37 @@ binds). Preview and export render the depth through **one shared helper**
 the referenced layer's source and transform (the same content a matte's key hashes), so
 editing the depth pass retires stale frames.
 
-**Status (v1, shipped, K-124; extended K-128):** the depth-driven disc blur above, with a depth
-layer + Focus/Range/Aperture/Mix, plus (K-128) Depth invert, separate Near/Far blur under the
-Aperture master, and the Rendered/Depth map/Focus map Display views. Deliberate v1 limitations
-(documented, follow-ups tracked): the depth layer is sampled per its **Depth source** mode
-(K-142) — None (raw), Masks, or Effects and masks (which runs its own stack into the depth) —
-and **resampled to the consuming layer's raster** to align with the pixels the blur runs on;
-a placement-aware depth is a follow-up (the referenced layer's own transform is not applied).
-The depth layer only needs to be **in-span**
+**Status (v1, shipped, K-124; extended K-128, K-313):** the depth-driven aperture blur above.
+K-128 added Depth invert, separate Near/Far blur under the Aperture master, and the
+Rendered/Depth map/Focus map Display views. K-313 folded in the iris, the split-at-threshold
+power mean and the fuller depth model (channel pick, focus point, Gamma,
+edge-leak suppression), all neutral at their defaults.
+
+Deliberate v1 limitations (documented, follow-ups tracked): the depth layer is sampled per its
+**Depth source** mode (K-142) — None (raw), Masks, or Effects and masks (which runs its own
+stack into the depth) — and **resampled to the consuming layer's raster** to align with the
+pixels the blur runs on; a placement-aware depth is a follow-up (the referenced layer's own
+transform is not applied). The depth layer only needs to be **in-span**
 — it is expected to be *hidden* (a depth map should not render into the comp), and both the
 preview decode planner and export decode a hidden layer-input reference exactly as they do a
-matte source. The bokeh is a plain flat disc; shaped, bright-rimmed highlights are the
-planned "DOF PRO" second effect. The depth layer is chosen with the inspector's Layer picker
-(a dropdown of the comp's other layers), with the Depth source combobox beside it; an unset
-or dangling reference is a no-op.
+matte source. The depth layer is chosen with the inspector's Layer picker
+(a dropdown of the comp's layers, its own included — K-288, where it reads the effect's
+own input), with the Depth source combobox beside it; an unset or dangling reference is a
+no-op.
 
+**Open (K-313).** Three things here are *our reading* of controls rather than measurements
+against a reference plugin, and are the honest places to correct later: Rim brightness's curve and
+Aspect ratio's mapping. So is the stops-to-power constant
+(`EXPOSURE_STOPS_PER_DOUBLING = 12` in `resolve_one`): 6 put the top of the Exposure slider at
+a power of 32, which is a maximum filter rather than a mean — flat hard-edged polygons instead
+of bokeh discs — and 12 puts the top at about 5.7, which is strong but still an average. Turn
+it if the onset feels early or late. Edge-leak removal only pulls back taps that are *nearer*
+than the pixel being gathered.
+
+**Not this effect: DOF PRO.** The physically-accurate, deliberately intensive depth of field —
+a scene-referred aperture and f-stop, per-pixel scatter, occlusion and inpainting behind
+foreground edges, spectral response — remains a separate planned effect (K-313). What landed
+here is the base lens blur finished, not that.
 ### 3.23 Invert
 
 **Parameters:** Mix.
@@ -1500,15 +1619,35 @@ the tail:
 |---|---|
 | *Lens options* (twirl) | Focus (m) (0.5–100 slider, hard min 0.2 — the focus distance; K-260, refocusing shifts the sensor plane and visibly rearranges the whole ghost train, the "same lens, different focus" look), Anamorphic squeeze (0.5–3), Blades (int 3–16), Rotation, Coating (0 uncoated → 1 fully coated), Roundness, Softness |
 | *Flare options* (twirl) | Ghost intensity (0–4), Ghost softness (0–1 slider, % of the frame diagonal — FlareSim's Ghost Blur, K-261: a touch of out-of-focus softness on the ghost train; default 0.02 since K-264 — taste, not cover: the vertex-smoothed density and the multisampled raster leave nothing for it to hide, and **0 is a clean setting**), Max ghosts (int 0–200 — the brightest survive), **Detail** (0.25–4 slider, default 1; K-265 — multiplies the Quality tier's ray grid AND its traced wavelength count through one shared pair of helpers, so the budget is the user's dial: a lens whose rims still show structure buys more without jumping a tier, a preview buys less), Dispersion (0–2), Starburst intensity (0–4), Scale (0.05–20 — the WHOLE flare about the optical centre, ghosts and starbursts together) |
-| *Source* | Source type (Manual light / Matte / Lights); **Light tint** (a colour, with picker and eyedropper — multiplies every light in every mode); then, shown conditionally: **Use source colour** (Matte *and* Lights) and — Matte only — Matte layer (a layer reference), Threshold (linear luma, slider 0–1, open above), Threshold softness |
+| *Source* | Source type (Manual light / Matte / Lights); **Light tint** (a colour, with picker and eyedropper — multiplies every light in every mode); then, shown conditionally: **Use source colour** (Matte *and* Lights) and — Matte only — Matte layer (a layer reference, defaulting to **this layer**, K-288), Threshold (linear luma, slider 0–1, open above), Threshold softness |
 
-and **Quality** (Draft / Normal / High / Ultra), **Background** (Transparent /
-Black, K-258 — Black makes the output opaque, the flare-element-over-black
-export for Screen/Add workflows; the neutral passthroughs stay bit-exact
-regardless), **Mix**. Blades and Max
-ghosts are the first **Int-kind** parameters (§1.2): stored and animated as
-Float scalars, but declared whole-number so the row steps, displays and
-commits integers.
+and **Quality** (Draft / Normal / High / Ultra), **Blend** (K-289 — how the
+flare element combines with the layer under it; see below), **Mix**. Blades
+and Max ghosts are the first **Int-kind** parameters (§1.2): stored and
+animated as Float scalars, but declared whole-number so the row steps,
+displays and commits integers.
+
+**Blend (K-289, superseding K-258's Background pair).** Everything the effect
+renders is a black-backed light **element**: a frame that is pure black where
+there is no flare. Blend says how that element combines with the layer
+beneath it — the same question a layer's Mode dropdown asks — and offers the
+curated light-combine set Echo does (§3.13, T21), for the same reason: the
+HSL / burn / dodge modes are ill-defined on a premultiplied light overlay, so
+they are not listed. In code order: **Normal**, a divider, then **Add**
+(default), Screen, Multiply, Overlay, Soft light, Hard light, Lighten,
+Darken, Difference, Exclusion, Subtract, Divide. Every mode runs per channel
+on all four channels in premultiplied linear light, and the result's alpha
+saturates at 1.
+
+**Normal** heads the list because it is the odd one out: the element
+*replaces* the layer, black background and all, so you see the flare on
+opaque black. That is exactly what Background = Black existed to produce —
+the flare-element-over-black export for a Screen/Add workflow — and it is
+what a project saved with that option migrates to. **Add** is light
+addition, bit-identical to what the effect did before this menu existed
+(`out = in + flare`, alpha saturating), so a project saved with the old
+default renders the same pixels. The neutral passthroughs (Intensity 0, Mix
+0) stay bit-exact whatever the menu holds.
 
 **Source modes (K-257).** **Manual light** is the tracked-point workflow: one
 white source at the Light point. **Matte** detects the flare's sources in a
@@ -1518,9 +1657,14 @@ the source, gated by the soft Threshold; each anchor's brightness is the
 **summed flux of every gated detection tile nearest it** (K-267), so a
 practical spanning half the frame finally weighs as its whole lit area
 where it used to count as one pixel, while a true point source reads
-exactly as before; the matte layer renders alone
-exactly as a DoF depth pass does (its own masks and effects apply, K-142
-default) and is expected to be hidden. **Lights** is prepared for light
+exactly as before. The matte layer defaults to **this layer** — the layer
+the effect is on (K-288) — because "flare the lights in this picture" is
+what asking for a matte source nearly always means; that reads the effect's
+own input at its point in the stack rather than re-rendering anything, and
+on an **adjustment layer** it is the composite of everything below, which is
+the only picture an adjustment layer has. Point it at any *other* layer and
+that layer renders alone exactly as a DoF depth pass does (its own masks and
+effects apply, K-142 default) and is expected to be hidden. **Lights** is prepared for light
 layers: the option exists and resolves as Manual until they land, so projects
 built against it survive the wiring.
 

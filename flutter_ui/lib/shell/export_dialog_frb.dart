@@ -22,6 +22,7 @@ import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/export.dart';
 
+import '../l10n/strings.dart';
 import '../state/file_dialogs.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
@@ -52,12 +53,12 @@ class _Format {
 
 /// H.264 first because it is the preset default; the sequences last because
 /// they are the specialist choice.
-const List<_Format> _formats = [
-  _Format('h264', 'H.264 video (.mp4)', 'mp4', 'MP4 video'),
-  _Format('hevc', 'HEVC video (.mp4)', 'mp4', 'MP4 video'),
-  _Format('png', 'PNG image sequence', 'png', 'PNG image'),
-  _Format('tiff', 'TIFF image sequence', 'tiff', 'TIFF image'),
-];
+List<_Format> get _formats => [
+      _Format('h264', l10n.formatH264, 'mp4', l10n.formatMp4Picker),
+      _Format('hevc', l10n.formatHevc, 'mp4', l10n.formatMp4Picker),
+      _Format('png', l10n.formatPngSequence, 'png', l10n.formatPngPicker),
+      _Format('tiff', l10n.formatTiffSequence, 'tiff', l10n.formatTiffPicker),
+    ];
 
 /// The AAC rates offered, bits per second. 320 leads because it is the
 /// delivery-preset rate (docs/06 §7.5); the rest are the customary steps down.
@@ -129,8 +130,7 @@ class _ExportDialogState extends State<_ExportDialog> {
       _compFrames = widget.comp.durationFrames();
       final area = widget.comp.getWorkArea();
       if (area != null) {
-        _rangeStart =
-            (area.inPoint.num / area.inPoint.den * _compFps).round();
+        _rangeStart = (area.inPoint.num / area.inPoint.den * _compFps).round();
         _rangeEnd = (area.outPoint.num / area.outPoint.den * _compFps)
             .round()
             .clamp(_rangeStart + 1, _compFrames);
@@ -164,11 +164,11 @@ class _ExportDialogState extends State<_ExportDialog> {
         children: [
           Padding(
             padding: const EdgeInsets.all(10),
-            child: Text('Export composition', style: t.bodyPrimary),
+            child: Text(l10n.exportComposition, style: t.bodyPrimary),
           ),
           _row(
             t,
-            'Format',
+            l10n.exportFormat,
             SizedBox(
               width: 190,
               child: BareDropdown<_Format>(
@@ -193,14 +193,14 @@ class _ExportDialogState extends State<_ExportDialog> {
           if (!images)
             _row(
               t,
-              'Preset',
+              l10n.exportPreset,
               SizedBox(
                 width: 150,
                 child: BareDropdown<String>(
                   key: const ValueKey('export-preset'),
                   value: _preset,
                   options: _presets,
-                  label: (p) => p.isEmpty ? 'Custom' : p,
+                  label: (p) => p.isEmpty ? l10n.custom : p,
                   onChanged: _applyPreset,
                 ),
               ),
@@ -208,7 +208,7 @@ class _ExportDialogState extends State<_ExportDialog> {
           if (!images)
             _row(
               t,
-              'Bit rate',
+              l10n.exportBitRate,
               SizedBox(
                 width: 90,
                 child: DragValueField(
@@ -223,7 +223,7 @@ class _ExportDialogState extends State<_ExportDialog> {
             ),
           _row(
             t,
-            'Frame rate',
+            l10n.frameRate,
             SizedBox(
               width: 90,
               child: DragValueField(
@@ -239,7 +239,7 @@ class _ExportDialogState extends State<_ExportDialog> {
           ),
           _row(
             t,
-            'From frame',
+            l10n.exportFromFrame,
             SizedBox(
               width: 90,
               child: DragValueField(
@@ -256,7 +256,7 @@ class _ExportDialogState extends State<_ExportDialog> {
           ),
           _row(
             t,
-            'To frame',
+            l10n.exportToFrame,
             SizedBox(
               width: 90,
               child: DragValueField(
@@ -274,7 +274,7 @@ class _ExportDialogState extends State<_ExportDialog> {
           if (!images)
             _row(
               t,
-              'Include audio',
+              l10n.exportIncludeAudio,
               HouseCheckbox(
                 key: const ValueKey('export-audio'),
                 value: _audio,
@@ -284,7 +284,7 @@ class _ExportDialogState extends State<_ExportDialog> {
           if (!images && _audio)
             _row(
               t,
-              'Audio bit rate',
+              l10n.exportAudioBitRate,
               SizedBox(
                 width: 110,
                 child: BareDropdown<int>(
@@ -298,14 +298,14 @@ class _ExportDialogState extends State<_ExportDialog> {
             ),
           _row(
             t,
-            'Write to',
+            l10n.exportWriteTo,
             Expanded(
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   Flexible(
                     child: Text(
-                      _path == null ? 'Not chosen' : _leaf(_path!),
+                      _path == null ? l10n.exportNotChosen : _leaf(_path!),
                       key: const ValueKey('export-path'),
                       style: t.small
                           .copyWith(color: _path == null ? t.textMuted : null),
@@ -317,7 +317,7 @@ class _ExportDialogState extends State<_ExportDialog> {
                     key: const ValueKey('export-choose'),
                     small: true,
                     onPressed: running ? null : _choose,
-                    child: Text('Choose…', style: t.small),
+                    child: Text(l10n.chooseEllipsis, style: t.small),
                   ),
                 ],
               ),
@@ -327,8 +327,7 @@ class _ExportDialogState extends State<_ExportDialog> {
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 2, 12, 0),
               child: Text(
-                'One numbered ${_format.extension.toUpperCase()} per frame, '
-                'beside the chosen name.',
+                l10n.exportImageSequenceNote(_format.extension.toUpperCase()),
                 style: t.small.copyWith(color: t.textMuted),
               ),
             ),
@@ -347,14 +346,18 @@ class _ExportDialogState extends State<_ExportDialog> {
                       exportCancel();
                       _refresh();
                     },
-                    child: const Text('Cancel export'),
+                    child: Text(l10n.exportCancel),
                   )
                 else
                   HouseButton(
                     key: const ValueKey('export-start'),
                     small: true,
+                    // The window's default action (K-319): Enter starts the
+                    // export unless a field is being typed in.
+                    primary: true,
+                    autofocus: true,
                     onPressed: _path == null ? null : _start,
-                    child: const Text('Export'),
+                    child: Text(l10n.exportAction),
                   ),
                 const SizedBox(width: 6),
                 HouseButton(
@@ -362,7 +365,7 @@ class _ExportDialogState extends State<_ExportDialog> {
                   small: true,
                   frameless: true,
                   onPressed: widget.onClose,
-                  child: const Text('Close'),
+                  child: Text(l10n.close),
                 ),
               ],
             ),
@@ -393,9 +396,9 @@ class _ExportDialogState extends State<_ExportDialog> {
     final message = switch (_state) {
       BridgeExportState_Running(:final frame, :final total, :final encoder) =>
         total == BigInt.zero
-            ? 'Preparing… ($encoder)'
-            : 'Frame $frame of $total ($encoder)',
-      BridgeExportState_Done(:final path) => 'Written to ${_leaf(path)}',
+            ? l10n.exportPreparing(encoder)
+            : l10n.exportFrameOf('$frame', '$total', encoder),
+      BridgeExportState_Done(:final path) => l10n.exportWritten(_leaf(path)),
       BridgeExportState_Failed(:final error) => error,
       _ => _refused ?? '',
     };

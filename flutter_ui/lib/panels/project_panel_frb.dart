@@ -31,11 +31,14 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/footage.dart';
+import 'package:lumit_flutter/src/rust/api/keymap.dart';
+import 'package:lumit_flutter/state/dock.dart';
 import 'package:lumit_flutter/src/rust/api/project_item.dart';
 import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:provider/provider.dart';
 
 import '../icons/icons.dart';
+import '../l10n/strings.dart';
 import '../state/drag_payloads.dart';
 import '../shell/comp_settings_frb.dart';
 import '../state/file_dialogs.dart';
@@ -128,19 +131,50 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
       final needle = _searchController.text.trim().toLowerCase();
       if (needle != _search) setState(() => _search = needle);
     });
+    // Enter renames the lone selected item (K-321) — the same key the
+    // Timeline gives its layers. Registered on the hardware keyboard like the
+    // Timeline's commands; the handler stands down for modals, focused
+    // fields, and whenever this panel is not the active one.
+    HardwareKeyboard.instance.addHandler(_onKey);
   }
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_onKey);
     _changes?.cancel();
     _searchController.dispose();
     _dropThumbs();
     super.dispose();
   }
 
+  /// The Project panel's keyboard commands — just `item.rename` today.
+  bool _onKey(KeyEvent event) {
+    if (event is! KeyDownEvent || !mounted) return false;
+    if (lumitModalOpen) return false;
+    final focused = FocusManager.instance.primaryFocus?.context;
+    if (focused != null &&
+        (focused.widget is EditableText ||
+            focused.findAncestorWidgetOfExactType<EditableText>() != null)) {
+      return false;
+    }
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    // A per-panel binding is live in the *focused* panel (docs/07 §15); this
+    // handler hears every key wherever it lands, so the panel checks that it
+    // is the active one itself.
+    if (ui.activePanel.value != Panel.project) return false;
+    final action = ui.keymap.actionFor(BridgeKeyContext.project, event);
+    if (action == 'item.rename') {
+      if (_selectedIds.length != 1 || _renamingId != null) return false;
+      setState(() => _renamingId = _selectedIds.first);
+      return true;
+    }
+    return false;
+  }
+
   /// The items currently selected, by id, in the order the panel lists them.
   /// Held here rather than in `LumitUiState` because nothing outside this panel
-  /// reads it yet.
+  /// reads the full set — only the anchor item is published, for the FX
+  /// console (K-327), through [_publishSelection].
   ///
   /// A set rather than one id because more than one row can be picked:
   /// `Ctrl`-click adds or removes one, `Shift`-click takes the run between the
@@ -212,6 +246,17 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
             ));
       }
     });
+    _publishSelection();
+  }
+
+  /// Mirror the anchor item to the shell (K-327), where the FX console reads
+  /// it. The anchor, not the set: the console acts on one thing, the way the
+  /// info header describes one thing. Deselected (a toggle off) or unknown
+  /// (a stale id after a delete) publishes null rather than a dead handle.
+  void _publishSelection() {
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    ui.selectedProjectItem.value =
+        _selectedIds.contains(_anchorId) ? _itemById[_anchorId] : null;
   }
 
   /// The row being renamed in place, by id.
@@ -256,7 +301,7 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 240),
                   child: Text(
-                    'No items yet — import footage or create a composition',
+                    l10n.projectEmpty,
                     style: t.small,
                     textAlign: TextAlign.center,
                   ),
@@ -389,7 +434,7 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
           key: const ValueKey('project-search'),
           controller: _searchController,
           width: double.infinity,
-          hint: 'Search project',
+          hint: l10n.searchProject,
         ),
       );
 
@@ -417,14 +462,14 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
         child: Row(
           children: [
             LumitTooltip(
-              message: 'Import footage',
+              message: l10n.importFootage,
               child: HouseButton(
                 key: const ValueKey('project-import'),
                 small: true,
                 frameless: true,
                 onPressed: _import,
-                child:
-                    lumitIcon(LumitIcon.folder, size: iconSize, color: t.textMuted),
+                child: lumitIcon(LumitIcon.folder,
+                    size: iconSize, color: t.textMuted),
               ),
             ),
             const SizedBox(width: 4),
@@ -439,14 +484,14 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
                     ? null
                     : BoxDecoration(border: Border.all(color: t.accent)),
                 child: LumitTooltip(
-                  message: 'New composition',
+                  message: l10n.newComposition,
                   child: HouseButton(
                     key: const ValueKey('project-new-comp'),
                     small: true,
                     frameless: true,
                     onPressed: _newComposition,
-                    child:
-                        lumitIcon(LumitIcon.comp, size: iconSize, color: t.textMuted),
+                    child: lumitIcon(LumitIcon.comp,
+                        size: iconSize, color: t.textMuted),
                   ),
                 ),
               ),
@@ -727,9 +772,7 @@ class _MissingHeaderFrb extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
     return LumitTooltip(
-      message: active
-          ? 'Showing only missing footage — click to show everything'
-          : 'Show only missing footage',
+      message: active ? l10n.tipShowEverything : l10n.tipMissingOnly,
       child: GestureDetector(
         key: const ValueKey('missing-toggle'),
         behavior: HitTestBehavior.opaque,
@@ -822,7 +865,19 @@ class _ProjectRowFrb extends StatefulWidget {
 class _ProjectRowFrbState extends State<_ProjectRowFrb> {
   bool _hover = false;
   TextEditingController? _rename;
-  final FocusNode _renameFocus = FocusNode();
+  // Escape on the field's own node, ahead of the shortcut system (K-323): the
+  // row's editor is a bare EditableText rather than a HouseTextField, so it
+  // wires the same key itself instead of inheriting it.
+  late final FocusNode _renameFocus = FocusNode(onKeyEvent: _onRenameKey);
+
+  KeyEventResult _onRenameKey(FocusNode node, KeyEvent event) {
+    if (event is KeyDownEvent &&
+        event.logicalKey == LogicalKeyboardKey.escape) {
+      _cancelRename();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
 
   ItemReference get item => widget.item;
 
@@ -840,6 +895,13 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
       _rename = TextEditingController(text: widget.name);
       _renameFocus.requestFocus();
     }
+  }
+
+  /// Escape: shut the editor, rename nothing (K-323).
+  void _cancelRename() {
+    _rename?.dispose();
+    _rename = null;
+    widget.onEndRename();
   }
 
   void _commitRename() {
@@ -920,7 +982,11 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
         widget.onToggleFolder();
         return;
       }
-      widget.onStartRename();
+      // Nothing for the other kinds: a second click used to rename them in
+      // place (K-191), which meant a slow double-click and a deliberate click
+      // on a selected row were the same gesture and names opened editors
+      // under people's pointers. Renaming is `Enter` on the selection now
+      // (K-321), with the row menu's Rename as the mouse path.
       return;
     }
     widget.onSelect(SelectMode.replace);
@@ -995,13 +1061,13 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
                   Text('missing', style: t.small.copyWith(color: t.warning)),
                   const SizedBox(width: 6),
                   LumitTooltip(
-                    message: 'Relink this file to its new location',
+                    message: l10n.relink,
                     child: HouseButton(
                       key: ValueKey<String>('relink-${_idOf(item)}'),
                       small: true,
                       onPressed: () =>
                           _doRelink((item as ItemReference_Footage).field0),
-                      child: Text('Relink…', style: t.small),
+                      child: Text(l10n.relinkEllipsis, style: t.small),
                     ),
                   ),
                 ],
@@ -1188,33 +1254,33 @@ Future<void> showProjectMenuFrb({
           if (isComp)
             MenuRow(
               onPressed: () => close(_ProjectMenuAction.compSettings),
-              child: const Text('Composition settings…'),
+              child: Text(l10n.compositionSettingsEllipsis),
             ),
           // Every kind can be renamed from here. It matters most for a comp,
           // whose second click opens it rather than renaming it.
           MenuRow(
             key: const ValueKey('project-menu-rename'),
             onPressed: () => close(_ProjectMenuAction.rename),
-            child: const Text('Rename'),
+            child: Text(l10n.rename),
           ),
           // Relink is offered only on a row that is actually broken.
           if (isFootage && missing)
             MenuRow(
               onPressed: () => close(_ProjectMenuAction.relink),
-              child: const Text('Relink…'),
+              child: Text(l10n.relinkEllipsis),
             ),
           if (isFootage)
             MenuRow(
               onPressed: () => close(_ProjectMenuAction.findMissing),
-              child: const Text('Find missing footage'),
+              child: Text(l10n.findMissingFootage),
             ),
           MenuRow(
             onPressed: () => close(_ProjectMenuAction.moveToRoot),
-            child: const Text('Move to root'),
+            child: Text(l10n.moveToRoot),
           ),
           MenuRow(
             onPressed: () => close(_ProjectMenuAction.delete),
-            child: const Text('Delete'),
+            child: Text(l10n.delete),
           ),
         ],
       ),

@@ -93,9 +93,11 @@ machine". Exceptions require a decision entry in [02-DECISIONS.md](02-DECISIONS.
   hashing (`HashMap` iteration MUST NOT influence output; use ordered structures where order
   reaches pixels) anywhere in evaluation.
 - All randomness in effects and expressions is seeded from
-  `(node_uuid, property, local_time, user_seed)`. `wiggle`/`seedRandom` reproduce exactly
-  across runs and machines (K-063). No `Date`, no IO, no locale access in the expression
-  runtime.
+  `(node_uuid, property, local_time, user_seed)`. `wiggle`/`seed_random` reproduce exactly
+  across runs on a given machine (K-305). No wall clock, no IO, no locale access in the
+  expression runtime. Across platforms the target is as close as the hardware allows, not
+  bit-identity: libm and the GPU both differ in the last bit, so promising it in the
+  evaluator alone would be a promise the picture does not keep.
 - Scheduling MUST NOT change results: whichever thread, order, or tile split evaluates a
   node, the output hash is identical. Reductions with float accumulation MUST use a fixed
   association order (tree reduction), not "whatever order jobs finish".
@@ -187,7 +189,12 @@ machine". Exceptions require a decision entry in [02-DECISIONS.md](02-DECISIONS.
 - **Public API docs:** every public item in engine crates has a doc comment; modules state
   their thread-role contract (§1.1) at the top. Doc examples compile (`cargo test --doc`).
 - **User-facing strings** go through the i18n table from day one (K-005); en-GB, sentence
-  case, calm, no exclamation marks. No string literal shown to a user lives in code.
+  case, calm, no exclamation marks. No string literal shown to a user lives in code. The
+  table is `flutter_ui/lib/l10n/app_en.arb`, reached as `l10n.<key>`, and translation
+  happens on Crowdin (K-303) — every other `app_*.arb` comes back from there and is never
+  hand-edited. A new string lands with an `@key` description saying where it appears; a
+  label the *engine* sends gets an entry in `lib/l10n/engine_labels.dart` at the same time,
+  which `test/l10n/engine_labels_test.dart` enforces against the Rust sources.
 - **Glossary compliance** extends to identifiers: `retime_map`, not `time_remap`; `speed`,
   not `velocity`; `clip`, not `event`; `playhead`, not `cti`; `export`, not `render` when a
   file is written. CI greps for the banned list in [01-GLOSSARY.md](01-GLOSSARY.md) §9
@@ -215,14 +222,19 @@ machine". Exceptions require a decision entry in [02-DECISIONS.md](02-DECISIONS.
 
 - New workspace dependencies require justification in the PR description: what it does, why
   not std/an existing dep, licence (GPLv3-compatible), maintenance signal. `cargo deny`
-  for licences, advisories, and duplicate versions is intended for CI but not yet wired
-  ([TODO.md](TODO.md)).
+  runs in CI over licences, advisories, wildcards and sources (K-272); `deny.toml` carries
+  the allowed-licence list and the reasoning, including every deliberately ignored
+  unmaintained-crate advisory and what it would take to leave it. Duplicate versions warn
+  rather than fail — wgpu and rsmpeg each bring their own stack — so the count stays
+  visible without failing builds nobody here can fix.
 - FFI-heavy and slow-to-compile crates (wgpu, rsmpeg, cudarc, QuickJS bindings) stay in
   their one owning leaf crate ([05-ARCHITECTURE.md](05-ARCHITECTURE.md) §1.1) so incremental
   builds of app-level crates stay in seconds.
-- The workspace is edition 2021 today; a `rust-toolchain.toml` pin and the edition-2024
-  move are owed ([TODO.md](TODO.md)). MSRV bumps are deliberate, logged in the changelog,
-  never incidental.
+- The workspace is edition 2021 today; the edition-2024 move is still owed
+  ([TODO.md](TODO.md)). The toolchain **is** pinned: `rust-toolchain.toml` names the one
+  version every machine and every CI job builds with (K-272), so a compiler released
+  mid-week cannot turn a new warning into a red build on a commit that changed nothing.
+  Raising it is deliberate — bump the file, run the full suite, log it in the changelog.
 
 ## 10. Definition of done
 

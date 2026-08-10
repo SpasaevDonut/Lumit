@@ -79,7 +79,11 @@ undo step:
 - **A drag stages rather than commits.** `render_frame_with_preview` renders a
     patched *clone* of the document engine-side, so a hundred drag ticks produce
     pixels without producing a hundred commits, journal writes and undo entries.
-    Only the release commits.
+    Only the release commits. Everything editable on a staged
+    `BridgeEffectInstance` follows that shape, not `set_value` alone:
+    `set_custom_name` (the instance's own display name, K-321) stages onto the
+    copy and `LayerReference::set_effects` is the commit, so a rename is one op
+    and one undo step like any other stack edit.
 
 ### The four binding rules
 
@@ -144,6 +148,14 @@ other side of this boundary.
     only that subtree rebuilds. This is the whole difference from the previous
     transport, which returned a refreshed snapshot of the entire document after
     every edit.
+- **A capability is not document state, and reads as its own answer.** Most reads
+    ask the document; a few ask the *machine*, and the two must not be conflated.
+    `ProjectReference::anti_aliasing` returns what the project asks for;
+    `anti_aliasing_in_use` returns what this graphics card will actually give
+    (K-274, K-286). Keeping them as two calls is what lets a limited adapter be
+    reported without rewriting the project — and the capability read takes no
+    engine lock, because a panel asking what the card can do must never queue
+    behind a frame.
 - **Rational time crosses as integers.** Frame counts and rates cross as exact
     `{num, den}` pairs or integer frame indices derived from a composition's own
     frame rate, never as floating-point seconds
@@ -162,6 +174,39 @@ other side of this boundary.
     it — the whole transform, a Retime property, an effect parameter, a camera's zoom, a
     volume curve, a staged `BridgeEffectInstance` — carries the same conversion. Read raw,
     every key on a layer that had been moved drew at the start of the composition.
+
+### The effect schema crosses as three lists, not one
+
+An effect's parameters are one question; how the panel *arranges* them is another, and they
+have different lifetimes. Three `#[frb(sync)]` free functions answer them, each keyed by the
+effect's match name and each memoised on the Dart side for the life of the process — the
+schema is static, and re-fetching it per card per rebuild was real hover-hot bridge traffic
+(K-183, and the budget test that forbids bridge calls in a rebuild path):
+
+- `list_parameters(effect)` — one `BridgeParamInfo` per declared parameter, in schema order:
+    its id, its label, and its **kind**, which is what decides the control drawn. The kinds
+    are Float, Int, **Angle**, Choice, Bool, Colour, Seed, File and Layer.
+- `list_parameter_groups(effect)` — the twirls (K-145). A group names a *contiguous run* of
+    the schema's parameters and renders where its first member sits; an empty label renders
+    headerless, and `visible_when_param`/`visible_when_values` hide the whole run while a
+    sibling Choice holds a different value (K-259).
+- `list_enabled_when(effect)` — the **greying rules** (K-313): `param` is editable only while
+    `on` satisfies `cond` (a bool is some value, a choice is/is not some index, a layer
+    reference actually names a layer). `lumit_core::fx::param_enabled` is the same rule in
+    Rust and the authority the tests pin; the panel evaluates it locally against values it
+    already holds, because a round trip per row per rebuild for an answer it can compute is
+    exactly the traffic the budget forbids. Greying is an **affordance, not a lock** — a
+    write to a greyed parameter is still accepted, and the resolve step implements the real
+    branch independently and never consults these rules, so the two cannot drift into
+    disagreeing about pixels.
+
+**There is no `Point` kind, and that is deliberate.** A 2-D point crosses as two adjacent
+`_x`/`_y` Float parameters that the panel folds into one row with a crosshair pick
+([07-UI-SPEC.md](07-UI-SPEC.md) §6.1) — the naming convention is the whole mechanism. The
+Lens flare's Light, Radial blur's Centre and Depth of field's Focus point all ride it. An
+`Angle` **is** its own kind, because no arrangement of existing rows draws a dial; its value
+still crosses as a `BridgeEffectValue::Float`, since an angle is a number of degrees and the
+kind only says which control to draw.
 
 ### Versioning
 
@@ -213,15 +258,58 @@ path, documented beside the types in
     trace and a patch are three different questions, and none may supersede
     another — only its own kind, where the newest wins (a pointer that has moved
     on makes the previous position worthless).
+- **Instrumentation rides it too (K-276).** Two further messages come back on the
+    same stream, both small and both about a frame rather than being one:
+    `WorkerResponse::RenderProgress` (`BridgeRenderProgress`: frame, stage code,
+    0..1 fraction, and a `done` flag) says how far the frame the user is waiting
+    on has got, and `WorkerResponse::FrameProfile` (`BridgeFrameProfile`: the
+    frame, its total, and per-layer/per-effect milliseconds with ids as strings)
+    says what a measured frame cost. Two rules bound them. **Progress is sent
+    only for a frame someone is waiting on** — the worker turns it on around the
+    interactive render paths and off again, so playback, the idle cache fill and
+    scope traces are silent — and the *worker*, not the engine, sends the closing
+    `done`, so a frame that faults or is served from the cache still ends its
+    own bar. **Timings are sent only while the frontend has asked for them**
+    (`api::cache::set_render_profiling`, read per frame): measuring fences the
+    graphics card at each node, so an unasked-for frame costs exactly what it
+    did before this existed.
+
+## Display text crosses the bridge in English (K-303)
+
+Some of what the bridge sends is meant to be read by a person: `BridgeEffectInfo`'s
+`label` and `category_label`, the parameter and choice labels in an effect's schema, and
+the keymap's `description` and context headings. **These stay British English on the wire
+and are always sent alongside the stable id they belong to** (`match_name`, the parameter
+`id`, the action id). The engine has no notion of a language and is not being given one.
+
+The frontend translates them on arrival, by looking the English text up in
+`flutter_ui/lib/l10n/engine_labels.dart`. Two consequences bind anything added here:
+
+- **A new display string in the engine needs a matching entry in that table**, in the same
+  commit. `flutter_ui/test/l10n/engine_labels_test.dart` reads the Rust sources and fails
+  otherwise, so it cannot be forgotten quietly.
+- **Build a display string with `format!` and it cannot be translated**, because the
+  lookup is by whole text. Send the pieces and let the frontend assemble them, or give the
+  string a stable id of its own.
+
+Nothing else the bridge sends is display text: a layer name, a comp name, a file path and
+a preset name are the *user's* words, and are passed through untouched.
 
 ## Feature gates
 
 - **`media`** (default on) pulls `lumit-media` (FFmpeg) for probing and decoding.
     Without it, footage does not probe and thumbnails are absent.
-- **Note.** `--no-default-features` does **not** currently build: the render
-    worker is part of the API surface, which is deliberately identical whatever
-    the features are so the generated Dart is one shape everywhere. Recorded in
-    [TODO.md](TODO.md).
+- **Note.** `--no-default-features` builds and tests (K-273). It is **not** a
+    build without FFmpeg: `lumit-render` and `lumit-audio` depend on
+    `lumit-media` unconditionally and the bridge depends on both, so the library
+    is still linked. The feature governs the bridge's own decode paths. The API surface is
+    identical whatever the features are — the generated Dart is one shape
+    everywhere — so a function never *disappears* with a feature: it stays
+    compiled and its body degrades. Beat detection is the shape to copy: always
+    present, and `NoAudioPipeline` on a build with no audio pipeline. What a
+    media-less build actually loses is decoding — no probe, no thumbnails, no
+    waveform peaks, and the decode-ahead thread drains its queue without
+    producing anything — never a call that is not there.
 - **`render`** (default on) enables the composited-comp Viewer path and export
 through the headless seam.
 - **`shared-texture`**, **`shared-texture-linux`**, **`shared-texture-macos`**

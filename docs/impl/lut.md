@@ -88,16 +88,15 @@ in the working space as-is (no implicit input transfer), documented in §3.11; a
 colour-managed "LUT input space" control is a recorded follow-up. Flag this when
 the effect lands so it can be logged as a K-decision.
 
-Status (shipped, K-114) — **domain gap**: the shipped shader (`fx_lut.wgsl`)
-assumes the default `0..1` domain and skips the `(c - lo) / (hi - lo)` remap
-above; the CPU reference (`Lut3d::sample`) applies it in full. Almost every
-creative `.cube` uses the default domain, where the two are identical — but a
-cube with a non-default `DOMAIN_MIN`/`DOMAIN_MAX` currently renders with the
-domain **ignored** on the GPU (wrong colours, silently) while the CPU oracle
-remaps correctly. Closing this — either passing the six domain floats through
-`LutParams` into the shader per §2, or refusing non-default-domain cubes at
-load as a labelled no-op — is an open follow-up; until then the oracle test
-only exercises default-domain cubes.
+Status (closed, K-271): the domain gap is gone. `LutParams` carries the six
+domain floats (as two padded `vec4`s — a uniform `vec3` is 16-byte aligned
+anyway) and the shader remaps through them operation for operation with
+`axis()`, zero-span guard included: a `DOMAIN_MIN` equal to its `DOMAIN_MAX`
+reads as 0 on both paths rather than dividing. The oracle test now covers a cube
+over an asymmetric non-default domain and a degenerate zero-span one; on the
+shader as it stood before, the first of those missed by 23684 fp16 ULP. (K-114
+shipped assuming `0..1`, so such a cube rendered silently wrong while the CPU
+reference was right.)
 
 ## 4. Caching by path (never re-parse per frame)
 
@@ -108,11 +107,14 @@ frame; parse+upload only on a miss (path changed, or the file was edited on
 disk). Bound the cache (a handful of entries — a comp rarely references many
 LUTs at once) and evict LRU. The parse cost is then paid once per distinct file.
 
-Status (shipped, K-114): the shipped caches (`GpuViewer::load_luts`,
-`Renderer::layer_luts`) key by **path only** — no mtime, no LRU bound — so a
-`.cube` edited on disk keeps showing its old grade until the app restarts, and
-distinct paths accumulate uploads for the session. Upgrading both to the
-`(path, mtime)` key with an LRU bound as specified here is an open follow-up.
+Status (closed, K-271): one `LutCache` (`lumit-render::fxops`) behind the one
+`Realiser::load_luts` both preview and export drive, keyed by `(path, mtime)`
+and bounded to eight entries, most recently used first. An edited `.cube` is
+re-parsed and re-uploaded on the next frame, and a stale entry for that path is
+replaced rather than kept beside the new one. A path that cannot be stat'd keys
+as `None`, which still matches itself, so such a file is cached by path exactly
+as before rather than re-read every frame. (K-114 shipped keyed by path alone,
+so a re-exported grade never appeared until the app was restarted.)
 
 ## 5. Animating which file is live (the File parameter)
 

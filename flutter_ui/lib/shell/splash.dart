@@ -9,6 +9,7 @@
 
 import 'package:flutter/widgets.dart';
 
+import '../l10n/strings.dart';
 import '../widgets/controls.dart';
 
 /// The fallback boot lines shown without an engine bridge (the F0 placeholder
@@ -94,7 +95,7 @@ class _SplashOverlayState extends State<SplashOverlay>
               children: [
                 Text('Lumit', style: t.heading),
                 const SizedBox(height: 2),
-                Text('Flutter frontend', style: t.small),
+                Text(l10n.splashSubtitle, style: t.small),
                 const SizedBox(height: 12),
                 for (var i = 0; i < _shown; i++)
                   Padding(

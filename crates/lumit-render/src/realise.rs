@@ -14,7 +14,7 @@
 //! Because every caller drives this one walk, a comp looks the same in the
 //! viewport, in Flutter, and in the exported file (K-031).
 
-use crate::draw::{AccumulationBelow, CompLayerDraw, DofInputDraw, DrawSource};
+use crate::draw::{AccumulationBelow, CompLayerDraw, DrawSource, LayerInputDraw};
 use crate::fxops::LoadedLut;
 
 /// The GPU primitives that turn a comp draw list into a linear texture,
@@ -32,7 +32,7 @@ pub struct Realiser<'a> {
     pub engine: &'a lumit_gpu::ColourEngine,
     pub compositor: &'a lumit_gpu::Compositor,
     pub fx: &'a lumit_gpu::fx::FxEngine,
-    pub lut_cache: &'a std::cell::RefCell<std::collections::HashMap<String, LoadedLut>>,
+    pub lut_cache: &'a std::cell::RefCell<crate::fxops::LutCache>,
     /// The preview render scale (the K-185 follow-up): every composite this
     /// walk performs allocates its target at [`lumit_gpu::scaled_size`] of the
     /// comp dims while all geometry stays in logical comp pixels. A field
@@ -40,15 +40,83 @@ pub struct Realiser<'a> {
     /// inherit it with no signature ripple. Export always builds with 1.0, so
     /// the K-031 preview == export identity is untouched at full scale.
     pub render_scale: f32,
+    /// The project's anti-aliasing sample count (K-274,
+    /// docs/impl/anti-aliasing.md): how many coverage samples per pixel the
+    /// composite is drawn with. 1 is the picture Lumit made before the setting
+    /// existed. A field beside [`Self::render_scale`], for the same reason —
+    /// the nested, below and adjustment recursions inherit it with no signature
+    /// ripple — but **not** like it in one way that matters: `render_scale`
+    /// differs between preview and export by design, and this must not. Both
+    /// paths read the same project field, which is what keeps the K-031
+    /// preview-equals-export identity true with anti-aliasing on.
+    ///
+    /// Already run through [`lumit_gpu::supported_sample_count`] by whoever
+    /// built the realiser: by the time it is here it is a count this adapter
+    /// really offers.
+    pub samples: u32,
+    /// The frame's recorder, when this render is being watched (docs/13 §7.1):
+    /// it counts finished layers for the Viewer's progress bar and measures
+    /// each layer and effect for the render-time indicators. `None` — every
+    /// frame of playback, and every unwatched render — walks exactly as it did
+    /// before this existed: no clocks, no fences, no extra allocations.
+    pub profiler: Option<&'a crate::profile::FrameProfiler>,
 }
 
 impl Realiser<'_> {
-    /// Turn a layer's ordered `lut_files` into the parallel `luts` list
-    /// `run_ops` binds (docs/08 §3.11): each `Some(path)` is parsed and
-    /// uploaded once (cached by path), a 1D or unreadable/absent file yields a
-    /// `None` slot (a labelled no-op, never a fault — docs/impl/lut.md §8). The
-    /// output is 1:1 and in order with `files`, so the k-th slot lines up with
-    /// the k-th `Resolved::Lut` op.
+    /// Start one layer's measurement: the clock, and the list its effect stack
+    /// writes a millisecond into per op. Both `None` unless this render is
+    /// being measured, which is what keeps an ordinary frame free of them.
+    #[allow(clippy::type_complexity)]
+    fn layer_clock(&self) -> (Option<std::time::Instant>, Option<Vec<f32>>) {
+        match self.profiler {
+            Some(p) if p.timing() => (Some(std::time::Instant::now()), Some(Vec::new())),
+            _ => (None, None),
+        }
+    }
+
+    /// Close one layer's measurement and hand it to the profiler: the fence
+    /// (see `crate::profile` on why the clock cannot be read without one), the
+    /// per-effect list paired back up with the ids the draw carries, and the
+    /// layer counted towards the progress bar.
+    fn layer_done(
+        &self,
+        l: &CompLayerDraw,
+        started: Option<std::time::Instant>,
+        fx_ms: Option<Vec<f32>>,
+    ) {
+        let Some(p) = self.profiler else {
+            return;
+        };
+        let ms = match started {
+            Some(started) => {
+                // Hand this layer's work over before waiting on it. Batching
+                // holds a frame's commands back to the end, and a fence over an
+                // empty queue would time nothing — so a *measured* frame gives
+                // up the batching, layer by layer, which is the cost the
+                // stopwatch already declares (docs/13 §7.1, K-276: measuring
+                // waits for the card at each layer, which is why it is opt-in
+                // and never runs during playback).
+                self.ctx.flush();
+                self.ctx.device.poll(wgpu::Maintain::Wait);
+                started.elapsed().as_secs_f32() * 1000.0
+            }
+            // Progress is being reported but nothing is being measured: the
+            // layer still counts towards the bar, it just has no number.
+            None => 0.0,
+        };
+        let effects = fx_ms
+            .map(|ms| {
+                l.fx_ids
+                    .iter()
+                    .copied()
+                    .zip(ms)
+                    .map(|(effect, ms)| crate::profile::EffectTiming { effect, ms })
+                    .collect()
+            })
+            .unwrap_or_default();
+        p.layer_done(l.layer, ms, effects);
+    }
+
     /// Read a layer's `lens_file` paths into (content hash, text) slots,
     /// 1:1 with the stack's `Resolved::LensFlare` ops (K-264). A `None`
     /// slot (unset, missing on disk, unreadable) degrades to the picked
@@ -70,55 +138,48 @@ impl Realiser<'_> {
             .collect()
     }
 
+    /// Turn a layer's ordered `lut_files` into the parallel `luts` list
+    /// `run_ops` binds (docs/08 §3.11): each `Some(path)` is parsed and
+    /// uploaded once — cached by path *and* last-modified time, bounded and
+    /// LRU-evicted (K-271, docs/impl/lut.md §4) — and a 1D or unreadable/absent
+    /// file yields a `None` slot (a labelled no-op, never a fault). The output
+    /// is 1:1 and in order with `files`, so the k-th slot lines up with the
+    /// k-th `Resolved::Lut` op.
     fn load_luts(&self, files: &[Option<String>]) -> Vec<Option<LoadedLut>> {
         let mut cache = self.lut_cache.borrow_mut();
         files
             .iter()
-            .map(|slot| {
-                let path = slot.as_ref()?;
-                if !cache.contains_key(path) {
-                    // Any IO/parse error, or a 1D LUT, leaves the slot empty:
-                    // the effect is a passthrough, never a panic (§3.11).
-                    if let Some(loaded) = std::fs::read_to_string(path)
-                        .ok()
-                        .and_then(|text| lumit_core::lut::parse_cube(&text).ok())
-                        .and_then(|lut| match lut {
-                            lumit_core::lut::Lut::Cube3d(l) => Some(LoadedLut {
-                                texture: lumit_gpu::fx::upload_lut_3d(
-                                    &self.ctx,
-                                    l.size as u32,
-                                    &l.data,
-                                ),
-                                size: l.size as u32,
-                            }),
-                            lumit_core::lut::Lut::Cube1d(_) => None,
-                        })
-                    {
-                        cache.insert(path.clone(), loaded);
-                    }
-                }
-                cache.get(path).cloned()
-            })
+            .map(|slot| cache.get_or_load(&self.ctx, slot.as_ref()?))
             .collect()
     }
 
-    /// Render a layer's depth-of-field depth inputs (docs/impl/layer-input.md
-    /// §2): each `DofInputDraw` (the referenced layer's source pixels) is
-    /// uploaded, linearised and resampled into the effect's working raster
-    /// `(w, h)` through the shared [`crate::fxops::render_layer_input`], so the
-    /// parallel `layer_inputs` handed to `run_ops` is 1:1 with the stack's
-    /// `Dof` ops and aligned with the layer texture the kernel blurs. Export
-    /// renders these identically (K-031).
-    fn render_dof_inputs(
+    /// Render a layer's layer-input slots (docs/impl/layer-input.md §2) — the
+    /// depth passes of its `dof` effects, the matte sources of its Lens
+    /// flares. Each [`LayerInputDraw::Layer`] (the referenced layer's source
+    /// pixels) is uploaded, linearised and resampled into the effect's
+    /// working raster `(w, h)` through the shared
+    /// [`crate::fxops::render_layer_input`], so the parallel list handed to
+    /// `run_ops` is 1:1 with the stack's ops and aligned with the layer
+    /// texture the kernel reads. Export renders these identically (K-031).
+    ///
+    /// [`LayerInputDraw::ThisLayer`] (K-288) renders nothing here: it names
+    /// the texture `run_ops` is already carrying, which only `run_ops` can
+    /// hand over, so it passes through as [`LayerInput::ThisLayer`].
+    fn render_layer_inputs(
         &self,
-        inputs: &[Option<DofInputDraw>],
+        inputs: &[LayerInputDraw],
         w: u32,
         h: u32,
-    ) -> Vec<Option<wgpu::Texture>> {
+    ) -> Vec<crate::fxops::LayerInput> {
+        use crate::fxops::LayerInput;
         inputs
             .iter()
             .map(|slot| {
-                let d = slot.as_ref()?;
+                let d = match slot {
+                    LayerInputDraw::Absent => return LayerInput::Absent,
+                    LayerInputDraw::ThisLayer => return LayerInput::ThisLayer,
+                    LayerInputDraw::Layer(d) => d,
+                };
                 // A Precomp input realises its nested comp exactly as a
                 // Precomp layer's picture does (K-266); anything else is
                 // the uploaded source pixels.
@@ -152,9 +213,13 @@ impl Realiser<'_> {
                         &[],
                         &[],
                         &[],
+                        // A depth or flare-matte input's own stack is part of
+                        // the effect that reads it, not a row of its own: its
+                        // cost is inside that layer's span already.
+                        None,
                     )
                 };
-                Some(crate::fxops::render_layer_input(
+                LayerInput::Texture(crate::fxops::render_layer_input(
                     self.compositor,
                     &self.ctx,
                     w,
@@ -173,6 +238,35 @@ impl Realiser<'_> {
     /// runs on that, and the two blend by coverage; the draws after
     /// composite straight onto the blended result (seeded, no resample).
     pub fn realise(
+        &self,
+        camera: Option<lumit_core::model::CameraPose>,
+        width: u32,
+        height: u32,
+        background: [f64; 4],
+        layers: &[CompLayerDraw],
+    ) -> wgpu::Texture {
+        // Depth is what tells the profiler which layers are rows of the
+        // composition being rendered and which are inside a Precomp (see
+        // crate::profile). Paired around the whole walk, recursion included, so
+        // a nested comp's layers can never be mistaken for this comp's.
+        if let Some(p) = self.profiler {
+            p.enter_comp();
+        }
+        // One command buffer for the whole walk, recursion included. Every pass
+        // below records into it and nothing reaches the driver until the
+        // outermost `end_frame`, so a frame costs one round trip rather than one
+        // per layer and per effect. `begin_frame` nests, which is what lets this
+        // sit on the recursive entry point rather than being threaded by hand.
+        self.ctx.begin_frame();
+        let out = self.realise_at_depth(camera, width, height, background, layers);
+        self.ctx.end_frame();
+        if let Some(p) = self.profiler {
+            p.leave_comp();
+        }
+        out
+    }
+
+    fn realise_at_depth(
         &self,
         camera: Option<lumit_core::model::CameraPose>,
         width: u32,
@@ -199,8 +293,8 @@ impl Realiser<'_> {
             // identical to export (K-031). The adjustment stack runs on the
             // comp-sized composite, so its depth inputs resample to comp size.
             let luts = self.load_luts(&l.lut_files);
-            let layer_inputs = self.render_dof_inputs(&l.dof_inputs, tw, th);
-            let flare_mattes = self.render_dof_inputs(&l.flare_mattes, tw, th);
+            let layer_inputs = self.render_layer_inputs(&l.dof_inputs, tw, th);
+            let flare_mattes = self.render_layer_inputs(&l.flare_mattes, tw, th);
             let flare_lens = self.load_flare_lens(&l.flare_lens_files);
             // The stack was resolved against the comp raster; this render
             // target may be smaller (reduced-resolution preview), and every
@@ -225,6 +319,11 @@ impl Realiser<'_> {
             // Accumulation motion blur (docs/08 §3.26) takes precedence: it
             // renders N sub-frame below-stacks and averages them; else Posterize
             // holds one below-stack; else the plain below-composite.
+            // An adjustment layer's own cost starts here: everything below it
+            // has been composited (and timed as its own layers), and what
+            // follows — the held or accumulated below-stack, this stack, the
+            // coverage and the blend — is what this row is spending.
+            let (started, mut fx_ms) = self.layer_clock();
             let fx_input = if let Some(ab) = &l.accumulation_below {
                 self.accumulate_below(width, height, background, ab, &below)
             } else if let Some(tb) = &l.temporal_below {
@@ -248,6 +347,7 @@ impl Realiser<'_> {
                 &layer_inputs,
                 &flare_mattes,
                 &flare_lens,
+                fx_ms.as_mut(),
             );
             let coverage = self.coverage_texture(camera, width, height, l);
             acc = Some(self.fx.adjust_blend(
@@ -259,6 +359,7 @@ impl Realiser<'_> {
                 th,
                 (l.opacity / 100.0).clamp(0.0, 1.0),
             ));
+            self.layer_done(l, started, fx_ms);
             start = i + 1;
         }
         self.realise_segment(camera, width, height, background, &layers[start..], &acc)
@@ -357,6 +458,7 @@ impl Realiser<'_> {
             cam_mat,
             None,
             self.render_scale,
+            self.samples,
         )
     }
 
@@ -373,6 +475,12 @@ impl Realiser<'_> {
     ) -> wgpu::Texture {
         let mut linear_textures: Vec<wgpu::Texture> = Vec::with_capacity(layers.len());
         for l in layers {
+            // One row's own cost: its source uploaded and linearised (or its
+            // Precomp realised entire) and then its effect stack. The composite
+            // that follows is one pass over the whole segment rather than a
+            // per-layer act, so it lands in the frame total instead
+            // (crate::profile).
+            let (started, mut fx_ms) = self.layer_clock();
             let tex = match &l.source {
                 DrawSource::Pixels { rgba, tex_w, tex_h } => {
                     let src = self.engine.upload_srgb8(&self.ctx, rgba, *tex_w, *tex_h);
@@ -422,24 +530,40 @@ impl Realiser<'_> {
                 // The depth-of-field depth inputs, resampled to this layer's
                 // working raster (w, h), 1:1 with the stack's Resolved::Dof ops
                 // (§3.22); the same render export runs (K-031).
-                let layer_inputs = self.render_dof_inputs(&l.dof_inputs, w, h);
-                let flare_mattes = self.render_dof_inputs(&l.flare_mattes, w, h);
+                let layer_inputs = self.render_layer_inputs(&l.dof_inputs, w, h);
+                let flare_mattes = self.render_layer_inputs(&l.flare_mattes, w, h);
                 let flare_lens = self.load_flare_lens(&l.flare_lens_files);
+                // A stack resolved against a raster wider than the one it is
+                // about to run on (a Precomp layer's, under reduced-resolution
+                // preview) has its px@comp parameters rescaled to this raster,
+                // the same correction the adjustment path applies (K-266,
+                // K-268). `None` — every other kind — resolved at its own
+                // decode scale already, so nothing moves.
+                let fx_ops = match l.fx_ref_width {
+                    Some(ref_w) if ref_w > 0.0 => {
+                        let mut ops = l.fx.clone();
+                        lumit_core::fx::rescale_px(&mut ops, w as f32 / ref_w);
+                        ops
+                    }
+                    _ => l.fx.clone(),
+                };
                 crate::fxops::run_ops(
                     self.fx,
                     &self.ctx,
                     tex,
                     w,
                     h,
-                    &l.fx,
+                    &fx_ops,
                     &neighbours,
                     flow.as_ref(),
                     &luts,
                     &layer_inputs,
                     &flare_mattes,
                     &flare_lens,
+                    fx_ms.as_mut(),
                 )
             };
+            self.layer_done(l, started, fx_ms);
             linear_textures.push(tex);
         }
         let cam_mat = camera.map(|pose| crate::export::camera_mat(width, height, pose));
@@ -464,6 +588,7 @@ impl Realiser<'_> {
                         l.pre,
                         cam_mat,
                         self.render_scale,
+                        self.samples,
                     )
                 })
             })
@@ -486,10 +611,17 @@ impl Realiser<'_> {
             .iter()
             .map(|l| {
                 l.matte.as_ref().map(|m| {
-                    let src = self
-                        .engine
-                        .upload_srgb8(&self.ctx, &m.rgba, m.tex_w, m.tex_h);
-                    let linear = self.engine.linearise(&self.ctx, &src);
+                    // A Precomp matte realises its nested comp exactly as a
+                    // Precomp layer's picture does (K-268, the K-266 layer-input
+                    // shape); anything else is the uploaded source pixels.
+                    let linear = if let Some(n) = &m.nested {
+                        self.realise(n.camera, n.width, n.height, n.background, &n.draws)
+                    } else {
+                        let src = self
+                            .engine
+                            .upload_srgb8(&self.ctx, &m.rgba, m.tex_w, m.tex_h);
+                        self.engine.linearise(&self.ctx, &src)
+                    };
                     // After-effects matte (K-decision): run the matte source's own
                     // stack on its texture before it gates the consumer, so a keyed
                     // or blurred matte works. Temporal inputs stay empty in v1 — the
@@ -512,6 +644,9 @@ impl Realiser<'_> {
                             &[],
                             &[],
                             &[],
+                            // A matte's own stack is part of the layer it
+                            // gates, not a row of its own.
+                            None,
                         )
                     };
                     self.compositor.composite_with_camera(
@@ -603,6 +738,7 @@ impl Realiser<'_> {
             cam_mat,
             seed.as_ref(),
             self.render_scale,
+            self.samples,
         )
     }
 }

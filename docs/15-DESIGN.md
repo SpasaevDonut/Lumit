@@ -235,7 +235,15 @@ Appearance → Customise…, and a saved custom theme is *a name, a light-or-dar
 colours over it* — so a theme keeps working when a token is added, taking the new one from
 its base. `flutter_ui/lib/theme/theme_tokens.dart` is the single declaration of what is
 editable (a test counts it against the struct); `viewer_surround` is deliberately absent for
-the §2.1 reason. Two tokens were added with it, both defaulting from the mode rather than
+the §2.1 reason.
+
+**Sharing a theme (K-298).** A theme is also a file: `.lumtheme`, an indented JSON document
+carrying a format marker, a version, and the same name/base/colours the workspace file
+stores (`flutter_ui/lib/theme/theme_file.dart`). Settings → Appearance offers **Duplicate,
+Rename…, Delete, Import… and Export…** beside **Customise…**, the editor offers **Save a
+copy…**, and the picker carries an eight-swatch preview of the selection. A theme read from
+a file is applied over its base like any other, so one written by a newer Lumit still opens
+with the colours this build knows; a name already taken is numbered rather than overwritten. Two tokens were added with it, both defaulting from the mode rather than
 being restated per scheme: `timeline_out_of_range` (the Timeline's ground outside the work
 area) and `selection_fill` (under a selected row, half-strength under a highlighted one —
 its own colour because a selection has to out-contrast whichever ground it lands on, which
@@ -246,10 +254,11 @@ on a light scheme means going *darker* while the surfaces go lighter).
 `accent`/`accent_hover`, `success`/`warning`/`error`, the `curve[4]` ramp, `layer`
 (`LayerColours`, §6.1) — plus two the code has split out that this listing does not yet name:
 `scope` (`ScopeColours`, the four scope-chrome accents), `cache_disk` (the disk tier of the
-cache bar, §6.3) and `marker` (comp markers on the time ruler, §6.4 — the first of the
-`marker` grouping to be split out, K-254; the beat variant still waits). Not yet split into their own tokens, and derived ad-hoc from existing roles in
+cache bar, §6.3), `marker` (comp markers on the time ruler, §6.4 — the first of the
+`marker` grouping to be split out, K-254; the beat variant still waits) and `waveform`
+(`WaveformColours`: `rest` plus the three multiwave bands, K-280). Not yet split into their own tokens, and derived ad-hoc from existing roles in
 v1: `disabled` and `fill_tonal` (the `cloud`/`oat` mappings below are reserved, not present);
-the `keyframe`, `overrun_hatch`, `waveform` and `selection` groupings (widgets reach
+the `keyframe`, `overrun_hatch` and `selection` groupings (widgets reach
 for `text_secondary`, `accent`, `warning`, etc. directly); and `shadow_float`. Splitting each
 into a named token — so no widget derives a semantic colour itself — is the standing direction,
 done as each area is next touched; the no-hex rule already holds regardless.
@@ -430,9 +439,20 @@ failure.
 - **Beat markers**: `marker.beat` = `#aef3e7` (mint) 1px ticks in the ruler with a small
   triangular head — still to come, and it needs a token of its own beside `marker`. Span
   markers draw a hairline-bounded band.
-- **Clip waveforms**: `waveform.rest` = `#5d8a96` (muted steel-cyan) filled envelope at 80%
-  opacity on `surface_2`; on selected clips the envelope brightens to `text_secondary`.
-  Waveforms never render in `accent` — they are content, not state.
+- **Clip waveforms (shipped, K-280)**: `waveform.rest` = `#5d8a96` (muted steel-cyan) filled
+  envelope at 80% opacity on `surface_2`, with the RMS core drawn solid inside it; on selected
+  clips the envelope brightens to `text_secondary` (still to come). Waveforms never render in
+  `accent` — they are content, not state, and the lane that did borrow `accent` was corrected
+  when this grouping became real tokens. The **multiwave** stack (K-280, K-284) adds three band
+  colours beside `rest`, drawn **over one another in one lane around one centre line** and so
+  ranked by *brightness* rather than by hue — the bass a dim broad body, the treble bright and
+  thin over it, which is how the reference reads: one silhouette with its inside showing.
+  `waveform.low` `#3c5c66`, `waveform.mid` `#6d9aa6`, `waveform.high` `#d4f0f6` on a dark
+  scheme; on a light one the ramp runs the other way (`#9dbac2` / `#598794` / `#14333c`),
+  because *darker* is what stands out on white. Band strokes are opaque — three softened
+  envelopes over one another blend into a wash and lose the ranking — and only the single wave
+  keeps the 80% envelope with the solid RMS core over it. All four default from the mode
+  rather than being restated per scheme, and all four are editable like any other token.
 
 ### 6.5 Selection, focus, drop targets
 
@@ -453,13 +473,16 @@ failure.
 
 ### 7.1 Scale
 
-Lumit is a pro tool; the household 16px body default gives way to an 11–13px UI scale:
+Lumit is a pro tool; the household 16px body default gives way to a 10–13px UI scale
+(tightened from 11–13px by K-317, after the owner found the interface a step large and
+soft beside the editors it sits among):
 
 | Size | Face | Use |
 |---|---|---|
-| 10px | Inter | Field captions only — the note under a control saying what format it takes. Never for anything the user has to act on |
+| 9px | Inter | Field captions only — the note under a control saying what format it takes. Never for anything the user has to act on |
+| 10px | Inter | Secondary notes and hints (`small`) |
 | 11px | JetBrains Mono, +0.08em, caps | Kickers, layer bar labels, axis numbers, attribution |
-| 12px | Inter | Panel body copy, property names, menus, buttons |
+| 11px | Inter | Panel body copy, property names, menus, buttons |
 | 13px | JetBrains Mono | Property values, timecode fields, frame numbers, speed percentages |
 | 14px | Inter Medium | Dialog body emphasis, panel tab labels |
 | 16px | Schibsted Grotesk | Dialog titles, workspace names |
@@ -525,7 +548,17 @@ section's 4/8/12/16px scale) does not vary by shape; only radius, gap, inset and
 - **Keyboard operability of every control** — every panel reachable by shortcut, every
   control focusable and operable, every drag having a keyboard equivalent (nudge keys move
   clips/keyframes by frame; modifier for 10 frames).
-- **Visible focus** everywhere, per §6.5.
+- **Visible focus** everywhere, per §6.5. Every house control — button, checkbox, radio,
+  value box — is focusable, draws the accent focus ring while focused, and answers `Enter`
+  (and `Space`, where pressing is what it does). Tab visits them in **reading order**: left
+  to right, then top to bottom, by where they sit on screen rather than by the order the
+  layout code composed them. A modal window is its own focus scope, so Tab cycles inside it
+  (K-319, docs/07 §4.2).
+- **A pointer travelling to a submenu is not hovering what it passes over** (K-318). Menus
+  hold an open flyout while the pointer is inside the triangle from where it left the owning
+  row to that flyout's near edge — the "safe triangle". A pointer that *stops* on another row
+  still switches, after a 300ms grace; one that plainly moves elsewhere switches at once. No
+  animation is involved and nothing is delayed that the user did not aim at.
 - **Contrast floors on the dark ramp** (WCAG 2.1, against the surface the text sits on):
   `text_primary` ≥7:1 (AAA); `text_secondary` ≥7:1; `text_muted` — the floor for the 11px
   mono labels — ≥4.5:1 (AA); disabled states exempt but kept ≥3:1; non-text interactive
@@ -537,7 +570,11 @@ section's 4/8/12/16px scale) does not vary by shape; only radius, gap, inset and
 ## 10. Voice and copy
 
 - British English, sentence case, calm, no exclamation marks, no emoji. UI strings go through
-  the i18n table (K-005).
+  the i18n table (K-005) — `flutter_ui/lib/l10n/app_en.arb`, translated on Crowdin (K-303).
+  British English is the source and stays the source; there is no en-US.
+- **A tooltip is a name, not a lesson**: under five words, two where two will do
+  ([07-UI-SPEC.md](07-UI-SPEC.md) §13.2, K-303). Explanation belongs in the settings row's
+  own sentence, in an empty state, or nowhere.
 - The app is **"Lumit"** — never abbreviated in UI. Features use glossary names exactly:
   Retime (not time remap), speed (not velocity), clip (not event), layer (not track), export
   (not render), playhead (not CTI). [01-GLOSSARY.md](01-GLOSSARY.md) §9 is binding for copy.
@@ -658,21 +695,32 @@ study of ~1,270 top-chart and editing-app icons (K-251 records the findings): at
 two hue families, one large glyph, dark tile, and none of the category's burned imagery
 (play button, film strip, clapperboard, lens ring, colour wheel, AI sparkle).
 
-Files, all in `assets/brand/`, all regenerated by `scripts/gen-icons.py`:
+Files, all in `assets/brand/`; the raster forms are regenerated by
+`scripts/gen-icons.py`, except the macOS application icon, which Xcode compiles (K-309):
 
 | File | Role |
 |---|---|
 | `lumit-mark.svg` | The bare mark, transparent — the Windows/Linux app icon (no tile; the white core is enclosed by the coloured keys, so it survives any background) |
-| `lumit-icon.svg` | The mark on the dark rounded tile — macOS only |
+| `lumit-icon.svg` | The mark on the dark rounded tile, flat. Reference drawing and single-image hand-out; nothing ships from it |
+| `lumit-icon.icon` | **The macOS application icon** (K-309): the same composition as six Icon Composer layers, so macOS 26 lights it as Liquid Glass and renders the dark/tinted/clear variants. Xcode generates the pre-26 flat `.icns` from the same layers |
 | `lumit-project.svg` / `.ico` | `.lum` project documents: dark folded-corner file, the twin keys, `LUM` kicker |
 | `lumit-preset.svg` / `.ico` | `.lumfx` presets: same chassis, a single violet key (one applied stack), `LUMFX` kicker |
+| `lumit-theme.svg` / `.ico` | `.lumtheme` colour themes (K-298): same chassis, three overlapping swatches in the two key gradients and the core white — colours rather than keyframes, because that is what the file carries — `THEME` kicker. The centres sit on an equilateral triangle whose circumradius **is** the swatch radius, so all three circles pass through the one point at the centre and share no area — which is what makes them equally visible, each giving up the same lens to each neighbour. They overlap **cyclically**: blue over white, violet over blue, white over violet, which no painting order can produce, so the violet swatch is clipped to outside the white circle instead. Nothing is painted where something else will cover it: a hidden shape still shows its softened edge pixels through the join as a hairline, two quarter-opacity rims stacking read as a blot, and a rim drawn as two arcs meeting end to end leaves a seam |
 
 The SVG sources carry the mark's own palette and are the only permitted hex values
 outside the theme module: keys `#86e2ff→#2f6fe0` (blue) and `#8a70ff→#ff4f9e`
 (violet-magenta), core white/`#eaf4ff`, rim `#0c0e14`, tile `#16181d→#0d0f13`, bloom
 `#b7c6e2`, document chassis `#181b21→#101217`, fold `#272b34`, kicker `#aab6c6`. The
 wordmark is the word "Lumit" set in Schibsted Grotesk beside or beneath the mark; no
-custom lettering. The mark MUST also be paintable from theme-module constants in code
+custom lettering.
+
+**The macOS layers carry no lighting of their own** (K-309). The layer SVGs inside
+`lumit-icon.icon` are the flat icon's own geometry with three things deliberately
+removed: the tile's corner radius, because macOS applies the platform squircle mask
+itself; the drop shadow under the keys, because Liquid Glass generates the shadow per
+layer; and the keys' dark rim stroke, which in the flat icon stands in for a lit edge
+that the system now draws for real. Painting any of them in means it doubles up in
+every appearance the system offers — the same edge twice, once painted and once lit. The mark MUST also be paintable from theme-module constants in code
 (four rounded rects and three gradients, no raster assets) so the splash and about box
 never ship image files.
 

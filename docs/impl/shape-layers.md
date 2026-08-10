@@ -18,8 +18,13 @@ from the plan and are worth knowing:
   both sides.
 
 Not built: nested groups and the shape modifiers, gradient fills, dashed strokes,
-joins and caps other than round, animated paths, and dragging a shape's points on
-the picture (K-224 does that for mask points).
+joins and caps other than round, and animated paths. Dragging a shape's points on
+the picture **is** built (K-307): the gesture K-224 gave mask points serves shape
+contents too, since both hold the same `BezierPath`. Mind the coordinates: a shape
+item's vertices are in the *art's* space, and the layer's pixels start at the art's
+bounding-box corner, so anything drawing or hit-testing a shape point subtracts that
+corner (`LayerBox.shapePoint`), and anything writing points back leaves position to
+follow the corner — `set_shape_contents` does it, as one `Op::Batch` (K-308).
 
 ## In plain terms
 

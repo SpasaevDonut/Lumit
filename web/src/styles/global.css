@@ -1,0 +1,126 @@
+@import "tailwindcss";
+
+/* Tokens mirror the app's dark ramp (docs/15-DESIGN.md). The mark's own gradient
+   is the only saturated colour on the site - everything else is the neutral ramp. */
+@theme {
+  --color-ink:      #0a0b0d;
+  --color-ink-2:    #0e1013;
+  --color-line:     rgb(255 255 255 / 0.08);
+  --color-line-2:   rgb(255 255 255 / 0.14);
+  --color-fg:       #f4f6f8;
+  --color-fg-2:     #8f96a1;
+  --color-fg-3:     #5d646e;
+  --color-key-cy:   #86e2ff;
+  --color-key-vi:   #8a70ff;
+  --color-key-mg:   #ff4f9e;
+
+  --font-sans: "Schibsted Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+  }
+  body {
+    background: var(--color-ink);
+    color: var(--color-fg-2);
+    font-family: var(--font-sans);
+  }
+  h1, h2, h3 { color: var(--color-fg); font-weight: 500; letter-spacing: -0.03em; }
+  ::selection { background: var(--color-key-vi); color: #fff; }
+  :focus-visible { outline: 2px solid var(--color-key-cy); outline-offset: 3px; border-radius: 4px; }
+}
+
+@layer components {
+  .wrap {
+    @apply mx-auto w-full max-w-[1080px] px-5 sm:px-10;
+  }
+  .kicker {
+    @apply font-mono text-[11px] font-medium leading-none tracking-[0.14em] uppercase text-fg-3;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2.5 rounded-[10px] border
+           border-transparent bg-fg px-5 py-2.5 text-[15px] font-medium text-ink
+           no-underline transition-opacity hover:opacity-[0.88];
+  }
+  .btn-ghost {
+    @apply border-line-2 bg-transparent text-fg hover:bg-white/5 hover:opacity-100;
+  }
+  .pill {
+    @apply inline-flex items-center gap-2 rounded-full border border-line bg-white/[0.02]
+           py-[5px] pl-[9px] pr-[13px] text-[13px] text-fg-2 no-underline;
+  }
+  .card {
+    @apply rounded-[14px] border border-line bg-ink-2 p-7;
+  }
+  .link {
+    @apply text-fg underline decoration-line-2 underline-offset-4
+           transition-colors hover:decoration-key-cy;
+  }
+
+  /* The Markdown body of a release note. The notes are plain Markdown, so every
+     element they can produce is styled here from the tokens rather than in the
+     note itself. Bullets carry the mark's gradient - the one saturated colour. */
+  .release-prose {
+    @apply text-[16px] leading-relaxed;
+  }
+  .release-prose > :first-child {
+    @apply mt-0;
+  }
+  .release-prose h2 {
+    @apply mt-10 text-[22px];
+  }
+  .release-prose h3 {
+    @apply mt-8 text-[18px];
+  }
+  .release-prose p {
+    @apply my-4;
+  }
+  .release-prose a {
+    @apply text-fg underline decoration-line-2 underline-offset-4
+           transition-colors hover:decoration-key-cy;
+  }
+  .release-prose strong {
+    @apply font-medium text-fg;
+  }
+  .release-prose ul,
+  .release-prose ol {
+    @apply my-4 flex flex-col gap-2 pl-6;
+  }
+  .release-prose ol {
+    @apply list-decimal;
+  }
+  .release-prose ul > li {
+    @apply relative list-none;
+  }
+  .release-prose ul > li::before {
+    content: "";
+    @apply absolute top-[0.6em] -left-5 h-2 w-2 rounded-full bg-linear-25 from-key-vi to-key-cy;
+  }
+  .release-prose code {
+    @apply rounded-md border border-line bg-white/[0.04] px-1.5 py-0.5 font-mono
+           text-[0.86em] text-fg;
+  }
+  .release-prose pre {
+    @apply my-5 overflow-x-auto rounded-xl border border-line bg-ink-2 p-4 text-[13.5px];
+  }
+  .release-prose pre code {
+    @apply border-0 bg-transparent p-0 text-inherit;
+  }
+  .release-prose blockquote {
+    @apply my-5 border-l-2 border-line-2 pl-4 text-fg-3;
+  }
+  .release-prose img,
+  .release-prose video {
+    @apply my-6 h-auto max-w-full rounded-xl border border-line;
+  }
+  .release-prose hr {
+    @apply my-8 border-line;
+  }
+}

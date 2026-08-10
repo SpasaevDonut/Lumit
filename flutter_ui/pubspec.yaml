@@ -1,7 +1,7 @@
 name: lumit_flutter
 description: "Lumit's Flutter frontend (K-174); see docs/archive/flutter-port/."
 publish_to: 'none'
-version: 0.1.0+1
+version: 0.2.0+1
 
 environment: 
   sdk: '>=3.6.0 <4.0.0'
@@ -9,6 +9,10 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  intl: any
+  crypto: ^3.0.7
   ffi: ^2.1.0
   iconoir_flutter: ^7.11.1
   file_selector: ^1.1.0
@@ -18,6 +22,7 @@ dependencies:
   provider: ^6.1.5+1
   freezed_annotation: ^3.1.0
   uuid: ^4.6.0
+  syntax_highlight: ^0.5.0
 
 dev_dependencies:
   flutter_test:
@@ -30,8 +35,12 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  # Turns lib/l10n/*.arb into Dart at `flutter pub get` time (see l10n.yaml).
+  generate: true
   fonts:
     - family: Inter
       fonts:
+        - asset: assets/fonts/Inter-Regular.otf
+          weight: 400
         - asset: assets/fonts/Inter-Medium.otf
           weight: 500

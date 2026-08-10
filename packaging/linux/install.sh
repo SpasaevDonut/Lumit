@@ -1,7 +1,7 @@
 #!/bin/sh
 # Installs a built Lumit bundle for the current user (K-252): the app under
-# ~/.local/lib/lumit, a launcher on the PATH, the desktop entry, the .lum and
-# .lumfx MIME types, and the icons (the brand SVGs install as scalable icons,
+# ~/.local/lib/lumit, a launcher on the PATH, the desktop entry, the .lum,
+# .lumfx and .lumtheme MIME types, and the icons (the brand SVGs install as scalable icons,
 # so the desktop renders them at any size).
 #
 #   (cd flutter_ui && flutter build linux --release)
@@ -36,6 +36,8 @@ cp "$root/assets/brand/lumit-project.svg" \
    "$prefix/share/icons/hicolor/scalable/mimetypes/application-x-lumit-project.svg"
 cp "$root/assets/brand/lumit-preset.svg" \
    "$prefix/share/icons/hicolor/scalable/mimetypes/application-x-lumit-preset.svg"
+cp "$root/assets/brand/lumit-theme.svg" \
+   "$prefix/share/icons/hicolor/scalable/mimetypes/application-x-lumit-theme.svg"
 
 command -v update-mime-database >/dev/null && update-mime-database "$prefix/share/mime" || true
 command -v update-desktop-database >/dev/null && update-desktop-database "$prefix/share/applications" || true

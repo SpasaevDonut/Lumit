@@ -10,8 +10,10 @@
 # freedesktop runtime does not ship.
 #
 # CI (release.yml, linux-bundle job) copies the staged bundle to
-# packaging/flatpak/bundle/ before running flatpak-builder; to build locally
-# on Linux, do the same with a bundle from the tar.gz.
+# packaging/flatpak/bundle/ before running flatpak-builder; to build locally on
+# Linux, do the same with a `flutter build linux --release` bundle, with the
+# FFmpeg .so files copied into its lib/ and the share/ files staged as the job
+# does. This .flatpak is the whole Linux release (K-304).
 id: io.github.luminalmvm.Lumit
 runtime: org.gnome.Platform
 runtime-version: '49'
@@ -50,7 +52,7 @@ modules:
         /app/share/mime/packages/io.github.luminalmvm.Lumit.xml
       - install -Dm644 io.github.luminalmvm.Lumit.metainfo.xml
         /app/share/metainfo/io.github.luminalmvm.Lumit.metainfo.xml
-      - rm -rf bundle/share bundle/INSTALL.txt
+      - rm -rf bundle/share
       - mkdir -p /app/lumit && cp -r bundle/* /app/lumit/
       - mkdir -p /app/bin && ln -s /app/lumit/lumit_flutter /app/bin/lumit_flutter
     sources:

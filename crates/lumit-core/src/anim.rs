@@ -9,7 +9,9 @@
 //! note's bracketed-Newton method: fast like Newton, and mathematically
 //! incapable of escaping the valid range like plain Newton can.
 
-use crate::time::Rational;
+use std::sync::Arc;
+
+use crate::{expression::ExpressionContext, time::Rational};
 use serde::{Deserialize, Serialize};
 
 /// Per-side interpolation of a keyframe (docs/03-DATA-MODEL.md §6.2).
@@ -336,6 +338,7 @@ pub enum Animation {
     Static(f64),
     /// Sorted by time, unique times (enforced by the editing ops).
     Keyframed(Vec<Keyframe>),
+    Expression(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -364,6 +367,17 @@ impl Property {
         match &self.animation {
             Animation::Static(v) => *v,
             Animation::Keyframed(keys) => evaluate(keys, t).unwrap_or(0.0),
+            Animation::Expression(expression) => crate::expression::evaluate(expression, None),
+        }
+    }
+
+    pub fn value_at_with_context(&self, t: f64, context: Arc<ExpressionContext>) -> f64 {
+        match &self.animation {
+            Animation::Static(v) => *v,
+            Animation::Keyframed(keys) => evaluate(keys, t).unwrap_or(0.0),
+            Animation::Expression(expression) => {
+                crate::expression::evaluate(expression, Some(context))
+            }
         }
     }
 

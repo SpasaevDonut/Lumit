@@ -1,0 +1,30 @@
+---
+title: Graph editor
+description: Curves rather than keyframes.
+sidebar:
+  order: 5
+---
+
+import Shot from "../../../components/Shot.astro";
+
+The graph editor shows a property as a curve. It edits the same data the timeline
+does - it is a view, not a copy.
+
+| Control | Does |
+| --- | --- |
+| **Value graph** | Value against time. |
+| **Speed graph** | Rate of change against time. |
+| **Lens switch** | Swap between the two. |
+| **Auto view** | Frame the selected curves. |
+
+On a retimed layer the Retime channel labels its value lens **Time** and its derivative
+lens **Velocity**, after After Effects and Vegas. Everywhere else the quantity is called
+**speed**.
+
+
+<Shot file="graph-editor.png" caption="The graph editor, showing the value graph." />
+
+## Related
+
+- [The graph editor, in use](/use/graph-editor/)
+- [Retiming and speed](/use/retime/)
