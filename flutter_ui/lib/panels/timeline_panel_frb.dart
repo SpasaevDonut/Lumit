@@ -851,6 +851,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
         if (cut > 0) _highlighted = path.substring(0, cut);
         _openRetimeInItsDefaultLens(path);
         _publishEffectSelection();
+        _publishPropertySelection();
       });
 
   /// The other direction: an effect picked in the Effect controls panel lights
@@ -889,6 +890,37 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
   /// has one idea of what is selected, and an effect heading is a row in it.
   /// Rows on more than one layer resolve to the first layer with an effect
   /// picked, because a `.lumfx` document is one layer's stack.
+  /// Tell the rest of the shell which property rows are picked (K-341), so the
+  /// Viewer can outline the layer they belong to and show the points of a mask
+  /// whose Path row is among them.
+  void _publishPropertySelection() {
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    ui.selectedProperties.value =
+        List<String>.unmodifiable(_selectedProperties);
+  }
+
+  /// The Viewer asking for a row to be picked — a mask path it has just
+  /// dragged, whose keyframe moved and whose row should therefore be the one
+  /// showing.
+  void _onSelectPropertyRequested() {
+    if (!mounted) return;
+    final path = _ui?.selectPropertyRequest.value;
+    if (path == null) return;
+    _ui!.selectPropertyRequest.value = null;
+    if (_selectedProperties.length == 1 && _selectedProperties.first == path) {
+      return;
+    }
+    setState(() {
+      _selectedProperties
+        ..clear()
+        ..add(path);
+      _graphKeySelection.clear();
+      final cut = path.indexOf('/');
+      if (cut > 0) _highlighted = path.substring(0, cut);
+    });
+    _publishPropertySelection();
+  }
+
   void _publishEffectSelection() {
     final ui = Provider.of<LumitUiState>(context, listen: false);
     String? layerId;
@@ -963,6 +995,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
       final cut = path.indexOf('/');
       if (cut > 0) _highlighted = path.substring(0, cut);
     });
+    _publishPropertySelection();
   }
 
   /// The graph editor replaces the layer area rather than sitting beside it:
@@ -1303,6 +1336,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     // be on screen (K-326). Ensure-open, not the reveal keys' toggle: showing
     // a row that is already showing must never hide it.
     _ui!.revealPropertyRequest.addListener(_onRevealRequested);
+    _ui!.selectPropertyRequest.addListener(_onSelectPropertyRequested);
     // Merged **once**, not per build: a fresh `Listenable` every rebuild makes
     // every cache bar under it unsubscribe and resubscribe, which during a zoom
     // flight is sixty times a second for nothing (K-293).
@@ -1742,6 +1776,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     _ui?.selectedLayer.removeListener(_onPrimaryChanged);
     _ui?.renderTimings.removeListener(_onTimingsChanged);
     _ui?.revealPropertyRequest.removeListener(_onRevealRequested);
+    _ui?.selectPropertyRequest.removeListener(_onSelectPropertyRequested);
     if (_ui?.deleteClaim == _deleteSelectedMasks) _ui!.deleteClaim = null;
     if (_ui?.copyClaim == _copySelectedKeys) _ui!.copyClaim = null;
     if (_ui?.pasteClaim == _pasteKeysIntoSelection) _ui!.pasteClaim = null;
@@ -2866,10 +2901,6 @@ class _FoldRow extends StatelessWidget {
   /// under the same header its layer's does (docs/13 §7.1).
   final ValueColumn timingsColumn;
 
-  /// Where a mask's mode picker goes, so the choice of how a mask combines
-  /// sits under the same header a layer's blend mode does (K-338).
-  final ValueColumn blendColumn;
-
   /// Where the identity group starts in the current order — the fold-out
   /// hangs off the layer's own twirl, so a group's twirl sits just inside it
   /// rather than at the row's far left.
@@ -2905,7 +2936,6 @@ class _FoldRow extends StatelessWidget {
     required this.row,
     required this.valueColumn,
     required this.timingsColumn,
-    required this.blendColumn,
     required this.baseIndent,
     required this.path,
     required this.selectedProperties,
@@ -3166,7 +3196,6 @@ class _FoldRow extends StatelessWidget {
           layer: layer,
           mask: mask,
           valueColumn: valueColumn,
-          blendColumn: blendColumn,
           onChanged: () {
             onEditProperty(path);
             onChanged();
@@ -3721,8 +3750,6 @@ class _MaskRow extends StatefulWidget {
   final BridgeMask mask;
   final ValueColumn valueColumn;
 
-  /// Where the mode picker goes, so it sits under the blend header (K-338).
-  final ValueColumn blendColumn;
   final VoidCallback onChanged;
   final VoidCallback? onLabelTap;
 
@@ -3733,7 +3760,6 @@ class _MaskRow extends StatefulWidget {
     required this.layer,
     required this.mask,
     required this.valueColumn,
-    required this.blendColumn,
     required this.onChanged,
     required this.comp,
     this.onLabelTap,
@@ -3787,47 +3813,48 @@ class _MaskRowState extends State<_MaskRow> with _InlineRename<_MaskRow> {
               onTap: widget.onLabelTap,
             ),
           ),
-          // The invert switch stays beside the name: it is a property of the
-          // shape rather than a value, and it has no column of its own.
-          LumitTooltip(
-            message: l10n.tipInvert,
-            child: HouseButton(
-              key: ValueKey<String>('tl-mask-invert-${mask.id}'),
-              small: true,
-              frameless: true,
-              onPressed: () => _write(inverted: !mask.inverted),
-              child: Text(
-                l10n.maskInvertMark,
-                style: t.small
-                    .copyWith(color: mask.inverted ? t.accent : t.textMuted),
-              ),
-            ),
-          ),
-          const SizedBox(width: 6),
-          // Nothing in the value column: the mask's own numbers each have a
-          // row of their own under it now (K-340), so the header keeps only
-          // what the mask *is* — its name, its invert switch and its mode.
-          SizedBox(width: valueColumn.width),
-          // How the mask combines with the ones above it — the same kind of
-          // choice a layer's blend mode is, so it sits under that same header,
-          // left-aligned in the cell as the blend picker is.
+          // **Both of the mask's own switches live in the value column**, where
+          // every other row's control sits, rather than floating beside the
+          // name: the invert mark and the mode picker are what the mask *is*,
+          // and a control that sits in no column reads as belonging to nothing.
           SizedBox(
-            width: widget.blendColumn.width,
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: LumitTooltip(
-                message: l10n.tipMaskMode,
-                child: BareDropdown<BridgeMaskMode>(
-                  key: ValueKey<String>('tl-mask-mode-${mask.id}'),
-                  value: mask.mode,
-                  options: BridgeMaskMode.values,
-                  label: maskModeLabel,
-                  onChanged: (m) => _write(mode: m),
+            width: valueColumn.width,
+            child: Row(
+              children: [
+                LumitTooltip(
+                  message: l10n.tipInvert,
+                  child: HouseButton(
+                    key: ValueKey<String>('tl-mask-invert-${mask.id}'),
+                    small: true,
+                    frameless: true,
+                    onPressed: () => _write(inverted: !mask.inverted),
+                    child: Text(
+                      l10n.maskInvertMark,
+                      style: t.small.copyWith(
+                          color: mask.inverted ? t.accent : t.textMuted),
+                    ),
+                  ),
                 ),
-              ),
+                const SizedBox(width: 6),
+                // The rest of the cell, so a long mode name ellipsises rather
+                // than pushing the row wider than its column — the same rule
+                // the blend picker follows.
+                Expanded(
+                  child: LumitTooltip(
+                    message: l10n.tipMaskMode,
+                    child: BareDropdown<BridgeMaskMode>(
+                      key: ValueKey<String>('tl-mask-mode-${mask.id}'),
+                      value: mask.mode,
+                      options: BridgeMaskMode.values,
+                      label: maskModeLabel,
+                      onChanged: (m) => _write(mode: m),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
-          SizedBox(width: widget.blendColumn.rightInset),
+          SizedBox(width: valueColumn.rightInset),
         ],
       ),
     );
@@ -5615,7 +5642,6 @@ class _Outline extends StatelessWidget {
                       row: row,
                       valueColumn: valueColumn,
                       timingsColumn: timingsColumnFor(groupOrder, widths),
-                      blendColumn: blendColumnFor(groupOrder, widths),
                       baseIndent: identityStart(groupOrder, widths),
                       path: foldRowPath(rows[i].id, row),
                       selectedProperties: selectedProperties,

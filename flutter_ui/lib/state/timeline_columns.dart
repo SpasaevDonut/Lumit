@@ -196,24 +196,6 @@ ValueColumn timingsColumnFor(
       rightInsetOf(order, widths, TimelineGroup.timings));
 }
 
-/// Where a fold-out row puts a picker that belongs under the **blend** cell,
-/// whatever order the groups have been dragged into — a mask's mode, which is
-/// the same kind of choice a layer's blend mode is and so reads as belonging
-/// in the same column (K-338).
-///
-/// The compose group holds three cells, so the inset is everything right of
-/// the blend one: the gap, the parent cell, and then every group after
-/// compose.
-ValueColumn blendColumnFor(
-    List<TimelineGroup> order, Map<TimelineGroup, double> widths) {
-  final (_, blend, parent) =
-      composeCellWidths(widths[TimelineGroup.compose] ?? composeGroupWidth);
-  return ValueColumn(
-    blend,
-    cellGap + parent + rightInsetOf(order, widths, TimelineGroup.compose),
-  );
-}
-
 /// Where the identity group (and so the layer's own twirl) starts, in the
 /// current order — the fold-out rows hang their indent off this, so a
 /// property's twirl sits just inside its layer's (docs/07 §4.3).

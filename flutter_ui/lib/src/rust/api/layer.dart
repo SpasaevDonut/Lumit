@@ -1493,6 +1493,20 @@ class LayerReference {
   void loadPreset({required String text}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceLoadPreset(that: this, text: text);
 
+  /// Drag one of the shape's keys along the timeline (K-340) — the lane
+  /// diamond, which moves a path key exactly as it moves a scalar's.
+  ///
+  /// Refused, with `false`, when the move would land on or step over a
+  /// neighbour: keys are sorted with unique times and the evaluator walks
+  /// them assuming so, and a drag that would break the order simply leaves
+  /// the key where it was rather than reordering under the pointer.
+  bool moveMaskPathKey(
+          {required UuidValue id,
+          required BridgeRational from,
+          required BridgeRational to}) =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceMoveMaskPathKey(
+          that: this, id: id, from: from, to: to);
+
   /// Append copied effects to this layer's stack, **timed to the playhead**
   /// (K-275): whatever the earliest keyframe among them was, it lands at
   /// `at_frame` and the rest keep their spacing.

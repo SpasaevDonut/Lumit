@@ -558,13 +558,30 @@ class LumitUiState extends ChangeNotifier {
   void requestRevealProperty(UuidValue layer, String action) =>
       revealPropertyRequest.value = (layer, action);
 
+  /// **Which property rows the Timeline has picked**, as their paths, published
+  /// so the Viewer can answer the same question (K-341).
+  ///
+  /// A property belongs to a layer, so picking one is saying which layer is
+  /// being worked on — and the Viewer should outline that layer and its masks
+  /// exactly as it does for a layer picked on its own row. It also tells the
+  /// Viewer which mask's shape is being edited: with a mask's **Path** row
+  /// picked, that mask is the one whose points are offered for dragging.
+  final ValueNotifier<List<String>> selectedProperties =
+      ValueNotifier(const []);
+
+  /// The other direction: something outside the Timeline asking it to pick a
+  /// property row. Set by the Viewer when a mask path with keyframes is
+  /// dragged, so the row whose key just moved is the row on screen.
+  final ValueNotifier<String?> selectPropertyRequest = ValueNotifier(null);
+
+  void requestSelectProperty(String path) => selectPropertyRequest.value = path;
+
   /// The Project panel's picked item — its selection anchor, published by the
   /// panel on every click (K-327). The full selection stays the panel's own;
   /// this is the one item the FX console acts on, so a Ctrl+Space over the
   /// Project panel offers "add this to the comp" rather than the new-layer
   /// ring it used to fall through to. Null with nothing picked there.
-  final ValueNotifier<ItemReference?> selectedProjectItem =
-      ValueNotifier(null);
+  final ValueNotifier<ItemReference?> selectedProjectItem = ValueNotifier(null);
 
   /// Bumped each time a rendered frame reaches the Viewer, on any of the three
   /// transports. Watched by anything that redraws when the picture does — the

@@ -81,8 +81,8 @@ void main() {
       expect(p.comp.getLayers().length, 1);
       final span = layer.getSpan();
 
-      final bar = find.byKey(ValueKey<String>(
-          'tl-bar-body-${layer.internallayerId}'));
+      final bar =
+          find.byKey(ValueKey<String>('tl-bar-body-${layer.internallayerId}'));
       expect(bar, findsOneWidget);
       final box = tester.getRect(bar);
       // A third of the way along the bar, well inside it.
@@ -139,9 +139,12 @@ void main() {
           reason: 'the halves meet at the cut');
       // The playhead is where they meet: this cut is at the playhead, not
       // wherever a pointer happened to be.
-      expect(outs.first,
-          closeTo(p.comp.timeOfFrame(frame: 12).num /
-              p.comp.timeOfFrame(frame: 12).den, 1e-9));
+      expect(
+          outs.first,
+          closeTo(
+              p.comp.timeOfFrame(frame: 12).num /
+                  p.comp.timeOfFrame(frame: 12).den,
+              1e-9));
     });
 
     /// A cut with nothing selected, or one the engine refuses, is silence.
@@ -237,8 +240,8 @@ void main() {
       p.uiState.model.refresh();
       await mount(tester, p);
 
-      final bar = find.byKey(ValueKey<String>(
-          'tl-bar-body-${layer.internallayerId}'));
+      final bar =
+          find.byKey(ValueKey<String>('tl-bar-body-${layer.internallayerId}'));
       final box = tester.getRect(bar);
       await tester.tapAt(Offset(box.left + box.width / 3, box.center.dy));
       await tester.pumpAndSettle();
@@ -249,15 +252,16 @@ void main() {
           reason: 'a razor cut is one undo step (docs/07 §4.7)');
     });
 
-    testWidgets('with the Selection tool a click on a bar selects rather than'
+    testWidgets(
+        'with the Selection tool a click on a bar selects rather than'
         ' cutting', (tester) async {
       final p = withComp();
       final layer = p.comp.addSolidLayer();
       p.uiState.model.refresh();
       await mount(tester, p);
 
-      final bar = find.byKey(ValueKey<String>(
-          'tl-bar-body-${layer.internallayerId}'));
+      final bar =
+          find.byKey(ValueKey<String>('tl-bar-body-${layer.internallayerId}'));
       await tester.tap(bar);
       await tester.pumpAndSettle();
 
@@ -315,7 +319,8 @@ void main() {
       }
     });
 
-    testWidgets('cutting a retimed layer puts a keyframe at the cut, on both'
+    testWidgets(
+        'cutting a retimed layer puts a keyframe at the cut, on both'
         ' halves', (tester) async {
       final p = withComp();
       final layer = p.comp.addSolidLayer();
@@ -390,8 +395,8 @@ void main() {
 
       expect(find.text('Masks'), findsOneWidget);
       // And it opens onto the mask itself.
-      await tester.tap(find.byKey(ValueKey<String>(
-          'tl-group-${layer.internallayerId}/masks')));
+      await tester.tap(find
+          .byKey(ValueKey<String>('tl-group-${layer.internallayerId}/masks')));
       await tester.pumpAndSettle();
       expect(find.text('Ellipse'), findsOneWidget);
 
@@ -404,8 +409,8 @@ void main() {
     });
 
     /// Give [layer] a mask, mount, and open the twirls that show its row.
-    Future<void> openMaskRow(
-        WidgetTester tester, dynamic p, LayerReference layer, String name) async {
+    Future<void> openMaskRow(WidgetTester tester, dynamic p,
+        LayerReference layer, String name) async {
       layer.addMask(
         mask: BridgeMask(
           id: UuidValue.fromString(const Uuid().v4()),
@@ -486,8 +491,7 @@ void main() {
 
       expect(stillValue(layer.getMasks().single.opacity), 100,
           reason: 'a drag in flight writes nothing');
-      expect(
-          find.descendant(of: field, matching: find.textContaining('100%')),
+      expect(find.descendant(of: field, matching: find.textContaining('100%')),
           findsNothing,
           reason: 'the row shows the value being dragged, not the stored one');
       expect(tester.takeException(), isNull,
@@ -617,7 +621,6 @@ void main() {
           reason: 'ONE undo returns the expansion it had before the drag');
     });
 
-
     /// **Every mask value keyframes, with the same stopwatch as everything
     /// else** (K-340). The branch that added mask animation exposed none of it
     /// to the frontend: there was no Path row at all, and no mask property
@@ -682,6 +685,62 @@ void main() {
       await tester.pumpAndSettle();
       expect(layer.getMasks().single.pathKeyTimes, isEmpty);
       expect(layer.getMasks().single.vertices, hasLength(before));
+    });
+
+    /// **A mask's rows select like every other property row** (K-341), and a
+    /// keyed one puts its diamonds on the lane. Both were missing: a mask value
+    /// row could not be picked at all, so its curve never reached the graph,
+    /// and a key planted on one left the lane empty.
+    testWidgets('mask rows select and show their keys on the lane',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await openMaskRow(tester, p, layer, 'Ellipse');
+      final id = layer.getMasks().single.id;
+
+      // Every one of the four rows picks itself when its name is clicked —
+      // the same as a transform or an effect parameter row.
+      final masks = masksPath(layer.internallayerId.toString());
+      for (final value in MaskValue.values) {
+        await tester.tap(find.text(maskValueLabel(value)));
+        await tester.pump();
+        expect(p.uiState.selectedProperties.value, ['$masks/$id/${value.name}'],
+            reason: '${value.name} did not select when its row was clicked');
+      }
+
+      // And a key planted on one appears on its lane.
+      expect(
+          find.byKey(ValueKey<String>('tl-keys-${masksPath(
+            layer.internallayerId.toString(),
+          )}/$id/opacity')),
+          findsNothing);
+      await tester.tap(
+          find.byKey(ValueKey<String>('kf-stopwatch-tl-mask-opacity-$id')));
+      await tester.pumpAndSettle();
+      expect(
+          find.byKey(ValueKey<String>('tl-keys-${masksPath(
+            layer.internallayerId.toString(),
+          )}/$id/opacity')),
+          findsOneWidget,
+          reason:
+              'the key planted by the stopwatch has no diamond on the lane');
+    });
+
+    /// **Picking a property row says which layer it belongs to** (K-341), so
+    /// the Viewer can outline that layer and its masks. Before this the
+    /// selection stayed inside the Timeline and the picture showed nothing.
+    testWidgets('picking a mask row publishes it to the shell', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await openMaskRow(tester, p, layer, 'Ellipse');
+
+      // Opening the fold already picked the Masks heading (K-300), so what
+      // matters is that the pick *moves* to the mask when its row is clicked.
+      await tester.tap(find.text('Ellipse'));
+      await tester.pump();
+      expect(p.uiState.selectedProperties.value, hasLength(1));
+      expect(p.uiState.selectedProperties.value.single,
+          '${masksPath(layer.internallayerId.toString())}/${layer.getMasks().single.id}');
     });
 
     /// **A mask row is a property row (K-234).** It joins the same selection
@@ -858,8 +917,7 @@ void main() {
           tester.getCenter(find.byKey(ValueKey<String>('tl-mask-name-$id'))),
           buttons: kSecondaryButton);
       await tester.pumpAndSettle();
-      await tester
-          .tap(find.byKey(ValueKey<String>('tl-mask-rename-menu-$id')));
+      await tester.tap(find.byKey(ValueKey<String>('tl-mask-rename-menu-$id')));
       await tester.pumpAndSettle();
 
       final editor = find.byKey(ValueKey<String>('tl-mask-rename-$id'));
@@ -907,15 +965,15 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Paint'), findsOneWidget);
-      await tester.tap(find.byKey(
-          ValueKey<String>('tl-group-${layer.internallayerId}/paint')));
+      await tester.tap(find
+          .byKey(ValueKey<String>('tl-group-${layer.internallayerId}/paint')));
       await tester.pumpAndSettle();
       expect(find.text('Brush 1'), findsOneWidget);
 
       // And the row's opacity writes through to the document.
       final stroke = layer.getPaint().single;
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-stroke-opacity-${stroke.id}')));
+      await tester
+          .tap(find.byKey(ValueKey<String>('tl-stroke-opacity-${stroke.id}')));
       await tester.pumpAndSettle();
       await tester.enterText(
           find.byKey(ValueKey<String>('tl-stroke-opacity-${stroke.id}')), '40');
@@ -983,7 +1041,8 @@ void main() {
     /// moving until the button came up — the wrong half of the bargain. The
     /// tick previews and the release commits, so the row reads the value under
     /// the pointer while the document still holds the old one.
-    testWidgets('a stroke opacity drag shows before it commits', (tester) async {
+    testWidgets('a stroke opacity drag shows before it commits',
+        (tester) async {
       final p = withComp();
       final layer = p.comp.addSolidLayer();
       layer.addStroke(
@@ -1025,8 +1084,7 @@ void main() {
       // the engine to draw it — but nothing has been written.
       expect(layer.getPaint().single.opacity, 100,
           reason: 'a drag in flight writes nothing');
-      expect(
-          find.descendant(of: field, matching: find.textContaining('100%')),
+      expect(find.descendant(of: field, matching: find.textContaining('100%')),
           findsNothing,
           reason: 'the row shows the value being dragged, not the stored one');
       expect(tester.takeException(), isNull,
@@ -1080,8 +1138,8 @@ void main() {
 
       // The row's opacity writes through to the document.
       final item = layer.getShapeContents().single;
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-shape-opacity-${item.id}')));
+      await tester
+          .tap(find.byKey(ValueKey<String>('tl-shape-opacity-${item.id}')));
       await tester.pumpAndSettle();
       await tester.enterText(
           find.byKey(ValueKey<String>('tl-shape-opacity-${item.id}')), '30');
@@ -1824,8 +1882,8 @@ void main() {
       // (docs/07 §4.5) — the way out when the wanted place is exactly where a
       // snap will not allow.
       await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
-      addTearDown(() async =>
-          tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft));
+      addTearDown(
+          () async => tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft));
       await tester.drag(handle, Offset(perFrame * 10, 0));
       await tester.pumpAndSettle();
       expect(p.comp.frameAtTime(time: keys().first.time), 610,
@@ -2056,8 +2114,8 @@ void main() {
       expect(fillOver('Opacity'), isNull, reason: 'nothing picked to start');
 
       // The stopwatch, not the label.
-      await tester.tap(find.byKey(const ValueKey<String>(
-          'kf-stopwatch-tl-tf-opacity')));
+      await tester.tap(
+          find.byKey(const ValueKey<String>('kf-stopwatch-tl-tf-opacity')));
       await tester.pump();
       expect(fillOver('Opacity'), t.selectionFill,
           reason: 'pressing the stopwatch chose the row');
@@ -2097,6 +2155,7 @@ void main() {
         return (tester.widget<Container>(box.first).decoration as BoxDecoration)
             .color;
       }
+
       expect(fillOver('Radius'), t.selectionFill, reason: 'picked to start');
 
       // Now the Viewer's path: the shell's selection changes under the panel.
@@ -2391,10 +2450,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
       expect(
           p.uiState.selectedLayerIds,
-          containsAll(<UuidValue>[
-            upper.internallayerId,
-            lower.internallayerId
-          ]));
+          containsAll(
+              <UuidValue>[upper.internallayerId, lower.internallayerId]));
 
       // And out again: the same click on a chosen layer un-chooses it.
       await tester.tap(
@@ -2414,8 +2471,8 @@ void main() {
       final top = p.comp.addSolidLayer();
       await mount(tester, p);
 
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-name-${top.internallayerId}')));
+      await tester
+          .tap(find.byKey(ValueKey<String>('tl-name-${top.internallayerId}')));
       await tester.pump(const Duration(milliseconds: 400));
 
       await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
@@ -2456,13 +2513,13 @@ void main() {
       expect(find.byKey(ValueKey<String>('tl-lanes-${lower.internallayerId}')),
           findsOneWidget,
           reason: 'the fold opened');
-      expect(p.uiState.selectedLayer.value?.internallayerId,
-          upper.internallayerId,
+      expect(
+          p.uiState.selectedLayer.value?.internallayerId, upper.internallayerId,
           reason: 'and the selection stayed where it was');
 
       // Nor does hiding a layer choose it: the switch groups are controls.
-      await tester.tap(find
-          .byKey(ValueKey<String>('tl-visible-${lower.internallayerId}')));
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-visible-${lower.internallayerId}')));
       await tester.pump();
       expect(p.uiState.selectedLayer.value?.internallayerId,
           upper.internallayerId);
@@ -2599,11 +2656,13 @@ void main() {
       await mount(tester, p);
 
       double barWidth() => tester
-          .getRect(find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}')))
+          .getRect(
+              find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}')))
           .width;
       final before = barWidth();
 
-      final track = tester.getRect(find.byKey(const ValueKey('tl-zoom-slider')));
+      final track =
+          tester.getRect(find.byKey(const ValueKey('tl-zoom-slider')));
       final gesture =
           await tester.startGesture(Offset(track.left + 2, track.center.dy));
       await tester.pump();
@@ -2742,8 +2801,8 @@ void main() {
     /// has been dragged (docs/13 §7.1) — so a fold row measures its own inset
     /// rather than assuming the column is last.
     test('timingsColumnFor follows the render-time column', () {
-      expect(timingsColumnFor(defaultGroupOrder, defaultGroupWidths).rightInset,
-          0,
+      expect(
+          timingsColumnFor(defaultGroupOrder, defaultGroupWidths).rightInset, 0,
           reason: 'shipped last, nothing sits to its right');
       expect(timingsColumnFor(defaultGroupOrder, defaultGroupWidths).width,
           timingsGroupWidth);
@@ -2751,8 +2810,7 @@ void main() {
           defaultGroupOrder, TimelineGroup.timings, TimelineGroup.switches);
       expect(
         timingsColumnFor(timingsFirst, defaultGroupWidths).rightInset,
-        rightInsetOf(
-            timingsFirst, defaultGroupWidths, TimelineGroup.timings),
+        rightInsetOf(timingsFirst, defaultGroupWidths, TimelineGroup.timings),
         reason: 'dragged to the front, the inset is everything after it',
       );
       expect(timingsColumnFor(timingsFirst, defaultGroupWidths).rightInset,
@@ -3064,10 +3122,11 @@ void main() {
       expect(ghost, findsOneWidget);
       final fill =
           find.byKey(ValueKey<String>('tl-bar-fill-${layer.internallayerId}'));
-      expect(tester.getRect(ghost).right,
-          greaterThan(tester.getRect(fill).right),
+      expect(
+          tester.getRect(ghost).right, greaterThan(tester.getRect(fill).right),
           reason: 'it reaches past the trimmed end');
-      expect(tester.getRect(ghost).left, closeTo(tester.getRect(fill).left, 0.5),
+      expect(
+          tester.getRect(ghost).left, closeTo(tester.getRect(fill).left, 0.5),
           reason: 'and not past the end that is still at the source start');
 
       // Retime on: the source has no reach worth drawing any more.
@@ -3264,8 +3323,8 @@ void main() {
           find.byKey(ValueKey<String>('tl-row-${middle.internallayerId}'));
       // The upper half of the row: a drop there goes above it, and the centre
       // is the midpoint the rule flips on.
-      final target = tester.getTopLeft(row) +
-          Offset(tester.getSize(row).width / 2, 5);
+      final target =
+          tester.getTopLeft(row) + Offset(tester.getSize(row).width / 2, 5);
       final from = tester.getCenter(
           find.byKey(ValueKey<String>('project-row-${footage.internalid}')));
 
@@ -3279,9 +3338,14 @@ void main() {
       await gesture.up();
       await tester.pumpAndSettle();
 
-      expect([for (final l in p.comp.getLayers()) l.getName()],
-          ['Top', 'shot.mov', 'Middle', 'Bottom'],
-          reason: 'it went in above the row it was dropped on');
+      expect([
+        for (final l in p.comp.getLayers()) l.getName()
+      ], [
+        'Top',
+        'shot.mov',
+        'Middle',
+        'Bottom'
+      ], reason: 'it went in above the row it was dropped on');
     });
 
     /// Comps nest by the same gesture: drag one from the Project panel onto
@@ -3640,8 +3704,7 @@ void main() {
       expect(barBefore.top, closeTo(rowBefore.top, 0.5));
 
       // Lift the top layer's name and hold it over the bottom row — no drop.
-      final from =
-          find.byKey(ValueKey<String>('tl-name-$top'));
+      final from = find.byKey(ValueKey<String>('tl-name-$top'));
       final onto = find.byKey(ValueKey<String>('tl-row-$bottom'));
       final start = tester.getCenter(from);
       final end = tester.getCenter(onto);
@@ -3722,27 +3785,27 @@ void main() {
       // be open before there is a row to right-click.
       final effects = find.byKey(ValueKey<String>('tl-group-$id/effects'));
       final effectsRect = tester.getRect(effects);
-      await tester.tapAt(
-          Offset(effectsRect.left + 6, effectsRect.center.dy));
+      await tester.tapAt(Offset(effectsRect.left + 6, effectsRect.center.dy));
       await tester.pump();
       await settleFrb(tester, minRounds: 4);
 
       final effect = layer.getEffects().single;
-      final heading = find.byKey(
-          ValueKey<String>('tl-group-$id/effects/${effect.id()}'));
+      final heading =
+          find.byKey(ValueKey<String>('tl-group-$id/effects/${effect.id()}'));
       expect(heading, findsOneWidget, reason: 'the effect has a heading row');
 
       expect(p.uiState.clipboard.kind, isNull);
       await tester.tapAt(tester.getCenter(heading), buttons: kSecondaryButton);
       await tester.pumpAndSettle();
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-fx-menu-copy-${effect.id()}')));
+      await tester
+          .tap(find.byKey(ValueKey<String>('tl-fx-menu-copy-${effect.id()}')));
       await tester.pumpAndSettle();
       expect(p.uiState.clipboard.kind, ClipboardKind.effects);
 
       // A grouping offers no menu: right-clicking Transform must not open one.
       await tester.tapAt(
-        tester.getCenter(find.byKey(ValueKey<String>('tl-group-$id/transform'))),
+        tester
+            .getCenter(find.byKey(ValueKey<String>('tl-group-$id/transform'))),
         buttons: kSecondaryButton,
       );
       await tester.pumpAndSettle();
@@ -3768,15 +3831,15 @@ void main() {
       await tester.pump();
       await settleFrb(tester, minRounds: 4);
       final effects = find.byKey(ValueKey<String>('tl-group-$id/effects'));
-      await tester.tapAt(
-          Offset(tester.getRect(effects).left + 6, tester.getCenter(effects).dy));
+      await tester.tapAt(Offset(
+          tester.getRect(effects).left + 6, tester.getCenter(effects).dy));
       await tester.pump();
       await settleFrb(tester, minRounds: 4);
 
       final effect = layer.getEffects().single;
       expect(p.uiState.selectedEffects.value, isEmpty);
-      await tester.tap(find
-          .byKey(ValueKey<String>('tl-group-$id/effects/${effect.id()}')));
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-group-$id/effects/${effect.id()}')));
       await tester.pump();
       await settleFrb(tester, minRounds: 4);
       expect(p.uiState.selectedEffects.value, [effect.id()],
@@ -3816,7 +3879,8 @@ void main() {
       await settleFrb(tester, minRounds: 4);
 
       final position = find.byType(TransformRowFrb);
-      expect(position, findsWidgets, reason: 'the transform rows are on screen');
+      expect(position, findsWidgets,
+          reason: 'the transform rows are on screen');
       expect(
         find.ancestor(of: position.first, matching: find.byType(AbsorbPointer)),
         findsNothing,
@@ -3907,8 +3971,8 @@ void main() {
       await tester.pump();
 
       // No Enter: click another row, the way a person would.
-      await tester.tap(find
-          .byKey(ValueKey<String>('tl-name-${other.internallayerId}')));
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-name-${other.internallayerId}')));
       await tester.pump(kDoubleTapTimeout);
 
       expect(layer.getInfo().name, 'Backplate',
@@ -4289,8 +4353,7 @@ void main() {
       await tester.pump();
       expect(find.text('Volume'), findsOneWidget,
           reason: 'L opens the Audio group');
-      expect(
-          find.byKey(ValueKey<String>('tl-wave-${layer.internallayerId}')),
+      expect(find.byKey(ValueKey<String>('tl-wave-${layer.internallayerId}')),
           findsNothing,
           reason: 'the lane waits for the second tap');
 
