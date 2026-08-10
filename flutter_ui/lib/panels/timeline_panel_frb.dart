@@ -2866,6 +2866,10 @@ class _FoldRow extends StatelessWidget {
   /// under the same header its layer's does (docs/13 §7.1).
   final ValueColumn timingsColumn;
 
+  /// Where a mask's mode picker goes, so the choice of how a mask combines
+  /// sits under the same header a layer's blend mode does (K-338).
+  final ValueColumn blendColumn;
+
   /// Where the identity group starts in the current order — the fold-out
   /// hangs off the layer's own twirl, so a group's twirl sits just inside it
   /// rather than at the row's far left.
@@ -2901,6 +2905,7 @@ class _FoldRow extends StatelessWidget {
     required this.row,
     required this.valueColumn,
     required this.timingsColumn,
+    required this.blendColumn,
     required this.baseIndent,
     required this.path,
     required this.selectedProperties,
@@ -3161,6 +3166,7 @@ class _FoldRow extends StatelessWidget {
           layer: layer,
           mask: mask,
           valueColumn: valueColumn,
+          blendColumn: blendColumn,
           onChanged: () {
             onEditProperty(path);
             onChanged();
@@ -3689,8 +3695,7 @@ mixin _InlineRename<T extends StatefulWidget> on State<T> {
           startRename();
         }
       },
-      child:
-          Text(renameCurrent, style: style, overflow: TextOverflow.ellipsis),
+      child: Text(renameCurrent, style: style, overflow: TextOverflow.ellipsis),
     );
   }
 }
@@ -3710,6 +3715,9 @@ class _MaskRow extends StatefulWidget {
   final LayerReference layer;
   final BridgeMask mask;
   final ValueColumn valueColumn;
+
+  /// Where the mode picker goes, so it sits under the blend header (K-338).
+  final ValueColumn blendColumn;
   final VoidCallback onChanged;
   final VoidCallback? onLabelTap;
 
@@ -3720,6 +3728,7 @@ class _MaskRow extends StatefulWidget {
     required this.layer,
     required this.mask,
     required this.valueColumn,
+    required this.blendColumn,
     required this.onChanged,
     required this.comp,
     this.onLabelTap,
@@ -3780,10 +3789,7 @@ class _MaskRowState extends State<_MaskRow> with _InlineRename<_MaskRow> {
   /// Write the mask back with one field changed. The engine takes the whole
   /// mask, so this is the only shape an edit has.
   void _write(
-      {String? name,
-      bool? inverted,
-      double? opacity,
-      BridgeMaskMode? mode}) {
+      {String? name, bool? inverted, double? opacity, BridgeMaskMode? mode}) {
     try {
       widget.layer.setMask(
         mask: maskWith(widget.mask,
@@ -3824,66 +3830,78 @@ class _MaskRowState extends State<_MaskRow> with _InlineRename<_MaskRow> {
               onTap: widget.onLabelTap,
             ),
           ),
-          // How the mask combines with the ones above it, beside the name
-          // rather than in the value column: the column already carries the
-          // invert switch and the opacity, and the mode reads as part of what
-          // the mask *is*.
-          BareDropdown<BridgeMaskMode>(
-            key: ValueKey<String>('tl-mask-mode-${mask.id}'),
-            value: mask.mode,
-            options: BridgeMaskMode.values,
-            label: maskModeLabel,
-            onChanged: (m) => _write(mode: m),
-          ),
-          const SizedBox(width: 6),
-          SizedBox(
-            width: valueColumn.width,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                LumitTooltip(
-                  message: l10n.tipInvert,
-                  child: HouseButton(
-                    key: ValueKey<String>('tl-mask-invert-${mask.id}'),
-                    small: true,
-                    frameless: true,
-                    onPressed: () => _write(inverted: !mask.inverted),
-                    child: Text(
-                      l10n.maskInvertMark,
-                      style: t.small.copyWith(
-                          color: mask.inverted ? t.accent : t.textMuted),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                SizedBox(
-                  width: 56,
-                  // Staged like every other dragged value here: the drag shows
-                  // live and commits once on release, so it is one op and one
-                  // undo step.
-                  child: DragValueField(
-                    key: ValueKey<String>('tl-mask-opacity-${mask.id}'),
-                    value: _staged ?? mask.opacity,
-                    min: 0,
-                    max: 100,
-                    suffix: '%',
-                    onChanged: _commitOpacity,
-                    onChangeLive: (v) {
-                      setState(() => _staged = v.toDouble());
-                      _preview(v.toDouble());
-                    },
-                    onChangeEnd: _commitOpacity,
-                    onDragCancel: () {
-                      setState(() => _staged = null);
-                      // The picture is showing a value nobody committed; put
-                      // the document's own back on screen.
-                      _preview(widget.mask.opacity);
-                    },
-                  ),
-                ),
-              ],
+          // The invert switch stays beside the name: it is a property of the
+          // shape rather than a value, and it has no column of its own.
+          LumitTooltip(
+            message: l10n.tipInvert,
+            child: HouseButton(
+              key: ValueKey<String>('tl-mask-invert-${mask.id}'),
+              small: true,
+              frameless: true,
+              onPressed: () => _write(inverted: !mask.inverted),
+              child: Text(
+                l10n.maskInvertMark,
+                style: t.small
+                    .copyWith(color: mask.inverted ? t.accent : t.textMuted),
+              ),
             ),
           ),
+          const SizedBox(width: 6),
+          // Opacity sits where an effect parameter's value sits — left of the
+          // value column, not hard against its right edge — so the numbers
+          // down a twirled-open layer form one column whatever kind of row
+          // they belong to.
+          SizedBox(
+            width: valueColumn.width,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: SizedBox(
+                width: 56,
+                // Staged like every other dragged value here: the drag shows
+                // live and commits once on release, so it is one op and one
+                // undo step.
+                child: DragValueField(
+                  key: ValueKey<String>('tl-mask-opacity-${mask.id}'),
+                  value: _staged ?? mask.opacity,
+                  min: 0,
+                  max: 100,
+                  suffix: '%',
+                  onChanged: _commitOpacity,
+                  onChangeLive: (v) {
+                    setState(() => _staged = v.toDouble());
+                    _preview(v.toDouble());
+                  },
+                  onChangeEnd: _commitOpacity,
+                  onDragCancel: () {
+                    setState(() => _staged = null);
+                    // The picture is showing a value nobody committed; put
+                    // the document's own back on screen.
+                    _preview(widget.mask.opacity);
+                  },
+                ),
+              ),
+            ),
+          ),
+          // How the mask combines with the ones above it — the same kind of
+          // choice a layer's blend mode is, so it sits under that same header,
+          // left-aligned in the cell as the blend picker is.
+          SizedBox(
+            width: widget.blendColumn.width,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: LumitTooltip(
+                message: l10n.tipMaskMode,
+                child: BareDropdown<BridgeMaskMode>(
+                  key: ValueKey<String>('tl-mask-mode-${mask.id}'),
+                  value: mask.mode,
+                  options: BridgeMaskMode.values,
+                  label: maskModeLabel,
+                  onChanged: (m) => _write(mode: m),
+                ),
+              ),
+            ),
+          ),
+          SizedBox(width: widget.blendColumn.rightInset),
         ],
       ),
     );
@@ -3966,9 +3984,8 @@ class _MaskValueRowState extends State<_MaskValueRow> {
   double get _stored =>
       _isFeather ? widget.mask.feather : widget.mask.expansion;
 
-  BridgeMask _patched(BridgeMask m, double v) => _isFeather
-      ? maskWith(m, feather: v)
-      : maskWith(m, expansion: v);
+  BridgeMask _patched(BridgeMask m, double v) =>
+      _isFeather ? maskWith(m, feather: v) : maskWith(m, expansion: v);
 
   @override
   void dispose() {
@@ -4015,39 +4032,40 @@ class _MaskValueRowState extends State<_MaskValueRow> {
           child: Text(_isFeather ? l10n.maskFeather : l10n.maskExpansion,
               style: t.body, overflow: TextOverflow.ellipsis),
         ),
+        // Left of the value column, exactly where an effect parameter's field
+        // sits, so every number down an open layer forms one column.
         SizedBox(
           width: widget.valueColumn.width,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              SizedBox(
-                width: 72,
-                child: DragValueField(
-                  key: ValueKey<String>(
-                      'tl-mask-${widget.value.name}-${widget.mask.id}'),
-                  value: _staged ?? _stored,
-                  // Feather is a width, so it has no negative side; expansion
-                  // grows one way and shrinks the other.
-                  min: _isFeather ? 0 : -1000,
-                  max: 1000,
-                  decimals: 1,
-                  suffix: ' px',
-                  onChanged: _commit,
-                  onChangeLive: (v) {
-                    setState(() => _staged = v.toDouble());
-                    _preview(v.toDouble());
-                  },
-                  onChangeEnd: _commit,
-                  onDragCancel: () {
-                    setState(() => _staged = null);
-                    // Put the document's own value back on screen.
-                    _preview(_stored);
-                  },
-                ),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: SizedBox(
+              width: 72,
+              child: DragValueField(
+                key: ValueKey<String>(
+                    'tl-mask-${widget.value.name}-${widget.mask.id}'),
+                value: _staged ?? _stored,
+                // Feather is a width, so it has no negative side; expansion
+                // grows one way and shrinks the other.
+                min: _isFeather ? 0 : -1000,
+                max: 1000,
+                decimals: 1,
+                suffix: ' px',
+                onChanged: _commit,
+                onChangeLive: (v) {
+                  setState(() => _staged = v.toDouble());
+                  _preview(v.toDouble());
+                },
+                onChangeEnd: _commit,
+                onDragCancel: () {
+                  setState(() => _staged = null);
+                  // Put the document's own value back on screen.
+                  _preview(_stored);
+                },
               ),
-            ],
+            ),
           ),
         ),
+        SizedBox(width: widget.valueColumn.rightInset),
       ],
     );
   }
@@ -5583,6 +5601,7 @@ class _Outline extends StatelessWidget {
                       row: row,
                       valueColumn: valueColumn,
                       timingsColumn: timingsColumnFor(groupOrder, widths),
+                      blendColumn: blendColumnFor(groupOrder, widths),
                       baseIndent: identityStart(groupOrder, widths),
                       path: foldRowPath(rows[i].id, row),
                       selectedProperties: selectedProperties,

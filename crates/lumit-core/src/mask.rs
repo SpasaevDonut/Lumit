@@ -110,6 +110,19 @@ pub struct Mask {
 }
 
 impl Mask {
+    /// Whether this mask has any say in what the layer looks like.
+    ///
+    /// Two switches turn a mask off, and both mean the same thing to the
+    /// person using them: mode `None`, and opacity zero. Neither is "combine
+    /// nothing into the stack" — a mask that is off is a mask that is not
+    /// there, so a layer carrying only switched-off masks is a layer with no
+    /// masks at all, whole and visible. Exactly zero, not merely rounding to
+    /// zero: 0.1 % is a mask the author can still see the edge of.
+    #[must_use]
+    pub fn does_something(&self) -> bool {
+        self.mode != MaskMode::None && self.opacity > 0.0
+    }
+
     pub fn rectangle(x: f64, y: f64, w: f64, h: f64) -> Self {
         let corner = |px: f64, py: f64| Vertex {
             pos: (px, py),
@@ -675,13 +688,17 @@ pub fn combined_coverage(
 ) -> Vec<u8> {
     let sx = f64::from(w) / natural_w.max(1.0);
     let sy = f64::from(h) / natural_h.max(1.0);
-    let base: u16 = match masks.iter().map(|m| m.mode).find(|m| *m != MaskMode::None) {
-        Some(MaskMode::Add) | None => 0,
+    let base: u16 = match masks.iter().find(|m| m.does_something()).map(|m| m.mode) {
+        Some(MaskMode::Add) => 0,
+        // Including `None`: no mask does anything, so nothing is masked and the
+        // layer is whole. Starting at zero here would hide a layer because it
+        // carries one switched-off mask, which reads as the mask doing the
+        // exact opposite of nothing.
         _ => 255,
     };
     let mut total = vec![base; (w * h) as usize];
     for mask in masks {
-        if mask.mode == MaskMode::None {
+        if !mask.does_something() {
             continue;
         }
         let cov = mask_coverage(mask, w, h, sx, sy, t);
@@ -818,6 +835,42 @@ mod tests {
             0.0,
         );
         assert_eq!(none, alone, "a None mask is geometry only");
+    }
+
+    /// **A mask that is switched off leaves the layer whole.** Both switches —
+    /// mode `None` and opacity zero — used to hide the layer completely when
+    /// the mask was the only one on it: the fold started from nothing and then
+    /// skipped the very mask it had started from, so the layer ended up masked
+    /// by an empty shape. The opposite of doing nothing.
+    #[test]
+    fn a_switched_off_mask_leaves_the_layer_whole() {
+        for off in [
+            {
+                let mut m = Mask::rectangle(0.0, 0.0, 8.0, 8.0);
+                m.mode = MaskMode::None;
+                m
+            },
+            {
+                let mut m = Mask::rectangle(0.0, 0.0, 8.0, 8.0);
+                m.opacity = 0.0;
+                m
+            },
+            {
+                // Off by opacity while asking to subtract: still off.
+                let mut m = Mask::rectangle(0.0, 0.0, 8.0, 8.0);
+                m.mode = MaskMode::Subtract;
+                m.opacity = 0.0;
+                m
+            },
+        ] {
+            let cov = combined_coverage(std::slice::from_ref(&off), 16, 16, 16.0, 16.0, 0.0);
+            assert!(
+                cov.iter().all(|c| *c == 255),
+                "mode {:?} at {} % hid the layer",
+                off.mode,
+                off.opacity,
+            );
+        }
     }
 
     #[test]
