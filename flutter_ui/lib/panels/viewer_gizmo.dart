@@ -41,6 +41,7 @@ import '../state/preview_throttle.dart';
 import '../widgets/controls.dart';
 import 'viewer_anchor.dart';
 import 'viewer_layer_map.dart';
+import 'layer_fold_frb.dart';
 
 /// How big a scale handle is drawn, and how far from it a press still counts.
 ///
@@ -697,10 +698,72 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
     ];
   }
 
+  /// The boxes to **outline**: the selected layers, plus any layer a picked
+  /// property row belongs to (K-341).
+  ///
+  /// Picking a property is saying which layer is being worked on, so the
+  /// picture should say so too — before this, keying a mask's opacity left the
+  /// Viewer showing nothing at all, and there was no way to see which layer
+  /// the curve on screen belonged to. Drawing only: what can be *dragged*
+  /// stays the layer selection proper, so an outline never turns into a handle
+  /// nobody asked for.
+  List<LayerBox> get _outlined {
+    final ids = widget.uiState.selectedLayerIds;
+    final byProperty = <String>{
+      for (final path in widget.uiState.selectedProperties.value)
+        if (path.indexOf('/') > 0) path.substring(0, path.indexOf('/')),
+    };
+    if (byProperty.isEmpty) return _selected;
+    return [
+      for (final box in widget.boxes)
+        if (ids.contains(box.id) || byProperty.contains(box.id.toString())) box
+    ];
+  }
+
+  /// The boxes whose points may be aimed at: the selected layers, plus the
+  /// layer owning a mask whose Path row is picked (K-341). Picking that row is
+  /// saying "this is the shape I am editing", so its points become reachable
+  /// without having to click the layer first.
+  List<LayerBox> get _editablePointBoxes {
+    final owner = _pathBeingEdited?.$1;
+    if (owner == null) return _selected;
+    final out = [..._selected];
+    if (!out.any((b) => b.id == owner)) {
+      for (final box in widget.boxes) {
+        if (box.id == owner) out.add(box);
+      }
+    }
+    return out;
+  }
+
+  /// The mask whose **Path** row is picked, if one is (K-341) — the shape the
+  /// author is editing, so it is the one whose points are offered even when
+  /// the layer itself was never clicked.
+  (UuidValue, UuidValue)? get _pathBeingEdited {
+    for (final path in widget.uiState.selectedProperties.value) {
+      final parts = path.split('/');
+      // <layer>/masks/<mask>/path
+      if (parts.length == 4 &&
+          parts[1] == 'masks' &&
+          parts[3] == MaskValue.path.name) {
+        try {
+          return (
+            UuidValue.fromString(parts[0]),
+            UuidValue.fromString(parts[2])
+          );
+        } catch (_) {
+          return null;
+        }
+      }
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
     final selected = [for (final box in _selected) _live(box)];
+    final outlined = [for (final box in _outlined) _live(box)];
     // The single-selection case is the one that gets handles: scaling and
     // rotating a set about a shared box is a different gesture with its own
     // maths, and is not built (docs/TODO.md).
@@ -710,7 +773,7 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
 
     final painter = CustomPaint(
       painter: _GizmoPainter(
-        selected: widget.showControls ? selected : const [],
+        selected: widget.showControls ? outlined : const [],
         hover: widget.showControls && _hover != null && _selectionTool
             ? _hoverBox()
             : null,
@@ -718,7 +781,7 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
         // The masks of what is selected: a mask you cannot see is a mask you
         // cannot judge, and until mask editing exists this outline is the only
         // sight of one on the picture (K-222).
-        maskedBoxes: widget.showControls ? selected : const [],
+        maskedBoxes: widget.showControls ? outlined : const [],
         selectedPoints: _points,
         pointNudge: _drag == _GizmoDrag.points ? _delta : Offset.zero,
         anchors: widget.showControls && widget.showAnchors
@@ -819,7 +882,7 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
     // A mask point first: it sits on top of the layer it belongs to, and a
     // click on it means the point rather than the layer.
     final point = widget.showControls
-        ? pathPointAt(_selected, details.localPosition)
+        ? pathPointAt(_editablePointBoxes, details.localPosition)
         : null;
     if (point != null) {
       setState(() {
@@ -870,7 +933,8 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
     // point's, so every corner of a drawn square was a scale and never an edit.
     // A press inside a point's own, tighter reach means the point.
     final selected = _selected;
-    final aimedAt = widget.showControls ? pathPointAt(_selected, at) : null;
+    final aimedAt =
+        widget.showControls ? pathPointAt(_editablePointBoxes, at) : null;
     if (aimedAt == null && selected.length == 1 && selected.single.scalable) {
       final handle = selected.single.handleHit(at);
       if (handle != null) {
@@ -1233,6 +1297,15 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
                 .timeOfFrame(frame: widget.uiState.playheadFrame.value),
           );
           landed = true;
+          // **A keyed shape edit shows itself in the Timeline** (K-341). The
+          // drag has just written a keyframe; the row that keyframe belongs to
+          // is the one the author now wants to see, and without this the key
+          // lands on a row nobody is looking at.
+          if (mask.pathKeyTimes.isNotEmpty) {
+            widget.uiState.requestSelectProperty(
+              '${box.id}/masks/${mask.id}/${MaskValue.path.name}',
+            );
+          }
         } catch (_) {
           // The mask went away mid-drag; the rest still move.
         }
@@ -1331,7 +1404,7 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
     // are already selected anyway. With none caught it is the layer sweep it
     // has always been.
     if (widget.showControls) {
-      final caughtPoints = pathPointsInRect(_selected, rect);
+      final caughtPoints = pathPointsInRect(_editablePointBoxes, rect);
       if (caughtPoints.isNotEmpty) {
         setState(() {
           if (!HardwareKeyboard.instance.isShiftPressed) _points.clear();

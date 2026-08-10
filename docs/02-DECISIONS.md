@@ -8061,3 +8061,45 @@ the fold started from an empty stack and then skipped the very mask it had start
 takes a time because opacity animates: a mask keyed up from zero is off for the first half
 of the shot and on for the second.
 
+
+**K-341 · DECIDED · A picked property row is a picked layer everywhere else, and a mask's
+rows behave like every other property row.** From the owner, testing K-340 (2026-08-10):
+"why tf if I click a mask row it doesn't just select it. Please can you treat all property
+rows the same in this regard, between transform/effects… whenever I add a keyframe it
+doesn't display it in the lane area… i can't view any of the mask properties in the graph
+view."
+
+**The selection was never the problem; everything downstream of it was.** Clicking a mask
+row did pick it — the row's fill said so — but nothing else in the program knew what to do
+with the pick. `laneKeysOf` had no mask arm, so a key planted by the stopwatch drew no
+diamond; `graphChannels` had no mask arm, so the graph editor had no curve to show and read
+as "the row cannot be selected"; and the property selection never left the Timeline at all,
+so the Viewer outlined nothing. Three separate silences that added up to one apparently
+dead row. Mask rows now answer all three, through the same functions the transform and
+effect rows already go through rather than through a mask-shaped path of their own.
+
+**The shape's lane shows diamonds without a curve.** A path key holds no number, so it
+cannot be a graph channel (K-339 already said so) — but it *can* be a position on a lane,
+and a key the author just planted must be visible or it reads as not having landed. The
+diamonds are built from the key times alone, and dragging one goes through a dedicated
+`move_mask_path_key` rather than the scalar path, because what is moving is a whole shape.
+
+**Picking a property says which layer is being worked on, and the picture says so too.**
+`selectedProperties` is published from the Timeline to the shell, and the Viewer outlines
+the layers those rows belong to — wireframe and masks — exactly as it does for a layer
+picked on its own row. Drawing only: what can be *dragged* stays the layer selection
+proper, so an outline never turns into a handle nobody asked for.
+
+**A mask's Path row is the shape being edited.** Picking it offers that mask's points for
+dragging without the layer having to be clicked first, and the reverse holds too: dragging
+a keyed mask path selects that Path row, so the key the drag just wrote is on a row the
+author can see. The two directions are one idea — the row and the shape are the same thing
+seen from two panels.
+
+**Both of the mask's own switches move into the value column.** The invert mark and the
+mode picker sat beside the name, in no column at all; K-340 had put the mode under the
+blend header on the grounds that it is the same kind of choice, and the owner's answer was
+that consistency down the *fold-out* matters more than consistency across to the layer row.
+The mode picker takes the rest of the cell so a long name ellipsises rather than pushing
+the row wider than its column, which is the rule the blend picker already followed.
+

@@ -134,6 +134,12 @@ class GraphChannel {
   /// property nor an effect parameter but reads and writes like both.
   final bool retime;
 
+  /// Set for one of a mask's numbers (K-340): the mask it belongs to, and
+  /// which of its values this is. The shape itself never becomes a channel —
+  /// it has no value to plot (K-339).
+  final BridgeMask? mask;
+  final MaskValue? maskValue;
+
   const GraphChannel({
     required this.path,
     required this.id,
@@ -145,6 +151,8 @@ class GraphChannel {
     this.effect,
     this.param,
     this.retime = false,
+    this.mask,
+    this.maskValue,
   });
 
   List<BridgeKeyframe> get keys => keysOf(scalar);
@@ -250,6 +258,35 @@ List<GraphChannel> graphChannels({
           ));
         }
       }
+      continue;
+    }
+
+    // A mask's numbers (K-340). Its shape is deliberately absent: a path has no
+    // value axis to draw against, so it keeps its lane diamonds and no curve.
+    if (path.startsWith('${masksPath(layerId)}/')) {
+      final rest = path.substring(masksPath(layerId).length + 1);
+      final slash = rest.indexOf('/');
+      if (slash <= 0) continue;
+      final maskId = rest.substring(0, slash);
+      final valueName = rest.substring(slash + 1);
+      if (valueName == MaskValue.path.name) continue;
+      for (final mask in entry.info.masks) {
+        if (mask.id.toString() != maskId) continue;
+        final value = MaskValue.values.firstWhere((v) => v.name == valueName,
+            orElse: () => MaskValue.path);
+        if (value == MaskValue.path) break;
+        out.add(GraphChannel(
+          path: path,
+          id: path,
+          label: '${entry.info.name} · ${mask.name} · ${maskValueLabel(value)}',
+          colourIndex: out.length,
+          scalar: maskScalarOf(mask, value),
+          entry: entry,
+          mask: mask,
+          maskValue: value,
+        ));
+        break;
+      }
     }
   }
   return out;
@@ -279,6 +316,14 @@ void commitChannelEdits(Map<GraphChannel, BridgeScalar> edits) {
     } else if (channel.effect != null && channel.param != null) {
       final slot = effects[layerId] ??= (channel.entry.layer, {});
       (slot.$2[channel.effect!.id.toString()] ??= {})[channel.param!.id] = next;
+    } else if (channel.mask case final mask?) {
+      // A mask edit takes the whole mask, so there is nothing to batch per
+      // property; two curves on one mask are two writes and two undo steps,
+      // which is what `SetLayerMasks` costs until it grows a per-key op.
+      channel.entry.layer.setMask(
+        mask: maskWithScalar(mask, channel.maskValue!, next),
+        at: null,
+      );
     }
   });
   for (final (layer, props, values) in transforms.values) {

@@ -1429,6 +1429,51 @@ impl LayerReference {
         self.commit_masks(masks)
     }
 
+    /// Drag one of the shape's keys along the timeline (K-340) — the lane
+    /// diamond, which moves a path key exactly as it moves a scalar's.
+    ///
+    /// Refused, with `false`, when the move would land on or step over a
+    /// neighbour: keys are sorted with unique times and the evaluator walks
+    /// them assuming so, and a drag that would break the order simply leaves
+    /// the key where it was rather than reordering under the pointer.
+    #[frb(sync)]
+    pub fn move_mask_path_key(
+        &self,
+        id: Uuid,
+        from: BridgeRational,
+        to: BridgeRational,
+    ) -> Result<bool, BridgeError> {
+        let layer = self.item()?;
+        let offset = layer.start_offset.0;
+        let mut masks = layer.masks;
+        let at = masks
+            .iter()
+            .position(|m| m.id == id)
+            .ok_or(BridgeError::NoSuchMask)?;
+        let local = |t: BridgeRational| -> Result<Rational, BridgeError> {
+            Rational::new(t.num, t.den)
+                .map_err(|_| BridgeError::InvalidKeyframes)?
+                .checked_sub(offset)
+                .map_err(|_| BridgeError::InvalidKeyframes)
+        };
+        let (from, to) = (local(from)?, local(to)?);
+        let mask = &mut masks[at];
+        let Some(i) = mask.path_keys.iter().position(|k| k.time == from) else {
+            return Ok(false);
+        };
+        for (j, key) in mask.path_keys.iter().enumerate() {
+            if j == i {
+                continue;
+            }
+            if (j < i && key.time >= to) || (j > i && key.time <= to) {
+                return Ok(false);
+            }
+        }
+        mask.path_keys[i].time = to;
+        self.commit_masks(masks)?;
+        Ok(true)
+    }
+
     /// Stop the shape animating, keeping the shape it shows at `time` (K-340).
     ///
     /// The stopwatch turning off, and it matches what the stopwatch does
