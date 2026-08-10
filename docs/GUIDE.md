@@ -1871,6 +1871,28 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   drag to break the two apart and shape a corner; Alt-drag again re-joins them. `Shift+F9`
   eases only the way *in*, `Ctrl+Shift+F9` only the way *out*, and the **Linear** and
   **Hold** buttons put selected keys back to straight lines or steps.
+  **Reusing one ease (the Easing button).** Shaping handles key by key is precise and slow,
+  and montage work wants the *same* ease on a great many keys. The bottom bar's
+  **Easing…** button opens a small box where you draw an ease once: travel runs left to
+  right, from nothing done at the bottom-left corner to all done at the top-right, and two
+  handles bend the line between them. Pick a starting shape from the row of presets, nudge
+  it, then press **Apply** to put it on the selection. The box stays open, so you can nudge
+  and apply again until it feels right.
+  It works on **spans**, not keys: a stretch of travel takes the shape when the keys at
+  *both* of its ends are selected, so selecting a run of keys eases the whole run, and
+  selecting one lone key does nothing — it has named no travel to shape.
+  The presets are named for which end of the travel is slow (*Slow start*, *Slow finish*)
+  rather than "in" and "out", which here already mean the two *sides* of a key, and mean
+  the opposite thing on the web. Two of them leave the box on purpose: **Overshoot** runs
+  past its destination and settles back, and **Anticipate** pulls back a little before
+  setting off. That is why the box has room above and below it.
+  One thing worth understanding, because it is the whole trick: a keyframe does not store a
+  shape, it stores a **speed** in real units per second. So the same drawn ease has to
+  become a *different* stored speed on a move of four hundred pixels than on a move of
+  forty — otherwise only one of the two would look like the curve you drew. Lumit works
+  that out per span, from how far and how long that span travels
+  (`flutter_ui/lib/panels/easing_curve.dart`). Influence, being already a fraction of the
+  gap, carries across untouched.
   **Value and speed.** The bottom bar's **Value / Speed** buttons switch what the pane
   plots (docs/07 §5.1). The speed graph is the value curve's *exact derivative* (K-080) —
   an eased key reads as a smooth dip to zero, a straight run as a flat line, a hold as

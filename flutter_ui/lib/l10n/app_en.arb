@@ -280,6 +280,10 @@
   "@easeBezier": {
     "description": "Keyframe easing with adjustable handles. Named after the curve — keep it recognisable."
   },
+  "easeCustom": "Easing…",
+  "@easeCustom": {
+    "description": "Button opening the easing editor, where a curve is shaped and applied to the selected keyframes. The ellipsis marks that it opens something."
+  },
   "easeEasy": "Easy ease",
   "@easeEasy": {
     "description": "Keyframe easing: slow out of one key and into the next."
@@ -287,6 +291,30 @@
   "easeHold": "Hold",
   "@easeHold": {
     "description": "Keyframe easing: no change at all until the next key."
+  },
+  "easingAnticipate": "Anticipate",
+  "@easingAnticipate": {
+    "description": "Easing preset: the move pulls back a little before it sets off."
+  },
+  "easingHeavy": "Heavy ease",
+  "@easingHeavy": {
+    "description": "Easing preset: slow at both ends, more strongly than Easy ease."
+  },
+  "easingOvershoot": "Overshoot",
+  "@easingOvershoot": {
+    "description": "Easing preset: the move goes past its end and settles back."
+  },
+  "easingSlowFinish": "Slow finish",
+  "@easingSlowFinish": {
+    "description": "Easing preset: sets off at full speed and slows into the end. Name the end that is slow, not a keyframe side — 'in' and 'out' mean sides here."
+  },
+  "easingSlowStart": "Slow start",
+  "@easingSlowStart": {
+    "description": "Easing preset: eases away from the start and arrives at full speed. Name the end that is slow, not a keyframe side — 'in' and 'out' mean sides here."
+  },
+  "easingSnap": "Snap",
+  "@easingSnap": {
+    "description": "Easing preset: away very fast, then a long glide into the end."
   },
   "easeLinear": "Linear",
   "@easeLinear": {
@@ -3475,6 +3503,10 @@
   "tipDisable": "Disable",
   "@tipDisable": {
     "description": "Tooltip on the checkbox that switches an effect off. Under five words."
+  },
+  "tipEasingEditor": "Shape an ease and apply it",
+  "@tipEasingEditor": {
+    "description": "Tooltip on the graph editor's Easing button, which opens the curve editor."
   },
   "tipEasyEase": "Easy ease (F9)",
   "@tipEasyEase": {

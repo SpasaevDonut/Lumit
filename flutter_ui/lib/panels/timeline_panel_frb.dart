@@ -52,6 +52,8 @@ import '../widgets/time_readout.dart';
 export 'timeline_extras_frb.dart' show rulerLabelStepSeconds, rulerLabelOf;
 
 import 'placeholder.dart';
+import 'easing_curve.dart';
+import 'easing_popup.dart';
 import 'graph_editor_frb.dart';
 import 'graph_maths.dart';
 import 'package:lumit_flutter/state/preview_throttle.dart';
@@ -1393,6 +1395,37 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     ui.model.refresh();
   }
 
+  /// Stamp a shaped ease onto the selection — the easing editor's Apply.
+  ///
+  /// The selection is resolved the same way [_applyInterp] resolves it, so the
+  /// bottom bar's one-click eases and a shaped one act on exactly the same
+  /// keys. Where they differ is the unit: a side is stamped key by key, a curve
+  /// span by span (`applyEasingToSelection`).
+  ///
+  /// Value lens only, and locked twice: the bottom bar hides the button in the
+  /// speed lens, and this refuses the call. A shape is drawn against value
+  /// travel, so stamping one from the speed lens would edit a graph the user is
+  /// not looking at.
+  void _applyEasing(EasingCurve curve) {
+    if (_graph && _graphLens == GraphLens.speed) return;
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    final paths = _graph
+        ? _selectedProperties
+        : {
+            for (final id in _laneKeySelection)
+              if (id.lastIndexOf('#') > 0) id.substring(0, id.lastIndexOf('#'))
+          }.toList();
+    final channels = graphChannels(layers: ui.model.layers, selected: paths);
+    final selection = _actionKeySelection(channels);
+    if (selection.isEmpty) return;
+    applyEasingToSelection(
+      channels: channels,
+      selectedKeys: selection,
+      curve: curve,
+    );
+    ui.model.refresh();
+  }
+
   /// The Timeline's keyboard commands: `Shift+F3` toggles the graph, the F9
   /// family sets easing, `Ctrl+Shift+D` cuts the selection at the playhead,
   /// `F` re-frames the graph, `Ctrl+C`/`Ctrl+V` copy and
@@ -2614,6 +2647,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
                                               _graphAutoFit = !_graphAutoFit),
                                           onInterp: (side) =>
                                               _applyInterp(side),
+                                          onEasing: _applyEasing,
                                         ),
                                       ],
                                     )
@@ -6966,6 +7000,9 @@ class _LaneBottomBar extends StatelessWidget {
   final VoidCallback? onToggleAutoFit;
   final ValueChanged<BridgeSideInterp>? onInterp;
 
+  /// Apply pressed in the easing editor, with the shape that was drawn.
+  final ValueChanged<EasingCurve>? onEasing;
+
   const _LaneBottomBar({
     required this.zoom,
     required this.maxZoom,
@@ -6981,6 +7018,7 @@ class _LaneBottomBar extends StatelessWidget {
     this.autoFit = true,
     this.onToggleAutoFit,
     this.onInterp,
+    this.onEasing,
   });
 
   Widget _graphButton(
@@ -7052,6 +7090,35 @@ class _LaneBottomBar extends StatelessWidget {
                             on: false,
                             onPressed: () =>
                                 onInterp?.call(const BridgeSideInterp.hold())),
+                        // The shaped ease, one step along from the one-click
+                        // three: same selection, a curve instead of a constant.
+                        // Its own Builder so the popup can find where this
+                        // button is; the popup layout slides it up into view.
+                        //
+                        // Value lens only. The box draws a shape against the
+                        // value's own travel, so a curve stamped while the
+                        // speed lens is up would land on the value graph — a
+                        // change the user cannot see in the view they drew it
+                        // in. The one-click three above stay in both lenses: a
+                        // side's interp means the same thing either way.
+                        if (lens == GraphLens.value)
+                          Builder(
+                            builder: (buttonContext) => _graphButton(t,
+                                keyName: 'graph-interp-easing',
+                                label: l10n.easeCustom,
+                                tip: l10n.tipEasingEditor,
+                                on: false,
+                                onPressed: () {
+                                  final box = buttonContext.findRenderObject()
+                                      as RenderBox?;
+                                  if (box == null) return;
+                                  showEasingPopup(
+                                    context: buttonContext,
+                                    position: box.localToGlobal(Offset.zero),
+                                    onApply: (curve) => onEasing?.call(curve),
+                                  );
+                                }),
+                          ),
                         const SizedBox(width: 6),
                         _graphButton(t,
                             keyName: 'graph-lens-value',

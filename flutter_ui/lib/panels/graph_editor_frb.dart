@@ -32,6 +32,7 @@ import '../l10n/strings.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 import '../widgets/marquee.dart';
+import 'easing_curve.dart';
 import 'effect_param_row_frb.dart';
 import 'graph_maths.dart';
 import 'layer_fold_frb.dart';
@@ -294,6 +295,60 @@ void applyInterpToSelection({
       } else {
         next.add(keys[i]);
       }
+    }
+    if (touched) edits[channel] = BridgeScalar.keyframed(next);
+  }
+  if (edits.isNotEmpty) commitChannelEdits(edits);
+}
+
+/// Stamp one normalised [curve] onto every **span** the selection covers — the
+/// easing editor's Apply.
+///
+/// A shape describes the travel *between* two keys, so the unit of work here is
+/// a span rather than a key: a span takes the curve when both of its ends are
+/// selected. Selecting a run of keys therefore eases the whole run, and
+/// selecting a lone key does nothing, having named no travel.
+///
+/// Each span converts the shape separately, against its own chord slope
+/// ([EasingCurve.sidesFor]) — the same drawn ease over a 400-pixel move and a
+/// 40-pixel one stores different speeds, and must, or only one of them would
+/// look like the shape that was drawn. A key in the middle of a run takes its
+/// in-side from the span behind it and its out-side from the span ahead.
+void applyEasingToSelection({
+  required List<GraphChannel> channels,
+  required Set<String> selectedKeys,
+  required EasingCurve curve,
+}) {
+  final edits = <GraphChannel, BridgeScalar>{};
+  for (final channel in channels) {
+    final keys = channel.keys;
+    final next = [...keys];
+    var touched = false;
+    for (var i = 0; i + 1 < keys.length; i++) {
+      if (!selectedKeys.contains('${channel.id}#$i') ||
+          !selectedKeys.contains('${channel.id}#${i + 1}')) {
+        continue;
+      }
+      final t1 = rationalSeconds(keys[i].time);
+      final t2 = rationalSeconds(keys[i + 1].time);
+      final dt = t2 - t1;
+      // Two keys on the same frame have no travel to shape, and dividing by
+      // that gap is how a curve becomes infinities. Leave the pair alone.
+      if (dt <= 0) continue;
+      final sides = curve.sidesFor((keys[i + 1].value - keys[i].value) / dt);
+      next[i] = BridgeKeyframe(
+        time: next[i].time,
+        value: next[i].value,
+        interpIn: next[i].interpIn,
+        interpOut: sides.out,
+      );
+      next[i + 1] = BridgeKeyframe(
+        time: next[i + 1].time,
+        value: next[i + 1].value,
+        interpIn: sides.inTo,
+        interpOut: next[i + 1].interpOut,
+      );
+      touched = true;
     }
     if (touched) edits[channel] = BridgeScalar.keyframed(next);
   }
