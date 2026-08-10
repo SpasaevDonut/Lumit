@@ -240,6 +240,17 @@ class BridgeLayerInfo {
   /// to remove.
   final List<BridgeLayerMarker> markers;
 
+  /// Whether optical flow is live on this layer (K-088/K-331) — the switch
+  /// cluster's Flow cell, and what decides whether the fold-out shows a Flow
+  /// group. In the read model because the Timeline draws that cell on every
+  /// rebuild, and asking per row per frame is exactly the cost K-184 removed.
+  final bool flow;
+
+  /// The Flow group's Input rate (K-095/K-160), the one animatable member —
+  /// carried here so its fold-out row can draw its keyframe diamonds without
+  /// a call, exactly as the Retime row's scalar is.
+  final BridgeScalar flowInputRate;
+
   const BridgeLayerInfo({
     required this.name,
     required this.kind,
@@ -261,6 +272,8 @@ class BridgeLayerInfo {
     required this.paint,
     required this.shapeContents,
     required this.markers,
+    required this.flow,
+    required this.flowInputRate,
   });
 
   @override
@@ -284,7 +297,9 @@ class BridgeLayerInfo {
       masks.hashCode ^
       paint.hashCode ^
       shapeContents.hashCode ^
-      markers.hashCode;
+      markers.hashCode ^
+      flow.hashCode ^
+      flowInputRate.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -310,7 +325,9 @@ class BridgeLayerInfo {
           masks == other.masks &&
           paint == other.paint &&
           shapeContents == other.shapeContents &&
-          markers == other.markers;
+          markers == other.markers &&
+          flow == other.flow &&
+          flowInputRate == other.flowInputRate;
 }
 
 /// What kind of source a layer has — what the Timeline draws its bar and its
@@ -1194,6 +1211,45 @@ class LayerReference {
         that: this,
       );
 
+  /// Whether flow is live on this layer — the switch-cluster toggle (K-088).
+  bool getFlowEnabled() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceGetFlowEnabled(
+        that: this,
+      );
+
+  /// The rate this clip is *interpreted* at for flow (K-095, K-160) — the
+  /// Flow group's Input rate, as a keyframeable scalar.
+  ///
+  /// `0` reads as **Auto**: adjacent source frames, the clip's own rate. Any
+  /// positive rate below native conforms the clip, so flow brackets the
+  /// source frames spaced `1/rate` apart and interpolates between *those*.
+  ///
+  /// Two quite different footage problems want this, from opposite ends.
+  /// High-speed capture — a 600 fps phone clip — has neighbours under two
+  /// thousandths of a second apart, so there is almost no motion to
+  /// interpolate and slow-motion looks frozen. **Animation drawn on 2s or 3s**
+  /// has the mirror problem: the same frame is held two or three times, so
+  /// half the pairs flow between a frame and its own duplicate (no motion at
+  /// all) and the rest carry double, which reads as judder rather than smooth
+  /// slow motion. Conforming to the rate the animation was *drawn* at — 12 fps
+  /// for 2s of 24, 8 fps for 3s — makes every bracket span real motion.
+  ///
+  /// Keyframeable because a scene's cadence is not always constant: anime
+  /// commonly switches between 2s and 3s within a cut, and a ramp lets the
+  /// conform follow it.
+  BridgeScalar getFlowInputRate() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceGetFlowInputRate(
+        that: this,
+      );
+
+  /// This layer's Flow group, or the defaults when its policy is not Flow —
+  /// so the panel can show the controls it *would* get without the document
+  /// having to hold them yet.
+  BridgeFlowParams getFlowParams() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceGetFlowParams(
+        that: this,
+      );
+
   /// One read for everything a row draws — see [`BridgeLayerInfo`]. One
   /// document lock and one crossing, where the per-field getters cost one of
   /// each per field.
@@ -1513,6 +1569,35 @@ class LayerReference {
   void setEffects({required List<BridgeEffectInstance> effects}) =>
       BridgeLib.instance.api
           .crateApiLayerLayerReferenceSetEffects(that: this, effects: effects);
+
+  /// Turn flow on or off (K-088). Off returns the layer to Nearest — the
+  /// policy it had before flow is not recorded, and Nearest is the crisp
+  /// default docs/04 §10 names.
+  ///
+  /// **Turning it off discards the Flow group.** The parameters live inside
+  /// the `Flow` variant of the policy, so there is nowhere to keep them while
+  /// the policy is something else. Comparing a flow shot against the plain
+  /// one is an ordinary thing to do and should not cost the tuning that got
+  /// you there; fixing it means moving `FlowParams` onto the layer beside the
+  /// policy rather than inside it (docs/TODO.md). Recorded here rather than
+  /// worked around, because a UI-side stash of the last settings would be the
+  /// view holding document state.
+  void setFlowEnabled({required bool on_}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceSetFlowEnabled(that: this, on_: on_);
+
+  /// Write the Flow input rate. One undo step. Turns flow on if it was off,
+  /// for the same reason [`Self::set_flow_params`] does.
+  void setFlowInputRate({required BridgeScalar value}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceSetFlowInputRate(that: this, value: value);
+
+  /// Write the Flow group. One undo step.
+  ///
+  /// Setting parameters *turns flow on* if it was off: the group is only
+  /// reachable from a layer whose flow is live, and a write that silently did
+  /// nothing would be worse than one that means what it says.
+  void setFlowParams({required BridgeFlowParams params}) =>
+      BridgeLib.instance.api
+          .crateApiLayerLayerReferenceSetFlowParams(that: this, params: params);
 
   /// Choose how in-between frames are found. One undo step.
   void setInterpolation({required BridgeRetimeInterp interpolation}) =>

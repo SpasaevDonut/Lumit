@@ -250,7 +250,12 @@ not a preset dropdown), so the conform rate can ramp over the clip. `0` reads as
 default) and interpolates between adjacent source frames; a positive rate below native
 conforms the clip to that rate, so flow brackets the source frames spaced `1/rate` apart and
 interpolates between those — the standard way to get real slow-motion out of high-framerate
-footage (whose adjacent frames barely move). The rate is read at frame time (`FlowParams::
+footage (whose adjacent frames barely move). **Animation drawn on 2s or 3s is the mirror
+case and wants the same control**: a 24 fps cut on 2s holds each drawing twice, so at the
+native rate half the pairs bracket a drawing and its own duplicate (no motion) while the
+rest carry the whole step, which judders. Conforming to the drawn rate — 12 for 2s, 8 for
+3s — makes every bracket span two different drawings. Keyframeable because a cut's cadence
+is not always constant. The rate is read at frame time (`FlowParams::
 input_fps_at`) and keys the frame cache — the value it reads at each local time is hashed, so
 the same source time synthesises from different frames under it — and applies identically in
 preview and export.
@@ -279,15 +284,47 @@ bidirectional warping with occlusion-aware blending. This is what makes extreme 
    which the pixel is visible; inpaint the (rare) both-occluded holes from neighbours.
 5. HUD/overlay guard: static-region detection (near-zero flow with high texture) biases
    those pixels toward pure blending, reducing the classic Twixtor HUD smearing.
+   **Shipped (K-331)** as `lumit_flow::hud_weights`: per pixel, `stillness × texture`, where
+   stillness tapers over 0.25–1.0 px of measured motion and texture over 0.02–0.08 of Sobel
+   magnitude in encoded luma. The texture term takes a **3×3 max** of the gradient before the
+   taper, not the gradient itself — a gradient is zero inside every stroke of a glyph and
+   spikes only at its rim, so a per-pixel test guards a HUD's outlines and leaves its insides
+   to smear, which is the artefact rather than the fix. The result is 3×3 box-blurred (as
+   FX-19's confidence is, and for the same reason: a hard boundary between warped and unwarped
+   is itself visible), and synthesis mixes each pixel back toward the plain blend by it.
 
-**Parameters** (surfaced per clip / per layer as render-policy options, not a stack entry):
+**Parameters** (surfaced per clip / per layer as render-policy options, not a stack entry).
+All of these ship as `FlowParams` fields (K-331); each is content in the frame-cache key,
+because each changes the synthesised picture.
 
 | Parameter | Range / type | Default | Notes |
 |---|---|---|---|
+| Flow resolution | Native / Half / Quarter | Native | The size flow is *measured* at. Independent of the preview quality tier (K-331) — see below |
 | Vector detail | Low / Medium / High / Ultra | Medium | Pyramid depth + refinement iterations |
-| Smoothness | 0–100 | 50 | Regularisation weight; high = fewer tears, gloopier |
+| Smoothness | 0–100 | 50 | Regularisation weight; high = fewer tears, gloopier. Scales the smoothing pass's flow-range sigma, 50 being the tuned default the analytic tests were fitted against |
 | Occlusion handling | Blend / Visible-only | Visible-only | Blend trades ghosting for fewer holes |
 | Fallback | enum | Blend | Behaviour where confidence is low: **blend** (crossfade) or **nearest** |
+| HUD guard | bool | on | Step 5's static-region bias; off for footage with no overlay |
+| Always | bool | off | Force flow past the engagement gate below |
+| Input rate | fps, keyframeable | 0 (Auto) | The conform rate above (K-095, K-160). Shipped with cadence presets beside the field — Auto, On 2s (12), On 3s (8), On 4s (6), 24, 25, 30 — named for the cadence rather than the number, since an editor knows a cut is "on 2s" without doing 24 ÷ 2 |
+
+**Flow resolution is not the preview resolution (K-331).** Flow used to be measured on
+whatever the preview scale had shrunk the decode to, which made a draft scrub and an export
+two different *measurements* rather than one measurement at two sizes. The working resolution
+is now this parameter alone. Consequence, accepted deliberately: **a layer whose flow is live
+decodes at native width even in draft preview**, since full-resolution flow cannot be measured
+on a shrunk decode — draft stops being cheap on flow layers, and the resolution knob is how a
+user buys the speed back. The rule is "whoever asks": a layer with a live flow-consuming
+effect (§3.2, §3.12) decodes natively on the same grounds, which is also what lets the two
+consumers share one measured field.
+
+**Engagement gate (K-088, built in K-331).** Flow engages only where a source frame would
+otherwise hold across two or more comp frames — i.e. where `|speed| · source_rate / comp_rate`
+is under 1, the source rate being the conform rate when one is set. Outside that (100% or
+faster, or a freeze) the policy degrades to Nearest and costs nothing. **Always** overrides.
+The gate is evaluated in the render plan *and* in the frame-cache key, so a gated-off flow
+layer keys like the Nearest it renders as rather than hashing a sub-frame position that
+changes no pixels.
 
 **Artefact behaviour.** Flow failure MUST degrade to blending, never to garbage: every
 synthesised pixel carries a confidence value, and low-confidence pixels fall back per the

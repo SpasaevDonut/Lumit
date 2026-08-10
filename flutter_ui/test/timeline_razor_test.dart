@@ -69,6 +69,8 @@ void main() {
         paint: const [],
         shapeContents: const [],
         markers: const [],
+        flow: false,
+        flowInputRate: const BridgeScalar.static_(0),
       ),
     );
   }

@@ -61,6 +61,9 @@ import 'timeline_razor.dart';
 import 'effect_param_row_frb.dart';
 import 'keyframe_controls_frb.dart';
 import 'layer_fold_frb.dart';
+import 'package:lumit_flutter/src/rust/api/retime.dart';
+import 'flow_rows_frb.dart';
+import 'fx_section.dart';
 import '../widgets/smooth_zoom.dart';
 import '../widgets/zoom_anchored_scroll.dart';
 import 'timeline_snap.dart';
@@ -3102,6 +3105,18 @@ class _FoldRow extends StatelessWidget {
           onLabelTap: () => onSelectProperty(path),
           graphColour: graphColours[path]?.firstOrNull,
         ),
+      FoldFlowRow() => _FlowRow(
+          comp: comp,
+          layer: layer,
+          row: row as FoldFlowRow,
+          valueColumn: valueColumn,
+          playheadFrame: playheadFrame,
+          onSeek: onSeek,
+          onChanged: () {
+            onEditProperty(path);
+            onChanged();
+          },
+        ),
       FoldVolumeRow() => _VolumeRow(
           comp: comp,
           layer: layer,
@@ -3222,6 +3237,177 @@ class _TimelineParamRowState extends State<_TimelineParamRow> {
 }
 
 /// The Audio group's one row: the layer's Volume, in dB.
+/// One control of the Flow group in the Timeline fold-out (K-088, K-331).
+///
+/// Every kind but the Input rate writes the whole group in one op, so the row
+/// needs no state of its own: read, change one field, write it back. The Input
+/// rate is a keyframeable scalar, so it alone carries the stopwatch and the
+/// navigator — the same shape the Retime and Volume rows use.
+class _FlowRow extends StatelessWidget {
+  final CompositionReference comp;
+  final LayerReference layer;
+  final FoldFlowRow row;
+  final ValueColumn valueColumn;
+  final int playheadFrame;
+  final ValueChanged<int> onSeek;
+  final VoidCallback onChanged;
+
+  const _FlowRow({
+    required this.comp,
+    required this.layer,
+    required this.row,
+    required this.valueColumn,
+    required this.playheadFrame,
+    required this.onSeek,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    final p = layer.getFlowParams();
+
+    void write(BridgeFlowParams next) {
+      layer.setFlowParams(params: next);
+      onChanged();
+    }
+
+    final control = switch (row.kind) {
+      FlowRowKind.resolution => _choice('flow-resolution',
+            const ['Native', 'Half', 'Quarter'], p.resolution, (v) {
+          write(flowParamsWith(p, resolution: v));
+        }),
+      FlowRowKind.detail => _choice(
+            'flow-detail', const ['Low', 'Medium', 'High', 'Ultra'], p.detail,
+            (v) {
+          write(flowParamsWith(p, detail: v));
+        }),
+      FlowRowKind.occlusion =>
+        _choice('flow-occlusion', const ['Visible only', 'Blend'], p.occlusion,
+            (v) {
+          write(flowParamsWith(p, occlusion: v));
+        }),
+      FlowRowKind.fallback =>
+        _choice('flow-fallback', const ['Blend', 'Nearest'], p.fallback, (v) {
+          write(flowParamsWith(p, fallback: v));
+        }),
+      FlowRowKind.smoothness => SizedBox(
+          width: valueColumn.width,
+          child: DragValueField(
+            key: const ValueKey('flow-smoothness'),
+            value: p.smoothness,
+            min: 0,
+            max: 100,
+            onChanged: (v) =>
+                write(flowParamsWith(p, smoothness: v.toDouble())),
+          ),
+        ),
+      FlowRowKind.hudGuard => HouseCheckbox(
+          key: const ValueKey('flow-hud-guard'),
+          value: p.hudGuard,
+          onChanged: (v) => write(flowParamsWith(p, hudGuard: v)),
+        ),
+      FlowRowKind.always => HouseCheckbox(
+          key: const ValueKey('flow-always'),
+          value: p.always,
+          onChanged: (v) => write(flowParamsWith(p, always: v)),
+        ),
+      FlowRowKind.inputRate => _inputRate(),
+    };
+
+    return Row(
+      children: [
+        if (row.kind == FlowRowKind.inputRate)
+          KeyframeControlsFrb(
+            scalars: [row.rate!],
+            comp: comp,
+            playheadFrame: playheadFrame,
+            onSeek: onSeek,
+            rowKey: 'tl-flow-rate',
+            onWrite: (next) {
+              layer.setFlowInputRate(value: next.single);
+              onChanged();
+            },
+          )
+        else
+          const SizedBox(width: fxKeyframeGutter),
+        const SizedBox(width: 4),
+        Expanded(child: Text(row.kind.label, style: t.body)),
+        SizedBox(width: valueColumn.width, child: control),
+      ],
+    );
+  }
+
+  Widget _choice(
+    String keyName,
+    List<String> options,
+    int value,
+    ValueChanged<int> onChanged,
+  ) =>
+      SizedBox(
+        width: valueColumn.width,
+        child: BareDropdown<int>(
+          key: ValueKey(keyName),
+          value: value < options.length ? value : 0,
+          options: List.generate(options.length, (i) => i),
+          label: (i) => options[i],
+          onChanged: onChanged,
+        ),
+      );
+
+  /// The conform rate: a typed value with the cadence presets beside it, and
+  /// keyframes, so a cut that changes cadence partway can be followed.
+  Widget _inputRate() {
+    final rate = row.rate!;
+    final shown = switch (rate) {
+      BridgeScalar_Static(:final field0) => field0,
+      // An expression is sampled engine-side too, so it needs no case of its
+      // own here — `sampleScalar` is the one place either is evaluated.
+      BridgeScalar_Keyframed() ||
+      BridgeScalar_Expression() =>
+        sampleScalar(scalar: rate, time: timeOfFrame(comp, playheadFrame)),
+    };
+    void writeRate(double fps) {
+      layer.setFlowInputRate(
+        value: scalarWithValueAt(rate, fps, comp, playheadFrame),
+      );
+      onChanged();
+    }
+
+    return Row(
+      children: [
+        SizedBox(
+          width: (valueColumn.width * 0.45).clamp(48, 90),
+          child: DragValueField(
+            key: const ValueKey('flow-input-rate'),
+            value: shown,
+            min: 0,
+            max: 240,
+            decimals: 2,
+            suffix: shown < 0.5 ? '' : ' fps',
+            onChanged: (v) => writeRate(v.toDouble()),
+          ),
+        ),
+        const SizedBox(width: 4),
+        Expanded(
+          child: BareDropdown<double>(
+            key: const ValueKey('flow-input-rate-preset'),
+            value: flowPresetLabel(shown) == null ? -1 : shown,
+            options: [
+              if (flowPresetLabel(shown) == null) -1,
+              ...flowRatePresets.map((p) => p.$1),
+            ],
+            label: (v) => flowPresetLabel(v) ?? 'Custom',
+            onChanged: (v) {
+              if (v >= 0) writeRate(v);
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _VolumeRow extends StatefulWidget {
   final CompositionReference comp;
   final LayerReference layer;
@@ -5398,10 +5584,10 @@ class _OutlineRowState extends State<_OutlineRow> {
   /// Group 3: flow (collapse on a Precomp) · fx · motion blur · 3D, spread
   /// across the same span the fold-out's value cells use.
   ///
-  /// The flow slot: optical flow has no per-layer engine backing yet
-  /// (docs/TODO.md), so a Precomp layer shows its collapse switch there —
-  /// the spec's flow-or-collapse cell (K-168) — and other kinds leave it
-  /// empty rather than offering a control that cannot do anything.
+  /// The flow slot is the spec's flow-or-collapse cell (K-168): a Precomp shows
+  /// its collapse switch there, **footage shows its Flow switch** (K-088/K-331),
+  /// and other kinds leave it empty rather than offering a control that cannot
+  /// do anything.
   Widget _renderCells(BuildContext context, BridgeLayerInfo info) {
     final id = layer.internallayerId.toString();
     final switches = info.switches;
@@ -5412,11 +5598,14 @@ class _OutlineRowState extends State<_OutlineRow> {
           // Packed left in ordinary switch cells, exactly as group 1 is: the
           // group's remaining span belongs to the fold-out's value column,
           // not to spreading four icons across it.
-          info.kind == BridgeLayerKind.precomp
-              ? _switch(context, id, 'collapse', LumitIcon.collapse,
-                  switches.collapse, BridgeLayerSwitch.collapse,
-                  tip: l10n.tipCollapseTransformations)
-              : const SizedBox(width: switchCellWidth),
+          if (info.kind == BridgeLayerKind.precomp)
+            _switch(context, id, 'collapse', LumitIcon.collapse,
+                switches.collapse, BridgeLayerSwitch.collapse,
+                tip: l10n.tipCollapseTransformations)
+          else if (info.kind == BridgeLayerKind.footage)
+            _flowSwitch(context, id, info.flow)
+          else
+            const SizedBox(width: switchCellWidth),
           _switch(context, id, 'fx', LumitIcon.fx, switches.fx,
               BridgeLayerSwitch.fx,
               tip: switches.fx
@@ -5592,6 +5781,49 @@ class _OutlineRowState extends State<_OutlineRow> {
   /// read as buttons rather than loose glyphs. With an [offIcon] the glyph
   /// itself flips (closed eye, muted speaker, hollow circle) and keeps full
   /// strength either way; without one the off state dims, as before.
+  /// The Flow cell. Shaped exactly like [_switch] but writing the layer's
+  /// interpolation policy rather than a `BridgeLayerSwitch`, because that is
+  /// what flow *is* underneath (K-088: "the option surfaces the policy").
+  ///
+  /// The state comes from the read model, never from a bridge call — this
+  /// builds on every timeline rebuild, which is the cost K-184 removed.
+  Widget _flowSwitch(BuildContext context, String id, bool on) {
+    final t = ThemeScope.of(context).theme;
+    final cell = GestureDetector(
+      key: ValueKey<String>('tl-flow-$id'),
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        layer.setFlowEnabled(on_: !on);
+        widget.onChanged();
+      },
+      child: SizedBox(
+        width: switchCellWidth,
+        height: _rowHeight,
+        child: Center(
+          child: Container(
+            width: 18,
+            height: 18,
+            decoration: BoxDecoration(
+              color: t.surface0,
+              borderRadius: BorderRadius.circular(t.tokens.controlRadius),
+              border: Border.all(color: t.hairline),
+            ),
+            child: Center(
+              child: lumitIcon(LumitIcon.flow,
+                  size: iconSize, color: on ? t.textPrimary : t.textDisabled),
+            ),
+          ),
+        ),
+      ),
+    );
+    return LumitTooltip(
+      message: on
+          ? 'Flow — in-between frames are synthesised; click to turn off'
+          : 'Flow — synthesise in-between frames with optical flow',
+      child: cell,
+    );
+  }
+
   Widget _switch(
     BuildContext context,
     String id,

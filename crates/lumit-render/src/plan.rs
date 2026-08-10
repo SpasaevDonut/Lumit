@@ -209,16 +209,26 @@ pub fn collect_comp_jobs(
                         continue;
                     };
                     use lumit_core::retime::Interpolation;
-                    let interp = lumit_core::sequence::active_clip(clips, lt)
-                        .map(|c| c.interpolation.clone());
-                    let blend_on =
-                        matches!(interp, Some(Interpolation::Blend | Interpolation::Flow(_)));
-                    let flow = matches!(interp, Some(Interpolation::Flow(_)));
-                    let flow_full =
-                        matches!(&interp, Some(Interpolation::Flow(p)) if !p.half_resolution);
-                    let sample_fps = match &interp {
-                        Some(Interpolation::Flow(p)) => p.input_fps_at(lt),
+                    let clip = lumit_core::sequence::active_clip(clips, lt);
+                    // Same engagement gate as a Footage layer (K-331); the
+                    // clip's own retime supplies the speed.
+                    let comp_fps = comp.frame_rate.fps();
+                    let flow = match clip.map(|c| (&c.interpolation, c.retime.as_ref())) {
+                        Some((Interpolation::Flow(p), retime)) => {
+                            let speed = lumit_core::retime::property_speed_at(retime, lt);
+                            p.engages(p.read_fps_at(lt, fps), comp_fps, speed)
+                                .then(|| p.clone())
+                        }
                         _ => None,
+                    };
+                    let blend_on =
+                        matches!(clip.map(|c| &c.interpolation), Some(Interpolation::Blend))
+                            || flow.is_some();
+                    let sample_fps = flow.as_ref().and_then(|p| p.input_fps_at(lt));
+                    let target_width = if flow.is_some() {
+                        None // flow decodes natively (K-331)
+                    } else {
+                        quality.target_width(nat_w)
                     };
                     let (source_frame, blend) =
                         lumit_core::pixels::frame_pick(st, fps, src_frames, blend_on, sample_fps);
@@ -227,12 +237,11 @@ pub fn collect_comp_jobs(
                         item,
                         path: PathBuf::from(&f.media.absolute_path),
                         source_frame,
-                        target_width: quality.target_width(nat_w),
+                        target_width,
                         natural_w: nat_w,
                         natural_h: nat_h,
                         blend,
                         flow,
-                        flow_full,
                         // Temporal effects on Sequence clips are a later
                         // refinement (clip-relative neighbour resolution);
                         // footage layers first.
@@ -271,8 +280,7 @@ pub fn collect_comp_jobs(
                         natural_w: comp.width,
                         natural_h: comp.height,
                         blend: None,
-                        flow: false,
-                        flow_full: false,
+                        flow: None,
                         temporal: Vec::new(),
                         flow_neighbour: None,
                         slate: true,
@@ -291,13 +299,33 @@ pub fn collect_comp_jobs(
                 // inside it, decides nearest vs blend.
                 let source_time = layer.source_time_at(lt);
                 use lumit_core::retime::Interpolation;
-                let interp = &layer.interpolation;
-                let blend_on = matches!(interp, Interpolation::Blend | Interpolation::Flow(_));
-                let flow = matches!(interp, Interpolation::Flow(_));
-                let flow_full = matches!(interp, Interpolation::Flow(p) if !p.half_resolution);
-                let sample_fps = match interp {
-                    Interpolation::Flow(p) => p.input_fps_at(lt),
+                // Flow only engages where it can help (K-088, built in K-331):
+                // at 100% or faster every comp frame lands on a source frame,
+                // so there is no in-between frame to invent and the policy
+                // degrades to Nearest. `always` overrides.
+                let speed = lumit_core::retime::property_speed_at(layer.retime.as_ref(), lt);
+                let comp_fps = comp.frame_rate.fps();
+                let flow = match &layer.interpolation {
+                    Interpolation::Flow(p) => p
+                        .engages(p.read_fps_at(lt, fps), comp_fps, speed)
+                        .then(|| p.clone()),
                     _ => None,
+                };
+                let interp = &layer.interpolation;
+                let blend_on = matches!(interp, Interpolation::Blend) || flow.is_some();
+                let sample_fps = flow.as_ref().and_then(|p| p.input_fps_at(lt));
+                let flow_neighbour =
+                    lumit_core::fx::stack_flow_neighbour(&layer.effects, layer.switches.fx);
+                // A layer that needs flow decodes at its own width whatever the
+                // preview tier says (K-331): flow measured on a shrunk decode is
+                // a different measurement, not the same one smaller. Must match
+                // `Stamper::stamp`'s `native` exactly, or the frame's name lies
+                // about the width of the pixels in it.
+                let native = flow.is_some() || flow_neighbour.is_some();
+                let target_width = if native {
+                    None
+                } else {
+                    quality.target_width(nat_w)
                 };
                 let (source_frame, blend) = lumit_core::pixels::frame_pick(
                     source_time,
@@ -335,20 +363,16 @@ pub fn collect_comp_jobs(
                     item: *item,
                     path: PathBuf::from(&f.media.absolute_path),
                     source_frame,
-                    target_width: quality.target_width(nat_w),
+                    target_width,
                     natural_w: nat_w,
                     natural_h: nat_h,
                     blend,
                     flow,
-                    flow_full,
                     temporal,
                     // Flow motion blur / Datamosh measure motion between
                     // this frame and their requested neighbour (already
                     // in `temporal`).
-                    flow_neighbour: lumit_core::fx::stack_flow_neighbour(
-                        &layer.effects,
-                        layer.switches.fx,
-                    ),
+                    flow_neighbour,
                     slate: false,
                 });
             }
@@ -396,7 +420,6 @@ pub fn same_decode(a: &[CompJob], b: &[CompJob]) -> bool {
                 && x.slate == y.slate
                 && x.blend == y.blend
                 && x.flow == y.flow
-                && x.flow_full == y.flow_full
                 && x.temporal == y.temporal
                 && x.flow_neighbour == y.flow_neighbour
         })
@@ -548,8 +571,7 @@ mod tests {
             natural_w: 8,
             natural_h: 8,
             blend: None,
-            flow: false,
-            flow_full: false,
+            flow: None,
             temporal: Vec::new(),
             flow_neighbour: None,
             slate: false,

@@ -940,14 +940,22 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   threshold off everything, so the transition is seamless. "Luminance only" (the default)
   sharpens the brightness signal and leaves colour alone, because sharpening the colour
   channels of compressed game capture produces rainbow fringes.
-- **Flow is a layer option** (K-088) — the wind toggle in a footage layer's switch
-  cluster. On, it synthesises in-between frames with optical flow wherever the footage's
-  rate (through any retime) undershoots the comp's — the moment a source frame would sit
-  across two comp frames, flow takes over; footage already at comp rate costs nothing. A
-  **Flow** group appears beside Transform and Effects with the engine's knobs (Quality:
-  half-resolution fields, the fast default, or full). Under the hood it's the retime's
-  frame-interpolation policy — an un-retimed layer quietly gains an identity retime to
-  carry it, and loses it again when you switch off.
+- **Flow is a layer option** (K-088). On, it synthesises in-between frames with optical flow
+  wherever the footage's rate (through any retime) undershoots the comp's — the moment a
+  source frame would sit across two comp frames, flow takes over; footage already at comp
+  rate costs nothing, because the engine now checks and stands down (see the flow section
+  further down for what that gate does and how to override it). Under the hood it's the
+  retime's frame-interpolation policy — an un-retimed layer quietly gains an identity retime
+  to carry it, and loses it again when you switch off.
+  **How you reach it (K-331):** the **Flow** switch in a footage layer's switch cluster, in
+  the same cell a Precomp uses for Collapse. Turning it on reveals a **Flow** group beside
+  Transform and Effects, carrying flow resolution, vector detail, smoothness, occlusion
+  handling, fallback, the HUD guard and an always-on override. Flow deliberately left the
+  in-between-frames dropdown, which still offers Nearest and Blend: sitting there made the
+  most expensive thing a layer can ask for look like a small setting you pick and forget.
+  One rough edge worth knowing: turning the switch off and on again resets the group to
+  defaults, because the parameters are stored inside the policy and have nowhere to live
+  while the policy is Nearest. Fixing that is on the backlog.
 - **Effects are usable end to end.** Twirl a layer open, open its **Effects** group,
   and "Add effect" lists the catalogue. Each effect shows a bypass
   tick, a remove button, and one row per parameter — a Blur radius has a stopwatch
@@ -1380,6 +1388,83 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   you want the slow-motion to ease in. It's the same "conform to N fps" idea editors know from
   interpreting footage in other tools, and because it changes which frames get blended, it's
   folded into the picture cache's identity so you never see a frame flowed at the wrong rate.
+  **Animation has the mirror version of that problem**, and the same control fixes it. Anime
+  and hand-drawn animation are usually drawn "on 2s" or "on 3s" — a new drawing every second
+  or third frame, with the same picture held in between. So a 24fps cut on 2s really goes
+  A A B B C C. Interpolate that at its native rate and half the frame pairs are a drawing and
+  its own duplicate, where nothing moves at all, while the others carry the whole step: the
+  result judders rather than flowing. Tell Input rate the clip is 12fps — the rate it was
+  actually *drawn* at — and every pair spans two different drawings. The dropdown beside the
+  field names the cadences rather than the numbers ("On 2s", "On 3s"), because an editor knows
+  a cut is on 2s without wanting to work out that 24 ÷ 2 is 12. And because it is keyframeable,
+  a cut that switches from 2s to 3s partway through — which happens constantly — can be
+  followed rather than compromised on.
+  Three more things about flow are worth understanding, because they each fix something that
+  used to be quietly wrong.
+  **Flow only switches itself on when it can actually help.** Inventing a frame *between* two
+  real ones only means anything when there is a gap to fill. At 100% speed every frame of the
+  composition lands squarely on a frame of the footage — there is no in-between moment — so
+  measuring all that motion would cost a great deal and change nothing. Flow now checks: how
+  far does the footage advance per composition frame? If it advances a whole frame or more,
+  flow stands down and you get the plain nearest frame. If it advances less than one — meaning
+  the same source frame would otherwise be shown twice or more in a row, which is exactly what
+  makes slow motion look like a slideshow — flow takes over. A freeze stands down too, since
+  there is nothing to move towards. If you want flow anyway, for a look rather than for the
+  maths, there is an override in the Flow group that forces it on regardless.
+  **Flow is measured at the footage's own size, not the preview's.** This one was a real trap.
+  Previews are usually rendered smaller than full size for speed, and flow used to be measured
+  on whatever shrunken copy the preview happened to be using. That is not the same measurement
+  at a smaller size — it is a *different* measurement, because motion that is obvious at full
+  resolution can vanish entirely in a quarter-size copy. The result was a preview that could
+  look meaningfully different from the export, which is the one thing the pipeline promises
+  never happens. Flow now always measures at the size *you* choose in the Flow group
+  (Native by default), no matter how coarse the preview is. The price is honest and worth
+  knowing: a layer with flow on decodes its footage at full size even in draft preview, so
+  draft mode stops being cheap on that layer. If you need the speed back, drop the flow
+  resolution to Half or Quarter — that is a decision you make once, and it then applies
+  identically to the preview and the export.
+  **Why the vectors used to look bad, and what fixed it.** DIS is a three-part algorithm, and
+  Lumit shipped two of them. Parts one and two are *local*: little tiles hunt for where their
+  bit of picture went, then every pixel takes a vote among the tiles covering it. That works
+  wherever there is something to match — and has nothing whatsoever to say about a patch of
+  sky, a cloud of smoke, water, or a dark corner, because every position there looks like
+  every other. Those pixels came out with whatever the coarse guess was, flagged
+  untrustworthy; untrustworthy was then treated as "hidden behind something", and hidden
+  pixels get a plain crossfade. So large soft regions turned into patches of ghosted mush.
+  Three reasonable-looking local decisions, one bad picture.
+  Part three is **variational refinement**, and it was skipped with the note "mostly helps
+  large untextured regions, rare in game footage". They are not rare — smoke, sky, muzzle
+  flash and motion-blurred backgrounds are most of a frame during exactly the fast moments a
+  montage slows down. Refinement stops treating pixels one at a time and solves the whole
+  field at once, balancing three demands: each pixel should land on matching *brightness*, it
+  should land on matching *edges* (this is the one that survives an explosion lighting up the
+  frame — brightness changes everywhere, edges stay put), and neighbouring pixels should move
+  alike unless there is strong evidence otherwise. That last demand is what fills the empty
+  regions: a pixel with no evidence of its own inherits motion from neighbours that have
+  some, seeping inward from the textured edges. It is the difference between "we don't know,
+  so here's mush" and "we don't know, so here's what the surrounding motion implies", which
+  is nearly always right.
+  Two side effects worth knowing. "Untrustworthy" now means something better — it used to
+  mean "nobody found an answer for me", and now means "the answer I was given doesn't actually
+  explain my pixels", which is the question that was worth asking all along. And the solver
+  sweeps the image in a **checkerboard** pattern rather than left-to-right, which sounds like
+  an odd detail but is the whole reason it can run on the graphics card at all: on a
+  checkerboard, every neighbour of a "red" pixel is "black", so an entire colour can be
+  updated at once by a million threads without any two of them tripping over each other. The
+  slow reference implementation is written the same way on purpose, so that the fast one is
+  allowed to agree with it.
+  **The HUD guard.** Game footage has a health bar, a killfeed, a minimap — things painted on
+  top of the picture that stay perfectly still while the whole world slides underneath them
+  during a fast turn. Flow sees a frame where everything moves except a few sharp rectangles,
+  and the motion of the background inevitably bleeds into them: the classic artefact where the
+  HUD smears across the screen, familiar to anyone who has used Twixtor on gameplay. The guard
+  looks for the tell — a region that is **not moving** but **is full of fine detail** (a still
+  patch of sky is smooth; a still patch of *text* is not) — and hands those pixels to a plain
+  crossfade instead of warping them. For genuinely static content that is the correct picture
+  anyway, since both frames agree there, so the guard costs nothing but the smear. It fades in
+  and out gradually rather than switching, because a hard edge between "warped" and "not
+  warped" is itself something you would see. It is on by default and can be turned off in the
+  Flow group.
   **This is wired up for
   Footage layers now**: a Speed % box in a footage layer's twirl-down retimes it (50% =
   half speed, and so on), and the same Retime map feeds preview, export, and the cache

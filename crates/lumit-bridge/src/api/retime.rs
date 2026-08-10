@@ -29,9 +29,76 @@ pub enum BridgeRetimeInterp {
     Nearest,
     /// Crossfade the two neighbours.
     Blend,
-    /// Optical-flow synthesis. The flow engine is future work; the policy
-    /// round-trips today so a project set to it is not silently downgraded.
+    /// Optical-flow synthesis (K-331/K-332): the engine measures how everything
+    /// moved between the two frames and paints the one in between.
     Flow,
+}
+
+/// A footage layer's Flow group (docs/08 §3.1, K-331), flat for the bridge.
+///
+/// Every field is a picture-changing parameter, so every field is part of the
+/// frame's identity — see `feed_interp`. Read and written whole: a group of
+/// eight settings edited one at a time would need eight round trips and eight
+/// undo steps to do what one does.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeFlowParams {
+    /// 0 native, 1 half, 2 quarter — the size flow is *measured* at,
+    /// independent of the preview quality tier.
+    pub resolution: u32,
+    /// 0 low, 1 medium, 2 high, 3 ultra — pyramid depth and refinement effort.
+    pub detail: u32,
+    /// 0–100. High means fewer tears and a gloopier field.
+    pub smoothness: f64,
+    /// 0 visible-only, 1 blend.
+    pub occlusion: u32,
+    /// 0 blend, 1 nearest — what shows where confidence is too low.
+    pub fallback: u32,
+    /// Bias static, detailed regions toward a plain blend, so a game HUD does
+    /// not smear across the frame.
+    pub hud_guard: bool,
+    /// Force flow on where the engagement gate would decline it.
+    pub always: bool,
+}
+
+impl BridgeFlowParams {
+    fn from_core(p: &lumit_core::retime::FlowParams) -> Self {
+        Self {
+            resolution: p.resolution.code(),
+            detail: p.detail.code(),
+            smoothness: p.smoothness,
+            occlusion: p.occlusion.code(),
+            fallback: p.fallback.code(),
+            hud_guard: p.hud_guard,
+            always: p.always,
+        }
+    }
+
+    /// Fold onto an existing set, so the keyframed input rate and any
+    /// forward-compatible fields survive an edit of the plain ones.
+    fn onto(&self, base: &lumit_core::retime::FlowParams) -> lumit_core::retime::FlowParams {
+        use lumit_core::retime::{FlowFallback, FlowResolution, OcclusionMode, VectorDetail};
+        let mut out = base.clone();
+        // An unknown code keeps what was there rather than snapping to a
+        // default: the UI and the engine disagreeing is a bug, not a reason to
+        // silently change the user's picture.
+        if let Some(v) = FlowResolution::from_code(self.resolution) {
+            out.resolution = v;
+        }
+        if let Some(v) = VectorDetail::from_code(self.detail) {
+            out.detail = v;
+        }
+        if let Some(v) = OcclusionMode::from_code(self.occlusion) {
+            out.occlusion = v;
+        }
+        if let Some(v) = FlowFallback::from_code(self.fallback) {
+            out.fallback = v;
+        }
+        out.smoothness = self.smoothness.clamp(0.0, 100.0);
+        out.hud_guard = self.hud_guard;
+        out.always = self.always;
+        out
+    }
 }
 
 impl LayerReference {
@@ -58,8 +125,129 @@ impl LayerReference {
             interpolation: match interpolation {
                 BridgeRetimeInterp::Nearest => Interpolation::Nearest,
                 BridgeRetimeInterp::Blend => Interpolation::Blend,
-                BridgeRetimeInterp::Flow => Interpolation::Flow(Default::default()),
+                // Keep the parameters a layer already had: turning Flow off to
+                // compare against Nearest and back on again must not silently
+                // reset the group.
+                BridgeRetimeInterp::Flow => {
+                    Interpolation::Flow(match &self.item()?.interpolation {
+                        Interpolation::Flow(p) => p.clone(),
+                        _ => Default::default(),
+                    })
+                }
             },
+        })
+    }
+
+    /// This layer's Flow group, or the defaults when its policy is not Flow —
+    /// so the panel can show the controls it *would* get without the document
+    /// having to hold them yet.
+    #[frb(sync)]
+    pub fn get_flow_params(&self) -> Result<BridgeFlowParams, BridgeError> {
+        Ok(match &self.item()?.interpolation {
+            Interpolation::Flow(p) => BridgeFlowParams::from_core(p),
+            _ => BridgeFlowParams::from_core(&Default::default()),
+        })
+    }
+
+    /// Write the Flow group. One undo step.
+    ///
+    /// Setting parameters *turns flow on* if it was off: the group is only
+    /// reachable from a layer whose flow is live, and a write that silently did
+    /// nothing would be worse than one that means what it says.
+    #[frb(sync)]
+    pub fn set_flow_params(&self, params: BridgeFlowParams) -> Result<(), BridgeError> {
+        let base = match &self.item()?.interpolation {
+            Interpolation::Flow(p) => p.clone(),
+            _ => Default::default(),
+        };
+        self.commit(lumit_core::Op::SetLayerInterpolation {
+            comp: self.comp_id,
+            layer: self.layer_id,
+            interpolation: Interpolation::Flow(params.onto(&base)),
+        })
+    }
+
+    /// The rate this clip is *interpreted* at for flow (K-095, K-160) — the
+    /// Flow group's Input rate, as a keyframeable scalar.
+    ///
+    /// `0` reads as **Auto**: adjacent source frames, the clip's own rate. Any
+    /// positive rate below native conforms the clip, so flow brackets the
+    /// source frames spaced `1/rate` apart and interpolates between *those*.
+    ///
+    /// Two quite different footage problems want this, from opposite ends.
+    /// High-speed capture — a 600 fps phone clip — has neighbours under two
+    /// thousandths of a second apart, so there is almost no motion to
+    /// interpolate and slow-motion looks frozen. **Animation drawn on 2s or 3s**
+    /// has the mirror problem: the same frame is held two or three times, so
+    /// half the pairs flow between a frame and its own duplicate (no motion at
+    /// all) and the rest carry double, which reads as judder rather than smooth
+    /// slow motion. Conforming to the rate the animation was *drawn* at — 12 fps
+    /// for 2s of 24, 8 fps for 3s — makes every bracket span real motion.
+    ///
+    /// Keyframeable because a scene's cadence is not always constant: anime
+    /// commonly switches between 2s and 3s within a cut, and a ramp lets the
+    /// conform follow it.
+    #[frb(sync)]
+    pub fn get_flow_input_rate(&self) -> Result<crate::api::effect::BridgeScalar, BridgeError> {
+        let layer = self.item()?;
+        let p = match &layer.interpolation {
+            Interpolation::Flow(p) => p.input_fps.clone(),
+            _ => lumit_core::anim::Property::zero(),
+        };
+        Ok(crate::api::effect::BridgeScalar::read_at(
+            &p,
+            layer.start_offset.0,
+        ))
+    }
+
+    /// Write the Flow input rate. One undo step. Turns flow on if it was off,
+    /// for the same reason [`Self::set_flow_params`] does.
+    #[frb(sync)]
+    pub fn set_flow_input_rate(
+        &self,
+        value: crate::api::effect::BridgeScalar,
+    ) -> Result<(), BridgeError> {
+        let layer = self.item()?;
+        let animation = value.animation_at(layer.start_offset.0)?;
+        let mut params = match &layer.interpolation {
+            Interpolation::Flow(p) => p.clone(),
+            _ => Default::default(),
+        };
+        params.input_fps.animation = animation;
+        self.commit(lumit_core::Op::SetLayerInterpolation {
+            comp: self.comp_id,
+            layer: self.layer_id,
+            interpolation: Interpolation::Flow(params),
+        })
+    }
+
+    /// Whether flow is live on this layer — the switch-cluster toggle (K-088).
+    #[frb(sync)]
+    pub fn get_flow_enabled(&self) -> Result<bool, BridgeError> {
+        Ok(matches!(self.item()?.interpolation, Interpolation::Flow(_)))
+    }
+
+    /// Turn flow on or off (K-088). Off returns the layer to Nearest — the
+    /// policy it had before flow is not recorded, and Nearest is the crisp
+    /// default docs/04 §10 names.
+    ///
+    /// **Turning it off discards the Flow group.** The parameters live inside
+    /// the `Flow` variant of the policy, so there is nowhere to keep them while
+    /// the policy is something else. Comparing a flow shot against the plain
+    /// one is an ordinary thing to do and should not cost the tuning that got
+    /// you there; fixing it means moving `FlowParams` onto the layer beside the
+    /// policy rather than inside it (docs/TODO.md). Recorded here rather than
+    /// worked around, because a UI-side stash of the last settings would be the
+    /// view holding document state.
+    #[frb(sync)]
+    pub fn set_flow_enabled(&self, on: bool) -> Result<(), BridgeError> {
+        if on == self.get_flow_enabled()? {
+            return Ok(());
+        }
+        self.set_interpolation(if on {
+            BridgeRetimeInterp::Flow
+        } else {
+            BridgeRetimeInterp::Nearest
         })
     }
 }

@@ -7587,3 +7587,102 @@ already open (`updateEditingValue`) rather than `enterText`, which re-attaches o
 hide exactly this fault (fx_console_test.dart). With the console open the space bar types
 instead of playing, and plays again once Escape closes it (shortcuts_frb_test.dart — the
 existing Ctrl+Space test now closes the console before asserting the bare space bar).
+
+**Renumbered on merge, twice.** These two were written as K-256 and K-257 on a branch; the lens-flare work claimed those first, so they became K-268 and K-269 — and main claimed *those* while the branch waited. They are K-331 and K-332 here, and this is the last time: the renumber-on-merge rule K-160 records.
+
+**K-331 · DECIDED · Flow is rebuilt on the render device: GPU synthesis, a cache tier of its
+own, a resolution independent of preview quality, and the §3.1 parameters it was always
+specified to have.** From the owner (2026-08-04), reopening the flow engine that landed in the
+egui era and has not been touched since. The DIS algorithm itself stands (K-169, and
+`docs/impl/optical-flow.md` remains the authoritative *how*); everything around it is replaced.
+
+- **One device, one walk.** `FlowEngine::new_auto` built its *own headless wgpu device* inside
+  the decode worker, measured flow there, read the field back, and synthesised the in-between
+  frame per-pixel on the CPU in sRGB bytes. Flow now runs in `realise`, on the compositor's
+  device, where both source textures already exist, and synthesis is a WGSL pass in linear
+  premultiplied fp16 as `docs/impl/optical-flow.md` §3 always required. The decode worker goes
+  back to decoding: `DrawSource` carries the two bracketing frames and the phase, not
+  pre-synthesised pixels. Because preview, the headless renderer and export all drive that one
+  walk, K-031 holds by construction rather than by a second implementation agreeing.
+- **Flow resolution is its own setting, not a side effect of preview quality.** Flow was
+  measured on whatever the preview scale had shrunk the decode to, so a draft scrub and an
+  export were different *measurements*, not the same measurement at two sizes. Flow resolution
+  moves into `FlowParams` and defaults to native. **The accepted cost:** a layer with Flow live
+  decodes at native width even in draft preview, because full-resolution flow cannot be
+  measured on a shrunk decode — draft stops being cheap on flow layers, and that is the price
+  of a preview that does not lie about what the export will look like. The quality knob remains
+  for anyone who wants the speed back.
+- **A `flow/` cache tier** beside `frames/` (docs/06 §5.4 reserved it and nothing was ever
+  written there), keyed by `(item, frame A, frame B, flow params, algorithm version)` and
+  **not** by the preview quality tier, since flow no longer varies with it — so a draft scrub
+  warms the cache for the full-quality pass. Fields store as `rg16float` plus an `r8`
+  confidence rather than the f32 buffers the CPU parity contract needed (≈18 MB per 1080p
+  pair). Retime flow and Fast motion blur hit the *same* entry when they want the same frame
+  pair: they are one measurement with two consumers (retime uses the vectors to invent a frame
+  between two, motion blur uses them to streak pixels within one), and a layer running both
+  paid for DIS twice.
+- **Flow is a switch, not a dropdown entry.** Completing K-088: the Source rows' interpolation
+  dropdown drops to Nearest / Blend, and Flow becomes a toggle in the footage layer's switch
+  cluster which reveals the **Flow** group beside Transform and Effects. `Interpolation::Flow`
+  remains the storage (K-088's "the option surfaces the policy"); only the control moves. The
+  gate is the K-246 duration rule — media that runs qualifies, so image sequences qualify for
+  free the day they become a footage kind, with no flow-specific work.
+- **The engagement gate ships, with an override.** K-088's "engages only when it can help" was
+  never built; Flow ran whenever selected, paying full cost on clips where it changed nothing.
+  Flow now passes through to Nearest unless the source rate through the retime undershoots the
+  comp rate, and the Flow group carries a manual override that forces it regardless (the "wind
+  toggle" K-095 refers to).
+- **The §3.1 parameters ship**: Vector detail, Smoothness, Occlusion handling and Fallback join
+  the resolution and the already-built-but-unreachable keyframeable Input rate (K-095, K-160 —
+  `set_interpolation` wrote `Interpolation::Flow(Default::default())` and discarded every one of
+  them, so two decisions' worth of working engine had no control surface at all). **The
+  HUD/overlay guard of §3.1 step 5 ships with them**: static regions with high texture bias
+  toward pure blending, which is what stops a game HUD smearing across the frame — the
+  single most valuable behaviour for this project's primary footage (K-002).
+
+Superseded in passing: the "flow fields are f32 storage buffers because fp16 rounding would eat
+the CPU-parity budget" note of `docs/impl/optical-flow.md` §1 applies to the *search*, which
+keeps its f32 working buffers and its CPU oracle; only the *stored* field narrows to fp16.
+
+**K-332 · DECIDED · DIS ships its variational refinement; "skip it in v1" is reversed.** From
+the owner (2026-08-04), reporting that the motion vectors are artefact-heavy and the flow and
+Fast motion blur that ride on them look poor. `docs/impl/optical-flow.md` §1 step 4 said: *skip
+the paper's full variational refinement in v1 — measure first; it is the difference between 2 ms
+and 10 ms and mostly helps large untextured regions, rare in game footage.* The measurement has
+now happened, and both halves of that sentence were wrong.
+
+DIS is **three** parts — inverse search, densification, variational refinement (Kroeger et al.,
+ECCV 2016) — and Lumit shipped two. The paper's own parameter analysis reports that refinement
+"always significantly reduced the error for a moderate increase in run-time"; OpenCV's
+`DISOpticalFlow`, the implementation everyone benchmarks against, enables it by default. The
+quality bar the impl note sets — "≈ Twixtor's easy-80% on game footage" — was set for the whole
+algorithm and judged against two thirds of it.
+
+The dismissal of untextured regions was the deeper mistake. Smoke, sky, muzzle flash, water,
+darkness and motion-blurred backgrounds are not *rare* in game capture, they are most of a
+frame during exactly the fast moments a montage slows down. And the current code fails hard
+there rather than softly: densification weights patch votes by a narrow Gaussian photometric
+term (σ = 0.08), so where nothing matches, the pixel keeps the coarse initialisation and is
+marked invalid; `occlusion` counts invalid as occluded; synthesis then crossfades it. Untextured
+regions collapse to patches of ghosted crossfade — the reported artefact, arrived at by three
+correct-looking local decisions. The single 3×3 bilateral pass was standing in for the
+regularisation the paper leaves to the refinement, and it cannot.
+
+Shipping, per the paper: intensity constancy **and gradient constancy** (the latter is what
+survives illumination change — a muzzle flash or explosion is a brightness step across a moving
+frame, the case plain intensity constancy has no answer for), a smoothness term, the robust
+penaliser `Ψ(a²) = √(a² + ε²)`, solved by successive over-relaxation once per pyramid level.
+Validity stops meaning "no patch covered me" and starts meaning "the refined flow does not
+explain these pixels", measured from the residual after refinement — a dense field has an
+answer everywhere, and the honest question is whether that answer is right.
+
+**Not adopted, and why.** Learned flow is the state of the art — WAFT (2025) leads Spring,
+Sintel and KITTI by replacing cost volumes with high-resolution warping, and RIFE-class models
+are what the community already pre-processes with. All of them are trained networks, which
+collides with three standing commitments: engine determinism (docs/14), preview equals export
+(K-031), and no model-file download in v1 (K-169's reasoning, unchanged). One architectural
+point decides the shape regardless: **RIFE synthesises frames directly and emits no flow
+field**, so Fast motion blur (§3.2) and Datamosh (§3.12) need DIS-class vectors whatever
+happens to retime synthesis — a learned model could one day replace the *synthesis* half and
+never the *measurement* half. The follow-up the owner accepted is a measurement harness on real
+gameplay, so the learned ceiling is judged later against numbers rather than impressions.
