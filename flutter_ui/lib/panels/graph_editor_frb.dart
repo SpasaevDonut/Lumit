@@ -26,6 +26,7 @@ import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/shell.dart';
 import 'package:lumit_flutter/state/comp_model.dart';
+import 'package:lumit_flutter/state/preview_throttle.dart';
 import 'package:provider/provider.dart';
 
 import '../l10n/strings.dart';
@@ -237,6 +238,86 @@ void commitChannelEdits(Map<GraphChannel, BridgeScalar> edits) {
     }
     layer.setEffects(effects: staged);
   }
+}
+
+/// Show the edits a gesture is *about* to make, without making them: the same
+/// scalars [commitChannelEdits] writes on release, rendered through the
+/// engine's patched clone.
+///
+/// **Why this exists.** A drag is one op on release (K-192), so between the
+/// first move and the mouse-up the document still holds the old curve and the
+/// Viewer still shows it. On a transform or an effect that is merely awkward;
+/// on a **Retime** it is the whole edit — you are choosing which frame of the
+/// source to land on, by eye, against a picture that will not move until you
+/// let go. Every other live drag in the editor already previews (transform
+/// rows, effect rows, paint, masks, clip envelopes); the graph is where curves
+/// are actually shaped, and it was the one place that did not.
+///
+/// **One layer, one kind, per gesture.** A preview request patches a single
+/// layer's single state (see `RenderCompRequestWithPreview`), so this previews
+/// the grabbed channel's layer and the channels that patch the same way; a
+/// selection spanning several layers or a transform *and* an effect at once
+/// shows the rest on release, as it always did. That is what a gesture is in
+/// practice: one property of one layer.
+void previewChannelEdits({
+  required CompositionReference comp,
+  required Map<GraphChannel, BridgeScalar> edits,
+  required int frame,
+  required double scale,
+}) {
+  if (edits.isEmpty) return;
+  final lead = edits.keys.first;
+  final layer = lead.entry.layer;
+  final layerId = layer.internallayerId.toString();
+  bool sameLayer(GraphChannel c) =>
+      c.entry.layer.internallayerId.toString() == layerId;
+  final bigFrame = BigInt.from(frame);
+
+  if (lead.retime) {
+    comp.renderFrameWithRetime(
+      frame: bigFrame,
+      scale: scale,
+      layer: layer,
+      retime: edits[lead]!,
+    );
+    return;
+  }
+
+  if (lead.prop != null) {
+    var transform = layer.getTransform();
+    edits.forEach((channel, next) {
+      if (!sameLayer(channel) || channel.prop == null) return;
+      transform = writeScalar(transform, channel.prop!, next);
+    });
+    comp.renderFrameWithTransformPreview(
+      frame: bigFrame,
+      scale: scale,
+      layer: layer,
+      transform: transform,
+    );
+    return;
+  }
+
+  if (lead.effect == null || lead.param == null) return;
+  final staged = layer.getEffects();
+  for (final instance in staged) {
+    edits.forEach((channel, next) {
+      if (!sameLayer(channel) ||
+          channel.effect == null ||
+          channel.param == null) {
+        return;
+      }
+      if (channel.effect!.id.toString() != instance.id().toString()) return;
+      instance.setValue(
+          id: channel.param!.id, value: BridgeEffectValue.float(next));
+    });
+  }
+  comp.renderFrameWithPreview(
+    frame: bigFrame,
+    scale: scale,
+    layer: layer,
+    effects: staged,
+  );
 }
 
 /// [keys] with a key of [value] at [frame] — replacing the one already there,
@@ -844,6 +925,16 @@ class _HandleDrag {
 class GraphEditorFrbState extends State<GraphEditorFrb> {
   _KeyDrag? _keyDrag;
 
+  /// How often a drag in flight may ask the engine for a frame of the values it
+  /// is about to write (see [previewChannelEdits]).
+  final PreviewThrottle _preview = PreviewThrottle();
+
+  @override
+  void dispose() {
+    _preview.cancel();
+    super.dispose();
+  }
+
   /// When and where the pane was last clicked, for spotting a double-click
   /// (see [_tapPane]).
   DateTime? _lastPaneTap;
@@ -1255,7 +1346,25 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
       _frozen = null;
     });
     if (drag == null || (drag.dxPx == 0 && drag.dyPx == 0)) return;
+    // The commit is the last word on this gesture: a preview tick still held
+    // would put the provisional picture back on top of it.
+    _preview.cancel();
+    final (edits, newSelection) = _keyDragEdits(drag, range, height);
+    if (edits.isEmpty) return;
+    commitChannelEdits(edits);
+    widget.selectedKeys
+      ..clear()
+      ..addAll(newSelection);
+    widget.onSelectionChanged();
+    widget.onChanged();
+  }
 
+  /// What a key drag would write, and the selection it would leave: the keys
+  /// moved by the gesture so far, per channel. Read twice — once per preview
+  /// tick and once by the release — so the picture during the drag is made of
+  /// exactly the values the commit will write.
+  (Map<GraphChannel, BridgeScalar>, Set<String>) _keyDragEdits(
+      _KeyDrag drag, (double, double) range, double height) {
     final perFrame = widget.axis.perFrame;
     final dFrames = perFrame <= 0 ? 0.0 : drag.dxPx / perFrame;
     final span =
@@ -1314,13 +1423,20 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
         if (placed[i].$3) newSelection.add('${channel.id}#$i');
       }
     }
+    return (edits, newSelection);
+  }
+
+  /// A drag tick: render the values the release will write, without writing
+  /// them. Throttled, and coalescing — see [PreviewThrottle].
+  void _previewDrag(Map<GraphChannel, BridgeScalar> edits) {
     if (edits.isEmpty) return;
-    commitChannelEdits(edits);
-    widget.selectedKeys
-      ..clear()
-      ..addAll(newSelection);
-    widget.onSelectionChanged();
-    widget.onChanged();
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    _preview.request(() => previewChannelEdits(
+          comp: widget.comp,
+          edits: edits,
+          frame: ui.playheadFrame.value,
+          scale: ui.viewerScale,
+        ));
   }
 
   /// Where key [index] of [channel] draws, with the drag in flight applied.
@@ -1485,6 +1601,11 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
       drag.influence = r.influence;
       _mirrorPartner(drag, key, r.speed, r.influence, range, height);
     });
+    // The shaped curve, exactly as the release will commit it (K-192): an ease
+    // or an envelope point changes which source moment every frame between two
+    // keys reads, so it is as much a picture edit as moving the key itself.
+    _previewDrag(
+        {drag.channel: BridgeScalar.keyframed(_shownKeys(drag.channel))});
   }
 
   /// Swing the joined partner opposite the dragged handle, keeping the pixel
@@ -1545,6 +1666,9 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
       _frozen = null;
     });
     if (drag == null) return;
+    // As in [_commitKeyDrag]: the write is the last word, so no held preview
+    // tick may land after it.
+    _preview.cancel();
     final shown = _keysWithHandleDrag(drag, drag.channel.keys);
 
     // Both sides keep the length they were left at: the dragged one wherever
@@ -1958,6 +2082,10 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
                       ?..rawDx += d.delta.dx
                       ..rawDy += d.delta.dy;
                   });
+                  final drag = _keyDrag;
+                  if (drag != null) {
+                    _previewDrag(_keyDragEdits(drag, range, height).$1);
+                  }
                 } else {
                   final box = context.findRenderObject();
                   if (box is RenderBox) {
@@ -1974,11 +2102,14 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
                   _commitHandleDrag();
                 }
               },
-              onPanCancel: () => setState(() {
-                _keyDrag = null;
-                _handleDrag = null;
-                _frozen = null;
-              }),
+              onPanCancel: () {
+                _preview.cancel();
+                setState(() {
+                  _keyDrag = null;
+                  _handleDrag = null;
+                  _frozen = null;
+                });
+              },
               // The glyph is small; the target around it is not (see
               // [_keyGrab]).
               child: SizedBox(
@@ -2051,10 +2182,13 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
                 }
               },
               onPanEnd: (_) => _commitHandleDrag(),
-              onPanCancel: () => setState(() {
-                _handleDrag = null;
-                _frozen = null;
-              }),
+              onPanCancel: () {
+                _preview.cancel();
+                setState(() {
+                  _handleDrag = null;
+                  _frozen = null;
+                });
+              },
               // A generous target around a small dot: a handle that takes two
               // attempts to grab loses the keyframe's selection on the miss.
               child: SizedBox(

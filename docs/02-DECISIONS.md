@@ -7587,3 +7587,36 @@ already open (`updateEditingValue`) rather than `enterText`, which re-attaches o
 hide exactly this fault (fx_console_test.dart). With the console open the space bar types
 instead of playing, and plays again once Escape closes it (shortcuts_frb_test.dart — the
 existing Ctrl+Space test now closes the console before asserting the bare space bar).
+
+
+**K-329 · DECIDED · Curves preview while they are dragged, and a Retime flattened to one
+constant is a Retime removed.** Two reports from the 0.2.0 release, one week apart, that turn
+out to be the same complaint: the Retime path had no live feedback, and the one gesture that
+looked like "take it away" quietly froze the layer instead.
+
+**A graph drag previews.** Every other live drag in the editor already renders its provisional
+value through the engine's patched clone (K-192, K-225, K-239, K-240, K-247); the graph editor
+— where curves are actually shaped — was the one place that committed on release and showed
+nothing before it. It now previews on every tick, throttled and coalescing like the rest
+(`previewChannelEdits`, beside the `commitChannelEdits` it mirrors, so the picture during the
+drag is made of exactly the scalars the release will write). One layer and one kind of patch
+per gesture, because a preview request patches one layer's one state: a selection spanning
+several layers, or a transform *and* an effect at once, shows the rest on release as before.
+The layer's own Retime map gets a preview door of its own
+(`CompositionReference::render_frame_with_retime`), for K-247's reason applied to K-197's
+property: a retime decides *which source frame is decoded*, so it cannot be previewed by
+re-compositing pixels already in hand. The Retime row's value drag uses the same door, which
+retires the "no preview path for that yet" note that sat in it.
+
+**A constant map removes the Retime.** `set_retime_property` given a static value takes the
+property away and re-hangs the layer on its source (K-212) rather than writing it. The two
+gestures that produce one — the row's stopwatch turned off, and the last key deleted, which
+the graph editor answers with a static value — both mean "no more retime"; written as they
+arrived they left the layer showing a single source frame for its whole length, with the row
+gone quiet and nothing on screen to say why. That is not a state K-197 has ("no freeze"), and
+it is the exact bug reported. This narrows K-197's "an ordinary property, the same stopwatch,
+nothing Retime-specific": the stopwatch is still the same control, but on this one property
+turning it off means what Ctrl+Alt+T off means. A freeze is still reachable and still says so
+— a map with one key holds that moment, as After Effects does. Regression tests:
+`a_flattened_retime_is_removed_rather_than_freezing_the_layer` (lumit-bridge), which also pins
+the one undo step covering removal and re-hang together.

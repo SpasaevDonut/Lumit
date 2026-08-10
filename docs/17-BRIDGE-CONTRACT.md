@@ -83,7 +83,12 @@ undo step:
     `BridgeEffectInstance` follows that shape, not `set_value` alone:
     `set_custom_name` (the instance's own display name, K-321) stages onto the
     copy and `LayerReference::set_effects` is the commit, so a rename is one op
-    and one undo step like any other stack edit.
+    and one undo step like any other stack edit. `render_frame_with_preview`'s
+    siblings patch the other things a drag can be holding — a transform, a text
+    document, a paint or shape or mask list, a clip's retime envelope, and a
+    layer's own Retime map (`render_frame_with_retime`, K-329) — one layer's one
+    state per request, so a gesture spanning more than that previews the part it
+    grabbed.
 
 ### The four binding rules
 

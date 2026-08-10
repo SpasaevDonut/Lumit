@@ -388,18 +388,15 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
         child: EffectParamRowExpression(
             value: scalar,
             set: (value) {
+              final field = (value as BridgeEffectValue_Float).field0;
 
+              if (field is BridgeScalar_Expression) {
+                _commitExpression(axis.prop, field.field0);
+              }
 
-             final field = (value as BridgeEffectValue_Float).field0;
-
-             if ( field is BridgeScalar_Expression ) {
-              _commitExpression(axis.prop, field.field0);
-             }
-
-             if(field is BridgeScalar_Static) {
-              _commit(axis.prop, field.field0);
-             }
-
+              if (field is BridgeScalar_Static) {
+                _commit(axis.prop, field.field0);
+              }
             },
             setLive: (value) {
               _liveExpression(
@@ -559,8 +556,13 @@ BridgeScalar read(BridgeTransform tf, BridgeTransformProp prop) =>
 /// Rebuilt field by field because the generated type has no `copyWith`: it is a
 /// plain data class across the seam, which is the point of it.
 BridgeTransform write(
-    BridgeTransform tf, BridgeTransformProp prop, double value) {
-  final replacement = BridgeScalar.static_(value);
+        BridgeTransform tf, BridgeTransformProp prop, double value) =>
+    writeScalar(tf, prop, BridgeScalar.static_(value));
+
+/// A copy of `tf` with one property's whole animation replaced — what a graph
+/// drag previews, where the provisional value is a curve rather than a number.
+BridgeTransform writeScalar(
+    BridgeTransform tf, BridgeTransformProp prop, BridgeScalar replacement) {
   BridgeScalar pick(BridgeTransformProp p, BridgeScalar current) =>
       p == prop ? replacement : current;
 
@@ -580,22 +582,5 @@ BridgeTransform write(
 }
 
 BridgeTransform writeExpression(
-    BridgeTransform tf, BridgeTransformProp prop, String expression) {
-  final replacement = BridgeScalar.expression(expression);
-  BridgeScalar pick(BridgeTransformProp p, BridgeScalar current) =>
-      p == prop ? replacement : current;
-
-  return BridgeTransform(
-    anchorX: pick(BridgeTransformProp.anchorX, tf.anchorX),
-    anchorY: pick(BridgeTransformProp.anchorY, tf.anchorY),
-    positionX: pick(BridgeTransformProp.positionX, tf.positionX),
-    positionY: pick(BridgeTransformProp.positionY, tf.positionY),
-    positionZ: pick(BridgeTransformProp.positionZ, tf.positionZ),
-    scaleX: pick(BridgeTransformProp.scaleX, tf.scaleX),
-    scaleY: pick(BridgeTransformProp.scaleY, tf.scaleY),
-    rotation: pick(BridgeTransformProp.rotation, tf.rotation),
-    rotationX: pick(BridgeTransformProp.rotationX, tf.rotationX),
-    rotationY: pick(BridgeTransformProp.rotationY, tf.rotationY),
-    opacity: pick(BridgeTransformProp.opacity, tf.opacity),
-  );
-}
+        BridgeTransform tf, BridgeTransformProp prop, String expression) =>
+    writeScalar(tf, prop, BridgeScalar.expression(expression));

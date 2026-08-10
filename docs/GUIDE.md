@@ -1318,7 +1318,14 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   because it genuinely *is* every other property — there is no Retime-specific code in any
   of those places. Switching it on installs two keys running source time alongside layer
   time, so the picture does not move; drag the second key later and the clip plays slower,
-  drag it earlier and it plays faster. **The two keys land on the layer's own start and
+  drag it earlier and it plays faster. **Taking the retime away is the same thought however
+  you say it.** Ctrl+Alt+T again, the stopwatch off, or deleting the last key all end with
+  the layer hung back on its source, playing at its own rate from the frame that was showing.
+  The alternative — writing down "show *this* one moment, for ever", which is literally what
+  a curve with no keys left in it says — would leave the layer frozen on a single frame with
+  the row gone quiet, and nobody means that by "remove the retime" (K-329). A freeze is asked
+  for the way After Effects asks: leave one key, and that moment holds.
+  **The two keys land on the layer's own start and
   end** — where it currently sits on the timeline, and where its ends currently are if you
   have trimmed it (K-213). That sounds obvious and was not: keyframes are stored in the
   layer's *own* clock, which is what makes a layer's animation travel with it when you slide

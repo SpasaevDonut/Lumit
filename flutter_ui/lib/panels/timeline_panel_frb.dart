@@ -3956,10 +3956,31 @@ class _RetimeRow extends StatefulWidget {
 
 class _RetimeRowState extends State<_RetimeRow> {
   /// The value under the pointer during a drag, held so the whole gesture is
-  /// one undo step. No live preview: a retime drag changes which frame is
-  /// decoded, and there is no preview path for that yet — the release commits
-  /// and the viewer re-renders then.
+  /// one undo step. The picture keeps up in the meantime: a retime drag decides
+  /// which frame is decoded, so it previews through its own door
+  /// (`renderFrameWithRetime`) rather than by re-compositing pixels already in
+  /// hand — the one edit where watching it move is the whole point.
   double? _staged;
+
+  final PreviewThrottle _preview = PreviewThrottle();
+
+  @override
+  void dispose() {
+    _preview.cancel();
+    super.dispose();
+  }
+
+  /// A drag tick: render the map the release will write, without writing it.
+  void _live(BridgeScalar scalar, double value, int frame) {
+    setState(() => _staged = value);
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    _preview.request(() => widget.comp.renderFrameWithRetime(
+          frame: BigInt.from(ui.playheadFrame.value),
+          scale: ui.viewerScale,
+          layer: widget.layer,
+          retime: scalarWithValueAt(scalar, value, widget.comp, frame),
+        ));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -4031,7 +4052,7 @@ class _RetimeRowState extends State<_RetimeRow> {
                           speed: 0.02,
                           onChanged: (v) => _commitAt(scalar, v, frame),
                           onChangeLive: (v) =>
-                              setState(() => _staged = v.toDouble()),
+                              _live(scalar, v.toDouble(), frame),
                           onChangeEnd: (v) => _commitAt(scalar, v, frame),
                           onDragCancel: () => setState(() => _staged = null),
                         ))
@@ -4051,8 +4072,8 @@ class _RetimeRowState extends State<_RetimeRow> {
                       minFrame: -100000,
                       maxFrame: 100000,
                       draggable: true,
-                      onDragLive: (f) => setState(
-                          () => _staged = _secondsOfFrame(f, fpsNum, fpsDen)),
+                      onDragLive: (f) => _live(
+                          scalar, _secondsOfFrame(f, fpsNum, fpsDen), frame),
                       onCommit: (f) => _commitAt(
                           scalar, _secondsOfFrame(f, fpsNum, fpsDen), frame),
                       onDragCancel: () => setState(() => _staged = null),
@@ -4078,6 +4099,9 @@ class _RetimeRowState extends State<_RetimeRow> {
       fpsNum <= 0 ? 0 : frame * (fpsDen <= 0 ? 1 : fpsDen) / fpsNum;
 
   void _commitAt(BridgeScalar scalar, num value, int frame) {
+    // The write is the last word on the gesture: a held preview tick after it
+    // would put the provisional picture back.
+    _preview.cancel();
     widget.layer.setRetimeProperty(
       value: scalarWithValueAt(scalar, value.toDouble(), widget.comp, frame),
     );

@@ -999,7 +999,11 @@ measurement — the panel shows the numbers, it does not turn them on.
     time in seconds, and it is an ordinary keyframable property: the same stopwatch, the same
     navigator, the same lane diamonds and the same graph lane as Position, with nothing
     Retime-specific attached. Switching it on installs the identity map, so the picture does
-    not move; switching it off removes the property rather than flattening it.
+    not move; switching it off removes the property rather than flattening it. **A map
+    flattened to one constant removes it too** (K-329): turning the stopwatch off, or deleting
+    the last key, means "no more retime" on this property, so the layer is re-hung on its
+    source and plays at source rate again rather than freezing on a single frame. A freeze is
+    still asked for the way After Effects asks — a map with one key holds that moment.
   - **Transform**, always: one row per property group with the stopwatch, the ◄ ◆ ► navigator,
     the label, and a scrub-drag/click-to-type value per axis.
   - **Effects**, only when the layer has any: one row per effect, opening onto that effect's
@@ -1340,7 +1344,11 @@ whole selection in time and value as one write per property; and **keyframe copy
 (`Ctrl+C`/`Ctrl+V`, from the lane view as much as the graph) — full fidelity in-app,
 mirrored to the system clipboard as a tab-separated `Lumit <version> Keyframe Data` table
 whose per-value easing columns carry the shaping across, and which parses foreign
-keyframe tables back in as linear keys. Still to build:
+keyframe tables back in as linear keys. **A drag in the graph previews as it goes** (K-329):
+every tick renders the values the release will write, through the same patched clone the
+value rows use — a key drag, a tangent handle and a Vegas envelope point alike. It covers the
+grabbed key's layer, so a selection spanning several layers still shows the rest on release.
+Still to build:
 the acceleration lens and auto view (K-070), numeric entry, the transform-box scaling,
 snap-to-beat-markers in the graph, waveform ghosting, and the Retime lenses of §5.2.
 

@@ -1785,6 +1785,12 @@ pub struct RenderCompRequestWithPreview {
     /// pointer is let go, which is the one edit where watching it matters
     /// most.
     pub clip_retime: Option<(Uuid, crate::api::effect::BridgeScalar)>,
+    /// The layer's own Retime map (K-197), while a key of it is being dragged
+    /// in the graph editor. Exactly `clip_retime`'s reason, for the property
+    /// rather than a clip: the map decides which source frame is decoded, so
+    /// the drag cannot ride the retained pixels and the provisional map has to
+    /// reach the render plan.
+    pub retime: Option<crate::api::effect::BridgeScalar>,
     /// A shape layer's whole art list, while one of its items is being dragged
     /// (K-239). The same reason as `paint` above.
     pub contents: Option<Vec<crate::api::layer::BridgeShapeItem>>,
@@ -2769,6 +2775,21 @@ fn render_comp_with_preview(
     }
     if let Some(paint) = req.paint {
         comp.layers[index].paint = paint.into_iter().map(|s| s.write()).collect();
+    }
+    if let Some(map) = req.retime {
+        // Keys cross the seam on the comp clock (K-213), so the layer's own
+        // zero comes back off on the way in. A layer with no Retime is left
+        // alone rather than given one: a preview must not invent a state the
+        // document cannot be in.
+        let offset = comp.layers[index].start_offset.0;
+        if let (Ok(animation), Some(retime)) =
+            (map.animation_at(offset), comp.layers[index].retime.clone())
+        {
+            comp.layers[index].retime = Some(lumit_core::anim::Property {
+                animation,
+                extra: retime.extra,
+            });
+        }
     }
     if let Some((clip, map)) = req.clip_retime {
         // Clip time, so no layer offset is applied on the way in.

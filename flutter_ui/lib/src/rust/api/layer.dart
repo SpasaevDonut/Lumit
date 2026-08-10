@@ -1554,6 +1554,16 @@ class LayerReference {
   /// the same coarse-grained shape as a transform property, for the same
   /// invertibility reason. Refused on a layer that is not retimed: the row
   /// only exists once it is.
+  ///
+  /// **A map that has become one constant takes the Retime away** rather than
+  /// being written. Every route that produces one is the user saying "no more
+  /// retime": the row's stopwatch turned off, or the last key deleted. Written
+  /// as it arrived, a constant map is a layer frozen on a single frame for its
+  /// whole length, with the row gone quiet and nothing on screen to say why —
+  /// which is not a state K-197 has ("no freeze") and not what either gesture
+  /// means. So it takes the Ctrl+Alt+T-off route instead: the property goes,
+  /// and the layer is re-hung on its source at source rate (K-212), in one
+  /// undo step.
   void setRetimeProperty({required BridgeScalar value}) => BridgeLib
       .instance.api
       .crateApiLayerLayerReferenceSetRetimeProperty(that: this, value: value);
