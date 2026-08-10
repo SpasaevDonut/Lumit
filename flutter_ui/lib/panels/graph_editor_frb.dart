@@ -50,12 +50,51 @@ import 'transform_rows_frb.dart';
 /// its travel for the waveform lane (`BarDragPreview`, K-172). Null between
 /// gestures.
 ///
-/// The layer and the transform property name are what the two sides have in
-/// common — an axis, not a row, so dragging Position x leaves y where it is. An
-/// **unkeyed** property is drawn at its new value and gains no diamond: the
-/// drag is not planting a key, and a glyph would say it was.
-final ValueNotifier<({String layer, String prop, int frame, double value})?>
-    rowValueDrag = ValueNotifier(null);
+/// The layer plus one channel selector — a transform axis, an effect
+/// parameter, or the Retime — is what the two sides have in common, so
+/// dragging Position x leaves y where it is. An **unkeyed** property is drawn
+/// at its new value and gains no diamond: the drag is not planting a key, and
+/// a glyph would say it was.
+final ValueNotifier<RowValueDrag?> rowValueDrag = ValueNotifier(null);
+
+/// One tick of a layer-area value drag: which channel, and what it holds.
+class RowValueDrag {
+  final String layer;
+
+  /// A transform axis (`BridgeTransformProp.name`), or null.
+  final String? prop;
+
+  /// An effect parameter, or nulls.
+  final String? effectId;
+  final String? paramId;
+
+  /// The layer's Retime channel.
+  final bool retime;
+
+  final int frame;
+  final double value;
+
+  const RowValueDrag({
+    required this.layer,
+    this.prop,
+    this.effectId,
+    this.paramId,
+    this.retime = false,
+    required this.frame,
+    required this.value,
+  });
+
+  /// Whether [channel] is the curve this drag is editing.
+  bool matches(GraphChannel channel) {
+    if (channel.entry.layer.internallayerId.toString() != layer) return false;
+    if (prop != null) return channel.prop?.name == prop;
+    if (effectId != null) {
+      return channel.effect?.id.toString() == effectId &&
+          channel.param?.id == paramId;
+    }
+    return retime && channel.retime;
+  }
+}
 
 /// Which reading of the curve is on screen (docs/07 §5.1).
 enum GraphLens { value, speed }
@@ -1940,9 +1979,7 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
   List<BridgeKeyframe> _shownKeys(GraphChannel channel,
       {bool painting = false}) {
     final row = rowValueDrag.value;
-    if (row != null &&
-        channel.prop?.name == row.prop &&
-        channel.entry.layer.internallayerId.toString() == row.layer) {
+    if (row != null && row.matches(channel)) {
       final keys = channel.keys;
       if (keys.isNotEmpty) {
         return _withKeyAt(keys, row.frame.toDouble(), row.value, widget.fps,

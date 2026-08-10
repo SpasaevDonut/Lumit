@@ -503,7 +503,7 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
   /// uses, carrying a whole animation instead of one number.
   void _liveKeyed(
       BridgeTransformProp prop, BridgeScalar scalar, double value, int frame) {
-    rowValueDrag.value = (
+    rowValueDrag.value = RowValueDrag(
       layer: widget.layer.internallayerId.toString(),
       prop: prop.name,
       frame: frame,

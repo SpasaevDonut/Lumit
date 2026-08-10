@@ -37,6 +37,7 @@ import '../widgets/angle_dial.dart';
 import '../widgets/colour_picker.dart';
 import '../widgets/controls.dart';
 import 'fx_section.dart';
+import 'graph_editor_frb.dart';
 import 'keyframe_controls_frb.dart';
 import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:lumit_flutter/widgets/autofill.dart';
@@ -527,8 +528,6 @@ class EffectParamRowFrb extends StatelessWidget {
     if (scalar case BridgeScalar_Keyframed()) {
       final sampled =
           sampleScalar(scalar: scalar, time: timeOfFrame(comp, frame));
-      // No live preview mid-drag on a curve; the release is one op — the key
-      // at the playhead updated or planted.
       return SizedBox(
         width: effectCellWidth,
         child: KeyedValueField(
@@ -537,8 +536,34 @@ class EffectParamRowFrb extends StatelessWidget {
           min: hardMin ?? -1000000,
           max: hardMax ?? 1000000,
           speed: speed,
-          onCommit: (v) =>
-              write(scalarWithValueAt(scalar, snap(v), comp, frame)),
+          onCommit: (v) {
+            rowValueDrag.value = null;
+            write(scalarWithValueAt(scalar, snap(v), comp, frame));
+          },
+          // A key under the playhead the moment the drag starts (K-333): it
+          // holds the value already there, so nothing moves — and the drag
+          // then has a key to carry in the graph.
+          onStart: () {
+            if (scalar.field0
+                .any((k) => comp.frameAtTime(time: k.time) == frame)) {
+              return;
+            }
+            write(scalarWithValueAt(scalar, sampled, comp, frame));
+          },
+          // Each tick: the picture through the staged effect stack, and the
+          // curve through the published drag (K-333/K-334) — the same pair a
+          // transform row's drag feeds.
+          onLive: (v) {
+            rowValueDrag.value = RowValueDrag(
+              layer: ownerLayerId.toString(),
+              effectId: effectId.toString(),
+              paramId: param.id,
+              frame: frame,
+              value: snap(v),
+            );
+            _setLive(BridgeEffectValue.float(
+                scalarWithValueAt(scalar, snap(v), comp, frame)));
+          },
         ),
       );
     }
@@ -646,7 +671,8 @@ class EffectParamRowFrb extends StatelessWidget {
           enabled: enabled,
           onChanged: animated
               ? null
-              : (v) => _setLive(BridgeEffectValue.float(BridgeScalar.static_(v))),
+              : (v) =>
+                  _setLive(BridgeEffectValue.float(BridgeScalar.static_(v))),
           onCommit: write,
         ),
         const SizedBox(width: 6),
@@ -1106,10 +1132,26 @@ Set<String> disabledParams(
     final on = values[rule.on_];
     if (on == null) continue;
     final ok = switch ((rule.cond, on)) {
-      (BridgeEnabledCond_BoolIs(:final field0), BridgeEffectValue_Bool(field0: final v)) => v == field0,
-      (BridgeEnabledCond_ChoiceIs(:final field0), BridgeEffectValue_Choice(field0: final v)) => v == field0,
-      (BridgeEnabledCond_ChoiceIsNot(:final field0), BridgeEffectValue_Choice(field0: final v)) => v != field0,
-      (BridgeEnabledCond_LayerSet(), BridgeEffectValue_Layer(field0: final v)) => v != null,
+      (
+        BridgeEnabledCond_BoolIs(:final field0),
+        BridgeEffectValue_Bool(field0: final v)
+      ) =>
+        v == field0,
+      (
+        BridgeEnabledCond_ChoiceIs(:final field0),
+        BridgeEffectValue_Choice(field0: final v)
+      ) =>
+        v == field0,
+      (
+        BridgeEnabledCond_ChoiceIsNot(:final field0),
+        BridgeEffectValue_Choice(field0: final v)
+      ) =>
+        v != field0,
+      (
+        BridgeEnabledCond_LayerSet(),
+        BridgeEffectValue_Layer(field0: final v)
+      ) =>
+        v != null,
       // A rule pointed at the wrong kind of parameter is a schema mistake the
       // Rust-side test fails the build for; here it leaves the row live rather
       // than locking one the owner can never reach.
@@ -1311,8 +1353,6 @@ class _DropperButton extends StatelessWidget {
   }
 }
 
-
-
 class EffectParamRowExpression extends StatefulWidget {
   const EffectParamRowExpression(
       {required this.value,
@@ -1383,8 +1423,6 @@ class ExpressionTextEditingController extends TextEditingController {
       language: 'dart',
       theme: theme,
     );
-
-
 
     var span = highlighter.highlight(text);
     return span;

@@ -3988,9 +3988,16 @@ class _RetimeRowState extends State<_RetimeRow> {
     super.dispose();
   }
 
-  /// A drag tick: render the map the release will write, without writing it.
+  /// A drag tick: render the map the release will write, without writing it —
+  /// and publish it, so the graph's Retime curve follows the drag (K-334).
   void _live(BridgeScalar scalar, double value, int frame) {
     setState(() => _staged = value);
+    rowValueDrag.value = RowValueDrag(
+      layer: widget.layer.internallayerId.toString(),
+      retime: true,
+      frame: frame,
+      value: value,
+    );
     final ui = Provider.of<LumitUiState>(context, listen: false);
     _preview.request(() => widget.comp.renderFrameWithRetime(
           frame: BigInt.from(ui.playheadFrame.value),
@@ -4120,6 +4127,7 @@ class _RetimeRowState extends State<_RetimeRow> {
     // The write is the last word on the gesture: a held preview tick after it
     // would put the provisional picture back.
     _preview.cancel();
+    rowValueDrag.value = null;
     widget.layer.setRetimeProperty(
       value: scalarWithValueAt(scalar, value.toDouble(), widget.comp, frame),
     );

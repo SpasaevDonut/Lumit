@@ -7709,3 +7709,23 @@ because it re-asks the same embedding that missed the key-up. `altActuallyHeld()
 is up, and trusting simulated modifiers under `flutter test`. Used everywhere the graph gates
 behaviour on Alt: the wheel zoom, Alt-click key removal, and handle break/join — a stuck Alt was
 also silently deleting keys on plain clicks and flipping every handle drag to broken.
+
+**K-335 · DECIDED · The Alt witness is `GetAsyncKeyState`, and every value row publishes its
+drag.** The owner's third report of both K-333 bugs, and this time the mechanisms rather than
+more wiring.
+
+**Alt.** K-334's `GetKeyState` was the right idea asked of the wrong thread: it reads the
+keyboard state of the *calling thread's message queue*, and Dart's UI thread is not the Win32
+thread that receives keyboard messages, so its answer was as stale as the framework belief it
+was meant to correct. `GetAsyncKeyState` reads the physical key state whoever asks. Same
+guardrails: only ever clears a false positive, and trusts simulated modifiers under
+`flutter test`.
+
+**The graph follow.** The transform rows were wired and the effect parameter rows were not —
+and a value being dragged in the layer area is as often a blur radius as a Position. The
+published drag (`rowValueDrag`) grows selectors for all three channel kinds — a transform axis,
+an effect parameter, the Retime — and every keyed row publishes: transform axes (K-334), effect
+parameters (this entry, with the drag-start key plant and the staged-stack picture preview the
+transforms already had), and the Retime row. Three end-to-end regression tests drive the real
+outline field with a held-down gesture and watch the graph: a drag on a key, a drag *between*
+keys (the key plants at drag start and is carried), and a drag on an effect parameter.

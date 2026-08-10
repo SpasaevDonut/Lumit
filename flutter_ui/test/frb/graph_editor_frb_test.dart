@@ -157,6 +157,111 @@ void main() {
           reason: 'and the document now holds what the drag showed');
     });
 
+    /// The same chain with the playhead **between** keys (K-334): the drag
+    /// starts by planting a key at the playhead — holding the value already
+    /// there, so nothing moves — and the graph then carries that key live.
+    /// This is the everyday shape of the reported bug: nobody drags a value
+    /// while parked exactly on an existing key.
+    testWidgets('a drag between keys plants one and the graph carries it',
+        (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer);
+      p.uiState.scrubTo(50);
+      await mountGraph(tester, p);
+
+      expect(opacityKeys(p.layer).length, 2);
+
+      final field = find.byKey(const ValueKey<String>('tl-tf-opacity'));
+      final gesture = await tester.startGesture(tester.getCenter(field));
+      await tester.pump();
+      // The first move is spent crossing the recogniser's slop; the second is
+      // the first that ticks.
+      await gesture.moveBy(const Offset(30, 0));
+      await tester.pump();
+      await gesture.moveBy(const Offset(30, 0));
+      await tester.pump();
+
+      expect(opacityKeys(p.layer).length, 3,
+          reason: 'the drag planted a key at the playhead as it began');
+      expect(rowValueDrag.value, isNotNull);
+      final planted = find.byKey(ValueKey<String>(opacityKey(p.layer, 1)));
+      expect(planted, findsOneWidget,
+          reason: 'and the graph shows the planted key mid-gesture');
+      final during = tester.getCenter(planted);
+
+      await gesture.moveBy(const Offset(30, 0));
+      await tester.pump();
+      expect(tester.getCenter(planted).dy, lessThan(during.dy),
+          reason: 'the planted key follows the pointer');
+
+      await gesture.up();
+      await tester.pump();
+      expect(rowValueDrag.value, isNull);
+    });
+
+    /// An **effect parameter's** drag feeds the same chain (K-334) — the wiring
+    /// the transform rows got first, which is exactly how "still not fixed"
+    /// shipped: the reporter was dragging an effect value.
+    testWidgets('the graph follows an effect value drag mid-gesture',
+        (tester) async {
+      final p = withLayer();
+      p.layer.addEffect(name: 'blur');
+      // Animate the radius so the channel has a curve.
+      final staged = p.layer.getEffects();
+      final id = staged.single.id();
+      for (final instance in staged) {
+        instance.setValue(
+          id: 'radius',
+          value: BridgeEffectValue.float(BridgeScalar.keyframed([
+            for (final (f, v) in [(0, 0.0), (100, 50.0)])
+              BridgeKeyframe(
+                time: p.comp.timeOfFrame(frame: f),
+                value: v,
+                interpIn: const BridgeSideInterp.linear(),
+                interpOut: const BridgeSideInterp.linear(),
+              ),
+          ])),
+        );
+      }
+      p.layer.setEffects(effects: staged);
+      p.uiState.model.refresh();
+      await mountGraph(tester, p, selectOpacity: false);
+
+      // Select the Radius property the outline way.
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${p.layer.internallayerId}')));
+      await tester.pump();
+      await tester.tap(find.text('Effects'));
+      await tester.pump();
+      await tester.tap(find.text('Gaussian blur'));
+      await tester.pump();
+      await tester.tap(find.text('Radius'));
+      await tester.pump();
+
+      final glyphKey =
+          'graph-key-${p.layer.internallayerId}/effects/$id/radius#0';
+      final glyph = find.byKey(ValueKey<String>(glyphKey));
+      expect(glyph, findsOneWidget, reason: 'the radius curve is on screen');
+      final before = tester.getCenter(glyph);
+
+      final field = find.byKey(ValueKey<String>('fx-float-$id-radius'));
+      final gesture = await tester.startGesture(tester.getCenter(field));
+      await tester.pump();
+      await gesture.moveBy(const Offset(30, 0));
+      await tester.pump();
+      await gesture.moveBy(const Offset(30, 0));
+      await tester.pump();
+
+      expect(rowValueDrag.value, isNotNull,
+          reason: 'the effect row publishes like a transform row');
+      expect(tester.getCenter(glyph).dy, lessThan(before.dy),
+          reason: 'the radius key draws at the dragged value mid-gesture');
+
+      await gesture.up();
+      await tester.pump();
+      expect(rowValueDrag.value, isNull);
+    });
+
     /// One gesture, one op: the key moves in time AND value, and one undo
     /// puts both back.
     testWidgets('dragging a key moves it in time and value as one undo step',
