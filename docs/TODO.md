@@ -115,7 +115,7 @@ These are v1-scope surfaces it does not yet match.
     engine (`lumit-core::mask`) but not yet as controls; **Lighten** and **Darken**
     are the two modes still unbuilt, and feather is uniform - the variable-width,
     per-vertex kind is a model change ([03-DATA-MODEL.md](03-DATA-MODEL.md) §7).
-- **Variable-width mask feather** (K-318) - After Effects has had this since CS6:
+- **Variable-width mask feather** (K-338) - After Effects has had this since CS6:
     the **Mask Feather Tool** (`G` cycles onto it, under the Pen) drops *feather
     points* along an existing mask path, each dragging its own radius in or out,
     so one edge of a mask can be razor-sharp and another 200 px soft. It is what
@@ -260,15 +260,6 @@ imported theme travels with the user rather than the machine's settings.
     value and speed graphs, nothing extra. Retime-specific affordances come later
     (see *Retime UI wiring* under Next); the parity rule itself is spec, and lives
     in [04-RETIMING.md](04-RETIMING.md).
-- **The Flow column is reserved, not wired** - per-layer optical flow has no
-    engine backing. Build the engine model first, then the fold-out's Flow group.
-- **Double-clicking a layer's *name* may not open its source.** The bar's
-    double-click (`_openLayer`) opens it; the name cell's `onDoubleTap` did not
-    fire in a widget test, and the bar deliberately uses a two-timestamp check
-    rather than `onDoubleTap` because of how the gesture arena holds taps back
-    next to the razor. The name cell sits under the row's own tap detector, which
-    is the same arena shape - so this may be the same problem, unfixed. Confirm
-    on a real window before writing anything.
 - **The Timeline's two halves are still two widget trees, and one vertical
     scrollable cannot hold both.** This was once written down here as a session's
     refactor — build each layer as a row holding both halves inside a single
@@ -333,6 +324,56 @@ fix. Also unbuilt: an **export**'s progress still has its own path
 ([07-UI-SPEC.md](07-UI-SPEC.md) §14) rather than sharing this one.
 
 ## Next - engine/bridge follow-ups
+
+**Fast motion blur only works on footage layers.** docs/08 §3.2 says the effect
+is "applied per layer or, **most commonly, on an adjustment layer over the whole
+montage**", and that case is a silent passthrough — as is a Precomp layer. Only
+Footage layers are given a `flow_field` at all, because the decode worker is the
+only thing that measures flow and it only ever sees decoded source frames. An
+adjustment layer's "source" is the composite of everything beneath it, which
+exists as a GPU texture and never as decoded frames.
+
+The shape it needs: build the below-stack at the neighbour time the way
+`temporal_below` already does for Posterize and `accumulation_below` for §3.26
+(docs/impl/temporal-rerender.md), render both to textures in `realise`, and
+measure between them. That last part wants a texture entry point on the flow
+engine — `GpuFlow` takes a CPU `Gray` today, so it needs one small kernel
+converting an RGBA texture to the luma buffer the pyramid starts from, after
+which the whole measurement stays on the card. Doing it by reading the two
+composites back to the CPU would work and would cost more than the flow does.
+
+**Flow's remaining K-331 work.** The engine, the GPU port, the cache and the
+controls have landed. What is left:
+1. **Turning the flow switch off discards the Flow group.** `FlowParams` lives
+    inside the `Flow` variant of `Interpolation`, so there is nowhere to keep it
+    while the policy is Nearest. Comparing a flow shot against the plain one is
+    ordinary and should not cost the tuning. Move `FlowParams` onto the layer
+    beside the policy (pre-release, no migration); `flow_rows_frb_test.dart`
+    pins the current behaviour and inverts when this lands.
+2. **`PreviewEngine::default` still builds its pool without a GPU**, so that
+    path measures flow on a headless device of its own; the headless renderer
+    the Flutter frontend drives shares the render device correctly. Pass a
+    context in, or delete the path if nothing drives it.
+3. **The remaining CPU work in synthesis is the luma conversion and the frame
+    uploads** — about 70 ms of the 79 ms a 1080p interpolation costs, against
+    8 ms for the flow itself. Both would go if the decoded frame reached the
+    card once and stayed there, which is the `DrawSource` change K-331 sketched.
+4. **A measurement harness on real gameplay** (K-332 follow-up), so the learned
+    ceiling — RIFE-class synthesis, WAFT-class flow — is judged against numbers
+    rather than impressions. A learned synthesiser emits no flow field, so Fast
+    motion blur and Datamosh need DIS vectors regardless.
+
+**Not to be built: a `flow/` disk tier.** docs/06 §5.4 reserves the folder and it
+should stay empty. Measuring a 1080p pair on the GPU costs ~8 ms; reading 37 MB
+of stored field off an SSD costs more. It would be a cache slower than the thing
+it caches. The RAM tier (`DEFAULT_FLOW_CACHE_BYTES`) is the one that pays.
+
+**The LUT effect's GPU path ignores a non-default domain**
+([impl/lut.md](impl/lut.md) §3 status): `fx_lut.wgsl` skips the
+`DOMAIN_MIN`/`DOMAIN_MAX` remap the CPU oracle applies, so such a cube renders
+silently wrong. Pass the six domain floats through `LutParams`, or refuse
+non-default-domain cubes as a labelled no-op. The LUT caches also key by path
+alone - no mtime, no LRU bound (§4).
 
 **Localisation follow-ups (K-303).** The seam is built and the strings are out of the
 code (`flutter_ui/lib/l10n/`, `crowdin.yml`); what is left is other people's turn and

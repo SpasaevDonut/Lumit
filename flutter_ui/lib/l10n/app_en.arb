@@ -663,6 +663,38 @@
   "@fxConfidence": {
     "description": "Effect controls — a control on Posterize time."
   },
+  "fxConsoleAddEffect": "Add effect",
+  "@fxConsoleAddEffect": {
+    "description": "The FX console radial menu: opens the Effects & presets panel."
+  },
+  "fxConsoleAddToComp": "Add to comp",
+  "@fxConsoleAddToComp": {
+    "description": "The FX console radial menu with a Project panel item picked: places the item in the open composition."
+  },
+  "fxConsoleCompositions": "Compositions",
+  "@fxConsoleCompositions": {
+    "description": "The FX console search list: the heading over the composition results."
+  },
+  "fxConsoleEffects": "Effects",
+  "@fxConsoleEffects": {
+    "description": "The FX console search list: the heading over the effect results."
+  },
+  "fxConsoleHint": "Search effects and compositions",
+  "@fxConsoleHint": {
+    "description": "Placeholder in the FX console’s search field."
+  },
+  "fxConsoleKeyframe": "Keyframe",
+  "@fxConsoleKeyframe": {
+    "description": "The FX console radial menu: the slice that expands into one slice per transform row, each planting a keyframe at the playhead."
+  },
+  "fxConsoleNothingSelected": "Nothing selected",
+  "@fxConsoleNothingSelected": {
+    "description": "Shown in the middle of the FX console’s radial menu when nothing is selected."
+  },
+  "fxConsoleSnapshotTip": "Save a snapshot of this frame",
+  "@fxConsoleSnapshotTip": {
+    "description": "Tooltip on the FX console’s snapshot button."
+  },
   "fxContrast": "Contrast",
   "@fxContrast": {
     "description": "Effect controls — the name of an effect."
@@ -1611,6 +1643,10 @@
   "@keyOpenTheCommandPalette": {
     "description": "Settings → Keymap: what a shortcut does, in the table’s left column."
   },
+  "keyOpenTheFxConsole": "Open the FX console",
+  "@keyOpenTheFxConsole": {
+    "description": "Settings → Keymap: what a shortcut does, in the table’s left column."
+  },
   "keyPanels": "Panels",
   "@keyPanels": {
     "description": "Settings → Keymap: a heading saying where these shortcuts are live."
@@ -1665,6 +1701,14 @@
   },
   "keyRenameTheLayer": "Rename the layer",
   "@keyRenameTheLayer": {
+    "description": "Settings → Keymap: what a shortcut does, in the table’s left column."
+  },
+  "keyRenameTheSelectedEffect": "Rename the selected effect",
+  "@keyRenameTheSelectedEffect": {
+    "description": "Settings → Keymap: what a shortcut does, in the table’s left column."
+  },
+  "keyRenameTheSelectedItem": "Rename the selected item",
+  "@keyRenameTheSelectedItem": {
     "description": "Settings → Keymap: what a shortcut does, in the table’s left column."
   },
   "keyRevealAnchorPoint": "Reveal Anchor point",

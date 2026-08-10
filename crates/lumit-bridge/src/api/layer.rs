@@ -540,6 +540,15 @@ pub struct BridgeLayerInfo {
     /// the Timeline draws them on every rebuild, which is the cost K-184 exists
     /// to remove.
     pub markers: Vec<BridgeLayerMarker>,
+    /// Whether optical flow is live on this layer (K-088/K-331) — the switch
+    /// cluster's Flow cell, and what decides whether the fold-out shows a Flow
+    /// group. In the read model because the Timeline draws that cell on every
+    /// rebuild, and asking per row per frame is exactly the cost K-184 removed.
+    pub flow: bool,
+    /// The Flow group's Input rate (K-095/K-160), the one animatable member —
+    /// carried here so its fold-out row can draw its keyframe diamonds without
+    /// a call, exactly as the Retime row's scalar is.
+    pub flow_input_rate: BridgeScalar,
 }
 
 /// One marker on a layer's bar: the marker itself plus where it lands at the
@@ -691,8 +700,24 @@ pub(crate) fn read_layer_info(
             }
             _ => Vec::new(),
         },
+        flow: matches!(
+            layer.interpolation,
+            lumit_core::retime::Interpolation::Flow(_)
+        ),
+        flow_input_rate: BridgeScalar::read_at(
+            match &layer.interpolation {
+                lumit_core::retime::Interpolation::Flow(p) => &p.input_fps,
+                _ => &ZERO_RATE,
+            },
+            layer.start_offset.0,
+        ),
     }
 }
+
+/// A shared Auto rate for layers with no flow, so the read model always has a
+/// scalar to hand back without allocating one per layer per rebuild.
+static ZERO_RATE: std::sync::LazyLock<lumit_core::anim::Property> =
+    std::sync::LazyLock::new(lumit_core::anim::Property::zero);
 
 /// The most buckets one peak query may ask for (K-280). A lane asks for a
 /// bucket per pixel column, and no panel is four thousand columns wide on any
@@ -2913,11 +2938,29 @@ impl LayerReference {
     /// the same coarse-grained shape as a transform property, for the same
     /// invertibility reason. Refused on a layer that is not retimed: the row
     /// only exists once it is.
+    ///
+    /// **A map that has become one constant takes the Retime away** rather than
+    /// being written. Every route that produces one is the user saying "no more
+    /// retime": the row's stopwatch turned off, or the last key deleted. Written
+    /// as it arrived, a constant map is a layer frozen on a single frame for its
+    /// whole length, with the row gone quiet and nothing on screen to say why —
+    /// which is not a state K-197 has ("no freeze") and not what either gesture
+    /// means. So it takes the Ctrl+Alt+T-off route instead: the property goes,
+    /// and the layer is re-hung on its source at source rate (K-212), in one
+    /// undo step.
     #[frb(sync)]
     pub fn set_retime_property(&self, value: BridgeScalar) -> Result<(), BridgeError> {
         let layer = self.item()?;
         let animation = value.animation_at(layer.start_offset.0)?;
         let mut retime = layer.retime.clone().ok_or(BridgeError::NotRetimed)?;
+        let removal = lumit_core::Op::SetRetimeProperty {
+            comp: self.comp_id,
+            layer: self.layer_id,
+            retime: None,
+        };
+        if matches!(animation, lumit_core::anim::Animation::Static(_)) {
+            return self.commit(self.unretime_op(&layer, removal));
+        }
         retime.animation = animation;
         self.commit(lumit_core::Op::SetRetimeProperty {
             comp: self.comp_id,

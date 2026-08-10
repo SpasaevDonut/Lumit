@@ -712,6 +712,7 @@ fn effect_with_every_kind() -> lumit_core::model::EffectInstance {
             param("layer", EffectValue::Layer(Some(Uuid::now_v7()))),
         ],
         sample_temporally: true,
+        custom_name: None,
         extra: serde_json::Map::new(),
     }
 }
@@ -4309,15 +4310,16 @@ fn the_retime_property_toggles_and_reads_back() {
         .iter()
         .any(|l| l.info.retime.is_some()));
 
+    // A constant map is not a map: writing one takes the Retime away rather
+    // than freezing the layer on a single source moment — see
+    // `a_flattened_retime_is_removed_rather_than_freezing_the_layer`.
     layer
         .set_retime_property(BridgeScalar::Static(2.5))
         .expect("write");
-    assert!(matches!(
-        layer.get_retime_property().expect("read"),
-        Some(BridgeScalar::Static(v)) if (v - 2.5).abs() < 1e-9
-    ));
+    assert!(layer.get_retime_property().expect("read").is_none());
 
     // Off removes it entirely — "not retimed", not "retimed to 1×".
+    assert!(layer.toggle_retime_property().expect("on again"));
     assert!(!layer.toggle_retime_property().expect("off"));
     assert!(layer.get_retime_property().expect("read").is_none());
 }
@@ -5154,6 +5156,75 @@ fn switching_retime_off_re_hangs_the_layer_on_its_source() {
         60,
         "one second in, one second out"
     );
+}
+
+/// A Retime flattened to one constant is a Retime **removed**, not a layer
+/// frozen on one frame.
+///
+/// The reported bug: turning the Retime row's stopwatch off — or deleting the
+/// last key, which the graph editor also answers with a static value — wrote a
+/// constant map. A constant map says "show this one source moment for the whole
+/// layer", so the layer sat on a single frame for ever, with the row gone quiet
+/// and nothing on screen to say why. Both gestures mean "no more retime", so
+/// both take the Ctrl+Alt+T-off route: the property goes and the layer is
+/// re-hung on its source (K-212), in one undo step.
+#[test]
+fn a_flattened_retime_is_removed_rather_than_freezing_the_layer() {
+    use crate::api::composition::BridgeCompSettings;
+    use crate::api::effect::{BridgeRational, BridgeScalar};
+
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let inner = project
+        .new_composition(
+            "Inner".into(),
+            Some(BridgeCompSettings {
+                name: "Inner".into(),
+                width: 320,
+                height: 240,
+                fps_num: 60,
+                fps_den: 1,
+                duration: BridgeRational { num: 5, den: 1 },
+            }),
+        )
+        .expect("comp");
+    let outer = project.new_composition("Outer".into(), None).expect("comp");
+    let layer = outer.add_precomp_layer(&inner).expect("nested");
+
+    layer.toggle_retime_property().expect("on");
+    assert!(layer.get_retime_property().expect("read").is_some());
+
+    // The stopwatch turned off: the value the curve read at the playhead,
+    // written as a constant.
+    layer
+        .set_retime_property(BridgeScalar::Static(0.0))
+        .expect("de-animated");
+    assert!(
+        layer.get_retime_property().expect("read").is_none(),
+        "a constant map takes the Retime away instead of freezing the layer"
+    );
+
+    // And the layer is re-hung on its source, so it plays at source rate again:
+    // five seconds of source from the frame that was showing at the in point.
+    let span = layer.get_span().expect("span");
+    assert_eq!(outer.frame_at_time(span.in_point).expect("frame"), 0);
+    assert_eq!(
+        outer.frame_at_time(span.out_point).expect("frame"),
+        300,
+        "the whole source runs again rather than one frame holding"
+    );
+
+    // One undo step covers the removal and the re-hang together.
+    project.undo().expect("undone");
+    assert!(
+        layer.get_retime_property().expect("read").is_some(),
+        "the Retime comes back whole"
+    );
+
+    // A layer with no Retime at all still refuses, rather than being given one.
+    layer.toggle_retime_property().expect("off");
+    assert!(layer
+        .set_retime_property(BridgeScalar::Static(0.0))
+        .is_err());
 }
 
 /// Keyframes belong to the layer, and the seam says so in the interface's units

@@ -107,11 +107,14 @@ class DockSplit extends DockNode {
       };
 }
 
-/// The default workspace, matching `default_layout()` share-for-share:
-/// a vertical root (upper band 0.68, Timeline 0.32 across the full width);
-/// the upper band horizontal (left tab group 0.22, Viewer 0.58, Scopes 0.20);
-/// the left group tabs Project (fronted), Effect controls, Effects & presets,
-/// Hierarchy. Viewer, Scopes and Timeline sit alone and render bare.
+/// The default workspace (docs/07 §1.6 "Edit"): a vertical root (upper band
+/// 0.68, Timeline 0.32 across the full width); the upper band horizontal
+/// (left tab group 0.22, Viewer 0.58, right tab group 0.20). The left group
+/// tabs Project (fronted), Effect controls, Hierarchy; the right group tabs
+/// Effects & presets (fronted), Scopes, Debug — the spec's right-hand
+/// Effects & presets column, which this layout used to bury as a left tab
+/// behind Project while fronting Debug on the right. Viewer and Timeline sit
+/// alone and render bare.
 DockSplit defaultLayout() => DockSplit(
       DockAxis.vertical,
       [
@@ -121,13 +124,13 @@ DockSplit defaultLayout() => DockSplit(
             DockTabs([
               DockPane(Panel.project),
               DockPane(Panel.effectControls),
-              DockPane(Panel.effectsAndPresets),
               DockPane(Panel.hierarchy),
             ]),
             DockPane(Panel.viewer),
             DockTabs([
-              DockPane(Panel.debug),
+              DockPane(Panel.effectsAndPresets),
               DockPane(Panel.scopes),
+              DockPane(Panel.debug),
             ]),
           ],
           [0.22, 0.58, 0.20],

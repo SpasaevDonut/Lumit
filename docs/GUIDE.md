@@ -940,14 +940,22 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   threshold off everything, so the transition is seamless. "Luminance only" (the default)
   sharpens the brightness signal and leaves colour alone, because sharpening the colour
   channels of compressed game capture produces rainbow fringes.
-- **Flow is a layer option** (K-088) — the wind toggle in a footage layer's switch
-  cluster. On, it synthesises in-between frames with optical flow wherever the footage's
-  rate (through any retime) undershoots the comp's — the moment a source frame would sit
-  across two comp frames, flow takes over; footage already at comp rate costs nothing. A
-  **Flow** group appears beside Transform and Effects with the engine's knobs (Quality:
-  half-resolution fields, the fast default, or full). Under the hood it's the retime's
-  frame-interpolation policy — an un-retimed layer quietly gains an identity retime to
-  carry it, and loses it again when you switch off.
+- **Flow is a layer option** (K-088). On, it synthesises in-between frames with optical flow
+  wherever the footage's rate (through any retime) undershoots the comp's — the moment a
+  source frame would sit across two comp frames, flow takes over; footage already at comp
+  rate costs nothing, because the engine now checks and stands down (see the flow section
+  further down for what that gate does and how to override it). Under the hood it's the
+  retime's frame-interpolation policy — an un-retimed layer quietly gains an identity retime
+  to carry it, and loses it again when you switch off.
+  **How you reach it (K-331):** the **Flow** switch in a footage layer's switch cluster, in
+  the same cell a Precomp uses for Collapse. Turning it on reveals a **Flow** group beside
+  Transform and Effects, carrying flow resolution, vector detail, smoothness, occlusion
+  handling, fallback, the HUD guard and an always-on override. Flow deliberately left the
+  in-between-frames dropdown, which still offers Nearest and Blend: sitting there made the
+  most expensive thing a layer can ask for look like a small setting you pick and forget.
+  One rough edge worth knowing: turning the switch off and on again resets the group to
+  defaults, because the parameters are stored inside the policy and have nowhere to live
+  while the policy is Nearest. Fixing that is on the backlog.
 - **Effects are usable end to end.** Twirl a layer open, open its **Effects** group,
   and "Add effect" lists the catalogue. Each effect shows a bypass
   tick, a remove button, and one row per parameter — a Blur radius has a stopwatch
@@ -1318,7 +1326,14 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   because it genuinely *is* every other property — there is no Retime-specific code in any
   of those places. Switching it on installs two keys running source time alongside layer
   time, so the picture does not move; drag the second key later and the clip plays slower,
-  drag it earlier and it plays faster. **The two keys land on the layer's own start and
+  drag it earlier and it plays faster. **Taking the retime away is the same thought however
+  you say it.** Ctrl+Alt+T again, the stopwatch off, or deleting the last key all end with
+  the layer hung back on its source, playing at its own rate from the frame that was showing.
+  The alternative — writing down "show *this* one moment, for ever", which is literally what
+  a curve with no keys left in it says — would leave the layer frozen on a single frame with
+  the row gone quiet, and nobody means that by "remove the retime" (K-329). A freeze is asked
+  for the way After Effects asks: leave one key, and that moment holds.
+  **The two keys land on the layer's own start and
   end** — where it currently sits on the timeline, and where its ends currently are if you
   have trimmed it (K-213). That sounds obvious and was not: keyframes are stored in the
   layer's *own* clock, which is what makes a layer's animation travel with it when you slide
@@ -1380,6 +1395,83 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   you want the slow-motion to ease in. It's the same "conform to N fps" idea editors know from
   interpreting footage in other tools, and because it changes which frames get blended, it's
   folded into the picture cache's identity so you never see a frame flowed at the wrong rate.
+  **Animation has the mirror version of that problem**, and the same control fixes it. Anime
+  and hand-drawn animation are usually drawn "on 2s" or "on 3s" — a new drawing every second
+  or third frame, with the same picture held in between. So a 24fps cut on 2s really goes
+  A A B B C C. Interpolate that at its native rate and half the frame pairs are a drawing and
+  its own duplicate, where nothing moves at all, while the others carry the whole step: the
+  result judders rather than flowing. Tell Input rate the clip is 12fps — the rate it was
+  actually *drawn* at — and every pair spans two different drawings. The dropdown beside the
+  field names the cadences rather than the numbers ("On 2s", "On 3s"), because an editor knows
+  a cut is on 2s without wanting to work out that 24 ÷ 2 is 12. And because it is keyframeable,
+  a cut that switches from 2s to 3s partway through — which happens constantly — can be
+  followed rather than compromised on.
+  Three more things about flow are worth understanding, because they each fix something that
+  used to be quietly wrong.
+  **Flow only switches itself on when it can actually help.** Inventing a frame *between* two
+  real ones only means anything when there is a gap to fill. At 100% speed every frame of the
+  composition lands squarely on a frame of the footage — there is no in-between moment — so
+  measuring all that motion would cost a great deal and change nothing. Flow now checks: how
+  far does the footage advance per composition frame? If it advances a whole frame or more,
+  flow stands down and you get the plain nearest frame. If it advances less than one — meaning
+  the same source frame would otherwise be shown twice or more in a row, which is exactly what
+  makes slow motion look like a slideshow — flow takes over. A freeze stands down too, since
+  there is nothing to move towards. If you want flow anyway, for a look rather than for the
+  maths, there is an override in the Flow group that forces it on regardless.
+  **Flow is measured at the footage's own size, not the preview's.** This one was a real trap.
+  Previews are usually rendered smaller than full size for speed, and flow used to be measured
+  on whatever shrunken copy the preview happened to be using. That is not the same measurement
+  at a smaller size — it is a *different* measurement, because motion that is obvious at full
+  resolution can vanish entirely in a quarter-size copy. The result was a preview that could
+  look meaningfully different from the export, which is the one thing the pipeline promises
+  never happens. Flow now always measures at the size *you* choose in the Flow group
+  (Native by default), no matter how coarse the preview is. The price is honest and worth
+  knowing: a layer with flow on decodes its footage at full size even in draft preview, so
+  draft mode stops being cheap on that layer. If you need the speed back, drop the flow
+  resolution to Half or Quarter — that is a decision you make once, and it then applies
+  identically to the preview and the export.
+  **Why the vectors used to look bad, and what fixed it.** DIS is a three-part algorithm, and
+  Lumit shipped two of them. Parts one and two are *local*: little tiles hunt for where their
+  bit of picture went, then every pixel takes a vote among the tiles covering it. That works
+  wherever there is something to match — and has nothing whatsoever to say about a patch of
+  sky, a cloud of smoke, water, or a dark corner, because every position there looks like
+  every other. Those pixels came out with whatever the coarse guess was, flagged
+  untrustworthy; untrustworthy was then treated as "hidden behind something", and hidden
+  pixels get a plain crossfade. So large soft regions turned into patches of ghosted mush.
+  Three reasonable-looking local decisions, one bad picture.
+  Part three is **variational refinement**, and it was skipped with the note "mostly helps
+  large untextured regions, rare in game footage". They are not rare — smoke, sky, muzzle
+  flash and motion-blurred backgrounds are most of a frame during exactly the fast moments a
+  montage slows down. Refinement stops treating pixels one at a time and solves the whole
+  field at once, balancing three demands: each pixel should land on matching *brightness*, it
+  should land on matching *edges* (this is the one that survives an explosion lighting up the
+  frame — brightness changes everywhere, edges stay put), and neighbouring pixels should move
+  alike unless there is strong evidence otherwise. That last demand is what fills the empty
+  regions: a pixel with no evidence of its own inherits motion from neighbours that have
+  some, seeping inward from the textured edges. It is the difference between "we don't know,
+  so here's mush" and "we don't know, so here's what the surrounding motion implies", which
+  is nearly always right.
+  Two side effects worth knowing. "Untrustworthy" now means something better — it used to
+  mean "nobody found an answer for me", and now means "the answer I was given doesn't actually
+  explain my pixels", which is the question that was worth asking all along. And the solver
+  sweeps the image in a **checkerboard** pattern rather than left-to-right, which sounds like
+  an odd detail but is the whole reason it can run on the graphics card at all: on a
+  checkerboard, every neighbour of a "red" pixel is "black", so an entire colour can be
+  updated at once by a million threads without any two of them tripping over each other. The
+  slow reference implementation is written the same way on purpose, so that the fast one is
+  allowed to agree with it.
+  **The HUD guard.** Game footage has a health bar, a killfeed, a minimap — things painted on
+  top of the picture that stay perfectly still while the whole world slides underneath them
+  during a fast turn. Flow sees a frame where everything moves except a few sharp rectangles,
+  and the motion of the background inevitably bleeds into them: the classic artefact where the
+  HUD smears across the screen, familiar to anyone who has used Twixtor on gameplay. The guard
+  looks for the tell — a region that is **not moving** but **is full of fine detail** (a still
+  patch of sky is smooth; a still patch of *text* is not) — and hands those pixels to a plain
+  crossfade instead of warping them. For genuinely static content that is the correct picture
+  anyway, since both frames agree there, so the guard costs nothing but the smear. It fades in
+  and out gradually rather than switching, because a hard edge between "warped" and "not
+  warped" is itself something you would see. It is on by default and can be turned off in the
+  Flow group.
   **This is wired up for
   Footage layers now**: a Speed % box in a footage layer's twirl-down retimes it (50% =
   half speed, and so on), and the same Retime map feeds preview, export, and the cache
@@ -2349,7 +2441,14 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   you sit paused), and the scope traces whichever one is on screen. If a frame hasn't been
   kept in memory yet — Lumit skips saving some frames during playback to stay fast — the scope
   simply holds the last frame it had rather than going blank, and snaps back to live the
-  instant the current frame is ready. The counting itself now runs on the graphics card (the
+  instant the current frame is ready. **It has to be sure the kept frame is still the frame**
+  (K-330): Lumit files a kept frame under a name made from its *contents*, and notes which
+  moment it was made for. Edit the comp — retime a layer, say — and that moment now looks
+  different, so it renders under a new name, while the old picture is still sitting there
+  labelled with the same moment. The scope used to take whichever of the two was the sharper
+  copy, which flipped back and forth as frames came and went, so it flickered between the
+  picture and the picture that moment used to be. It now checks that the name still matches
+  what the moment renders to today, and traces its own frame rather than trusting an old one. The counting itself now runs on the graphics card (the
   GPU scope pass, K-096 v1 — `crates/lumit-gpu/src/scope.rs`), so tracing every frame costs
   almost nothing; the CPU counting in `shell/scopes.rs` remains as the fallback for a machine
   with no adapter. The scope's
@@ -3975,6 +4074,338 @@ theme's `body`, `small` and `caption` styles ask for regular weight while
 test in `theme_test.dart` pins the weights so nothing drifts back to
 all-Medium without saying so.
 
+### The corner you no longer have to travel (K-318)
+
+Open a menu, hover a row with an arrow on it, and a second menu flies out to the
+right. Now move towards it. The obvious path is a diagonal — up-and-right, or
+down-and-right — and that diagonal crosses the rows *underneath* the one you
+started on. The menu, watching only for "which row is the pointer over", saw one
+of those rows, decided you had changed your mind, and took the flyout away
+before you got there. The workaround everyone learns without noticing is to
+travel the corner: straight right first, then down. That is a small tax paid on
+every single submenu.
+
+The fix is old and has a name — the **safe triangle**. When a flyout is open,
+draw an imaginary triangle from where your pointer is to the two near corners of
+the flyout. Anything inside that triangle is *travel*: you are on your way to
+the flyout, whatever row you happen to be passing over. So while the pointer is
+in there, the menu holds the switch back rather than acting on it.
+
+Two details stop that from becoming its own annoyance:
+
+- If the pointer *stops* inside the triangle — you were heading for the flyout,
+  changed your mind, and settled on a row — the held switch lands anyway after
+  about a third of a second. Resting on a row still means that row.
+- If the pointer moves somewhere the triangle does not cover — straight down the
+  menu, say — the switch happens immediately, with no delay to feel. Only travel
+  towards the flyout is ever held.
+
+The geometry is a separate little file (`widgets/hover_intent.dart`) with no
+Flutter in it beyond the `Offset` and `Rect` types, which is what lets it be
+tested as plain arithmetic: is this point inside this triangle? The timers and
+the "which row is hovered" bookkeeping live with the floating menu surface every
+popup already shares, so the menu bar, the Add effect browser and every
+right-click menu got this at the same moment, from one change.
+
+A guard like this is invisible when it works and invisible when it does not,
+which makes it miserable to test by feel. So the Debug panel has a switch —
+**Show safe hover triangles** — that draws the live triangle over the menus: the
+shape, and a small ring at the apex where the pointer left the owning row. It
+turns amber at the moment the guard is actually holding a row switch back, which
+is the moment worth watching. It only draws; the guard cannot see it and decides
+exactly what it would have decided with the switch off.
+
+### Windows you can drive without the mouse (K-319)
+
+Three complaints turned out to be one missing thing.
+
+**The buttons were pictures.** A `HouseButton` drew itself, watched for a click,
+and that was all — it could not hold keyboard focus, so Tab never reached it and
+Enter never pressed it. Every house control now carries a **focus node**: the
+buttons, the checkboxes, the radios, and the resting state of a value box. A
+focused control draws the accent ring the design spec has always asked for, and
+answers Enter (and Space, where "press" is what it does).
+
+**"Enter presses the OK button" is not a special case.** Rather than wiring one
+button to the Enter key, each window now says which of its buttons is the
+*default* — the affirmative one, or the safe one where the affirmative deletes
+something — and that button simply **takes focus when the window opens**. Enter
+then presses whatever is focused, which is that button until you Tab somewhere
+else. One rule instead of a special case, and it means a whole window is
+operable from the keyboard rather than just its OK button.
+
+There is a companion rule that already existed for text fields and now covers
+controls too: while a control holds focus, the application's global shortcuts
+stand down. Otherwise Enter on a dialogue's button would *also* rename a layer
+in the Timeline behind it — which is a real bug this project has already had
+once (K-243).
+
+**Escape closes a window, which it did not.** The code said it did — there was a comment
+claiming Escape was handled "via the route" — but a Lumit dialogue is not a *route*, it is a
+panel painted into the overlay, so there was no route to handle anything and Escape did
+nothing in every dialogue in the application. This was found by going looking for what
+Flutter already provides rather than writing more of our own: the framework binds Escape to
+something called a "dismiss intent" all by itself, and a window only has to say what
+dismissing means for it. Here it means the same as clicking the dimmed background — the
+window closes and answers "cancelled".
+
+**Tab now goes the way you read.** Left to right, then top to bottom. It sounds
+like it should be the default, and it is not: the toolkit walks the *widget
+tree*, and a layout that nests a column inside a row visits things in whatever
+order the code composed them, which can be down-then-across, or worse. Flutter
+ships a policy that sorts by actual screen position instead
+(`ReadingOrderTraversalPolicy`); every modal is now wrapped in one, plus a focus
+scope so Tab cycles inside the window rather than wandering off into the panels
+behind it.
+
+### Clicks that wobble, and text you can drag over (K-319)
+
+A value box in Lumit does two jobs: drag it sideways to scrub the number, click
+it to type one. Deciding which of those you meant happens in Flutter's *gesture
+arena* — the pointer goes down, and whoever recognises a gesture first wins.
+Move sideways more than a few pixels and the drag wins; stay still and the tap
+wins.
+
+The gap was what happened to a press that wandered a little but never actually
+scrubbed a whole step. The drag recogniser won it, ticked nothing, and released
+into nothing at all: no value change, no editor. To a person that is a click
+that the box swallowed, and mice wobble constantly. Now a drag that ends without
+ever crossing one increment is understood for what it is — a click — and opens
+the editor.
+
+Two more things about that editor. It opens with the whole value **selected**,
+because a value is retyped far more often than it is amended, and a caret parked
+at the end means every edit begins with a select-all of your own. And it now has
+real text selection: press to place the caret, drag to highlight. It sounds like
+something you get for free, and you do not — a bare `EditableText` takes keys but
+has no selection gestures attached until you wrap it in the builder that
+provides them, which the plain text fields had and the numeric ones did not.
+
+The ordinary text fields gained one further thing: they take focus on the
+pointer's **down** stroke rather than waiting for the tap to resolve. Somebody
+who presses in a field and immediately drags is selecting text in one motion,
+and the field has to be theirs before the highlight starts or the drag selects
+nothing.
+
+### Why the zoom slider still pinged, after it was fixed (K-320)
+
+The Timeline's zoom keeps something still while the lanes grow — the playhead,
+when you use the slider. That mechanism (K-293) was right. What was wrong was
+*when* it measured.
+
+Keeping the playhead still means working out where it is on screen right now,
+and then, after the lanes have grown, moving the scroll so it is still there.
+The panel did that measurement on **every drag update**. But a drag update
+arrives, applies the new zoom, and returns — the scroll offset is only corrected
+later, during layout. So the second update measured a *fresh zoom against a
+stale offset*: two numbers describing different moments. Each update anchored
+somewhere slightly wrong, and the lanes lurched. Near the edges of the view it
+was worse, because the "is the playhead visible?" test flipped back and forth
+between "keep it where it is" and "bring it to the middle".
+
+The fix is to measure once. The slider now says when its drag begins and when it
+ends, and the anchor is chosen at the start and held for the whole gesture —
+which is what the flight always assumed anyway. The other half is where the
+width comes from: it is now read from the scroll position's own content extent,
+the same numbers the correction is applied with, rather than from a viewport
+size cached during build. Those two disagreed by a little at every zoom, and the
+disagreement grew the further in you were.
+
+### One way to rename anything (K-321)
+
+Renaming had drifted into three different gestures in three places, and one of
+them was actively in the way: in the Project panel, clicking a row that was
+already selected opened its name for editing. That is the *same gesture* as a
+slightly slow double-click, so names kept opening for editing under people's
+pointers when they meant to open the item.
+
+It is one rule now: **`Enter` renames whatever the focused panel has selected.**
+A layer in the Timeline (which already worked this way), an item in the Project
+panel, an effect in Effect controls. Double-clicking, and clicking an
+already-selected row, mean *open* everywhere, without exception.
+
+Each of those is a separate keyboard binding in a separate context, which is how
+one Enter press cannot open two editors at once: a per-panel binding is only
+live in the panel that has focus, and each panel's handler checks that it is the
+focused one before acting.
+
+**Effects can now carry a name of their own**, which is the new part. A blur
+called "Gaussian blur" three times down a stack tells you nothing; "Blur the
+sign" does. The instance gains one optional field, `custom_name`, and where it
+is set it is shown in place of the effect's label — in the Effect controls
+heading and in the Timeline's fold-out alike. It is a *display* name only:
+`match_name` is the schema key everything else looks the effect up by, and it is
+untouched, so nothing about rendering or expressions changes. Clearing the field
+puts the label back.
+
+The saved-file question is worth stating plainly, because it is the one that
+decides whether a feature like this is safe: the field is written **only when it
+is set**. A project with no renamed effects is byte-for-byte the file it was
+before, and an older project simply reads as "no name given". Nothing needs
+migrating.
+
+### The way back out of an editor (K-323)
+
+An earlier change (K-243) settled that every way of leaving an inline rename
+*keeps* what you typed: pressing Enter, clicking somewhere else, tabbing away.
+That was the right call — abandoning a rename by clicking elsewhere should not
+silently throw the work away. But taken together it meant there was no way to
+change your mind at all. Whatever you had typed was going to be written.
+
+Escape is that way out now: the editor shuts and nothing is written, so the
+thing keeps the name or the number it already had. It works on all four
+editors that had the problem — an effect's name, a layer's name, a Project
+item's name, and any value box you are typing into.
+
+Why it did not already work is the interesting part. Modals got Escape earlier
+(K-319) by leaning on a mechanism Flutter already has: the framework binds
+Escape to a "dismiss" request that travels up the widget tree looking for
+something willing to handle it, and each dialog says what dismissing means for
+it. An inline rename is not a dialog — it is a text field that has replaced a
+label where it stood — so that request travelled up and found nobody, and the
+key did nothing at all.
+
+The fix attaches Escape to each editor's own **focus node**. A focus node gets
+first refusal on keys before the general shortcut machinery runs, which matters
+here for a specific reason: Flutter's text editor has its own idea of what the
+dismiss request means (hiding the selection toolbar), so a handler placed above
+it could have been quietly swallowed. Handling the raw key at the field itself
+is the version that cannot be intercepted.
+
+One trap worth remembering, because it is the sort that produces a bug that
+looks like the opposite of what you wrote: the value box commits its number
+whenever it loses focus, and closing the editor is *what loses focus*. So
+cancelling has to mark the editor closed before it takes it down, or Escape
+would commit the very value it was asked to discard.
+
+### The panel that was never on screen (K-322)
+
+The default workspace put **Effects & presets** as the *third tab of the left
+group*, behind Project and Effect controls — so on a fresh install you never saw
+it — and gave the fronted spot in the right-hand column to the **Debug** view,
+which is a developer panel. The specification had said "right column Effects &
+Presets" all along; the code had never matched it.
+
+It matches now. Left group: Project (open), Effect controls, Hierarchy. Right
+column: Effects & presets (open), Scopes, Debug. Nothing about the proportions
+changed, and the other three workspace presets are as they were. This is the
+*factory* layout, so a workspace you have already arranged is untouched — you
+would see the new one by resetting the workspace, or on a new install.
+
+### The Ctrl+Space console, and why a ring beats a list (K-324, K-325)
+
+Press Ctrl+Space and a ring of choices appears **around your mouse** —
+anywhere, including over the picture in the Viewer — with a search box
+floating just above it (or below, if your pointer is near the top of the
+window). Nothing is boxed: the console floats translucent over your work,
+because your work is the thing it is about to act on, and behind it the frame
+dims just a little — enough that every slice stays readable over any picture,
+never enough to hide what you are working on. While it is open, the keyboard
+is the console's: anything you type goes into the search box, never into the
+panels underneath, so a keystroke can never rename a layer you did not mean
+to touch. Escape closes it from anywhere; so does a click outside. Two ways
+into the same handful of things, because they suit different moments.
+
+**The ring is a radial menu**, the kind Blender uses. The point of a ring is
+not that it looks better than a list. It is that every choice is in a fixed
+*direction*, and the ring opens where your hand already is — so after a few
+uses your hand knows "duplicate is up" and stops reading the menu at all: you
+press the chord, flick, and it is done. A list can never offer that, because a
+list's third entry moves the moment the list grows.
+
+Two rules follow from that, and they are most of the code:
+
+- **A slice is chosen by angle, not by what you are hovering over.** Flick in a
+  direction and the choice is made, however far the pointer actually travelled.
+  If it were hit-testing a drawn wedge you would have to land *inside* the
+  shape, and the gesture could only be as fast as your aim.
+- **There is a dead zone in the middle.** Inside it nothing is chosen, so
+  opening the menu and letting go without moving cancels — rather than
+  committing you to whatever happened to be nearest the cursor.
+
+What is *in* the ring depends on what you have selected. An item picked in
+the Project panel (while you are standing in that panel) offers exactly one
+thing: **Add to comp**, which places it the way dropping it on the Timeline
+would — and when it cannot be placed (no comp open, a folder, a comp into
+itself) the slice sits there dimmed rather than vanishing, so the direction
+is learned before it is ever needed. An effect picked out
+in the stack offers the things you do to an effect; a selected layer the
+things you do to *that layer* — duplicate, add an effect, pre-compose, delete
+— and never a stray "new solid" beside them, because creating a layer is not
+something about your selection. Creation is still one flick away: the **New**
+slice carries a small caret, and choosing it expands the ring in place into
+the same six entries as Layer ▸ New, the way Blender nests its pies. The
+centre of the ring always names where you are, and inside a sub-ring it is
+also the way back out (so is Escape). A composition with nothing selected
+offers the new-layer ring directly, because that is what an empty timeline is
+asking for; with nothing open at all it offers the two ways to get somewhere.
+Never more than six to a ring — a ring of twelve is a ring nobody learns, and
+the long tail is the search box beside it. An entry that cannot run right now
+is dimmed rather than removed, so a direction your hand has learned keeps
+meaning the same thing tomorrow.
+
+A selected layer's ring has one more trick: the **Keyframe** slice. It expands
+into one slice per transform row — Anchor point, Position, Scale, Rotation,
+Opacity — and choosing one plants a keyframe at the playhead holding whatever
+value is already there, so nothing on screen moves. Then the Timeline comes to
+the front with that row open, and the key you just made is sitting there under
+the playhead. It is the flick-sized version of twirling the layer open,
+finding the row, and pressing its diamond — the three steps it replaces. A row
+already keyed at this frame is not keyed twice, and a row driven by an
+expression is dimmed, because writing keys over an expression would erase it.
+
+**The search box starts empty and shows nothing** — the ring is the offer.
+Start typing and the ring steps aside for a dropdown of matches under the box:
+type "gau", press Enter, and Gaussian blur is on every selected layer. The
+dropdown puts **effects first and compositions after a divider**, and — this
+is the deliberate part — a composition can never outrank an effect however
+well it matches. The reason you hit this key is nearly always an effect; a
+comp that happened to score better would just be in the way. The comps are
+there so the same box can also be "take me to that comp". Escape backs out one
+step at a time: it clears what you typed before it closes anything, so a
+mistyped search never costs you the whole console.
+
+This half is modelled on Video Copilot's **FX Console**, which is the plug-in
+After Effects users install first and then cannot work without. That includes
+its **snapshot button** beside the box: one press writes the frame you are
+looking at to a PNG, so you can change a look and compare the two without
+setting up an export.
+
+Worth knowing how the snapshot is done, because the cheap way was also the
+right way: it is a **one-frame export**. Lumit's exporter already writes PNG
+sequences, and it is the tested path from a Lumit frame to a file — colour,
+sizing, all of it. So a snapshot is that, with the range set to "this frame and
+the next". The alternative would have been a second still-writer living beside
+the exporter: a second thing to keep correct, for nothing gained. The file goes
+into a `Snapshots` folder beside your project, or your pictures folder if the
+project has never been saved — never into whatever directory the application
+happened to be started from, which is where a bare file name would have put it.
+
+One small mechanism makes "opens at the mouse" possible at all: a keyboard
+event does not know where the mouse is. So the shell keeps a note of the last
+place the pointer was seen — a single remembered position, updated as the
+mouse moves, costing nothing — and the console reads it when the chord lands.
+The note is taken at the door rather than in any one room: pointer events are
+recorded globally, before the interface decides which widget they belong to,
+because some regions (the Viewer's picture is drawn by the engine, not by a
+widget) belong to no widget at all, and a note taken inside the widget tree
+went stale exactly there.
+
+**Why this is not the command palette.** Ctrl+Shift+P still opens that, and the
+two are not competing: the palette is *every command by name*, the console is
+effects plus the thing you were about to do. Both build their lists in the same
+file as the menu items, so neither can drift into a different idea of what
+"New composition" means.
+
+This also closes something that had been deferred since K-102, where the radial
+menu was blocked on there being no pie-menu library for the old toolkit. The
+move to Flutter (K-174) removed the blocker: a ring is a stack of positioned
+labels over a gesture detector, and the only real content is the arithmetic of
+which slice a direction means — which is why that arithmetic, and the sums
+that place the ring and bar on screen, live in their own file,
+`widgets/radial_maths.dart`, with no Flutter in it and a test that treats it
+as pure maths.
+
 ### The rules that bite
 
 These are the ones a plausible-looking change breaks. Each has tests standing
@@ -3992,6 +4423,13 @@ behind it.
   rebuilds anything whose shape changed, taking scroll position and in-flight
   drags with it. Focus outlines and hover borders are always present and merely
   transparent when unseen.
+- **A child that comes and goes beside a child that holds state needs a key**
+  (K-328). Flutter matches the children of a `Stack` or `Column` by *position in
+  the list* unless they carry keys, so removing one shifts every later sibling
+  onto its neighbour's element — and anything living in that element (a text
+  field's editing session, a scroll position) is quietly rebuilt from nothing.
+  In the FX console this cost the search box its keyboard connection the moment
+  the ring was hidden, so typing worked for exactly one letter.
 - **Throttle by holding the newest, never by dropping it**
   (`state/preview_throttle.dart`, mirrored by the engine's worker).
 - **Register the new texture before releasing the old one** — never show less

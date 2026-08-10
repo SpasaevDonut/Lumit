@@ -88,6 +88,7 @@ impl ActionId {
             "edit.copy" => "Copy the selection",
             "edit.paste" => "Paste",
             "palette.open" => "Open the command palette",
+            "console.open" => "Open the FX console",
             "export.queue.add" => "Add to the export queue",
             "comp.settings" => "Composition settings",
             "edit.undo" => "Undo",
@@ -103,6 +104,7 @@ impl ActionId {
             "comp.new" => "New composition",
             "app.settings" => "Open Settings",
             "project.settings" => "Open Project settings",
+            "item.rename" => "Rename the selected item",
             "panel.maximise" => "Maximise the panel under the pointer",
             "graph.toggle" => "Show or hide the graph editor",
             // Tools.
@@ -142,6 +144,7 @@ impl ActionId {
             "timeline.zoom.out" => "Zoom out",
             "timeline.zoom.fit" => "Zoom to fit",
             "layer.rename" => "Rename the layer",
+            "effect.rename" => "Rename the selected effect",
             "layer.toggle.visible" => "Show or hide the layer",
             // Graph editor.
             "graph.ease" => "Easy ease",
@@ -597,7 +600,7 @@ fn row(context: KeyContext, chord: &str, action: &str) -> Option<Binding> {
 /// it to Cmd on macOS. Ships conflict-free (proven in tests).
 #[must_use]
 pub fn default_keymap() -> Keymap {
-    use KeyContext::{Global, Graph, Panels, Timeline, Tools, Viewer};
+    use KeyContext::{Effects, Global, Graph, Panels, Project, Timeline, Tools, Viewer};
     let rows = [
         // --- Global: transport, navigation, app-wide commands ---
         row(Global, "Space", "playback.toggle"),
@@ -648,6 +651,9 @@ pub fn default_keymap() -> Keymap {
         row(Global, "Mod+C", "edit.copy"),
         row(Global, "Mod+V", "edit.paste"),
         row(Global, "Mod+Shift+P", "palette.open"),
+        // The FX console (K-324): Video Copilot's own chord, and the one the
+        // owner asked for.
+        row(Global, "Mod+Space", "console.open"),
         row(Global, "Mod+M", "export.queue.add"),
         row(Global, "Mod+K", "comp.settings"),
         row(Global, "Mod+Z", "edit.undo"),
@@ -726,6 +732,11 @@ pub fn default_keymap() -> Keymap {
         row(Timeline, "-", "timeline.zoom.out"),
         row(Timeline, "\\", "timeline.zoom.fit"),
         row(Timeline, "Enter", "layer.rename"),
+        // Enter renames the selected thing wherever one is selected (K-321):
+        // the item in the Project panel, the effect in Effect controls — the
+        // same key the Timeline has always used for its layers.
+        row(Project, "Enter", "item.rename"),
+        row(Effects, "Enter", "effect.rename"),
         row(Timeline, "X", "layer.toggle.visible"),
         // --- Graph editor ---
         row(Graph, "F9", "graph.ease"),
@@ -858,6 +869,43 @@ mod tests {
             "Hyper+A".parse::<Chord>(),
             Err(ChordError::UnknownModifier(_))
         ));
+    }
+
+    #[test]
+    fn the_fx_console_has_its_own_chord_and_does_not_clash() {
+        // K-324: Ctrl+Space opens the console. Video Copilot's own chord, and
+        // the shipped map must stay conflict-free with it in.
+        let km = default_keymap();
+        assert_eq!(
+            km.lookup(KeyContext::Global, &"Mod+Space".parse().unwrap()),
+            Some(&ActionId::from("console.open"))
+        );
+        // The bare space bar still plays; the console took the modified one.
+        assert_eq!(
+            km.lookup(KeyContext::Global, &"Space".parse().unwrap()),
+            Some(&ActionId::from("playback.toggle"))
+        );
+        assert!(km.conflicts().is_empty(), "the shipped map ships clean");
+    }
+
+    #[test]
+    fn enter_renames_the_selection_in_each_panel_that_has_one() {
+        // K-321: the same key the Timeline always used for its layers is
+        // bound for the Project panel's items and Effect controls' effects.
+        let km = default_keymap();
+        let enter: Chord = "Enter".parse().unwrap();
+        assert_eq!(
+            km.lookup(KeyContext::Timeline, &enter),
+            Some(&ActionId::from("layer.rename"))
+        );
+        assert_eq!(
+            km.lookup(KeyContext::Project, &enter),
+            Some(&ActionId::from("item.rename"))
+        );
+        assert_eq!(
+            km.lookup(KeyContext::Effects, &enter),
+            Some(&ActionId::from("effect.rename"))
+        );
     }
 
     #[test]

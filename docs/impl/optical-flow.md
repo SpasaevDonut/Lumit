@@ -73,9 +73,40 @@ synthesis itself moves GPU-side).
    content edge) before falling back to the init flow with the pixel marked invalid.
 4. **Smoothing**: one 3×3 edge-aware blur of the flow field — bilateral on luma *and* on
    flow difference, so vectors from the two sides of a motion boundary never average into
-   a phantom in-between motion. Skip the paper's full variational refinement in v1 —
-   measure first; it is the difference between 2 ms and 10 ms and mostly helps large
-   untextured regions, rare in game footage.
+   a phantom in-between motion.
+5. **Variational refinement** — DIS part three, and **not optional** (K-332). This note
+   previously said to skip it in v1 and "measure first"; the measurement happened and both
+   halves of the reasoning were wrong. Untextured regions are not rare in game capture (smoke,
+   sky, muzzle flash, water, darkness are most of a frame during the fast moments a montage
+   slows down), and without refinement they fail *hard* rather than softly: densification
+   leaves the coarse guess, flags the pixel invalid, §2 counts invalid as occluded, and §3
+   crossfades it — patches of ghosted mush, the reported artefact.
+
+   Per the paper (§3.3), minimise `E(U) = ∫ σ·Ψ(E_I) + γ·Ψ(E_G) + α·Ψ(E_S) dx` with
+   `Ψ(a²) = √(a² + ε²)`, ε = 0.001, σ = 5, γ = 10, α = 10. `E_I` is intensity constancy,
+   `E_G` gradient constancy — the term that survives a brightness step, which a muzzle flash
+   is and which plain intensity constancy reads as motion everywhere — and `E_S = ‖∇u‖² +
+   ‖∇v‖²`. Both data tensors are normalised by their own gradient energy plus ζ² (ζ = 0.1) so
+   a high-contrast pixel cannot shout down a low-contrast one. Run once per pyramid level,
+   `1·(s+1)` fixed-point iterations at scale `s` counting from the coarsest, each linearising
+   about the current warp and solving for the increment with `θ_vi = 5` SOR sweeps at ω = 1.6.
+
+   **Sweeps are red–black, not raster order.** Plain SOR wants each pixel to read its
+   neighbours' just-updated values, which is strictly sequential. On a checkerboard every
+   neighbour of a red pixel is black, so a whole colour updates with no pixel reading another
+   of its own colour — the identical algorithm, reordered into something the WGSL can run in
+   parallel. **The CPU oracle is written this way deliberately**: a sequential oracle would
+   have condemned the shader to disagree with it by construction, and the §6.5 parity contract
+   would have had to be abandoned rather than met.
+
+   **Validity changes meaning.** It was "at least one patch covered me photometrically"; it
+   becomes "the refined flow explains these pixels", from the residual after refinement
+   (`VR_RESIDUAL_MAX`). A refined field has an answer everywhere, so the honest question is
+   whether the answer is right, not whether one was found.
+
+   **Cost, measured (960×540 pair, dev machine):** parts 1–2 on the CPU 456 ms, all three
+   1.82 s — 4×. Parts 1–2 on the GPU 4.8 ms. The refinement therefore *must* reach WGSL: the
+   CPU oracle at 1.8 s per pair is a correctness reference, not a preview path.
 
 **Output**: the dense flow at working res plus a per-pixel validity mask (v1: one f32
 storage buffer read back to the CPU, since synthesis still runs there; `Rg16Float`
@@ -160,10 +191,97 @@ counts, the ±1 central difference and the destination-flow fixed point remain f
 
 ## 5. Parameters and defaults (user-facing, per [08-EFFECTS.md](../08-EFFECTS.md))
 
-Flow interpolation: quality Half/Full (working res), smoothness σ (densification), and
-"fallback sensitivity" (the confidence threshold for §3's blend fallback; default
-mid). Motion blur: amount k (default 1.0), shutter from comp settings or override,
-max taps. Resist adding more knobs — Twixtor's manual is a warning, not a target.
+Resist adding more knobs — Twixtor's manual is a warning, not a target. The set is closed at
+the §3.1 table, which ships in full as of K-331.
+
+**Engine-side (`lumit_flow::FlowSettings`).** `lumit-flow` is an engine crate and knows
+nothing of the document, so the stored `FlowParams` are translated into plain numbers by
+`lumit_render::decode::flow_settings` — one function, so preview, export and the flow cache
+cannot translate the same parameters into two different measurements.
+
+| Setting | From | Effect on the algorithm |
+|---|---|---|
+| `divisor` | Flow resolution | 1/2/4 on the source dims before §1's pyramid. Repeated box-halving, never a second resampler, so the WGSL mirrors it. A source under `8·d·2` px stays whole rather than starving the pyramid |
+| `iterations` | Vector detail | §1 step 2's cap: 6 / 12 / 20 / 32 (Medium is the paper's ≤ 12) |
+| `min_level_dim` | Vector detail | §1's pyramid floor: 48 / 24 / 24 / 16. Below ~24 the 8×8 patches go frame-scale — the failure §6.1 measured |
+| `smoothness` | Smoothness | Scales `FLOW_SIGMA2` in §1 step 4's bilateral, quadratically over a 4× span each way, clamped. 50 is exactly the tuned constant, so the default is bit-identical to the pre-parameter engine |
+| `refine_iters` | Vector detail | §1 step 5's fixed-point iterations per level: 1 / 1 / 2 / 3. `0` disables DIS part three and is **not user-reachable** — it is the two-part engine K-332 replaced, kept only so the A/B test and the GPU parity test can address it |
+| `occlusion` | Occlusion handling | §3's weights: Visible-only keeps the `(1 − occ)` terms, Blend drops them |
+| `fallback` | Fallback | §3's both-occluded branch: crossfade or the nearer endpoint |
+| `hud_guard` | HUD guard | Runs §3.1 step 5's `hud_weights` and mixes synthesis back toward the plain blend by it |
+
+**Every setting has a GPU path.** The iteration cap and the smoothing sigma ride in the
+per-level `Params` uniform; the pyramid floor shapes the plan, which is rebuilt when the
+settings change (`Plan::set`). The refinement is seven kernels — `vr_warp`, `vr_init_duv`,
+`vr_deriv`, `vr_sor_red`/`vr_sor_black`, `vr_apply`, `vr_validity` — reusing the existing
+eight-binding layout: `duv` packs `(du, dv, u, v)` into one vec4 so the solver needs no fifth
+read slot, the increment travelling with the flow it is an increment of. `FlowError::Unsupported`
+therefore no longer fires for any real setting, and the parity test covers all three parts of
+the algorithm again.
+
+**Measured (960×540 pair, dev machine):** GPU parts 1–2 4.3 ms, all three **8.9 ms**; CPU all
+three 1.9 s. The refinement roughly doubles GPU cost and is comfortably inside budget.
+
+## 5.5 Measured quality (the harness, K-332 follow-up)
+
+`crates/lumit-render/tests/flow_quality.rs` scores the engine on real footage by
+rebuilding a frame from its two neighbours and comparing against the frame that
+was actually there — ground truth out of ordinary film. It reports against
+**nearest** (hold the previous frame) and **blend** (crossfade). Blend is the one
+that matters: flow costs far more, and its failure is tearing rather than a soft
+double image, so losing to a crossfade makes it worse than useless.
+
+**Three measures, and the third is the one that matters.** PSNR scores an error
+by size, SSIM by shape, and the **5th-percentile block SSIM** by the worst
+twentieth of the picture. Flow does not go uniformly slightly wrong: it goes
+badly wrong in a few places and stays right everywhere else, which over a 1080p
+frame averages to a rounding error. A clip that looks unusable can score level
+with a crossfade on the mean and be a fifth of a point worse on the worst blocks.
+
+**Triplets where any two of the three frames are held are excluded**, compared
+loosely because a held cel is not bit-identical after encoding. Animation drawn
+on 2s and 3s holds most of its frames — 78% of neighbouring pairs on the clip
+below — so a middle frame that duplicates an end is the norm rather than the
+exception, and leaving those in scores every method against a target one of its
+own inputs already is. An earlier run of this harness did leave them in and
+concluded that *holding* was the best method on animation; it is not, it is
+comfortably the worst, and the difference was entirely the sampling.
+
+| footage | rate | nearest | blend | flow | Δ PSNR | Δ worst |
+|---|---|---|---|---|---|---|
+| gameplay 600 fps | native | 29.02 / 0.8688 | 31.86 / 0.9012 | **35.62 / 0.9707** | +3.77 | — |
+| gameplay | 60 (÷10) | 22.20 / 0.6530 / 0.033 | 24.35 / 0.6871 / 0.083 | **26.93 / 0.8208 / 0.342** | +2.58 | **+0.259** |
+| gameplay | 24 (÷25) | 20.38 / 0.6012 | 21.49 / 0.6170 | **22.00 / 0.6663** | +0.51 | — |
+| anime on 2s | stride 2 | 32.74 / 0.9532 / 0.666 | 37.08 / **0.9536** / **0.699** | 37.07 / 0.9506 / 0.681 | −0.00 | −0.018 |
+| anime | stride 3 | 31.52 / 0.9511 / 0.671 | 35.99 / **0.9541** / **0.712** | **36.87** / 0.9519 / 0.697 | +0.88 | −0.015 |
+
+(PSNR dB / SSIM / worst-5% where measured.)
+
+**What it says.** On game capture flow is not marginally better than a crossfade,
+it is holding structure together where a crossfade falls apart: +0.26 of
+worst-block SSIM at a 60 fps effective rate, against a blend that has essentially
+collapsed there (0.083). This is the footage the project exists for (K-002) and
+the engine is doing its job on it.
+
+On cel animation flow is level with a crossfade on PSNR and consistently *worse*
+on both structural measures. Interpolation itself is clearly worth doing — nearest
+is far behind — so this is not "the content cannot be interpolated". It is that
+warping introduces localised damage a crossfade does not, and the damage lands on
+line art where it is most visible. Cel animation is flat regions bounded by hard
+edges: no photometric evidence across most of the frame, and a smoothness term
+that diffuses motion straight over boundaries it should stop at.
+
+**Two corollaries.** Parameters do not decide this — the full sweep spans about
+0.2 dB on either clip, so whatever fixes animation is not a knob. And a
+confidence-weighted bias toward the fallback, written to stop flow ever losing to
+a crossfade, was measured and removed: it cost gameplay 0.036 of worst-block SSIM
+to gain animation 0.012 and changed neither verdict.
+
+**Content is separable, cheaply.** `clip_cadence.rs` reports held-frame fraction
+and flat fraction: 78% held and 67% flat on the animation clip, 0% held and 23%
+flat on the game capture. Either statistic alone separates them, which is what
+makes choosing an engine automatically (§0's `rife` backend) a tractable thing
+rather than a guess.
 
 ## 6. Test plan
 

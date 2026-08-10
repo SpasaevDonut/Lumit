@@ -38,6 +38,7 @@ import '../icons/icons.dart';
 import '../l10n/strings.dart';
 import '../state/comp_model.dart';
 import '../state/comp_time.dart';
+import '../state/dock.dart';
 import '../state/drag_payloads.dart';
 import '../state/timecode.dart';
 import '../state/timeline_columns.dart';
@@ -60,6 +61,9 @@ import 'timeline_razor.dart';
 import 'effect_param_row_frb.dart';
 import 'keyframe_controls_frb.dart';
 import 'layer_fold_frb.dart';
+import 'package:lumit_flutter/src/rust/api/retime.dart';
+import 'flow_rows_frb.dart';
+import 'fx_section.dart';
 import '../widgets/smooth_zoom.dart';
 import '../widgets/zoom_anchored_scroll.dart';
 import 'timeline_snap.dart';
@@ -1123,6 +1127,24 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     return true;
   }
 
+  /// The FX console has planted a key and wants its row visible (K-326): open
+  /// the layer and the named row, leaving whatever else is open alone.
+  void _onRevealRequested() {
+    final request = _ui?.revealPropertyRequest.value;
+    if (request == null || !mounted) return;
+    _ui!.revealPropertyRequest.value = null;
+    final (layerId, action) = request;
+    setState(() {
+      for (final entry in _ui!.model.layers) {
+        if (entry.layer.internallayerId != layerId) continue;
+        final id = layerId.toString();
+        _open
+          ..add(id)
+          ..addAll(_revealPaths(id, entry, action));
+      }
+    });
+  }
+
   /// Which fold paths a reveal key opens under [id]. Empty means the layer's
   /// own row and nothing beneath it — what the Retime chord leaves behind, and
   /// what `E` or `M` come to on a layer with no effects or masks to show.
@@ -1277,6 +1299,10 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     // the outline is that much narrower for it — a layout change, so the panel
     // has to hear about it rather than only the cells inside the column.
     _ui!.renderTimings.addListener(_onTimingsChanged);
+    // The FX console's Keyframe ring plants a key and then asks for its row to
+    // be on screen (K-326). Ensure-open, not the reveal keys' toggle: showing
+    // a row that is already showing must never hide it.
+    _ui!.revealPropertyRequest.addListener(_onRevealRequested);
     // Merged **once**, not per build: a fresh `Listenable` every rebuild makes
     // every cache bar under it unsubscribe and resubscribe, which during a zoom
     // flight is sixty times a second for nothing (K-293).
@@ -1417,8 +1443,14 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     }
     // Enter renames the selected layer in place (docs/07 §15, K-243): the row
     // it names opens its own editor, which is why this sets a value rather
-    // than reaching into a row.
+    // than reaching into a row. Only while this is the focused panel — the
+    // Project panel and Effect controls answer the same key for their own
+    // selections now (K-321), and two renames on one press is a mess.
     if (action == 'layer.rename') {
+      // A different panel is focused: its own rename answers this key. No
+      // panel focused yet falls to the Timeline, as it always did.
+      final active = ui.activePanel.value;
+      if (active != null && active != Panel.timeline) return false;
       final layer = ui.selectedLayer.value;
       if (layer == null) return false;
       _renameRequest.value = layer.internallayerId;
@@ -1709,6 +1741,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     HardwareKeyboard.instance.removeHandler(_onKey);
     _ui?.selectedLayer.removeListener(_onPrimaryChanged);
     _ui?.renderTimings.removeListener(_onTimingsChanged);
+    _ui?.revealPropertyRequest.removeListener(_onRevealRequested);
     if (_ui?.deleteClaim == _deleteSelectedMasks) _ui!.deleteClaim = null;
     if (_ui?.copyClaim == _copySelectedKeys) _ui!.copyClaim = null;
     if (_ui?.pasteClaim == _pasteKeysIntoSelection) _ui!.pasteClaim = null;
@@ -1766,18 +1799,51 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
   /// flight restarted before it ever arrived. A tap on the track, or the
   /// wheel, is a discrete jump and still flies.
   void _setZoom(double z, {bool fly = true}) {
-    _anchorOnPlayhead();
+    // While the slider is being dragged the anchor was chosen once, at the
+    // start of the gesture, and holds to the end (K-319). Re-measuring it on
+    // every drag update read the scroll offset before layout had corrected it
+    // for the zoom just applied — a fresh zoom against a stale offset — and
+    // each update re-anchored somewhere slightly wrong, which is what made
+    // the lanes ping around under a dragged slider. The measured-once anchor
+    // is exact: the flight (and the drag) re-applies the same fixed point
+    // every tick, which is the invariant the whole mechanism is built on.
+    if (!_zoomAnchorHeld) _anchorOnPlayhead();
     _zoomMotion.goTo(z,
         duration: fly ? animationDuration(_animationLevel) : Duration.zero);
   }
 
+  /// True while a slider drag holds the anchor fixed — see [_setZoom].
+  bool _zoomAnchorHeld = false;
+
+  /// The slider's drag began: choose the anchor now, and keep it for the
+  /// whole gesture.
+  void _zoomDragStart() {
+    _anchorOnPlayhead();
+    _zoomAnchorHeld = true;
+  }
+
+  void _zoomDragEnd() {
+    _zoomAnchorHeld = false;
+  }
+
   /// Point the flight's anchor at the playhead — held where it is if it is on
   /// screen, brought to the middle if it is not.
+  ///
+  /// The per-frame width is derived from the scroll position's own content
+  /// extent when it has one — the same numbers `zoomAnchorOffset` applies the
+  /// anchor with — so the point measured here is exactly the point the layout
+  /// puts back. A width from anywhere else (the build-time viewport cache)
+  /// disagrees by a little at every zoom, and the disagreement is a
+  /// systematic drift that grows with magnification.
   void _anchorOnPlayhead() {
     final viewport =
         _hLane.hasClients ? _hLane.position.viewportDimension : _laneViewport;
     final offset = _hLane.hasClients ? _hLane.offset : 0.0;
-    final perFrame = _perFrameNow;
+    final perFrame = _hLane.hasClients && _laneFrames > 0
+        ? (_hLane.position.viewportDimension +
+                _hLane.position.maxScrollExtent) /
+            _laneFrames
+        : _perFrameNow;
     final playhead = (_ui?.playheadFrame.value ?? 0).toDouble();
     _zoomAnchorFrame = playhead;
     final x = playhead * perFrame - offset;
@@ -2537,6 +2603,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
                                           onZoom: _setZoom,
                                           onZoomLive: (z) =>
                                               _setZoom(z, fly: false),
+                                          onZoomDragStart: _zoomDragStart,
+                                          onZoomDragEnd: _zoomDragEnd,
                                           maxZoom: _maxZoom,
                                           lens: _graphLens,
                                           onLens: (lens) =>
@@ -2712,6 +2780,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
                                           onZoom: _setZoom,
                                           onZoomLive: (z) =>
                                               _setZoom(z, fly: false),
+                                          onZoomDragStart: _zoomDragStart,
+                                          onZoomDragEnd: _zoomDragEnd,
                                           maxZoom: _maxZoom,
                                         ),
                                       ],
@@ -2856,35 +2926,53 @@ class _FoldRow extends StatelessWidget {
     final selected = selectedProperties.contains(path);
     final contains =
         !selected && selectedProperties.any((p) => isUnderPath(path, p));
-    // Selection rides on the property's *name* (docs/07 §4.3): the label
-    // taps inside the row widgets call [onSelectProperty]; a click on the
-    // rest of the row — its fields, its empty space — selects nothing.
-    return Container(
-      height: _rowHeight,
-      // Selected is the full surface; a row that merely *contains* the
-      // selection — the effect heading over a picked parameter — is the
-      // same at half strength, exactly as a layer row marks itself.
-      decoration: BoxDecoration(
-        color: selected
-            ? t.selectionFill
-            : contains
-                ? t.selectionFill.withValues(alpha: 0.45)
-                : null,
+    // Selection rides on the property's *name* (docs/07 §4.3) — and on any
+    // press that *acts* on the row (K-334): the stopwatch, the ◄ ◆ ►
+    // navigator, a value drag. Touching a row's controls IS choosing it, and
+    // before this a value drag on an unselected row moved a curve the graph
+    // was not even showing. Pointer-down rather than tap, so the selection —
+    // and with it the graph channel — exists before the first drag tick. A
+    // modified press is left to the label's own Ctrl/Shift semantics, and a
+    // group heading keeps its pick-and-twirl click (K-300).
+    return Listener(
+      onPointerDown: row is FoldGroupRow || row is FoldWaveformRow
+          ? null
+          : (_) {
+              final keys = HardwareKeyboard.instance;
+              if (keys.isControlPressed ||
+                  keys.isMetaPressed ||
+                  keys.isShiftPressed) {
+                return;
+              }
+              onEditProperty(path);
+            },
+      child: Container(
+        height: _rowHeight,
+        // Selected is the full surface; a row that merely *contains* the
+        // selection — the effect heading over a picked parameter — is the
+        // same at half strength, exactly as a layer row marks itself.
+        decoration: BoxDecoration(
+          color: selected
+              ? t.selectionFill
+              : contains
+                  ? t.selectionFill.withValues(alpha: 0.45)
+                  : null,
+        ),
+        padding: EdgeInsets.only(left: indent, right: 4),
+        // A locked layer's rows are read-only, not hidden (K-291): the numbers
+        // are still the document's and the curves still draw, but nothing on the
+        // row can be touched. The engine refuses the edit anyway — this is what
+        // stops the interface offering a gesture that would only be refused.
+        //
+        // A *group* row is exempt: twirling one open is navigation, not editing,
+        // and a locked layer that could not be looked inside would be worse than
+        // one that can.
+        child: locked && row is! FoldGroupRow && row is! FoldWaveformRow
+            ? AbsorbPointer(
+                child: Opacity(opacity: 0.5, child: _control(context)),
+              )
+            : _control(context),
       ),
-      padding: EdgeInsets.only(left: indent, right: 4),
-      // A locked layer's rows are read-only, not hidden (K-291): the numbers
-      // are still the document's and the curves still draw, but nothing on the
-      // row can be touched. The engine refuses the edit anyway — this is what
-      // stops the interface offering a gesture that would only be refused.
-      //
-      // A *group* row is exempt: twirling one open is navigation, not editing,
-      // and a locked layer that could not be looked inside would be worse than
-      // one that can.
-      child: locked && row is! FoldGroupRow && row is! FoldWaveformRow
-          ? AbsorbPointer(
-              child: Opacity(opacity: 0.5, child: _control(context)),
-            )
-          : _control(context),
     );
   }
 
@@ -3035,6 +3123,18 @@ class _FoldRow extends StatelessWidget {
           onLabelTap: () => onSelectProperty(path),
           graphColour: graphColours[path]?.firstOrNull,
         ),
+      FoldFlowRow() => _FlowRow(
+          comp: comp,
+          layer: layer,
+          row: row as FoldFlowRow,
+          valueColumn: valueColumn,
+          playheadFrame: playheadFrame,
+          onSeek: onSeek,
+          onChanged: () {
+            onEditProperty(path);
+            onChanged();
+          },
+        ),
       FoldVolumeRow() => _VolumeRow(
           comp: comp,
           layer: layer,
@@ -3166,6 +3266,177 @@ class _TimelineParamRowState extends State<_TimelineParamRow> {
 }
 
 /// The Audio group's one row: the layer's Volume, in dB.
+/// One control of the Flow group in the Timeline fold-out (K-088, K-331).
+///
+/// Every kind but the Input rate writes the whole group in one op, so the row
+/// needs no state of its own: read, change one field, write it back. The Input
+/// rate is a keyframeable scalar, so it alone carries the stopwatch and the
+/// navigator — the same shape the Retime and Volume rows use.
+class _FlowRow extends StatelessWidget {
+  final CompositionReference comp;
+  final LayerReference layer;
+  final FoldFlowRow row;
+  final ValueColumn valueColumn;
+  final int playheadFrame;
+  final ValueChanged<int> onSeek;
+  final VoidCallback onChanged;
+
+  const _FlowRow({
+    required this.comp,
+    required this.layer,
+    required this.row,
+    required this.valueColumn,
+    required this.playheadFrame,
+    required this.onSeek,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    final p = layer.getFlowParams();
+
+    void write(BridgeFlowParams next) {
+      layer.setFlowParams(params: next);
+      onChanged();
+    }
+
+    final control = switch (row.kind) {
+      FlowRowKind.resolution => _choice('flow-resolution',
+            const ['Native', 'Half', 'Quarter'], p.resolution, (v) {
+          write(flowParamsWith(p, resolution: v));
+        }),
+      FlowRowKind.detail => _choice(
+            'flow-detail', const ['Low', 'Medium', 'High', 'Ultra'], p.detail,
+            (v) {
+          write(flowParamsWith(p, detail: v));
+        }),
+      FlowRowKind.occlusion =>
+        _choice('flow-occlusion', const ['Visible only', 'Blend'], p.occlusion,
+            (v) {
+          write(flowParamsWith(p, occlusion: v));
+        }),
+      FlowRowKind.fallback =>
+        _choice('flow-fallback', const ['Blend', 'Nearest'], p.fallback, (v) {
+          write(flowParamsWith(p, fallback: v));
+        }),
+      FlowRowKind.smoothness => SizedBox(
+          width: valueColumn.width,
+          child: DragValueField(
+            key: const ValueKey('flow-smoothness'),
+            value: p.smoothness,
+            min: 0,
+            max: 100,
+            onChanged: (v) =>
+                write(flowParamsWith(p, smoothness: v.toDouble())),
+          ),
+        ),
+      FlowRowKind.hudGuard => HouseCheckbox(
+          key: const ValueKey('flow-hud-guard'),
+          value: p.hudGuard,
+          onChanged: (v) => write(flowParamsWith(p, hudGuard: v)),
+        ),
+      FlowRowKind.always => HouseCheckbox(
+          key: const ValueKey('flow-always'),
+          value: p.always,
+          onChanged: (v) => write(flowParamsWith(p, always: v)),
+        ),
+      FlowRowKind.inputRate => _inputRate(),
+    };
+
+    return Row(
+      children: [
+        if (row.kind == FlowRowKind.inputRate)
+          KeyframeControlsFrb(
+            scalars: [row.rate!],
+            comp: comp,
+            playheadFrame: playheadFrame,
+            onSeek: onSeek,
+            rowKey: 'tl-flow-rate',
+            onWrite: (next) {
+              layer.setFlowInputRate(value: next.single);
+              onChanged();
+            },
+          )
+        else
+          const SizedBox(width: fxKeyframeGutter),
+        const SizedBox(width: 4),
+        Expanded(child: Text(row.kind.label, style: t.body)),
+        SizedBox(width: valueColumn.width, child: control),
+      ],
+    );
+  }
+
+  Widget _choice(
+    String keyName,
+    List<String> options,
+    int value,
+    ValueChanged<int> onChanged,
+  ) =>
+      SizedBox(
+        width: valueColumn.width,
+        child: BareDropdown<int>(
+          key: ValueKey(keyName),
+          value: value < options.length ? value : 0,
+          options: List.generate(options.length, (i) => i),
+          label: (i) => options[i],
+          onChanged: onChanged,
+        ),
+      );
+
+  /// The conform rate: a typed value with the cadence presets beside it, and
+  /// keyframes, so a cut that changes cadence partway can be followed.
+  Widget _inputRate() {
+    final rate = row.rate!;
+    final shown = switch (rate) {
+      BridgeScalar_Static(:final field0) => field0,
+      // An expression is sampled engine-side too, so it needs no case of its
+      // own here — `sampleScalar` is the one place either is evaluated.
+      BridgeScalar_Keyframed() ||
+      BridgeScalar_Expression() =>
+        sampleScalar(scalar: rate, time: timeOfFrame(comp, playheadFrame)),
+    };
+    void writeRate(double fps) {
+      layer.setFlowInputRate(
+        value: scalarWithValueAt(rate, fps, comp, playheadFrame),
+      );
+      onChanged();
+    }
+
+    return Row(
+      children: [
+        SizedBox(
+          width: (valueColumn.width * 0.45).clamp(48, 90),
+          child: DragValueField(
+            key: const ValueKey('flow-input-rate'),
+            value: shown,
+            min: 0,
+            max: 240,
+            decimals: 2,
+            suffix: shown < 0.5 ? '' : ' fps',
+            onChanged: (v) => writeRate(v.toDouble()),
+          ),
+        ),
+        const SizedBox(width: 4),
+        Expanded(
+          child: BareDropdown<double>(
+            key: const ValueKey('flow-input-rate-preset'),
+            value: flowPresetLabel(shown) == null ? -1 : shown,
+            options: [
+              if (flowPresetLabel(shown) == null) -1,
+              ...flowRatePresets.map((p) => p.$1),
+            ],
+            label: (v) => flowPresetLabel(v) ?? 'Custom',
+            onChanged: (v) {
+              if (v >= 0) writeRate(v);
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _VolumeRow extends StatefulWidget {
   final CompositionReference comp;
   final LayerReference layer;
@@ -4218,10 +4489,58 @@ class _RetimeRow extends StatefulWidget {
 
 class _RetimeRowState extends State<_RetimeRow> {
   /// The value under the pointer during a drag, held so the whole gesture is
-  /// one undo step. No live preview: a retime drag changes which frame is
-  /// decoded, and there is no preview path for that yet — the release commits
-  /// and the viewer re-renders then.
+  /// one undo step. The picture keeps up in the meantime: a retime drag decides
+  /// which frame is decoded, so it previews through its own door
+  /// (`renderFrameWithRetime`) rather than by re-compositing pixels already in
+  /// hand — the one edit where watching it move is the whole point.
   double? _staged;
+
+  final PreviewThrottle _preview = PreviewThrottle();
+
+  @override
+  void dispose() {
+    _preview.cancel();
+    super.dispose();
+  }
+
+  /// Whether this gesture already planted its key — one plant per drag.
+  bool _planted = false;
+
+  /// A drag tick: render the map the release will write, without writing it —
+  /// and publish it, so the graph's Retime curve follows the drag (K-334).
+  ///
+  /// The first tick on a frame with **no key plants one** holding the value
+  /// already showing (K-333's rule, K-336 for this row): nothing moves, and
+  /// the preview then *replaces* a real key instead of inserting beside the
+  /// document's — the aligned path the transform rows take.
+  void _live(BridgeScalar scalar, double value, int frame) {
+    if (!_planted &&
+        scalar is BridgeScalar_Keyframed &&
+        !scalar.field0
+            .any((k) => widget.comp.frameAtTime(time: k.time) == frame)) {
+      _planted = true;
+      final held = sampleScalar(
+          scalar: scalar, time: widget.comp.timeOfFrame(frame: frame));
+      widget.layer.setRetimeProperty(
+        value: scalarWithValueAt(scalar, held, widget.comp, frame),
+      );
+      widget.onChanged();
+    }
+    setState(() => _staged = value);
+    rowValueDrag.value = RowValueDrag(
+      layer: widget.layer.internallayerId.toString(),
+      retime: true,
+      frame: frame,
+      value: value,
+    );
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    _preview.request(() => widget.comp.renderFrameWithRetime(
+          frame: BigInt.from(ui.playheadFrame.value),
+          scale: ui.viewerScale,
+          layer: widget.layer,
+          retime: scalarWithValueAt(scalar, value, widget.comp, frame),
+        ));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -4271,6 +4590,7 @@ class _RetimeRowState extends State<_RetimeRow> {
                   ? (animated
                       ? KeyedValueField(
                           fieldKey: const ValueKey('tl-retime-seconds'),
+                          onLive: (v) => _live(scalar, v, frame),
                           value: value,
                           // The same open range a transform axis gets: a
                           // source time before zero or past the end simply
@@ -4293,7 +4613,7 @@ class _RetimeRowState extends State<_RetimeRow> {
                           speed: 0.02,
                           onChanged: (v) => _commitAt(scalar, v, frame),
                           onChangeLive: (v) =>
-                              setState(() => _staged = v.toDouble()),
+                              _live(scalar, v.toDouble(), frame),
                           onChangeEnd: (v) => _commitAt(scalar, v, frame),
                           onDragCancel: () => setState(() => _staged = null),
                         ))
@@ -4313,8 +4633,8 @@ class _RetimeRowState extends State<_RetimeRow> {
                       minFrame: -100000,
                       maxFrame: 100000,
                       draggable: true,
-                      onDragLive: (f) => setState(
-                          () => _staged = _secondsOfFrame(f, fpsNum, fpsDen)),
+                      onDragLive: (f) => _live(
+                          scalar, _secondsOfFrame(f, fpsNum, fpsDen), frame),
                       onCommit: (f) => _commitAt(
                           scalar, _secondsOfFrame(f, fpsNum, fpsDen), frame),
                       onDragCancel: () => setState(() => _staged = null),
@@ -4340,6 +4660,11 @@ class _RetimeRowState extends State<_RetimeRow> {
       fpsNum <= 0 ? 0 : frame * (fpsDen <= 0 ? 1 : fpsDen) / fpsNum;
 
   void _commitAt(BridgeScalar scalar, num value, int frame) {
+    // The write is the last word on the gesture: a held preview tick after it
+    // would put the provisional picture back.
+    _preview.cancel();
+    rowValueDrag.value = null;
+    _planted = false;
     widget.layer.setRetimeProperty(
       value: scalarWithValueAt(scalar, value.toDouble(), widget.comp, frame),
     );
@@ -5400,6 +5725,19 @@ class _OutlineRowState extends State<_OutlineRow> {
         () => _rename = TextEditingController(text: widget.entry.info.name));
   }
 
+  /// Escape: shut the editor and rename nothing (K-323). Shares the closing
+  /// half of [_commitRename] — the write is the only difference between them.
+  void _cancelRename() {
+    if (!mounted || _rename == null) return;
+    setState(() {
+      _rename?.dispose();
+      _rename = null;
+    });
+    if (widget.renameRequest.value == layer.internallayerId) {
+      widget.renameRequest.value = null;
+    }
+  }
+
   void _commitRename() {
     // Both ways out of the editor can land here for one edit — submitting and
     // then losing the pointer — and the row can be gone by the time the second
@@ -5647,10 +5985,10 @@ class _OutlineRowState extends State<_OutlineRow> {
   /// Group 3: flow (collapse on a Precomp) · fx · motion blur · 3D, spread
   /// across the same span the fold-out's value cells use.
   ///
-  /// The flow slot: optical flow has no per-layer engine backing yet
-  /// (docs/TODO.md), so a Precomp layer shows its collapse switch there —
-  /// the spec's flow-or-collapse cell (K-168) — and other kinds leave it
-  /// empty rather than offering a control that cannot do anything.
+  /// The flow slot is the spec's flow-or-collapse cell (K-168): a Precomp shows
+  /// its collapse switch there, **footage shows its Flow switch** (K-088/K-331),
+  /// and other kinds leave it empty rather than offering a control that cannot
+  /// do anything.
   Widget _renderCells(BuildContext context, BridgeLayerInfo info) {
     final id = layer.internallayerId.toString();
     final switches = info.switches;
@@ -5661,11 +5999,14 @@ class _OutlineRowState extends State<_OutlineRow> {
           // Packed left in ordinary switch cells, exactly as group 1 is: the
           // group's remaining span belongs to the fold-out's value column,
           // not to spreading four icons across it.
-          info.kind == BridgeLayerKind.precomp
-              ? _switch(context, id, 'collapse', LumitIcon.collapse,
-                  switches.collapse, BridgeLayerSwitch.collapse,
-                  tip: l10n.tipCollapseTransformations)
-              : const SizedBox(width: switchCellWidth),
+          if (info.kind == BridgeLayerKind.precomp)
+            _switch(context, id, 'collapse', LumitIcon.collapse,
+                switches.collapse, BridgeLayerSwitch.collapse,
+                tip: l10n.tipCollapseTransformations)
+          else if (info.kind == BridgeLayerKind.footage)
+            _flowSwitch(context, id, info.flow)
+          else
+            const SizedBox(width: switchCellWidth),
           _switch(context, id, 'fx', LumitIcon.fx, switches.fx,
               BridgeLayerSwitch.fx,
               tip: switches.fx
@@ -5761,6 +6102,7 @@ class _OutlineRowState extends State<_OutlineRow> {
         // Clicking anywhere else finishes the edit and keeps what was typed.
         // It used to leave the field open and lose the change (K-243).
         onTapOutside: _commitRename,
+        onCancelled: _cancelRename,
       );
     }
     return GestureDetector(
@@ -5840,6 +6182,49 @@ class _OutlineRowState extends State<_OutlineRow> {
   /// read as buttons rather than loose glyphs. With an [offIcon] the glyph
   /// itself flips (closed eye, muted speaker, hollow circle) and keeps full
   /// strength either way; without one the off state dims, as before.
+  /// The Flow cell. Shaped exactly like [_switch] but writing the layer's
+  /// interpolation policy rather than a `BridgeLayerSwitch`, because that is
+  /// what flow *is* underneath (K-088: "the option surfaces the policy").
+  ///
+  /// The state comes from the read model, never from a bridge call — this
+  /// builds on every timeline rebuild, which is the cost K-184 removed.
+  Widget _flowSwitch(BuildContext context, String id, bool on) {
+    final t = ThemeScope.of(context).theme;
+    final cell = GestureDetector(
+      key: ValueKey<String>('tl-flow-$id'),
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        layer.setFlowEnabled(on_: !on);
+        widget.onChanged();
+      },
+      child: SizedBox(
+        width: switchCellWidth,
+        height: _rowHeight,
+        child: Center(
+          child: Container(
+            width: 18,
+            height: 18,
+            decoration: BoxDecoration(
+              color: t.surface0,
+              borderRadius: BorderRadius.circular(t.tokens.controlRadius),
+              border: Border.all(color: t.hairline),
+            ),
+            child: Center(
+              child: lumitIcon(LumitIcon.flow,
+                  size: iconSize, color: on ? t.textPrimary : t.textDisabled),
+            ),
+          ),
+        ),
+      ),
+    );
+    return LumitTooltip(
+      message: on
+          ? 'Flow — in-between frames are synthesised; click to turn off'
+          : 'Flow — synthesise in-between frames with optical flow',
+      child: cell,
+    );
+  }
+
   Widget _switch(
     BuildContext context,
     String id,
@@ -6968,6 +7353,10 @@ class _LaneBottomBar extends StatelessWidget {
   /// A zoom asked for continuously, while the handle is dragged. The drag is
   /// the motion, so this one arrives at once.
   final ValueChanged<double> onZoomLive;
+
+  /// The drag's ends, so the panel can anchor once per gesture (K-319).
+  final VoidCallback? onZoomDragStart;
+  final VoidCallback? onZoomDragEnd;
   final bool magnet;
   final VoidCallback onToggleMagnet;
 
@@ -6984,6 +7373,8 @@ class _LaneBottomBar extends StatelessWidget {
     required this.hScroll,
     required this.onZoom,
     required this.onZoomLive,
+    this.onZoomDragStart,
+    this.onZoomDragEnd,
     required this.magnet,
     required this.onToggleMagnet,
     this.lens,
@@ -7120,7 +7511,10 @@ class _LaneBottomBar extends StatelessWidget {
                             showValue: false,
                             // Dragged, the zoom follows the finger with no
                             // flight; tapped, it flies to where the track was
-                            // clicked (K-293).
+                            // clicked (K-293). The drag's ends bracket the
+                            // gesture so the panel anchors once (K-319).
+                            onChangeStart: onZoomDragStart,
+                            onChangeEnd: onZoomDragEnd,
                             onChangeLive: (t) =>
                                 onZoomLive(zoomForSliderPosition(t, maxZoom)),
                             onChanged: (t) =>

@@ -3582,6 +3582,7 @@ pub fn instantiate(match_name: &str) -> Option<EffectInstance> {
             })
             .collect(),
         sample_temporally: true,
+        custom_name: None,
         extra: serde_json::Map::new(),
     })
 }

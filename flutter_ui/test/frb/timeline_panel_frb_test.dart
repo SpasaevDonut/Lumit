@@ -1960,6 +1960,38 @@ void main() {
           reason: "and so does the property's layer");
     });
 
+    /// **Any press that acts on a row selects it** (K-334): the stopwatch, the
+    /// navigator, a value drag. Touching a row's controls is choosing it — and
+    /// it is what puts the channel in the graph before a drag's first tick.
+    testWidgets('pressing a row control selects the row', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await mount(tester, p);
+      final id = layer.internallayerId;
+
+      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
+      await tester.pump();
+      await tester.tap(find.text('Transform'));
+      await tester.pump();
+
+      final t = LumitTheme.dark();
+      Color? fillOver(String text) {
+        final box = find.ancestor(
+            of: find.text(text), matching: find.byType(Container));
+        return (tester.widget<Container>(box.first).decoration as BoxDecoration)
+            .color;
+      }
+
+      expect(fillOver('Opacity'), isNull, reason: 'nothing picked to start');
+
+      // The stopwatch, not the label.
+      await tester.tap(find.byKey(const ValueKey<String>(
+          'kf-stopwatch-tl-tf-opacity')));
+      await tester.pump();
+      expect(fillOver('Opacity'), t.selectionFill,
+          reason: 'pressing the stopwatch chose the row');
+    });
+
     /// **Picking a layer on the picture reaches the Timeline** (K-275).
     ///
     /// The Viewer's click goes straight to the shell's selection
@@ -3769,6 +3801,18 @@ void main() {
       expect(layer.getInfo().name, 'Hero solid');
       expect(find.byKey(ValueKey<String>('tl-rename-$id')), findsNothing,
           reason: 'submitting leaves the editor');
+
+      // Escape leaves it the other way (K-323): editor shut, nothing written.
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      await tester.enterText(
+          find.byKey(ValueKey<String>('tl-rename-$id')), 'Regretted');
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byKey(ValueKey<String>('tl-rename-$id')), findsNothing,
+          reason: 'Escape closes the editor');
+      expect(layer.getInfo().name, 'Hero solid',
+          reason: 'and the layer keeps the name it had');
     });
 
     /// Clicking away from the rename editor finishes the edit and keeps what

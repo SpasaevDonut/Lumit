@@ -701,6 +701,31 @@ class CompositionReference {
               layer: layer,
               effects: effects);
 
+  /// Ask for `frame` with one layer's Retime map replaced — the live graph
+  /// drag on the Retime channel, which never touches the document.
+  ///
+  /// The same reason as [`Self::render_frame_with_clip_retime`] one function
+  /// up, for the layer's own map (K-197) rather than a clip's: a retime
+  /// decides *which frame of the source* is decoded, so it cannot be
+  /// previewed by re-compositing pixels already in hand. Without it the
+  /// picture does not move until the key is let go, which is the one edit
+  /// where watching it matters most.
+  ///
+  /// `retime` arrives on the comp clock like every keyframed value that
+  /// crosses the seam (K-213); the worker returns it to the layer's own.
+  void renderFrameWithRetime(
+          {required BigInt frame,
+          required double scale,
+          required LayerReference layer,
+          required BridgeScalar retime}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceRenderFrameWithRetime(
+              that: this,
+              frame: frame,
+              scale: scale,
+              layer: layer,
+              retime: retime);
+
   /// Ask for `frame` with `layer`'s art replaced by `contents` — the shape
   /// layer's half of the call above (K-239).
   ///

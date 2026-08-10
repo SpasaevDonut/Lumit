@@ -66,6 +66,7 @@ import 'package:iconoir_flutter/regular/star.dart' as ic;
 import 'package:iconoir_flutter/regular/text.dart' as ic;
 import 'package:iconoir_flutter/regular/timer.dart' as ic;
 import 'package:iconoir_flutter/regular/type.dart' as ic;
+import 'package:iconoir_flutter/regular/camera.dart' as ic;
 import 'package:iconoir_flutter/regular/video_camera.dart' as ic;
 import 'package:iconoir_flutter/regular/view_columns_3.dart' as ic;
 import 'package:iconoir_flutter/regular/wind.dart' as ic;
@@ -101,6 +102,10 @@ enum LumitIcon {
   sequence,
   text,
   camera,
+
+  /// The still camera on the Ctrl+Space console's snapshot button (K-324) —
+  /// a *photo*, distinct from [camera], which is the camera layer.
+  snapshot,
   eye,
   eyeClosed,
   audio,
@@ -312,6 +317,7 @@ Widget _glyph(LumitIcon icon, Color color) => switch (icon) {
       LumitIcon.sequence => ic.ViewColumns3(color: color),
       LumitIcon.text => ic.Text(color: color),
       LumitIcon.camera => ic.VideoCamera(color: color),
+      LumitIcon.snapshot => ic.Camera(color: color),
       LumitIcon.eye => ic.Eye(color: color),
       LumitIcon.eyeClosed => ic.EyeClosed(color: color),
       LumitIcon.audio => ic.SoundHigh(color: color),

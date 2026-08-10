@@ -216,6 +216,21 @@ Win32Window::MessageHandler(HWND hwnd,
     case WM_DWMCOLORIZATIONCOLORCHANGED:
       UpdateTheme(hwnd);
       return 0;
+
+    // Releasing a lone Alt asks Windows to activate the window menu:
+    // DefWindowProc enters a *modal menu loop* that silently swallows every
+    // wheel message — plain, Ctrl and Shift alike — until Alt is pressed
+    // again, Escape is hit, or the window is clicked. A key press between the
+    // Alt going down and up cancels the request, but a wheel tick does not,
+    // which is why exactly Alt+wheel (the graph editor's vertical zoom) left
+    // scrolling dead afterwards while every ordinary Alt shortcut was fine
+    // (K-336). Lumit's menu bar is Flutter-drawn; there is no native menu for
+    // the chord to open, so it is suppressed outright.
+    case WM_SYSCOMMAND:
+      if ((wparam & 0xFFF0) == SC_KEYMENU) {
+        return 0;
+      }
+      break;
   }
 
   return DefWindowProc(window_handle_, message, wparam, lparam);
