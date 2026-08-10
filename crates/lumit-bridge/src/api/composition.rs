@@ -1335,9 +1335,11 @@ impl CompositionReference {
         frame: i64,
     ) -> Result<Vec<BridgeAnimatedMaskPath>, BridgeError> {
         let comp = self.composition()?;
+        // Not clamped at zero: a layer may start before the composition, and
+        // its masks are keyed on its own clock either way.
         let time = comp
             .frame_rate
-            .time_of_frame(frame.max(0))
+            .time_of_frame(frame)
             .map_err(|_| BridgeError::InvalidTime)?;
         let mut out = Vec::new();
         for layer in &comp.layers {
@@ -1607,9 +1609,13 @@ impl CompositionReference {
     #[frb(sync)]
     pub fn time_of_frame(&self, frame: i64) -> Result<BridgeRational, BridgeError> {
         let comp = self.composition()?;
+        // **Negative frames are real.** A layer may start before the composition
+        // does, so this must answer for frames below zero rather than clamping
+        // them to it — clamping here pinned a bar to the comp edge however far
+        // left it was dragged.
         let time = comp
             .frame_rate
-            .time_of_frame(frame.max(0))
+            .time_of_frame(frame)
             .map_err(|_| BridgeError::InvalidComp)?;
         Ok(BridgeRational {
             num: time.0.num(),
