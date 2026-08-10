@@ -166,7 +166,11 @@ void main() {
         (tester) async {
       final p = withLayer();
       animateOpacity(p.comp, p.layer);
-      p.uiState.scrubTo(50);
+      // Frame 31, not a rounder number: 31/60 s as a double times 60 is not
+      // 31.0, which is exactly the float mismatch that made the old preview
+      // insert a duplicate key instead of replacing (K-336). Frame 50 is
+      // float-exact and cannot catch it.
+      p.uiState.scrubTo(31);
       await mountGraph(tester, p);
 
       expect(opacityKeys(p.layer).length, 2);
@@ -184,15 +188,34 @@ void main() {
       expect(opacityKeys(p.layer).length, 3,
           reason: 'the drag planted a key at the playhead as it began');
       expect(rowValueDrag.value, isNotNull);
+      // Exactly three glyphs. The preview once matched keys by *float* frame
+      // equality, and frame 31 at 60 fps does not read back as 31.0, so the
+      // drag's key was inserted BESIDE the planted one instead of replacing
+      // it — one extra key, every later diamond one index off, the dragged
+      // key drawn at the next key's place (K-336).
+      expect(
+          find.byWidgetPredicate((w) =>
+              w.key is ValueKey<String> &&
+              ((w.key as ValueKey<String>).value)
+                  .startsWith('graph-key-${p.layer.internallayerId}/')),
+          findsNWidgets(3),
+          reason: 'replaced in place, never duplicated');
       final planted = find.byKey(ValueKey<String>(opacityKey(p.layer, 1)));
       expect(planted, findsOneWidget,
           reason: 'and the graph shows the planted key mid-gesture');
       final during = tester.getCenter(planted);
+      final lastBefore = tester
+          .getCenter(find.byKey(ValueKey<String>(opacityKey(p.layer, 2))));
 
       await gesture.moveBy(const Offset(30, 0));
       await tester.pump();
       expect(tester.getCenter(planted).dy, lessThan(during.dy),
           reason: 'the planted key follows the pointer');
+      expect(
+          tester
+              .getCenter(find.byKey(ValueKey<String>(opacityKey(p.layer, 2)))),
+          lastBefore,
+          reason: 'the keys after the playhead do not move with the drag');
 
       await gesture.up();
       await tester.pump();

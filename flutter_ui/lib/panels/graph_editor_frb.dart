@@ -1970,6 +1970,52 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
     ];
   }
 
+  /// [keys] with the row drag's value written into the key at its frame —
+  /// matched to the **nearest half frame**, never by float equality (K-336).
+  ///
+  /// `_withKeyAt` merged by exact double frame, and a key's frame comes back
+  /// through rational-to-float maths: frame 50 at 60 fps reads 49.999…, which
+  /// is not 50.0, so the drag's key was *inserted beside* the document's
+  /// instead of replacing it. One extra key shifts every later index, and the
+  /// glyphs read position by index — the dragged key drew at the next key's
+  /// place and everything after it sat one key off, until the release rebuilt
+  /// from the document and it all snapped back. Same length in, same length
+  /// out (or +1 when the playhead truly has no key), so the glyph indexes hold.
+  List<BridgeKeyframe> _keysWithRowDrag(
+      List<BridgeKeyframe> keys, RowValueDrag row) {
+    final out = <BridgeKeyframe>[];
+    var replaced = false;
+    for (final k in keys) {
+      if (!replaced && (_keyFrame(k, widget.fps) - row.frame).abs() < 0.5) {
+        out.add(BridgeKeyframe(
+          time: k.time,
+          value: row.value,
+          interpIn: k.interpIn,
+          interpOut: k.interpOut,
+        ));
+        replaced = true;
+      } else {
+        out.add(k);
+      }
+    }
+    if (replaced) return out;
+    // The playhead genuinely sits between keys and the plant has not landed
+    // yet: show the key the release will write, in order.
+    final planted = BridgeKeyframe(
+      time: timeOfSubframe(row.frame.toDouble(), widget.fpsNum, widget.fpsDen),
+      value: row.value,
+      interpIn: const BridgeSideInterp.linear(),
+      interpOut: const BridgeSideInterp.linear(),
+    );
+    final at = out.indexWhere((k) => _keyFrame(k, widget.fps) > row.frame);
+    if (at < 0) {
+      out.add(planted);
+    } else {
+      out.insert(at, planted);
+    }
+    return out;
+  }
+
   /// The keys as the painter should read them — the handle drag's provisional
   /// sides swapped in, so the curve follows the handle live.
   ///
@@ -1982,8 +2028,7 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
     if (row != null && row.matches(channel)) {
       final keys = channel.keys;
       if (keys.isNotEmpty) {
-        return _withKeyAt(keys, row.frame.toDouble(), row.value, widget.fps,
-            widget.fpsNum, widget.fpsDen);
+        return _keysWithRowDrag(keys, row);
       }
       // Not keyed: one point carries the whole flat line to its new height, and
       // only for the drawing.

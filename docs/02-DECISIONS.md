@@ -7729,3 +7729,30 @@ parameters (this entry, with the drag-start key plant and the staged-stack pictu
 transforms already had), and the Retime row. Three end-to-end regression tests drive the real
 outline field with a held-down gesture and watch the graph: a drag on a key, a drag *between*
 keys (the key plants at drag start and is carried), and a drag on an effect parameter.
+
+**K-336 · DECIDED · The dead scrolling was the Windows menu loop, and the drag preview matches
+keys by half a frame.** The owner's fourth report of the Alt bug, and the one that ends it —
+because this time the mechanism was reproduced in a clean-room probe app before the fix was
+written, and the fix was proven against the same probe.
+
+**It was never a modifier.** Releasing a *lone* Alt makes DefWindowProc enter the modal menu
+loop (`WM_SYSCOMMAND`/`SC_KEYMENU`): a loop inside Windows itself that swallows every wheel —
+plain, Ctrl and Shift alike — and keyboard input, until Alt is pressed again, Escape is hit, or
+the window is clicked. A key press between Alt going down and up cancels the request, but a
+wheel tick does not — which is why exactly Alt+wheel (the graph's vertical zoom) left scrolling
+dead while every ordinary Alt shortcut was fine, and why "press Alt again" fixed it. The probe:
+a bare Flutter app whose posted probe-key vanishes after `SC_KEYMENU` and returns after an Alt
+press — and stops vanishing entirely with the fix in. The fix is in the runner
+(`win32_window.cpp`): `SC_KEYMENU` returns 0, because Lumit's menu bar is Flutter-drawn and
+there is no native menu for the chord to open. K-334/K-335's stale-modifier readings were
+wrong about the cause; `altActuallyHeld()` stays, as a harmless guard that only ever clears a
+true false-positive.
+
+**The drag preview replaces keys within half a frame.** The published row drag swapped its
+value into the curve by *exact float* frame equality, and a key's frame comes back through
+rational-to-double maths that does not always land on the integer — so the drag's key could be
+inserted beside the document's instead of replacing it. One extra key shifts every later glyph
+index: the dragged key drew at the next key's place and everything after it sat one key off
+until the release rebuilt from the document. The preview now replaces the nearest key within
+half a frame, keeping list length and order stable, and the between-keys regression test pins
+the glyph count and the immobility of the keys after the playhead.
