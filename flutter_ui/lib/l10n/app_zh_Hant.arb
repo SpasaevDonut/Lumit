@@ -1923,9 +1923,54 @@
   "@markerHint": {
     "description": "Placeholder in the marker's text field."
   },
+  "maskExpansion": "Expansion",
+  "@maskExpansion": {
+    "description": "Row label under a mask: how far its shape is grown or shrunk, in layer pixels."
+  },
+  "maskFeather": "Feather",
+  "@maskFeather": {
+    "description": "Row label under a mask: the width of its soft edge, in layer pixels."
+  },
   "maskInvertMark": "Inv",
   "@maskInvertMark": {
     "description": "Very short marker on a mask row meaning it is inverted. Abbreviate in your language too — the cell is about three characters wide."
+  },
+  "maskModeAdd": "Add",
+  "@maskModeAdd": {
+    "description": "Mask mode: this mask adds its shape to what the masks above it let through."
+  },
+  "maskModeDifference": "Difference",
+  "@maskModeDifference": {
+    "description": "Mask mode: what one of this mask and the masks above it cover, but not both."
+  },
+  "maskModeIntersect": "Intersect",
+  "@maskModeIntersect": {
+    "description": "Mask mode: only where this mask and the masks above it overlap."
+  },
+  "maskModeNone": "None",
+  "@maskModeNone": {
+    "description": "Mask mode: the shape is editable but gates nothing."
+  },
+  "maskModeSubtract": "Subtract",
+  "@maskModeSubtract": {
+    "description": "Mask mode: this mask takes its shape away from what the masks above it let through."
+  },
+  "maskNumbered": "Mask {n}",
+  "@maskNumbered": {
+    "description": "Default name for a mask drawn with the Pen. {n} counts up from 1 within the layer.",
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "maskOpacity": "Opacity",
+  "@maskOpacity": {
+    "description": "The name of a mask's opacity row in the Timeline fold-out."
+  },
+  "maskPath": "Path",
+  "@maskPath": {
+    "description": "The name of a mask's shape row in the Timeline fold-out — the row that keyframes the drawn shape itself."
   },
   "menu3dLayer": "3D layer",
   "@menu3dLayer": {
@@ -3543,6 +3588,10 @@
   "tipMarkOpacity": "Mark opacity",
   "@tipMarkOpacity": {
     "description": "Tooltip. Keep it to the control's name — under five words."
+  },
+  "tipMaskMode": "Mask mode",
+  "@tipMaskMode": {
+    "description": "Tooltip on the picker choosing how a mask combines with the ones above it — Add, Subtract, Intersect, Difference. Under five words."
   },
   "tipMasterMotionBlurOff": "Master motion blur off",
   "@tipMasterMotionBlurOff": {
