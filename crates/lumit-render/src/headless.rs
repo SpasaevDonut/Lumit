@@ -147,6 +147,15 @@ pub struct HeadlessRenderer {
     /// frame worth describing) and playback (a frame that must not be slowed).
     watching: bool,
     measuring: bool,
+    /// The Viewer's own exposure and tone map (K-314) — a way of *looking* at
+    /// the composite, never part of it.
+    ///
+    /// **This is how "it can never reach an export" is kept true.** It defaults
+    /// to neutral and only [`Self::set_display_view`] moves it, and an export
+    /// builds its own renderer (`export::run`) which nobody calls that on. So
+    /// the promise is a property of the code's shape rather than a rule anyone
+    /// has to remember — and `an_export_ignores_the_viewer_view` pins it.
+    view: lumit_gpu::DisplayParams,
     /// The Windows zero-copy Viewer targets (K-177): **one per size, kept and
     /// reused**, most recently used last.
     ///
@@ -513,6 +522,7 @@ impl HeadlessRenderer {
             profile: None,
             watching: false,
             measuring: false,
+            view: lumit_gpu::DisplayParams::NEUTRAL,
             #[cfg(all(windows, feature = "shared-texture"))]
             shared: Vec::new(),
             #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
@@ -599,10 +609,30 @@ impl HeadlessRenderer {
         self.audio_jobs.audio_jobs(doc, comp)
     }
 
+    /// Set the Viewer's exposure and tone map for every frame this renderer
+    /// composites from here on (K-314). Preview only — see [`Self::view`].
+    ///
+    /// Non-neutral makes frames **unnameable** (below), so nothing this renders
+    /// while a control is engaged enters any cache tier, and the neutral frames
+    /// already banked stay banked and come straight back the moment it returns
+    /// to neutral. Cheaper than widening the key through three tiers, and it
+    /// cannot mis-serve an exposed frame to something expecting the composite.
+    pub fn set_display_view(&mut self, view: lumit_gpu::DisplayParams) {
+        self.view = view;
+    }
+
+    /// What the Viewer is currently looking through.
+    #[must_use]
+    pub fn display_view(&self) -> lumit_gpu::DisplayParams {
+        self.view
+    }
+
     /// The content-hash name of this comp frame ([`crate::cache::frame_key`]),
     /// computed from **this renderer's own** probe results so the name and the
     /// pixels can never disagree about what a source file is. `None` while some
-    /// footage is unprobed — the frame renders live and is not cached.
+    /// footage is unprobed — the frame renders live and is not cached — and
+    /// `None` while the display view is non-neutral (see
+    /// [`Self::set_display_view`]).
     ///
     /// Takes `&mut self` because it probes anything new, exactly as a render
     /// would; a caller that then renders pays for the probe only once.
@@ -613,6 +643,9 @@ impl HeadlessRenderer {
         frame: u64,
         quality: Quality,
     ) -> Option<u128> {
+        if !self.view.is_neutral() {
+            return None;
+        }
         let comp = doc.comp(comp_id)?;
         let slate = (comp.width, comp.height);
         self.sync_items(doc, slate);
@@ -650,6 +683,9 @@ impl HeadlessRenderer {
         frame: u64,
         quality: Quality,
     ) -> Option<u128> {
+        if !self.view.is_neutral() {
+            return None;
+        }
         let comp = doc.comp(comp_id)?;
         crate::cache::frame_key(
             doc,
@@ -774,10 +810,12 @@ impl HeadlessRenderer {
             if let Some(w) = &watcher {
                 w.presenting();
             }
+            // The one place the Viewer's own way of looking is applied: on the
+            // linear composite, on its way to display bytes (docs/06 §3.3).
             Ok(if bgra {
-                parts.colour.display_bgra(&self.gpu, &linear)
+                parts.colour.display_bgra(&self.gpu, &linear, self.view)
             } else {
-                parts.colour.display(&self.gpu, &linear)
+                parts.colour.display(&self.gpu, &linear, self.view)
             })
         };
         // Return the engines to the pool even on error, so one failed frame does
@@ -852,7 +890,16 @@ impl HeadlessRenderer {
                 .map(|rgba| (rgba, sw, sh))
                 .map_err(|e| format!("headless preview: {e}"));
         }
-        let reduced = parts.colour.display_scaled(&self.gpu, &shown, sw, sh);
+        // Neutral, and it must stay so: `shown` is already display-encoded, and
+        // the Viewer's view was applied on the way there. Passing it again here
+        // would expose the picture twice.
+        let reduced = parts.colour.display_scaled(
+            &self.gpu,
+            &shown,
+            sw,
+            sh,
+            lumit_gpu::DisplayParams::NEUTRAL,
+        );
         parts
             .colour
             .readback8(&self.gpu, &reduced)
@@ -2178,6 +2225,116 @@ mod tests {
         assert_eq!((w, h), (8, 8));
         let idx = (((h / 2) * w + w / 2) * 4) as usize;
         assert!(rgba[idx] > 200, "red solid stays red at the scaled size");
+    }
+
+    /// **A non-neutral view makes a frame unnameable** (K-314). This is the
+    /// whole of how the Viewer's exposure and tone map stay out of the three
+    /// cache tiers: an unnameable frame is rendered live and banked nowhere, so
+    /// the neutral frames already held stay held and come straight back the
+    /// moment the controls return to neutral. Needs no adapter — naming is a
+    /// hash of the document, not a render.
+    #[test]
+    fn a_non_neutral_view_makes_a_frame_unnameable() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                lumit_gpu::no_adapter();
+                return;
+            }
+        };
+        let (store, comp_id) = doc_with_solid(LinearColour([1.0, 0.0, 0.0, 1.0]), 8, 8);
+        let doc = store.snapshot();
+        let q = crate::plan::Quality::default();
+
+        let neutral = r.frame_key(&doc, comp_id, 0, q);
+        assert!(neutral.is_some(), "a neutral view names its frames");
+        r.presync_items(&doc, (8, 8));
+        assert_eq!(
+            r.frame_key_presynced(&doc, comp_id, 0, q),
+            neutral,
+            "both naming entry points agree while neutral"
+        );
+
+        // Exposure alone, tone map alone, and both — each must be enough.
+        for view in [
+            lumit_gpu::DisplayParams::from_stops(1.0, false),
+            lumit_gpu::DisplayParams::from_stops(0.0, true),
+            lumit_gpu::DisplayParams::from_stops(-2.3, true),
+        ] {
+            r.set_display_view(view);
+            assert!(
+                r.frame_key(&doc, comp_id, 0, q).is_none(),
+                "{view:?} must leave the frame unnameable"
+            );
+            assert!(
+                r.frame_key_presynced(&doc, comp_id, 0, q).is_none(),
+                "{view:?} must leave the frame unnameable on the presynced path too"
+            );
+        }
+
+        // And back: the name it had is the name it gets again, so the frames
+        // banked before the control was touched are hits once more.
+        r.set_display_view(lumit_gpu::DisplayParams::NEUTRAL);
+        assert_eq!(
+            r.frame_key(&doc, comp_id, 0, q),
+            neutral,
+            "returning to neutral returns the frame's own name"
+        );
+    }
+
+    /// **The export cannot see the Viewer's view** (K-314), and it is neutral by
+    /// *construction* rather than by discipline: `export::run` builds its own
+    /// `HeadlessRenderer` and nothing ever calls the setter on it, then renders
+    /// each frame through `render_preview` exactly as this does.
+    ///
+    /// So the property under test is that the view is renderer-owned state. The
+    /// obvious regression — making it a global, a static or a thread-local, all
+    /// of which would look fine in every preview test — fails here, because the
+    /// export's fresh renderer would then inherit a view somebody else set. The
+    /// first assertion also proves the view is doing something at all, so this
+    /// cannot pass by the display transform being a no-op.
+    #[test]
+    fn an_export_renders_neutral_whatever_the_viewer_is_set_to() {
+        let mut viewer = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                lumit_gpu::no_adapter();
+                return;
+            }
+        };
+        let (store, comp_id) = doc_with_solid(LinearColour([0.18, 0.18, 0.18, 1.0]), 8, 8);
+        let doc = store.snapshot();
+        let q = crate::plan::Quality::default();
+
+        let (neutral, _, _) = viewer
+            .render_preview(&doc, comp_id, 0, q, 1.0)
+            .expect("neutral render");
+
+        viewer.set_display_view(lumit_gpu::DisplayParams::from_stops(2.0, true));
+        let (exposed, _, _) = viewer
+            .render_preview(&doc, comp_id, 0, q, 1.0)
+            .expect("exposed render");
+        assert_ne!(
+            exposed, neutral,
+            "two stops and a tone map must visibly change the preview, or this \
+             test would pass on a display transform that does nothing"
+        );
+
+        // What the exporter does, in the order it does it (`export::run`): its
+        // own renderer, then `render_preview` per frame at full quality.
+        let mut exporter = HeadlessRenderer::new().expect("export renderer");
+        assert!(
+            exporter.display_view().is_neutral(),
+            "a fresh renderer starts neutral, which is what makes export neutral"
+        );
+        let (exported, _, _) = exporter
+            .render_preview(&doc, comp_id, 0, q, 1.0)
+            .expect("export render");
+        assert_eq!(
+            exported, neutral,
+            "the export's bytes are the neutral bytes, with the Viewer set to \
+             two stops and a tone map"
+        );
     }
 
     /// Audio-only media (a readable file with no video stream) must not draw

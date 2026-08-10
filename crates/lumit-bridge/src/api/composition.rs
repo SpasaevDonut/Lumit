@@ -1335,9 +1335,11 @@ impl CompositionReference {
         frame: i64,
     ) -> Result<Vec<BridgeAnimatedMaskPath>, BridgeError> {
         let comp = self.composition()?;
+        // Not clamped at zero: a layer may start before the composition, and
+        // its masks are keyed on its own clock either way.
         let time = comp
             .frame_rate
-            .time_of_frame(frame.max(0))
+            .time_of_frame(frame)
             .map_err(|_| BridgeError::InvalidTime)?;
         let mut out = Vec::new();
         for layer in &comp.layers {
@@ -1474,6 +1476,22 @@ impl CompositionReference {
         ))
     }
 
+    /// Set what the Viewer looks *through*: `stops` of exposure and whether the
+    /// tone map is engaged (K-314, docs/07 §2.2 items 12-13).
+    ///
+    /// **Preview only.** It moves the display encode of every frame the session
+    /// renderer composites from here on and nothing else — no document, no op,
+    /// no undo step. An export builds its own renderer and this is never sent
+    /// to it, so the export is neutral by construction.
+    ///
+    /// The frontend follows this with its ordinary request for the frame under
+    /// the playhead: a setting changes what the *next* frame looks like, and
+    /// without an ask the picture would not move until something else did.
+    #[frb(sync)]
+    pub fn set_display_view(&self, stops: f64, tone_map: bool) -> Result<(), BridgeError> {
+        self.dispatch(WorkerRequest::SetDisplayView { stops, tone_map })
+    }
+
     /// Stop playing, and silence the sound. Harmless when nothing is playing.
     #[frb(sync)]
     pub fn stop_playback(&self) -> Result<(), BridgeError> {
@@ -1607,9 +1625,13 @@ impl CompositionReference {
     #[frb(sync)]
     pub fn time_of_frame(&self, frame: i64) -> Result<BridgeRational, BridgeError> {
         let comp = self.composition()?;
+        // **Negative frames are real.** A layer may start before the composition
+        // does, so this must answer for frames below zero rather than clamping
+        // them to it — clamping here pinned a bar to the comp edge however far
+        // left it was dragged.
         let time = comp
             .frame_rate
-            .time_of_frame(frame.max(0))
+            .time_of_frame(frame)
             .map_err(|_| BridgeError::InvalidComp)?;
         Ok(BridgeRational {
             num: time.0.num(),

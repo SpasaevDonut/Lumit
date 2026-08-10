@@ -664,6 +664,98 @@ pub struct ColourEngine {
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     linear_sampler: wgpu::Sampler,
+    /// The view uniform, as **two buffers made once** rather than one made per
+    /// pass. A pass-sized allocation looks harmless and is not: a frame batches
+    /// its passes into a single command buffer (K-290), so nothing frees until
+    /// that submission retires, and a long session's worth of them exhausts the
+    /// device — which is how it showed up, as `request_device` failing with
+    /// "not enough memory" partway through a test run on a software adapter.
+    ///
+    /// Two, not one, because a single frame mixes views: `linearise` is always
+    /// neutral while `display` carries the Viewer's, and with the passes in one
+    /// submission a shared buffer would hand both whichever value was written
+    /// last. Two is enough because only ever *one* view is non-neutral — the
+    /// renderer's own — so [`Self::view_buf`] is rewritten (never reallocated)
+    /// and every non-neutral pass in a frame wants the same value anyway.
+    neutral_buf: wgpu::Buffer,
+    view_buf: wgpu::Buffer,
+}
+
+/// The two viewer-only controls that live inside the display transform
+/// (docs/06-RENDER-PIPELINE.md §3.3, docs/07-UI-SPEC.md §2.2, K-314).
+///
+/// **Preview only.** Every export path passes [`DisplayParams::NEUTRAL`], which
+/// the shader short-circuits on, so an export is bit-identical to one taken
+/// before these existed — the promise preview resolution and the region of
+/// interest already make (K-031).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DisplayParams {
+    /// Scene-linear gain, `2^stops`. 1.0 is neutral.
+    pub gain: f32,
+    /// The fixed highlight rolloff. Not measured and not adapted: the picture
+    /// at a frame never depends on which frame was shown before it, so a
+    /// revisited frame is the frame it was.
+    pub tone_map: bool,
+}
+
+impl DisplayParams {
+    /// What every export, every read-back oracle and the linearise pass use.
+    pub const NEUTRAL: Self = Self {
+        gain: 1.0,
+        tone_map: false,
+    };
+
+    /// Stops → gain, by the same arithmetic the Exposure effect resolves with
+    /// (`lumit_core::fx::resolved`, K-106), so the Viewer reading `+1.4` and
+    /// the effect set to `+1.4` multiply by the identical float.
+    #[must_use]
+    pub fn from_stops(stops: f64, tone_map: bool) -> Self {
+        Self {
+            gain: 2f64.powf(stops) as f32,
+            tone_map,
+        }
+    }
+
+    /// Whether this pass is the plain copy it always was.
+    #[must_use]
+    pub fn is_neutral(&self) -> bool {
+        self.gain == 1.0 && !self.tone_map
+    }
+
+    fn raw(&self) -> ViewParamsRaw {
+        ViewParamsRaw {
+            gain: self.gain,
+            tone_map: u32::from(self.tone_map),
+            _pad: [0.0; 2],
+        }
+    }
+}
+
+impl Default for DisplayParams {
+    fn default() -> Self {
+        Self::NEUTRAL
+    }
+}
+
+/// One view uniform, sized and written at creation.
+fn view_uniform(ctx: &GpuContext, label: &str, view: DisplayParams) -> wgpu::Buffer {
+    wgpu::util::DeviceExt::create_buffer_init(
+        &ctx.device,
+        &wgpu::util::BufferInitDescriptor {
+            label: Some(label),
+            contents: bytemuck::bytes_of(&view.raw()),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        },
+    )
+}
+
+/// `ViewParams` in `colour.wgsl`, laid out for the card.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct ViewParamsRaw {
+    gain: f32,
+    tone_map: u32,
+    _pad: [f32; 2],
 }
 
 /// The engine's working format (docs/06-RENDER-PIPELINE.md §3).
@@ -768,6 +860,20 @@ impl ColourEngine {
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
                     },
+                    // The viewer-only exposure and tone map. Bound by every
+                    // pass, including linearise, which simply passes the
+                    // neutral value and takes the shader's short-circuit —
+                    // cheaper than a second bind group layout to avoid it.
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             });
         let pipeline_layout = ctx
@@ -823,6 +929,8 @@ impl ColourEngine {
             layout,
             sampler,
             linear_sampler,
+            neutral_buf: view_uniform(ctx, "colour-view-neutral", DisplayParams::NEUTRAL),
+            view_buf: view_uniform(ctx, "colour-view", DisplayParams::NEUTRAL),
         }
     }
 
@@ -865,6 +973,7 @@ impl ColourEngine {
         texture
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn pass(
         &self,
         ctx: &GpuContext,
@@ -873,8 +982,9 @@ impl ColourEngine {
         format: wgpu::TextureFormat,
         extra_usage: wgpu::TextureUsages,
         label: &str,
+        view: DisplayParams,
     ) -> wgpu::Texture {
-        self.pass_sized(ctx, pipeline, src, None, format, extra_usage, label)
+        self.pass_sized(ctx, pipeline, src, None, format, extra_usage, label, view)
     }
 
     /// [`Self::pass`] with an explicit destination size. A `size` smaller than
@@ -890,6 +1000,7 @@ impl ColourEngine {
         format: wgpu::TextureFormat,
         extra_usage: wgpu::TextureUsages,
         label: &str,
+        view: DisplayParams,
     ) -> wgpu::Texture {
         let scaled = size.is_some();
         let size = match size {
@@ -912,6 +1023,16 @@ impl ColourEngine {
                 | extra_usage,
             view_formats: &[],
         });
+        // Queue writes are ordered against submissions, so writing here lands
+        // before this pass's own submit — and before any other pass batched
+        // into it, every one of which carries this same non-neutral view.
+        let view_buf = if view.is_neutral() {
+            &self.neutral_buf
+        } else {
+            ctx.queue
+                .write_buffer(&self.view_buf, 0, bytemuck::bytes_of(&view.raw()));
+            &self.view_buf
+        };
         let bind = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(label),
             layout: &self.layout,
@@ -929,6 +1050,10 @@ impl ColourEngine {
                     } else {
                         &self.sampler
                     }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: view_buf.as_entire_binding(),
                 },
             ],
         });
@@ -964,12 +1089,23 @@ impl ColourEngine {
             WORKING_FORMAT,
             wgpu::TextureUsages::empty(),
             "linearise",
+            // Decoding source pixels is not a view of anything.
+            DisplayParams::NEUTRAL,
         )
     }
 
     /// Linear working texture → sRGB display texture (register this with the
     /// UI, or read it back for export/tests).
-    pub fn display(&self, ctx: &GpuContext, src: &wgpu::Texture) -> wgpu::Texture {
+    ///
+    /// `view` is the Viewer's own exposure and tone map — preview only, so
+    /// export passes [`DisplayParams::NEUTRAL`] and gets the pixels it always
+    /// got (K-031, K-314).
+    pub fn display(
+        &self,
+        ctx: &GpuContext,
+        src: &wgpu::Texture,
+        view: DisplayParams,
+    ) -> wgpu::Texture {
         self.pass(
             ctx,
             &self.display,
@@ -977,6 +1113,7 @@ impl ColourEngine {
             SRGB_FORMAT,
             wgpu::TextureUsages::COPY_SRC,
             "display",
+            view,
         )
     }
 
@@ -986,7 +1123,12 @@ impl ColourEngine {
     /// a DXGI share handle must be BGRA or ANGLE cannot open the surface, and
     /// it declines silently. Encoded by the same hardware sRGB write as
     /// [`Self::display`], so the values are bit-identical, reordered.
-    pub fn display_bgra(&self, ctx: &GpuContext, src: &wgpu::Texture) -> wgpu::Texture {
+    pub fn display_bgra(
+        &self,
+        ctx: &GpuContext,
+        src: &wgpu::Texture,
+        view: DisplayParams,
+    ) -> wgpu::Texture {
         self.pass(
             ctx,
             &self.display_bgra,
@@ -994,6 +1136,7 @@ impl ColourEngine {
             wgpu::TextureFormat::Bgra8UnormSrgb,
             wgpu::TextureUsages::COPY_SRC,
             "display-bgra",
+            view,
         )
     }
 
@@ -1010,6 +1153,7 @@ impl ColourEngine {
         src: &wgpu::Texture,
         width: u32,
         height: u32,
+        view: DisplayParams,
     ) -> wgpu::Texture {
         self.pass_sized(
             ctx,
@@ -1019,6 +1163,7 @@ impl ColourEngine {
             SRGB_FORMAT,
             wgpu::TextureUsages::COPY_SRC,
             "display-scaled",
+            view,
         )
     }
 
@@ -1370,7 +1515,7 @@ mod tests {
 
         let src = engine.upload_srgb8(&ctx, &rgba, w, h);
         let linear = engine.linearise(&ctx, &src);
-        let shown = engine.display(&ctx, &linear);
+        let shown = engine.display(&ctx, &linear, DisplayParams::NEUTRAL);
         let back = engine.readback8(&ctx, &shown).unwrap();
 
         assert_eq!(back.len(), rgba.len());
@@ -1402,7 +1547,10 @@ mod tests {
         }
         let src = engine.upload_srgb8(&ctx, &rgba, w, h);
         let back = engine
-            .readback8(&ctx, &engine.display(&ctx, &engine.linearise(&ctx, &src)))
+            .readback8(
+                &ctx,
+                &engine.display(&ctx, &engine.linearise(&ctx, &src), DisplayParams::NEUTRAL),
+            )
             .unwrap();
         for (i, (a, b)) in rgba.iter().zip(back.iter()).enumerate() {
             let d = (i16::from(*a) - i16::from(*b)).abs();

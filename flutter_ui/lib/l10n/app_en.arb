@@ -3752,6 +3752,14 @@
   "@tipValueGraph": {
     "description": "Tooltip: show value against time. Under five words."
   },
+  "tipViewerExposure": "Exposure — preview only",
+  "@tipViewerExposure": {
+    "description": "Tooltip on the Viewer's exposure box. It brightens or darkens the picture on screen and never the export. \"Stop\" is the photographic unit — one stop is a doubling of light."
+  },
+  "tipViewerToneMap": "Tone mapping — preview only",
+  "@tipViewerToneMap": {
+    "description": "Tooltip on the Viewer's tone-map toggle, which has an icon and no label, so this sentence is the only description of it. \"The knee\" is where the rolloff starts; \"what is up there\" means detail brighter than the display can show. Preview only."
+  },
   "tipZoomPercent": "Zoom — {percent}%",
   "@tipZoomPercent": {
     "description": "Tooltip on the Timeline's zoom slider. {percent} is a whole number.",

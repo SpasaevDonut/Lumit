@@ -1074,6 +1074,15 @@ fn idle_backup(state: &mut WorkerState) {
 /// nothing (or no room) left, so an idle editor stops spending the GPU.
 #[frb(ignore)]
 fn idle_fill(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
+    // A non-neutral Viewer view makes every frame unnameable (K-314), so the
+    // fill would render frame after frame and bank none of them, never reach
+    // the end of its list, and never stop — GPU work for nothing, for as long
+    // as the exposure is off zero. There is nothing to fill while the picture
+    // is not the composite, so the fill is simply finished.
+    if !state.renderer.display_view().is_neutral() {
+        state.fill_exhausted = true;
+        return;
+    }
     let Some((comp_ref, anchor, scale)) = state.last_shown.clone() else {
         state.fill_exhausted = true;
         return;
@@ -1218,6 +1227,14 @@ pub enum WorkerRequest {
     Play(PlayRequest),
     /// Stop playing. Harmless when nothing is playing.
     StopPlayback,
+    /// Set the Viewer's exposure and tone map (K-314). A *setting*, not a
+    /// picture: it changes how every frame from here on is display-encoded and
+    /// nothing about the document. Preview only — an export builds its own
+    /// renderer, which nobody sends this to.
+    SetDisplayView {
+        stops: f64,
+        tone_map: bool,
+    },
 }
 
 /// Start playback of `comp` at `from`.
@@ -2532,6 +2549,12 @@ fn handle_requests(
                     state.playback = None;
                     Ok(())
                 }
+                WorkerRequest::SetDisplayView { stops, tone_map } => {
+                    state
+                        .renderer
+                        .set_display_view(lumit_render::DisplayParams::from_stops(stops, tone_map));
+                    Ok(())
+                }
             };
             if let Err(err) = outcome {
                 eprintln!("Dropping frame: {err}");
@@ -2551,13 +2574,19 @@ fn handle_requests(
 /// long after the user had let go.
 ///
 /// Transport commands are not pictures and must never be dropped: superseding
-/// a Stop would leave playback running with nothing left to stop it.
+/// a Stop would leave playback running with nothing left to stop it. A display
+/// view (K-314) is not a picture either, and for the same reason: the last one
+/// queued is the state the renderer must end up in, so dropping one because a
+/// newer request of another kind arrived would leave the Viewer exposing frames
+/// after the user had set it back to neutral.
 #[frb(ignore)]
 fn classify_request(r: &WorkerRequest) -> DrainClass {
     match r {
         WorkerRequest::TraceScope(_) => DrainClass::Scope,
         WorkerRequest::SamplePixels(_) => DrainClass::Sample,
-        WorkerRequest::Play(_) | WorkerRequest::StopPlayback => DrainClass::PictureKeepAll,
+        WorkerRequest::Play(_)
+        | WorkerRequest::StopPlayback
+        | WorkerRequest::SetDisplayView { .. } => DrainClass::PictureKeepAll,
         WorkerRequest::RenderComp(_) | WorkerRequest::RenderCompWithPreview(_) => {
             DrainClass::PictureNewestWins
         }
@@ -2571,7 +2600,8 @@ enum DrainClass {
     /// A stale one is worthless: only the newest survives (a scrub — the
     /// playhead position behind the newest will never be looked at).
     PictureNewestWins,
-    /// Every one is served, in order (transport commands: Play and Stop).
+    /// Every one is served, in order (transport commands: Play and Stop; and
+    /// the display view, which is a setting rather than a picture).
     PictureKeepAll,
     /// A trace; the newest survives, served after the pictures.
     Scope,

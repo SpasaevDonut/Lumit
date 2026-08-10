@@ -66,7 +66,18 @@ These are v1-scope surfaces it does not yet match.
 
 **Viewer bar ([07-UI-SPEC.md](07-UI-SPEC.md) §2.2):**
 - The wireframe/overlay *menu*; guides menu; region-of-interest;
-    colour-management indicator; background-colour swatch.
+    background-colour swatch.
+- **The colour-management indicator** (§2.2 item 8) — and it is now owed twice.
+    Exposure and tone mapping (K-314) are built, and §2.2 says the badge is where
+    the Viewer states that the picture is not the export while either is engaged.
+    Until the badge exists the two controls simply draw themselves in the accent
+    while engaged, which is honest but says it only where you are already
+    looking. Building the badge means moving that statement into it.
+- **Tone mapping wants a hint somewhere findable** (owner, 2026-08-08). It is an
+    icon with no label, and its tooltip is the control's *name* because §13.2
+    keeps tooltips to that — so nothing on screen says what the toggle does. The
+    explanation currently exists only in the translator's description and in
+    K-314. Wherever hints of this kind end up living, this is a first candidate.
 
 **Toolbar tools ([07-UI-SPEC.md](07-UI-SPEC.md) §1.7):** what is armed is a
 *tool*; what each tool then does is the backlog.

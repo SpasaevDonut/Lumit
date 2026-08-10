@@ -3498,6 +3498,30 @@ its way is not sent again, and at most eight may be waiting at once. Past that
 the copy is simply skipped — the frame is still on the card and in memory, and it
 will be offered again later.
 
+**Looking at the picture another way, without lying about the export (K-314).**
+Two controls sit on the Viewer bar: an **exposure** in stops (the photographic
+unit — `+1.0` is twice the light, `-1.0` is half) and a **tone mapping** switch
+that folds highlights brighter than the display can show back into range so you
+can see what is actually up there. Both are *ways of looking*, not grades: they
+happen at the very last step, where the finished scene-linear picture is turned
+into the pixels your monitor understands, and the export path never goes near
+them. That is not discipline — an export builds its own renderer, and nothing
+ever sets a view on it.
+
+Both are per composition and are remembered in the session (above), so a comp
+reopens looking how you left it, and neither is an edit: Ctrl+Z will not undo an
+exposure nudge and setting one does not make the project dirty.
+
+The cache had to be told about them, and the answer is pleasingly blunt: **while
+either control is engaged, frames have no name.** A frame with no name cannot be
+filed in any of the three tiers, so nothing exposed is ever banked, and the
+neutral frames already banked are untouched and come straight back as hits the
+moment both controls return to neutral. The alternative — folding the exposure
+into the name — would have meant threading it through all three tiers for the
+sake of caching frames nobody keeps. The cost of the blunt answer is that the
+picture is composited afresh while you scrub the exposure, and that is the right
+trade for a control you nudge and then put back.
+
 **The cache bar** under the time ruler shows what is held: mint at the current
 preview resolution, dimmed mint only at a coarser one, steel-blue on disk,
 nothing for absent. The render worker computes the strip and publishes it; the
@@ -3976,7 +4000,8 @@ They are the same job, and the shared piece is written.
 - **The workspace** — panel arrangement, colour scheme, interface scale, tooltips,
   keymap, modal window positions. One `Workspace` object, written to a
   machine-local settings file. Nothing personal reaches the project file.
-- **The session** — open comp tabs, front tab, playhead, selection, and the panel
+- **The session** — open comp tabs, front tab, playhead, selection, the Viewer's
+  exposure and tone map per comp, and the panel
   tree. Written both to the local settings file (keyed by project path, updated
   as you work) and as an opaque blob inside the `.lum` at save (K-245). The local
   copy wins; the blob is what a machine seeing the project for the first time

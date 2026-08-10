@@ -4,6 +4,8 @@
 // the text colour of their state, and the motion-blur mark is drawn from the
 // owner's artwork rather than looked up (Iconoir has no motion-blur glyph).
 
+import 'dart:math' as math;
+
 import 'package:flutter/widgets.dart';
 import 'package:iconoir_flutter/regular/align_left.dart' as ic;
 import 'package:iconoir_flutter/regular/arc_3d.dart' as ic;
@@ -27,6 +29,7 @@ import 'package:iconoir_flutter/regular/folder.dart' as ic;
 import 'package:iconoir_flutter/regular/frame.dart' as ic;
 import 'package:iconoir_flutter/regular/fx.dart' as ic;
 import 'package:iconoir_flutter/regular/globe.dart' as ic;
+import 'package:iconoir_flutter/regular/hdr.dart' as ic;
 import 'package:iconoir_flutter/regular/intersect.dart' as ic;
 import 'package:iconoir_flutter/regular/keyframe.dart' as ic;
 import 'package:iconoir_flutter/regular/keyframe_plus.dart' as ic;
@@ -194,6 +197,16 @@ enum LumitIcon {
   /// what it depicts is Lumit's own gizmo rather than anything a general icon
   /// set has a glyph for.
   wireframe,
+
+  /// The Viewer bar's exposure box (K-314): a camera iris. Painter-drawn —
+  /// Iconoir has no aperture glyph, and exposure in stops is a camera idea, so
+  /// the mark is the camera's.
+  aperture,
+
+  /// The Viewer bar's tone-map switch (K-314). Iconoir's HDR mark: what the
+  /// toggle is about is the values above 1 that an ordinary display cannot
+  /// show.
+  toneMap,
 }
 
 /// The size an icon draws at (15-DESIGN §5: 16px for panels, 20px for the
@@ -231,6 +244,7 @@ Widget lumitIcon(LumitIcon icon, {required double size, required Color color}) {
     LumitIcon.roundedRectangle => RoundedRectanglePainter(color),
     LumitIcon.wireframe => WireframePainter(color),
     LumitIcon.zoomExtent => ZoomExtentPainter(color),
+    LumitIcon.aperture => AperturePainter(color),
     _ => null,
   };
   if (painter != null) {
@@ -350,7 +364,9 @@ Widget _glyph(LumitIcon icon, Color color) => switch (icon) {
       LumitIcon.cameraOrbit => ic.Globe(color: color),
       LumitIcon.cameraPan => ic.Drag(color: color),
       LumitIcon.cameraDolly => ic.Expand(color: color),
+      LumitIcon.toneMap => ic.Hdr(color: color),
       // Painter-drawn, handled above.
+      LumitIcon.aperture ||
       LumitIcon.shy ||
       LumitIcon.shyHidden ||
       LumitIcon.circleFilled ||
@@ -361,6 +377,42 @@ Widget _glyph(LumitIcon icon, Color color) => switch (icon) {
       LumitIcon.zoomExtent =>
         const SizedBox.shrink(),
     };
+
+/// The exposure box's mark (K-314): a camera iris, on the same 24×24 grid and
+/// at the same 1.5-unit stroke as every Iconoir glyph, so it sits in the bar at
+/// the weight of the icons either side of it.
+///
+/// Six blades, drawn as six chords of the ring at 60° apart. Each chord runs
+/// between two points on the circle a third of the way round from each other,
+/// which is what gives the iris its hexagonal opening without any of the lines
+/// meeting at the centre.
+class AperturePainter extends CustomPainter {
+  final Color color;
+  const AperturePainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final s = size.shortestSide / _iconGridUnits;
+    final centre = Offset(size.width / 2, size.height / 2);
+    final radius = 9.0 * s;
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = _iconStrokeUnits * s
+      ..strokeCap = StrokeCap.round;
+    canvas.drawCircle(centre, radius, paint);
+    Offset on(double turns) =>
+        centre +
+        Offset(math.cos(turns * 2 * math.pi), math.sin(turns * 2 * math.pi)) *
+            radius;
+    for (var blade = 0; blade < 6; blade++) {
+      canvas.drawLine(on(blade / 6), on((blade + 2) / 6), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(AperturePainter old) => old.color != color;
+}
 
 /// The motion-blur mark: a ring with speed streaks running into it, from the
 /// owner's artwork on a 24×24 grid — coordinates identical to the Rust
@@ -597,7 +649,12 @@ class WireframePainter extends CustomPainter {
         ..strokeWidth = _iconStrokeUnits * s,
     );
     final handle = Paint()..color = color;
-    for (final (x, y) in const [(5.0, 5.0), (19.0, 5.0), (19.0, 19.0), (5.0, 19.0)]) {
+    for (final (x, y) in const [
+      (5.0, 5.0),
+      (19.0, 5.0),
+      (19.0, 19.0),
+      (5.0, 19.0)
+    ]) {
       canvas.drawRect(
         Rect.fromCenter(center: at(x, y), width: 4 * s, height: 4 * s),
         handle,

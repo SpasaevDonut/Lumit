@@ -7956,6 +7956,57 @@ clock, the one every other property on the layer reads (K-213).
 rewrites all of it as one undo entry. That is correct but coarse; a per-key op is noted in
 TODO.md for when the interface can make one.
 
+**K-314 · DECIDED · The Viewer gets an exposure and a tone map that the export can never
+see, and the tone map is a fixed highlight rolloff.** Two controls in the Viewer bar
+(07-UI-SPEC §2.2), both preview only, both inside the display transform where
+06-RENDER-PIPELINE §3.3 already reserved room for exactly this. Exposure reads signed
+stops to one decimal and means what the Exposure effect means — the same `2^stops`
+scene-linear gain, computed host-side, so the two agree by construction (K-106). The tone
+map is an icon toggle with a tooltip and no menu.
+
+**The curve is a knee at 0.8 and an exponential shoulder above it**, applied to luminance
+so hue and saturation stay where the author put them:
+`knee + room · (1 − exp(−(L − knee) / room))`, `room = 1 − knee`. Its slope at the knee is
+exactly 1, so the join is smooth, and it approaches 1 without reaching it, so no highlight
+clips flat however bright. Below the knee it is the identity, exactly.
+
+**That identity is the reason for the choice.** Reinhard darkens mid grey by about 15%,
+the ACES fits impose filmic contrast across the whole range and carry the familiar hue
+skews, and AgX — the best-looking of them on genuinely blown content, and Blender's
+default — is a *look*: it moves mids and saturation on a composite that never exceeds 1.
+Any of those makes turning the toggle on change a picture that had nothing wrong with it,
+which reads as the Viewer lying about the export. The rolloff cannot: on an ordinary
+composite it does nothing at all, and on one running past 1 it shows what is up there.
+AgX remains the right answer later as a *selectable* transform when OCIO lands, and the
+tone-mapping **effect** (08-EFFECTS, still unbuilt) must share this curve, so this entry
+binds twice.
+
+**"Auto" was asked for and is not what shipped.** A measured, time-smoothed exposure makes
+the displayed frame depend on which frames preceded it: scrubbing back to frame one shows
+different pixels than frame one showed, which breaks the cache tier outright and puts a
+clock in the pixel path that 14-ENGINEERING-RULES §7 forbids. Unsmoothed measurement is
+worse — the picture pumps on every cut. No compositor's viewer adapts per frame; After
+Effects, Resolve and Blender all apply a fixed transform. So the control is named "tone
+mapping", because nothing about a constant is automatic, and the word "auto" is left free
+for the day a measured white point is genuinely built.
+
+**Export is neutral by construction, not by discipline.** `DisplayParams` defaults to
+neutral on `HeadlessRenderer`, the shader short-circuits on it so a neutral pass is
+bit-identical to the plain copy it replaced, and an export builds its own renderer that
+nobody ever calls the setter on. The K-031 promise — the Viewer at full resolution is the
+export — survives as "the Viewer at full resolution and neutral view".
+
+**A non-neutral view makes a frame unnameable**, so nothing rendered while a control is
+engaged enters any cache tier and the neutral frames already banked stay banked, returning
+as hits the moment it goes back to neutral. Widening the frame key through three tiers
+would have been the alternative; this costs a cache miss while the control is engaged and
+cannot mis-serve an exposed frame to something expecting the composite.
+
+**The settings persist per composition, in the project, through `ui_state`** — the blob
+K-245 already writes into the `.lum`, which is not undoable and does not mark the project
+dirty. A way of looking is not an edit to the work, so Ctrl+Z must never undo an exposure
+nudge, and a comp reopens looking how it was left.
+
 **K-340 · DECIDED · Every one of a mask's values animates, and a still mask still writes
 bare numbers.** From the owner, testing K-338 in the app (2026-08-10): "currently no mask
 property has the clock icon to enable keyframing. This should be the same as any
@@ -8010,6 +8061,7 @@ the fold started from an empty stack and then skipped the very mask it had start
 takes a time because opacity animates: a mask keyed up from zero is off for the first half
 of the shot and on for the second.
 
+
 **K-341 · DECIDED · A picked property row is a picked layer everywhere else, and a mask's
 rows behave like every other property row.** From the owner, testing K-340 (2026-08-10):
 "why tf if I click a mask row it doesn't just select it. Please can you treat all property
@@ -8050,6 +8102,7 @@ blend header on the grounds that it is the same kind of choice, and the owner's 
 that consistency down the *fold-out* matters more than consistency across to the layer row.
 The mode picker takes the rest of the cell so a long name ellipsises rather than pushing
 the row wider than its column, which is the rule the blend picker already followed.
+
 
 **K-342 · DECIDED · The wireframe of an animated mask is drawn from the shape it is
 showing, asked of the engine.** From the owner, testing K-340/K-341 (2026-08-10): "after
@@ -8123,3 +8176,4 @@ lets the lane draw its diamonds *and* the graph draw the curve from one read.
 times are not strictly ascending, because the evaluator walks them assuming so and a
 half-applied reorder is not a mask. The shapes themselves never cross: a key holds a path,
 which the drawing tools edit (K-339).
+

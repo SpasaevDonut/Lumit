@@ -1939,6 +1939,15 @@ class DragValueField extends StatefulWidget {
   final String? suffix;
   final num? resetTo;
 
+  /// Whether a positive value is shown with its `+`.
+  ///
+  /// For a field whose zero is a *middle* rather than a floor — the Viewer's
+  /// exposure in stops (K-314), which reads `+1.4` and `-2.3` — so the sign is
+  /// part of the reading and the number does not appear to jump width when it
+  /// crosses zero. Display only: what is typed, copied and pasted is the plain
+  /// number, and `+1.4` parses as readily as `1.4`.
+  final bool signed;
+
   /// The resting background. Defaults to `surface3`, which reads as a field on
   /// a panel — but a dialogue's own surface *is* surface3, so a field there has
   /// to be darker to look like something you can type into. Only the resting
@@ -1976,6 +1985,7 @@ class DragValueField extends StatefulWidget {
     this.decimals = 0,
     this.suffix,
     this.resetTo,
+    this.signed = false,
     this.fill,
     this.onChangeStart,
     this.onChangeLive,
@@ -2076,9 +2086,10 @@ class _DragValueFieldState extends State<DragValueField>
   }
 
   String _format(num v) {
-    final s = widget.decimals == 0
-        ? v.round().toString()
-        : v.toDouble().toStringAsFixed(widget.decimals);
+    var s = _plain(v);
+    // `toStringAsFixed` already carries a minus; only the plus has to be put
+    // back, and only where the reading is signed.
+    if (widget.signed && !s.startsWith('-')) s = '+$s';
     return widget.suffix == null ? s : '$s${widget.suffix}';
   }
 

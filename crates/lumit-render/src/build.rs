@@ -1655,7 +1655,10 @@ mod render_below_at_tests {
         let draws = build_comp_draws(&doc, &comp, t, &pixels, &mut v1);
         let normal = realiser.realise(comp.camera_pose(t), comp.width, comp.height, bg, &draws);
         let normal_bytes = engine
-            .readback8(&ctx, &engine.display(&ctx, &normal))
+            .readback8(
+                &ctx,
+                &engine.display(&ctx, &normal, lumit_gpu::DisplayParams::NEUTRAL),
+            )
             .unwrap();
 
         // Re-render the whole stack (every layer counts as "below") at the same
@@ -1673,7 +1676,10 @@ mod render_below_at_tests {
             &mut v2,
         );
         let below_bytes = engine
-            .readback8(&ctx, &engine.display(&ctx, &below))
+            .readback8(
+                &ctx,
+                &engine.display(&ctx, &below, lumit_gpu::DisplayParams::NEUTRAL),
+            )
             .unwrap();
 
         assert_eq!(
@@ -1966,7 +1972,10 @@ mod render_below_at_tests {
         let posterised =
             realiser.realise(comp.camera_pose(0.35), comp.width, comp.height, bg, &draws);
         let posterised_bytes = engine
-            .readback8(&ctx, &engine.display(&ctx, &posterised))
+            .readback8(
+                &ctx,
+                &engine.display(&ctx, &posterised, lumit_gpu::DisplayParams::NEUTRAL),
+            )
             .unwrap();
 
         // A plain render of the below-stack (just the text) at tau = 0.3.
@@ -1978,7 +1987,10 @@ mod render_below_at_tests {
             &realiser, &doc, &comp, below, 0.3, 0.35, None, &pixels, &mut v2,
         );
         let held_bytes = engine
-            .readback8(&ctx, &engine.display(&ctx, &held))
+            .readback8(
+                &ctx,
+                &engine.display(&ctx, &held, lumit_gpu::DisplayParams::NEUTRAL),
+            )
             .unwrap();
 
         assert_eq!(
@@ -2109,7 +2121,12 @@ mod render_below_at_tests {
             let draws = build_comp_draws(&doc, comp, t, &pixels, &mut v);
             let bg = comp.background.0.map(f64::from);
             let tex = realiser.realise(comp.camera_pose(t), comp.width, comp.height, bg, &draws);
-            engine.readback8(&ctx, &engine.display(&ctx, &tex)).unwrap()
+            engine
+                .readback8(
+                    &ctx,
+                    &engine.display(&ctx, &tex, lumit_gpu::DisplayParams::NEUTRAL),
+                )
+                .unwrap()
         };
 
         // STILL scene: a static text below a 4-sample accumulation adjustment must
