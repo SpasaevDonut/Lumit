@@ -145,6 +145,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeFileParam dco_decode_box_autoadd_bridge_file_param(dynamic raw);
 
   @protected
+  BridgeFlowParams dco_decode_box_autoadd_bridge_flow_params(dynamic raw);
+
+  @protected
   BridgeFrameProfile dco_decode_box_autoadd_bridge_frame_profile(dynamic raw);
 
   @protected
@@ -304,6 +307,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeFileParam dco_decode_bridge_file_param(dynamic raw);
+
+  @protected
+  BridgeFlowParams dco_decode_bridge_flow_params(dynamic raw);
 
   @protected
   BridgeFrameProfile dco_decode_bridge_frame_profile(dynamic raw);
@@ -801,6 +807,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  BridgeFlowParams sse_decode_box_autoadd_bridge_flow_params(
+      SseDeserializer deserializer);
+
+  @protected
   BridgeFrameProfile sse_decode_box_autoadd_bridge_frame_profile(
       SseDeserializer deserializer);
 
@@ -990,6 +1000,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeFileParam sse_decode_bridge_file_param(SseDeserializer deserializer);
+
+  @protected
+  BridgeFlowParams sse_decode_bridge_flow_params(SseDeserializer deserializer);
 
   @protected
   BridgeFrameProfile sse_decode_bridge_frame_profile(
@@ -1547,6 +1560,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeFileParam self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_bridge_flow_params(
+      BridgeFlowParams self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_bridge_frame_profile(
       BridgeFrameProfile self, SseSerializer serializer);
 
@@ -1750,6 +1767,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_bridge_file_param(
       BridgeFileParam self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_flow_params(
+      BridgeFlowParams self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_frame_profile(

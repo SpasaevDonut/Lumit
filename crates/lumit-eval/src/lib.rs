@@ -76,7 +76,29 @@ impl Default for Quality {
 pub trait SourceStamper {
     /// (source identity, source frame index), or None while the media is
     /// still unprobed — an unknown source makes the whole frame unkeyable.
-    fn stamp(&self, item: Uuid, lt: f64) -> Option<(String, u64)>;
+    ///
+    /// `native` asks for the source at its own width regardless of the preview
+    /// quality tier: a layer whose flow engages decodes natively (K-331),
+    /// because full-resolution flow cannot be measured on a shrunk decode. The
+    /// identity this returns embeds the decode width, and **the width in the
+    /// name must be the width the pixels were decoded at** — the plan and this
+    /// stamp deciding separately is precisely the class of bug the `keyed_scale`
+    /// note in `lumit-render`'s Quality documents, so both ask this question the
+    /// same way.
+    fn stamp(&self, item: Uuid, lt: f64, native: bool) -> Option<(String, u64)>;
+
+    /// The source's own frame rate, when known.
+    ///
+    /// Only the flow engagement gate needs this (K-331): flow that cannot help
+    /// renders as plain Nearest, and a key that did not know that would hash
+    /// the sub-frame position of a frame which is bit-identical to its
+    /// neighbours — re-rendering, on a fast section of a ramp, frames it
+    /// already has. The default answers `None`, which keys flow as engaged: the
+    /// safe direction, since over-keying costs a cache miss and under-keying
+    /// shows a stale picture.
+    fn source_fps(&self, _item: Uuid) -> Option<f64> {
+        None
+    }
 }
 
 /// The content-hash key for `comp` rendered at time `t` — or None when some
@@ -581,7 +603,10 @@ fn feed_layer(
             {
                 let nlt = lt + f64::from(o) * comp_dt;
                 let nst = layer.source_time_at(nlt);
-                if let Some((identity, frame)) = stamper.stamp(*item, nst) {
+                // These neighbours are what the flow field is measured
+                // against, so they follow the same native-decode rule (K-331).
+                let native = wants_flow(layer, &layer.interpolation);
+                if let Some((identity, frame)) = stamper.stamp(*item, nst, native) {
                     h.update(&o.to_le_bytes());
                     h.update(identity.as_bytes());
                     h.update(&frame.to_le_bytes());
@@ -721,7 +746,7 @@ fn blend_tag(b: lumit_core::model::BlendMode) -> u8 {
 
 /// The layer's source pixels as content (docs/06 §5.2 "node type id ‖
 /// algorithm version, evaluated parameters, key(inputs)").
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // one hasher walk; bundling would hide it
 fn feed_source(
     h: &mut blake3::Hasher,
     doc: &Arc<Document>,
@@ -736,12 +761,27 @@ fn feed_source(
     stamper: &dyn SourceStamper,
     visited: &mut Vec<Uuid>,
 ) -> Option<()> {
+    // The comp's own rate, which is what a flow conform rate is judged against
+    // (K-331). Read from the comp the caller passes rather than carried as a
+    // parameter of its own: one fewer thing two call paths can disagree about.
+    let comp_fps = owner.frame_rate.fps();
     match &layer.kind {
         LayerKind::Footage { item } => {
             // The retime maps local time → source time; the cache key must key
             // the RETIMED source frame, so two different ramps never collide.
             let source_time = layer.source_time_at(lt);
-            let (identity, frame) = stamper.stamp(*item, source_time)?;
+            // Decided before the stamp, because a flow layer decodes natively
+            // and the identity embeds the width it was decoded at (K-331).
+            let effective = flow_effective_at(
+                &layer.interpolation,
+                layer.retime.as_ref(),
+                *item,
+                lt,
+                comp_fps,
+                stamper,
+            );
+            let native = wants_flow(layer, effective);
+            let (identity, frame) = stamper.stamp(*item, source_time, native)?;
             h.update(b"footage/");
             h.update(identity.as_bytes());
             h.update(&frame.to_le_bytes());
@@ -761,21 +801,18 @@ fn feed_source(
             // distinctly; identical times reuse, so it never over-renders a
             // truly repeated position.
             {
-                let interpolation = &layer.interpolation;
+                // Flow that cannot help renders as plain Nearest (K-331), and
+                // that must be what the key says: otherwise a flow layer on a
+                // 100%-or-faster stretch would hash its sub-frame position and
+                // re-render frames identical to ones it already holds.
+                let interpolation = effective;
                 if !matches!(interpolation, lumit_core::retime::Interpolation::Nearest) {
-                    h.update(&[interp_tag(interpolation)]);
+                    // The policy and, under Flow, every parameter that shapes
+                    // the synthesised picture — including the conform rate
+                    // (K-095/K-160), which synthesises from different source
+                    // frames at the same source time.
+                    feed_interp(h, interpolation, lt);
                     feed_f64(h, source_time);
-                    // A flow conform rate (K-095) synthesises from different
-                    // source frames at the same source time, so it is content.
-                    if let lumit_core::retime::Interpolation::Flow(p) = interpolation {
-                        // The conform rate is keyframeable (K-160): hash the
-                        // value it reads at this local time, so each rate along
-                        // an animated ramp keys its own synthesised frame.
-                        if let Some(fps) = p.input_fps_at(lt) {
-                            h.update(b"conform");
-                            feed_f64(h, fps);
-                        }
-                    }
                 }
             }
         }
@@ -839,28 +876,37 @@ fn feed_source(
                     h.update(b"gap");
                 }
                 Some((_id, lumit_core::sequence::ClipSource::Footage(item), st)) => {
-                    let (identity, frame) = stamper.stamp(item, st)?;
+                    let seq_interp = lumit_core::sequence::active_clip(clips, lt)
+                        .map(|c| {
+                            flow_effective_at(
+                                &c.interpolation,
+                                c.retime.as_ref(),
+                                item,
+                                lt,
+                                comp_fps,
+                                stamper,
+                            )
+                        })
+                        .unwrap_or(&lumit_core::retime::Interpolation::Nearest);
+                    let native = wants_flow(layer, seq_interp);
+                    let (identity, frame) = stamper.stamp(item, st, native)?;
                     h.update(b"seq-footage/");
                     h.update(identity.as_bytes());
                     h.update(&frame.to_le_bytes());
-                    if let Some(clip) = lumit_core::sequence::active_clip(clips, lt) {
-                        if !matches!(
-                            clip.interpolation,
-                            lumit_core::retime::Interpolation::Nearest
-                        ) {
+                    {
+                        // Gated exactly as the Footage case: flow that cannot
+                        // help keys as the Nearest it renders as (K-331). The
+                        // clip's own retime supplied the speed, since a
+                        // Sequence layer's clips each carry their own.
+                        let interpolation = seq_interp;
+                        if !matches!(interpolation, lumit_core::retime::Interpolation::Nearest) {
                             // The sub-frame position is content under blend/flow
-                            // (see the Footage case above, K-093).
-                            h.update(&[interp_tag(&clip.interpolation)]);
+                            // (see the Footage case above, K-093). The flow
+                            // params — conform rate included — ride along, read
+                            // at the clip's layer-local time like the footage
+                            // case.
+                            feed_interp(h, interpolation, lt);
                             feed_f64(h, st);
-                            if let lumit_core::retime::Interpolation::Flow(p) = &clip.interpolation
-                            {
-                                // Keyframeable conform rate (K-160), read at the
-                                // clip's layer-local time like the footage case.
-                                if let Some(fps) = p.input_fps_at(lt) {
-                                    h.update(b"conform");
-                                    feed_f64(h, fps);
-                                }
-                            }
                         }
                     }
                 }
@@ -909,15 +955,100 @@ fn feed_source(
     Some(())
 }
 
-/// Stable one-byte tag per frame-interpolation policy (never reuse a value).
-fn interp_tag(i: &lumit_core::retime::Interpolation) -> u8 {
+/// Whether this layer needs its source measured for optical flow at all — the
+/// retime Flow option engaging, or a live flow-consuming effect (Fast motion
+/// blur, Datamosh) asking for a field.
+///
+/// Such a layer decodes at native width whatever the preview tier says (K-331).
+/// The rule is deliberately "whoever asks", not "the retime option only": flow
+/// measured on a shrunk decode is a *different measurement*, not the same one
+/// smaller, and a preview that quietly measures differently from the export is
+/// the exact fault K-331 set out to remove. Making the rule uniform is also what
+/// lets the two consumers share one cached field — they ask for the same frame
+/// pair at the same resolution, so they get the same answer once.
+fn wants_flow(
+    layer: &lumit_core::model::Layer,
+    interpolation: &lumit_core::retime::Interpolation,
+) -> bool {
+    matches!(interpolation, lumit_core::retime::Interpolation::Flow(_))
+        || lumit_core::fx::stack_flow_neighbour(&layer.effects, layer.switches.fx).is_some()
+}
+
+/// The policy as it will actually render: `Flow` whose engagement gate declines
+/// at this moment (K-331) is the `Nearest` it degrades to, so it keys like one.
+///
+/// Returns a borrowed policy in the common case (nothing to decide) and the
+/// `Nearest` constant when the gate declines. An unknown source rate keeps the
+/// policy as written — over-keying costs a cache miss, under-keying shows a
+/// stale picture, and only one of those is a bug.
+fn flow_effective_at<'a>(
+    interpolation: &'a lumit_core::retime::Interpolation,
+    retime: Option<&lumit_core::anim::Property>,
+    item: Uuid,
+    lt: f64,
+    comp_fps: f64,
+    stamper: &dyn SourceStamper,
+) -> &'a lumit_core::retime::Interpolation {
+    const NEAREST: lumit_core::retime::Interpolation = lumit_core::retime::Interpolation::Nearest;
+    let lumit_core::retime::Interpolation::Flow(p) = interpolation else {
+        return interpolation;
+    };
+    let Some(native) = stamper.source_fps(item) else {
+        return interpolation;
+    };
+    let speed = lumit_core::retime::property_speed_at(retime, lt);
+    if p.engages(p.read_fps_at(lt, native), comp_fps, speed) {
+        interpolation
+    } else {
+        &NEAREST
+    }
+}
+
+/// Feed a frame-interpolation policy into the key: a stable one-byte tag
+/// (never reuse a value), and for Flow every parameter that changes the
+/// synthesised picture.
+///
+/// All of them do. Resolution and vector detail change the measurement,
+/// smoothness changes the field, occlusion handling and the fallback change
+/// what synthesis does with it, and the HUD guard changes which pixels get
+/// synthesised at all — so two frames that agree on everything else but differ
+/// in one knob are different pictures and must not share a name. `always` is in
+/// here too, because forcing flow on where the gate would have declined it is
+/// the difference between a synthesised frame and a plain nearest one. The
+/// conform rate is read at `lt` and hashed as the value it takes there (K-160),
+/// so an animated rate keys each frame along the ramp distinctly.
+///
+/// Callers hash the sub-frame `source_time` *after* this, per K-093.
+fn feed_interp(h: &mut blake3::Hasher, i: &lumit_core::retime::Interpolation, lt: f64) {
     use lumit_core::retime::Interpolation;
     match i {
-        Interpolation::Nearest => 1,
-        Interpolation::Blend => 2,
-        Interpolation::Flow(p) if p.half_resolution => 3,
-        Interpolation::Flow(_) => 4,
-    }
+        Interpolation::Nearest => {
+            h.update(&[1]);
+        }
+        Interpolation::Blend => {
+            h.update(&[2]);
+        }
+        Interpolation::Flow(p) => {
+            // Tag 3 was half-res flow and 4 full-res flow before the params
+            // existed (K-331); both are retired rather than reused, and the
+            // fixed-width block that follows makes a new Flow key strictly
+            // longer than either, so no old key can be re-addressed.
+            h.update(&[5]);
+            h.update(&[
+                p.resolution.code() as u8,
+                p.detail.code() as u8,
+                p.occlusion.code() as u8,
+                p.fallback.code() as u8,
+                u8::from(p.hud_guard),
+                u8::from(p.always),
+            ]);
+            feed_f64(h, p.smoothness);
+            if let Some(fps) = p.input_fps_at(lt) {
+                h.update(b"conform");
+                feed_f64(h, fps);
+            }
+        }
+    };
 }
 
 fn feed_f64(h: &mut blake3::Hasher, v: f64) {
@@ -939,14 +1070,14 @@ mod tests {
 
     struct StubStamper;
     impl SourceStamper for StubStamper {
-        fn stamp(&self, item: Uuid, lt: f64) -> Option<(String, u64)> {
+        fn stamp(&self, item: Uuid, lt: f64, _native: bool) -> Option<(String, u64)> {
             Some((format!("stub:{item}"), (lt * 60.0).round().max(0.0) as u64))
         }
     }
 
     struct UnknownStamper;
     impl SourceStamper for UnknownStamper {
-        fn stamp(&self, _item: Uuid, _lt: f64) -> Option<(String, u64)> {
+        fn stamp(&self, _item: Uuid, _lt: f64, _native: bool) -> Option<(String, u64)> {
             None
         }
     }
@@ -1948,14 +2079,44 @@ mod tests {
         let plain = k(&footage(Interpolation::Nearest));
         let blend = k(&footage(Interpolation::Blend));
         assert_ne!(plain, blend);
-        let half = k(&footage(Interpolation::Flow(FlowParams::default())));
-        let full = k(&footage(Interpolation::Flow(FlowParams {
-            half_resolution: false,
-            input_fps: lumit_core::anim::Property::zero(),
-            extra: serde_json::Map::new(),
+        let native = k(&footage(Interpolation::Flow(FlowParams::default())));
+        let half = k(&footage(Interpolation::Flow(FlowParams {
+            resolution: lumit_core::retime::FlowResolution::Half,
+            ..FlowParams::default()
         })));
-        assert_ne!(blend, half);
-        assert_ne!(half, full);
+        assert_ne!(blend, native);
+        assert_ne!(native, half);
+        // Every §3.1 knob is content: it changes the synthesised picture, so
+        // two frames that differ only in one must not share a name (K-331).
+        let knobs = [
+            FlowParams {
+                detail: lumit_core::retime::VectorDetail::Ultra,
+                ..FlowParams::default()
+            },
+            FlowParams {
+                smoothness: 90.0,
+                ..FlowParams::default()
+            },
+            FlowParams {
+                occlusion: lumit_core::retime::OcclusionMode::Blend,
+                ..FlowParams::default()
+            },
+            FlowParams {
+                fallback: lumit_core::retime::FlowFallback::Nearest,
+                ..FlowParams::default()
+            },
+            FlowParams {
+                hud_guard: false,
+                ..FlowParams::default()
+            },
+        ];
+        for p in knobs {
+            assert_ne!(
+                native,
+                k(&footage(Interpolation::Flow(p.clone()))),
+                "a flow parameter that changes the picture must change the key: {p:?}"
+            );
+        }
     }
 
     /// K-093: two comp times whose retimed source lands in the *same* integer
@@ -1983,8 +2144,8 @@ mod tests {
         // source·60; 1.000 and 1.004 both round to 60), so it is the sub-frame
         // fraction, not the frame, that must differentiate the keys below.
         assert_eq!(
-            StubStamper.stamp(item, 1.000).unwrap().1,
-            StubStamper.stamp(item, 1.004).unwrap().1,
+            StubStamper.stamp(item, 1.000, false).unwrap().1,
+            StubStamper.stamp(item, 1.004, false).unwrap().1,
         );
         for policy in [
             Interpolation::Blend,
@@ -2143,11 +2304,10 @@ mod tests {
             let mut l = text_layer("", 0.0, 10.0, 0.0);
             l.kind = LayerKind::Footage { item };
             l.interpolation = Interpolation::Flow(FlowParams {
-                half_resolution: true,
                 input_fps: fps
                     .map(lumit_core::anim::Property::fixed)
                     .unwrap_or_else(lumit_core::anim::Property::zero),
-                extra: serde_json::Map::new(),
+                ..FlowParams::default()
             });
             comp_with(vec![l])
         };

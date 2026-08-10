@@ -486,6 +486,9 @@ impl HeadlessRenderer {
             lut_cache: std::cell::RefCell::new(crate::fxops::LutCache::default()),
         };
         let scope = lumit_gpu::scope::ScopeEngine::new(&gpu);
+        // Flow runs on this same device rather than opening one of its own
+        // (K-331); the handles are reference-counted, so this shares it.
+        let pool = DecodePool::with_gpu(&gpu);
         Ok(Self {
             gpu,
             parts: Some(parts),
@@ -493,7 +496,7 @@ impl HeadlessRenderer {
             items: HashMap::new(),
             probe_cache: HashMap::new(),
             audio_jobs: AudioJobsBuilder::new(),
-            pool: DecodePool::new(),
+            pool,
             retained: None,
             frame_textures: {
                 let mut lru = lumit_cache::ByteLru::new(DEFAULT_VRAM_CACHE_BYTES);
