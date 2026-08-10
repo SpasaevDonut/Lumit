@@ -491,7 +491,10 @@ vertically after the edited segment.
 - **The Retime row's own value reads as a timecode** (`HH:MM:SS:FF`, with a leading minus
   for a source time before zero), not as a number of seconds — K-287, realising K-075's
   value lens for the outline row. It is dragged and typed in whole source frames, at the
-  composition's rate until the read model carries the footage's own. Settings ▸ Interface ▸
+  **footage's own rate** — 600 fps footage counts to `:599` whatever the comp's rate is.
+  The rate is probed from the media when the row appears; until it answers, and for a
+  source that is not footage or cannot be probed, the composition's rate stands in so the
+  clock is always usable. Settings ▸ Interface ▸
   Editing ▸ *Retime values in seconds* puts the decimal seconds field back, which is also
   the only way to state a position between two frames.
 - Graph editor header: speed at the playhead (per cent, one decimal), resolved source
