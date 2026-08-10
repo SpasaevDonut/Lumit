@@ -472,14 +472,38 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
         decimals: axis.decimals,
         suffix: axis.suffix,
         onCommit: (v) => _commitKeyed(axis.prop, scalar, v, frame),
+        onLive: (v) => _liveKeyed(axis.prop, scalar, v, frame),
       ),
     );
+  }
+
+  /// A tick of a drag on an *animated* property: render the curve the release
+  /// will write — the key at the playhead moved, or a linear one planted there
+  /// — without writing it (K-333). The same patched-clone door a static drag
+  /// uses, carrying a whole animation instead of one number.
+  void _liveKeyed(
+      BridgeTransformProp prop, BridgeScalar scalar, double value, int frame) {
+    final staged = writeScalar(
+      widget.transform,
+      prop,
+      scalarWithValueAt(scalar, value, widget.comp, frame),
+    );
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    _throttle.request(() => widget.comp.renderFrameWithTransformPreview(
+          frame: BigInt.from(ui.playheadFrame.value),
+          scale: ui.viewerScale,
+          layer: widget.layer,
+          transform: staged,
+        ));
   }
 
   /// Write `value` into the animated property's key at `frame` (or plant one
   /// there) — one op, one undo step.
   void _commitKeyed(
       BridgeTransformProp prop, BridgeScalar scalar, double value, int frame) {
+    // The write is the last word: a held preview tick after it would put the
+    // provisional picture back.
+    _throttle.cancel();
     widget.layer.setTransform(
       prop: prop,
       value: scalarWithValueAt(scalar, value, widget.comp, frame),

@@ -7644,3 +7644,33 @@ old picture back finds it in the cache. Nothing current held means the consumer 
 which is the fallback it always had. The predicate runs under the cache lock and is therefore
 held to the dropper's rule — bounded, pure CPU, nowhere near the GPU or the FFI boundary
 (docs/14). Regression test: `a_frame_the_edit_orphaned_is_not_served_positionally` (lumit-bridge).
+
+**K-333 · DECIDED · Four graph-editor faults from the owner's pass, and a keyed value drag
+that showed nothing.** All reported against the 0.2.0 build; each is a fix rather than a change
+of intent, so they are recorded together.
+
+**Auto-fit frames what is on screen.** It was fitting over every key of every selected channel
+whatever the time zoom, so zooming into a quiet stretch of a curve that spikes somewhere
+off-screen still left room for the spike and the part under the pointer stayed a flat line. The
+fit now takes the keys inside the visible time window, plus what each curve reads at the two
+edges of it — the edges being what stops a span *between* two keys from framing on nothing.
+
+**A stale Alt no longer kills every other wheel.** Alt is Windows' menu-activation chord, so the
+release that ends an Alt+wheel zoom often never reaches the app; Flutter went on believing Alt
+was held and read every later wheel as another zoom, leaving plain, Shift and Ctrl scrolling
+dead until the user pressed Alt again somewhere it could be seen. The wheel handler asks the
+platform what is actually held when it sees Alt.
+
+**The magnet snaps the picture, not only the write.** A key drag rounded to whole frames on
+release and drew unrounded until then, so a key bound for frame 12 sat between 11 and 12 for
+the whole gesture and jumped on the way out.
+
+**`Shift` lays a tangent handle flat**, holding the value at the key's own so the curve leaves
+it horizontally; a joined partner is mirrored from the dragged side and comes flat with it.
+
+**A keyed value drag in the layer area previews**, through the same patched clone a static one
+uses (K-192) — carrying the whole animation, with the key at the playhead moved or a linear one
+planted there. Still owed, and not built here: the *graph* pane does not follow such a drag,
+because the curve it draws comes from the read model and the provisional value lives in the row's
+own state; carrying it across wants a published drag value the pane can read, the shape
+`BarDragPreview` already uses for bar drags (K-172).

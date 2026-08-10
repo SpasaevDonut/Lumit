@@ -17,6 +17,8 @@
 // model. The bridge is only crossed when a gesture commits — one write per
 // channel, batched per layer, so a drag stays one undo step per property.
 
+import 'dart:async';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -1032,6 +1034,59 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
   List<List<BridgeKeyframe>> get _channelKeys =>
       [for (final c in widget.channels) c.keys];
 
+  /// The stretch of time actually on screen, in seconds — or null when the pane
+  /// is not inside a scroll view (a test builds it alone) and everything is.
+  (double, double)? get _visibleSeconds {
+    final c = widget.hScroll;
+    if (c == null || !c.hasClients) return null;
+    final width = c.position.viewportDimension;
+    if (width <= 0) return null;
+    return (_secondsOfX(c.offset), _secondsOfX(c.offset + width));
+  }
+
+  /// Each channel's keys as the fit should see them: **only the ones on
+  /// screen**, plus what the curve reads at each edge of the view.
+  ///
+  /// Auto-fit frames the curves, and "the curves" means the part of them you
+  /// are looking at. Fitting over every key regardless left the vertical
+  /// framing fixed however far the time axis was zoomed in — zoom into a
+  /// quiet stretch of a curve that spikes somewhere off-screen and the pane
+  /// still made room for the spike, so the part under the pointer stayed a
+  /// flat line (K-333).
+  ///
+  /// The edge samples are what stop a span *between* two keys from framing on
+  /// nothing: zoomed between them there is no key in view at all, and the
+  /// value there is the whole of what the view shows.
+  List<List<BridgeKeyframe>> get _visibleChannelKeys {
+    final window = _visibleSeconds;
+    if (window == null) return _channelKeys;
+    final (t0, t1) = window;
+    return [
+      for (final channel in widget.channels)
+        () {
+          final keys = channel.keys;
+          if (keys.isEmpty) return keys;
+          final shown = [
+            for (final k in keys)
+              if (rationalSeconds(k.time) >= t0 &&
+                  rationalSeconds(k.time) <= t1)
+                k,
+          ];
+          return [
+            ...shown,
+            for (final t in [t0, t1])
+              BridgeKeyframe(
+                time: timeOfSubframe(
+                    t * widget.fps, widget.fpsNum, widget.fpsDen),
+                value: evaluateKeys(keys, t),
+                interpIn: const BridgeSideInterp.linear(),
+                interpOut: const BridgeSideInterp.linear(),
+              ),
+          ];
+        }(),
+    ];
+  }
+
   /// Whether [channel] draws as the Vegas speed envelope right now (K-247) —
   /// a Retime, in the speed view, with the preference on.
   bool isEnvelope(GraphChannel channel) =>
@@ -1042,14 +1097,14 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
   (double, double) _fitRange() {
     if (widget.lens == GraphLens.value) {
       return fitValueRange(
-        _channelKeys,
+        _visibleChannelKeys,
         [
           for (final c in widget.channels)
             if (c.isStatic) c.staticValue,
         ],
       );
     }
-    if (!_anyEnvelope) return fitSpeedRange(_channelKeys);
+    if (!_anyEnvelope) return fitSpeedRange(_visibleChannelKeys);
     // An envelope brings its own floor and ceiling (100% down to −25%), which
     // the ordinary speed fit has no business inventing. Any other channel
     // selected alongside is framed as before and the two ranges are unioned —
@@ -1118,6 +1173,14 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
 
   void _wheel(PointerScrollEvent event) {
     final keys = HardwareKeyboard.instance;
+    // **Windows eats the Alt key-up.** Alt is the system's menu-activation
+    // chord, so the release that ends an Alt+wheel zoom often never reaches
+    // the app: Flutter goes on believing Alt is held, every later wheel is
+    // read as another zoom, and plain, Shift and Ctrl scrolling all stay dead
+    // until the user presses Alt again and lets go somewhere the app can see
+    // it (K-333). Asking the platform what is *actually* held puts it right,
+    // and costs nothing on a wheel event.
+    if (keys.isAltPressed) unawaited(keys.syncKeyboardState());
     if (keys.isControlPressed || keys.isShiftPressed) {
       widget.onWheelTime(event, event.localPosition.dx);
       return;
@@ -1426,6 +1489,17 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
     return (edits, newSelection);
   }
 
+  /// [travel] pixels of sideways drag, rounded to whole frames when the magnet
+  /// is on — what [_keyDragEdits] will commit, so the key draws where it lands.
+  double _snappedDx(BridgeKeyframe key, double travel) {
+    final perFrame = widget.axis.perFrame;
+    if (!widget.magnet || perFrame <= 0) return travel;
+    final base = _keyFrame(key, widget.fps);
+    final moved =
+        (base + travel / perFrame).clamp(0.0, widget.frames.toDouble());
+    return (moved.roundToDouble() - base) * perFrame;
+  }
+
   /// A drag tick: render the values the release will write, without writing
   /// them. Throttled, and coalescing — see [PreviewThrottle].
   void _previewDrag(Map<GraphChannel, BridgeScalar> edits) {
@@ -1448,7 +1522,12 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
     var y = _keyY(channel, index, range, height, isOut: isOut);
     final drag = _keyDrag;
     if (drag != null && widget.selectedKeys.contains('${channel.id}#$index')) {
-      x += drag.dxPx;
+      // With the magnet on the key lands on a whole frame, and it has to *look*
+      // as though it does while the pointer is still down: the release rounded
+      // the time but the drawing did not, so a key that would land on frame 12
+      // drew between 11 and 12 for the whole gesture and jumped on the way out
+      // (K-333). The same rounding, applied to the picture.
+      x += _snappedDx(channel.keys[index], drag.dxPx);
       if (widget.lens == GraphLens.value) y += drag.dyPx;
     }
     // A speed-lens dot in flight: sideways under the pointer, and the side
@@ -1589,13 +1668,19 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
       }
 
       if (nb == null) return;
+      // `Shift` lays the handle flat (K-333): the value is held at the key's
+      // own, so the tangent leaves it horizontally — the ease-out-to-nothing
+      // every editor spells this way. A joined partner is mirrored from the
+      // dragged side, so it comes flat with it and the pair reads as one
+      // straight line through the key.
+      final flat = HardwareKeyboard.instance.isShiftPressed;
       final r = handleFromDrag(
         keyTime: keyTime,
         keyValue: key.value,
         neighbourTime: rationalSeconds(nb.time),
         isOut: drag.isOut,
         dragTime: pointerTime,
-        dragValue: pointerValue,
+        dragValue: flat ? key.value : pointerValue,
       );
       drag.speed = r.speed;
       drag.influence = r.influence;
