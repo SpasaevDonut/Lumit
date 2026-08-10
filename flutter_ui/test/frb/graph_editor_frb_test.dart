@@ -119,6 +119,44 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    /// **The graph follows a value drag in the outline, while the pointer is
+    /// still down** (K-333/K-334). The row publishes each tick (`rowValueDrag`)
+    /// and the pane draws the key through it; the release commits and the
+    /// publication clears. Fails if any link of that chain breaks — the wiring
+    /// this bug shipped without twice.
+    testWidgets('the graph key follows an outline value drag mid-gesture',
+        (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer);
+      await mountGraph(tester, p);
+
+      final glyph = find.byKey(ValueKey<String>(opacityKey(p.layer, 0)));
+      final before = tester.getCenter(glyph);
+
+      // Grab the outline row's value field and drag, without letting go.
+      final field = find.byKey(const ValueKey<String>('tl-tf-opacity'));
+      final gesture = await tester.startGesture(tester.getCenter(field));
+      await tester.pump();
+      await gesture.moveBy(const Offset(30, 0));
+      await tester.pump();
+      await gesture.moveBy(const Offset(30, 0));
+      await tester.pump();
+
+      expect(rowValueDrag.value, isNotNull,
+          reason: 'the row publishes the provisional value each tick');
+      final during = tester.getCenter(glyph);
+      expect(during.dy, lessThan(before.dy),
+          reason: 'the key draws at the dragged value while the pointer '
+              'is still down');
+
+      await gesture.up();
+      await tester.pump();
+      expect(rowValueDrag.value, isNull,
+          reason: 'the release commits and the publication clears');
+      expect(opacityKeys(p.layer).first.value, greaterThan(0),
+          reason: 'and the document now holds what the drag showed');
+    });
+
     /// One gesture, one op: the key moves in time AND value, and one undo
     /// puts both back.
     testWidgets('dragging a key moves it in time and value as one undo step',
@@ -703,7 +741,8 @@ void main() {
 
       // Halfway between the two keys: on a straight span that is exactly on
       // the curve, whatever the framing happens to be.
-      final base = 'graph-key-${p.layer.internallayerId}/transform/opacity@opacity';
+      final base =
+          'graph-key-${p.layer.internallayerId}/transform/opacity@opacity';
       final a = tester.getCenter(find.byKey(ValueKey<String>('$base#0')));
       final b = tester.getCenter(find.byKey(ValueKey<String>('$base#1')));
       final mid = Offset((a.dx + b.dx) / 2, (a.dy + b.dy) / 2);
@@ -759,7 +798,8 @@ void main() {
       await tester.tap(key);
       await tester.pumpAndSettle();
       expect(opacityKeys(p.layer), hasLength(3),
-          reason: 'the key is still there — double-click plants, it does not lift');
+          reason:
+              'the key is still there — double-click plants, it does not lift');
     });
 
     testWidgets('the last key of a channel refuses to be lifted',
@@ -789,8 +829,8 @@ void main() {
       // Compared as sets, because a key dragged far enough in time overtakes
       // its neighbour and the list re-sorts — which says nothing about
       // whether the constraint held.
-      List<double> values() => [for (final k in opacityKeys(p.layer)) k.value]
-        ..sort();
+      List<double> values() =>
+          [for (final k in opacityKeys(p.layer)) k.value]..sort();
       List<int> frames() => [
             for (final k in opacityKeys(p.layer))
               p.comp.frameAtTime(time: k.time)
@@ -801,8 +841,8 @@ void main() {
       await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
       // Mostly sideways, a little up: the sideways travel wins, so the value
       // must not move at all.
-      await _drag(tester, find.byKey(ValueKey<String>(id)),
-          const Offset(40, -12));
+      await _drag(
+          tester, find.byKey(ValueKey<String>(id)), const Offset(40, -12));
       await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
 
       expect(frames(), isNot(beforeFrames), reason: 'it moved in time');
@@ -825,8 +865,8 @@ void main() {
       final beforeValue = opacityKeys(p.layer)[1].value;
 
       await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
-      await _drag(tester, find.byKey(ValueKey<String>(id)),
-          const Offset(-12, 60));
+      await _drag(
+          tester, find.byKey(ValueKey<String>(id)), const Offset(-12, 60));
       await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
 
       expect([
@@ -835,7 +875,6 @@ void main() {
       expect(opacityKeys(p.layer)[1].value, lessThan(beforeValue),
           reason: 'and the value moved');
     });
-
   }, skip: !engineAvailable);
 }
 

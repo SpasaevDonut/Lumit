@@ -1187,7 +1187,13 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
       GraphChannel channel, int index, (double, double) range, double height,
       {required bool isOut}) {
     if (widget.lens == GraphLens.value) {
-      return _yOf(channel.keys[index].value, range, height);
+      // Through [_shownKeys], not the document's keys: a value drag in the
+      // outline publishes its provisional value, and the diamond has to sit on
+      // the curve that is actually being drawn — the curve moved and the glyph
+      // stayed, which is how "the graph does not follow the drag" survived
+      // K-333's wiring (K-334). Same length and order as `channel.keys`, so
+      // the caller's index holds.
+      return _yOf(_shownKeys(channel)[index].value, range, height);
     }
     if (isEnvelope(channel)) {
       return _yOf(envelopeSpeeds(channel.keys)[index], range, height);
