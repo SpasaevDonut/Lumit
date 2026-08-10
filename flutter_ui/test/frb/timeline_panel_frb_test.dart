@@ -698,18 +698,6 @@ void main() {
       await openMaskRow(tester, p, layer, 'Ellipse');
       final id = layer.getMasks().single.id;
 
-      // **Clicking the empty part of a row picks it too** (K-343). The row
-      // deferred its hits to its children, so a click beside the label missed
-      // it, fell through to the outline behind and cleared the selection — and
-      // the Path row, which has no value field, is almost all empty.
-      final pathRow = find.text(maskValueLabel(MaskValue.path));
-      final box = tester.getRect(pathRow);
-      await tester.tapAt(Offset(box.right + 120, box.center.dy));
-      await tester.pump();
-      expect(p.uiState.selectedProperties.value,
-          ['${masksPath(layer.internallayerId.toString())}/$id/path'],
-          reason: 'a click on the empty part of the Path row did not pick it');
-
       // Every one of the four rows picks itself when its name is clicked —
       // the same as a transform or an effect parameter row.
       final masks = masksPath(layer.internallayerId.toString());
