@@ -7867,3 +7867,259 @@ as the transform and effect rows already did (K-333's rule), so the ordinary ges
 replacement path anyway and a diamond stands at the playhead from the first tick. Regression:
 `a Retime drag on a keyless frame keeps the diamonds on the curve`, which fails on the mixed
 lists and on the missing plant alike.
+
+**K-338 · DECIDED · Masks gain modes, feather and expansion, and the first mask in the
+list decides what the fold starts from.** 03-DATA-MODEL §7 always described a v1 mask as
+"static, Add-mode" with the rest listed as future. The future is now partly here:
+`MaskMode` is `None | Add | Subtract | Intersect | Difference`, and every mask carries a
+`feather` and an `expansion` in layer pixels. Lighten and Darken are deliberately not
+built — they are max and min over overlapping opacities, and nobody has asked.
+
+**Combination is now sequential, and it had to become so.** `combined_coverage` summed
+every mask's coverage and clamped, which is order-independent and correct precisely
+because everything was Add. Subtract and Intersect are not commutative, so masks now fold
+top to bottom in list order, which is what 06-RENDER-PIPELINE §3 always said they should.
+Add's expression is unchanged, so an all-Add project is bit-identical to before.
+
+**The first mask needs a starting value, and the honest one depends on its mode.** With
+the accumulator starting at zero, a lone Subtract subtracts from nothing and a lone
+Intersect intersects with nothing — both give an empty frame, which is not what anyone
+drawing a single subtract mask means. So the fold starts from zero when the topmost
+non-`None` mask is Add, and from full coverage otherwise: a lone Subtract cuts a hole, a
+lone Intersect shows just its own shape, a lone Difference shows its inverse. This is
+After Effects' behaviour and it is the only reading under which the first mask does
+something rather than nothing.
+
+**Feather and expansion are one mechanism, not two.** The obvious build is a blur for
+feather and a morphological grow/shrink for expansion. Instead the rasterised coverage
+becomes a signed distance field once — an exact Euclidean transform, Felzenszwalb and
+Huttenlocher, seeded from the antialiased edge so it keeps sub-pixel placement — and both
+controls read off it: expansion shifts the zero crossing, feather sets the width of the
+ramp across it. One pass, and it is what "feather in pixels" actually means, measured
+along the surface normal rather than approximated by a blur radius. The cost is that an
+expanded or eroded shape rounds its corners, because distance is measured to the nearest
+point on the path; that is also what After Effects does.
+
+**With both at zero the rasteriser's bytes are returned untouched** — no distance field,
+no allocation. That is what keeps every existing project bit-identical, and it is why the
+new fields also serialise only when they differ from their defaults: the frame cache key
+hashes the serialised masks, and always emitting them would have retired every frame
+every existing project has banked.
+
+**Variable-width (per-point) feather is not built.** It is a second point set on the path
+with its own tool, and `ToolMode.penMaskFeather` already exists in the toolbar as a stub
+with nothing behind it. It stays in TODO.
+
+**K-339 · DECIDED · A mask path animates through its own keyframe list, and mismatched point
+counts resample upward.** From the owner (2026-08-08): the deferral K-224 recorded ("neither
+can a mask path be keyframed") is closed for the engine half.
+
+**A separate carrier, not a generic `Property`.** Every animatable value in Lumit is a scalar:
+`Animation::{Static, Keyframed, Expression}` behind a `Property` whose `value_at` returns one
+`f64` at roughly two hundred call sites. A shape is not a scalar, and making `Property` generic
+to hold one would churn all two hundred to buy nothing. So `Mask` carries `path_keys:
+Vec<PathKeyframe>` beside its `path`, in `lumit-core::mask` where the path type already lives.
+Empty means unanimated, and empty is omitted from the file — an untouched mask writes the exact
+bytes it always did, which is what keeps every frame every existing project has banked
+(`lumit-eval` hashes the serialised masks into the frame key).
+
+**Timing eases, no value graph.** Path keys carry the same `SideInterp` pair a scalar keyframe
+does, and it shapes the **interpolation parameter** — 0 at this key, 1 at the next — evaluated
+by the scalar evaluator itself rather than a second copy of the same maths. A shape has no
+value to plot, so the lane shows diamonds only; the graph editor's speed lens is the TODO item
+that pairs with this.
+
+**Mismatched vertex counts resample to the higher count, never refuse.** Adding a point to a
+mask halfway through an animation is an ordinary act, so interpolation between a four-point key
+and a seven-point key must simply work. The sparser path is redrawn at the higher count by
+**splitting its own segments** — de Casteljau at a parameter, the same exact split K-221 relies
+on, so the two halves *are* the original cubic and the reconciled path is geometrically the
+path it was. Distribution is fixed arithmetic (evenly, remainder to the earliest segments), so
+the reconciliation is deterministic and playback repeats frame for frame. Then the two run
+vertex for vertex, position and both handles blended straight. This is what After Effects does,
+so an imported comp and a hand-built one behave alike.
+
+**Open against closed is held, not blended.** Whether a path is joined up is not a quantity and
+has no halfway. Across a span it takes the outgoing key's flag and flips at the next key — a
+Hold in all but name. The geometry still interpolates; only the closing segment appears or
+disappears, on a frame boundary rather than smearing.
+
+**The frame cache needs the evaluated path, not the stored keys.** The key carries no timeline
+position by design (K-214), and a keyframed mask serialises identically at every frame — so the
+stored keys alone would name every frame of a moving mask the same, and playback would hand
+back the first frame drawn while the mask sat still. The evaluated shape at the layer's local
+time therefore joins the hash, **and only for masks that are actually animated**, so no
+existing key moves and `ALGO_VERSION` does not need bumping. Masks evaluate at the layer's own
+clock, the one every other property on the layer reads (K-213).
+
+**Still whole-list ops.** `SetLayerMasks` carries the entire mask list, so a keyframe drag
+rewrites all of it as one undo entry. That is correct but coarse; a per-key op is noted in
+TODO.md for when the interface can make one.
+
+**K-340 · DECIDED · Every one of a mask's values animates, and a still mask still writes
+bare numbers.** From the owner, testing K-338 in the app (2026-08-10): "currently no mask
+property has the clock icon to enable keyframing. This should be the same as any
+transform/effect etc. and all the properties should be able to be keyframed." K-339 had
+given the *path* its keys and left the three numbers static, and had exposed neither to the
+frontend — so the branch claimed keyframing that nothing in the interface could reach.
+
+**Opacity, feather and expansion become ordinary `Property`s**, not a second key-list
+carrier beside each value. K-339 argued the other way for the *path*, and that argument
+still holds there: a shape is not a scalar, and making `Property` generic to hold one would
+churn two hundred call sites to buy nothing. A number is a scalar. Making these three what
+every other animatable number already is means the Timeline row reuses the stopwatch, the
+◄ ◆ ► navigator, the keyed-value field and the lane diamonds exactly as they stand —
+"the same as any transform/effect" is then true by construction rather than by a parallel
+implementation that would drift.
+
+**The file keeps its old shape while the mask is still.** A `Property` normally serialises
+as an object, and switching to that would have migrated every `.lum` ever written and —
+worse — retired every frame every project has banked, because the frame key names a mask by
+the bytes its list serialises to. So the three fields carry their own encoding
+(`still_or_keyed`): a static value writes as the bare number it always wrote, and only a
+mask somebody has actually keyed grows the object. Reading takes either. An unkeyed mask is
+therefore byte-identical to what it was, which is the same promise K-338 and K-339 each
+made and is why the cache survives all three.
+
+**The frame key learns the evaluated numbers, for the same reason it learned the evaluated
+path.** A keyed opacity serialises identically at every frame while the key deliberately
+carries no timeline position of its own (K-214), so without the value at the layer's local
+time a moving mask would name every frame alike and playback would hand back the first one
+drawn. Fed only for properties that actually hold keys.
+
+**Clamping an animation clamps its keys.** The bridge has always held a mask's opacity into
+0..100 and its feather and expansion into a sane span rather than trusting the frontend. A
+key three seconds away at −40 % is exactly as wrong as one now, so the clamp walks the
+keyframes rather than the value under the playhead.
+
+**Opacity moves off the mask's header onto a row of its own**, joining Path, Feather and
+Expansion. A property with no row has nowhere to put a stopwatch, and the header now carries
+only what the mask *is*: its name, its invert switch and its mode.
+
+**The shape's row keys through its own ops.** `toggle_mask_path_key` and
+`clear_mask_path_keys` plant, remove and stop — a key holds the shape the mask is *already*
+showing at that moment, so pressing ◆ never moves anything, and switching animation off
+keeps the shape under the playhead rather than snapping to the first key. That is what the
+stopwatch does everywhere else. `MaskPathKeyframesFrb` sits in the same file as the scalar
+controls so the two cannot drift into different ideas of what a diamond means.
+
+**Two switches mean a mask does nothing, and neither hides the layer.** Mode `None` and
+opacity zero both used to blank the layer outright when the mask was the only one on it —
+the fold started from an empty stack and then skipped the very mask it had started from.
+`Mask::does_something_at` is now the single question every caller routes through, and it
+takes a time because opacity animates: a mask keyed up from zero is off for the first half
+of the shot and on for the second.
+
+**K-341 · DECIDED · A picked property row is a picked layer everywhere else, and a mask's
+rows behave like every other property row.** From the owner, testing K-340 (2026-08-10):
+"why tf if I click a mask row it doesn't just select it. Please can you treat all property
+rows the same in this regard, between transform/effects… whenever I add a keyframe it
+doesn't display it in the lane area… i can't view any of the mask properties in the graph
+view."
+
+**The selection was never the problem; everything downstream of it was.** Clicking a mask
+row did pick it — the row's fill said so — but nothing else in the program knew what to do
+with the pick. `laneKeysOf` had no mask arm, so a key planted by the stopwatch drew no
+diamond; `graphChannels` had no mask arm, so the graph editor had no curve to show and read
+as "the row cannot be selected"; and the property selection never left the Timeline at all,
+so the Viewer outlined nothing. Three separate silences that added up to one apparently
+dead row. Mask rows now answer all three, through the same functions the transform and
+effect rows already go through rather than through a mask-shaped path of their own.
+
+**The shape's lane shows diamonds without a curve.** A path key holds no number, so it
+cannot be a graph channel (K-339 already said so) — but it *can* be a position on a lane,
+and a key the author just planted must be visible or it reads as not having landed. The
+diamonds are built from the key times alone, and dragging one goes through a dedicated
+`move_mask_path_key` rather than the scalar path, because what is moving is a whole shape.
+
+**Picking a property says which layer is being worked on, and the picture says so too.**
+`selectedProperties` is published from the Timeline to the shell, and the Viewer outlines
+the layers those rows belong to — wireframe and masks — exactly as it does for a layer
+picked on its own row. Drawing only: what can be *dragged* stays the layer selection
+proper, so an outline never turns into a handle nobody asked for.
+
+**A mask's Path row is the shape being edited.** Picking it offers that mask's points for
+dragging without the layer having to be clicked first, and the reverse holds too: dragging
+a keyed mask path selects that Path row, so the key the drag just wrote is on a row the
+author can see. The two directions are one idea — the row and the shape are the same thing
+seen from two panels.
+
+**Both of the mask's own switches move into the value column.** The invert mark and the
+mode picker sat beside the name, in no column at all; K-340 had put the mode under the
+blend header on the grounds that it is the same kind of choice, and the owner's answer was
+that consistency down the *fold-out* matters more than consistency across to the layer row.
+The mode picker takes the rest of the cell so a long name ellipsises rather than pushing
+the row wider than its column, which is the rule the blend picker already followed.
+
+**K-342 · DECIDED · The wireframe of an animated mask is drawn from the shape it is
+showing, asked of the engine.** From the owner, testing K-340/K-341 (2026-08-10): "after
+you move the path in the viewer, visually it snaps back to its original position, but it
+adds the keyframe correctly and when you preview it animates correctly."
+
+**The picture was right and the outline was stale.** Once a path is keyed, `Mask::path` is
+no longer what the mask draws — `path_at` reads the keys — but the Viewer's wireframe was
+drawn from the vertices the mask carries, which are exactly that stale `path`. So a drag
+wrote its key, the render animated, and the outline sprang back to where the shape began.
+
+**Evaluated engine-side, not in Dart.** Dart samples ordinary scalars itself and could have
+been given the keyed *shapes* to interpolate — but interpolating two paths means
+reconciling their vertex counts by splitting cubics (K-339), and a second implementation of
+that here would drift from the one that draws the pixels. A wireframe that stops matching
+the mask it describes is worse than no wireframe. So `animated_mask_paths_at(frame)` asks
+the engine, which answers with the same `path_at` the renderer uses.
+
+**Only animated masks are listed, and the answer is held.** A still mask's own vertices
+already say where it is, so the ordinary composition answers with an empty list and pays
+nothing. The Viewer rebuilds on every movement of the pointer, so the answer is cached
+against the document revision and the playhead frame — the two things that can change it —
+and a hover asks nothing. That keeps K-184's budget intact: the hover test still measures
+zero.
+
+**K-343 · DECIDED · A property row takes the press across its whole width, not only where a
+widget happens to sit.** From the owner (2026-08-10): "when I click the path row, it
+deselects and can't be re-selected by clicking like it should."
+
+The fold-out's rows select on pointer-down through a `Listener`, and a `Listener` defers to
+its children by default — so a press only counted where it landed *on* something. A
+property row is mostly empty: the label stops where its text stops, and the value column is
+one narrow field in a wide cell. A press in the space between reached the outline behind
+instead, which is the surface that **clears** the selection — so clicking a row could
+unpick it, and clicking again did the same thing rather than picking it back.
+
+Worst on a mask's **Path** row, which by design has no value field at all (a shape has no
+number to put in one, K-339), leaving almost the whole row dead to the pointer.
+
+The rows that select are now opaque to hit testing, so the press lands on the row wherever
+it falls. Group headings keep defer-to-child: their own detector owns the click, and a
+heading both picks and twirls (K-300).
+
+**The graph editor showing nothing for a Path row is not this bug.** A path has no value
+axis, so it is deliberately not a graph channel — its keys live on the lane as diamonds.
+Easing them wants the speed lens K-339 already recorded as outstanding. A mask's opacity,
+feather and expansion *do* resolve into channels and draw curves.
+
+**K-344 · DECIDED · A keyed mask shape draws its rate of change, in both lenses.** The
+deferral K-339 recorded — "a keyframed mask path shows a speed graph and no value graph" —
+is closed. From the owner (2026-08-10): opening the graph on a Path row showed an empty
+pane, which reads as a property that is plainly animating having nothing to say.
+
+**What a path can honestly plot.** A shape has no number, so there is no value curve. What
+there *is* is the crossing from one keyed shape to the next, shaped by the ordinary eases
+K-339 gave those keys — and the rate of that crossing is a real, meaningful curve. So the
+shape's keys now carry a **counted-up interpolation parameter**: key *i* holds *i*, and
+every span therefore rises by exactly one. The number is not worth reading; its slope is
+the whole point, and it is what After Effects draws for a mask path.
+
+**Both lenses draw the slope.** The value lens would otherwise show a meaningless staircase
+and the speed lens the useful curve — one of the two views blank or misleading for no
+reason. A shape channel is therefore drawn in the speed reading whichever lens is on, and a
+pane holding only shapes fits its axis to speeds. Every other channel still follows the
+view's lens exactly as before.
+
+**The keys cross with their eases, and edits go back the same way.** `BridgeMask` carries
+`path_keys` (time, counted value, both `SideInterp`s) rather than bare times, which is what
+lets the lane draw its diamonds *and* the graph draw the curve from one read.
+`set_mask_path_keys` writes a whole re-timed, re-eased list back — refused outright if the
+times are not strictly ascending, because the evaluator walks them assuming so and a
+half-applied reorder is not a mask. The shapes themselves never cross: a key holds a path,
+which the drawing tools edit (K-339).

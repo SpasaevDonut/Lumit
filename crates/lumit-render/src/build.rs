@@ -372,6 +372,10 @@ pub fn build_comp_draws_at(
             LayerKind::Precomp { .. } => None, // handled as Nested below
             LayerKind::Camera { .. } => None,  // shapes the view, draws nothing
         };
+        // The layer's own clock, the same one its transform and effects are
+        // read at (K-213) — a keyframed mask on a layer dragged along the
+        // timeline travels with the layer.
+        let lt = t_comp - layer.start_offset.0.to_f64();
         raw.map(|(mut rgba, w, h, natural)| {
             // Paint first, masks second: a stroke is part of the layer's
             // picture, and a mask gates the picture (K-227, docs/06 render
@@ -392,6 +396,7 @@ pub fn build_comp_draws_at(
                 f64::from(natural.0),
                 f64::from(natural.1),
                 &layer.masks,
+                lt,
             );
             (rgba, w, h, natural)
         })
@@ -882,6 +887,7 @@ pub fn build_comp_draws_at(
                                 comp.height,
                                 f64::from(comp.width),
                                 f64::from(comp.height),
+                                lt,
                             )),
                             comp.width,
                             comp.height,
@@ -1116,6 +1122,7 @@ pub fn build_comp_draws_at(
                             h,
                             f64::from(w),
                             f64::from(h),
+                            lt,
                         )),
                         w,
                         h,

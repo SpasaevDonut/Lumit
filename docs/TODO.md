@@ -17,6 +17,16 @@ this file is the concrete backlog underneath it.
 
 These sit above everything else: they are what the editor feels like in the hand.
 
+- **The lens flare is not bit-stable on this machine, today.**
+    `lumit-gpu`'s `fx::tests::wgsl_lens_flare_matches_the_cpu_frame_reference_and_neutrals`
+    fails its own "GPU lens flare must be bit-stable" assertion on a clean `main`
+    (checked 2026-08-08 by stashing every local change and running it alone): two
+    runs of the same flare give different pixels. Bit-stability is the property
+    the whole additive-blend draw order exists to protect
+    ([impl/lens-flare.md](impl/lens-flare.md) §2.4), so this is a real
+    regression and not a flaky test - and it means the two flare performance
+    items below cannot be measured honestly until it is understood. Find which
+    stage varies before changing anything.
 - **Take the lens flare's bake off the render thread.** Choosing a lens blocks
     the picture for about half a second of pure CPU optics (measured, K-263) -
     the single longest stall the effect has - and the bake is still a closure the
@@ -74,9 +84,21 @@ These are v1-scope surfaces it does not yet match.
     [03-DATA-MODEL.md](03-DATA-MODEL.md) change and a decision, not just a
     gesture; and the Pen's add/delete/convert-vertex siblings and dragging a
     whole path by a segment.
-- **Mask paths cannot be keyframed** ([03-DATA-MODEL.md](03-DATA-MODEL.md) has
-    them as animatable); there is no mask **mode** (add/subtract/intersect) -
-    every mask adds; **mask feather** has neither a control nor a renderer path.
+- **Mask paths have no per-key op.** `SetLayerMasks` rewrites the whole list for
+    every keyframe drag, so one drag is one undo step only because the drag is
+    staged - a per-key op would make it so by construction (K-344). **Lighten**
+    and **Darken** are the two mask modes still unbuilt, and feather is uniform:
+    the variable-width, per-vertex kind is a model change
+    ([03-DATA-MODEL.md](03-DATA-MODEL.md) §7).
+- **Variable-width mask feather** (K-338) - After Effects has had this since CS6:
+    the **Mask Feather Tool** (`G` cycles onto it, under the Pen) drops *feather
+    points* along an existing mask path, each dragging its own radius in or out,
+    so one edge of a mask can be razor-sharp and another 200 px soft. It is what
+    a sky replacement wants - crisp along the horizon, blending away at the
+    corner. It needs a second point set on the path, its own tool, and a
+    rasteriser that varies the ramp width along the boundary rather than using
+    one number. `ToolMode.penMaskFeather` already exists in the toolbar as a stub
+    with an icon and a string and nothing behind it.
 - **Type** - vertical type (needs `lumit-text` to lay a line downwards); true
     glyph metrics across the bridge (the caret, the anchor and the gizmo all use
     the same half-an-em estimate, and one measured advance width would replace
@@ -496,38 +518,6 @@ entry above.
     (sizes are preset-driven today).
 - **Export status still speaks the old idiom** - `export.rs` replies in JSON
     strings (`err_json`) polled on a timer; follow the worker's typed-stream way.
-
-- **Viewer-only exposure and auto tone mapping (asked for by the owner,
-    2026-08-06).** Two controls in the Viewer bar
-    ([07-UI-SPEC.md](07-UI-SPEC.md) §2.2, which gains their entries when they
-    land), both **preview only - neither may change the export**, the same
-    promise preview resolution and the region of interest already make.
-    **(1) Exposure**: a small box that scrubs on drag and takes a typed number,
-    with an aperture icon beside it, reading signed stops to one decimal -
-    `+0.0`, `+1.4`, `-2.3`. The number must mean what the Exposure effect's does
-    (K-106): the same `2^stops` gain in scene-linear, so the two agree.
-    **(2) Auto tone mapping**: an icon that toggles it on and off, nothing more -
-    no curve picker in the bar. It is the "what will this actually look like"
-    switch for a comp whose values run past 1, keeping the low end readable
-    instead of watching the highlights clip flat.
-    Both belong **inside the display transform**, which
-    [06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md) §3.3 already reserves for
-    exactly this ("the exposure control and channel isolation are viewer-only and
-    sit inside this stage") - the display blit in `crates/lumit-gpu/src/lib.rs`
-    (`display`, `display_bgra`, `display_scaled`), not the effect stack. Check
-    before building that the frame cache holds pre-display frames: if it does,
-    changing either control is a re-blit and must not throw a cached frame away.
-    Three things to settle. **The curve is decision-sized** - Reinhard, an
-    ACES fit and AgX all look different, and picking one is a
-    [02-DECISIONS.md](02-DECISIONS.md) entry, not a code comment. **"Auto"
-    needs a definition**: if it adapts to each frame's content the picture
-    breathes as the shot cuts, so say whether it is a fixed curve or a measured
-    one, and if measured, how it is smoothed. **Persistence is an owner call** -
-    per comp in the project like preview resolution, or view state that resets.
-    Whatever they are, the Viewer must say when the picture is not the export:
-    the colour-management badge (§2.2 item 8) is where that lives, in
-    [15-DESIGN.md](15-DESIGN.md)'s calm voice - a statement, never a warning.
-    A tone mapping *effect* is separate work and sits in **Later** below.
 
 - **The menu bar names its own backlog (K-244).** Every row marked
     "(Not implemented)" in File/Edit/Composition/Layer/Animation/View/Help is a

@@ -94,6 +94,26 @@ final class FoldMaskRow extends LayerFoldRow {
   const FoldMaskRow(this.mask, {required int depth}) : super(depth);
 }
 
+/// Which of a mask's animatable values a [FoldMaskValueRow] carries (K-340).
+///
+/// [path] is the shape itself: a value with no number, so its row carries a
+/// stopwatch and diamonds but no field (K-339).
+enum MaskValue { path, opacity, feather, expansion }
+
+/// One of a mask's values — its shape, opacity, feather or expansion — on a
+/// row of its own under the mask (K-222, K-340).
+///
+/// A row rather than another control squeezed onto the mask's own row: the
+/// value column holds one field, every other number in the fold-out has a row
+/// with its name on it, and a property without a row of its own has nowhere to
+/// put the stopwatch that animates it.
+final class FoldMaskValueRow extends LayerFoldRow {
+  final BridgeMask mask;
+  final MaskValue value;
+  const FoldMaskValueRow(this.mask, this.value, {required int depth})
+      : super(depth);
+}
+
 /// One piece of a shape layer's art (K-237): its name, its fill and its
 /// outline — the row that makes a drawn shape editable after the fact.
 final class FoldShapeRow extends LayerFoldRow {
@@ -173,8 +193,51 @@ List<BridgeKeyframe> laneKeysOf(LayerFoldRow row) => switch (row) {
             field0,
           _ => const [],
         },
+      // A mask's numbers key like any other scalar; its **shape** keys as whole
+      // paths, and those keys carry their own eases and a counted-up value
+      // (K-344), so the lane draws their diamonds and the graph can draw the
+      // rate the shape is changing at.
+      FoldMaskValueRow(:final mask, :final value) => value == MaskValue.path
+          ? mask.pathKeys
+          : switch (maskScalarOf(mask, value)) {
+              BridgeScalar_Keyframed(:final field0) => field0,
+              _ => const [],
+            },
       _ => const [],
     };
+
+/// What a mask's value row is called — shared by the row, the graph channel
+/// and anything else that has to name one.
+String maskValueLabel(MaskValue value) => switch (value) {
+      MaskValue.path => l10n.maskPath,
+      MaskValue.opacity => l10n.maskOpacity,
+      MaskValue.feather => l10n.maskFeather,
+      MaskValue.expansion => l10n.maskExpansion,
+    };
+
+/// Which of a mask's animatable numbers [value] names. The shape is not one of
+/// them — it has no number — and asks for the still zero nobody reads.
+BridgeScalar maskScalarOf(BridgeMask mask, MaskValue value) => switch (value) {
+      MaskValue.opacity => mask.opacity,
+      MaskValue.feather => mask.feather,
+      MaskValue.expansion => mask.expansion,
+      MaskValue.path => const BridgeScalar.static_(0),
+    };
+
+/// [mask] with the one number [value] names replaced.
+BridgeMask maskWithScalar(BridgeMask mask, MaskValue value, BridgeScalar to) =>
+    BridgeMask(
+      id: mask.id,
+      name: mask.name,
+      vertices: mask.vertices,
+      closed: mask.closed,
+      inverted: mask.inverted,
+      opacity: value == MaskValue.opacity ? to : mask.opacity,
+      mode: mask.mode,
+      feather: value == MaskValue.feather ? to : mask.feather,
+      expansion: value == MaskValue.expansion ? to : mask.expansion,
+      pathKeys: mask.pathKeys,
+    );
 
 /// A key's position on the comp's frame axis, computed Dart-side from its
 /// exact time and the comp's rate so a paint never crosses the bridge for it.
@@ -280,6 +343,27 @@ bool moveLaneKey({
       entry.layer.setRetimeProperty(value: BridgeScalar.keyframed(next));
       return true;
 
+    case FoldMaskValueRow(:final mask, :final value):
+      if (value == MaskValue.path) {
+        // A path key is a whole shape, so the engine moves it rather than the
+        // frontend rebuilding a list of them (K-340).
+        if (index >= mask.pathKeys.length) return false;
+        return entry.layer.moveMaskPathKey(
+          id: mask.id,
+          from: mask.pathKeys[index].time,
+          to: time,
+        );
+      }
+      final scalar = maskScalarOf(mask, value);
+      if (scalar is! BridgeScalar_Keyframed) return false;
+      final next = moved(scalar.field0);
+      if (next == null) return false;
+      entry.layer.setMask(
+        mask: maskWithScalar(mask, value, BridgeScalar.keyframed(next)),
+        at: null,
+      );
+      return true;
+
     case _:
       return false;
   }
@@ -302,6 +386,8 @@ String foldRowPath(String layerId, LayerFoldRow row) => switch (row) {
       FoldFlowRow(:final kind) => '${flowPath(layerId)}/${kind.name}',
       FoldWaveformRow() => waveformPath(layerId),
       FoldMaskRow(:final mask) => '${masksPath(layerId)}/${mask.id}',
+      FoldMaskValueRow(:final mask, :final value) =>
+        '${masksPath(layerId)}/${mask.id}/${value.name}',
       FoldStrokeRow(:final stroke) => '${paintPath(layerId)}/${stroke.id}',
       FoldShapeRow(:final item) => '${contentsPath(layerId)}/${item.id}',
     };
@@ -472,6 +558,12 @@ List<LayerFoldRow> layerFoldRows({
     if (masksOpen) {
       for (final mask in info.masks) {
         rows.add(FoldMaskRow(mask, depth: 2));
+        // Its values sit under it, the way an effect's parameters sit under
+        // the effect — shape first, because it is what the mask *is*, then the
+        // numbers in the order they apply.
+        for (final value in MaskValue.values) {
+          rows.add(FoldMaskValueRow(mask, value, depth: 3));
+        }
       }
     }
   }

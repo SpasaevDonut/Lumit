@@ -630,13 +630,54 @@ fn feed_layer(
         h.update(json.as_bytes());
     }
 
-    // Masks: static paths are plain data (animated paths will evaluate here).
+    // Masks: static paths are plain data, so the serialised list names them.
+    //
+    // A *keyframed* path serialises identically at every frame, and this key
+    // deliberately carries no time of its own (see the module header: no
+    // timeline position), so the stored keys alone would give every frame of an
+    // animated mask the same name — the mask would sit still through playback
+    // while the cache handed back the first frame it drew. The evaluated shape
+    // is therefore fed as well, at the layer's own local time. Only for masks
+    // that are actually animated: an unanimated mask must keep the exact name it
+    // already had, or every frame every existing project has banked is retired.
     if layer.masks.is_empty() {
         h.update(b"nomask");
     } else {
         h.update(b"masks");
         let json = serde_json::to_string(&layer.masks).unwrap_or_default();
         h.update(json.as_bytes());
+        for mask in layer.masks.iter().filter(|m| m.path_is_animated()) {
+            h.update(b"maskpath");
+            let path = mask.path_at(lt);
+            for v in &path.vertices {
+                for c in [
+                    v.pos.0,
+                    v.pos.1,
+                    v.tan_in.0,
+                    v.tan_in.1,
+                    v.tan_out.0,
+                    v.tan_out.1,
+                ] {
+                    feed_f64(h, c);
+                }
+            }
+            h.update(&[u8::from(path.closed)]);
+        }
+        // The same argument, for the same reason, about the three numbers a
+        // mask can now animate (K-340): a keyed opacity serialises identically
+        // at every frame, so without its evaluated value here the mask would
+        // hold one opacity for the whole of playback. Fed only when the
+        // property actually holds keys, so a still mask keeps the exact name it
+        // already had and nothing banked is retired.
+        for mask in &layer.masks {
+            for property in [&mask.opacity, &mask.feather, &mask.expansion] {
+                if matches!(property.animation, lumit_core::anim::Animation::Static(_)) {
+                    continue;
+                }
+                h.update(b"maskvalue");
+                feed_f64(h, property.value_at(lt));
+            }
+        }
     }
 
     // Matte: the matte source's content at this time, plus the mode flags.
@@ -1465,6 +1506,60 @@ mod tests {
         // Quality tier.
         let half = comp_frame_key(&doc, &comp, 1.0, Quality { divisor: 2 }, &StubStamper);
         assert_ne!(Some(base), half);
+    }
+
+    /// **An animated mask path must rename the frame it moves in.** The key
+    /// carries no time of its own, and a keyframed mask serialises identically
+    /// at every frame — so without the evaluated path in the hash, playback
+    /// would show the mask frozen at whichever frame rendered first. The static
+    /// mask beside it is the control: its key must not move with time, or every
+    /// frame every existing project banked is retired.
+    #[test]
+    fn an_animated_mask_path_keys_the_frame_it_moves_in() {
+        use lumit_core::{
+            anim::SideInterp,
+            mask::{Mask, PathKeyframe},
+        };
+
+        let doc = Document::new();
+        let mut still = text_layer("m", 0.0, 10.0, 0.0);
+        still.masks.push(Mask::rectangle(0.0, 0.0, 10.0, 10.0));
+        let static_comp = comp_with(vec![still.clone()]);
+        assert_eq!(
+            key(&doc, &static_comp, 0.0),
+            key(&doc, &static_comp, 1.0),
+            "a static mask is the same picture at every time"
+        );
+
+        let mut moving = still.clone();
+        let start = Mask::rectangle(0.0, 0.0, 10.0, 10.0).path;
+        let end = Mask::rectangle(40.0, 0.0, 10.0, 10.0).path;
+        moving.masks[0].path_keys = vec![
+            PathKeyframe {
+                time: Rational::new(0, 1).unwrap(),
+                path: start,
+                interp_in: SideInterp::Linear,
+                interp_out: SideInterp::Linear,
+            },
+            PathKeyframe {
+                time: Rational::new(2, 1).unwrap(),
+                path: end,
+                interp_in: SideInterp::Linear,
+                interp_out: SideInterp::Linear,
+            },
+        ];
+        let animated = comp_with(vec![moving.clone()]);
+        assert_ne!(key(&doc, &animated, 0.0), key(&doc, &animated, 1.0));
+        assert_ne!(key(&doc, &animated, 1.0), key(&doc, &animated, 1.5));
+        // Past the last key the shape holds, so the frames there share a name.
+        assert_eq!(key(&doc, &animated, 3.0), key(&doc, &animated, 4.0));
+
+        // The keys live in *layer* time (K-213): the same animation on a layer
+        // dragged along the timeline is the same picture, one offset later.
+        let mut shifted = moving;
+        shifted.start_offset = secs(1.0);
+        let moved = comp_with(vec![shifted]);
+        assert_eq!(key(&doc, &animated, 0.5), key(&doc, &moved, 1.5));
     }
 
     /// The collapse switch is content (docs/06 §1.4 — it changes how a

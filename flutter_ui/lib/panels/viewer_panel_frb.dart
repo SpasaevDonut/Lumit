@@ -64,6 +64,7 @@ import 'viewer_gizmo.dart';
 import 'viewer_layer_map.dart';
 import 'viewer_rotate.dart';
 import 'viewer_shape_layer.dart';
+import 'viewer_shapes.dart';
 import 'viewer_tool_cursor.dart';
 import 'viewer_camera.dart';
 import 'viewer_paint.dart';
@@ -627,6 +628,14 @@ class _Stage extends StatelessWidget {
     // refreshes the model and repaints this from the new one, so checking here
     // only asked the engine a question the answer to which was always no.
     final revision = model.heldRevision;
+    // Where the keyed masks actually are at the frame on screen (K-342). Held
+    // against the document and the playhead, so this costs nothing on a hover
+    // and re-asks only when one of the two has moved.
+    uiState.animatedMaskPaths.refresh(
+      comp: comp,
+      frame: uiState.playheadFrame.value,
+      revision: revision,
+    );
     final viewScale = compSize.width == 0 ? 1.0 : fitted.width / compSize.width;
     double? still(BridgeScalar s) => s is BridgeScalar_Static ? s.field0 : null;
 
@@ -666,7 +675,16 @@ class _Stage extends StatelessWidget {
         draggable: true,
         scalable: sx != null && sy != null && rotation != null,
         rotationDegrees: rotation ?? 0,
-        masks: entry.info.masks,
+        // An animated mask draws where the picture has it, not where its
+        // still path was last written (K-342).
+        masks: [
+          for (final mask in entry.info.masks)
+            switch (uiState.animatedMaskPaths
+                .pathOf(entry.layer.internallayerId, mask.id)) {
+              final live? => maskWithVertices(mask, live),
+              _ => mask,
+            }
+        ],
         shapeContents: entry.info.shapeContents,
         // Where the art's box starts, which is where the layer's pixels do
         // (K-308) — without it every drawn point sat a box away from its art.

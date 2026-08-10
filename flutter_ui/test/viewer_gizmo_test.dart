@@ -10,6 +10,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/panels/viewer_gizmo.dart';
 import 'package:lumit_flutter/panels/viewer_layer_map.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
@@ -77,7 +78,11 @@ void main() {
         ],
         closed: true,
         inverted: false,
-        opacity: 100,
+        opacity: const BridgeScalar.static_(100),
+        mode: BridgeMaskMode.add,
+        feather: const BridgeScalar.static_(0),
+        expansion: const BridgeScalar.static_(0),
+        pathKeys: const [],
       );
 
   /// The same square, as a shape layer's own art rather than a mask. The two

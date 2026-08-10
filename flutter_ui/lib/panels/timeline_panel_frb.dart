@@ -851,6 +851,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
         if (cut > 0) _highlighted = path.substring(0, cut);
         _openRetimeInItsDefaultLens(path);
         _publishEffectSelection();
+        _publishPropertySelection();
       });
 
   /// The other direction: an effect picked in the Effect controls panel lights
@@ -889,6 +890,37 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
   /// has one idea of what is selected, and an effect heading is a row in it.
   /// Rows on more than one layer resolve to the first layer with an effect
   /// picked, because a `.lumfx` document is one layer's stack.
+  /// Tell the rest of the shell which property rows are picked (K-341), so the
+  /// Viewer can outline the layer they belong to and show the points of a mask
+  /// whose Path row is among them.
+  void _publishPropertySelection() {
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    ui.selectedProperties.value =
+        List<String>.unmodifiable(_selectedProperties);
+  }
+
+  /// The Viewer asking for a row to be picked — a mask path it has just
+  /// dragged, whose keyframe moved and whose row should therefore be the one
+  /// showing.
+  void _onSelectPropertyRequested() {
+    if (!mounted) return;
+    final path = _ui?.selectPropertyRequest.value;
+    if (path == null) return;
+    _ui!.selectPropertyRequest.value = null;
+    if (_selectedProperties.length == 1 && _selectedProperties.first == path) {
+      return;
+    }
+    setState(() {
+      _selectedProperties
+        ..clear()
+        ..add(path);
+      _graphKeySelection.clear();
+      final cut = path.indexOf('/');
+      if (cut > 0) _highlighted = path.substring(0, cut);
+    });
+    _publishPropertySelection();
+  }
+
   void _publishEffectSelection() {
     final ui = Provider.of<LumitUiState>(context, listen: false);
     String? layerId;
@@ -963,6 +995,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
       final cut = path.indexOf('/');
       if (cut > 0) _highlighted = path.substring(0, cut);
     });
+    _publishPropertySelection();
   }
 
   /// The graph editor replaces the layer area rather than sitting beside it:
@@ -1303,6 +1336,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     // be on screen (K-326). Ensure-open, not the reveal keys' toggle: showing
     // a row that is already showing must never hide it.
     _ui!.revealPropertyRequest.addListener(_onRevealRequested);
+    _ui!.selectPropertyRequest.addListener(_onSelectPropertyRequested);
     // Merged **once**, not per build: a fresh `Listenable` every rebuild makes
     // every cache bar under it unsubscribe and resubscribe, which during a zoom
     // flight is sixty times a second for nothing (K-293).
@@ -1742,6 +1776,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     _ui?.selectedLayer.removeListener(_onPrimaryChanged);
     _ui?.renderTimings.removeListener(_onTimingsChanged);
     _ui?.revealPropertyRequest.removeListener(_onRevealRequested);
+    _ui?.selectPropertyRequest.removeListener(_onSelectPropertyRequested);
     if (_ui?.deleteClaim == _deleteSelectedMasks) _ui!.deleteClaim = null;
     if (_ui?.copyClaim == _copySelectedKeys) _ui!.copyClaim = null;
     if (_ui?.pasteClaim == _pasteKeysIntoSelection) _ui!.pasteClaim = null;
@@ -2934,8 +2969,29 @@ class _FoldRow extends StatelessWidget {
     // and with it the graph channel — exists before the first drag tick. A
     // modified press is left to the label's own Ctrl/Shift semantics, and a
     // group heading keeps its pick-and-twirl click (K-300).
-    return Listener(
-      onPointerDown: row is FoldGroupRow || row is FoldWaveformRow
+    final picks = row is! FoldGroupRow && row is! FoldWaveformRow;
+    // **And the row must WIN that press, not merely see it** (K-343). The
+    // ground under the outline clears the selection on tap, and its comment
+    // has always said "a switch or a property still wins its own tap in the
+    // arena" — which was true only of rows carrying a gesture recogniser. A
+    // `Listener` is not one: it watches pointers and never competes. So a mask
+    // row lit up on the press and went out again on the release, when the
+    // ground took the tap nothing had claimed. This claims it, for every
+    // picking row, which is what makes them all behave alike.
+    //
+    // Empty `onTap`, because the selecting is done on pointer-down above:
+    // being in the arena at all is the whole job. The row's own controls sit
+    // inside and win their taps ahead of it.
+    final row_ = Listener(
+      // **The whole row takes the press, not just the parts with a widget in
+      // them** (K-343). A `Listener` defers to its children by default, and a
+      // property row is mostly empty space — so a click beside the label never
+      // reached this at all, fell through to the outline behind, and *cleared*
+      // the selection instead of making one. Worst on a mask's Path row, which
+      // has no value field and so is almost all empty. A heading keeps
+      // defer-to-child: its own detector owns the click (K-300).
+      behavior: picks ? HitTestBehavior.opaque : HitTestBehavior.deferToChild,
+      onPointerDown: !picks
           ? null
           : (_) {
               final keys = HardwareKeyboard.instance;
@@ -2974,6 +3030,13 @@ class _FoldRow extends StatelessWidget {
             : _control(context),
       ),
     );
+    return picks
+        ? GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () {},
+            child: row_,
+          )
+        : row_;
   }
 
   /// Copy the effect this heading names (K-275) — or, when it is one of
@@ -3166,6 +3229,19 @@ class _FoldRow extends StatelessWidget {
             onChanged();
           },
           onLabelTap: () => onSelectProperty(path),
+        ),
+      FoldMaskValueRow(:final mask, :final value) => _MaskValueRow(
+          comp: comp,
+          layer: layer,
+          mask: mask,
+          value: value,
+          valueColumn: valueColumn,
+          playheadFrame: playheadFrame,
+          onSeek: onSeek,
+          onChanged: () {
+            onEditProperty(path);
+            onChanged();
+          },
         ),
       FoldShapeRow(:final item) => _ShapeItemRow(
           comp: comp,
@@ -3541,8 +3617,154 @@ class _VolumeRowState extends State<_VolumeRow> {
 /// and only exists while the layer has been given a Retime (Ctrl+Alt+T), so
 /// unlike Volume its scalar arrives on the fold row rather than being read here
 /// (K-184: no bridge calls while drawing).
-/// One mask's row in the fold-out (K-222): its name, its invert switch and its
-/// opacity.
+/// [m] with one or two fields changed. The engine takes the whole mask, so
+/// every edit and every preview here is "the mask, with this changed".
+BridgeMask maskWith(
+  BridgeMask m, {
+  String? name,
+  bool? inverted,
+  BridgeScalar? opacity,
+  BridgeMaskMode? mode,
+  BridgeScalar? feather,
+  BridgeScalar? expansion,
+}) =>
+    BridgeMask(
+      id: m.id,
+      name: name ?? m.name,
+      vertices: m.vertices,
+      closed: m.closed,
+      inverted: inverted ?? m.inverted,
+      opacity: opacity ?? m.opacity,
+      mode: mode ?? m.mode,
+      feather: feather ?? m.feather,
+      expansion: expansion ?? m.expansion,
+      // Where the shape's own keys are is the engine's to say; an edit here
+      // never moves them (`set_mask` patches them back).
+      pathKeys: m.pathKeys,
+    );
+
+/// What a mask mode is called on its dropdown.
+String maskModeLabel(BridgeMaskMode mode) => switch (mode) {
+      BridgeMaskMode.none => l10n.maskModeNone,
+      BridgeMaskMode.add => l10n.maskModeAdd,
+      BridgeMaskMode.subtract => l10n.maskModeSubtract,
+      BridgeMaskMode.intersect => l10n.maskModeIntersect,
+      BridgeMaskMode.difference => l10n.maskModeDifference,
+    };
+
+/// The inline rename shared by the mask row and the shape-item row.
+///
+/// In plain terms: a shape drawn with the ellipse tool arrives called
+/// "Ellipse", which is the right name until it isn't — this is how it becomes
+/// "left eye". The name is a label; a double-click (or the row menu's
+/// **Rename**) turns it into a field; `Enter` or a click elsewhere keeps what
+/// was typed; `Escape` throws it away. An empty name is refused, because a row
+/// with no name is worse than a row named after its tool.
+///
+/// **Why not a single click.** A single tap on these names *selects* the row,
+/// and selection is what `Delete` acts on (K-234), so the rename needs a
+/// gesture of its own.
+///
+/// **Why not `onDoubleTap`.** A double-tap recogniser holds every single tap
+/// back for the whole double-tap window while the arena waits to see whether a
+/// second one is coming — the layer bar found that out beside the razor and
+/// counts its own two timestamps instead (see the note by `_lastBarTap`). The
+/// same trade applies here, and worse: selection arriving a third of a second
+/// after the click is the thing `Delete` is waiting on. Two timestamps owe the
+/// arena nothing.
+///
+/// The commit is one write through the row's own `_write`, so it is one op and
+/// one undo step, exactly as the opacity drag beside it is (K-234, K-240).
+mixin _InlineRename<T extends StatefulWidget> on State<T> {
+  TextEditingController? _editor;
+  DateTime? _lastNameTap;
+
+  /// What the row is called now, and how it writes a new name.
+  String get renameCurrent;
+  void renameCommit(String name);
+
+  /// Open the editor on the current name. Safe to call twice; the second call
+  /// leaves the edit in progress alone rather than restarting it.
+  void startRename() {
+    if (_editor != null) return;
+    setState(() => _editor = TextEditingController(text: renameCurrent));
+  }
+
+  /// Close the editor, writing what was typed only when [keep].
+  void _endRename({required bool keep}) {
+    // Both ways out can land here for one edit — submitting and then losing
+    // the pointer — and the row can be gone by the time the second arrives.
+    if (!mounted || _editor == null) return;
+    final text = _editor?.text.trim() ?? '';
+    setState(() {
+      _editor?.dispose();
+      _editor = null;
+    });
+    if (!keep || text.isEmpty || text == renameCurrent) return;
+    renameCommit(text);
+  }
+
+  @override
+  void dispose() {
+    _editor?.dispose();
+    super.dispose();
+  }
+
+  /// The name cell: the label, or the editor once a rename has started.
+  ///
+  /// [onTap] still fires on the first tap and at once, so selection is never
+  /// held up; the second tap inside the double-tap window opens the editor.
+  Widget renameName({
+    required String nameKey,
+    required String editorKey,
+    required TextStyle style,
+    VoidCallback? onTap,
+  }) {
+    final editor = _editor;
+    if (editor != null) {
+      return Focus(
+        // An ancestor of the field, so `Escape` reaches here after the field
+        // has had its say: abandon the edit and keep the stored name.
+        onKeyEvent: (_, event) {
+          if (event is! KeyDownEvent ||
+              event.logicalKey != LogicalKeyboardKey.escape) {
+            return KeyEventResult.ignored;
+          }
+          _endRename(keep: false);
+          return KeyEventResult.handled;
+        },
+        child: HouseTextField(
+          key: ValueKey<String>(editorKey),
+          controller: editor,
+          autofocus: true,
+          onSubmitted: (_) => _endRename(keep: true),
+          // Clicking anywhere else finishes the edit and keeps what was typed,
+          // the same as every other inline rename here (K-243).
+          onTapOutside: () => _endRename(keep: true),
+        ),
+      );
+    }
+    return GestureDetector(
+      key: ValueKey<String>(nameKey),
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        onTap?.call();
+        final now = DateTime.now();
+        final last = _lastNameTap;
+        _lastNameTap = now;
+        if (last != null && now.difference(last) < kDoubleTapTimeout) {
+          _lastNameTap = null;
+          startRename();
+        }
+      },
+      child: Text(renameCurrent, style: style, overflow: TextOverflow.ellipsis),
+    );
+  }
+}
+
+/// One mask's row in the fold-out (K-222): its name, its mode, its invert
+/// switch and its opacity. Its feather and its expansion are rows of their own
+/// underneath, because the value column holds one field.
 ///
 /// Read from the model, written through the layer's own handle — the same shape
 /// as every other row here. Deleting a mask is on its right-click menu, and on
@@ -3555,6 +3777,7 @@ class _MaskRow extends StatefulWidget {
   final LayerReference layer;
   final BridgeMask mask;
   final ValueColumn valueColumn;
+
   final VoidCallback onChanged;
   final VoidCallback? onLabelTap;
 
@@ -3574,81 +3797,24 @@ class _MaskRow extends StatefulWidget {
   State<_MaskRow> createState() => _MaskRowState();
 }
 
-class _MaskRowState extends State<_MaskRow> {
-  /// The opacity a drag in flight is showing, before it commits. Held here so
-  /// the whole gesture is **one** op and so one Ctrl+Z undoes the whole drag:
-  /// writing on every tick filled the undo stack with near-identical steps,
-  /// and one undo backed out a single percent — which looked like nothing.
-  double? _staged;
-
-  /// Keeps the drag's preview requests about one render apart, as every other
-  /// dragged value does.
-  final PreviewThrottle _throttle = PreviewThrottle();
+class _MaskRowState extends State<_MaskRow> with _InlineRename<_MaskRow> {
+  @override
+  String get renameCurrent => widget.mask.name;
 
   @override
-  void dispose() {
-    _throttle.cancel();
-    super.dispose();
-  }
-
-  /// Show the opacity the drag is passing through without writing it (K-240).
-  ///
-  /// The last of the three rows to get this. Staging alone made the drag one
-  /// undo step (K-234) and left the picture still until the button came up;
-  /// paint and shape art were fixed under K-239 and this is the same fix, in
-  /// the same shape, through the same clone-and-patch render path.
-  void _preview(double opacity) {
-    final ui = Provider.of<LumitUiState>(context, listen: false);
-    _throttle.request(() {
-      try {
-        widget.comp.renderFrameWithMaskPreview(
-          frame: BigInt.from(ui.playheadFrame.value),
-          scale: ui.viewerScale,
-          layer: widget.layer,
-          masks: [
-            for (final m in widget.layer.getMasks())
-              if (m.id == widget.mask.id) _withOpacity(m, opacity) else m,
-          ],
-        );
-      } catch (_) {
-        // A preview is a courtesy; the drag carries on without it.
-      }
-    });
-  }
-
-  static BridgeMask _withOpacity(BridgeMask m, double opacity) => BridgeMask(
-        id: m.id,
-        name: m.name,
-        vertices: m.vertices,
-        closed: m.closed,
-        inverted: m.inverted,
-        opacity: opacity,
-      );
+  void renameCommit(String name) => _write(name: name);
 
   /// Write the mask back with one field changed. The engine takes the whole
   /// mask, so this is the only shape an edit has.
-  void _write({bool? inverted, double? opacity}) {
-    final mask = widget.mask;
+  void _write({String? name, bool? inverted, BridgeMaskMode? mode}) {
     try {
       widget.layer.setMask(
-        mask: BridgeMask(
-          id: mask.id,
-          name: mask.name,
-          vertices: mask.vertices,
-          closed: mask.closed,
-          inverted: inverted ?? mask.inverted,
-          opacity: opacity ?? mask.opacity,
-        ),
+        mask: maskWith(widget.mask, name: name, inverted: inverted, mode: mode),
       );
       widget.onChanged();
     } catch (_) {
       // The mask or its layer went away between the draw and the click.
     }
-  }
-
-  void _commitOpacity(num v) {
-    setState(() => _staged = null);
-    _write(opacity: v.toDouble());
   }
 
   @override
@@ -3665,20 +3831,23 @@ class _MaskRowState extends State<_MaskRow> {
               size: iconSize, color: t.textSecondary),
           const SizedBox(width: 4),
           // The name is the row's handle, exactly as it is on a transform row:
-          // tapping it selects the mask, and Delete then acts on it.
+          // tapping it selects the mask, and Delete then acts on it. A
+          // double-click renames it in place, and so does the row menu.
           Expanded(
-            child: GestureDetector(
-              key: ValueKey<String>('tl-mask-name-${mask.id}'),
-              behavior: HitTestBehavior.opaque,
+            child: renameName(
+              nameKey: 'tl-mask-name-${mask.id}',
+              editorKey: 'tl-mask-rename-${mask.id}',
+              style: t.body,
               onTap: widget.onLabelTap,
-              child: Text(mask.name,
-                  style: t.body, overflow: TextOverflow.ellipsis),
             ),
           ),
+          // **Both of the mask's own switches live in the value column**, where
+          // every other row's control sits, rather than floating beside the
+          // name: the invert mark and the mode picker are what the mask *is*,
+          // and a control that sits in no column reads as belonging to nothing.
           SizedBox(
             width: valueColumn.width,
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
               children: [
                 LumitTooltip(
                   message: l10n.tipInvert,
@@ -3695,34 +3864,25 @@ class _MaskRowState extends State<_MaskRow> {
                   ),
                 ),
                 const SizedBox(width: 6),
-                SizedBox(
-                  width: 56,
-                  // Staged like every other dragged value here: the drag shows
-                  // live and commits once on release, so it is one op and one
-                  // undo step.
-                  child: DragValueField(
-                    key: ValueKey<String>('tl-mask-opacity-${mask.id}'),
-                    value: _staged ?? mask.opacity,
-                    min: 0,
-                    max: 100,
-                    suffix: '%',
-                    onChanged: _commitOpacity,
-                    onChangeLive: (v) {
-                      setState(() => _staged = v.toDouble());
-                      _preview(v.toDouble());
-                    },
-                    onChangeEnd: _commitOpacity,
-                    onDragCancel: () {
-                      setState(() => _staged = null);
-                      // The picture is showing a value nobody committed; put
-                      // the document's own back on screen.
-                      _preview(widget.mask.opacity);
-                    },
+                // The rest of the cell, so a long mode name ellipsises rather
+                // than pushing the row wider than its column — the same rule
+                // the blend picker follows.
+                Expanded(
+                  child: LumitTooltip(
+                    message: l10n.tipMaskMode,
+                    child: BareDropdown<BridgeMaskMode>(
+                      key: ValueKey<String>('tl-mask-mode-${mask.id}'),
+                      value: mask.mode,
+                      options: BridgeMaskMode.values,
+                      label: maskModeLabel,
+                      onChanged: (m) => _write(mode: m),
+                    ),
                   ),
                 ),
               ],
             ),
           ),
+          SizedBox(width: valueColumn.rightInset),
         ],
       ),
     );
@@ -3734,18 +3894,248 @@ class _MaskRowState extends State<_MaskRow> {
       position: at,
       builder: (close) => FloatSurface(
         width: 160,
-        child: MenuRow(
-          key: ValueKey<String>('tl-mask-delete-${widget.mask.id}'),
-          onPressed: () {
-            close(null);
-            try {
-              widget.layer.deleteMask(id: widget.mask.id);
-              widget.onChanged();
-            } catch (_) {}
-          },
-          child: Text(l10n.deleteMask),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            MenuRow(
+              key: ValueKey<String>('tl-mask-rename-menu-${widget.mask.id}'),
+              onPressed: () {
+                close(null);
+                startRename();
+              },
+              // The same bare "Rename" the Project panel's row menu offers.
+              child: Text(l10n.rename),
+            ),
+            MenuRow(
+              key: ValueKey<String>('tl-mask-delete-${widget.mask.id}'),
+              onPressed: () {
+                close(null);
+                try {
+                  widget.layer.deleteMask(id: widget.mask.id);
+                  widget.onChanged();
+                } catch (_) {}
+              },
+              child: Text(l10n.deleteMask),
+            ),
+          ],
         ),
       ),
+    );
+  }
+}
+
+/// One of a mask's values on a row under it (K-222, K-340): its shape, its
+/// opacity, its feather or its expansion.
+///
+/// **Every one of them animates, and animates the way everything else does.**
+/// The row carries the same stopwatch and ◄ ◆ ► the transform and effect rows
+/// carry, reads its value at the playhead, and writes an edit into the key
+/// sitting there — so a mask is keyed with the same gesture as a position.
+///
+/// The **shape** is the exception in one respect only: a path has no number to
+/// put in a field, so its row is a name, a stopwatch and its diamonds, and the
+/// shape itself is edited where it is drawn (K-339).
+///
+/// The drag is staged and previewed exactly as it always was, so the whole
+/// gesture is one op and one undo step (K-234, K-240).
+///
+/// The row has no label tap: the mask itself is what Delete acts on, and a
+/// selectable value row under it would give Delete a path it cannot resolve to
+/// a mask.
+class _MaskValueRow extends StatefulWidget {
+  final LayerReference layer;
+  final CompositionReference comp;
+  final BridgeMask mask;
+  final MaskValue value;
+  final ValueColumn valueColumn;
+  final int playheadFrame;
+  final ValueChanged<int> onSeek;
+  final VoidCallback onChanged;
+
+  const _MaskValueRow({
+    required this.layer,
+    required this.comp,
+    required this.mask,
+    required this.value,
+    required this.valueColumn,
+    required this.playheadFrame,
+    required this.onSeek,
+    required this.onChanged,
+  });
+
+  @override
+  State<_MaskValueRow> createState() => _MaskValueRowState();
+}
+
+class _MaskValueRowState extends State<_MaskValueRow> {
+  double? _staged;
+  final PreviewThrottle _throttle = PreviewThrottle();
+
+  bool get _isPath => widget.value == MaskValue.path;
+
+  /// This row's animation. The path has none of its own — its keys are whole
+  /// shapes, not numbers — so it is not one of these.
+  BridgeScalar get _scalar => switch (widget.value) {
+        MaskValue.opacity => widget.mask.opacity,
+        MaskValue.feather => widget.mask.feather,
+        MaskValue.expansion => widget.mask.expansion,
+        MaskValue.path => const BridgeScalar.static_(0),
+      };
+
+  String get _label => switch (widget.value) {
+        MaskValue.path => l10n.maskPath,
+        MaskValue.opacity => l10n.maskOpacity,
+        MaskValue.feather => l10n.maskFeather,
+        MaskValue.expansion => l10n.maskExpansion,
+      };
+
+  /// What a drag on this row may ask for. Feather is a width, so it has no
+  /// negative side; expansion grows one way and shrinks the other; opacity is
+  /// a percentage.
+  (double, double) get _range => switch (widget.value) {
+        MaskValue.opacity => (0, 100),
+        MaskValue.feather => (0, 1000),
+        _ => (-1000, 1000),
+      };
+
+  int get _decimals => widget.value == MaskValue.opacity ? 0 : 1;
+
+  String get _suffix => widget.value == MaskValue.opacity ? '%' : ' px';
+
+  BridgeMask _patched(BridgeMask m, BridgeScalar v) => switch (widget.value) {
+        MaskValue.opacity => maskWith(m, opacity: v),
+        MaskValue.feather => maskWith(m, feather: v),
+        _ => maskWith(m, expansion: v),
+      };
+
+  @override
+  void dispose() {
+    _throttle.cancel();
+    super.dispose();
+  }
+
+  /// Show the value the drag is passing through without writing it (K-240).
+  void _preview(BridgeScalar v) {
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    _throttle.request(() {
+      try {
+        widget.comp.renderFrameWithMaskPreview(
+          frame: BigInt.from(ui.playheadFrame.value),
+          scale: ui.viewerScale,
+          layer: widget.layer,
+          masks: [
+            for (final m in widget.layer.getMasks())
+              if (m.id == widget.mask.id) _patched(m, v) else m,
+          ],
+        );
+      } catch (_) {
+        // A preview is a courtesy; the drag carries on without it.
+      }
+    });
+  }
+
+  void _write(BridgeScalar v) {
+    setState(() => _staged = null);
+    try {
+      widget.layer.setMask(mask: _patched(widget.mask, v));
+      widget.onChanged();
+    } catch (_) {
+      // The mask or its layer went away mid-drag.
+    }
+  }
+
+  /// A still value: the number typed or dragged becomes the value.
+  void _commitStatic(num v) => _write(BridgeScalar.static_(v.toDouble()));
+
+  /// An animated one: the edit lands on the key under the playhead, or plants
+  /// one there — never flattening the curve (docs/07 §4.3).
+  void _commitKeyed(double v) =>
+      _write(scalarWithValueAt(_scalar, v, widget.comp, widget.playheadFrame));
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    return Row(
+      children: [
+        if (_isPath)
+          MaskPathKeyframesFrb(
+            layer: widget.layer,
+            mask: widget.mask,
+            comp: widget.comp,
+            playheadFrame: widget.playheadFrame,
+            onSeek: widget.onSeek,
+            onChanged: widget.onChanged,
+          )
+        else
+          KeyframeControlsFrb(
+            scalars: [_scalar],
+            onWrite: (s) => _write(s.first),
+            comp: widget.comp,
+            playheadFrame: widget.playheadFrame,
+            onSeek: widget.onSeek,
+            rowKey: 'tl-mask-${widget.value.name}-${widget.mask.id}',
+          ),
+        const SizedBox(width: 4),
+        Expanded(
+          child: Text(_label, style: t.body, overflow: TextOverflow.ellipsis),
+        ),
+        // Left of the value column, exactly where an effect parameter's field
+        // sits, so every number down an open layer forms one column.
+        SizedBox(
+          width: widget.valueColumn.width,
+          child: _isPath
+              ? const SizedBox.shrink()
+              : Align(
+                  alignment: Alignment.centerLeft,
+                  child: SizedBox(width: 72, child: _field()),
+                ),
+        ),
+        SizedBox(width: widget.valueColumn.rightInset),
+      ],
+    );
+  }
+
+  Widget _field() {
+    final (min, max) = _range;
+    final key =
+        ValueKey<String>('tl-mask-${widget.value.name}-${widget.mask.id}');
+    final scalar = _scalar;
+    if (scalar is! BridgeScalar_Keyframed) {
+      final stored =
+          _staged ?? (scalar is BridgeScalar_Static ? scalar.field0 : 0.0);
+      return DragValueField(
+        key: key,
+        value: stored,
+        min: min,
+        max: max,
+        decimals: _decimals,
+        suffix: _suffix,
+        onChanged: _commitStatic,
+        onChangeLive: (v) {
+          setState(() => _staged = v.toDouble());
+          _preview(BridgeScalar.static_(v.toDouble()));
+        },
+        onChangeEnd: _commitStatic,
+        onDragCancel: () {
+          setState(() => _staged = null);
+          // Put the document's own value back on screen.
+          _preview(scalar);
+        },
+      );
+    }
+    // Animated: the field shows what the curve reads at the playhead, and an
+    // edit writes the key there. No live preview mid-drag — staging a keyed
+    // value through the static preview would lie about the curve.
+    return KeyedValueField(
+      fieldKey: key,
+      value: sampleScalar(
+          scalar: scalar, time: timeOfFrame(widget.comp, widget.playheadFrame)),
+      min: min,
+      max: max,
+      decimals: _decimals,
+      suffix: _suffix,
+      onCommit: _commitKeyed,
     );
   }
 }
@@ -3776,7 +4166,8 @@ class _ShapeItemRow extends StatefulWidget {
   State<_ShapeItemRow> createState() => _ShapeItemRowState();
 }
 
-class _ShapeItemRowState extends State<_ShapeItemRow> {
+class _ShapeItemRowState extends State<_ShapeItemRow>
+    with _InlineRename<_ShapeItemRow> {
   /// The opacity a drag is part way through, or null when nothing is dragging.
   /// Without it the field committed on every tick, so one drag was a stack of
   /// ops and `Ctrl+Z` backed out a hair (K-238, K-239).
@@ -3831,8 +4222,14 @@ class _ShapeItemRowState extends State<_ShapeItemRow> {
     _write(opacity: v.toDouble());
   }
 
+  @override
+  String get renameCurrent => item.name;
+
+  @override
+  void renameCommit(String name) => _write(name: name);
+
   /// Write the contents back with this item changed, or dropped.
-  void _write({double? opacity, bool delete = false}) {
+  void _write({String? name, double? opacity, bool delete = false}) {
     try {
       final contents = <BridgeShapeItem>[
         for (final other in layer.getShapeContents())
@@ -3841,7 +4238,7 @@ class _ShapeItemRowState extends State<_ShapeItemRow> {
           else if (!delete)
             BridgeShapeItem(
               id: other.id,
-              name: other.name,
+              name: name ?? other.name,
               vertices: other.vertices,
               closed: other.closed,
               fill: other.fill,
@@ -3868,9 +4265,14 @@ class _ShapeItemRowState extends State<_ShapeItemRow> {
           lumitIcon(LumitIcon.rectangle,
               size: iconSize, color: t.textSecondary),
           const SizedBox(width: 4),
+          // Named after the tool that drew it, and renamed here: a
+          // double-click on the name, or the row menu's Rename.
           Expanded(
-            child:
-                Text(item.name, style: t.body, overflow: TextOverflow.ellipsis),
+            child: renameName(
+              nameKey: 'tl-shape-name-${item.id}',
+              editorKey: 'tl-shape-rename-${item.id}',
+              style: t.body,
+            ),
           ),
           SizedBox(
             width: widget.valueColumn.width,
@@ -3914,13 +4316,27 @@ class _ShapeItemRowState extends State<_ShapeItemRow> {
       position: at,
       builder: (close) => FloatSurface(
         width: 160,
-        child: MenuRow(
-          key: ValueKey<String>('tl-shape-delete-${item.id}'),
-          onPressed: () {
-            close(null);
-            _write(delete: true);
-          },
-          child: Text(l10n.deleteShape),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            MenuRow(
+              key: ValueKey<String>('tl-shape-rename-menu-${item.id}'),
+              onPressed: () {
+                close(null);
+                startRename();
+              },
+              child: Text(l10n.rename),
+            ),
+            MenuRow(
+              key: ValueKey<String>('tl-shape-delete-${item.id}'),
+              onPressed: () {
+                close(null);
+                _write(delete: true);
+              },
+              child: Text(l10n.deleteShape),
+            ),
+          ],
         ),
       ),
     );

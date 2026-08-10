@@ -586,7 +586,7 @@ pub enum BridgeSideInterp {
 
 impl BridgeSideInterp {
     #[frb(ignore)]
-    fn read(side: SideInterp) -> BridgeSideInterp {
+    pub(crate) fn read(side: SideInterp) -> BridgeSideInterp {
         match side {
             SideInterp::Hold => BridgeSideInterp::Hold,
             SideInterp::Linear => BridgeSideInterp::Linear,
@@ -597,7 +597,7 @@ impl BridgeSideInterp {
     }
 
     #[frb(ignore)]
-    fn write(self) -> SideInterp {
+    pub(crate) fn write(self) -> SideInterp {
         match self {
             BridgeSideInterp::Hold => SideInterp::Hold,
             BridgeSideInterp::Linear => SideInterp::Linear,

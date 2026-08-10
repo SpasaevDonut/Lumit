@@ -1355,7 +1355,9 @@ void main() {
 
       final masks = p.layer.getMasks();
       expect(masks, hasLength(1));
-      expect(masks.single.name, 'Path');
+      // Numbered, not named for the tool: every path the Pen draws is a path,
+      // so the number is the only thing that tells two of them apart (K-340).
+      expect(masks.single.name, 'Mask 1');
       expect(masks.single.vertices, hasLength(3));
       expect(masks.single.closed, isTrue);
     });
@@ -1406,7 +1408,11 @@ void main() {
           ],
           closed: true,
           inverted: false,
-          opacity: 100,
+          opacity: const BridgeScalar.static_(100),
+          mode: BridgeMaskMode.add,
+          feather: const BridgeScalar.static_(0),
+          expansion: const BridgeScalar.static_(0),
+          pathKeys: const [],
         ),
       );
       p.uiState.model.refresh();
@@ -1582,7 +1588,11 @@ void main() {
           ],
           closed: true,
           inverted: false,
-          opacity: 100,
+          opacity: const BridgeScalar.static_(100),
+          mode: BridgeMaskMode.add,
+          feather: const BridgeScalar.static_(0),
+          expansion: const BridgeScalar.static_(0),
+          pathKeys: const [],
         ),
       );
       p.uiState.setSelection([shape]);

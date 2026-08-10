@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use flutter_rust_bridge::frb;
+use lumit_core::anim::{Animation, Keyframe, Property};
 use lumit_core::model::{EffectInstance, Layer};
 use lumit_core::time::{CompTime, Duration, Rational, SourceTime};
 
@@ -8,7 +9,9 @@ use uuid::Uuid;
 
 use crate::api::{
     composition::{bridge_marker, core_markers, BridgeMarker},
-    effect::{BridgeEffectInstance, BridgeRational, BridgeScalar},
+    effect::{
+        BridgeEffectInstance, BridgeKeyframe, BridgeRational, BridgeScalar, BridgeSideInterp,
+    },
     project_item::ItemReference,
     state::{LumitBridgeState, PROJECTS},
     BridgeError,
@@ -248,13 +251,109 @@ pub struct BridgeMask {
     /// gates nothing yet; it is a shape being drawn.
     pub closed: bool,
     pub inverted: bool,
-    /// 0..100.
-    pub opacity: f64,
+    /// 0..100, and animatable exactly as a transform property is (K-340) — so
+    /// the Timeline row carries the same stopwatch and the same ◄ ◆ ► as every
+    /// other property. Times are the layer's own, as everywhere else (K-213).
+    pub opacity: BridgeScalar,
+    /// How this mask combines with the ones above it.
+    pub mode: BridgeMaskMode,
+    /// Width of the soft edge in layer pixels; 0 is the hard antialiased edge.
+    pub feather: BridgeScalar,
+    /// Grow (+) or shrink (−) the shape, in layer pixels.
+    pub expansion: BridgeScalar,
+    /// This mask's **shape** keys — empty when the path does not animate.
+    /// Composition time, carried out by the layer's start offset exactly as a
+    /// scalar's keyframe times cross (K-213).
+    ///
+    /// The shapes themselves do not cross: a key holds a whole path, which the
+    /// frontend edits through the drawing tools rather than by sending a list
+    /// of them (K-339). What crosses is where the keys are and how they ease —
+    /// which is everything the lane and the graph need.
+    ///
+    /// **`value` is the interpolation parameter, counted up** (K-344): key *i*
+    /// carries *i*, so every span rises by exactly 1 as the shape crosses from
+    /// one key to the next. The number itself means nothing to look at, but its
+    /// *slope* is the rate the shape is changing at — which is the one curve a
+    /// path can honestly draw, and the one After Effects draws for a mask path.
+    pub path_keys: Vec<BridgeKeyframe>,
+}
+
+/// A mask's scalar as an engine [`Property`], with every value it can take held
+/// inside `[lo, hi]`.
+///
+/// **Clamping an animation means clamping its keys**, not just the number the
+/// playhead happens to be over: a mask keyed to −40 % opacity three seconds
+/// away is just as wrong as one set to −40 % now, and it would arrive the
+/// moment the playhead did. An expression cannot be clamped here at all — it is
+/// a string until it runs — so it is passed through and the renderer's own
+/// reads keep their clamps.
+#[frb(ignore)]
+fn clamped_property(
+    scalar: &BridgeScalar,
+    offset: Rational,
+    lo: f64,
+    hi: f64,
+) -> Result<Property, BridgeError> {
+    let animation = match scalar.animation_at(offset)? {
+        Animation::Static(v) => Animation::Static(v.clamp(lo, hi)),
+        Animation::Keyframed(keys) => Animation::Keyframed(
+            keys.into_iter()
+                .map(|k| Keyframe {
+                    value: k.value.clamp(lo, hi),
+                    ..k
+                })
+                .collect(),
+        ),
+        expression => expression,
+    };
+    Ok(Property {
+        animation,
+        extra: serde_json::Map::new(),
+    })
+}
+
+/// [`lumit_core::mask::MaskMode`] across the bridge. Its own enum because the
+/// engine's types do not cross (docs/17 §Types), and named the same so the two
+/// cannot drift apart unnoticed.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BridgeMaskMode {
+    /// Geometry only: the path is editable and gates nothing.
+    None,
+    #[default]
+    Add,
+    Subtract,
+    Intersect,
+    Difference,
+}
+
+impl BridgeMaskMode {
+    #[frb(ignore)]
+    fn read(mode: lumit_core::mask::MaskMode) -> Self {
+        match mode {
+            lumit_core::mask::MaskMode::None => Self::None,
+            lumit_core::mask::MaskMode::Add => Self::Add,
+            lumit_core::mask::MaskMode::Subtract => Self::Subtract,
+            lumit_core::mask::MaskMode::Intersect => Self::Intersect,
+            lumit_core::mask::MaskMode::Difference => Self::Difference,
+        }
+    }
+
+    #[frb(ignore)]
+    fn write(self) -> lumit_core::mask::MaskMode {
+        match self {
+            Self::None => lumit_core::mask::MaskMode::None,
+            Self::Add => lumit_core::mask::MaskMode::Add,
+            Self::Subtract => lumit_core::mask::MaskMode::Subtract,
+            Self::Intersect => lumit_core::mask::MaskMode::Intersect,
+            Self::Difference => lumit_core::mask::MaskMode::Difference,
+        }
+    }
 }
 
 impl BridgeMask {
     #[frb(ignore)]
-    fn read(mask: &lumit_core::mask::Mask) -> Self {
+    fn read_at(mask: &lumit_core::mask::Mask, offset: Rational) -> Self {
         Self {
             id: mask.id,
             name: mask.name.clone(),
@@ -273,15 +372,35 @@ impl BridgeMask {
                 .collect(),
             closed: mask.path.closed,
             inverted: mask.inverted,
-            opacity: mask.opacity,
+            opacity: BridgeScalar::read_at(&mask.opacity, offset),
+            mode: BridgeMaskMode::read(mask.mode),
+            feather: BridgeScalar::read_at(&mask.feather, offset),
+            expansion: BridgeScalar::read_at(&mask.expansion, offset),
+            path_keys: mask
+                .path_keys
+                .iter()
+                .enumerate()
+                .map(|(i, k)| {
+                    let time = k.time.checked_add(offset).unwrap_or(k.time);
+                    BridgeKeyframe {
+                        time: BridgeRational {
+                            num: time.num(),
+                            den: time.den(),
+                        },
+                        value: i as f64,
+                        interp_in: BridgeSideInterp::read(k.interp_in),
+                        interp_out: BridgeSideInterp::read(k.interp_out),
+                    }
+                })
+                .collect(),
         }
     }
 
     /// The engine's mask this describes. `id` is kept, so an edit names the
     /// mask it came from; a caller making a *new* mask sends a fresh uuid.
     #[frb(ignore)]
-    pub(crate) fn write(&self) -> lumit_core::mask::Mask {
-        lumit_core::mask::Mask {
+    pub(crate) fn write(&self, offset: Rational) -> Result<lumit_core::mask::Mask, BridgeError> {
+        Ok(lumit_core::mask::Mask {
             id: self.id,
             name: self.name.clone(),
             path: lumit_core::mask::BezierPath {
@@ -298,10 +417,83 @@ impl BridgeMask {
             },
             inverted: self.inverted,
             // A mask with an absurd opacity is a mask that renders wrongly for
-            // ever after; clamped here rather than trusted.
-            opacity: self.opacity.clamp(0.0, 100.0),
+            // ever after; clamped here rather than trusted. Clamping a whole
+            // animation means clamping every key it holds.
+            opacity: clamped_property(&self.opacity, offset, 0.0, 100.0)?,
+            // What this type does not carry yet. A mask edited from the frontend
+            // must not LOSE these, so `set_mask` patches them back from the mask
+            // it is replacing (see `write_over`); this bare form is only for a
+            // mask that did not exist a moment ago, which has neither.
+            path_keys: Vec::new(),
             extra: serde_json::Map::new(),
+            mode: self.mode.write(),
+            // Same reasoning as opacity. A negative feather is not a thing, and
+            // both are bounded so a typo cannot ask for a distance field the
+            // size of a continent. The ceiling is generous: 5000 layer pixels
+            // is wider than any comp anyone is masking.
+            feather: clamped_property(&self.feather, offset, 0.0, 5000.0)?,
+            expansion: clamped_property(&self.expansion, offset, -5000.0, 5000.0)?,
+        })
+    }
+
+    /// [`Self::write`], but keeping what `previous` carries and this type does
+    /// not describe: the path keyframes, and the forward-compatibility `extra`
+    /// a newer Lumit may have written (docs/10 §1.1 makes preserving it
+    /// mandatory).
+    ///
+    /// **Why this exists.** `BridgeMask` is the only bridge type that rebuilds
+    /// its engine value field by field rather than patching the one it read, so
+    /// every field the engine grows and the bridge does not is silently dropped
+    /// the moment the frontend edits that mask. Dragging a mask's opacity would
+    /// otherwise delete its animation.
+    ///
+    /// **A shape edit on an animated mask lands on the key under the
+    /// playhead** (K-340). Once a path is keyed, `path` is no longer what the
+    /// mask draws — `path_at` reads the keys — so writing the dragged vertices
+    /// there would move nothing at all and the shape would appear frozen under
+    /// the pointer. `at` is where the playhead is; with it, the vertices update
+    /// the key sitting at that time or plant one holding them, which is what
+    /// dragging a keyframed value does everywhere else (docs/07 §4.3). Without
+    /// it — an edit that is not a shape edit, such as an opacity drag — the
+    /// keys are simply carried through untouched.
+    #[frb(ignore)]
+    fn write_over(
+        &self,
+        previous: &lumit_core::mask::Mask,
+        offset: Rational,
+        at: Option<Rational>,
+    ) -> Result<lumit_core::mask::Mask, BridgeError> {
+        let mut written = lumit_core::mask::Mask {
+            path_keys: previous.path_keys.clone(),
+            extra: previous.extra.clone(),
+            ..self.write(offset)?
+        };
+        if let (false, Some(at)) = (written.path_keys.is_empty(), at) {
+            let at = at
+                .checked_sub(offset)
+                .map_err(|_| BridgeError::InvalidKeyframes)?;
+            let path = std::mem::replace(&mut written.path, previous.path.clone());
+            match written.path_keys.iter_mut().find(|k| k.time == at) {
+                Some(key) => key.path = path,
+                None => {
+                    let i = written
+                        .path_keys
+                        .iter()
+                        .position(|k| k.time > at)
+                        .unwrap_or(written.path_keys.len());
+                    written.path_keys.insert(
+                        i,
+                        lumit_core::mask::PathKeyframe {
+                            time: at,
+                            path,
+                            interp_in: lumit_core::anim::SideInterp::Linear,
+                            interp_out: lumit_core::anim::SideInterp::Linear,
+                        },
+                    );
+                }
+            }
         }
+        Ok(written)
     }
 }
 
@@ -595,7 +787,11 @@ pub(crate) fn read_layer_info(
             .retime
             .as_ref()
             .map(|r| BridgeScalar::read_at(r, layer.start_offset.0)),
-        masks: layer.masks.iter().map(BridgeMask::read).collect(),
+        masks: layer
+            .masks
+            .iter()
+            .map(|m| BridgeMask::read_at(m, layer.start_offset.0))
+            .collect(),
         paint: layer.paint.iter().map(BridgeStroke::read).collect(),
         markers: layer
             .markers
@@ -1124,7 +1320,13 @@ impl LayerReference {
     /// every row whether it has masks to list, exactly as it asks about clips.
     #[frb(sync)]
     pub fn get_masks(&self) -> Result<Vec<BridgeMask>, BridgeError> {
-        Ok(self.item()?.masks.iter().map(BridgeMask::read).collect())
+        let layer = self.item()?;
+        let offset = layer.start_offset.0;
+        Ok(layer
+            .masks
+            .iter()
+            .map(|m| BridgeMask::read_at(m, offset))
+            .collect())
     }
 
     /// Add `mask` to the top of this layer's stack.
@@ -1141,25 +1343,44 @@ impl LayerReference {
         if mask.vertices.len() < 2 {
             return Err(BridgeError::EmptyPath);
         }
-        let mut masks = self.item()?.masks;
-        masks.push(mask.write());
+        let layer = self.item()?;
+        let offset = layer.start_offset.0;
+        let mut masks = layer.masks;
+        masks.push(mask.write(offset)?);
         self.commit_masks(masks)
     }
 
     /// Replace one mask — its path, its name, its invert switch, its opacity.
     /// Named by id, so a stale reference is a calm error rather than an edit
     /// landing on whichever mask happens to sit at that index now.
+    /// `at` is the playhead, in composition time. It matters only for a mask
+    /// whose **shape** is keyed, where it decides which key the dragged
+    /// vertices land on; see [`BridgeMask::write_over`].
     #[frb(sync)]
-    pub fn set_mask(&self, mask: BridgeMask) -> Result<(), BridgeError> {
+    pub fn set_mask(
+        &self,
+        mask: BridgeMask,
+        at: Option<BridgeRational>,
+    ) -> Result<(), BridgeError> {
         if mask.vertices.len() < 2 {
             return Err(BridgeError::EmptyPath);
         }
-        let mut masks = self.item()?.masks;
-        let at = masks
+        let layer = self.item()?;
+        let offset = layer.start_offset.0;
+        let mut masks = layer.masks;
+        let at_index = masks
             .iter()
             .position(|m| m.id == mask.id)
             .ok_or(BridgeError::NoSuchMask)?;
-        masks[at] = mask.write();
+        // Patched over the mask it replaces, not built fresh: an edit to a
+        // mask's opacity must not throw away its path keyframes.
+        let when = match at {
+            Some(t) => {
+                Some(Rational::new(t.num, t.den).map_err(|_| BridgeError::InvalidKeyframes)?)
+            }
+            None => None,
+        };
+        masks[at_index] = mask.write_over(&masks[at_index], offset, when)?;
         self.commit_masks(masks)
     }
 
@@ -1172,6 +1393,171 @@ impl LayerReference {
         if masks.len() == before {
             return Err(BridgeError::NoSuchMask);
         }
+        self.commit_masks(masks)
+    }
+
+    /// Key this mask's **shape** at `time`, or take the key already there away
+    /// (K-339, K-340) — the ◆ on the mask's Path row.
+    ///
+    /// A planted key holds the shape the mask is *already showing* at that
+    /// moment, so pressing ◆ never moves anything: on an unanimated mask that
+    /// is its static path, and on an animated one it is what the shapes either
+    /// side interpolate to. Planting the first key is what starts the shape
+    /// animating.
+    ///
+    /// `time` is composition time, as every other keyframe time that crosses
+    /// here; the layer's own offset is taken back off inside.
+    #[frb(sync)]
+    pub fn toggle_mask_path_key(&self, id: Uuid, time: BridgeRational) -> Result<(), BridgeError> {
+        let layer = self.item()?;
+        let offset = layer.start_offset.0;
+        let mut masks = layer.masks;
+        let at = masks
+            .iter()
+            .position(|m| m.id == id)
+            .ok_or(BridgeError::NoSuchMask)?;
+        let time = Rational::new(time.num, time.den)
+            .map_err(|_| BridgeError::InvalidKeyframes)?
+            .checked_sub(offset)
+            .map_err(|_| BridgeError::InvalidKeyframes)?;
+        let mask = &mut masks[at];
+        // Compared by value: a key planted here and one loaded from a file are
+        // the same key, and `Rational` reduces, so equality is exact.
+        if let Some(i) = mask.path_keys.iter().position(|k| k.time == time) {
+            mask.path_keys.remove(i);
+        } else {
+            let path = mask.path_at(time.to_f64()).into_owned();
+            let key = lumit_core::mask::PathKeyframe {
+                time,
+                path,
+                interp_in: lumit_core::anim::SideInterp::Linear,
+                interp_out: lumit_core::anim::SideInterp::Linear,
+            };
+            let at = mask
+                .path_keys
+                .iter()
+                .position(|k| k.time > time)
+                .unwrap_or(mask.path_keys.len());
+            mask.path_keys.insert(at, key);
+        }
+        self.commit_masks(masks)
+    }
+
+    /// Drag one of the shape's keys along the timeline (K-340) — the lane
+    /// diamond, which moves a path key exactly as it moves a scalar's.
+    ///
+    /// Refused, with `false`, when the move would land on or step over a
+    /// neighbour: keys are sorted with unique times and the evaluator walks
+    /// them assuming so, and a drag that would break the order simply leaves
+    /// the key where it was rather than reordering under the pointer.
+    #[frb(sync)]
+    pub fn move_mask_path_key(
+        &self,
+        id: Uuid,
+        from: BridgeRational,
+        to: BridgeRational,
+    ) -> Result<bool, BridgeError> {
+        let layer = self.item()?;
+        let offset = layer.start_offset.0;
+        let mut masks = layer.masks;
+        let at = masks
+            .iter()
+            .position(|m| m.id == id)
+            .ok_or(BridgeError::NoSuchMask)?;
+        let local = |t: BridgeRational| -> Result<Rational, BridgeError> {
+            Rational::new(t.num, t.den)
+                .map_err(|_| BridgeError::InvalidKeyframes)?
+                .checked_sub(offset)
+                .map_err(|_| BridgeError::InvalidKeyframes)
+        };
+        let (from, to) = (local(from)?, local(to)?);
+        let mask = &mut masks[at];
+        let Some(i) = mask.path_keys.iter().position(|k| k.time == from) else {
+            return Ok(false);
+        };
+        for (j, key) in mask.path_keys.iter().enumerate() {
+            if j == i {
+                continue;
+            }
+            if (j < i && key.time >= to) || (j > i && key.time <= to) {
+                return Ok(false);
+            }
+        }
+        mask.path_keys[i].time = to;
+        self.commit_masks(masks)?;
+        Ok(true)
+    }
+
+    /// Re-time and re-ease this mask's shape keys in one write (K-344) — what
+    /// the graph editor commits when a handle is dragged, and what a lane drag
+    /// of several keys at once needs.
+    ///
+    /// `keys` must name every key the mask has, in order; their `value` is
+    /// ignored, because a path key holds a shape rather than a number. Refused
+    /// as a whole if the times are not strictly ascending: the evaluator walks
+    /// the list assuming they are, and a half-applied reorder is not a mask.
+    #[frb(sync)]
+    pub fn set_mask_path_keys(
+        &self,
+        id: Uuid,
+        keys: Vec<BridgeKeyframe>,
+    ) -> Result<bool, BridgeError> {
+        let layer = self.item()?;
+        let offset = layer.start_offset.0;
+        let mut masks = layer.masks;
+        let at = masks
+            .iter()
+            .position(|m| m.id == id)
+            .ok_or(BridgeError::NoSuchMask)?;
+        if keys.len() != masks[at].path_keys.len() {
+            return Ok(false);
+        }
+        let mut written = Vec::with_capacity(keys.len());
+        for (key, existing) in keys.iter().zip(masks[at].path_keys.iter()) {
+            let time = Rational::new(key.time.num, key.time.den)
+                .map_err(|_| BridgeError::InvalidKeyframes)?
+                .checked_sub(offset)
+                .map_err(|_| BridgeError::InvalidKeyframes)?;
+            if written
+                .last()
+                .is_some_and(|p: &lumit_core::mask::PathKeyframe| time <= p.time)
+            {
+                return Ok(false);
+            }
+            written.push(lumit_core::mask::PathKeyframe {
+                time,
+                path: existing.path.clone(),
+                interp_in: key.interp_in.write(),
+                interp_out: key.interp_out.write(),
+            });
+        }
+        masks[at].path_keys = written;
+        self.commit_masks(masks)?;
+        Ok(true)
+    }
+
+    /// Stop the shape animating, keeping the shape it shows at `time` (K-340).
+    ///
+    /// The stopwatch turning off, and it matches what the stopwatch does
+    /// everywhere else: the value that stays is the one the curve reads *at the
+    /// playhead*, not the first key's — so the picture does not jump when
+    /// animation is switched off.
+    #[frb(sync)]
+    pub fn clear_mask_path_keys(&self, id: Uuid, time: BridgeRational) -> Result<(), BridgeError> {
+        let layer = self.item()?;
+        let offset = layer.start_offset.0;
+        let mut masks = layer.masks;
+        let at = masks
+            .iter()
+            .position(|m| m.id == id)
+            .ok_or(BridgeError::NoSuchMask)?;
+        let time = Rational::new(time.num, time.den)
+            .map_err(|_| BridgeError::InvalidKeyframes)?
+            .checked_sub(offset)
+            .map_err(|_| BridgeError::InvalidKeyframes)?;
+        let mask = &mut masks[at];
+        mask.path = mask.path_at(time.to_f64()).into_owned();
+        mask.path_keys.clear();
         self.commit_masks(masks)
     }
 

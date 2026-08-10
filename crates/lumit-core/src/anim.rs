@@ -218,6 +218,23 @@ impl CubicSpan {
         }
     }
 
+    /// A span from raw control points. The maths of a cubic does not care what
+    /// its two axes mean, so this is also how a *geometric* cubic — a bezier
+    /// path segment, x against y — borrows [`Self::split_at`] instead of the
+    /// codebase carrying a second de Casteljau (see `mask::resample`). Only the
+    /// time-flavoured methods (`solve_u`, `value_at`, the AE side conversions)
+    /// assume x is time.
+    #[must_use]
+    pub fn from_points(x: [f64; 4], y: [f64; 4]) -> Self {
+        Self { x, y }
+    }
+
+    /// The four control points, x and y.
+    #[must_use]
+    pub fn control_points(&self) -> ([f64; 4], [f64; 4]) {
+        (self.x, self.y)
+    }
+
     fn bezier(p: &[f64; 4], u: f64) -> f64 {
         let w = 1.0 - u;
         w * w * w * p[0] + 3.0 * w * w * u * p[1] + 3.0 * w * u * u * p[2] + u * u * u * p[3]

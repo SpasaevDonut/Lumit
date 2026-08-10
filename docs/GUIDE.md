@@ -2491,6 +2491,45 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   folder (Lumit remembers the folder itself, not its name). Compositions do the same
   with a Compositions folder. Multi-step creations like that land as a single undo
   step — a batch operation whose inverse is just the reversed inverses of its members.
+- **A mask shape that moves (`lumit-core::mask`)** — everything else Lumit animates is a
+  single number: a position, an opacity, a blur radius. A keyframe on one of those says "be
+  40 here and 90 there", and asking for a moment in between is arithmetic. A mask path is not
+  a number — it is a whole drawn shape, a ring of points each with two handles — so
+  animating it needed its own small machine sitting beside the one that does numbers, rather
+  than a rebuild of that one. A mask now carries a list of **shape keyframes**: at this
+  moment the shape looks like *this*, at that moment like *that*. If the list is empty (which
+  it is for every mask you have not keyed) nothing changes anywhere, including in the saved
+  file, so old projects load and re-save byte for byte and their cached frames stay good.
+  - **In between two keys, the shape is blended point by point** — each point walks from
+    where it was towards where it is going, and its two handles walk with it, so the curve
+    bends smoothly rather than snapping. The **timing** is the ordinary keyframe timing:
+    hold, linear, or an eased handle, all borrowed from the number machine rather than
+    written again. What the ease shapes here is *how far along the crossing you are* — 0 at
+    one key, 1 at the next. There is no value graph for a shape, because there is no value
+    to plot; the timeline shows shape keys as diamonds, exactly as After Effects does.
+  - **The awkward bit: the two shapes need not have the same number of points.** Adding a
+    point halfway through an animation is one of the most ordinary things anyone does, and
+    refusing it is not an option. So before blending, the sparser shape is redrawn with as
+    many points as the denser one — and this has to happen *without changing the shape*, or
+    adding a point would visibly dent the mask. The trick is that a curve segment can be
+    **cut in two** and the two halves, taken together, are the exact same curve; nothing is
+    approximated. Cut a four-point ellipse in the right places and you have a seven-point
+    ellipse that is still, pixel for pixel, the same ellipse — it just has more handles to
+    grab. Which segments get the extra points is fixed arithmetic (spread evenly, earliest
+    first) rather than anything clever, so the same two shapes always reconcile the same way
+    and a playback is repeatable frame for frame.
+  - **Open or closed is not something you can be halfway.** A shape is either joined up at
+    the ends or it is not, so that setting *holds* across the crossing and flips at the next
+    key, like a hold keyframe. The points still travel smoothly; only the closing segment
+    appears or disappears, on a frame boundary, rather than smearing into existence.
+  - One thing worth knowing about the cache: the name a rendered frame is filed under is
+    made from *what is in the picture*, never from which frame it is (that is the whole
+    reason a duplicated composition shares its original's cached frames). A keyframed mask
+    is written to the file identically at every moment, so the list of keys alone would give
+    every frame of a moving mask the same name — and playback would show the mask stuck at
+    whichever frame drew first. The *worked-out* shape at that moment goes into the name as
+    well, and only for masks that are actually animated, so nothing that already exists is
+    disturbed.
 - **The evaluation graph (`lumit-eval::graph`)** — before rendering, Lumit lowers a
   composition into a wiring diagram: for each layer a short chain of typed steps — fetch the
   source, retime it, mask it, place it (transform), then blend it over everything beneath —
@@ -2672,6 +2711,37 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   — right-click the Shape button to choose rectangle, ellipse or star; Pen (G) is the
   click-to-place mask drawing above. The mode is one value (`ToolMode`) the Viewer reads
   each frame, so the whole app agrees on what the mouse is doing.
+- **Mask modes, feather and expansion — and the distance field underneath them.** A mask has
+  a **mode** that says how it joins the masks above it: **Add** widens what shows, **Subtract**
+  cuts a hole in it, **Intersect** keeps only where both agree, **Difference** keeps where
+  exactly one of them covers, and **None** parks the shape as geometry that gates nothing (handy
+  while you draw). They apply top to bottom in the list, so the order is part of the result:
+  A with B subtracted from it is a different picture from B with A subtracted from it. The one
+  question with no obvious answer is what the *first* mask combines with, since there is nothing
+  above it. Lumit does what After Effects does: if the top mask is Add the stack starts empty, and
+  otherwise it starts as the whole frame — which is what makes a single Subtract mask punch a hole
+  in the layer instead of leaving you with nothing at all.
+
+  **Feather** softens a mask's edge and **expansion** grows or shrinks the shape (in layer
+  pixels, positive out, negative in). They sound like two jobs — a blur and a choke — but they
+  are one, and building them as one is why they behave. The trick is a **signed distance
+  field**: for every pixel, work out how far it is from the mask's outline, counting distances
+  inside the shape as positive and outside as negative. Zero is exactly on the line. Once you
+  have that map, both controls are just ways of reading it. Expansion adds a constant to every
+  distance, which slides where "zero" falls and so moves the whole outline outward or inward,
+  keeping its shape and rounding its corners the way an offset outline should. Feather says how
+  many pixels the fade takes to cross that zero: a feather of 12 goes from fully on to fully
+  off over twelve pixels, six either side of the line. A blur would have smeared corners and
+  thin necks differently from long straight edges; distances don't care about any of that.
+
+  Two details worth knowing. The distances are measured from the *antialiased* raster, not from
+  a hard on/off version of it, so the softness starts out as smooth as the edge Lumit drew —
+  a partly-covered pixel tells you, by how covered it is, roughly how far past its centre the
+  edge ran. And feather and expansion are in **layer** pixels, so they are scaled along with
+  everything else when the Viewer drops to half or quarter resolution: a soft edge looks the
+  same width at every preview setting, and the same again on export. A mask with feather and
+  expansion both at zero skips all of this entirely and uses the raster untouched — which is
+  nearly every mask, and it costs nothing.
 - **Masks on Precomp layers** — a masked transition can now wipe a whole nested comp,
   the flow staple. Pixel layers (footage, solids, text) get their masks applied on the
   CPU before upload; a Precomp's pixels only ever exist on the GPU, so its mask stack
@@ -5025,3 +5095,89 @@ The general lesson, which applies well beyond expressions: anything on the
 per-frame path is run tens of thousands of times a second, so the question is
 never "is this fast enough once", it is "what is this multiplied by sixty, by
 the number of layers".
+
+### A mask that moves, and the number in the file that stays a number
+
+A mask is a drawn shape that decides which of a layer's pixels show. Until now the shape
+could be animated but nothing in the interface could reach that, and the three numbers
+beside it — how see-through the mask is, how soft its edge is, how much it is grown or
+shrunk — could not be animated at all. Now all four animate, and they do it with the same
+stopwatch, the same ◄ ◆ ► and the same diamonds as a layer's position (K-340).
+
+For the three numbers the change was to make them the same *kind of thing* the rest of the
+program already animates. Everywhere else, an animatable number is a "property": a little
+box that holds either one value or a list of keyframes. A mask's opacity used to be a plain
+number in a box of its own. Making it a property means every control that already knows how
+to key a property works on it immediately, with nothing rewritten — which is why it now
+behaves exactly like a transform rather than *almost* like one.
+
+That change had a trap in it, and the trap is worth understanding because the same one
+comes up whenever a stored value grows. A property normally writes itself into the saved
+file as a small object — something like `{"animation": {"Static": 100}}` — where the plain
+number wrote `100`. Two things break if that happens. Every project ever saved has the old
+shape, so they would all need converting. And Lumit names every finished frame it has
+stored by, among other things, the exact text a layer's masks turn into; change the text
+and every name changes, so every frame anyone has banked is suddenly unrecognisable and has
+to be drawn again. So the three fields keep their own private spelling: while the value is
+still, it writes as the bare number it always wrote, and only a mask somebody has actually
+keyed writes the longer form. Reading accepts both. An untouched mask is byte-for-byte what
+it was.
+
+The shape itself is the odd one out, and stays so. A keyframe on it holds a whole path
+rather than a number, so there is nothing to plot on a value graph — its row shows diamonds
+and no curve, and no number field, because there is no single number to put there. Its
+stopwatch works through the engine's own path-key operations. Pressing the diamond stores
+the shape the mask is *already* showing at that moment, so nothing jumps; switching
+animation off keeps the shape under the playhead rather than snapping back to the first
+key. That is the rule the stopwatch follows everywhere in Lumit.
+
+One more thing changed in passing, and it was a plain bug. A mask can be switched off two
+ways: set its mode to None, or take its opacity to zero. Both are meant to mean "this mask
+has no say". Both did the opposite — a layer with one switched-off mask went completely
+invisible — because the code started from "nothing is showing" and then skipped the very
+mask that was supposed to say what *did* show. Now there is one question, asked in one
+place, about whether a mask does anything at all; a layer whose masks are all off is simply
+the layer it always was. The question takes a moment in time, because opacity animates: a
+mask keyed up from zero is genuinely off early in a shot and on later.
+
+Once a mask's shape is animated, one more thing has to follow it: the thin outline the
+Viewer draws round the mask. That outline was drawn from the shape *stored* on the mask,
+and the stored shape stops being the shape you see the moment the path is keyed — from then
+on the picture works out an in-between shape for each frame, and the stored one is only
+what the drawing tools last wrote. So dragging a point looked as though it snapped back the
+instant you let go, even though the key had landed and the animation played correctly.
+
+The outline now asks the engine where the shape actually is at the frame on screen. It
+could have been worked out here instead — the keyed shapes could be sent over and blended
+locally — but blending two shapes means matching up their points first, splitting curves
+where one shape has fewer points than the other, and a second copy of that arithmetic would
+slowly disagree with the one that draws the actual pixels. An outline that no longer traces
+the mask it describes is worse than having no outline. Asking the one authority keeps them
+identical by construction.
+
+The asking is careful about cost. Only masks that are actually animated are ever sent, so
+an ordinary project answers "nothing moved" and pays nothing; and because the Viewer redraws
+every time the pointer moves, the answer is remembered against the only two things that can
+change it — an edit to the document, and the playhead moving. Hovering asks nothing at all.
+
+### The one curve a shape can draw
+
+Open the graph editor on an animated position and you see its value rise and fall. Open it
+on an animated *shape* and there is nothing to plot: a shape is not a number, so there is
+no height to draw. The pane used to come up empty, which reads as though the property is
+not animating at all — when plainly it is.
+
+There is still one real curve in there. Between one keyed shape and the next, the drawing
+crosses from the first to the second, and *how fast it crosses* is a genuine, editable
+quantity — it is what the ease handles on those keys control. So each shape key now carries
+a plain counting number: the first key holds 0, the second 1, the third 2. Nobody is meant
+to read those numbers. What matters is that every span between two keys climbs by exactly
+one, so the *steepness* of the line is precisely the rate the shape is changing at. Steep
+means the shape is racing from one form to the next; flat means it has almost settled.
+
+Both views show that steepness, rather than the value view showing the meaningless counting
+staircase and only the speed view being useful. Everything else in the graph still behaves
+as it did — this substitution applies to shapes alone, which are the only properties with
+no value of their own.
+
+This is also what After Effects shows for a mask path, and for the same reason.
