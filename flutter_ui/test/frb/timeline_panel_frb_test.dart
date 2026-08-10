@@ -387,7 +387,7 @@ void main() {
           mode: BridgeMaskMode.add,
           feather: const BridgeScalar.static_(0),
           expansion: const BridgeScalar.static_(0),
-          pathKeyTimes: const [],
+          pathKeys: const [],
         ),
       );
       p.uiState.model.refresh();
@@ -429,7 +429,7 @@ void main() {
           mode: BridgeMaskMode.add,
           feather: const BridgeScalar.static_(0),
           expansion: const BridgeScalar.static_(0),
-          pathKeyTimes: const [],
+          pathKeys: const [],
         ),
       );
       (p.uiState as LumitUiState).model.refresh();
@@ -671,11 +671,11 @@ void main() {
       expect(find.byKey(ValueKey<String>('tl-mask-path-$id')), findsNothing,
           reason: 'a shape has no single number, so the row has no field');
 
-      expect(layer.getMasks().single.pathKeyTimes, isEmpty);
+      expect(layer.getMasks().single.pathKeys, isEmpty);
       await tester
           .tap(find.byKey(ValueKey<String>('kf-stopwatch-tl-mask-path-$id')));
       await tester.pumpAndSettle();
-      expect(layer.getMasks().single.pathKeyTimes, hasLength(1),
+      expect(layer.getMasks().single.pathKeys, hasLength(1),
           reason: 'the stopwatch planted a key on the shape');
 
       // And off again keeps the shape rather than dropping it.
@@ -683,7 +683,7 @@ void main() {
       await tester
           .tap(find.byKey(ValueKey<String>('kf-stopwatch-tl-mask-path-$id')));
       await tester.pumpAndSettle();
-      expect(layer.getMasks().single.pathKeyTimes, isEmpty);
+      expect(layer.getMasks().single.pathKeys, isEmpty);
       expect(layer.getMasks().single.vertices, hasLength(before));
     });
 
@@ -697,6 +697,18 @@ void main() {
       final layer = p.comp.addSolidLayer();
       await openMaskRow(tester, p, layer, 'Ellipse');
       final id = layer.getMasks().single.id;
+
+      // **Clicking the empty part of a row picks it too** (K-343). The row
+      // deferred its hits to its children, so a click beside the label missed
+      // it, fell through to the outline behind and cleared the selection — and
+      // the Path row, which has no value field, is almost all empty.
+      final pathRow = find.text(maskValueLabel(MaskValue.path));
+      final box = tester.getRect(pathRow);
+      await tester.tapAt(Offset(box.right + 120, box.center.dy));
+      await tester.pump();
+      expect(p.uiState.selectedProperties.value,
+          ['${masksPath(layer.internallayerId.toString())}/$id/path'],
+          reason: 'a click on the empty part of the Path row did not pick it');
 
       // Every one of the four rows picks itself when its name is clicked —
       // the same as a transform or an effect parameter row.
@@ -724,6 +736,72 @@ void main() {
           findsOneWidget,
           reason:
               'the key planted by the stopwatch has no diamond on the lane');
+    });
+
+    /// **A mask row stays picked after the mouse comes up** (K-343). Reported
+    /// from the app: "if I click one it briefly looks like it selects while the
+    /// mouse is down then it resets." The row selected on the press and the
+    /// ground under the outline took the *tap* on the release, clearing it —
+    /// because a `Listener` never competes in the gesture arena, and a mask row
+    /// had nothing else that did.
+    testWidgets('a mask row stays picked when the press is released',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await openMaskRow(tester, p, layer, 'Ellipse');
+      final id = layer.getMasks().single.id;
+      final masks = masksPath(layer.internallayerId.toString());
+
+      for (final value in MaskValue.values) {
+        final gesture = await tester
+            .startGesture(tester.getCenter(find.text(maskValueLabel(value))));
+        await tester.pump();
+        expect(p.uiState.selectedProperties.value, ['$masks/$id/${value.name}'],
+            reason: '${value.name} did not pick on the press');
+        await gesture.up();
+        await tester.pump();
+        expect(p.uiState.selectedProperties.value, ['$masks/$id/${value.name}'],
+            reason: '${value.name} lost the selection when the mouse came up');
+      }
+
+      // The mask's own row, the same way.
+      final gesture =
+          await tester.startGesture(tester.getCenter(find.text('Ellipse')));
+      await tester.pump();
+      await gesture.up();
+      await tester.pump();
+      expect(p.uiState.selectedProperties.value, ['$masks/$id'],
+          reason: 'the mask row lost the selection when the mouse came up');
+    });
+
+    /// **The Viewer picking a row, then a click on that row, keeps it picked**
+    /// (K-343). Reported from the app: after a mask path drag planted a key the
+    /// Path row lit up correctly, and clicking it then dropped the selection
+    /// and would not take it back.
+    testWidgets('a row the Viewer picked stays picked when clicked',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await openMaskRow(tester, p, layer, 'Ellipse');
+      final id = layer.getMasks().single.id;
+      final path = '${masksPath(layer.internallayerId.toString())}/$id/path';
+
+      // What the gizmo does when a drag has written a path key.
+      p.uiState.requestSelectProperty(path);
+      await tester.pump();
+      expect(p.uiState.selectedProperties.value, [path],
+          reason: 'the Viewer request did not reach the Timeline');
+
+      await tester.tap(find.text(maskValueLabel(MaskValue.path)));
+      await tester.pump();
+      expect(p.uiState.selectedProperties.value, [path],
+          reason: 'clicking the row the Viewer picked dropped the selection');
+
+      // And a second click still leaves it picked.
+      await tester.tap(find.text(maskValueLabel(MaskValue.path)));
+      await tester.pump();
+      expect(p.uiState.selectedProperties.value, [path],
+          reason: 'the row could not be picked again');
     });
 
     /// **Picking a property row says which layer it belongs to** (K-341), so

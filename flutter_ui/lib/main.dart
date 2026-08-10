@@ -44,6 +44,7 @@ import 'package:lumit_flutter/state/dock.dart';
 import 'package:lumit_flutter/state/dropper.dart';
 import 'package:lumit_flutter/state/keymap.dart';
 import 'package:lumit_flutter/src/rust/api/keymap.dart';
+import 'package:lumit_flutter/state/animated_mask_paths.dart';
 import 'package:lumit_flutter/state/layer_bounds.dart';
 import 'package:lumit_flutter/state/preview_progress.dart';
 import 'package:lumit_flutter/state/render_timings.dart';
@@ -460,6 +461,12 @@ class LumitUiState extends ChangeNotifier {
   /// and probing a clip is disk work that must happen once rather than per
   /// Viewer rebuild.
   final LayerBoundsCache layerBounds = LayerBoundsCache();
+
+  /// Where a keyed mask's shape actually is at the frame on screen (K-342), so
+  /// the Viewer's wireframe follows an animated path instead of the still one
+  /// the mask still carries. Held against the document and the playhead, so a
+  /// hover asks the engine nothing.
+  final AnimatedMaskPaths animatedMaskPaths = AnimatedMaskPaths();
 
   /// Which tool the toolbar has armed (docs/07 §1.7, K-216).
   ///

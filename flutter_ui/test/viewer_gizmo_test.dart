@@ -82,7 +82,7 @@ void main() {
         mode: BridgeMaskMode.add,
         feather: const BridgeScalar.static_(0),
         expansion: const BridgeScalar.static_(0),
-        pathKeyTimes: const [],
+        pathKeys: const [],
       );
 
   /// The same square, as a shape layer's own art rather than a mask. The two

@@ -243,6 +243,16 @@ pub enum BridgePlaybackMode {
     EveryFrame,
 }
 
+/// One animated mask's shape at a moment (K-342): which mask, on which layer,
+/// and the path it is showing there.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeAnimatedMaskPath {
+    pub layer: Uuid,
+    pub mask: Uuid,
+    pub vertices: Vec<crate::api::layer::BridgeVertex>,
+}
+
 impl CompositionReference {
     #[frb(ignore)]
     pub fn new(project: Uuid, id: Uuid) -> CompositionReference {
@@ -1306,6 +1316,60 @@ impl CompositionReference {
         }
     }
 
+    /// The **shape every animated mask is actually showing** at `frame`
+    /// (K-342), so the Viewer can draw a keyed mask's wireframe where the
+    /// picture has it rather than where its still path used to be.
+    ///
+    /// Only masks that carry path keys are listed — a still mask's own
+    /// vertices already say where it is, and sending them again would put the
+    /// whole document through here on every frame. An empty answer, which is
+    /// the ordinary case, means "nothing moved; use what you have".
+    ///
+    /// Evaluated engine-side on purpose: interpolating two paths means
+    /// reconciling vertex counts by splitting cubics (K-339), and a second
+    /// implementation of that in Dart would drift from the one that draws the
+    /// pixels — the wireframe would stop matching the mask it describes.
+    #[frb(sync)]
+    pub fn animated_mask_paths_at(
+        &self,
+        frame: i64,
+    ) -> Result<Vec<BridgeAnimatedMaskPath>, BridgeError> {
+        let comp = self.composition()?;
+        let time = comp
+            .frame_rate
+            .time_of_frame(frame.max(0))
+            .map_err(|_| BridgeError::InvalidTime)?;
+        let mut out = Vec::new();
+        for layer in &comp.layers {
+            // A mask lives on its layer's clock, as every other property does
+            // (K-213).
+            let local = time.0.checked_sub(layer.start_offset.0).unwrap_or(time.0);
+            for mask in &layer.masks {
+                if mask.path_keys.is_empty() {
+                    continue;
+                }
+                let path = mask.path_at(local.to_f64());
+                out.push(BridgeAnimatedMaskPath {
+                    layer: layer.id,
+                    mask: mask.id,
+                    vertices: path
+                        .vertices
+                        .iter()
+                        .map(|v| crate::api::layer::BridgeVertex {
+                            x: v.pos.0,
+                            y: v.pos.1,
+                            tan_in_x: v.tan_in.0,
+                            tan_in_y: v.tan_in.1,
+                            tan_out_x: v.tan_out.0,
+                            tan_out_y: v.tan_out.1,
+                        })
+                        .collect(),
+                });
+            }
+        }
+        Ok(out)
+    }
+
     #[frb(sync)]
     pub fn get_layers(&self) -> Result<Vec<LayerReference>, BridgeError> {
         Ok(self
@@ -1561,7 +1625,7 @@ impl CompositionReference {
         let comp = self.composition()?;
         let time = comp
             .frame_rate
-            .time_of_frame(frame)
+            .time_of_frame(frame.max(0))
             .map_err(|_| BridgeError::InvalidComp)?;
         Ok(BridgeRational {
             num: time.0.num(),

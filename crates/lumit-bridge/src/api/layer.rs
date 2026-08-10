@@ -9,7 +9,9 @@ use uuid::Uuid;
 
 use crate::api::{
     composition::{bridge_marker, core_markers, BridgeMarker},
-    effect::{BridgeEffectInstance, BridgeRational, BridgeScalar},
+    effect::{
+        BridgeEffectInstance, BridgeKeyframe, BridgeRational, BridgeScalar, BridgeSideInterp,
+    },
     project_item::ItemReference,
     state::{LumitBridgeState, PROJECTS},
     BridgeError,
@@ -259,15 +261,21 @@ pub struct BridgeMask {
     pub feather: BridgeScalar,
     /// Grow (+) or shrink (−) the shape, in layer pixels.
     pub expansion: BridgeScalar,
-    /// The times this mask's **path** is keyed at — empty when the shape does
-    /// not animate. Composition time, carried out by the layer's start offset,
-    /// exactly as a scalar's keyframe times cross (K-213), and rational so the
-    /// diamond lands on the frame the key is really on.
+    /// This mask's **shape** keys — empty when the path does not animate.
+    /// Composition time, carried out by the layer's start offset exactly as a
+    /// scalar's keyframe times cross (K-213).
     ///
-    /// Read-only here: the shape at a key is a whole path, which the frontend
-    /// edits through the drawing tools rather than by sending a list of shapes,
-    /// so what crosses is where the diamonds go (K-339).
-    pub path_key_times: Vec<BridgeRational>,
+    /// The shapes themselves do not cross: a key holds a whole path, which the
+    /// frontend edits through the drawing tools rather than by sending a list
+    /// of them (K-339). What crosses is where the keys are and how they ease —
+    /// which is everything the lane and the graph need.
+    ///
+    /// **`value` is the interpolation parameter, counted up** (K-344): key *i*
+    /// carries *i*, so every span rises by exactly 1 as the shape crosses from
+    /// one key to the next. The number itself means nothing to look at, but its
+    /// *slope* is the rate the shape is changing at — which is the one curve a
+    /// path can honestly draw, and the one After Effects draws for a mask path.
+    pub path_keys: Vec<BridgeKeyframe>,
 }
 
 /// A mask's scalar as an engine [`Property`], with every value it can take held
@@ -368,14 +376,20 @@ impl BridgeMask {
             mode: BridgeMaskMode::read(mask.mode),
             feather: BridgeScalar::read_at(&mask.feather, offset),
             expansion: BridgeScalar::read_at(&mask.expansion, offset),
-            path_key_times: mask
+            path_keys: mask
                 .path_keys
                 .iter()
-                .map(|k| {
+                .enumerate()
+                .map(|(i, k)| {
                     let time = k.time.checked_add(offset).unwrap_or(k.time);
-                    BridgeRational {
-                        num: time.num(),
-                        den: time.den(),
+                    BridgeKeyframe {
+                        time: BridgeRational {
+                            num: time.num(),
+                            den: time.den(),
+                        },
+                        value: i as f64,
+                        interp_in: BridgeSideInterp::read(k.interp_in),
+                        interp_out: BridgeSideInterp::read(k.interp_out),
                     }
                 })
                 .collect(),
@@ -1470,6 +1484,54 @@ impl LayerReference {
             }
         }
         mask.path_keys[i].time = to;
+        self.commit_masks(masks)?;
+        Ok(true)
+    }
+
+    /// Re-time and re-ease this mask's shape keys in one write (K-344) — what
+    /// the graph editor commits when a handle is dragged, and what a lane drag
+    /// of several keys at once needs.
+    ///
+    /// `keys` must name every key the mask has, in order; their `value` is
+    /// ignored, because a path key holds a shape rather than a number. Refused
+    /// as a whole if the times are not strictly ascending: the evaluator walks
+    /// the list assuming they are, and a half-applied reorder is not a mask.
+    #[frb(sync)]
+    pub fn set_mask_path_keys(
+        &self,
+        id: Uuid,
+        keys: Vec<BridgeKeyframe>,
+    ) -> Result<bool, BridgeError> {
+        let layer = self.item()?;
+        let offset = layer.start_offset.0;
+        let mut masks = layer.masks;
+        let at = masks
+            .iter()
+            .position(|m| m.id == id)
+            .ok_or(BridgeError::NoSuchMask)?;
+        if keys.len() != masks[at].path_keys.len() {
+            return Ok(false);
+        }
+        let mut written = Vec::with_capacity(keys.len());
+        for (key, existing) in keys.iter().zip(masks[at].path_keys.iter()) {
+            let time = Rational::new(key.time.num, key.time.den)
+                .map_err(|_| BridgeError::InvalidKeyframes)?
+                .checked_sub(offset)
+                .map_err(|_| BridgeError::InvalidKeyframes)?;
+            if written
+                .last()
+                .is_some_and(|p: &lumit_core::mask::PathKeyframe| time <= p.time)
+            {
+                return Ok(false);
+            }
+            written.push(lumit_core::mask::PathKeyframe {
+                time,
+                path: existing.path.clone(),
+                interp_in: key.interp_in.write(),
+                interp_out: key.interp_out.write(),
+            });
+        }
+        masks[at].path_keys = written;
         self.commit_masks(masks)?;
         Ok(true)
     }

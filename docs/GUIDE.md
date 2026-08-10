@@ -5164,3 +5164,45 @@ mask that was supposed to say what *did* show. Now there is one question, asked 
 place, about whether a mask does anything at all; a layer whose masks are all off is simply
 the layer it always was. The question takes a moment in time, because opacity animates: a
 mask keyed up from zero is genuinely off early in a shot and on later.
+
+Once a mask's shape is animated, one more thing has to follow it: the thin outline the
+Viewer draws round the mask. That outline was drawn from the shape *stored* on the mask,
+and the stored shape stops being the shape you see the moment the path is keyed — from then
+on the picture works out an in-between shape for each frame, and the stored one is only
+what the drawing tools last wrote. So dragging a point looked as though it snapped back the
+instant you let go, even though the key had landed and the animation played correctly.
+
+The outline now asks the engine where the shape actually is at the frame on screen. It
+could have been worked out here instead — the keyed shapes could be sent over and blended
+locally — but blending two shapes means matching up their points first, splitting curves
+where one shape has fewer points than the other, and a second copy of that arithmetic would
+slowly disagree with the one that draws the actual pixels. An outline that no longer traces
+the mask it describes is worse than having no outline. Asking the one authority keeps them
+identical by construction.
+
+The asking is careful about cost. Only masks that are actually animated are ever sent, so
+an ordinary project answers "nothing moved" and pays nothing; and because the Viewer redraws
+every time the pointer moves, the answer is remembered against the only two things that can
+change it — an edit to the document, and the playhead moving. Hovering asks nothing at all.
+
+### The one curve a shape can draw
+
+Open the graph editor on an animated position and you see its value rise and fall. Open it
+on an animated *shape* and there is nothing to plot: a shape is not a number, so there is
+no height to draw. The pane used to come up empty, which reads as though the property is
+not animating at all — when plainly it is.
+
+There is still one real curve in there. Between one keyed shape and the next, the drawing
+crosses from the first to the second, and *how fast it crosses* is a genuine, editable
+quantity — it is what the ease handles on those keys control. So each shape key now carries
+a plain counting number: the first key holds 0, the second 1, the third 2. Nobody is meant
+to read those numbers. What matters is that every span between two keys climbs by exactly
+one, so the *steepness* of the line is precisely the rate the shape is changing at. Steep
+means the shape is racing from one form to the next; flat means it has almost settled.
+
+Both views show that steepness, rather than the value view showing the meaningless counting
+staircase and only the speed view being useful. Everything else in the graph still behaves
+as it did — this substitution applies to shapes alone, which are the only properties with
+no value of their own.
+
+This is also what After Effects shows for a mask path, and for the same reason.

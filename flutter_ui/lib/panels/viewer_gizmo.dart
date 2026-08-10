@@ -461,7 +461,7 @@ BridgeMask? maskWithPointsMoved(
     mode: mask.mode,
     feather: mask.feather,
     expansion: mask.expansion,
-    pathKeyTimes: mask.pathKeyTimes,
+    pathKeys: mask.pathKeys,
   );
 }
 
@@ -1301,7 +1301,7 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
           // drag has just written a keyframe; the row that keyframe belongs to
           // is the one the author now wants to see, and without this the key
           // lands on a row nobody is looking at.
-          if (mask.pathKeyTimes.isNotEmpty) {
+          if (mask.pathKeys.isNotEmpty) {
             widget.uiState.requestSelectProperty(
               '${box.id}/masks/${mask.id}/${MaskValue.path.name}',
             );

@@ -5375,7 +5375,7 @@ fn editing_a_mask_keeps_what_the_bridge_cannot_describe() {
         mode: BridgeMaskMode::Add,
         feather: BridgeScalar::Static(0.0),
         expansion: BridgeScalar::Static(0.0),
-        path_key_times: Vec::new(),
+        path_keys: Vec::new(),
     };
     layer.add_mask(mask.clone()).expect("added");
 
@@ -5487,5 +5487,41 @@ fn editing_a_mask_keeps_what_the_bridge_cannot_describe() {
     assert!(
         (stored.path_keys[0].path.vertices[0].pos.0 - (mask.vertices[0].x + 25.0)).abs() < 1e-9,
         "the dragged shape went into the key, not the ignored static path"
+    );
+
+    // The document's lock goes back before anything writes through it again:
+    // `clear_mask_path_keys` below takes the write side, and a read guard still
+    // alive here would sit on it for ever (docs/14: no lock held across a call
+    // that takes the other side).
+    drop(state);
+
+    // **And the wireframe can find that shape** (K-342). The mask still carries
+    // its old static path — `path` is not what an animated mask draws — so
+    // without this the Viewer drew the shape snapping back to where it began
+    // the moment the drag ended, even though the render animated correctly.
+    let comp = crate::api::composition::CompositionReference::new(layer.project_id, layer.comp_id);
+    let shown = comp
+        .animated_mask_paths_at(0)
+        .expect("the comp answers for frame 0");
+    let row = shown
+        .iter()
+        .find(|r| r.mask == mask.id)
+        .expect("an animated mask is listed");
+    assert_eq!(row.layer, layer.layer_id);
+    assert!(
+        (row.vertices[0].x - (mask.vertices[0].x + 25.0)).abs() < 1e-9,
+        "the shape shown is the keyed one, not the stale static path"
+    );
+
+    // A still mask is not listed at all: its own vertices already say where it
+    // is, and sending every mask every frame is what this avoids.
+    layer
+        .clear_mask_path_keys(mask.id, BridgeRational { num: 0, den: 1 })
+        .expect("stopped animating");
+    assert!(
+        comp.animated_mask_paths_at(0)
+            .expect("still answers")
+            .is_empty(),
+        "a mask that is not animated must not be listed"
     );
 }

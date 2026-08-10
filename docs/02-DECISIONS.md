@@ -8103,3 +8103,77 @@ that consistency down the *fold-out* matters more than consistency across to the
 The mode picker takes the rest of the cell so a long name ellipsises rather than pushing
 the row wider than its column, which is the rule the blend picker already followed.
 
+
+**K-342 · DECIDED · The wireframe of an animated mask is drawn from the shape it is
+showing, asked of the engine.** From the owner, testing K-340/K-341 (2026-08-10): "after
+you move the path in the viewer, visually it snaps back to its original position, but it
+adds the keyframe correctly and when you preview it animates correctly."
+
+**The picture was right and the outline was stale.** Once a path is keyed, `Mask::path` is
+no longer what the mask draws — `path_at` reads the keys — but the Viewer's wireframe was
+drawn from the vertices the mask carries, which are exactly that stale `path`. So a drag
+wrote its key, the render animated, and the outline sprang back to where the shape began.
+
+**Evaluated engine-side, not in Dart.** Dart samples ordinary scalars itself and could have
+been given the keyed *shapes* to interpolate — but interpolating two paths means
+reconciling their vertex counts by splitting cubics (K-339), and a second implementation of
+that here would drift from the one that draws the pixels. A wireframe that stops matching
+the mask it describes is worse than no wireframe. So `animated_mask_paths_at(frame)` asks
+the engine, which answers with the same `path_at` the renderer uses.
+
+**Only animated masks are listed, and the answer is held.** A still mask's own vertices
+already say where it is, so the ordinary composition answers with an empty list and pays
+nothing. The Viewer rebuilds on every movement of the pointer, so the answer is cached
+against the document revision and the playhead frame — the two things that can change it —
+and a hover asks nothing. That keeps K-184's budget intact: the hover test still measures
+zero.
+
+**K-343 · DECIDED · A property row takes the press across its whole width, not only where a
+widget happens to sit.** From the owner (2026-08-10): "when I click the path row, it
+deselects and can't be re-selected by clicking like it should."
+
+The fold-out's rows select on pointer-down through a `Listener`, and a `Listener` defers to
+its children by default — so a press only counted where it landed *on* something. A
+property row is mostly empty: the label stops where its text stops, and the value column is
+one narrow field in a wide cell. A press in the space between reached the outline behind
+instead, which is the surface that **clears** the selection — so clicking a row could
+unpick it, and clicking again did the same thing rather than picking it back.
+
+Worst on a mask's **Path** row, which by design has no value field at all (a shape has no
+number to put in one, K-339), leaving almost the whole row dead to the pointer.
+
+The rows that select are now opaque to hit testing, so the press lands on the row wherever
+it falls. Group headings keep defer-to-child: their own detector owns the click, and a
+heading both picks and twirls (K-300).
+
+**The graph editor showing nothing for a Path row is not this bug.** A path has no value
+axis, so it is deliberately not a graph channel — its keys live on the lane as diamonds.
+Easing them wants the speed lens K-339 already recorded as outstanding. A mask's opacity,
+feather and expansion *do* resolve into channels and draw curves.
+
+**K-344 · DECIDED · A keyed mask shape draws its rate of change, in both lenses.** The
+deferral K-339 recorded — "a keyframed mask path shows a speed graph and no value graph" —
+is closed. From the owner (2026-08-10): opening the graph on a Path row showed an empty
+pane, which reads as a property that is plainly animating having nothing to say.
+
+**What a path can honestly plot.** A shape has no number, so there is no value curve. What
+there *is* is the crossing from one keyed shape to the next, shaped by the ordinary eases
+K-339 gave those keys — and the rate of that crossing is a real, meaningful curve. So the
+shape's keys now carry a **counted-up interpolation parameter**: key *i* holds *i*, and
+every span therefore rises by exactly one. The number is not worth reading; its slope is
+the whole point, and it is what After Effects draws for a mask path.
+
+**Both lenses draw the slope.** The value lens would otherwise show a meaningless staircase
+and the speed lens the useful curve — one of the two views blank or misleading for no
+reason. A shape channel is therefore drawn in the speed reading whichever lens is on, and a
+pane holding only shapes fits its axis to speeds. Every other channel still follows the
+view's lens exactly as before.
+
+**The keys cross with their eases, and edits go back the same way.** `BridgeMask` carries
+`path_keys` (time, counted value, both `SideInterp`s) rather than bare times, which is what
+lets the lane draw its diamonds *and* the graph draw the curve from one read.
+`set_mask_path_keys` writes a whole re-timed, re-eased list back — refused outright if the
+times are not strictly ascending, because the evaluator walks them assuming so and a
+half-applied reorder is not a mask. The shapes themselves never cross: a key holds a path,
+which the drawing tools edit (K-339).
+
