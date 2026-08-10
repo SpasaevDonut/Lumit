@@ -41,6 +41,23 @@ import 'layer_fold_frb.dart';
 import 'timeline_extras_frb.dart';
 import 'transform_rows_frb.dart';
 
+/// A value drag in flight **in the layer area**, published for the graph pane to
+/// draw (K-333).
+///
+/// The row stages its value in Dart and commits once on release (K-192), so the
+/// read model — and therefore the curve — still holds the old one until the
+/// pointer comes up. The pane cannot ask for it, because it is not in the
+/// document; the row publishes it here instead, exactly as a bar drag publishes
+/// its travel for the waveform lane (`BarDragPreview`, K-172). Null between
+/// gestures.
+///
+/// The layer and the transform property name are what the two sides have in
+/// common — an axis, not a row, so dragging Position x leaves y where it is. An
+/// **unkeyed** property is drawn at its new value and gains no diamond: the
+/// drag is not planting a key, and a glyph would say it was.
+final ValueNotifier<({String layer, String prop, int frame, double value})?>
+    rowValueDrag = ValueNotifier(null);
+
 /// Which reading of the curve is on screen (docs/07 §5.1).
 enum GraphLens { value, speed }
 
@@ -932,7 +949,18 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
   final PreviewThrottle _preview = PreviewThrottle();
 
   @override
+  void initState() {
+    super.initState();
+    rowValueDrag.addListener(_rowDragChanged);
+  }
+
+  void _rowDragChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
   void dispose() {
+    rowValueDrag.removeListener(_rowDragChanged);
     _preview.cancel();
     super.dispose();
   }
@@ -1878,7 +1906,28 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
 
   /// The keys as the painter should read them — the handle drag's provisional
   /// sides swapped in, so the curve follows the handle live.
-  List<BridgeKeyframe> _shownKeys(GraphChannel channel) {
+  ///
+  /// `painting` is what tells a *row* drag's provisional value from the keys
+  /// that really exist: the curve is drawn through it, the diamonds are not, so
+  /// dragging an unkeyed value moves the line without appearing to key it.
+  List<BridgeKeyframe> _shownKeys(GraphChannel channel,
+      {bool painting = false}) {
+    final row = rowValueDrag.value;
+    if (row != null &&
+        channel.prop?.name == row.prop &&
+        channel.entry.layer.internallayerId.toString() == row.layer) {
+      final keys = channel.keys;
+      if (keys.isNotEmpty) {
+        return _withKeyAt(keys, row.frame.toDouble(), row.value, widget.fps,
+            widget.fpsNum, widget.fpsDen);
+      }
+      // Not keyed: one point carries the whole flat line to its new height, and
+      // only for the drawing.
+      if (painting) {
+        return _withKeyAt(const [], row.frame.toDouble(), row.value, widget.fps,
+            widget.fpsNum, widget.fpsDen);
+      }
+    }
     final drag = _handleDrag;
     if (drag == null || drag.channel.id != channel.id) return channel.keys;
     final shaped = _keysWithHandleDrag(drag, channel.keys);
@@ -2019,7 +2068,8 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
                       painter: _GraphPainter(
                         channels: widget.channels,
                         shownKeys: [
-                          for (final c in widget.channels) _shownKeys(c)
+                          for (final c in widget.channels)
+                            _shownKeys(c, painting: true)
                         ],
                         lens: widget.lens,
                         axis: widget.axis,

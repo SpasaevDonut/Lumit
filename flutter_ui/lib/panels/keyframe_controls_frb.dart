@@ -108,12 +108,20 @@ class KeyedValueField extends StatefulWidget {
   /// nothing and behaves exactly as before.
   final ValueChanged<double>? onLive;
 
+  /// The gesture beginning, before any value has moved. A caller that keys on
+  /// drag-start uses it (K-333): the property is animated, the playhead is
+  /// between keys, and the drag is about to edit *something* — so a key holding
+  /// the value already there is planted, and nothing moves until the pointer
+  /// does.
+  final VoidCallback? onStart;
+
   const KeyedValueField({
     super.key,
     required this.fieldKey,
     required this.value,
     required this.onCommit,
     this.onLive,
+    this.onStart,
     this.min = -1000000,
     this.max = 1000000,
     this.speed = 1,
@@ -145,7 +153,10 @@ class _KeyedValueFieldState extends State<KeyedValueField> {
         suffix: widget.suffix,
         // Typed, reset and pasted values are already one-shot edits.
         onChanged: _commit,
-        onChangeStart: () => setState(() => _staged = widget.value),
+        onChangeStart: () {
+          setState(() => _staged = widget.value);
+          widget.onStart?.call();
+        },
         // A tick moves the number on screen, and shows it if the caller can.
         onChangeLive: (v) {
           setState(() => _staged = v.toDouble());

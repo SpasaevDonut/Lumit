@@ -7668,9 +7668,16 @@ the whole gesture and jumped on the way out.
 **`Shift` lays a tangent handle flat**, holding the value at the key's own so the curve leaves
 it horizontally; a joined partner is mirrored from the dragged side and comes flat with it.
 
-**A keyed value drag in the layer area previews**, through the same patched clone a static one
-uses (K-192) — carrying the whole animation, with the key at the playhead moved or a linear one
-planted there. Still owed, and not built here: the *graph* pane does not follow such a drag,
-because the curve it draws comes from the read model and the provisional value lives in the row's
-own state; carrying it across wants a published drag value the pane can read, the shape
-`BarDragPreview` already uses for bar drags (K-172).
+**A value drag in the layer area previews, and the graph follows it.** The picture is rendered
+through the same patched clone a static drag uses (K-192), carrying the whole animation. The
+curve is a second problem with the same cause — the pane draws from the read model, and the
+provisional value lives in the row's own state until the release — so the row **publishes** it
+(`rowValueDrag`), exactly as a bar drag publishes its travel for the waveform lane
+(`BarDragPreview`, K-172), and the pane draws through it. Matched by layer and *axis*, so
+dragging Position x leaves y where it is.
+
+Two rules about keys go with it. An **animated** property with no key under the playhead gains
+one the moment the drag starts, holding the value already showing — nothing moves, and the drag
+then has a key to carry, which is what makes it visible in the graph as it goes. An **unkeyed**
+property is drawn at its new value and gains no diamond: the drag is not planting a key, and a
+glyph would say it was.

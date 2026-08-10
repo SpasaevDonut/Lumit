@@ -34,6 +34,7 @@ import '../state/preview_throttle.dart';
 import '../state/timeline_columns.dart';
 import '../widgets/angle_dial.dart';
 import '../widgets/controls.dart';
+import 'graph_editor_frb.dart';
 import 'fx_section.dart';
 import 'keyframe_controls_frb.dart';
 
@@ -473,8 +474,27 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
         suffix: axis.suffix,
         onCommit: (v) => _commitKeyed(axis.prop, scalar, v, frame),
         onLive: (v) => _liveKeyed(axis.prop, scalar, v, frame),
+        onStart: () => _keyOnDragStart(axis.prop, scalar, sampled, frame),
       ),
     );
+  }
+
+  /// The playhead has no key on this property and a drag is starting, so one is
+  /// planted there holding the value already showing (K-333). Nothing moves —
+  /// it is the same value — and the drag then has a key to carry, which is what
+  /// makes it visible in the graph as it goes rather than only on release.
+  void _keyOnDragStart(
+      BridgeTransformProp prop, BridgeScalar scalar, double value, int frame) {
+    if (scalar is! BridgeScalar_Keyframed) return;
+    if (scalar.field0
+        .any((k) => widget.comp.frameAtTime(time: k.time) == frame)) {
+      return;
+    }
+    widget.layer.setTransform(
+      prop: prop,
+      value: scalarWithValueAt(scalar, value, widget.comp, frame),
+    );
+    widget.onChanged();
   }
 
   /// A tick of a drag on an *animated* property: render the curve the release
@@ -483,6 +503,12 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
   /// uses, carrying a whole animation instead of one number.
   void _liveKeyed(
       BridgeTransformProp prop, BridgeScalar scalar, double value, int frame) {
+    rowValueDrag.value = (
+      layer: widget.layer.internallayerId.toString(),
+      prop: prop.name,
+      frame: frame,
+      value: value,
+    );
     final staged = writeScalar(
       widget.transform,
       prop,
@@ -502,8 +528,9 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
   void _commitKeyed(
       BridgeTransformProp prop, BridgeScalar scalar, double value, int frame) {
     // The write is the last word: a held preview tick after it would put the
-    // provisional picture back.
+    // provisional picture back, and the graph reads the document again.
     _throttle.cancel();
+    rowValueDrag.value = null;
     widget.layer.setTransform(
       prop: prop,
       value: scalarWithValueAt(scalar, value, widget.comp, frame),
