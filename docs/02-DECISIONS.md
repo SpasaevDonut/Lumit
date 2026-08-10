@@ -7655,11 +7655,18 @@ off-screen still left room for the spike and the part under the pointer stayed a
 fit now takes the keys inside the visible time window, plus what each curve reads at the two
 edges of it — the edges being what stops a span *between* two keys from framing on nothing.
 
-**A stale Alt no longer kills every other wheel.** Alt is Windows' menu-activation chord, so the
-release that ends an Alt+wheel zoom often never reaches the app; Flutter went on believing Alt
-was held and read every later wheel as another zoom, leaving plain, Shift and Ctrl scrolling
-dead until the user pressed Alt again somewhere it could be seen. The wheel handler asks the
-platform what is actually held when it sees Alt.
+**"No other scroll works until I press Alt again" was never the Alt key.** The first reading was
+a stale modifier — Alt is Windows' menu-activation chord, so the key-up that ends an Alt+wheel
+zoom is easily lost — and the handler does now ask the platform what is really held. But that
+was not the fault. Alt+wheel multiplies the vertical span by 1.2 a tick and nothing bounded it,
+so half a second of scrolling gave a range hundreds of times the curve and a few seconds gave
+millions. Nothing about the pane then looks broken; it looks *dead*. The curve is far outside
+the window, a pan of one wheel notch moves it by a fraction of a span nobody can see, and only
+another Alt+wheel — being multiplicative — can climb back, which is exactly what "press Alt
+again and it works" was describing. The vertical range is now held finite, the right way up, and
+within a thousandfold of what auto-fit would choose; the zoom's anchor is clamped to the pane,
+because the pointer signal is reported against a listener taller than the graph and an anchor
+from outside it zooms about a value nowhere near the curve.
 
 **The magnet snaps the picture, not only the write.** A key drag rounded to whole frames on
 release and drew unrounded until then, so a key bound for frame 12 sat between 11 and 12 for

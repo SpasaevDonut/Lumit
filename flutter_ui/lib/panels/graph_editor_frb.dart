@@ -1219,17 +1219,47 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
     final (lo, hi) = range;
     final span = hi - lo;
     if (keys.isAltPressed) {
-      // Zoom about the pointer: the value under the cursor stays put.
-      final at = _valueAt(event.localPosition.dy, range, _paneSize.height);
+      // Zoom about the pointer: the value under the cursor stays put. The
+      // anchor is clamped to the pane, because the pointer signal is reported
+      // against a listener that is taller than the graph — an anchor from
+      // outside it zooms about a value nowhere near the curve, which is how a
+      // few ticks turned into a range of millions.
+      final at = _valueAt(
+        event.localPosition.dy.clamp(0.0, _paneSize.height),
+        range,
+        _paneSize.height,
+      );
       final factor = event.scrollDelta.dy < 0 ? 1 / 1.2 : 1.2;
       setState(() => _manual[widget.lens] =
-          (at - (at - lo) * factor, at + (hi - at) * factor));
+          _sane((at - (at - lo) * factor, at + (hi - at) * factor)));
       return;
     }
     // Wheel down moves the *content* up, as scrolling does everywhere: the
     // window onto the values travels the other way to the wheel.
     final pan = -event.scrollDelta.dy / _paneSize.height * span;
-    setState(() => _manual[widget.lens] = (lo + pan, hi + pan));
+    setState(() => _manual[widget.lens] = _sane((lo + pan, hi + pan)));
+  }
+
+  /// A vertical range the pane can actually draw: finite, the right way up, and
+  /// within a thousandfold of the range auto-fit would choose.
+  ///
+  /// **Why there has to be a floor and a ceiling.** Alt+wheel multiplies the
+  /// span by 1.2 a tick, so half a second of scrolling is a range hundreds of
+  /// times the curve and a few seconds is millions. Nothing refuses it, and
+  /// nothing about the pane then looks broken — it looks *dead*: the curve is
+  /// far outside the window, a pan of one wheel notch moves it by a fraction of
+  /// a span nobody can see, and only another Alt+wheel — being multiplicative —
+  /// can climb back. That is the "no other scroll works until I press Alt
+  /// again" report, and it was never the Alt key at all (K-333).
+  (double, double) _sane((double, double) range) {
+    final fit = _fitRange();
+    final reference = (fit.$2 - fit.$1).abs();
+    final limit = reference.isFinite && reference > 1e-9 ? reference : 1.0;
+    var (lo, hi) = range;
+    if (!lo.isFinite || !hi.isFinite || hi <= lo) return fit;
+    final span = (hi - lo).clamp(limit / 1000, limit * 1000);
+    final middle = (lo + hi) / 2;
+    return (middle - span / 2, middle + span / 2);
   }
 
   // --- selection -----------------------------------------------------------
