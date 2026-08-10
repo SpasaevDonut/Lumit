@@ -1927,6 +1927,17 @@ class _TickPainter extends CustomPainter {
   bool shouldRepaint(_TickPainter old) => old.color != color;
 }
 
+/// How much a scrub tick is worth right now, from the modifier keys — the
+/// After Effects convention: Shift makes a drag coarse (×10), Ctrl makes it
+/// fine (×0.1), and nothing held is ×1. Sampled inside the drag handler on
+/// every update, so pressing or releasing a modifier mid-drag takes effect at
+/// once.
+double scrubFactor() => HardwareKeyboard.instance.isShiftPressed
+    ? 10
+    : HardwareKeyboard.instance.isControlPressed
+        ? 0.1
+        : 1;
+
 /// egui's DragValue: drag horizontally to adjust, click to type, right-click
 /// for Reset / Copy / Paste (egui's built-in drag-value menu). [resetTo] is the
 /// field's known default — Reset appears only when a call site supplies one.
@@ -2229,10 +2240,15 @@ class _DragValueFieldState extends State<DragValueField>
             widget.onChangeStart?.call();
           },
           onHorizontalDragUpdate: (d) {
-            _dragAccum += d.delta.dx * widget.speed;
-            if (_dragAccum.abs() >= widget.speed) {
-              final next =
-                  (widget.value + _dragAccum).clamp(widget.min, widget.max);
+            final factor = scrubFactor();
+            _dragAccum += d.delta.dx * widget.speed * factor;
+            if (_dragAccum.abs() >= widget.speed * factor) {
+              // The drag runs from its own last tick, not from `widget.value`:
+              // pointer events arrive faster than rebuilds, and a base read
+              // from the stale prop dropped every chunk but the frame's last —
+              // a fast drag lost most of its travel.
+              final next = ((_lastDragValue ?? widget.value) + _dragAccum)
+                  .clamp(widget.min, widget.max);
               _dragAccum = 0;
               _lastDragValue = next;
               (widget.onChangeLive ?? widget.onChanged)(next);
