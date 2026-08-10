@@ -21,19 +21,21 @@ void main() {
       [
         Panel.project,
         Panel.effectControls,
-        Panel.effectsAndPresets,
         Panel.hierarchy,
       ],
     );
     expect(left.active, 0, reason: 'the left group opens on Project');
 
     expect((upper.children[1] as DockPane).panel, Panel.viewer);
-    // The right group tabs the Debug view over Scopes (Airyz's panel).
+    // The right column carries Effects & presets fronted (docs/07 §1.6's
+    // Edit workspace), with Scopes and Debug tabbed behind it.
     final right = upper.children[2] as DockTabs;
     expect(
       [for (final c in right.children) c.panel],
-      [Panel.debug, Panel.scopes],
+      [Panel.effectsAndPresets, Panel.scopes, Panel.debug],
     );
+    expect(right.active, 0,
+        reason: 'the right group opens on Effects & presets');
     expect((root.children[1] as DockPane).panel, Panel.timeline);
   });
 
@@ -56,7 +58,7 @@ void main() {
   test('activatePanelTab fronts the tab that holds the panel', () {
     final root = defaultLayout();
     final left = (root.children[0] as DockSplit).children[0] as DockTabs;
-    left.active = 3;
+    left.active = 2;
     activatePanelTab(root, Panel.project);
     expect(left.active, 0);
     // A panel not in any tab group is a no-op.

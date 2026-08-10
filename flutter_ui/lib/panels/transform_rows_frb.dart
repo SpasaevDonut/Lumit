@@ -34,6 +34,7 @@ import '../state/preview_throttle.dart';
 import '../state/timeline_columns.dart';
 import '../widgets/angle_dial.dart';
 import '../widgets/controls.dart';
+import 'graph_editor_frb.dart';
 import 'fx_section.dart';
 import 'keyframe_controls_frb.dart';
 
@@ -388,18 +389,15 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
         child: EffectParamRowExpression(
             value: scalar,
             set: (value) {
+              final field = (value as BridgeEffectValue_Float).field0;
 
+              if (field is BridgeScalar_Expression) {
+                _commitExpression(axis.prop, field.field0);
+              }
 
-             final field = (value as BridgeEffectValue_Float).field0;
-
-             if ( field is BridgeScalar_Expression ) {
-              _commitExpression(axis.prop, field.field0);
-             }
-
-             if(field is BridgeScalar_Static) {
-              _commit(axis.prop, field.field0);
-             }
-
+              if (field is BridgeScalar_Static) {
+                _commit(axis.prop, field.field0);
+              }
             },
             setLive: (value) {
               _liveExpression(
@@ -475,14 +473,64 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
         decimals: axis.decimals,
         suffix: axis.suffix,
         onCommit: (v) => _commitKeyed(axis.prop, scalar, v, frame),
+        onLive: (v) => _liveKeyed(axis.prop, scalar, v, frame),
+        onStart: () => _keyOnDragStart(axis.prop, scalar, sampled, frame),
       ),
     );
+  }
+
+  /// The playhead has no key on this property and a drag is starting, so one is
+  /// planted there holding the value already showing (K-333). Nothing moves —
+  /// it is the same value — and the drag then has a key to carry, which is what
+  /// makes it visible in the graph as it goes rather than only on release.
+  void _keyOnDragStart(
+      BridgeTransformProp prop, BridgeScalar scalar, double value, int frame) {
+    if (scalar is! BridgeScalar_Keyframed) return;
+    if (scalar.field0
+        .any((k) => widget.comp.frameAtTime(time: k.time) == frame)) {
+      return;
+    }
+    widget.layer.setTransform(
+      prop: prop,
+      value: scalarWithValueAt(scalar, value, widget.comp, frame),
+    );
+    widget.onChanged();
+  }
+
+  /// A tick of a drag on an *animated* property: render the curve the release
+  /// will write — the key at the playhead moved, or a linear one planted there
+  /// — without writing it (K-333). The same patched-clone door a static drag
+  /// uses, carrying a whole animation instead of one number.
+  void _liveKeyed(
+      BridgeTransformProp prop, BridgeScalar scalar, double value, int frame) {
+    rowValueDrag.value = RowValueDrag(
+      layer: widget.layer.internallayerId.toString(),
+      prop: prop.name,
+      frame: frame,
+      value: value,
+    );
+    final staged = writeScalar(
+      widget.transform,
+      prop,
+      scalarWithValueAt(scalar, value, widget.comp, frame),
+    );
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    _throttle.request(() => widget.comp.renderFrameWithTransformPreview(
+          frame: BigInt.from(ui.playheadFrame.value),
+          scale: ui.viewerScale,
+          layer: widget.layer,
+          transform: staged,
+        ));
   }
 
   /// Write `value` into the animated property's key at `frame` (or plant one
   /// there) — one op, one undo step.
   void _commitKeyed(
       BridgeTransformProp prop, BridgeScalar scalar, double value, int frame) {
+    // The write is the last word: a held preview tick after it would put the
+    // provisional picture back, and the graph reads the document again.
+    _throttle.cancel();
+    rowValueDrag.value = null;
     widget.layer.setTransform(
       prop: prop,
       value: scalarWithValueAt(scalar, value, widget.comp, frame),
@@ -559,8 +607,13 @@ BridgeScalar read(BridgeTransform tf, BridgeTransformProp prop) =>
 /// Rebuilt field by field because the generated type has no `copyWith`: it is a
 /// plain data class across the seam, which is the point of it.
 BridgeTransform write(
-    BridgeTransform tf, BridgeTransformProp prop, double value) {
-  final replacement = BridgeScalar.static_(value);
+        BridgeTransform tf, BridgeTransformProp prop, double value) =>
+    writeScalar(tf, prop, BridgeScalar.static_(value));
+
+/// A copy of `tf` with one property's whole animation replaced — what a graph
+/// drag previews, where the provisional value is a curve rather than a number.
+BridgeTransform writeScalar(
+    BridgeTransform tf, BridgeTransformProp prop, BridgeScalar replacement) {
   BridgeScalar pick(BridgeTransformProp p, BridgeScalar current) =>
       p == prop ? replacement : current;
 
@@ -580,22 +633,5 @@ BridgeTransform write(
 }
 
 BridgeTransform writeExpression(
-    BridgeTransform tf, BridgeTransformProp prop, String expression) {
-  final replacement = BridgeScalar.expression(expression);
-  BridgeScalar pick(BridgeTransformProp p, BridgeScalar current) =>
-      p == prop ? replacement : current;
-
-  return BridgeTransform(
-    anchorX: pick(BridgeTransformProp.anchorX, tf.anchorX),
-    anchorY: pick(BridgeTransformProp.anchorY, tf.anchorY),
-    positionX: pick(BridgeTransformProp.positionX, tf.positionX),
-    positionY: pick(BridgeTransformProp.positionY, tf.positionY),
-    positionZ: pick(BridgeTransformProp.positionZ, tf.positionZ),
-    scaleX: pick(BridgeTransformProp.scaleX, tf.scaleX),
-    scaleY: pick(BridgeTransformProp.scaleY, tf.scaleY),
-    rotation: pick(BridgeTransformProp.rotation, tf.rotation),
-    rotationX: pick(BridgeTransformProp.rotationX, tf.rotationX),
-    rotationY: pick(BridgeTransformProp.rotationY, tf.rotationY),
-    opacity: pick(BridgeTransformProp.opacity, tf.opacity),
-  );
-}
+        BridgeTransform tf, BridgeTransformProp prop, String expression) =>
+    writeScalar(tf, prop, BridgeScalar.expression(expression));

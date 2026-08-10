@@ -174,6 +174,40 @@ pub fn frame_pick(
 mod tests {
     use super::*;
 
+    /// K-095's conform, from the other end: animation drawn on 2s.
+    ///
+    /// A 24 fps anime cut animated on 2s holds each drawing for two frames —
+    /// A A B B C C. Interpolating natively, half the pairs bracket a frame and
+    /// its own duplicate (no motion at all) and the rest carry the whole step,
+    /// which reads as judder rather than slow motion. Conforming to 12 — the
+    /// rate it was *drawn* at — makes every bracket span two different
+    /// drawings.
+    #[test]
+    fn a_conform_rate_skips_the_duplicates_of_animation_on_twos() {
+        let fps = 24.0;
+        let frames = 48;
+        // Native: at an eighth of a second in, the bracket is frames 3 and 4 —
+        // and on 2s, frames 2 and 3 are the same drawing, so the pair 3-4
+        // straddles a change while 2-3 would not move at all.
+        let (a, b) = frame_pick(0.14, fps, frames, true, None);
+        assert_eq!(a, 3);
+        assert_eq!(b.map(|(f, _)| f), Some(4));
+
+        // Conformed to 12: brackets are always an even frame and the next even
+        // frame — one drawing to the next, never a drawing to itself.
+        for step in 0..8 {
+            let t = f64::from(step) * 0.09;
+            let (a, b) = frame_pick(t, fps, frames, true, Some(12.0));
+            assert!(
+                a.is_multiple_of(2),
+                "conformed bracket starts on a drawing: {a}"
+            );
+            if let Some((f, _)) = b {
+                assert_eq!(f, a + 2, "and ends on the next one, never a duplicate");
+            }
+        }
+    }
+
     #[test]
     fn blend_and_frame_pick() {
         // Half-blend of black and mid-grey is mid-value.

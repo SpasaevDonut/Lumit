@@ -283,12 +283,17 @@ pub fn preview_scale_q(quality: Quality) -> u16 {
 /// for. Deliberately NOT part of its name — two positions with identical content
 /// share one entry, and this then records whichever asked for it first — but kept
 /// because a hash alone cannot answer "is there any picture of frame 12?".
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub struct FrameProvenance {
     pub comp: Uuid,
     pub frame: u64,
     /// Preview scale in thousandths — see [`preview_scale_q`].
     pub scale_q: u16,
+    /// The quality the frame was made at, which is what makes the position
+    /// answerable *and* checkable: a positional consumer can recompute the
+    /// content name this position has now at this quality, and so tell the
+    /// picture of frame 12 from a picture frame 12 used to show (K-330).
+    pub quality: Quality,
 }
 
 /// A frame's name in the VRAM cache: its content hash, plus the channel order
@@ -481,6 +486,9 @@ impl HeadlessRenderer {
             lut_cache: std::cell::RefCell::new(crate::fxops::LutCache::default()),
         };
         let scope = lumit_gpu::scope::ScopeEngine::new(&gpu);
+        // Flow runs on this same device rather than opening one of its own
+        // (K-331); the handles are reference-counted, so this shares it.
+        let pool = DecodePool::with_gpu(&gpu);
         Ok(Self {
             gpu,
             parts: Some(parts),
@@ -488,7 +496,7 @@ impl HeadlessRenderer {
             items: HashMap::new(),
             probe_cache: HashMap::new(),
             audio_jobs: AudioJobsBuilder::new(),
-            pool: DecodePool::new(),
+            pool,
             retained: None,
             frame_textures: {
                 let mut lru = lumit_cache::ByteLru::new(DEFAULT_VRAM_CACHE_BYTES);
@@ -1122,6 +1130,7 @@ impl HeadlessRenderer {
                         comp: comp_id,
                         frame,
                         scale_q: preview_scale_q(quality),
+                        quality,
                     },
                     from_lower_tier: false,
                     cost_ms,
@@ -2811,6 +2820,7 @@ mod tests {
                 comp,
                 frame: key as u64,
                 scale_q: 1000,
+                quality: Quality::default(),
             },
         };
         // Room for exactly one 8×8 frame, so each promotion evicts the one

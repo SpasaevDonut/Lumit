@@ -43,6 +43,8 @@ import '../widgets/controls.dart';
 import 'about_window_frb.dart';
 import 'command_palette_frb.dart';
 import 'comp_settings_frb.dart';
+import 'fx_console_context.dart';
+import 'fx_console_frb.dart';
 import 'precompose_dialog_frb.dart';
 import 'export_dialog_frb.dart';
 import 'recovery_dialog_frb.dart';
@@ -199,7 +201,10 @@ class LumitMenuBarFrb extends StatelessWidget {
     if (defaultTargetPlatform == TargetPlatform.macOS) {
       return PlatformMenuBar(
         menus: platformMenusFor(context, menus),
-        child: _PaletteHotkey(onRequested: () => _palette(context)),
+        child: Stack(children: [
+          _PaletteHotkey(onRequested: () => _palette(context)),
+          _ConsoleHotkey(onRequested: () => _console(context)),
+        ]),
       );
     }
 
@@ -226,6 +231,9 @@ class LumitMenuBarFrb extends StatelessWidget {
             // palette this bar builds, rather than the shell building a second
             // one from a list that would drift out of step with these menus.
             _PaletteHotkey(onRequested: () => _palette(context)),
+            // The same, for Ctrl+Space (K-324): the console's effects and comps
+            // come from this file for the same reason the palette's commands do.
+            _ConsoleHotkey(onRequested: () => _console(context)),
           ],
         ),
       ),
@@ -324,6 +332,53 @@ class LumitMenuBarFrb extends StatelessWidget {
             run: () => showProjectSettingsFrb(context, project),
           ),
       ],
+    );
+  }
+
+  /// The Ctrl+Space console (K-324). Its two halves are built here beside the
+  /// menus for the same reason the palette's list is: the effects it applies
+  /// and the comps it fronts must be the ones the menus mean.
+  Future<void> _console(BuildContext context) async {
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    final comp = ui.selectedComp;
+
+    void applyEffect(String name) {
+      final layers = ui.selectedLayers.value;
+      if (layers.isEmpty) return;
+      // Every selected layer, as the Effect menu does (K-217).
+      for (final target in layers) {
+        target.addEffect(name: name);
+      }
+      app.notifyDocumentChanged();
+    }
+
+    await showFxConsoleFrb(
+      context: context,
+      // The ring opens around the mouse (K-325): the shell records where the
+      // pointer last was, because the key event itself has no position.
+      anchor: lastKnownPointerPosition,
+      model: FxConsoleModel(
+        radialTitle: fxConsoleContextTitle(ui),
+        radial: fxConsoleRadial(context, app, ui),
+        onSnapshot: comp == null ? null : () => saveSnapshotFrb(app, ui),
+        entries: [
+          // Effects first — the overwhelmingly common reason to open this.
+          for (final effect in listEffects())
+            FxConsoleEntry(
+              label: engineLabel(effect.label),
+              kind: FxConsoleKind.effect,
+              group: engineLabel(effect.categoryLabel),
+              run: () => applyEffect(effect.name),
+            ),
+          // Then the comps, under the list's divider.
+          for (final (each, name) in app.comps())
+            FxConsoleEntry(
+              label: name,
+              kind: FxConsoleKind.composition,
+              run: () => ui.setSelectedComp(each),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -1199,6 +1254,41 @@ class _PaletteHotkeyState extends State<_PaletteHotkey> {
     // of the shell state would be pure cost. The state itself outlives the
     // window, so the notifier it hands over never changes under us.
     final requests = context.read<LumitUiState>().paletteRequest;
+    if (requests != _bound) {
+      _bound?.removeListener(_open);
+      _bound = requests..addListener(_open);
+    }
+    return const SizedBox.shrink();
+  }
+
+  void _open() {
+    if (mounted) widget.onRequested();
+  }
+
+  @override
+  void dispose() {
+    _bound?.removeListener(_open);
+    super.dispose();
+  }
+}
+
+/// The same for the Ctrl+Space console (K-324): holds the subscription to
+/// [LumitUiState.consoleRequest] and draws nothing.
+class _ConsoleHotkey extends StatefulWidget {
+  final VoidCallback onRequested;
+
+  const _ConsoleHotkey({required this.onRequested});
+
+  @override
+  State<_ConsoleHotkey> createState() => _ConsoleHotkeyState();
+}
+
+class _ConsoleHotkeyState extends State<_ConsoleHotkey> {
+  ValueNotifier<int>? _bound;
+
+  @override
+  Widget build(BuildContext context) {
+    final requests = context.read<LumitUiState>().consoleRequest;
     if (requests != _bound) {
       _bound?.removeListener(_open);
       _bound = requests..addListener(_open);

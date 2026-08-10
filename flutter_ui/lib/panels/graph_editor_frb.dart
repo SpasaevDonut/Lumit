@@ -26,9 +26,11 @@ import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/shell.dart';
 import 'package:lumit_flutter/state/comp_model.dart';
+import 'package:lumit_flutter/state/preview_throttle.dart';
 import 'package:provider/provider.dart';
 
 import '../l10n/strings.dart';
+import '../state/os_keys.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 import '../widgets/marquee.dart';
@@ -37,6 +39,62 @@ import 'graph_maths.dart';
 import 'layer_fold_frb.dart';
 import 'timeline_extras_frb.dart';
 import 'transform_rows_frb.dart';
+
+/// A value drag in flight **in the layer area**, published for the graph pane to
+/// draw (K-333).
+///
+/// The row stages its value in Dart and commits once on release (K-192), so the
+/// read model — and therefore the curve — still holds the old one until the
+/// pointer comes up. The pane cannot ask for it, because it is not in the
+/// document; the row publishes it here instead, exactly as a bar drag publishes
+/// its travel for the waveform lane (`BarDragPreview`, K-172). Null between
+/// gestures.
+///
+/// The layer plus one channel selector — a transform axis, an effect
+/// parameter, or the Retime — is what the two sides have in common, so
+/// dragging Position x leaves y where it is. An **unkeyed** property is drawn
+/// at its new value and gains no diamond: the drag is not planting a key, and
+/// a glyph would say it was.
+final ValueNotifier<RowValueDrag?> rowValueDrag = ValueNotifier(null);
+
+/// One tick of a layer-area value drag: which channel, and what it holds.
+class RowValueDrag {
+  final String layer;
+
+  /// A transform axis (`BridgeTransformProp.name`), or null.
+  final String? prop;
+
+  /// An effect parameter, or nulls.
+  final String? effectId;
+  final String? paramId;
+
+  /// The layer's Retime channel.
+  final bool retime;
+
+  final int frame;
+  final double value;
+
+  const RowValueDrag({
+    required this.layer,
+    this.prop,
+    this.effectId,
+    this.paramId,
+    this.retime = false,
+    required this.frame,
+    required this.value,
+  });
+
+  /// Whether [channel] is the curve this drag is editing.
+  bool matches(GraphChannel channel) {
+    if (channel.entry.layer.internallayerId.toString() != layer) return false;
+    if (prop != null) return channel.prop?.name == prop;
+    if (effectId != null) {
+      return channel.effect?.id.toString() == effectId &&
+          channel.param?.id == paramId;
+    }
+    return retime && channel.retime;
+  }
+}
 
 /// Which reading of the curve is on screen (docs/07 §5.1).
 enum GraphLens { value, speed }
@@ -237,6 +295,86 @@ void commitChannelEdits(Map<GraphChannel, BridgeScalar> edits) {
     }
     layer.setEffects(effects: staged);
   }
+}
+
+/// Show the edits a gesture is *about* to make, without making them: the same
+/// scalars [commitChannelEdits] writes on release, rendered through the
+/// engine's patched clone.
+///
+/// **Why this exists.** A drag is one op on release (K-192), so between the
+/// first move and the mouse-up the document still holds the old curve and the
+/// Viewer still shows it. On a transform or an effect that is merely awkward;
+/// on a **Retime** it is the whole edit — you are choosing which frame of the
+/// source to land on, by eye, against a picture that will not move until you
+/// let go. Every other live drag in the editor already previews (transform
+/// rows, effect rows, paint, masks, clip envelopes); the graph is where curves
+/// are actually shaped, and it was the one place that did not.
+///
+/// **One layer, one kind, per gesture.** A preview request patches a single
+/// layer's single state (see `RenderCompRequestWithPreview`), so this previews
+/// the grabbed channel's layer and the channels that patch the same way; a
+/// selection spanning several layers or a transform *and* an effect at once
+/// shows the rest on release, as it always did. That is what a gesture is in
+/// practice: one property of one layer.
+void previewChannelEdits({
+  required CompositionReference comp,
+  required Map<GraphChannel, BridgeScalar> edits,
+  required int frame,
+  required double scale,
+}) {
+  if (edits.isEmpty) return;
+  final lead = edits.keys.first;
+  final layer = lead.entry.layer;
+  final layerId = layer.internallayerId.toString();
+  bool sameLayer(GraphChannel c) =>
+      c.entry.layer.internallayerId.toString() == layerId;
+  final bigFrame = BigInt.from(frame);
+
+  if (lead.retime) {
+    comp.renderFrameWithRetime(
+      frame: bigFrame,
+      scale: scale,
+      layer: layer,
+      retime: edits[lead]!,
+    );
+    return;
+  }
+
+  if (lead.prop != null) {
+    var transform = layer.getTransform();
+    edits.forEach((channel, next) {
+      if (!sameLayer(channel) || channel.prop == null) return;
+      transform = writeScalar(transform, channel.prop!, next);
+    });
+    comp.renderFrameWithTransformPreview(
+      frame: bigFrame,
+      scale: scale,
+      layer: layer,
+      transform: transform,
+    );
+    return;
+  }
+
+  if (lead.effect == null || lead.param == null) return;
+  final staged = layer.getEffects();
+  for (final instance in staged) {
+    edits.forEach((channel, next) {
+      if (!sameLayer(channel) ||
+          channel.effect == null ||
+          channel.param == null) {
+        return;
+      }
+      if (channel.effect!.id.toString() != instance.id().toString()) return;
+      instance.setValue(
+          id: channel.param!.id, value: BridgeEffectValue.float(next));
+    });
+  }
+  comp.renderFrameWithPreview(
+    frame: bigFrame,
+    scale: scale,
+    layer: layer,
+    effects: staged,
+  );
 }
 
 /// [keys] with a key of [value] at [frame] — replacing the one already there,
@@ -844,6 +982,27 @@ class _HandleDrag {
 class GraphEditorFrbState extends State<GraphEditorFrb> {
   _KeyDrag? _keyDrag;
 
+  /// How often a drag in flight may ask the engine for a frame of the values it
+  /// is about to write (see [previewChannelEdits]).
+  final PreviewThrottle _preview = PreviewThrottle();
+
+  @override
+  void initState() {
+    super.initState();
+    rowValueDrag.addListener(_rowDragChanged);
+  }
+
+  void _rowDragChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    rowValueDrag.removeListener(_rowDragChanged);
+    _preview.cancel();
+    super.dispose();
+  }
+
   /// When and where the pane was last clicked, for spotting a double-click
   /// (see [_tapPane]).
   DateTime? _lastPaneTap;
@@ -941,6 +1100,59 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
   List<List<BridgeKeyframe>> get _channelKeys =>
       [for (final c in widget.channels) c.keys];
 
+  /// The stretch of time actually on screen, in seconds — or null when the pane
+  /// is not inside a scroll view (a test builds it alone) and everything is.
+  (double, double)? get _visibleSeconds {
+    final c = widget.hScroll;
+    if (c == null || !c.hasClients) return null;
+    final width = c.position.viewportDimension;
+    if (width <= 0) return null;
+    return (_secondsOfX(c.offset), _secondsOfX(c.offset + width));
+  }
+
+  /// Each channel's keys as the fit should see them: **only the ones on
+  /// screen**, plus what the curve reads at each edge of the view.
+  ///
+  /// Auto-fit frames the curves, and "the curves" means the part of them you
+  /// are looking at. Fitting over every key regardless left the vertical
+  /// framing fixed however far the time axis was zoomed in — zoom into a
+  /// quiet stretch of a curve that spikes somewhere off-screen and the pane
+  /// still made room for the spike, so the part under the pointer stayed a
+  /// flat line (K-333).
+  ///
+  /// The edge samples are what stop a span *between* two keys from framing on
+  /// nothing: zoomed between them there is no key in view at all, and the
+  /// value there is the whole of what the view shows.
+  List<List<BridgeKeyframe>> get _visibleChannelKeys {
+    final window = _visibleSeconds;
+    if (window == null) return _channelKeys;
+    final (t0, t1) = window;
+    return [
+      for (final channel in widget.channels)
+        () {
+          final keys = channel.keys;
+          if (keys.isEmpty) return keys;
+          final shown = [
+            for (final k in keys)
+              if (rationalSeconds(k.time) >= t0 &&
+                  rationalSeconds(k.time) <= t1)
+                k,
+          ];
+          return [
+            ...shown,
+            for (final t in [t0, t1])
+              BridgeKeyframe(
+                time: timeOfSubframe(
+                    t * widget.fps, widget.fpsNum, widget.fpsDen),
+                value: evaluateKeys(keys, t),
+                interpIn: const BridgeSideInterp.linear(),
+                interpOut: const BridgeSideInterp.linear(),
+              ),
+          ];
+        }(),
+    ];
+  }
+
   /// Whether [channel] draws as the Vegas speed envelope right now (K-247) —
   /// a Retime, in the speed view, with the preference on.
   bool isEnvelope(GraphChannel channel) =>
@@ -951,14 +1163,14 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
   (double, double) _fitRange() {
     if (widget.lens == GraphLens.value) {
       return fitValueRange(
-        _channelKeys,
+        _visibleChannelKeys,
         [
           for (final c in widget.channels)
             if (c.isStatic) c.staticValue,
         ],
       );
     }
-    if (!_anyEnvelope) return fitSpeedRange(_channelKeys);
+    if (!_anyEnvelope) return fitSpeedRange(_visibleChannelKeys);
     // An envelope brings its own floor and ceiling (100% down to −25%), which
     // the ordinary speed fit has no business inventing. Any other channel
     // selected alongside is framed as before and the two ranges are unioned —
@@ -1013,14 +1225,19 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
   double _keyY(
       GraphChannel channel, int index, (double, double) range, double height,
       {required bool isOut}) {
+    // Through [_shownKeys], never the document's keys, in every lens: the
+    // drag previews — a row drag's published value, a handle's provisional
+    // sides — live in the shown list, and the diamond has to sit on the curve
+    // that is actually being drawn (K-334, K-336).
+    final shown = _shownKeys(channel);
+    if (index >= shown.length) return 0;
     if (widget.lens == GraphLens.value) {
-      return _yOf(channel.keys[index].value, range, height);
+      return _yOf(shown[index].value, range, height);
     }
     if (isEnvelope(channel)) {
-      return _yOf(envelopeSpeeds(channel.keys)[index], range, height);
+      return _yOf(envelopeSpeeds(shown)[index], range, height);
     }
-    return _yOf(
-        sideSpeedAtKey(channel.keys, index, isOut: isOut), range, height);
+    return _yOf(sideSpeedAtKey(shown, index, isOut: isOut), range, height);
   }
 
   // --- wheel ---------------------------------------------------------------
@@ -1036,18 +1253,48 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
     final range = _manual[widget.lens] ??= _lastRange;
     final (lo, hi) = range;
     final span = hi - lo;
-    if (keys.isAltPressed) {
-      // Zoom about the pointer: the value under the cursor stays put.
-      final at = _valueAt(event.localPosition.dy, range, _paneSize.height);
+    if (altActuallyHeld()) {
+      // Zoom about the pointer: the value under the cursor stays put. The
+      // anchor is clamped to the pane, because the pointer signal is reported
+      // against a listener that is taller than the graph — an anchor from
+      // outside it zooms about a value nowhere near the curve, which is how a
+      // few ticks turned into a range of millions.
+      final at = _valueAt(
+        event.localPosition.dy.clamp(0.0, _paneSize.height),
+        range,
+        _paneSize.height,
+      );
       final factor = event.scrollDelta.dy < 0 ? 1 / 1.2 : 1.2;
       setState(() => _manual[widget.lens] =
-          (at - (at - lo) * factor, at + (hi - at) * factor));
+          _sane((at - (at - lo) * factor, at + (hi - at) * factor)));
       return;
     }
     // Wheel down moves the *content* up, as scrolling does everywhere: the
     // window onto the values travels the other way to the wheel.
     final pan = -event.scrollDelta.dy / _paneSize.height * span;
-    setState(() => _manual[widget.lens] = (lo + pan, hi + pan));
+    setState(() => _manual[widget.lens] = _sane((lo + pan, hi + pan)));
+  }
+
+  /// A vertical range the pane can actually draw: finite, the right way up, and
+  /// within a thousandfold of the range auto-fit would choose.
+  ///
+  /// **Why there has to be a floor and a ceiling.** Alt+wheel multiplies the
+  /// span by 1.2 a tick, so half a second of scrolling is a range hundreds of
+  /// times the curve and a few seconds is millions. Nothing refuses it, and
+  /// nothing about the pane then looks broken — it looks *dead*: the curve is
+  /// far outside the window, a pan of one wheel notch moves it by a fraction of
+  /// a span nobody can see, and only another Alt+wheel — being multiplicative —
+  /// can climb back. That is the "no other scroll works until I press Alt
+  /// again" report, and it was never the Alt key at all (K-333).
+  (double, double) _sane((double, double) range) {
+    final fit = _fitRange();
+    final reference = (fit.$2 - fit.$1).abs();
+    final limit = reference.isFinite && reference > 1e-9 ? reference : 1.0;
+    var (lo, hi) = range;
+    if (!lo.isFinite || !hi.isFinite || hi <= lo) return fit;
+    final span = (hi - lo).clamp(limit / 1000, limit * 1000);
+    final middle = (lo + hi) / 2;
+    return (middle - span / 2, middle + span / 2);
   }
 
   // --- selection -----------------------------------------------------------
@@ -1255,7 +1502,25 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
       _frozen = null;
     });
     if (drag == null || (drag.dxPx == 0 && drag.dyPx == 0)) return;
+    // The commit is the last word on this gesture: a preview tick still held
+    // would put the provisional picture back on top of it.
+    _preview.cancel();
+    final (edits, newSelection) = _keyDragEdits(drag, range, height);
+    if (edits.isEmpty) return;
+    commitChannelEdits(edits);
+    widget.selectedKeys
+      ..clear()
+      ..addAll(newSelection);
+    widget.onSelectionChanged();
+    widget.onChanged();
+  }
 
+  /// What a key drag would write, and the selection it would leave: the keys
+  /// moved by the gesture so far, per channel. Read twice — once per preview
+  /// tick and once by the release — so the picture during the drag is made of
+  /// exactly the values the commit will write.
+  (Map<GraphChannel, BridgeScalar>, Set<String>) _keyDragEdits(
+      _KeyDrag drag, (double, double) range, double height) {
     final perFrame = widget.axis.perFrame;
     final dFrames = perFrame <= 0 ? 0.0 : drag.dxPx / perFrame;
     final span =
@@ -1314,25 +1579,56 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
         if (placed[i].$3) newSelection.add('${channel.id}#$i');
       }
     }
+    return (edits, newSelection);
+  }
+
+  /// [travel] pixels of sideways drag, rounded to whole frames when the magnet
+  /// is on — what [_keyDragEdits] will commit, so the key draws where it lands.
+  double _snappedDx(BridgeKeyframe key, double travel) {
+    final perFrame = widget.axis.perFrame;
+    if (!widget.magnet || perFrame <= 0) return travel;
+    final base = _keyFrame(key, widget.fps);
+    final moved =
+        (base + travel / perFrame).clamp(0.0, widget.frames.toDouble());
+    return (moved.roundToDouble() - base) * perFrame;
+  }
+
+  /// A drag tick: render the values the release will write, without writing
+  /// them. Throttled, and coalescing — see [PreviewThrottle].
+  void _previewDrag(Map<GraphChannel, BridgeScalar> edits) {
     if (edits.isEmpty) return;
-    commitChannelEdits(edits);
-    widget.selectedKeys
-      ..clear()
-      ..addAll(newSelection);
-    widget.onSelectionChanged();
-    widget.onChanged();
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    _preview.request(() => previewChannelEdits(
+          comp: widget.comp,
+          edits: edits,
+          frame: ui.playheadFrame.value,
+          scale: ui.viewerScale,
+        ));
   }
 
   /// Where key [index] of [channel] draws, with the drag in flight applied.
   Offset _keyPoint(
       GraphChannel channel, int index, (double, double) range, double height,
       {required bool isOut}) {
-    final key = channel.keys[index];
+    // ONE list for both coordinates. A row drag on a frame with no key shows
+    // a curve one key longer than the document's, and reading x from the
+    // document while y read the preview drew every diamond past the insertion
+    // with one key's x and another's y — glyphs floating off the curve until
+    // release (K-336). The same list the glyph loop iterates, so the index can
+    // never cross lists.
+    final shown = _shownKeys(channel);
+    if (index >= shown.length) return Offset.zero;
+    final key = shown[index];
     var x = widget.axis.xOf(_keyFrame(key, widget.fps));
     var y = _keyY(channel, index, range, height, isOut: isOut);
     final drag = _keyDrag;
     if (drag != null && widget.selectedKeys.contains('${channel.id}#$index')) {
-      x += drag.dxPx;
+      // With the magnet on the key lands on a whole frame, and it has to *look*
+      // as though it does while the pointer is still down: the release rounded
+      // the time but the drawing did not, so a key that would land on frame 12
+      // drew between 11 and 12 for the whole gesture and jumped on the way out
+      // (K-333). The same rounding, applied to the picture.
+      x += _snappedDx(key, drag.dxPx);
       if (widget.lens == GraphLens.value) y += drag.dyPx;
     }
     // A speed-lens dot in flight: sideways under the pointer, and the side
@@ -1398,7 +1694,7 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
     final joined = side is BridgeSideInterp_Bezier &&
         other is BridgeSideInterp_Bezier &&
         (side.field0.speed - other.field0.speed).abs() < 1e-9;
-    final alt = HardwareKeyboard.instance.isAltPressed;
+    final alt = altActuallyHeld();
     final hasOther = _neighbour(keys, index, !isOut) != null;
     final speed = switch (side) {
       BridgeSideInterp_Bezier(:final field0) => field0.speed,
@@ -1473,18 +1769,29 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
       }
 
       if (nb == null) return;
+      // `Shift` lays the handle flat (K-333): the value is held at the key's
+      // own, so the tangent leaves it horizontally — the ease-out-to-nothing
+      // every editor spells this way. A joined partner is mirrored from the
+      // dragged side, so it comes flat with it and the pair reads as one
+      // straight line through the key.
+      final flat = HardwareKeyboard.instance.isShiftPressed;
       final r = handleFromDrag(
         keyTime: keyTime,
         keyValue: key.value,
         neighbourTime: rationalSeconds(nb.time),
         isOut: drag.isOut,
         dragTime: pointerTime,
-        dragValue: pointerValue,
+        dragValue: flat ? key.value : pointerValue,
       );
       drag.speed = r.speed;
       drag.influence = r.influence;
       _mirrorPartner(drag, key, r.speed, r.influence, range, height);
     });
+    // The shaped curve, exactly as the release will commit it (K-192): an ease
+    // or an envelope point changes which source moment every frame between two
+    // keys reads, so it is as much a picture edit as moving the key itself.
+    _previewDrag(
+        {drag.channel: BridgeScalar.keyframed(_shownKeys(drag.channel))});
   }
 
   /// Swing the joined partner opposite the dragged handle, keeping the pixel
@@ -1545,6 +1852,9 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
       _frozen = null;
     });
     if (drag == null) return;
+    // As in [_commitKeyDrag]: the write is the last word, so no held preview
+    // tick may land after it.
+    _preview.cancel();
     final shown = _keysWithHandleDrag(drag, drag.channel.keys);
 
     // Both sides keep the length they were left at: the dragged one wherever
@@ -1667,9 +1977,73 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
     ];
   }
 
+  /// [keys] with the row drag's value written into the key at its frame —
+  /// matched to the **nearest half frame**, never by float equality (K-336).
+  ///
+  /// `_withKeyAt` merged by exact double frame, and a key's frame comes back
+  /// through rational-to-float maths: frame 50 at 60 fps reads 49.999…, which
+  /// is not 50.0, so the drag's key was *inserted beside* the document's
+  /// instead of replacing it. One extra key shifts every later index, and the
+  /// glyphs read position by index — the dragged key drew at the next key's
+  /// place and everything after it sat one key off, until the release rebuilt
+  /// from the document and it all snapped back. Same length in, same length
+  /// out (or +1 when the playhead truly has no key), so the glyph indexes hold.
+  List<BridgeKeyframe> _keysWithRowDrag(
+      List<BridgeKeyframe> keys, RowValueDrag row) {
+    final out = <BridgeKeyframe>[];
+    var replaced = false;
+    for (final k in keys) {
+      if (!replaced && (_keyFrame(k, widget.fps) - row.frame).abs() < 0.5) {
+        out.add(BridgeKeyframe(
+          time: k.time,
+          value: row.value,
+          interpIn: k.interpIn,
+          interpOut: k.interpOut,
+        ));
+        replaced = true;
+      } else {
+        out.add(k);
+      }
+    }
+    if (replaced) return out;
+    // The playhead genuinely sits between keys and the plant has not landed
+    // yet: show the key the release will write, in order.
+    final planted = BridgeKeyframe(
+      time: timeOfSubframe(row.frame.toDouble(), widget.fpsNum, widget.fpsDen),
+      value: row.value,
+      interpIn: const BridgeSideInterp.linear(),
+      interpOut: const BridgeSideInterp.linear(),
+    );
+    final at = out.indexWhere((k) => _keyFrame(k, widget.fps) > row.frame);
+    if (at < 0) {
+      out.add(planted);
+    } else {
+      out.insert(at, planted);
+    }
+    return out;
+  }
+
   /// The keys as the painter should read them — the handle drag's provisional
   /// sides swapped in, so the curve follows the handle live.
-  List<BridgeKeyframe> _shownKeys(GraphChannel channel) {
+  ///
+  /// `painting` is what tells a *row* drag's provisional value from the keys
+  /// that really exist: the curve is drawn through it, the diamonds are not, so
+  /// dragging an unkeyed value moves the line without appearing to key it.
+  List<BridgeKeyframe> _shownKeys(GraphChannel channel,
+      {bool painting = false}) {
+    final row = rowValueDrag.value;
+    if (row != null && row.matches(channel)) {
+      final keys = channel.keys;
+      if (keys.isNotEmpty) {
+        return _keysWithRowDrag(keys, row);
+      }
+      // Not keyed: one point carries the whole flat line to its new height, and
+      // only for the drawing.
+      if (painting) {
+        return _withKeyAt(const [], row.frame.toDouble(), row.value, widget.fps,
+            widget.fpsNum, widget.fpsDen);
+      }
+    }
     final drag = _handleDrag;
     if (drag == null || drag.channel.id != channel.id) return channel.keys;
     final shaped = _keysWithHandleDrag(drag, channel.keys);
@@ -1810,7 +2184,8 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
                       painter: _GraphPainter(
                         channels: widget.channels,
                         shownKeys: [
-                          for (final c in widget.channels) _shownKeys(c)
+                          for (final c in widget.channels)
+                            _shownKeys(c, painting: true)
                         ],
                         lens: widget.lens,
                         axis: widget.axis,
@@ -1930,7 +2305,7 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
               // gesture for *planting* a key on empty curve, where there is no
               // competing single click to slow down.
               onTap: () {
-                if (HardwareKeyboard.instance.isAltPressed || widget.penArmed) {
+                if (altActuallyHeld() || widget.penArmed) {
                   _removeKey(channel, i);
                   return;
                 }
@@ -1958,6 +2333,10 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
                       ?..rawDx += d.delta.dx
                       ..rawDy += d.delta.dy;
                   });
+                  final drag = _keyDrag;
+                  if (drag != null) {
+                    _previewDrag(_keyDragEdits(drag, range, height).$1);
+                  }
                 } else {
                   final box = context.findRenderObject();
                   if (box is RenderBox) {
@@ -1974,11 +2353,14 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
                   _commitHandleDrag();
                 }
               },
-              onPanCancel: () => setState(() {
-                _keyDrag = null;
-                _handleDrag = null;
-                _frozen = null;
-              }),
+              onPanCancel: () {
+                _preview.cancel();
+                setState(() {
+                  _keyDrag = null;
+                  _handleDrag = null;
+                  _frozen = null;
+                });
+              },
               // The glyph is small; the target around it is not (see
               // [_keyGrab]).
               child: SizedBox(
@@ -2051,10 +2433,13 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
                 }
               },
               onPanEnd: (_) => _commitHandleDrag(),
-              onPanCancel: () => setState(() {
-                _handleDrag = null;
-                _frozen = null;
-              }),
+              onPanCancel: () {
+                _preview.cancel();
+                setState(() {
+                  _handleDrag = null;
+                  _frozen = null;
+                });
+              },
               // A generous target around a small dot: a handle that takes two
               // attempts to grab loses the keyframe's selection on the miss.
               child: SizedBox(

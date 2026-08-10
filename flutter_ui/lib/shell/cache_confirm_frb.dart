@@ -86,6 +86,11 @@ class _ConfirmClearDisk extends StatelessWidget {
                 HouseButton(
                   key: const ValueKey('disk-clear-confirm'),
                   small: true,
+                  // The window's default action: focused on open, so Enter
+                  // confirms, and drawn with the accent edge that says so
+                  // (K-319).
+                  primary: true,
+                  autofocus: true,
                   onPressed: () => onChoose(true),
                   child: Text(l10n.delete, style: t.small),
                 ),

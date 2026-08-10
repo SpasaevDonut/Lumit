@@ -44,11 +44,15 @@ pub struct CompJob {
     /// Frame interpolation: `Some((ceil_frame, weight))` pairs
     /// `source_frame` with `ceil_frame` at `weight` (K-021 Blend/Flow).
     pub blend: Option<(usize, f32)>,
-    /// When true, `blend`'s pair is combined with optical-flow synthesis
-    /// rather than a plain crossfade (K-021 Flow policy).
-    pub flow: bool,
-    /// Full-resolution flow fields (FlowParams.half_resolution = false).
-    pub flow_full: bool,
+    /// Set when `blend`'s pair is combined by optical-flow synthesis rather
+    /// than a plain crossfade (K-021 Flow policy), carrying the parameters the
+    /// synthesis runs with (K-331).
+    ///
+    /// `None` covers both "the policy is not Flow" and "it is, but the
+    /// engagement gate declined" — flow that cannot help renders as Nearest,
+    /// and the plan is where that is decided so the decode, the render and the
+    /// cache key all see one answer.
+    pub flow: Option<lumit_core::retime::FlowParams>,
     /// Neighbour source frames a temporal effect stack needs (echo, flow
     /// motion blur, datamosh): `(offset, source_frame)`, one per non-zero
     /// offset in the stack's temporal window. Empty for a plain layer, so
@@ -232,10 +236,17 @@ impl lumit_cache::ByteSized for CachedFrame {
 pub struct DecodePool {
     decoders: HashMap<Uuid, lumit_media::VideoDecoder>,
     frame_cache: lumit_cache::ByteLru<(Uuid, usize, Option<u32>), CachedFrame>,
-    /// Flow backend, created on the first Flow-policy frame: its own headless
-    /// GPU when one exists, the CPU oracle otherwise (lumit-flow degrades by
-    /// itself — never a fault).
+    /// Flow backend, created on the first Flow-policy frame. Uses [`Self::gpu`]
+    /// — the renderer's own device — when the pool was given one, so flow runs
+    /// where the frames are already going rather than on a second device of its
+    /// own (K-331). Falls back to a headless device, then to the CPU oracle;
+    /// lumit-flow degrades by itself and never faults.
     flow_engine: Option<lumit_flow::FlowEngine>,
+    /// The renderer's GPU, when the owner shared it.
+    gpu: Option<lumit_gpu::GpuContext>,
+    /// Measured flow pairs (K-331), so a scrub does not remeasure and the two
+    /// consumers of a layer's motion share one measurement.
+    flow_cache: lumit_cache::ByteLru<FlowKey, CachedFlow>,
     /// How many comp frames this pool has actually decoded. Diagnostic, and the
     /// thing the drag fast path is *measured* by: a value drag must not move it
     /// (see the headless preview tests).
@@ -245,6 +256,56 @@ pub struct DecodePool {
 /// The decoded-frame cache's default share of RAM (K-016 tier seed); Settings →
 /// Performance moves it.
 pub const DEFAULT_DECODE_CACHE_BYTES: usize = 512 * 1024 * 1024;
+
+/// The measured-flow cache's share of RAM (K-331).
+///
+/// A 1080p field pair is about 37 MB at native flow resolution, so this holds
+/// roughly seven of them — a scrub window, which is what it is for. Smaller than
+/// the frame cache on purpose: a missed flow entry now costs ~8 ms of GPU work,
+/// where a missed frame costs a seek and a decode.
+pub const DEFAULT_FLOW_CACHE_BYTES: usize = 256 * 1024 * 1024;
+
+/// One measured flow pair, keyed by the two source frames and the settings that
+/// produced it.
+///
+/// **Deliberately RAM only.** docs/06 §5.4 reserved a `flow/` folder beside
+/// `frames/`, and it should stay empty: measuring a 1080p pair on the GPU costs
+/// about 8 ms, while reading 37 MB of stored field back off an SSD costs more
+/// than that. A disk tier for flow would be a cache slower than the thing it
+/// caches. RAM still pays, because it is what lets the retime policy and a
+/// flow-consuming effect on the same layer share one measurement instead of
+/// making it twice.
+struct CachedFlow {
+    fwd: lumit_flow::FlowField,
+    bwd: lumit_flow::FlowField,
+}
+
+impl lumit_cache::ByteSized for CachedFlow {
+    fn byte_size(&self) -> usize {
+        let one = |f: &lumit_flow::FlowField| f.u.len() * 8 + f.valid.len() + 48;
+        one(&self.fwd) + one(&self.bwd)
+    }
+}
+
+/// What a cached flow pair is filed under: which source, which two frames of
+/// it, and the settings it was measured with — every one of which changes the
+/// field (K-331).
+type FlowKey = (Uuid, usize, usize, u64);
+
+/// A stable hash of the settings that shape a measurement.
+fn flow_settings_key(s: &lumit_flow::FlowSettings) -> u64 {
+    // Only the fields that change the *field* — the synthesis-side knobs
+    // (occlusion, fallback, the guard) consume it and do not alter it, so
+    // folding them in would split the cache for no reason.
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    use std::hash::{Hash, Hasher};
+    s.divisor.hash(&mut h);
+    s.iterations.hash(&mut h);
+    s.min_level_dim.hash(&mut h);
+    s.refine_iters.hash(&mut h);
+    s.flow_sigma2().to_bits().hash(&mut h);
+    h.finish()
+}
 
 impl Default for DecodePool {
     fn default() -> Self {
@@ -259,7 +320,25 @@ impl DecodePool {
             decoders: HashMap::new(),
             frame_cache: lumit_cache::ByteLru::new(DEFAULT_DECODE_CACHE_BYTES),
             flow_engine: None,
+            gpu: None,
+            flow_cache: lumit_cache::ByteLru::new(DEFAULT_FLOW_CACHE_BYTES),
             comp_decodes: 0,
+        }
+    }
+
+    /// A pool that runs flow on the renderer's device rather than one of its
+    /// own (K-331). The handles are reference-counted clones, so this shares
+    /// the device rather than duplicating it — flow work then queues behind the
+    /// same driver as everything else instead of competing with it from a
+    /// second context.
+    #[must_use]
+    pub fn with_gpu(ctx: &lumit_gpu::GpuContext) -> Self {
+        Self {
+            gpu: Some(lumit_gpu::GpuContext::from_parts(
+                ctx.device.clone(),
+                ctx.queue.clone(),
+            )),
+            ..Self::new()
         }
     }
 
@@ -288,6 +367,7 @@ impl DecodePool {
     /// Drop every cached decoded frame, keeping the open decoders (Settings →
     /// Clear cache). The decoders are cheap to keep and expensive to re-open.
     pub fn clear(&mut self) {
+        self.flow_cache.clear();
         self.frame_cache.clear();
     }
 
@@ -336,6 +416,8 @@ impl DecodePool {
             &mut self.decoders,
             &mut self.frame_cache,
             &mut self.flow_engine,
+            &mut self.flow_cache,
+            self.gpu.as_ref(),
             comp,
             frame,
             jobs,
@@ -450,11 +532,100 @@ impl PreviewEngine {
     }
 }
 
+/// Measure the flow between two source frames, or return the pair already
+/// measured for them (K-331).
+///
+/// **The one door both consumers go through.** A layer can want motion for two
+/// reasons at once — the retime policy inventing an in-between frame, and Fast
+/// motion blur or Datamosh streaking the current one — and before this they
+/// each ran DIS separately over the same footage. Whichever asks first pays;
+/// the other gets the answer. It is also what makes a scrub cheap, since going
+/// back over a span re-asks for pairs already measured.
+///
+/// Keyed by content, never by timeline position: the source, the two frames,
+/// and the settings that shape the measurement.
 #[allow(clippy::too_many_arguments)]
+fn flow_for(
+    flow_engine: &mut Option<lumit_flow::FlowEngine>,
+    flow_cache: &mut lumit_cache::ByteLru<FlowKey, CachedFlow>,
+    gpu: Option<&lumit_gpu::GpuContext>,
+    item: Uuid,
+    frame_a: usize,
+    frame_b: usize,
+    a: &lumit_flow::Gray,
+    b: &lumit_flow::Gray,
+    set: &lumit_flow::FlowSettings,
+) -> (lumit_flow::FlowField, lumit_flow::FlowField) {
+    let key = (item, frame_a, frame_b, flow_settings_key(set));
+    if let Some(hit) = flow_cache.get(&key) {
+        return (clone_field(&hit.fwd), clone_field(&hit.bwd));
+    }
+    let (fwd, bwd) = flow_engine
+        .get_or_insert_with(|| flow_engine_for(gpu))
+        .flow_pair_with(a, b, set);
+    flow_cache.insert(
+        key,
+        CachedFlow {
+            fwd: clone_field(&fwd),
+            bwd: clone_field(&bwd),
+        },
+    );
+    (fwd, bwd)
+}
+
+fn clone_field(f: &lumit_flow::FlowField) -> lumit_flow::FlowField {
+    lumit_flow::FlowField {
+        w: f.w,
+        h: f.h,
+        u: f.u.clone(),
+        v: f.v.clone(),
+        valid: f.valid.clone(),
+    }
+}
+
+/// The flow engine for this pool: on the renderer's device when one was shared
+/// (K-331), otherwise a headless device of its own, otherwise the CPU oracle.
+fn flow_engine_for(gpu: Option<&lumit_gpu::GpuContext>) -> lumit_flow::FlowEngine {
+    match gpu {
+        Some(ctx) => lumit_flow::FlowEngine::with_context(ctx),
+        None => lumit_flow::FlowEngine::new_auto(),
+    }
+}
+
+/// Translate a layer's stored [`lumit_core::retime::FlowParams`] into the
+/// plain-numbers [`lumit_flow::FlowSettings`] the engine takes (K-331).
+///
+/// `lumit-flow` is an engine crate that knows nothing of the document, so the
+/// mapping has to live somewhere that sees both — here, once, so preview,
+/// export and the flow cache can never translate the same parameters into two
+/// different measurements.
+pub fn flow_settings(p: &lumit_core::retime::FlowParams) -> lumit_flow::FlowSettings {
+    use lumit_core::retime::{FlowFallback, OcclusionMode};
+    lumit_flow::FlowSettings {
+        divisor: p.resolution.divisor(),
+        iterations: p.detail.iterations(),
+        min_level_dim: p.detail.min_level_dim(),
+        smoothness: p.smoothness as f32,
+        occlusion: match p.occlusion {
+            OcclusionMode::VisibleOnly => lumit_flow::OcclusionMode::VisibleOnly,
+            OcclusionMode::Blend => lumit_flow::OcclusionMode::Blend,
+        },
+        fallback: match p.fallback {
+            FlowFallback::Blend => lumit_flow::Fallback::Blend,
+            FlowFallback::Nearest => lumit_flow::Fallback::Nearest,
+        },
+        hud_guard: p.hud_guard,
+        refine_iters: p.detail.refine_iters(),
+    }
+}
+
+#[allow(clippy::too_many_arguments)] // one worker call; bundling would hide it
 fn decode_comp(
     decoders: &mut HashMap<Uuid, lumit_media::VideoDecoder>,
     cache: &mut lumit_cache::ByteLru<(Uuid, usize, Option<u32>), CachedFrame>,
     flow_engine: &mut Option<lumit_flow::FlowEngine>,
+    flow_cache: &mut lumit_cache::ByteLru<FlowKey, CachedFlow>,
+    gpu: Option<&lumit_gpu::GpuContext>,
     comp: Uuid,
     frame: usize,
     jobs: &[CompJob],
@@ -522,16 +693,54 @@ fn decode_comp(
                 .find(|(o, _)| *o == offset)
                 .map(|(_, other)| {
                     let (w, h) = (px.width as usize, px.height as usize);
-                    let ga = lumit_flow::to_gray(&px.rgba, w, h);
-                    let gb = lumit_flow::to_gray(other, w, h);
-                    let (fwd, bwd) = flow_engine
-                        .get_or_insert_with(lumit_flow::FlowEngine::new_auto)
-                        .flow_pair(&ga, &gb);
+                    // An effect asking for motion has no parameters of its own,
+                    // and sharing the retime policy's settings would make one
+                    // layer's blur depend on the other's retime.
+                    //
+                    // Half resolution, though, not the retime default of
+                    // native. Retime measures natively so that preview and
+                    // export agree about the picture (K-331); an effect has no
+                    // such argument, and a smaller working size is *better*
+                    // here rather than merely cheaper. Between consecutive
+                    // frames of a fast camera move the displacement is large,
+                    // and an 8×8 patch on a 1080p frame is a tiny window on
+                    // content that is often periodic — container ribs, railings,
+                    // brickwork — where the patch matches many positions
+                    // equally well and picks one. Halving doubles what each
+                    // patch spans relative to that repeat, which is the
+                    // difference between disambiguating it and guessing. It is
+                    // also the working resolution docs/impl/optical-flow.md §1
+                    // names as the default, and a quarter of the cost.
+                    let set = lumit_flow::FlowSettings {
+                        divisor: 2,
+                        ..lumit_flow::FlowSettings::default()
+                    };
+                    let (ga, gb, _) = lumit_flow::flow_grays(&px.rgba, other, w, h, &set);
+                    let nb = job
+                        .temporal
+                        .iter()
+                        .find(|(o, _)| *o == offset)
+                        .map_or(job.source_frame, |(_, f)| *f);
+                    let (fwd, bwd) = flow_for(
+                        flow_engine,
+                        flow_cache,
+                        gpu,
+                        job.item,
+                        job.source_frame,
+                        nb,
+                        &ga,
+                        &gb,
+                        &set,
+                    );
                     // The per-pixel confidence Fast motion blur tapers the streak
                     // by (FX-19); the same deterministic function export runs, so
                     // the two match (K-031). Datamosh ignores it.
                     let conf = lumit_flow::confidence(&fwd, &bwd);
-                    (fwd.u, fwd.v, conf)
+                    // The consumers want a field at the frame's own size. The
+                    // vectors scale with the image — a 3 px move at half res is
+                    // 6 px at full — while the confidence is a 0..1 weight and
+                    // must not be touched by that scaling.
+                    lumit_flow::field_to_size(&fwd, &conf, w, h)
                 })
         });
         // Blend / Flow policy: combine with the next source frame.
@@ -545,22 +754,30 @@ fn decode_comp(
                 slate: None,
             };
             let px2 = decode(decoders, cache, &req2)?;
-            if job.flow {
-                let quality = if job.flow_full {
-                    lumit_flow::FlowQuality::Full
-                } else {
-                    lumit_flow::FlowQuality::Half
-                };
+            if let Some(params) = &job.flow {
+                let set = flow_settings(params);
+                let (fw, fh) = (px.width as usize, px.height as usize);
+                // Measure through the shared cache, then paint. Splitting the
+                // two — rather than calling `interpolate_at`, which does both —
+                // is what lets the measurement be reused: synthesis differs per
+                // frame because φ does, but the field between two source frames
+                // is the same field however many phases are drawn from it, and
+                // a slow ramp draws many.
+                let (ga, gb, _) = lumit_flow::flow_grays(&px.rgba, &px2.rgba, fw, fh, &set);
+                let (fwd, bwd) = flow_for(
+                    flow_engine,
+                    flow_cache,
+                    gpu,
+                    job.item,
+                    job.source_frame,
+                    ceil,
+                    &ga,
+                    &gb,
+                    &set,
+                );
                 flow_engine
-                    .get_or_insert_with(lumit_flow::FlowEngine::new_auto)
-                    .interpolate_at(
-                        &px.rgba,
-                        &px2.rgba,
-                        px.width as usize,
-                        px.height as usize,
-                        w,
-                        quality,
-                    )
+                    .get_or_insert_with(|| flow_engine_for(gpu))
+                    .synthesize_at(&px.rgba, &px2.rgba, fw, fh, &fwd, &bwd, w, &set)
             } else {
                 lumit_core::pixels::blend_rgba(&px.rgba, &px2.rgba, w)
             }
@@ -628,5 +845,108 @@ mod tests {
                 slate: None,
             })
             .is_err());
+    }
+
+    /// K-331: the flow cache is keyed by content — the source, the two frames,
+    /// and the settings that shape the measurement — so a second ask for the
+    /// same pair is answered rather than remeasured, and a changed setting is
+    /// a different entry rather than a stale one.
+    #[test]
+    fn flow_entries_are_named_by_what_produced_them() {
+        let base = lumit_flow::FlowSettings::default();
+        let same = lumit_flow::FlowSettings::default();
+        assert_eq!(flow_settings_key(&base), flow_settings_key(&same));
+
+        // Everything that changes the *field* splits the entry.
+        for changed in [
+            lumit_flow::FlowSettings { divisor: 2, ..base },
+            lumit_flow::FlowSettings {
+                iterations: 32,
+                ..base
+            },
+            lumit_flow::FlowSettings {
+                min_level_dim: 48,
+                ..base
+            },
+            lumit_flow::FlowSettings {
+                refine_iters: 3,
+                ..base
+            },
+            lumit_flow::FlowSettings {
+                smoothness: 90.0,
+                ..base
+            },
+        ] {
+            assert_ne!(
+                flow_settings_key(&base),
+                flow_settings_key(&changed),
+                "a setting that changes the measurement must change its name"
+            );
+        }
+        // The synthesis-side knobs consume the field without altering it, so
+        // splitting the cache for them would measure twice for one answer.
+        for shared in [
+            lumit_flow::FlowSettings {
+                occlusion: lumit_flow::OcclusionMode::Blend,
+                ..base
+            },
+            lumit_flow::FlowSettings {
+                fallback: lumit_flow::Fallback::Nearest,
+                ..base
+            },
+            lumit_flow::FlowSettings {
+                hud_guard: false,
+                ..base
+            },
+        ] {
+            assert_eq!(
+                flow_settings_key(&base),
+                flow_settings_key(&shared),
+                "a synthesis knob must not split the measurement cache"
+            );
+        }
+    }
+
+    /// A measured pair comes back from the cache instead of being measured
+    /// again — the thing that makes a scrub cheap, and what lets the retime
+    /// policy and a flow effect on one layer share a single measurement.
+    #[test]
+    fn a_measured_flow_pair_is_reused() {
+        let mut engine: Option<lumit_flow::FlowEngine> = Some(lumit_flow::FlowEngine::cpu());
+        let mut cache = lumit_cache::ByteLru::new(DEFAULT_FLOW_CACHE_BYTES);
+        let item = Uuid::now_v7();
+        let (w, h) = (32usize, 32usize);
+        let px = |shift: usize| -> Vec<u8> {
+            let mut v = vec![0u8; w * h * 4];
+            for y in 0..h {
+                for x in 0..w {
+                    let c = (((x + shift) * 7 + y * 13) % 256) as u8;
+                    let i = (y * w + x) * 4;
+                    v[i] = c;
+                    v[i + 1] = c;
+                    v[i + 2] = c;
+                    v[i + 3] = 255;
+                }
+            }
+            v
+        };
+        let (a, b) = (px(0), px(2));
+        let ga = lumit_flow::to_gray(&a, w, h);
+        let gb = lumit_flow::to_gray(&b, w, h);
+        let set = lumit_flow::FlowSettings::default();
+        let call = |e: &mut Option<lumit_flow::FlowEngine>,
+                    c: &mut lumit_cache::ByteLru<FlowKey, CachedFlow>| {
+            flow_for(e, c, None, item, 0, 1, &ga, &gb, &set)
+        };
+        let (f1, _) = call(&mut engine, &mut cache);
+        assert_eq!(cache.len(), 1, "the first ask files an entry");
+        // Drop the engine entirely: a second ask that had to measure would now
+        // have to build a new one, and could not return the identical field.
+        let mut none: Option<lumit_flow::FlowEngine> = None;
+        let (f2, _) = call(&mut none, &mut cache);
+        assert!(none.is_none(), "the second ask never touched an engine");
+        assert_eq!(f1.u, f2.u);
+        assert_eq!(f1.v, f2.v);
+        assert_eq!(f1.valid, f2.valid);
     }
 }

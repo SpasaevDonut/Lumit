@@ -7231,7 +7231,644 @@ outline; on a 22px bar that is a whisper. It now lerps its label colour 35 % tow
 lit bar is what AE does and reads at any zoom. No spec pinned the outline, so nothing
 else moves.
 
-**K-318 · DECIDED · Masks gain modes, feather and expansion, and the first mask in the
+**K-318 · DECIDED · Submenus survive the diagonal: the safe hover triangle.**
+From the owner (2026-08-09): "when going through menus of any kind, I think we need to add
+safe hover triangles — like how JavaScript has intent plugins." A flyout opens beside the
+row that owns it, so the natural path to its first entry crosses the rows *below* that row;
+the menu switched on whichever row the pointer merely passed over, and the flyout vanished
+before it could be reached. The fix is the classic one: while a flyout is open, a hover
+report from another row of the same surface is **held** while the pointer is inside the
+triangle from where it left the owning row to the flyout's near edge. The held switch lands
+when the pointer leaves the triangle, or after a 300ms grace if the pointer simply stops
+there — resting on a row still means that row, which is the property a plain delay would
+lose. Reaching the flyout voids anything pending; a move that is not travel at all (straight
+down the menu) switches with no delay. The geometry lives in
+`flutter_ui/lib/widgets/hover_intent.dart` as pure arithmetic (`SafeTriangle`, tested as
+such), with the timers and hover state in `FloatSurface` — so every popup on the shared menu
+surface gets it at once: the menu bar, the Add effect browser's category flyouts, and every
+right-click menu. No animation, no toolkit dependency. Regression tests:
+`hover_intent_test.dart` (the geometry, and three submenu journeys — crossing, settling,
+leaving).
+
+**K-318a · NOTE · What Flutter already gives, and what it does not (the wheel check).**
+Asked by the owner before merging K-318/K-319: are we reinventing things the toolkit ships?
+Checked against Flutter 3.44.7's own source, and worth recording so it is not re-argued.
+
+**Already Flutter's, and used as such:** `ReadingOrderTraversalPolicy` is the traversal K-319
+installs — not a hand-written comparator. `TextSelectionGestureDetectorBuilder` is the
+press-to-caret/drag-to-highlight the value and timecode editors gained; the earlier code's
+fault was a bare `EditableText` with no gesture builder around it, not a missing feature.
+`DismissIntent` is now what Escape means in a modal (see below).
+
+**Flutter has a weaker answer, so ours stands.** `SubmenuButton` offers `hoverOpenDelay`
+(`material/menu_anchor.dart`) — a plain delay before a flyout *opens*. That is the naive fix
+K-318 rejected: it makes every submenu feel sluggish, and it does not address the actual
+complaint, which is that crossing a sibling row **closes** the flyout you are travelling to.
+There is no safe triangle anywhere in the framework (no hit for `safeTriangle`/`hoverIntent`
+in `packages/flutter`). The K-318 geometry is therefore not a reimplementation.
+
+**Flutter has nothing:** a radial/pie menu (no decision number yet). Correct to build.
+
+**We did duplicate one thing, mildly.** `WidgetsApp` already binds Enter/numpadEnter/Space to
+`ActivateIntent`, and `FocusableActionDetector` bundles focus + hover + shortcuts + actions —
+so the per-control `Focus(onKeyEvent:)` in `HouseButton`/`HouseCheckbox`/`HouseRadio` is about
+eight lines each that the Actions system could carry. It is left as it is *for now*, on
+purpose: the house controls are deliberately not Material (K-084), the hand-rolled version is
+tested, and — the part that matters — it does **not** take focus on a mouse click, so a
+clicked button shows no focus ring. Moving to `ActivateIntent` means opting into the standard
+focus-highlight behaviour and re-deciding that. Worth doing as its own change with its own
+look, not folded into this one.
+
+**The check found a real bug, which is why it was worth doing.** `showLumitModal`'s comment
+claimed dismissal happened on "Escape, via the route" — but a Lumit modal is an
+`OverlayEntry`, not a route, so **nothing listened and Escape did nothing in every dialogue
+in the application**. Fixed the framework's way rather than with a tenth key handler: the
+window contributes an `Actions` entry for `DismissIntent`, which `WidgetsApp` has already
+bound Escape to, and dismissing means completing with null exactly as a click on the scrim
+does. Regression test: `Escape closes a modal, the same as clicking the scrim`
+(dialog_keys_test.dart), which fails without the `Actions` entry.
+
+**K-319 · DECIDED · Every window has a default action; every control answers the keyboard;
+Tab reads left-to-right, top-to-bottom.**
+From the owner (2026-08-09), three complaints in one shape — "opening any confirmation
+window should have the okay button selected by default, and pressing enter presses whatever
+is currently the selected button", "tabbing through menus needs to be improved… left to
+right then top to bottom", and "when a user clicks a text/value box but immediately starts
+dragging without lifting up, it should still just be like they've selected the box". All
+three were the same gap: house controls were painted, not focusable. `HouseButton`,
+`HouseCheckbox`, `HouseRadio` and the idle `DragValueField` now hold a `ControlFocusNode`,
+draw the accent focus ring (docs/15 §6.5) and answer `Enter`/`Space`; the global shortcut
+handler stands down while one holds focus, exactly as it already did for a focused text
+field, so a dialogue's `Enter` can never also fire a panel command. Each confirmation window
+names one **default action** — affirmative, or safe where the affirmative is destructive —
+which is `primary: true` *and* `autofocus: true`; K-243 had established that shape for the
+Pre-compose dialogue alone, and it is now all of them (disk-cache clear, composition
+settings, export, project settings, theme name, theme-editor save, marker label, update
+offer, restart). Modals wrap their body in a `FocusScope` + `ReadingOrderTraversalPolicy`, so
+Tab cycles inside the window in *visual* reading order rather than widget-tree order — the
+two disagree wherever a layout nests columns inside rows. For the value boxes: a drag that
+never crosses one increment now cancels as a drag and then opens the editor (a click that
+wobbled is a click); the editor opens with the value **selected**, since a value is retyped
+far more often than amended; the numeric and timecode editors gained the desktop selection
+gestures they never had, so press-and-drag highlights; and `HouseTextField` takes focus on
+the pointer's *down* stroke so a press that slides into a drag selects text from the first
+pixel. Regression tests: `dialog_keys_test.dart`.
+
+**K-320 · DECIDED · A dragged zoom slider anchors once.**
+Same report ("zooming in the timeline with the slider can still ping around a lot"), and
+K-293's anchoring was right but measured at the wrong moment. `_setZoom` re-measured the
+anchor on every drag update, reading `_hLane.offset` *before* layout had corrected it for
+the zoom just applied — a fresh zoom against a stale offset — so each update re-anchored
+somewhere slightly wrong and the lanes lurched; near the viewport edges the in-view/recentre
+branch flip-flopped as well. The slider's drag now brackets the gesture (`onChangeStart`/
+`onChangeEnd` on `HouseSlider`): the anchor is chosen once, at the start, and held to the
+end, which is the invariant the flight already assumed. The anchor's per-frame width is also
+taken from the scroll position's own content extent — the same numbers `zoomAnchorOffset`
+applies it with — rather than from the build-time viewport cache, which disagreed by a
+little at every zoom and by more the further in you were. Landed with K-319, from the same
+report; the zoom rule it amends is docs/07 §4.6.
+
+**K-321 · DECIDED · `Enter` renames the selection; nothing renames on a double-click; effects
+can carry their own name.**
+From the owner (2026-08-09): "if there's anywhere still allowing double click or click a
+selected item to rename, drop that behaviour and instead enable pressing enter to edit the
+name of the selected item (this also needs to work for effect names in the effect control,
+but not property rows, just effect name)." K-191 had already moved compositions off the
+second-click rename and K-243 had given the Timeline `Enter`; the Project panel still
+renamed footage, solids and folders on a second click, which is the same gesture as a slow
+double-click and opened editors under people's pointers. That is gone: a second click
+*opens* (K-191's rule, now without exception), and `Enter` renames whatever the focused panel
+has selected. Two new actions join the keymap — `item.rename` (Project) and `effect.rename`
+(Effect controls) — bound to `Enter` in their own contexts, so the binding is live in the
+focused panel alone and one press can never open two editors (the Timeline's handler gained
+the same guard). **An effect instance gains `custom_name: Option<String>`**
+(`serde(default, skip_serializing_if = "Option::is_none")`, so a project without one is
+byte-for-byte unchanged and an older file reads as `None`). It is a display name only:
+`match_name`, the schema, the parameters and every lookup are untouched, and it shows in
+place of the effect's label in both the Effect controls heading and the Timeline's fold-out.
+`BridgeEffectInstance::set_custom_name` stages it and `set_effects` commits, so a rename is
+one op and one undo step; an empty or whitespace name clears back to the label. Parameter
+rows are not renameable — a parameter's name is the schema's. Regression tests:
+`custom_name_roundtrips_and_defaults_to_none` (lumit-core),
+`enter_renames_the_selection_in_each_panel_that_has_one` (lumit-keymap), `Enter renames the
+selected item` (project_panel_frb_test.dart), `Enter renames the selected effect, and the
+name persists` (effect_controls_frb_test.dart).
+
+**K-322 · DECIDED · The default workspace puts Effects & presets in the right-hand column.**
+From the owner (2026-08-09): "the default workspace layout should move the effect and preset
+panel to the right side panel." It also settles a disagreement between code and spec that
+had stood since the port: docs/07 §1.6 always described the Edit workspace as having
+"right column Effects & Presets", while `defaultLayout()` made it the *third tab of the left
+group* — behind Project and Effect controls, so it was never visible on a fresh install —
+and fronted the **Debug** view in the right column instead, which is a developer panel. The
+left group is now Project (fronted), Effect controls, Hierarchy; the right group is Effects
+& presets (fronted), Scopes, Debug. Shares are unchanged (0.68/0.32; 0.22/0.58/0.20), and
+the other three presets are untouched. A saved workspace is unaffected — this is the factory
+layout, which Reset workspace restores. Regression test: the amended `default layout matches
+default_layout() structure and shares` (dock_test.dart), which now also pins which tab each
+group opens on.
+
+**K-323 · DECIDED · `Escape` is the way out of an inline editor, and it writes nothing.**
+From the owner (2026-08-09), testing K-321: "escape still doesn't exit the rename dialogue".
+It never did, and the reason is worth recording because K-319 looked like it had covered
+this. K-319 gave *modals* an Escape by contributing an `Actions` entry for Flutter's own
+`DismissIntent`, which `WidgetsApp` already binds the key to. An inline rename is not a
+modal — it is a text field that replaced a label in place — so there was no `DismissIntent`
+handler anywhere above it and the key reached nothing.
+
+**The gap was the shape of the contract, not one missing handler.** K-243 established that
+every way out of an inline rename *commits*: Enter commits, clicking away commits (that was
+the point of K-243), losing focus commits. That is right — a rename typed and then abandoned
+by clicking elsewhere should not be thrown away. But it left no way to change your mind at
+all, on any of the three inline renames (an effect's name, a layer's name, a Project item's
+name) or in the value boxes, which have the same all-roads-commit shape.
+
+**So `Escape` cancels: the editor shuts and nothing is written.** `HouseTextField` gains an
+`onCancelled` callback and the two renames that use it pass one; the Project row's editor is
+a bare `EditableText`, so it wires the same key on its own focus node; `DragValueField`'s
+open editor does the same for typed numbers. In every case the key is handled on the field's
+**own focus node**, which sees it before the `Shortcuts`/`Actions` system — deliberately,
+because `EditableText` has its own `DismissIntent` handling and a handler placed above it
+could be swallowed. Clearing the editing flag *before* the editor closes is load-bearing in
+the value box: closing it is what loses focus, and the focus listener commits on focus loss.
+
+Regression tests, one per surface, each failing without the fix: `Enter renames the selected
+effect, and the name persists` and `Enter renames the selected item` (extended with an
+Escape leg), `Enter renames the selected layer` (timeline_panel_frb_test.dart), and `a value
+box opens its editor with the text selected` (dialog_keys_test.dart).
+
+**K-324 · DECIDED · The Ctrl+Space console: a search bar over the effects, and a Blender-style
+radial menu under it. Supersedes K-102's deferral.**
+From the owner (2026-08-09): a Ctrl+Space window with "at the top a search bar the user can
+type in… effect options then a little divider for comp names", modelled on Video Copilot's
+**FX Console** ("with the little camera/snapshot button too"), and "below this bar a radial
+menu just like Blender's" whose entries follow the selection. K-102 deferred exactly this
+("the effects radial menu (Ctrl+Space, apply-to-clip) — that remains blocked on a from-scratch
+build (no egui 0.31-compatible `egui_pie_menu`)"). That blocker is gone with egui: the port to
+Flutter (K-174) means a ring is a `Stack` of positioned labels over a gesture detector, and
+the only real content is the arithmetic of which slice a direction means. This entry
+supersedes that half of K-102; the command palette (Ctrl+Shift+P) stays exactly as it is,
+because the two answer different questions — the palette is every command by name, the
+console is *effects*, fast, plus the thing you were about to do.
+
+**The search half.** Effects first, then a divider, then compositions — ranked within each
+kind and never across it, because the reason to open this window is nearly always an effect
+and a comp that happened to score better would be in the way. Matching is the palette's
+subsequence ranking (earlier and tighter wins), so "gau" finds Gaussian blur. Enter applies
+the top match to **every** selected layer, as the Effect menu does (K-217); a comp fronts.
+The **snapshot** button beside the field writes the frame on screen to a PNG — a one-frame
+image-sequence export (`codec: 'png'`, K-201) rather than a second still-writer beside the
+exporter, so it is the same tested path to a file and the status line already reports it. It
+lands in a `Snapshots` folder beside the saved project, or the user's pictures folder when
+the project has never been saved — never the working directory.
+
+**The radial half.** A slice is chosen by **angle alone**, not by hit-testing a drawn wedge:
+flick in a direction and the choice is made however far the pointer travelled, which is what
+makes a ring faster than a list once the hand has learned it. A dead zone in the middle picks
+nothing, so opening the menu and releasing without moving cancels rather than committing to
+whatever was nearest. The first slice is straight up and they run clockwise. The entries are
+chosen from the selection in four contexts — a picked effect offers what you do to an effect;
+a selected layer what you do to a layer; a composition with nothing selected the new-layer
+menu; nothing open at all the two ways to get somewhere — each capped at six, because a ring
+of twelve is a ring nobody learns and the long tail is the search bar directly above it. A
+slice that cannot run right now is drawn dimmed rather than dropped, so a direction a hand
+has learned keeps its meaning.
+
+**Where the lists come from.** `menu_bar_frb.dart`, beside the menu items, for the same
+reason the palette's commands are declared there (K-102): the effects this applies and the
+comps it fronts must be the ones the menus mean, and a second list would drift.
+`fx_console_frb.dart` is the widget and knows nothing about the document;
+`fx_console_context.dart` holds the selection knowledge; `widgets/radial_maths.dart` is the
+geometry, widget-free so it is tested as arithmetic. Regression tests:
+`radial_maths_test.dart` (slice centres, direction-picks-slice at any distance, the dead
+zone, every wedge boundary, an empty ring), `fx_console_test.dart` (subsequence ranking,
+effects-before-comps, Enter applies the top match, the snapshot button's two states, a flick
+runs a slice, a dead-zone release cancels, a disabled slice keeps its place),
+`the_fx_console_has_its_own_chord_and_does_not_clash` (lumit-keymap — and the bare space bar
+still plays).
+
+**K-325 · DECIDED · The console opens around the pointer, the search waits to be asked, and
+rings nest. Reshapes K-324's presentation; the chord, ranking and snapshot stand.**
+From the owner (2026-08-09), after working with K-324's console, four faults with how it
+presented: it opened as a centred window rather than at the mouse; the search half listed
+every effect before anything was typed; the box was opaque over the very frame it acts on;
+and the ring for a *selected layer* offered "Solid" and "Text" — new-layer commands that
+have nothing to do with the thing selected.
+
+**It opens where the mouse is.** The ring is centred on the pointer, because the whole point
+of a ring is that the flick can start the instant the chord lands — travel to a window first
+and a list would have done. The key event carries no position, so the shell records the last
+pointer position — through a **global pointer route**, not a widget `Listener`: the owner's
+first build showed a `Listener` misses everywhere no widget claims the hit (the Viewer's
+texture, exactly where this menu is most wanted), so the console kept opening at wherever
+the pointer had last crossed a panel. The route sees every pointer event regardless of hit
+testing, and is still one plain field write per event — no `setState`, no bridge call, so
+the no-bridge-in-rebuild-paths budget is untouched. The **search bar floats above the
+ring**, or below it when the pointer is near the top of the window; centre and bar placement
+(edge clamping included) is `fxConsoleLayout` in `radial_maths.dart`, pure arithmetic with
+its own tests. No boxed window; the console's surfaces are the standard menu float let
+through a little (`surface3` at 0.88 — derived from the theme, no new colour), over the
+modal scrim at **half strength** (from the owner, same day: a slight darkening keeps every
+slice legible over any frame, while a full scrim would shut out the very work the console
+acts on).
+
+**The search waits to be asked.** An empty bar lists nothing — the ring is the offer. Typing
+opens a dropdown *below the bar* with the matches (K-324's ranking unchanged: effects first,
+comps after the divider, never across), and the ring steps aside while the query is
+non-empty, both because the dropdown needs the room and because starting to type *is*
+choosing the other way in. Escape retreats one step at a time — clear the text, then pop a
+sub-ring, then close — and Enter on an empty bar closes rather than sitting inert. Escape is
+handled at the **keyboard itself** for the console's lifetime, the way the shell's own
+shortcuts are, and nowhere else: the owner found a handler on the search field's focus node
+answers only while the field has focus, which a pointer resting on the ring need not have —
+and one handler means one press is always exactly one step back.
+
+**Rings nest, so context stays honest.** `RadialEntry` gains `children`: choosing such a
+slice expands the menu in place (Blender's nested pies), the centre of the ring names where
+you are and steps back out, and a caret on the slice says it expands. The layer-selected
+ring is now only what you do to *this* layer — Duplicate, Add effect, Pre-compose (wired to
+the real pre-compose dialogue now, not a jump to the Timeline panel), Delete — plus a
+**New ▸** slice whose sub-ring is Layer ▸ New's six items in the menu's order. The
+comp-with-nothing-selected ring keeps creation at the top level (that context *is* "make me
+a layer") reordered to match the menu, and the picked-effect and nothing-open rings stand.
+
+Regression tests: `fxConsoleLayout` placement (centres on the anchor, pulls in at edges, bar
+flips below near the top, tiny-window fallback — radial_maths_test.dart); the empty bar
+lists nothing; typing opens the dropdown and hides the ring, clearing restores it; Escape's
+one-step retreat; the ring centres on the anchor; a child slice expands in place, the centre
+backs out, a flick expands rather than closes, Escape pops before it closes; Enter on an
+empty bar closes (fx_console_test.dart).
+
+**K-326 · DECIDED · The Keyframe ring: the console keys a transform row where the playhead
+stands, and the Timeline shows the key it made.**
+From the owner (2026-08-09): "maybe on the radial menu having a keyframe option, which opens
+up all properties on that layer you could add a keyframe to in that position, and clicking
+adds one and opens that property row in the timeline if it's not already". So the
+layer-selected ring gains a sixth slice, **Keyframe ▸** (the ring is now at K-325's cap of
+six), whose sub-ring is one slice per transform row: Anchor point, Position, Scale, Rotation,
+Opacity — the five everyday rows, not the 3D extras, both for the cap and because Rotation
+X/Y remain the fold-out's business. A row driven by an expression is dimmed rather than
+dropped: writing keys over an expression would delete it.
+
+**Choosing a slice plants a key at the playhead holding the value already there** — nothing
+moves, the same invariant the stopwatch keeps — with every axis of the row keyed together
+and the key inserted in time order. A row already keyed at the playhead skips the write; in
+both cases the Timeline is fronted with **that row open**, so the key just made (or found)
+is on screen. The reveal is a new `revealPropertyRequest` on the shell state, speaking the
+same `reveal.*` words the P/S/R/T/A keys use so one mapping serves both — but it
+**ensures open** rather than toggling, because asking to see a row twice must never hide it.
+
+Regression tests (fx_console_context_frb_test.dart, against the real engine): the ring is
+exactly the five rows; a slice plants one key at the playhead and fires the reveal; the same
+frame never duplicates a key while a new frame inserts in order; an expressed row is dimmed;
+the Timeline opens exactly the asked row, consumes the request, and a second ask never
+closes it.
+
+**K-327 · DECIDED · A Project panel item's ring is "Add to comp" — one slice, dimmed when it
+cannot run, never the new-layer grab-bag.**
+From the owner (2026-08-09): "when you select an item in the project panel, why does it
+display the layer types…?? We don't want that, remove those… if it can be added to the
+current comp then have that as an option (otherwise have it there so people can get muscle
+memory but disable it)". The console had no project-item context at all, so a picked item
+fell through to the comp's new-layer ring — six slices with nothing to do with the
+selection. Now, **while the Project panel is the active panel** (the console follows where
+the user stands, as the keymap's contexts do) and an item is picked there, the ring is a
+single slice: **Add to comp**, doing exactly what dropping the item on the Timeline does —
+footage becomes a footage layer (honouring K-246's Vegas preference), a composition nests
+as a precomp. Per the owner's muscle-memory rule (and K-325's), the slice is **dimmed, never
+dropped**, when it cannot run: no comp open, a folder, a solid (no engine path from the
+panel yet), or a comp offered to itself, which the engine would refuse — said up front
+rather than after the flick.
+
+**The plumbing.** The Project panel's selection stays its own; it now publishes the anchor
+item to a `selectedProjectItem` notifier on the shell state on every click, which is also
+what puts the item's name in the middle of the ring. A stale handle (the item deleted, the
+project switched since publishing) dims the slice and falls through the title rather than
+throwing. Regression tests: the panel publishes on click and follows it
+(project_panel_frb_test.dart); footage places a layer, a comp nests but never into itself,
+the slice dims with no comp open, and the item counts only while the Project panel is the
+active one (fx_console_context_frb_test.dart).
+
+**K-328 · DECIDED · While the console is open, the keyboard is the console's: the search box
+holds focus for the console's whole life, and every command handler stands down.**
+From the owner (2026-08-09), running K-325's build: "the search bar has stopped being
+selected by default… if any text is typed when the console is on screen, it is what keys are
+put into, so users don't accidentally start opening/editing layers etc". Two faults, one
+root: the boxed K-324 console was a movable window, which counted into `lumitModalOpen` —
+the flag every panel's hardware-keyboard handler checks (K-243) — and its field won focus as
+dialogs do. The K-325 overlay was neither, so the field's `autofocus` lost the race against
+the shell's own scope and, with focus astray, keystrokes fell through to the panels' and
+shell's command handlers: typing a search renamed and added layers underneath.
+
+So the console now does both things a dialogue does, explicitly. **It counts into
+`lumitModalOpen`** (via `markModalMounted`/`markModalUnmounted`, mount-counted for K-243's
+stuck-counter reason), and the *shell's* global key handler now honours that flag too —
+which it never had, an older gap the console exposed. **And the search field holds focus
+deterministically**: focused post-frame on open (`autofocus` races are what failed), then
+re-taken the moment anything steals it, for as long as the console is open. There is no
+keyboard route out of the console except Escape; the pointer route is a click outside.
+`HouseTextField` gains an optional caller-owned `focusNode` to make that steering possible.
+
+**And the console's `Stack` children are keyed, which is load-bearing rather than tidiness.**
+Owner-found immediately after the above: typing worked for exactly one letter and then
+stopped. The ring is hidden while the query is non-empty, so the first keystroke *removes a
+child from the middle of the stack* — and Flutter matches unkeyed children by index and
+runtime type, both of these being `Positioned`. The bar's element was recycled onto the
+ring's old slot and the field beneath it rebuilt from nothing; a fresh `EditableText` whose
+focus node is **already** focused never opens a text-input connection, so every later
+keystroke had nowhere to land. Keying each child matches by identity instead, and the field
+survives the ring coming and going untouched. The general rule this is an instance of: any
+conditional child in a `Stack` whose siblings hold state needs a key.
+
+Regression tests: the field has focus on open and takes it back when unfocused; **typing
+keeps going after the ring steps aside** — the field's state object must be the same
+instance across the change, and the second letter is delivered through the connection
+already open (`updateEditingValue`) rather than `enterText`, which re-attaches one and would
+hide exactly this fault (fx_console_test.dart). With the console open the space bar types
+instead of playing, and plays again once Escape closes it (shortcuts_frb_test.dart — the
+existing Ctrl+Space test now closes the console before asserting the bare space bar).
+
+
+**K-329 · DECIDED · Curves preview while they are dragged, and a Retime flattened to one
+constant is a Retime removed.** Two reports from the 0.2.0 release, one week apart, that turn
+out to be the same complaint: the Retime path had no live feedback, and the one gesture that
+looked like "take it away" quietly froze the layer instead.
+
+**A graph drag previews.** Every other live drag in the editor already renders its provisional
+value through the engine's patched clone (K-192, K-225, K-239, K-240, K-247); the graph editor
+— where curves are actually shaped — was the one place that committed on release and showed
+nothing before it. It now previews on every tick, throttled and coalescing like the rest
+(`previewChannelEdits`, beside the `commitChannelEdits` it mirrors, so the picture during the
+drag is made of exactly the scalars the release will write). One layer and one kind of patch
+per gesture, because a preview request patches one layer's one state: a selection spanning
+several layers, or a transform *and* an effect at once, shows the rest on release as before.
+The layer's own Retime map gets a preview door of its own
+(`CompositionReference::render_frame_with_retime`), for K-247's reason applied to K-197's
+property: a retime decides *which source frame is decoded*, so it cannot be previewed by
+re-compositing pixels already in hand. The Retime row's value drag uses the same door, which
+retires the "no preview path for that yet" note that sat in it.
+
+**A constant map removes the Retime.** `set_retime_property` given a static value takes the
+property away and re-hangs the layer on its source (K-212) rather than writing it. The two
+gestures that produce one — the row's stopwatch turned off, and the last key deleted, which
+the graph editor answers with a static value — both mean "no more retime"; written as they
+arrived they left the layer showing a single source frame for its whole length, with the row
+gone quiet and nothing on screen to say why. That is not a state K-197 has ("no freeze"), and
+it is the exact bug reported. This narrows K-197's "an ordinary property, the same stopwatch,
+nothing Retime-specific": the stopwatch is still the same control, but on this one property
+turning it off means what Ctrl+Alt+T off means. A freeze is still reachable and still says so
+— a map with one key holds that moment, as After Effects does. Regression tests:
+`a_flattened_retime_is_removed_rather_than_freezing_the_layer` (lumit-bridge), which also pins
+the one undo step covering removal and re-hang together.
+
+**K-330 · DECIDED · A positional frame lookup must prove the frame is still that position's.**
+Reported on 0.2.0: retime a footage layer and the Scopes jump, flicker and match nothing in the
+Viewer.
+
+The frame cache names a frame by its **content**, and keeps its **provenance** — the position
+and quality it was made for — beside it, because a hash cannot answer "is there any picture of
+frame 12?" (K-096, K-183). Two consumers ask exactly that positional question: the Scopes, which
+want the numbers in a frame at any resolution, and the dropper. Provenance records where a frame
+*came from*, and that never stops being true — but what a position *shows* does change. An edit
+renames every frame it touches, so frame 12 renders to a new name while the entry made before it
+sits in the map still claiming frame 12. `best_frame` took the finest of the candidates, and
+which one that was flipped as the tiers churned under playback: the flicker, and a scope
+disagreeing with the picture beside it. A retime made it obvious because a retime changes every
+frame of the layer at once.
+
+So both positional lookups now take a predicate and ask each candidate whether its name is still
+what that position renders to **at the quality that candidate was made at** — which is why
+`FrameProvenance` carries the `Quality` and not only the preview scale it derived from. A stale
+entry is passed over, never evicted: its name is still valid content, so an undo that brings the
+old picture back finds it in the cache. Nothing current held means the consumer renders its own,
+which is the fallback it always had. The predicate runs under the cache lock and is therefore
+held to the dropper's rule — bounded, pure CPU, nowhere near the GPU or the FFI boundary
+(docs/14). Regression test: `a_frame_the_edit_orphaned_is_not_served_positionally` (lumit-bridge).
+
+**Renumbered on merge, twice.** These two were written as K-256 and K-257 on a branch; the lens-flare work claimed those first, so they became K-268 and K-269 — and main claimed *those* while the branch waited. They are K-331 and K-332 here, and this is the last time: the renumber-on-merge rule K-160 records.
+
+**K-331 · DECIDED · Flow is rebuilt on the render device: GPU synthesis, a cache tier of its
+own, a resolution independent of preview quality, and the §3.1 parameters it was always
+specified to have.** From the owner (2026-08-04), reopening the flow engine that landed in the
+egui era and has not been touched since. The DIS algorithm itself stands (K-169, and
+`docs/impl/optical-flow.md` remains the authoritative *how*); everything around it is replaced.
+
+- **One device, one walk.** `FlowEngine::new_auto` built its *own headless wgpu device* inside
+  the decode worker, measured flow there, read the field back, and synthesised the in-between
+  frame per-pixel on the CPU in sRGB bytes. Flow now runs in `realise`, on the compositor's
+  device, where both source textures already exist, and synthesis is a WGSL pass in linear
+  premultiplied fp16 as `docs/impl/optical-flow.md` §3 always required. The decode worker goes
+  back to decoding: `DrawSource` carries the two bracketing frames and the phase, not
+  pre-synthesised pixels. Because preview, the headless renderer and export all drive that one
+  walk, K-031 holds by construction rather than by a second implementation agreeing.
+- **Flow resolution is its own setting, not a side effect of preview quality.** Flow was
+  measured on whatever the preview scale had shrunk the decode to, so a draft scrub and an
+  export were different *measurements*, not the same measurement at two sizes. Flow resolution
+  moves into `FlowParams` and defaults to native. **The accepted cost:** a layer with Flow live
+  decodes at native width even in draft preview, because full-resolution flow cannot be
+  measured on a shrunk decode — draft stops being cheap on flow layers, and that is the price
+  of a preview that does not lie about what the export will look like. The quality knob remains
+  for anyone who wants the speed back.
+- **A `flow/` cache tier** beside `frames/` (docs/06 §5.4 reserved it and nothing was ever
+  written there), keyed by `(item, frame A, frame B, flow params, algorithm version)` and
+  **not** by the preview quality tier, since flow no longer varies with it — so a draft scrub
+  warms the cache for the full-quality pass. Fields store as `rg16float` plus an `r8`
+  confidence rather than the f32 buffers the CPU parity contract needed (≈18 MB per 1080p
+  pair). Retime flow and Fast motion blur hit the *same* entry when they want the same frame
+  pair: they are one measurement with two consumers (retime uses the vectors to invent a frame
+  between two, motion blur uses them to streak pixels within one), and a layer running both
+  paid for DIS twice.
+- **Flow is a switch, not a dropdown entry.** Completing K-088: the Source rows' interpolation
+  dropdown drops to Nearest / Blend, and Flow becomes a toggle in the footage layer's switch
+  cluster which reveals the **Flow** group beside Transform and Effects. `Interpolation::Flow`
+  remains the storage (K-088's "the option surfaces the policy"); only the control moves. The
+  gate is the K-246 duration rule — media that runs qualifies, so image sequences qualify for
+  free the day they become a footage kind, with no flow-specific work.
+- **The engagement gate ships, with an override.** K-088's "engages only when it can help" was
+  never built; Flow ran whenever selected, paying full cost on clips where it changed nothing.
+  Flow now passes through to Nearest unless the source rate through the retime undershoots the
+  comp rate, and the Flow group carries a manual override that forces it regardless (the "wind
+  toggle" K-095 refers to).
+- **The §3.1 parameters ship**: Vector detail, Smoothness, Occlusion handling and Fallback join
+  the resolution and the already-built-but-unreachable keyframeable Input rate (K-095, K-160 —
+  `set_interpolation` wrote `Interpolation::Flow(Default::default())` and discarded every one of
+  them, so two decisions' worth of working engine had no control surface at all). **The
+  HUD/overlay guard of §3.1 step 5 ships with them**: static regions with high texture bias
+  toward pure blending, which is what stops a game HUD smearing across the frame — the
+  single most valuable behaviour for this project's primary footage (K-002).
+
+Superseded in passing: the "flow fields are f32 storage buffers because fp16 rounding would eat
+the CPU-parity budget" note of `docs/impl/optical-flow.md` §1 applies to the *search*, which
+keeps its f32 working buffers and its CPU oracle; only the *stored* field narrows to fp16.
+
+**K-332 · DECIDED · DIS ships its variational refinement; "skip it in v1" is reversed.** From
+the owner (2026-08-04), reporting that the motion vectors are artefact-heavy and the flow and
+Fast motion blur that ride on them look poor. `docs/impl/optical-flow.md` §1 step 4 said: *skip
+the paper's full variational refinement in v1 — measure first; it is the difference between 2 ms
+and 10 ms and mostly helps large untextured regions, rare in game footage.* The measurement has
+now happened, and both halves of that sentence were wrong.
+
+DIS is **three** parts — inverse search, densification, variational refinement (Kroeger et al.,
+ECCV 2016) — and Lumit shipped two. The paper's own parameter analysis reports that refinement
+"always significantly reduced the error for a moderate increase in run-time"; OpenCV's
+`DISOpticalFlow`, the implementation everyone benchmarks against, enables it by default. The
+quality bar the impl note sets — "≈ Twixtor's easy-80% on game footage" — was set for the whole
+algorithm and judged against two thirds of it.
+
+The dismissal of untextured regions was the deeper mistake. Smoke, sky, muzzle flash, water,
+darkness and motion-blurred backgrounds are not *rare* in game capture, they are most of a
+frame during exactly the fast moments a montage slows down. And the current code fails hard
+there rather than softly: densification weights patch votes by a narrow Gaussian photometric
+term (σ = 0.08), so where nothing matches, the pixel keeps the coarse initialisation and is
+marked invalid; `occlusion` counts invalid as occluded; synthesis then crossfades it. Untextured
+regions collapse to patches of ghosted crossfade — the reported artefact, arrived at by three
+correct-looking local decisions. The single 3×3 bilateral pass was standing in for the
+regularisation the paper leaves to the refinement, and it cannot.
+
+Shipping, per the paper: intensity constancy **and gradient constancy** (the latter is what
+survives illumination change — a muzzle flash or explosion is a brightness step across a moving
+frame, the case plain intensity constancy has no answer for), a smoothness term, the robust
+penaliser `Ψ(a²) = √(a² + ε²)`, solved by successive over-relaxation once per pyramid level.
+Validity stops meaning "no patch covered me" and starts meaning "the refined flow does not
+explain these pixels", measured from the residual after refinement — a dense field has an
+answer everywhere, and the honest question is whether that answer is right.
+
+**Not adopted, and why.** Learned flow is the state of the art — WAFT (2025) leads Spring,
+Sintel and KITTI by replacing cost volumes with high-resolution warping, and RIFE-class models
+are what the community already pre-processes with. All of them are trained networks, which
+collides with three standing commitments: engine determinism (docs/14), preview equals export
+(K-031), and no model-file download in v1 (K-169's reasoning, unchanged). One architectural
+point decides the shape regardless: **RIFE synthesises frames directly and emits no flow
+field**, so Fast motion blur (§3.2) and Datamosh (§3.12) need DIS-class vectors whatever
+happens to retime synthesis — a learned model could one day replace the *synthesis* half and
+never the *measurement* half. The follow-up the owner accepted is a measurement harness on real
+gameplay, so the learned ceiling is judged later against numbers rather than impressions.
+
+**K-333 · DECIDED · Four graph-editor faults from the owner's pass, and a keyed value drag
+that showed nothing.** All reported against the 0.2.0 build; each is a fix rather than a change
+of intent, so they are recorded together.
+
+**Auto-fit frames what is on screen.** It was fitting over every key of every selected channel
+whatever the time zoom, so zooming into a quiet stretch of a curve that spikes somewhere
+off-screen still left room for the spike and the part under the pointer stayed a flat line. The
+fit now takes the keys inside the visible time window, plus what each curve reads at the two
+edges of it — the edges being what stops a span *between* two keys from framing on nothing.
+
+**"No other scroll works until I press Alt again" was never the Alt key.** The first reading was
+a stale modifier — Alt is Windows' menu-activation chord, so the key-up that ends an Alt+wheel
+zoom is easily lost — and the handler does now ask the platform what is really held. But that
+was not the fault. Alt+wheel multiplies the vertical span by 1.2 a tick and nothing bounded it,
+so half a second of scrolling gave a range hundreds of times the curve and a few seconds gave
+millions. Nothing about the pane then looks broken; it looks *dead*. The curve is far outside
+the window, a pan of one wheel notch moves it by a fraction of a span nobody can see, and only
+another Alt+wheel — being multiplicative — can climb back, which is exactly what "press Alt
+again and it works" was describing. The vertical range is now held finite, the right way up, and
+within a thousandfold of what auto-fit would choose; the zoom's anchor is clamped to the pane,
+because the pointer signal is reported against a listener taller than the graph and an anchor
+from outside it zooms about a value nowhere near the curve.
+
+**The magnet snaps the picture, not only the write.** A key drag rounded to whole frames on
+release and drew unrounded until then, so a key bound for frame 12 sat between 11 and 12 for
+the whole gesture and jumped on the way out.
+
+**`Shift` lays a tangent handle flat**, holding the value at the key's own so the curve leaves
+it horizontally; a joined partner is mirrored from the dragged side and comes flat with it.
+
+**A value drag in the layer area previews, and the graph follows it.** The picture is rendered
+through the same patched clone a static drag uses (K-192), carrying the whole animation. The
+curve is a second problem with the same cause — the pane draws from the read model, and the
+provisional value lives in the row's own state until the release — so the row **publishes** it
+(`rowValueDrag`), exactly as a bar drag publishes its travel for the waveform lane
+(`BarDragPreview`, K-172), and the pane draws through it. Matched by layer and *axis*, so
+dragging Position x leaves y where it is.
+
+Two rules about keys go with it. An **animated** property with no key under the playhead gains
+one the moment the drag starts, holding the value already showing — nothing moves, and the drag
+then has a key to carry, which is what makes it visible in the graph as it goes. An **unkeyed**
+property is drawn at its new value and gains no diamond: the drag is not planting a key, and a
+glyph would say it was.
+
+**K-334 · DECIDED · A press on a row's controls selects the row, and Alt is asked of the
+operating system.** Two more findings from the owner testing K-333, both of which turn earlier
+fixes from nearly-right to right.
+
+**Selection.** K-196 put selection on the property's *name*; every other press on a row — the
+stopwatch, the ◄ ◆ ► navigator, the value field — acted without choosing. That is why the graph
+still did not follow a value drag after K-333 wired the preview: the pane draws **selected**
+channels, the drag was on an unselected row, and the channel it should have moved was not on
+screen at all. Any unmodified pointer-down on a property row now selects it (replace, not
+toggle — `_selectOnEdit`'s behaviour), on pointer-DOWN so the channel exists before the drag's
+first tick. Modified presses keep the label's Ctrl/Shift semantics; group headings keep their
+pick-and-twirl click (K-300). Extends K-196.
+
+**Alt.** K-333's second reading (the unbounded zoom) was real and stays, but the first reading
+was righter than its fix: Alt genuinely sticks, and `syncKeyboardState` cannot unstick it
+because it re-asks the same embedding that missed the key-up. `altActuallyHeld()` asks the OS
+(`GetKeyState`) — only ever to clear a false positive, trusting the framework when it says Alt
+is up, and trusting simulated modifiers under `flutter test`. Used everywhere the graph gates
+behaviour on Alt: the wheel zoom, Alt-click key removal, and handle break/join — a stuck Alt was
+also silently deleting keys on plain clicks and flipping every handle drag to broken.
+
+**K-335 · DECIDED · The Alt witness is `GetAsyncKeyState`, and every value row publishes its
+drag.** The owner's third report of both K-333 bugs, and this time the mechanisms rather than
+more wiring.
+
+**Alt.** K-334's `GetKeyState` was the right idea asked of the wrong thread: it reads the
+keyboard state of the *calling thread's message queue*, and Dart's UI thread is not the Win32
+thread that receives keyboard messages, so its answer was as stale as the framework belief it
+was meant to correct. `GetAsyncKeyState` reads the physical key state whoever asks. Same
+guardrails: only ever clears a false positive, and trusts simulated modifiers under
+`flutter test`.
+
+**The graph follow.** The transform rows were wired and the effect parameter rows were not —
+and a value being dragged in the layer area is as often a blur radius as a Position. The
+published drag (`rowValueDrag`) grows selectors for all three channel kinds — a transform axis,
+an effect parameter, the Retime — and every keyed row publishes: transform axes (K-334), effect
+parameters (this entry, with the drag-start key plant and the staged-stack picture preview the
+transforms already had), and the Retime row. Three end-to-end regression tests drive the real
+outline field with a held-down gesture and watch the graph: a drag on a key, a drag *between*
+keys (the key plants at drag start and is carried), and a drag on an effect parameter.
+
+**K-336 · DECIDED · The dead scrolling was the Windows menu loop, and the drag preview matches
+keys by half a frame.** The owner's fourth report of the Alt bug, and the one that ends it —
+because this time the mechanism was reproduced in a clean-room probe app before the fix was
+written, and the fix was proven against the same probe.
+
+**It was never a modifier.** Releasing a *lone* Alt makes DefWindowProc enter the modal menu
+loop (`WM_SYSCOMMAND`/`SC_KEYMENU`): a loop inside Windows itself that swallows every wheel —
+plain, Ctrl and Shift alike — and keyboard input, until Alt is pressed again, Escape is hit, or
+the window is clicked. A key press between Alt going down and up cancels the request, but a
+wheel tick does not — which is why exactly Alt+wheel (the graph's vertical zoom) left scrolling
+dead while every ordinary Alt shortcut was fine, and why "press Alt again" fixed it. The probe:
+a bare Flutter app whose posted probe-key vanishes after `SC_KEYMENU` and returns after an Alt
+press — and stops vanishing entirely with the fix in. The fix is in the runner
+(`win32_window.cpp`): `SC_KEYMENU` returns 0, because Lumit's menu bar is Flutter-drawn and
+there is no native menu for the chord to open. K-334/K-335's stale-modifier readings were
+wrong about the cause; `altActuallyHeld()` stays, as a harmless guard that only ever clears a
+true false-positive.
+
+**The drag preview replaces keys within half a frame.** The published row drag swapped its
+value into the curve by *exact float* frame equality, and a key's frame comes back through
+rational-to-double maths that does not always land on the integer — so the drag's key could be
+inserted beside the document's instead of replacing it. One extra key shifts every later glyph
+index: the dragged key drew at the next key's place and everything after it sat one key off
+until the release rebuilt from the document. The preview now replaces the nearest key within
+half a frame, keeping list length and order stable, and the between-keys regression test pins
+the glyph count and the immobility of the keys after the playhead.
+
+**K-337 · DECIDED · A glyph reads both its coordinates from one list.** The screenshot that
+closed the drag-preview saga: drag the Retime readout on a frame with no key and the diamonds
+floated off the curve. K-336's half-frame match fixed replacement, but a keyless frame takes the
+*insertion* path — the preview list is one key longer than the document's — and `_keyPoint` read
+x from the document's keys while `_keyY` read y from the preview's, so every glyph past the
+insertion drew with one key's x and another's y. Both now read the same `_shownKeys` list in
+every lens, with an index guard. The Retime row also plants its key on the drag's first tick,
+as the transform and effect rows already did (K-333's rule), so the ordinary gesture takes the
+replacement path anyway and a diamond stands at the playhead from the first tick. Regression:
+`a Retime drag on a keyless frame keeps the diamonds on the curve`, which fails on the mixed
+lists and on the missing plant alike.
+
+**K-338 · DECIDED · Masks gain modes, feather and expansion, and the first mask in the
 list decides what the fold starts from.** 03-DATA-MODEL §7 always described a v1 mask as
 "static, Add-mode" with the rest listed as future. The future is now partly here:
 `MaskMode` is `None | Add | Subtract | Intersect | Difference`, and every mask carries a
@@ -7273,7 +7910,7 @@ every existing project has banked.
 with its own tool, and `ToolMode.penMaskFeather` already exists in the toolbar as a stub
 with nothing behind it. It stays in TODO.
 
-**K-319 · DECIDED · A mask path animates through its own keyframe list, and mismatched point
+**K-339 · DECIDED · A mask path animates through its own keyframe list, and mismatched point
 counts resample upward.** From the owner (2026-08-08): the deferral K-224 recorded ("neither
 can a mask path be keyframed") is closed for the engine half.
 

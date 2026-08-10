@@ -360,18 +360,37 @@ pub(crate) fn contains(key: FrameKey) -> bool {
 /// hash cannot answer — hence the provenance kept beside each entry. It is
 /// deliberately a best effort: two positions with identical pixels share one
 /// entry filed under whichever asked first, so this can miss a frame it could
-/// have served, and then the Scopes render their own. It can never answer with
-/// the wrong picture.
+/// have served, and then the Scopes render their own.
+///
+/// **`still_current` is what keeps it from answering with the wrong picture**
+/// (K-330). An entry's provenance says which position asked for it, and that
+/// stays true for ever — but what the position *shows* does not. Edit the comp
+/// and frame 12 renders to a new name, while the old entry sits in the map
+/// still claiming frame 12; the finest of the two wins, which alternates as
+/// tiers churn, and the Scopes flicker between the picture and the picture it
+/// used to be. So each candidate is asked whether its name is still what this
+/// position renders to at the quality it was made at, and a stale one is passed
+/// over rather than served. The predicate runs under the cache lock, so — like
+/// the dropper's reader below — it must stay bounded, pure CPU, and nowhere
+/// near the GPU or the FFI boundary (docs/14 §"no locks across GPU").
 ///
 /// Does not count as a hit or a miss: those numbers describe how well the Viewer
 /// is being served, and mixing a second consumer into them would make the meter
 /// mean nothing.
-pub(crate) fn best_frame(comp: uuid::Uuid, frame: u64) -> Option<(u32, u32, Vec<u8>)> {
+pub(crate) fn best_frame(
+    comp: uuid::Uuid,
+    frame: u64,
+    still_current: impl Fn(FrameKey, lumit_render::Quality) -> bool,
+) -> Option<(u32, u32, Vec<u8>)> {
     with_cache(|c| {
         let key = *c
             .map
             .iter()
-            .filter(|(_, e)| e.provenance.comp == comp && e.provenance.frame == frame)
+            .filter(|(k, e)| {
+                e.provenance.comp == comp
+                    && e.provenance.frame == frame
+                    && still_current(**k, e.provenance.quality)
+            })
             // The finest one held.
             .max_by_key(|(_, e)| e.provenance.scale_q)
             .map(|(k, _)| k)?;
@@ -414,13 +433,18 @@ pub(crate) fn best_frame(comp: uuid::Uuid, frame: u64) -> Option<(u32, u32, Vec<
 pub(crate) fn with_best_frame<R>(
     comp: uuid::Uuid,
     frame: u64,
+    still_current: impl Fn(FrameKey, lumit_render::Quality) -> bool,
     read: impl FnOnce(&[u8], u32, u32, bool) -> R,
 ) -> Option<R> {
     with_cache(|c| {
         let key = *c
             .map
             .iter()
-            .filter(|(_, e)| e.provenance.comp == comp && e.provenance.frame == frame)
+            .filter(|(k, e)| {
+                e.provenance.comp == comp
+                    && e.provenance.frame == frame
+                    && still_current(**k, e.provenance.quality)
+            })
             .max_by_key(|(_, e)| e.provenance.scale_q)
             .map(|(k, _)| k)?;
         let entry = c.map.get_mut(&key)?;
@@ -821,7 +845,14 @@ mod tests {
             comp,
             frame,
             scale_q,
+            quality: lumit_render::Quality::default(),
         }
+    }
+
+    /// A positional lookup that accepts every candidate — for the tests that
+    /// are about the lookup itself rather than about staleness.
+    fn anything(_key: FrameKey, _quality: lumit_render::Quality) -> bool {
+        true
     }
 
     /// One entry of `bytes` bytes. The dimensions are nominal — this store only
@@ -978,12 +1009,63 @@ mod tests {
 
         // The finest one held for frame 5 of this comp is the 500-thousandths
         // entry, not the 250 one and not another comp's.
-        let (_, _, bytes) = best_frame(comp, 5).expect("frame 5 is held");
+        let (_, _, bytes) = best_frame(comp, 5, anything).expect("frame 5 is held");
         assert_eq!(bytes.len(), 256, "the finest one held, not just any");
 
-        assert!(best_frame(comp, 7).is_none(), "nothing held for frame 7");
-        let (_, _, others) = best_frame(other, 5).expect("the other comp has its own");
+        assert!(
+            best_frame(comp, 7, anything).is_none(),
+            "nothing held for frame 7"
+        );
+        let (_, _, others) = best_frame(other, 5, anything).expect("the other comp has its own");
         assert_eq!(others.len(), 4096, "never another composition's picture");
+        clear();
+    }
+
+    /// **The Scopes were showing the picture a frame used to be.** Reported on
+    /// 0.2.0: retime a footage layer and the scope jumps and flickers and
+    /// matches nothing in the Viewer.
+    ///
+    /// The edit renames every frame it touches, so the comp renders frame 5 to
+    /// a new name — and the entry made before it is still in the map, still
+    /// saying it is a picture of frame 5, because provenance records where a
+    /// frame *came from* and that never stops being true. Whichever of the two
+    /// was made at the finer scale won, and which one that was flipped as the
+    /// tiers churned under playback: hence the flicker, and hence a scope that
+    /// disagreed with the picture beside it. A candidate whose name is no
+    /// longer this position's name is now passed over (K-330).
+    #[test]
+    fn a_frame_the_edit_orphaned_is_not_served_positionally() {
+        let _guard = cache_test_guard();
+        let comp = uuid::Uuid::now_v7();
+        clear();
+        // 1 is what frame 5 shows now; 2 is what it showed before the retime,
+        // and it is the finer of the two — so it wins on scale alone.
+        with_cache(|c| {
+            c.put(1, entry(64, at(comp, 5, 250)));
+            c.put(2, entry(256, at(comp, 5, 1000)));
+        });
+        let current = |key: FrameKey, _q: lumit_render::Quality| key == 1;
+
+        let (_, _, bytes) = best_frame(comp, 5, current).expect("the current frame is held");
+        assert_eq!(
+            bytes.len(),
+            64,
+            "the picture frame 5 shows now, not the finer one it used to show"
+        );
+
+        // The stale entry is passed over, not evicted: its name is still valid
+        // content, so an undo that brings it back must find it there.
+        assert!(contains(2), "a stale position does not retire the frame");
+
+        // And with nothing current held, the caller renders its own rather than
+        // being handed the old picture.
+        with_cache(|c| {
+            c.map.remove(&1);
+        });
+        assert!(
+            best_frame(comp, 5, current).is_none(),
+            "no current picture is answered with none, never with the old one"
+        );
         clear();
     }
 
@@ -1011,7 +1093,7 @@ mod tests {
             );
         });
 
-        let (_, _, bytes) = best_frame(comp, 0).unwrap();
+        let (_, _, bytes) = best_frame(comp, 0, anything).unwrap();
         assert_eq!(bytes, vec![3, 2, 1, 4], "given to the Scopes as RGBA");
         let up = held(A).expect("still held for promotion");
         assert_eq!(*up.bytes, vec![1, 2, 3, 4], "and kept as it came down");

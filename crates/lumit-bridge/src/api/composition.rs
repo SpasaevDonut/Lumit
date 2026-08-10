@@ -1459,6 +1459,7 @@ impl CompositionReference {
             contents: None,
             masks: None,
             clip_retime: None,
+            retime: None,
         }))
     }
 
@@ -1491,6 +1492,43 @@ impl CompositionReference {
             contents: None,
             masks: None,
             clip_retime: Some((clip, retime)),
+            retime: None,
+        }))
+    }
+
+    /// Ask for `frame` with one layer's Retime map replaced — the live graph
+    /// drag on the Retime channel, which never touches the document.
+    ///
+    /// The same reason as [`Self::render_frame_with_clip_retime`] one function
+    /// up, for the layer's own map (K-197) rather than a clip's: a retime
+    /// decides *which frame of the source* is decoded, so it cannot be
+    /// previewed by re-compositing pixels already in hand. Without it the
+    /// picture does not move until the key is let go, which is the one edit
+    /// where watching it matters most.
+    ///
+    /// `retime` arrives on the comp clock like every keyframed value that
+    /// crosses the seam (K-213); the worker returns it to the layer's own.
+    #[frb(sync)]
+    pub fn render_frame_with_retime(
+        &self,
+        frame: u64,
+        scale: f32,
+        layer: LayerReference,
+        retime: crate::api::effect::BridgeScalar,
+    ) -> Result<(), BridgeError> {
+        self.dispatch(RenderCompWithPreview(RenderCompRequestWithPreview {
+            comp: self.clone(),
+            frame,
+            scale,
+            layer,
+            effects: None,
+            transform: None,
+            text: None,
+            paint: None,
+            contents: None,
+            masks: None,
+            clip_retime: None,
+            retime: Some(retime),
         }))
     }
 
@@ -1630,6 +1668,7 @@ impl CompositionReference {
             contents: None,
             masks: None,
             clip_retime: None,
+            retime: None,
         }))
     }
 
@@ -1660,6 +1699,7 @@ impl CompositionReference {
             contents: None,
             masks: None,
             clip_retime: None,
+            retime: None,
         }))
     }
 
@@ -1694,6 +1734,7 @@ impl CompositionReference {
             contents: None,
             masks: None,
             clip_retime: None,
+            retime: None,
         }))
     }
 
@@ -1725,6 +1766,7 @@ impl CompositionReference {
             contents: Some(contents),
             masks: None,
             clip_retime: None,
+            retime: None,
         }))
     }
 
@@ -1749,6 +1791,7 @@ impl CompositionReference {
             paint: None,
             contents: None,
             clip_retime: None,
+            retime: None,
             masks: Some(masks),
         }))
     }

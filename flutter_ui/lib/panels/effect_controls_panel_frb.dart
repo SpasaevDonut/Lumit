@@ -35,11 +35,14 @@
 
 import 'dart:async';
 
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
+import 'package:lumit_flutter/src/rust/api/keymap.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
+import 'package:lumit_flutter/state/dock.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
@@ -52,6 +55,7 @@ import 'fx_section.dart';
 import 'transform_rows_frb.dart';
 import '../state/drag_payloads.dart';
 import 'placeholder.dart';
+import 'flow_rows_frb.dart';
 import 'source_rows_frb.dart';
 import 'timeline_timings.dart';
 
@@ -83,6 +87,45 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
   void _toggle(String path) => setState(() {
         if (!_shut.remove(path)) _shut.add(path);
       });
+
+  /// The effect whose heading is an inline rename editor, or null (K-321).
+  UuidValue? _renamingEffect;
+
+  @override
+  void initState() {
+    super.initState();
+    // `Enter` renames the selected effect (K-321) — registered on the
+    // hardware keyboard like every panel command; stands down for modals,
+    // focused fields, and whenever this panel is not the active one.
+    HardwareKeyboard.instance.addHandler(_onKey);
+  }
+
+  @override
+  void dispose() {
+    HardwareKeyboard.instance.removeHandler(_onKey);
+    super.dispose();
+  }
+
+  bool _onKey(KeyEvent event) {
+    if (event is! KeyDownEvent || !mounted) return false;
+    if (lumitModalOpen) return false;
+    final focused = FocusManager.instance.primaryFocus?.context;
+    if (focused != null &&
+        (focused.widget is EditableText ||
+            focused.findAncestorWidgetOfExactType<EditableText>() != null)) {
+      return false;
+    }
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    if (ui.activePanel.value != Panel.effectControls) return false;
+    final action = ui.keymap.actionFor(BridgeKeyContext.effects, event);
+    if (action == 'effect.rename') {
+      final picked = ui.selectedEffects.value;
+      if (picked.length != 1 || _renamingEffect != null) return false;
+      setState(() => _renamingEffect = picked.first);
+      return true;
+    }
+    return false;
+  }
 
   /// Which parameter twirls the owner has opened or shut, by path.
   ///
@@ -225,6 +268,21 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
                       open: _isOpen('source'),
                       onToggle: () => _toggle('source'),
                     ),
+                    // Flow sits between what the layer is made of and where it
+                    // sits, because that is what it is: how the source is
+                    // *sampled* (K-088). It shows itself only when the layer's
+                    // flow switch is on.
+                    FlowRowsFrb(
+                      key: ValueKey<String>(
+                          'flow-card-${layer.internallayerId}'),
+                      layer: layer,
+                      onChanged: ui.model.refresh,
+                      comp: comp,
+                      playheadFrame: playhead,
+                      onSeek: (frame) => ui.playheadFrame.value = frame,
+                      open: _isOpen('flow'),
+                      onToggle: () => _toggle('flow'),
+                    ),
                     _TransformSection(
                       key: ValueKey<String>('tf-card-${layer.internallayerId}'),
                       layer: layer,
@@ -273,6 +331,30 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
                         open: _isOpen('fx-${info.effects[index].id}'),
                         onToggle: () => _toggle('fx-${info.effects[index].id}'),
                         selected: picked.contains(info.effects[index].id),
+                        renaming: _renamingEffect == info.effects[index].id,
+                        onRenamed: (name) {
+                          // Stage the name on a fresh handle and commit the
+                          // stack — one SetLayerEffects, one undo step, the
+                          // same shape every stack edit has.
+                          final stack = layer.getEffects();
+                          for (final instance in stack) {
+                            if (instance.id() == info.effects[index].id) {
+                              instance.setCustomName(name: name);
+                              try {
+                                layer.setEffects(effects: stack);
+                              } catch (_) {
+                                // The stack changed under us; re-reading is
+                                // the recovery.
+                              }
+                              break;
+                            }
+                          }
+                          setState(() => _renamingEffect = null);
+                          ui.model.refresh();
+                        },
+                        // Escape: close the editor, write nothing (K-323).
+                        onRenameCancelled: () =>
+                            setState(() => _renamingEffect = null),
                         onSelect: () => ui.pickEffect(
                           layer,
                           info.effects[index].id,
@@ -440,6 +522,12 @@ class _EffectSection extends StatelessWidget {
   /// The stack itself changed (enabled, reordered, removed) — re-read it.
   final VoidCallback onStackChanged;
 
+  /// The heading is an inline rename editor (K-321), its commit, and the
+  /// Escape that throws the edit away instead (K-323).
+  final bool renaming;
+  final ValueChanged<String>? onRenamed;
+  final VoidCallback? onRenameCancelled;
+
   /// Write a parameter — a typed value, or the release of a drag. One op.
   final void Function(UuidValue effect, String param, BridgeEffectValue value)
       onWrite;
@@ -473,6 +561,9 @@ class _EffectSection extends StatelessWidget {
     required this.onStackChanged,
     required this.onWrite,
     required this.onLive,
+    this.renaming = false,
+    this.onRenamed,
+    this.onRenameCancelled,
     required this.isGroupOpen,
     required this.onToggleGroup,
   });
@@ -516,11 +607,16 @@ class _EffectSection extends StatelessWidget {
     final values = {for (final v in info.values) v.id: v.value};
 
     return FxSection(
-      title: effectLabelOf(info.name),
+      // The user's own name where one is set (K-321); the effect's label
+      // otherwise.
+      title: info.customName ?? effectLabelOf(info.name),
       open: open,
       onToggle: onToggle,
       selected: selected,
       onSelect: onSelect,
+      renaming: renaming,
+      onRenamed: onRenamed,
+      onRenameCancelled: onRenameCancelled,
       twirlKey: ValueKey<String>('fx-twirl-$id'),
       leading: LumitTooltip(
         message: info.enabled ? l10n.tipDisable : l10n.tipEnable,

@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'dart:io' show File, Platform;
 import 'dart:ui' show AppExitResponse;
 
+import 'package:flutter/gestures.dart' show GestureBinding;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
@@ -21,6 +22,8 @@ import 'package:lumit_flutter/shell/precompose_dialog_frb.dart';
 import 'package:lumit_flutter/shell/dock_widget.dart';
 import 'package:lumit_flutter/shell/about_window_frb.dart';
 import 'package:lumit_flutter/shell/first_run_frb.dart';
+import 'package:lumit_flutter/shell/fx_console_frb.dart'
+    show lastKnownPointerPosition;
 import 'package:lumit_flutter/shell/menu_bar_frb.dart';
 import 'package:lumit_flutter/shell/project_settings_frb.dart';
 import 'package:lumit_flutter/shell/settings_window_frb.dart';
@@ -535,6 +538,33 @@ class LumitUiState extends ChangeNotifier {
   final ValueNotifier<int> paletteRequest = ValueNotifier(0);
 
   void requestPalette() => paletteRequest.value++;
+
+  /// Bumped when `Ctrl+Space` asks for the FX console (K-324). Its effects,
+  /// comps and radial entries are the menu bar's, for the same reason the
+  /// palette's commands are.
+  final ValueNotifier<int> consoleRequest = ValueNotifier(0);
+
+  void requestConsole() => consoleRequest.value++;
+
+  /// A property row the Timeline has been asked to show — the layer and one of
+  /// the `reveal.*` actions (docs/07 §4.3's P/S/R/T/A family). Set by the FX
+  /// console's Keyframe ring (K-326) after it plants a key, so the key just
+  /// made is on screen. The Timeline listens and *ensures* the row is open —
+  /// no toggle, unlike the reveal keys, because asking to see a row twice
+  /// should never hide it.
+  final ValueNotifier<(UuidValue, String)?> revealPropertyRequest =
+      ValueNotifier(null);
+
+  void requestRevealProperty(UuidValue layer, String action) =>
+      revealPropertyRequest.value = (layer, action);
+
+  /// The Project panel's picked item — its selection anchor, published by the
+  /// panel on every click (K-327). The full selection stays the panel's own;
+  /// this is the one item the FX console acts on, so a Ctrl+Space over the
+  /// Project panel offers "add this to the comp" rather than the new-layer
+  /// ring it used to fall through to. Null with nothing picked there.
+  final ValueNotifier<ItemReference?> selectedProjectItem =
+      ValueNotifier(null);
 
   /// Bumped each time a rendered frame reaches the Viewer, on any of the three
   /// transports. Watched by anything that redraws when the picture does — the
@@ -1286,6 +1316,7 @@ class LumitUiState extends ChangeNotifier {
     selectedLayers.dispose();
     activePanel.dispose();
     paletteRequest.dispose();
+    consoleRequest.dispose();
     super.dispose();
   }
 
@@ -1604,6 +1635,14 @@ class _LumitAppViewState extends State<LumitAppView> {
     // funeral). A hardware-keyboard handler fires wherever focus is; the
     // focused-text-field guard inside _onKey keeps typing safe.
     HardwareKeyboard.instance.addHandler(_handleKey);
+    // The pointer is tracked the same way — globally, not through the widget
+    // tree. The Ctrl+Space console opens its ring at the mouse (K-325), and a
+    // key event carries no position; a widget `Listener` missed everywhere no
+    // widget claims the hit (the Viewer's texture, above all), so the console
+    // kept opening at wherever the pointer had last crossed a panel. A global
+    // route sees every pointer event regardless. One field write per event —
+    // no setState, no bridge.
+    GestureBinding.instance.pointerRouter.addGlobalRoute(_trackPointer);
     // A Lumit document copied while this window was away — in another Lumit
     // window, most of all — is picked up when the window comes back (K-302), so
     // Paste is live rather than greyed over something that is genuinely there.
@@ -1628,8 +1667,17 @@ class _LumitAppViewState extends State<LumitAppView> {
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_handleKey);
+    GestureBinding.instance.pointerRouter.removeGlobalRoute(_trackPointer);
     _clipboardWatch?.dispose();
     super.dispose();
+  }
+
+  void _trackPointer(PointerEvent event) {
+    if (event is PointerHoverEvent ||
+        event is PointerMoveEvent ||
+        event is PointerDownEvent) {
+      lastKnownPointerPosition = event.position;
+    }
   }
 
   bool _handleKey(KeyEvent event) {
@@ -1691,6 +1739,11 @@ class _LumitAppViewState extends State<LumitAppView> {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
     }
+    // A modal surface is up — a dialogue, or the FX console (K-328): its keys
+    // are its own, exactly as the panels' handlers already treat it (K-243).
+    // Without this, a keystroke aimed at the console's search box also ran
+    // whatever shell command it happened to spell.
+    if (lumitModalOpen) return KeyEventResult.ignored;
     // A field with focus keeps its keys, or typing a layer name would also run
     // commands. The focused context's own widget is the `Focus` that
     // `EditableText` builds, not the `EditableText` — so the check has to look
@@ -1699,6 +1752,13 @@ class _LumitAppViewState extends State<LumitAppView> {
     if (focused != null &&
         (focused.widget is EditableText ||
             focused.findAncestorWidgetOfExactType<EditableText>() != null)) {
+      return KeyEventResult.ignored;
+    }
+    // A focused house control (a dialog's OK button, a tabbed-to checkbox)
+    // keeps its keys the same way a text field does: Enter or Space there
+    // presses the control, and must not also run a panel command underneath
+    // it (K-319).
+    if (FocusManager.instance.primaryFocus is ControlFocusNode) {
       return KeyEventResult.ignored;
     }
 
@@ -1763,6 +1823,10 @@ class _LumitAppViewState extends State<LumitAppView> {
         } else {
           state.toggleRetime(layer);
         }
+      case 'console.open':
+        // The menu bar owns the console's lists too, so the key asks for it
+        // rather than assembling a second one (K-324).
+        ui.requestConsole();
       case 'palette.open':
         // The menu bar owns the palette's list of commands, so the key asks
         // for it rather than assembling a second one (docs/07 §12).
