@@ -2356,7 +2356,14 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   you sit paused), and the scope traces whichever one is on screen. If a frame hasn't been
   kept in memory yet — Lumit skips saving some frames during playback to stay fast — the scope
   simply holds the last frame it had rather than going blank, and snaps back to live the
-  instant the current frame is ready. The counting itself now runs on the graphics card (the
+  instant the current frame is ready. **It has to be sure the kept frame is still the frame**
+  (K-330): Lumit files a kept frame under a name made from its *contents*, and notes which
+  moment it was made for. Edit the comp — retime a layer, say — and that moment now looks
+  different, so it renders under a new name, while the old picture is still sitting there
+  labelled with the same moment. The scope used to take whichever of the two was the sharper
+  copy, which flipped back and forth as frames came and went, so it flickered between the
+  picture and the picture that moment used to be. It now checks that the name still matches
+  what the moment renders to today, and traces its own frame rather than trusting an old one. The counting itself now runs on the graphics card (the
   GPU scope pass, K-096 v1 — `crates/lumit-gpu/src/scope.rs`), so tracing every frame costs
   almost nothing; the CPU counting in `shell/scopes.rs` remains as the fallback for a machine
   with no adapter. The scope's

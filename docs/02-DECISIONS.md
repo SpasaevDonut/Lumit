@@ -7620,3 +7620,27 @@ turning it off means what Ctrl+Alt+T off means. A freeze is still reachable and 
 — a map with one key holds that moment, as After Effects does. Regression tests:
 `a_flattened_retime_is_removed_rather_than_freezing_the_layer` (lumit-bridge), which also pins
 the one undo step covering removal and re-hang together.
+
+**K-330 · DECIDED · A positional frame lookup must prove the frame is still that position's.**
+Reported on 0.2.0: retime a footage layer and the Scopes jump, flicker and match nothing in the
+Viewer.
+
+The frame cache names a frame by its **content**, and keeps its **provenance** — the position
+and quality it was made for — beside it, because a hash cannot answer "is there any picture of
+frame 12?" (K-096, K-183). Two consumers ask exactly that positional question: the Scopes, which
+want the numbers in a frame at any resolution, and the dropper. Provenance records where a frame
+*came from*, and that never stops being true — but what a position *shows* does change. An edit
+renames every frame it touches, so frame 12 renders to a new name while the entry made before it
+sits in the map still claiming frame 12. `best_frame` took the finest of the candidates, and
+which one that was flipped as the tiers churned under playback: the flicker, and a scope
+disagreeing with the picture beside it. A retime made it obvious because a retime changes every
+frame of the layer at once.
+
+So both positional lookups now take a predicate and ask each candidate whether its name is still
+what that position renders to **at the quality that candidate was made at** — which is why
+`FrameProvenance` carries the `Quality` and not only the preview scale it derived from. A stale
+entry is passed over, never evicted: its name is still valid content, so an undo that brings the
+old picture back finds it in the cache. Nothing current held means the consumer renders its own,
+which is the fallback it always had. The predicate runs under the cache lock and is therefore
+held to the dropper's rule — bounded, pure CPU, nowhere near the GPU or the FFI boundary
+(docs/14). Regression test: `a_frame_the_edit_orphaned_is_not_served_positionally` (lumit-bridge).

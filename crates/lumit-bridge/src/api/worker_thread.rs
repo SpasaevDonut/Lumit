@@ -947,6 +947,7 @@ fn prepare_frame(
             comp,
             frame,
             scale_q: lumit_render::preview_scale_q(quality),
+            quality,
         };
         match crate::framecache::held(key) {
             // Only the order it came down in can go back up: a frame read in the
@@ -1158,6 +1159,7 @@ fn idle_fill(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
                     comp: comp_ref.id,
                     frame,
                     scale_q: lumit_render::preview_scale_q(quality),
+                    quality,
                 };
                 let uploaded = line_up_frame(
                     &mut state.renderer,
@@ -2223,6 +2225,7 @@ fn play_one_frame(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
                             comp: comp_id,
                             frame: future,
                             scale_q: lumit_render::preview_scale_q(quality),
+                            quality,
                         };
                         let uploaded = line_up_frame(
                             &mut state.renderer,
@@ -2436,6 +2439,7 @@ fn start_playback(req: PlayRequest, state: &mut WorkerState) -> Result<(), Bridg
                         comp: comp_id,
                         frame,
                         scale_q: lumit_render::preview_scale_q(quality),
+                        quality,
                     },
                     asked: std::time::Instant::now(),
                 },
@@ -2864,47 +2868,60 @@ fn trace_scope(
     // made at. Scopes read the *values* in a frame, so any size answers the
     // question — and compositing the composition a second time to ask it was
     // doubling the cost of every played frame with the panel open.
-    let (width, height, rgba) = match crate::framecache::best_frame(req.comp.id, req.frame) {
-        Some(held) => held,
-        None => {
-            // Nothing held for this frame — the zero-copy Viewer keeps no bytes,
-            // so on that path the trace still has to make its own. Cached under
-            // the frame's content name, so a second trace of the same frame is
-            // free; an unnameable frame (footage still being probed) is traced
-            // without banking anything.
-            let quality = quality_for(req.scale);
-            let key = state
-                .renderer
-                .frame_key(&document, req.comp.id, req.frame, quality);
-            let provenance = lumit_render::FrameProvenance {
-                comp: req.comp.id,
-                frame: req.frame,
-                scale_q: lumit_render::preview_scale_q(quality),
-            };
-            let mut render = || {
-                state
-                    .renderer
-                    .render_preview(
-                        &document,
-                        req.comp.id,
-                        req.frame,
-                        quality_for(req.scale),
-                        req.scale,
-                    )
-                    .ok()
-                    .map(|(rgba, width, height)| (width, height, rgba))
-            };
-            let made = match key {
-                Some(key) => crate::framecache::get_or_render(key, provenance, &mut render),
-                None => render(),
-            };
-            let Some(made) = made else {
-                eprintln!("Scope render failed, dropping the trace");
-                return Ok(());
-            };
-            made
-        }
+    // Only a frame that is still what this position *shows* will do (K-330):
+    // an edit renames every frame it touches, and the entry the edit orphaned
+    // keeps claiming the position it was made for. Asked at the quality each
+    // candidate was made at, so a Half-resolution frame is judged by the Half
+    // name and not by the Full one.
+    let still_current = |key: u128, quality: lumit_render::Quality| {
+        state
+            .renderer
+            .frame_key_presynced(&document, req.comp.id, req.frame, quality)
+            == Some(key)
     };
+    let (width, height, rgba) =
+        match crate::framecache::best_frame(req.comp.id, req.frame, still_current) {
+            Some(held) => held,
+            None => {
+                // Nothing held for this frame — the zero-copy Viewer keeps no bytes,
+                // so on that path the trace still has to make its own. Cached under
+                // the frame's content name, so a second trace of the same frame is
+                // free; an unnameable frame (footage still being probed) is traced
+                // without banking anything.
+                let quality = quality_for(req.scale);
+                let key = state
+                    .renderer
+                    .frame_key(&document, req.comp.id, req.frame, quality);
+                let provenance = lumit_render::FrameProvenance {
+                    comp: req.comp.id,
+                    frame: req.frame,
+                    scale_q: lumit_render::preview_scale_q(quality),
+                    quality,
+                };
+                let mut render = || {
+                    state
+                        .renderer
+                        .render_preview(
+                            &document,
+                            req.comp.id,
+                            req.frame,
+                            quality_for(req.scale),
+                            req.scale,
+                        )
+                        .ok()
+                        .map(|(rgba, width, height)| (width, height, rgba))
+                };
+                let made = match key {
+                    Some(key) => crate::framecache::get_or_render(key, provenance, &mut render),
+                    None => render(),
+                };
+                let Some(made) = made else {
+                    eprintln!("Scope render failed, dropping the trace");
+                    return Ok(());
+                };
+                made
+            }
+        };
 
     match state
         .renderer
@@ -2967,8 +2984,20 @@ fn sample_pixels(
             // own pixels, not of the frame around them. A frame that came down
             // off the card is BGRA on two of the three platforms, thus the
             // window — and only the window — is put right after the cut.
-            let held =
-                crate::framecache::with_best_frame(req.comp.id, req.frame, |bytes, w, h, bgra| {
+            // Stale entries are passed over here for the same reason as in
+            // `trace_scope` (K-330): a dropper reading the picture frame 12
+            // used to show is a wrong number, not a stale one.
+            let still_current = |key: u128, quality: lumit_render::Quality| {
+                state
+                    .renderer
+                    .frame_key_presynced(&document, req.comp.id, req.frame, quality)
+                    == Some(key)
+            };
+            let held = crate::framecache::with_best_frame(
+                req.comp.id,
+                req.frame,
+                still_current,
+                |bytes, w, h, bgra| {
                     cut_patch(bytes, w, h, u, v, req.window).map(|mut p| {
                         if bgra {
                             for px in p.rgba.chunks_exact_mut(4) {
@@ -2977,8 +3006,9 @@ fn sample_pixels(
                         }
                         (p, w, h)
                     })
-                })
-                .flatten();
+                },
+            )
+            .flatten();
             match held {
                 Some(cut) => Some(cut),
                 // Nothing banked for this frame: render it once (banked under
@@ -3006,6 +3036,7 @@ fn sample_pixels(
                                 comp: req.comp.id,
                                 frame: req.frame,
                                 scale_q: lumit_render::preview_scale_q(quality),
+                                quality,
                             },
                             render,
                         ),
