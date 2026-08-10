@@ -4590,6 +4590,27 @@ class _RetimeRowState extends State<_RetimeRow> {
     super.dispose();
   }
 
+  /// The footage's own rate, probed once when the row mounts. Null until the
+  /// probe answers, or when the source is not footage (or carries no video
+  /// stream) — the comp rate stands in then, so the clock is always usable.
+  (int, int)? _sourceFps;
+
+  @override
+  void initState() {
+    super.initState();
+    _probeSourceFps();
+  }
+
+  Future<void> _probeSourceFps() async {
+    final item = widget.layer.getSourceItem();
+    if (item is! ItemReference_Footage) return;
+    final info = await item.field0.mediaInfo();
+    if (!mounted || info == null || info.fpsNum <= 0 || info.fpsDen <= 0) {
+      return;
+    }
+    setState(() => _sourceFps = (info.fpsNum, info.fpsDen));
+  }
+
   /// Whether this gesture already planted its key — one plant per drag.
   bool _planted = false;
 
@@ -4639,7 +4660,9 @@ class _RetimeRowState extends State<_RetimeRow> {
     // Which face the row wears (K-287): the clock by default, seconds for
     // anyone who asked for them in Settings ▸ Interface ▸ Editing.
     final seconds = ui.workspace.interface.retimeInSeconds;
-    final (fpsNum, fpsDen) = ui.model.fpsExact;
+    // The clock face counts *source* frames, so it runs at the footage's own
+    // rate — 600 fps footage counts to :599 whatever the comp's rate says.
+    final (fpsNum, fpsDen) = _sourceFps ?? ui.model.fpsExact;
 
     return ValueListenableBuilder<int>(
       valueListenable: playhead,
@@ -4736,8 +4759,9 @@ class _RetimeRowState extends State<_RetimeRow> {
 
   /// A source time in seconds as a whole source frame, and back.
   ///
-  /// At the composition's rate: the read model does not carry the footage's own
-  /// rate yet, and every other time in the panel is counted in comp frames.
+  /// At the footage's own rate where the source is footage whose rate is
+  /// known; at the composition's rate until the probe answers, and for
+  /// everything else.
   static int _frameOfSeconds(double seconds, int fpsNum, int fpsDen) {
     if (fpsDen <= 0 || fpsNum <= 0) return 0;
     return (seconds * fpsNum / fpsDen).round();

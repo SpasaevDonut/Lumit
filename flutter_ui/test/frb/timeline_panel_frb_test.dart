@@ -1618,6 +1618,34 @@ void main() {
           reason: 'the setting puts the seconds field back');
     });
 
+    /// The Retime clock counts *source* frames at the footage's own rate.
+    /// Half a second into 600 fps footage is frame 300 — a clock at the comp's
+    /// 60 fps would call the same moment frame 30, and could never say :599.
+    testWidgets('the Retime clock runs at the footage rate, not the comp rate',
+        (tester) async {
+      final p = withComp();
+      final footage =
+          p.state.project!.importFootage(path: _highRateVideoFile('fast.y4m'));
+      p.comp.addFootageLayer(footage: footage, asSequence: false);
+      final layer = p.comp.getLayers().single;
+      layer.toggleRetimeProperty();
+      // Half a second at the comp's 60 fps: the identity map reads 0.5 s of
+      // source here.
+      p.uiState.playheadFrame.value = 30;
+      p.uiState.model.refresh();
+      await mount(tester, p);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pump();
+
+      // The row probes the footage's rate over an async frb call; real
+      // event-loop turns deliver the answer.
+      await settleFrb(tester,
+          until: () => find.text('00:00:00:300').evaluate().isNotEmpty);
+      expect(find.text('00:00:00:300'), findsOneWidget,
+          reason: 'the clock counts source frames at 600 fps, not comp frames');
+    });
+
     /// An animated value stays editable in the outline (docs/07 §4.3): on a
     /// keyframe the edit lands in that key; between keyframes it plants one.
     /// Fails if the cell falls back to a read-only "animated" label, or if it
@@ -4519,4 +4547,24 @@ Uint8List _tinyWav() {
   }
   out.add(data);
   return out.toBytes();
+}
+
+/// A real, probeable 600 fps video on disk: one second of 2×2 YUV4MPEG.
+///
+/// y4m because it is the one video container a test can write by hand — a
+/// plain-text header carrying the exact rational rate, then raw frames — and
+/// FFmpeg reads it natively, so the engine's probe reports 600/1 for real.
+String _highRateVideoFile(String name) {
+  final dir = Directory.systemTemp.createTempSync('lumit-retime');
+  final file = File('${dir.path}/$name');
+  final out = BytesBuilder();
+  out.add('YUV4MPEG2 W2 H2 F600:1 Ip A1:1 C420\n'.codeUnits);
+  // 600 frames of grey: per frame, 4 luma bytes and one byte per chroma plane.
+  final frame = Uint8List.fromList(
+      [...'FRAME\n'.codeUnits, 128, 128, 128, 128, 128, 128]);
+  for (var i = 0; i < 600; i++) {
+    out.add(frame);
+  }
+  file.writeAsBytesSync(out.toBytes());
+  return file.path;
 }
