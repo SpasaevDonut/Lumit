@@ -3988,9 +3988,29 @@ class _RetimeRowState extends State<_RetimeRow> {
     super.dispose();
   }
 
+  /// Whether this gesture already planted its key — one plant per drag.
+  bool _planted = false;
+
   /// A drag tick: render the map the release will write, without writing it —
   /// and publish it, so the graph's Retime curve follows the drag (K-334).
+  ///
+  /// The first tick on a frame with **no key plants one** holding the value
+  /// already showing (K-333's rule, K-336 for this row): nothing moves, and
+  /// the preview then *replaces* a real key instead of inserting beside the
+  /// document's — the aligned path the transform rows take.
   void _live(BridgeScalar scalar, double value, int frame) {
+    if (!_planted &&
+        scalar is BridgeScalar_Keyframed &&
+        !scalar.field0
+            .any((k) => widget.comp.frameAtTime(time: k.time) == frame)) {
+      _planted = true;
+      final held = sampleScalar(
+          scalar: scalar, time: widget.comp.timeOfFrame(frame: frame));
+      widget.layer.setRetimeProperty(
+        value: scalarWithValueAt(scalar, held, widget.comp, frame),
+      );
+      widget.onChanged();
+    }
     setState(() => _staged = value);
     rowValueDrag.value = RowValueDrag(
       layer: widget.layer.internallayerId.toString(),
@@ -4055,6 +4075,7 @@ class _RetimeRowState extends State<_RetimeRow> {
                   ? (animated
                       ? KeyedValueField(
                           fieldKey: const ValueKey('tl-retime-seconds'),
+                          onLive: (v) => _live(scalar, v, frame),
                           value: value,
                           // The same open range a transform axis gets: a
                           // source time before zero or past the end simply
@@ -4128,6 +4149,7 @@ class _RetimeRowState extends State<_RetimeRow> {
     // would put the provisional picture back.
     _preview.cancel();
     rowValueDrag.value = null;
+    _planted = false;
     widget.layer.setRetimeProperty(
       value: scalarWithValueAt(scalar, value.toDouble(), widget.comp, frame),
     );

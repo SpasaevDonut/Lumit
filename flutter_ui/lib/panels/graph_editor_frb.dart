@@ -1225,20 +1225,19 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
   double _keyY(
       GraphChannel channel, int index, (double, double) range, double height,
       {required bool isOut}) {
+    // Through [_shownKeys], never the document's keys, in every lens: the
+    // drag previews — a row drag's published value, a handle's provisional
+    // sides — live in the shown list, and the diamond has to sit on the curve
+    // that is actually being drawn (K-334, K-336).
+    final shown = _shownKeys(channel);
+    if (index >= shown.length) return 0;
     if (widget.lens == GraphLens.value) {
-      // Through [_shownKeys], not the document's keys: a value drag in the
-      // outline publishes its provisional value, and the diamond has to sit on
-      // the curve that is actually being drawn — the curve moved and the glyph
-      // stayed, which is how "the graph does not follow the drag" survived
-      // K-333's wiring (K-334). Same length and order as `channel.keys`, so
-      // the caller's index holds.
-      return _yOf(_shownKeys(channel)[index].value, range, height);
+      return _yOf(shown[index].value, range, height);
     }
     if (isEnvelope(channel)) {
-      return _yOf(envelopeSpeeds(channel.keys)[index], range, height);
+      return _yOf(envelopeSpeeds(shown)[index], range, height);
     }
-    return _yOf(
-        sideSpeedAtKey(channel.keys, index, isOut: isOut), range, height);
+    return _yOf(sideSpeedAtKey(shown, index, isOut: isOut), range, height);
   }
 
   // --- wheel ---------------------------------------------------------------
@@ -1611,7 +1610,15 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
   Offset _keyPoint(
       GraphChannel channel, int index, (double, double) range, double height,
       {required bool isOut}) {
-    final key = channel.keys[index];
+    // ONE list for both coordinates. A row drag on a frame with no key shows
+    // a curve one key longer than the document's, and reading x from the
+    // document while y read the preview drew every diamond past the insertion
+    // with one key's x and another's y — glyphs floating off the curve until
+    // release (K-336). The same list the glyph loop iterates, so the index can
+    // never cross lists.
+    final shown = _shownKeys(channel);
+    if (index >= shown.length) return Offset.zero;
+    final key = shown[index];
     var x = widget.axis.xOf(_keyFrame(key, widget.fps));
     var y = _keyY(channel, index, range, height, isOut: isOut);
     final drag = _keyDrag;
@@ -1621,7 +1628,7 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
       // the time but the drawing did not, so a key that would land on frame 12
       // drew between 11 and 12 for the whole gesture and jumped on the way out
       // (K-333). The same rounding, applied to the picture.
-      x += _snappedDx(channel.keys[index], drag.dxPx);
+      x += _snappedDx(key, drag.dxPx);
       if (widget.lens == GraphLens.value) y += drag.dyPx;
     }
     // A speed-lens dot in flight: sideways under the pointer, and the side

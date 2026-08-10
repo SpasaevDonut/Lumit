@@ -7756,3 +7756,15 @@ index: the dragged key drew at the next key's place and everything after it sat 
 until the release rebuilt from the document. The preview now replaces the nearest key within
 half a frame, keeping list length and order stable, and the between-keys regression test pins
 the glyph count and the immobility of the keys after the playhead.
+
+**K-337 · DECIDED · A glyph reads both its coordinates from one list.** The screenshot that
+closed the drag-preview saga: drag the Retime readout on a frame with no key and the diamonds
+floated off the curve. K-336's half-frame match fixed replacement, but a keyless frame takes the
+*insertion* path — the preview list is one key longer than the document's — and `_keyPoint` read
+x from the document's keys while `_keyY` read y from the preview's, so every glyph past the
+insertion drew with one key's x and another's y. Both now read the same `_shownKeys` list in
+every lens, with an index guard. The Retime row also plants its key on the drag's first tick,
+as the transform and effect rows already did (K-333's rule), so the ordinary gesture takes the
+replacement path anyway and a diamond stands at the playhead from the first tick. Regression:
+`a Retime drag on a keyless frame keeps the diamonds on the curve`, which fails on the mixed
+lists and on the missing plant alike.

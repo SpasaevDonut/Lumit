@@ -285,6 +285,58 @@ void main() {
       expect(rowValueDrag.value, isNull);
     });
 
+    /// The screenshot bug (K-336): drag the **Retime** readout on a frame with
+    /// no key, and the diamonds floated off the curve — every glyph past the
+    /// insertion drew with one key's x and another's y, because x read the
+    /// document's keys while y read the preview's longer list. The first tick
+    /// now plants a key (so the preview replaces, never inserts) and both
+    /// coordinates read one list either way.
+    testWidgets('a Retime drag on a keyless frame keeps the diamonds on the curve',
+        (tester) async {
+      final p = withLayer();
+      p.layer.toggleRetimeProperty();
+      p.uiState.scrubTo(31);
+      p.uiState.model.refresh();
+      await mountGraph(tester, p, selectOpacity: false);
+
+      final id = p.layer.internallayerId;
+      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('tl-retime-name')));
+      await tester.pump();
+
+      String glyph(int i) => 'graph-key-$id/retime#$i';
+      expect(find.byKey(ValueKey<String>(glyph(0))), findsOneWidget,
+          reason: 'the identity map has its first key on screen');
+      expect(find.byKey(ValueKey<String>(glyph(1))), findsOneWidget);
+      final lastBefore = tester.getCenter(find.byKey(ValueKey<String>(glyph(1))));
+
+      final field = find.byKey(const ValueKey('tl-retime-seconds'));
+      final gesture = await tester.startGesture(tester.getCenter(field));
+      await tester.pump();
+      await gesture.moveBy(const Offset(30, 0));
+      await tester.pump();
+      await gesture.moveBy(const Offset(30, 0));
+      await tester.pump();
+
+      expect(rowValueDrag.value, isNotNull,
+          reason: 'the Retime row publishes its drag');
+      expect(find.byKey(ValueKey<String>(glyph(2))), findsOneWidget,
+          reason: 'the first tick planted a key, so three diamonds show');
+      // The key that was the last is now index 2 of three; its position must
+      // not have moved — with the mixed-list bug it drew at the middle key's x.
+      expect(tester.getCenter(find.byKey(ValueKey<String>(glyph(2)))),
+          lastBefore,
+          reason: 'the keys after the playhead hold still, x and y both');
+
+      await gesture.up();
+      await tester.pump();
+      expect(rowValueDrag.value, isNull);
+      final keys =
+          (p.layer.getRetimeProperty() as BridgeScalar_Keyframed).field0;
+      expect(keys.length, 3, reason: 'plant plus the dragged write persisted');
+    });
+
     /// One gesture, one op: the key moves in time AND value, and one undo
     /// puts both back.
     testWidgets('dragging a key moves it in time and value as one undo step',
