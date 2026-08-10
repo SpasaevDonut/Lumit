@@ -134,11 +134,17 @@ class GraphChannel {
   /// property nor an effect parameter but reads and writes like both.
   final bool retime;
 
-  /// Set for one of a mask's numbers (K-340): the mask it belongs to, and
-  /// which of its values this is. The shape itself never becomes a channel —
-  /// it has no value to plot (K-339).
+  /// Set for one of a mask's values (K-340): the mask it belongs to, and which
+  /// of its values this is.
   final BridgeMask? mask;
   final MaskValue? maskValue;
+
+  /// True for a mask's **shape** (K-344). A path has no value to plot, so what
+  /// this channel carries is the interpolation parameter — counted up, one per
+  /// key — and both lenses draw its *slope*: the rate the shape is changing
+  /// at. That is the one honest curve a path has, and it is what After Effects
+  /// draws for a mask path.
+  bool get isMaskPath => maskValue == MaskValue.path;
 
   const GraphChannel({
     required this.path,
@@ -269,18 +275,22 @@ List<GraphChannel> graphChannels({
       if (slash <= 0) continue;
       final maskId = rest.substring(0, slash);
       final valueName = rest.substring(slash + 1);
-      if (valueName == MaskValue.path.name) continue;
       for (final mask in entry.info.masks) {
         if (mask.id.toString() != maskId) continue;
-        final value = MaskValue.values.firstWhere((v) => v.name == valueName,
-            orElse: () => MaskValue.path);
-        if (value == MaskValue.path) break;
+        final value =
+            MaskValue.values.where((v) => v.name == valueName).firstOrNull;
+        if (value == null) break;
+        // The shape's channel carries its keys as the counted-up interpolation
+        // parameter (K-344); a still shape has none and draws nothing.
+        if (value == MaskValue.path && mask.pathKeys.isEmpty) break;
         out.add(GraphChannel(
           path: path,
           id: path,
           label: '${entry.info.name} · ${mask.name} · ${maskValueLabel(value)}',
           colourIndex: out.length,
-          scalar: maskScalarOf(mask, value),
+          scalar: value == MaskValue.path
+              ? BridgeScalar.keyframed(mask.pathKeys)
+              : maskScalarOf(mask, value),
           entry: entry,
           mask: mask,
           maskValue: value,
@@ -316,6 +326,13 @@ void commitChannelEdits(Map<GraphChannel, BridgeScalar> edits) {
     } else if (channel.effect != null && channel.param != null) {
       final slot = effects[layerId] ??= (channel.entry.layer, {});
       (slot.$2[channel.effect!.id.toString()] ??= {})[channel.param!.id] = next;
+    } else if (channel.isMaskPath && channel.mask != null) {
+      // A shape key holds a path, not a number, so only its time and its eases
+      // can be written — which is exactly what a graph edit changes (K-344).
+      channel.entry.layer.setMaskPathKeys(
+        id: channel.mask!.id,
+        keys: keysOf(next),
+      );
     } else if (channel.mask case final mask?) {
       // A mask edit takes the whole mask, so there is nothing to batch per
       // property; two curves on one mask are two writes and two undo steps,
@@ -1198,6 +1215,12 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
     ];
   }
 
+  /// Which reading [channel] draws in. Everything follows the view's lens
+  /// except a mask's **shape** (K-344), which has no value to plot and so
+  /// draws its rate of change in both.
+  GraphLens lensOf(GraphChannel channel) =>
+      channel.isMaskPath ? GraphLens.speed : widget.lens;
+
   /// Whether [channel] draws as the Vegas speed envelope right now (K-247) —
   /// a Retime, in the speed view, with the preference on.
   bool isEnvelope(GraphChannel channel) =>
@@ -1206,7 +1229,10 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
   bool get _anyEnvelope => widget.channels.any(isEnvelope);
 
   (double, double) _fitRange() {
-    if (widget.lens == GraphLens.value) {
+    // Only shapes on screen means only speeds on screen (K-344).
+    final allPaths = widget.channels.isNotEmpty &&
+        widget.channels.every((c) => c.isMaskPath);
+    if (widget.lens == GraphLens.value && !allPaths) {
       return fitValueRange(
         _visibleChannelKeys,
         [
@@ -1276,7 +1302,7 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
     // that is actually being drawn (K-334, K-336).
     final shown = _shownKeys(channel);
     if (index >= shown.length) return 0;
-    if (widget.lens == GraphLens.value) {
+    if (lensOf(channel) == GraphLens.value) {
       return _yOf(shown[index].value, range, height);
     }
     if (isEnvelope(channel)) {
@@ -1434,7 +1460,7 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
     for (final channel in widget.channels) {
       final keys = channel.keys;
       final double drawn;
-      if (widget.lens == GraphLens.value) {
+      if (lensOf(channel) == GraphLens.value) {
         drawn = channel.isStatic
             ? channel.staticValue
             : evaluateKeys(keys, seconds);
@@ -2603,6 +2629,10 @@ class _GraphPainter extends CustomPainter {
       // is scaled onto the same axis as its points (K-247).
       final envelope = vegas && channel.retime && lens == GraphLens.speed;
       final speedScale = envelope ? 100.0 : 1.0;
+      // **A shape draws its rate of change in both lenses** (K-344): a path has
+      // no value to plot, so the value view would otherwise be an empty pane
+      // for a property that is plainly animating.
+      final chLens = channel.isMaskPath ? GraphLens.speed : lens;
       final paint = Paint()
         ..color = palette[channel.colourIndex % palette.length]
         ..strokeWidth = 1.4
@@ -2612,12 +2642,12 @@ class _GraphPainter extends CustomPainter {
         if (channel.isStatic || keys.isEmpty) {
           // A static property is a flat line of its value (a flat 0 as speed).
           final y =
-              _yOf(lens == GraphLens.value ? channel.staticValue : 0, size);
+              _yOf(chLens == GraphLens.value ? channel.staticValue : 0, size);
           canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
           continue;
         }
         if (keys.length == 1) {
-          final y = _yOf(lens == GraphLens.value ? keys.first.value : 0, size);
+          final y = _yOf(chLens == GraphLens.value ? keys.first.value : 0, size);
           canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
           continue;
         }
@@ -2658,7 +2688,7 @@ class _GraphPainter extends CustomPainter {
       } else {
         for (var x = 0.0; x <= size.width; x += step) {
           final seconds = axis.perFrame <= 0 ? 0.0 : x / axis.perFrame / f;
-          final v = lens == GraphLens.value
+          final v = chLens == GraphLens.value
               ? evaluateKeys(keys, seconds)
               : evaluateKeysSpeed(keys, seconds) * speedScale;
           final point = Offset(x, _yOf(v, size));

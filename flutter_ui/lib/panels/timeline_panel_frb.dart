@@ -2969,8 +2969,29 @@ class _FoldRow extends StatelessWidget {
     // and with it the graph channel — exists before the first drag tick. A
     // modified press is left to the label's own Ctrl/Shift semantics, and a
     // group heading keeps its pick-and-twirl click (K-300).
-    return Listener(
-      onPointerDown: row is FoldGroupRow || row is FoldWaveformRow
+    final picks = row is! FoldGroupRow && row is! FoldWaveformRow;
+    // **And the row must WIN that press, not merely see it** (K-343). The
+    // ground under the outline clears the selection on tap, and its comment
+    // has always said "a switch or a property still wins its own tap in the
+    // arena" — which was true only of rows carrying a gesture recogniser. A
+    // `Listener` is not one: it watches pointers and never competes. So a mask
+    // row lit up on the press and went out again on the release, when the
+    // ground took the tap nothing had claimed. This claims it, for every
+    // picking row, which is what makes them all behave alike.
+    //
+    // Empty `onTap`, because the selecting is done on pointer-down above:
+    // being in the arena at all is the whole job. The row's own controls sit
+    // inside and win their taps ahead of it.
+    final row_ = Listener(
+      // **The whole row takes the press, not just the parts with a widget in
+      // them** (K-343). A `Listener` defers to its children by default, and a
+      // property row is mostly empty space — so a click beside the label never
+      // reached this at all, fell through to the outline behind, and *cleared*
+      // the selection instead of making one. Worst on a mask's Path row, which
+      // has no value field and so is almost all empty. A heading keeps
+      // defer-to-child: its own detector owns the click (K-300).
+      behavior: picks ? HitTestBehavior.opaque : HitTestBehavior.deferToChild,
+      onPointerDown: !picks
           ? null
           : (_) {
               final keys = HardwareKeyboard.instance;
@@ -3009,6 +3030,13 @@ class _FoldRow extends StatelessWidget {
             : _control(context),
       ),
     );
+    return picks
+        ? GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () {},
+            child: row_,
+          )
+        : row_;
   }
 
   /// Copy the effect this heading names (K-275) — or, when it is one of
@@ -3612,7 +3640,7 @@ BridgeMask maskWith(
       expansion: expansion ?? m.expansion,
       // Where the shape's own keys are is the engine's to say; an edit here
       // never moves them (`set_mask` patches them back).
-      pathKeyTimes: m.pathKeyTimes,
+      pathKeys: m.pathKeys,
     );
 
 /// What a mask mode is called on its dropdown.

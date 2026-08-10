@@ -8,6 +8,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/panels/graph_editor_frb.dart';
+import 'package:uuid/uuid.dart';
 import 'package:lumit_flutter/panels/graph_maths.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
@@ -291,7 +292,8 @@ void main() {
     /// document's keys while y read the preview's longer list. The first tick
     /// now plants a key (so the preview replaces, never inserts) and both
     /// coordinates read one list either way.
-    testWidgets('a Retime drag on a keyless frame keeps the diamonds on the curve',
+    testWidgets(
+        'a Retime drag on a keyless frame keeps the diamonds on the curve',
         (tester) async {
       final p = withLayer();
       p.layer.toggleRetimeProperty();
@@ -309,7 +311,8 @@ void main() {
       expect(find.byKey(ValueKey<String>(glyph(0))), findsOneWidget,
           reason: 'the identity map has its first key on screen');
       expect(find.byKey(ValueKey<String>(glyph(1))), findsOneWidget);
-      final lastBefore = tester.getCenter(find.byKey(ValueKey<String>(glyph(1))));
+      final lastBefore =
+          tester.getCenter(find.byKey(ValueKey<String>(glyph(1))));
 
       final field = find.byKey(const ValueKey('tl-retime-seconds'));
       final gesture = await tester.startGesture(tester.getCenter(field));
@@ -325,8 +328,8 @@ void main() {
           reason: 'the first tick planted a key, so three diamonds show');
       // The key that was the last is now index 2 of three; its position must
       // not have moved — with the mixed-list bug it drew at the middle key's x.
-      expect(tester.getCenter(find.byKey(ValueKey<String>(glyph(2)))),
-          lastBefore,
+      expect(
+          tester.getCenter(find.byKey(ValueKey<String>(glyph(2)))), lastBefore,
           reason: 'the keys after the playhead hold still, x and y both');
 
       await gesture.up();
@@ -807,6 +810,56 @@ void main() {
       ]);
       expect(channels.map((c) => c.colourIndex).toList(), [0, 1, 2]);
       expect(channels.last.keys, hasLength(2));
+    });
+
+    /// **A mask's numbers reach the graph** (K-341), and so does its **shape**
+    /// once it is keyed (K-344) — as the interpolation parameter, whose slope
+    /// is the rate the shape is changing at. A *still* shape has no keys and so
+    /// no curve, and stays out.
+    testWidgets("graphChannels resolves a mask's numbers and its keyed shape",
+        (tester) async {
+      final p = withLayer();
+      p.layer.addMask(
+        mask: BridgeMask(
+          id: UuidValue.fromString(const Uuid().v4()),
+          name: 'Ellipse',
+          vertices: const [
+            BridgeVertex(
+                x: 0, y: 0, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+            BridgeVertex(
+                x: 10, y: 0, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+            BridgeVertex(
+                x: 10, y: 8, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+          ],
+          closed: true,
+          inverted: false,
+          opacity: const BridgeScalar.static_(100),
+          mode: BridgeMaskMode.add,
+          feather: const BridgeScalar.static_(0),
+          expansion: const BridgeScalar.static_(0),
+          pathKeys: const [],
+        ),
+      );
+      final id = p.layer.internallayerId.toString();
+      final maskId = p.layer.getMasks().single.id;
+      p.uiState.model.refresh();
+
+      final channels = graphChannels(
+        layers: p.uiState.model.layers,
+        selected: [
+          '$id/masks/$maskId/opacity',
+          '$id/masks/$maskId/feather',
+          '$id/masks/$maskId/path',
+        ],
+      );
+      expect(
+          channels.map((c) => c.id).toList(),
+          [
+            '$id/masks/$maskId/opacity',
+            '$id/masks/$maskId/feather',
+          ],
+          reason: 'the shape has no curve, so it is not a channel');
+      expect(channels.first.label, contains('Ellipse'));
     });
 
     // --- the Vegas speed envelope (K-247) -------------------------------

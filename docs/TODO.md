@@ -84,26 +84,12 @@ These are v1-scope surfaces it does not yet match.
     [03-DATA-MODEL.md](03-DATA-MODEL.md) change and a decision, not just a
     gesture; and the Pen's add/delete/convert-vertex siblings and dragging a
     whole path by a segment.
-- **A keyframed mask path shows a speed graph and no value graph** (owner,
-    2026-08-08). A path has no scalar to plot on a value axis, but the transition
-    between two path keys is still worth easing - so the graph editor draws the
-    rate of change of the *interpolation parameter*, which is what After Effects
-    does for a mask path. The eases themselves are the ordinary
-    hold/linear/bezier ones the engine already evaluates; only the graph's
-    presentation differs, and the parity rule in
-    [04-RETIMING.md](04-RETIMING.md) is satisfied by the speed graph being the
-    same speed graph.
-- **Mask paths keyframe in the engine but nothing can key one yet.**
-    `lumit-core::mask` carries `path_keys`, blends two shapes (resampling the
-    sparser one upward), evaluates at the layer's own time and feeds the frame
-    cache ([03-DATA-MODEL.md](03-DATA-MODEL.md) §7.0). Still missing: the bridge
-    surface (`BridgeMask` has no keys, and `SetLayerMasks` rewrites the whole
-    list per drag - a per-key op may be wanted so one keyframe drag is one undo
-    step), the stopwatch in the mask's Timeline row, and the diamonds in the
-    lane. Mask **modes**, **feather** and **expansion** exist in the
-    engine (`lumit-core::mask`) but not yet as controls; **Lighten** and **Darken**
-    are the two modes still unbuilt, and feather is uniform - the variable-width,
-    per-vertex kind is a model change ([03-DATA-MODEL.md](03-DATA-MODEL.md) §7).
+- **Mask paths have no per-key op.** `SetLayerMasks` rewrites the whole list for
+    every keyframe drag, so one drag is one undo step only because the drag is
+    staged - a per-key op would make it so by construction (K-344). **Lighten**
+    and **Darken** are the two mask modes still unbuilt, and feather is uniform:
+    the variable-width, per-vertex kind is a model change
+    ([03-DATA-MODEL.md](03-DATA-MODEL.md) §7).
 - **Variable-width mask feather** (K-338) - After Effects has had this since CS6:
     the **Mask Feather Tool** (`G` cycles onto it, under the Pen) drops *feather
     points* along an existing mask path, each dragging its own radius in or out,

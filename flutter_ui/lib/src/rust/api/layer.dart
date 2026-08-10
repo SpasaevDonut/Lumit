@@ -488,15 +488,21 @@ class BridgeMask {
   /// Grow (+) or shrink (−) the shape, in layer pixels.
   final BridgeScalar expansion;
 
-  /// The times this mask's **path** is keyed at — empty when the shape does
-  /// not animate. Composition time, carried out by the layer's start offset,
-  /// exactly as a scalar's keyframe times cross (K-213), and rational so the
-  /// diamond lands on the frame the key is really on.
+  /// This mask's **shape** keys — empty when the path does not animate.
+  /// Composition time, carried out by the layer's start offset exactly as a
+  /// scalar's keyframe times cross (K-213).
   ///
-  /// Read-only here: the shape at a key is a whole path, which the frontend
-  /// edits through the drawing tools rather than by sending a list of shapes,
-  /// so what crosses is where the diamonds go (K-339).
-  final List<BridgeRational> pathKeyTimes;
+  /// The shapes themselves do not cross: a key holds a whole path, which the
+  /// frontend edits through the drawing tools rather than by sending a list
+  /// of them (K-339). What crosses is where the keys are and how they ease —
+  /// which is everything the lane and the graph need.
+  ///
+  /// **`value` is the interpolation parameter, counted up** (K-344): key *i*
+  /// carries *i*, so every span rises by exactly 1 as the shape crosses from
+  /// one key to the next. The number itself means nothing to look at, but its
+  /// *slope* is the rate the shape is changing at — which is the one curve a
+  /// path can honestly draw, and the one After Effects draws for a mask path.
+  final List<BridgeKeyframe> pathKeys;
 
   const BridgeMask({
     required this.id,
@@ -508,7 +514,7 @@ class BridgeMask {
     required this.mode,
     required this.feather,
     required this.expansion,
-    required this.pathKeyTimes,
+    required this.pathKeys,
   });
 
   @override
@@ -522,7 +528,7 @@ class BridgeMask {
       mode.hashCode ^
       feather.hashCode ^
       expansion.hashCode ^
-      pathKeyTimes.hashCode;
+      pathKeys.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -538,7 +544,7 @@ class BridgeMask {
           mode == other.mode &&
           feather == other.feather &&
           expansion == other.expansion &&
-          pathKeyTimes == other.pathKeyTimes;
+          pathKeys == other.pathKeys;
 }
 
 /// [`lumit_core::mask::MaskMode`] across the bridge. Its own enum because the
@@ -1696,6 +1702,19 @@ class LayerReference {
   void setMask({required BridgeMask mask, BridgeRational? at}) =>
       BridgeLib.instance.api
           .crateApiLayerLayerReferenceSetMask(that: this, mask: mask, at: at);
+
+  /// Re-time and re-ease this mask's shape keys in one write (K-344) — what
+  /// the graph editor commits when a handle is dragged, and what a lane drag
+  /// of several keys at once needs.
+  ///
+  /// `keys` must name every key the mask has, in order; their `value` is
+  /// ignored, because a path key holds a shape rather than a number. Refused
+  /// as a whole if the times are not strictly ascending: the evaluator walks
+  /// the list assuming they are, and a half-applied reorder is not a mask.
+  bool setMaskPathKeys(
+          {required UuidValue id, required List<BridgeKeyframe> keys}) =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceSetMaskPathKeys(
+          that: this, id: id, keys: keys);
 
   /// Point this layer at another as its matte, or clear it with `None`.
   ///

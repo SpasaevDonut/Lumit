@@ -194,20 +194,11 @@ List<BridgeKeyframe> laneKeysOf(LayerFoldRow row) => switch (row) {
           _ => const [],
         },
       // A mask's numbers key like any other scalar; its **shape** keys as whole
-      // paths, so its diamonds are made from the times alone (K-340). The value
-      // is nothing anybody reads — the lane draws position, not height — but
-      // the diamonds have to be there or a key the author just planted looks
-      // like it did not land.
+      // paths, and those keys carry their own eases and a counted-up value
+      // (K-344), so the lane draws their diamonds and the graph can draw the
+      // rate the shape is changing at.
       FoldMaskValueRow(:final mask, :final value) => value == MaskValue.path
-          ? [
-              for (final t in mask.pathKeyTimes)
-                BridgeKeyframe(
-                  time: t,
-                  value: 0,
-                  interpIn: const BridgeSideInterp.linear(),
-                  interpOut: const BridgeSideInterp.linear(),
-                )
-            ]
+          ? mask.pathKeys
           : switch (maskScalarOf(mask, value)) {
               BridgeScalar_Keyframed(:final field0) => field0,
               _ => const [],
@@ -245,7 +236,7 @@ BridgeMask maskWithScalar(BridgeMask mask, MaskValue value, BridgeScalar to) =>
       mode: mask.mode,
       feather: value == MaskValue.feather ? to : mask.feather,
       expansion: value == MaskValue.expansion ? to : mask.expansion,
-      pathKeyTimes: mask.pathKeyTimes,
+      pathKeys: mask.pathKeys,
     );
 
 /// A key's position on the comp's frame axis, computed Dart-side from its
@@ -356,9 +347,10 @@ bool moveLaneKey({
       if (value == MaskValue.path) {
         // A path key is a whole shape, so the engine moves it rather than the
         // frontend rebuilding a list of them (K-340).
+        if (index >= mask.pathKeys.length) return false;
         return entry.layer.moveMaskPathKey(
           id: mask.id,
-          from: mask.pathKeyTimes[index],
+          from: mask.pathKeys[index].time,
           to: time,
         );
       }

@@ -238,6 +238,23 @@ List<BridgeVertex> shapePath({
   }
 }
 
+/// [mask] showing [vertices] instead of its own — the shape an animated path
+/// is really at (K-342). Everything else is the mask untouched, so this is
+/// only ever a *view* of it and never something written back.
+BridgeMask maskWithVertices(BridgeMask mask, List<BridgeVertex> vertices) =>
+    BridgeMask(
+      id: mask.id,
+      name: mask.name,
+      vertices: vertices,
+      closed: mask.closed,
+      inverted: mask.inverted,
+      opacity: mask.opacity,
+      mode: mask.mode,
+      feather: mask.feather,
+      expansion: mask.expansion,
+      pathKeys: mask.pathKeys,
+    );
+
 /// A mask ready to send, from a path and a name.
 BridgeMask shapeMask({
   required List<BridgeVertex> vertices,
@@ -256,7 +273,7 @@ BridgeMask shapeMask({
       expansion: const BridgeScalar.static_(0),
       // A shape just drawn has no keys; a mask being edited keeps its own,
       // which the engine patches back.
-      pathKeyTimes: const [],
+      pathKeys: const [],
     );
 
 /// What a shape drawn by [tool] is called. Named for the shape rather than

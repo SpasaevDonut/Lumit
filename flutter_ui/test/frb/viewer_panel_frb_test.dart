@@ -1412,7 +1412,7 @@ void main() {
           mode: BridgeMaskMode.add,
           feather: const BridgeScalar.static_(0),
           expansion: const BridgeScalar.static_(0),
-          pathKeyTimes: const [],
+          pathKeys: const [],
         ),
       );
       p.uiState.model.refresh();
@@ -1592,7 +1592,7 @@ void main() {
           mode: BridgeMaskMode.add,
           feather: const BridgeScalar.static_(0),
           expansion: const BridgeScalar.static_(0),
-          pathKeyTimes: const [],
+          pathKeys: const [],
         ),
       );
       p.uiState.setSelection([shape]);

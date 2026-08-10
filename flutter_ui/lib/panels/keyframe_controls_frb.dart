@@ -433,12 +433,12 @@ class MaskPathKeyframesFrb extends StatelessWidget {
     required this.onChanged,
   });
 
-  bool get _animated => mask.pathKeyTimes.isNotEmpty;
+  bool get _animated => mask.pathKeys.isNotEmpty;
 
   /// The frames the shape is keyed on. Read once per build: the times come
   /// across with the mask itself, so this asks the engine nothing.
   List<int> get _frames =>
-      [for (final t in mask.pathKeyTimes) comp.frameAtTime(time: t)];
+      [for (final k in mask.pathKeys) comp.frameAtTime(time: k.time)];
 
   int? _neighbour(int frame, {required bool before}) {
     int? best;
