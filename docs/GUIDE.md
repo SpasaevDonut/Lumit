@@ -5095,3 +5095,47 @@ The general lesson, which applies well beyond expressions: anything on the
 per-frame path is run tens of thousands of times a second, so the question is
 never "is this fast enough once", it is "what is this multiplied by sixty, by
 the number of layers".
+
+### A mask that moves, and the number in the file that stays a number
+
+A mask is a drawn shape that decides which of a layer's pixels show. Until now the shape
+could be animated but nothing in the interface could reach that, and the three numbers
+beside it — how see-through the mask is, how soft its edge is, how much it is grown or
+shrunk — could not be animated at all. Now all four animate, and they do it with the same
+stopwatch, the same ◄ ◆ ► and the same diamonds as a layer's position (K-340).
+
+For the three numbers the change was to make them the same *kind of thing* the rest of the
+program already animates. Everywhere else, an animatable number is a "property": a little
+box that holds either one value or a list of keyframes. A mask's opacity used to be a plain
+number in a box of its own. Making it a property means every control that already knows how
+to key a property works on it immediately, with nothing rewritten — which is why it now
+behaves exactly like a transform rather than *almost* like one.
+
+That change had a trap in it, and the trap is worth understanding because the same one
+comes up whenever a stored value grows. A property normally writes itself into the saved
+file as a small object — something like `{"animation": {"Static": 100}}` — where the plain
+number wrote `100`. Two things break if that happens. Every project ever saved has the old
+shape, so they would all need converting. And Lumit names every finished frame it has
+stored by, among other things, the exact text a layer's masks turn into; change the text
+and every name changes, so every frame anyone has banked is suddenly unrecognisable and has
+to be drawn again. So the three fields keep their own private spelling: while the value is
+still, it writes as the bare number it always wrote, and only a mask somebody has actually
+keyed writes the longer form. Reading accepts both. An untouched mask is byte-for-byte what
+it was.
+
+The shape itself is the odd one out, and stays so. A keyframe on it holds a whole path
+rather than a number, so there is nothing to plot on a value graph — its row shows diamonds
+and no curve, and no number field, because there is no single number to put there. Its
+stopwatch works through the engine's own path-key operations. Pressing the diamond stores
+the shape the mask is *already* showing at that moment, so nothing jumps; switching
+animation off keeps the shape under the playhead rather than snapping back to the first
+key. That is the rule the stopwatch follows everywhere in Lumit.
+
+One more thing changed in passing, and it was a plain bug. A mask can be switched off two
+ways: set its mode to None, or take its opacity to zero. Both are meant to mean "this mask
+has no say". Both did the opposite — a layer with one switched-off mask went completely
+invisible — because the code started from "nothing is showing" and then skipped the very
+mask that was supposed to say what *did* show. Now there is one question, asked in one
+place, about whether a mask does anything at all; a layer whose masks are all off is simply
+the layer it always was. The question takes a moment in time, because opacity animates: a
+mask keyed up from zero is genuinely off early in a shot and on later.

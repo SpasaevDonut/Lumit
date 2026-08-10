@@ -25,6 +25,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
+import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/state/workspace.dart';
 import 'package:lumit_flutter/src/rust/frb_generated.dart';
 import 'package:lumit_flutter/theme/theme.dart';
@@ -275,3 +276,11 @@ Future<void> tapAgain(WidgetTester tester, Finder target) async {
   await tester.tap(target);
   await tester.pump(const Duration(milliseconds: 350));
 }
+
+/// The number a **still** scalar holds — for asserting on a value that a test
+/// never keyed. A keyed one has no single number, so asking for it here is a
+/// test bug rather than a value of zero, and it says so.
+double stillValue(BridgeScalar scalar) => switch (scalar) {
+      BridgeScalar_Static(:final field0) => field0,
+      _ => throw StateError('expected a still scalar, got $scalar'),
+    };

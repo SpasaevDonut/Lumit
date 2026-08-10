@@ -26,6 +26,7 @@ import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
+import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:provider/provider.dart';
 
 import '../icons/icons.dart';
@@ -403,5 +404,153 @@ class KeyframeControlsFrb extends StatelessWidget {
   void _seekTo(BridgeKeyframe? key) {
     if (key == null) return;
     onSeek(comp.frameAtTime(time: key.time));
+  }
+}
+
+/// The stopwatch and ◄ ◆ ► for a mask's **shape** (K-339, K-340).
+///
+/// The same controls as [KeyframeControlsFrb] and deliberately in the same
+/// file, so the two cannot drift into different ideas of what a diamond does.
+/// What differs is only what a key *holds*: a whole path rather than a number,
+/// which is why this one writes through the engine's own path-key ops instead
+/// of sending an animation. There is no value to plot, so the lane shows
+/// diamonds and no curve, and the row has no field.
+class MaskPathKeyframesFrb extends StatelessWidget {
+  final LayerReference layer;
+  final BridgeMask mask;
+  final CompositionReference comp;
+  final int playheadFrame;
+  final ValueChanged<int> onSeek;
+  final VoidCallback onChanged;
+
+  const MaskPathKeyframesFrb({
+    super.key,
+    required this.layer,
+    required this.mask,
+    required this.comp,
+    required this.playheadFrame,
+    required this.onSeek,
+    required this.onChanged,
+  });
+
+  bool get _animated => mask.pathKeyTimes.isNotEmpty;
+
+  /// The frames the shape is keyed on. Read once per build: the times come
+  /// across with the mask itself, so this asks the engine nothing.
+  List<int> get _frames =>
+      [for (final t in mask.pathKeyTimes) comp.frameAtTime(time: t)];
+
+  int? _neighbour(int frame, {required bool before}) {
+    int? best;
+    for (final f in _frames) {
+      if (before ? f >= frame : f <= frame) continue;
+      if (best == null || (before ? f > best : f < best)) best = f;
+    }
+    return best;
+  }
+
+  void _toggleKeyHere(int frame) {
+    try {
+      layer.toggleMaskPathKey(
+          id: mask.id, time: comp.timeOfFrame(frame: frame));
+      onChanged();
+    } catch (_) {
+      // The mask went away between the draw and the click.
+    }
+  }
+
+  /// On: one key at the playhead holding the shape already showing, so nothing
+  /// moves. Off: the shape the playhead is over is kept as the static path.
+  void _toggleAnimated(int frame) {
+    try {
+      final time = comp.timeOfFrame(frame: frame);
+      if (_animated) {
+        layer.clearMaskPathKeys(id: mask.id, time: time);
+      } else {
+        layer.toggleMaskPathKey(id: mask.id, time: time);
+      }
+      onChanged();
+    } catch (_) {
+      // As above.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final playhead =
+        Provider.of<LumitUiState>(context, listen: false).playheadFrame;
+    return ValueListenableBuilder<int>(
+      valueListenable: playhead,
+      builder: (context, frame, _) => _build(context, frame),
+    );
+  }
+
+  Widget _build(BuildContext context, int frame) {
+    final t = ThemeScope.of(context).theme;
+    final onKey = _frames.contains(frame);
+    final rowKey = 'tl-mask-path-${mask.id}';
+    Widget button({
+      required String keyName,
+      required Widget child,
+      required VoidCallback onPressed,
+      bool enabled = true,
+    }) =>
+        HouseButton(
+          key: ValueKey<String>(keyName),
+          frameless: true,
+          small: true,
+          padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
+          onPressed: enabled ? onPressed : null,
+          child: child,
+        );
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        LumitTooltip(
+          message: _animated ? l10n.tipStopAnimating : l10n.tipAnimate,
+          child: button(
+            keyName: 'kf-stopwatch-$rowKey',
+            child: lumitIcon(LumitIcon.stopwatch,
+                size: iconSize, color: _animated ? t.accent : t.textMuted),
+            onPressed: () => _toggleAnimated(frame),
+          ),
+        ),
+        if (_animated) ...[
+          button(
+            keyName: 'kf-prev-$rowKey',
+            enabled: _neighbour(frame, before: true) != null,
+            child: Text('◄',
+                style: t.small.copyWith(
+                    color: _neighbour(frame, before: true) == null
+                        ? t.textDisabled
+                        : t.textMuted)),
+            onPressed: () => onSeek(_neighbour(frame, before: true)!),
+          ),
+          LumitTooltip(
+            message: onKey ? l10n.tipRemoveKeyframe : l10n.tipAddKeyframe,
+            child: button(
+              keyName: 'kf-toggle-$rowKey',
+              child: lumitIcon(
+                onKey ? LumitIcon.keyframeFilled : LumitIcon.keyframe,
+                size: iconSize,
+                color: onKey ? t.accent : t.textMuted,
+              ),
+              onPressed: () => _toggleKeyHere(frame),
+            ),
+          ),
+          button(
+            keyName: 'kf-next-$rowKey',
+            enabled: _neighbour(frame, before: false) != null,
+            child: Text('►',
+                style: t.small.copyWith(
+                    color: _neighbour(frame, before: false) == null
+                        ? t.textDisabled
+                        : t.textMuted)),
+            onPressed: () => onSeek(_neighbour(frame, before: false)!),
+          ),
+        ],
+      ],
+    );
   }
 }

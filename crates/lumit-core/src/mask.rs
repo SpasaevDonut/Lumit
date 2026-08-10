@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    anim::{CubicSpan, Keyframe, SideInterp},
+    anim::{Animation, CubicSpan, Keyframe, Property, SideInterp},
     time::Rational,
 };
 
@@ -74,8 +74,50 @@ impl MaskMode {
     }
 }
 
-fn is_zero(v: &f64) -> bool {
-    *v == 0.0
+/// True when this property is a plain, still zero — the default for feather and
+/// expansion, and so the thing that is left out of the file entirely.
+fn is_static_zero(p: &Property) -> bool {
+    matches!(p.animation, Animation::Static(v) if v == 0.0) && p.extra.is_empty()
+}
+
+/// A mask's animatable number, written as a **bare number while it is still**.
+///
+/// In plain terms: a mask's opacity used to be just `50.0` in the file, and now
+/// it can hold keyframes. Anything that can hold keyframes is a [`Property`],
+/// and a `Property` normally writes itself as an object. If these three fields
+/// started doing that, every `.lum` ever saved would have to be migrated, and —
+/// worse — every frame every project has banked would be retired, because the
+/// frame cache names a frame partly by the bytes its masks serialise to
+/// (K-338, K-339 made a point of not doing that).
+///
+/// So the encoding stays what it was for the case that is almost always true.
+/// A still value writes as the number; only a mask somebody has actually keyed
+/// grows the object. Reading accepts either, so a project written by any build
+/// opens here, and one written by this build opens in an older one as long as
+/// nobody keyed the mask.
+mod still_or_keyed {
+    use super::{Animation, Property};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(p: &Property, s: S) -> Result<S::Ok, S::Error> {
+        match (&p.animation, p.extra.is_empty()) {
+            (Animation::Static(v), true) => s.serialize_f64(*v),
+            _ => p.serialize(s),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Property, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Either {
+            Still(f64),
+            Keyed(Property),
+        }
+        Ok(match Either::deserialize(d)? {
+            Either::Still(v) => Property::fixed(v),
+            Either::Keyed(p) => p,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -92,25 +134,35 @@ pub struct Mask {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub path_keys: Vec<PathKeyframe>,
     pub inverted: bool,
-    /// 0..100.
-    pub opacity: f64,
+    /// 0..100, and animatable like any transform property (K-340). Written as
+    /// a bare number while it is still — see [`still_or_keyed`].
+    #[serde(with = "still_or_keyed")]
+    pub opacity: Property,
     /// How this mask combines with the ones above it. Absent in projects
     /// written before modes existed, which loaded and rendered as Add.
     #[serde(default, skip_serializing_if = "MaskMode::is_add")]
     pub mode: MaskMode,
     /// Total width of the soft edge, in layer pixels, half either side of the
-    /// path (0 = the hard, antialiased edge).
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub feather: f64,
-    /// Grow (+) or shrink (−) the shape, in layer pixels.
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub expansion: f64,
+    /// path (0 = the hard, antialiased edge). Animatable (K-340).
+    #[serde(
+        default = "Property::zero",
+        with = "still_or_keyed",
+        skip_serializing_if = "is_static_zero"
+    )]
+    pub feather: Property,
+    /// Grow (+) or shrink (−) the shape, in layer pixels. Animatable (K-340).
+    #[serde(
+        default = "Property::zero",
+        with = "still_or_keyed",
+        skip_serializing_if = "is_static_zero"
+    )]
+    pub expansion: Property,
     #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Mask {
-    /// Whether this mask has any say in what the layer looks like.
+    /// Whether this mask has any say in what the layer looks like at `t`.
     ///
     /// Two switches turn a mask off, and both mean the same thing to the
     /// person using them: mode `None`, and opacity zero. Neither is "combine
@@ -118,9 +170,12 @@ impl Mask {
     /// there, so a layer carrying only switched-off masks is a layer with no
     /// masks at all, whole and visible. Exactly zero, not merely rounding to
     /// zero: 0.1 % is a mask the author can still see the edge of.
+    ///
+    /// Time matters because opacity animates: a mask keyed from 0 % can be off
+    /// for the first half of a shot and on for the second.
     #[must_use]
-    pub fn does_something(&self) -> bool {
-        self.mode != MaskMode::None && self.opacity > 0.0
+    pub fn does_something_at(&self, t: f64) -> bool {
+        self.mode != MaskMode::None && self.opacity.value_at(t) > 0.0
     }
 
     pub fn rectangle(x: f64, y: f64, w: f64, h: f64) -> Self {
@@ -143,10 +198,10 @@ impl Mask {
             },
             path_keys: Vec::new(),
             inverted: false,
-            opacity: 100.0,
+            opacity: Property::fixed(100.0),
             mode: MaskMode::Add,
-            feather: 0.0,
-            expansion: 0.0,
+            feather: Property::zero(),
+            expansion: Property::zero(),
             extra: serde_json::Map::new(),
         }
     }
@@ -176,10 +231,10 @@ impl Mask {
             },
             path_keys: Vec::new(),
             inverted: false,
-            opacity: 100.0,
+            opacity: Property::fixed(100.0),
             mode: MaskMode::Add,
-            feather: 0.0,
-            expansion: 0.0,
+            feather: Property::zero(),
+            expansion: Property::zero(),
             extra: serde_json::Map::new(),
         }
     }
@@ -206,10 +261,10 @@ impl Mask {
             },
             path_keys: Vec::new(),
             inverted: false,
-            opacity: 100.0,
+            opacity: Property::fixed(100.0),
             mode: MaskMode::Add,
-            feather: 0.0,
-            expansion: 0.0,
+            feather: Property::zero(),
+            expansion: Property::zero(),
             extra: serde_json::Map::new(),
         }
     }
@@ -491,8 +546,8 @@ fn mask_coverage(mask: &Mask, w: u32, h: u32, sx: f64, sy: f64, t: f64) -> Vec<u
     let cov = rasterise(&mask.path_at(t), w, h, sx, sy);
     let scale = (sx + sy) * 0.5;
     let finite = |v: f64| if v.is_finite() { v } else { 0.0 };
-    let feather = (finite(mask.feather).max(0.0) * scale) as f32;
-    let expansion = (finite(mask.expansion) * scale) as f32;
+    let feather = (finite(mask.feather.value_at(t)).max(0.0) * scale) as f32;
+    let expansion = (finite(mask.expansion.value_at(t)) * scale) as f32;
     // Fast path: the overwhelmingly common mask is hard-edged and unexpanded,
     // and must come back byte for byte as the rasteriser drew it.
     if feather == 0.0 && expansion == 0.0 {
@@ -688,7 +743,11 @@ pub fn combined_coverage(
 ) -> Vec<u8> {
     let sx = f64::from(w) / natural_w.max(1.0);
     let sy = f64::from(h) / natural_h.max(1.0);
-    let base: u16 = match masks.iter().find(|m| m.does_something()).map(|m| m.mode) {
+    let base: u16 = match masks
+        .iter()
+        .find(|m| m.does_something_at(t))
+        .map(|m| m.mode)
+    {
         Some(MaskMode::Add) => 0,
         // Including `None`: no mask does anything, so nothing is masked and the
         // layer is whole. Starting at zero here would hide a layer because it
@@ -698,11 +757,11 @@ pub fn combined_coverage(
     };
     let mut total = vec![base; (w * h) as usize];
     for mask in masks {
-        if !mask.does_something() {
+        if !mask.does_something_at(t) {
             continue;
         }
         let cov = mask_coverage(mask, w, h, sx, sy, t);
-        let op = (mask.opacity.clamp(0.0, 100.0) / 100.0 * 255.0) as u16;
+        let op = (mask.opacity.value_at(t).clamp(0.0, 100.0) / 100.0 * 255.0) as u16;
         for (t, c) in total.iter_mut().zip(cov) {
             let c = if mask.inverted {
                 255 - u16::from(c)
@@ -787,7 +846,7 @@ mod tests {
 
         let mut inv = m.clone();
         inv.inverted = true;
-        inv.opacity = 50.0;
+        inv.opacity = Property::fixed(50.0);
         let mut rgba = vec![255u8; 4 * 4 * 4];
         apply_masks(&mut rgba, 4, 4, 4.0, 4.0, &[inv], 0.0);
         assert_eq!(rgba[4 * 4 + 3], 0, "inverted left transparent");
@@ -852,14 +911,14 @@ mod tests {
             },
             {
                 let mut m = Mask::rectangle(0.0, 0.0, 8.0, 8.0);
-                m.opacity = 0.0;
+                m.opacity = Property::zero();
                 m
             },
             {
                 // Off by opacity while asking to subtract: still off.
                 let mut m = Mask::rectangle(0.0, 0.0, 8.0, 8.0);
                 m.mode = MaskMode::Subtract;
-                m.opacity = 0.0;
+                m.opacity = Property::zero();
                 m
             },
         ] {
@@ -868,7 +927,7 @@ mod tests {
                 cov.iter().all(|c| *c == 255),
                 "mode {:?} at {} % hid the layer",
                 off.mode,
-                off.opacity,
+                off.opacity.value_at(0.0),
             );
         }
     }
@@ -917,7 +976,7 @@ mod tests {
         let base = Mask::rectangle(30.0, 30.0, 40.0, 40.0);
         let with = |e: f64| {
             let mut m = base.clone();
-            m.expansion = e;
+            m.expansion = Property::fixed(e);
             area(&mask_coverage(&m, 100, 100, 1.0, 1.0, 0.0))
         };
         // Growing a square by r gives a square with rounded corners:
@@ -942,7 +1001,7 @@ mod tests {
     #[test]
     fn feather_ramps_monotonically_across_the_edge() {
         let mut m = Mask::rectangle(0.0, 0.0, 50.0, 100.0); // left half
-        m.feather = 12.0;
+        m.feather = Property::fixed(12.0);
         let cov = mask_coverage(&m, 100, 100, 1.0, 1.0, 0.0);
         let row: Vec<u8> = (0..100).map(|x| cov[50 * 100 + x]).collect();
         for pair in row.windows(2) {
@@ -960,8 +1019,8 @@ mod tests {
     #[test]
     fn feather_and_expansion_keep_their_shape_at_half_preview_scale() {
         let mut m = Mask::rectangle(25.0, 25.0, 50.0, 50.0);
-        m.feather = 10.0;
-        m.expansion = 4.0;
+        m.feather = Property::fixed(10.0);
+        m.expansion = Property::fixed(4.0);
         // Path coordinates are natural 100×100 in both cases.
         let full = area(&mask_coverage(&m, 100, 100, 1.0, 1.0, 0.0)) / (100.0 * 100.0);
         let half = area(&mask_coverage(&m, 50, 50, 0.5, 0.5, 0.0)) / (50.0 * 50.0);
@@ -974,7 +1033,7 @@ mod tests {
     #[test]
     fn inverting_a_feathered_mask_is_the_complement_of_its_feather() {
         let mut m = Mask::ellipse(32.0, 32.0, 16.0, 16.0);
-        m.feather = 9.0;
+        m.feather = Property::fixed(9.0);
         let plain = combined_coverage(std::slice::from_ref(&m), 64, 64, 64.0, 64.0, 0.0);
         let mut inv = m.clone();
         inv.inverted = true;
@@ -992,13 +1051,47 @@ mod tests {
             "path":{"vertices":[],"closed":true},"inverted":false,"opacity":100.0}"#;
         let m: Mask = serde_json::from_str(json).unwrap();
         assert_eq!(m.mode, MaskMode::Add);
-        assert_eq!(m.feather, 0.0);
-        assert_eq!(m.expansion, 0.0);
+        assert_eq!(m.feather, Property::zero());
+        assert_eq!(m.expansion, Property::zero());
+        assert_eq!(m.opacity, Property::fixed(100.0));
         // …and an untouched mask serialises exactly as it did before, so the
         // frame cache keeps the frames it already banked.
         let round = serde_json::to_string(&m).unwrap();
         assert!(!round.contains("mode"), "{round}");
         assert!(!round.contains("feather"), "{round}");
+        assert!(round.contains(r#""opacity":100.0"#), "{round}");
+    }
+
+    /// **A still mask still writes bare numbers; only a keyed one grows.**
+    ///
+    /// The three values became animatable in K-340, and animatable normally
+    /// means an object in the file. That would have retired every frame every
+    /// project has banked, because the frame key names a mask by the bytes it
+    /// serialises to — so the encoding stays a bare number until somebody
+    /// actually keys the property.
+    #[test]
+    fn a_still_mask_writes_bare_numbers_and_a_keyed_one_does_not() {
+        let mut m = Mask::rectangle(0.0, 0.0, 8.0, 8.0);
+        m.feather = Property::fixed(4.0);
+        let still = serde_json::to_string(&m).unwrap();
+        assert!(still.contains(r#""opacity":100.0"#), "{still}");
+        assert!(still.contains(r#""feather":4.0"#), "{still}");
+        assert!(!still.contains("animation"), "{still}");
+        assert_eq!(serde_json::from_str::<Mask>(&still).unwrap(), m);
+
+        m.opacity = Property {
+            animation: Animation::Keyframed(vec![Keyframe {
+                time: Rational::new(0, 1).unwrap(),
+                value: 20.0,
+                interp_in: SideInterp::Linear,
+                interp_out: SideInterp::Linear,
+            }]),
+            extra: serde_json::Map::new(),
+        };
+        let keyed = serde_json::to_string(&m).unwrap();
+        assert!(keyed.contains("animation"), "{keyed}");
+        // And it comes back as what it was, so a keyed mask survives a save.
+        assert_eq!(serde_json::from_str::<Mask>(&keyed).unwrap(), m);
     }
 
     // ---- Animated paths -------------------------------------------------

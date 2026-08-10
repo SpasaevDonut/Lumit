@@ -2809,7 +2809,12 @@ fn render_comp_with_preview(
         }
     }
     if let Some(masks) = req.masks {
-        comp.layers[index].masks = masks.into_iter().map(|m| m.write()).collect();
+        // The preview's masks are the layer's own, so they read on its clock.
+        let offset = comp.layers[index].start_offset.0;
+        let written: Result<Vec<_>, _> = masks.into_iter().map(|m| m.write(offset)).collect();
+        if let Ok(written) = written {
+            comp.layers[index].masks = written;
+        }
     }
     if let Some(items) = req.contents {
         // Only a shape layer has art; a stale request against another kind

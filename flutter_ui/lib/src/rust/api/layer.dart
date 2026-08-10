@@ -17,7 +17,7 @@ import 'retime.dart';
 import 'solid.dart';
 import 'state.dart';
 
-// These functions are ignored because they are not marked as `pub`: `bands_of`, `clip_under`, `clips_and_index`, `commit_clips_with_offset`, `commit_clips`, `commit_masks`, `commit_paint`, `commit`, `comp_time`, `composition`, `core`, `empty`, `item`, `map_end_value`, `project`, `rational_of`, `read_at`, `read_layer_info`, `read`, `read`, `read`, `read`, `reanchored_span`, `source_length`, `unretime_op`, `with_effects`, `write_at`, `write_item`, `write_over`, `write`, `write`, `write`
+// These functions are ignored because they are not marked as `pub`: `bands_of`, `clamped_property`, `clip_under`, `clips_and_index`, `commit_clips_with_offset`, `commit_clips`, `commit_masks`, `commit_paint`, `commit`, `comp_time`, `composition`, `core`, `empty`, `item`, `map_end_value`, `project`, `rational_of`, `read_at`, `read_at`, `read_layer_info`, `read`, `read`, `read`, `reanchored_span`, `source_length`, `unretime_op`, `with_effects`, `write_at`, `write_item`, `write_over`, `write`, `write`, `write`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `comp_id`, `id`, `new`, `project_id`
 
@@ -474,17 +474,29 @@ class BridgeMask {
   final bool closed;
   final bool inverted;
 
-  /// 0..100.
-  final double opacity;
+  /// 0..100, and animatable exactly as a transform property is (K-340) — so
+  /// the Timeline row carries the same stopwatch and the same ◄ ◆ ► as every
+  /// other property. Times are the layer's own, as everywhere else (K-213).
+  final BridgeScalar opacity;
 
   /// How this mask combines with the ones above it.
   final BridgeMaskMode mode;
 
   /// Width of the soft edge in layer pixels; 0 is the hard antialiased edge.
-  final double feather;
+  final BridgeScalar feather;
 
   /// Grow (+) or shrink (−) the shape, in layer pixels.
-  final double expansion;
+  final BridgeScalar expansion;
+
+  /// The times this mask's **path** is keyed at — empty when the shape does
+  /// not animate. Composition time, carried out by the layer's start offset,
+  /// exactly as a scalar's keyframe times cross (K-213), and rational so the
+  /// diamond lands on the frame the key is really on.
+  ///
+  /// Read-only here: the shape at a key is a whole path, which the frontend
+  /// edits through the drawing tools rather than by sending a list of shapes,
+  /// so what crosses is where the diamonds go (K-339).
+  final List<BridgeRational> pathKeyTimes;
 
   const BridgeMask({
     required this.id,
@@ -496,6 +508,7 @@ class BridgeMask {
     required this.mode,
     required this.feather,
     required this.expansion,
+    required this.pathKeyTimes,
   });
 
   @override
@@ -508,7 +521,8 @@ class BridgeMask {
       opacity.hashCode ^
       mode.hashCode ^
       feather.hashCode ^
-      expansion.hashCode;
+      expansion.hashCode ^
+      pathKeyTimes.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -523,7 +537,8 @@ class BridgeMask {
           opacity == other.opacity &&
           mode == other.mode &&
           feather == other.feather &&
-          expansion == other.expansion;
+          expansion == other.expansion &&
+          pathKeyTimes == other.pathKeyTimes;
 }
 
 /// [`lumit_core::mask::MaskMode`] across the bridge. Its own enum because the
@@ -1035,6 +1050,17 @@ class LayerReference {
           endSeconds: endSeconds,
           buckets: buckets,
           multiwave: multiwave);
+
+  /// Stop the shape animating, keeping the shape it shows at `time` (K-340).
+  ///
+  /// The stopwatch turning off, and it matches what the stopwatch does
+  /// everywhere else: the value that stays is the one the curve reads *at the
+  /// playhead*, not the first key's — so the picture does not jump when
+  /// animation is switched off.
+  void clearMaskPathKeys(
+          {required UuidValue id, required BridgeRational time}) =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceClearMaskPathKeys(
+          that: this, id: id, time: time);
 
   /// One Sequence clip's audio, summarised in `buckets` across the clip's own
   /// placed span — the waveform a clip draws inside itself (K-280).
@@ -1650,8 +1676,12 @@ class LayerReference {
   /// Replace one mask — its path, its name, its invert switch, its opacity.
   /// Named by id, so a stale reference is a calm error rather than an edit
   /// landing on whichever mask happens to sit at that index now.
-  void setMask({required BridgeMask mask}) => BridgeLib.instance.api
-      .crateApiLayerLayerReferenceSetMask(that: this, mask: mask);
+  /// `at` is the playhead, in composition time. It matters only for a mask
+  /// whose **shape** is keyed, where it decides which key the dragged
+  /// vertices land on; see [`BridgeMask::write_over`].
+  void setMask({required BridgeMask mask, BridgeRational? at}) =>
+      BridgeLib.instance.api
+          .crateApiLayerLayerReferenceSetMask(that: this, mask: mask, at: at);
 
   /// Point this layer at another as its matte, or clear it with `None`.
   ///
@@ -1817,6 +1847,22 @@ class LayerReference {
   /// zero-length layer nobody asked for.
   void splitAt({required PlatformInt64 frame}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceSplitAt(that: this, frame: frame);
+
+  /// Key this mask's **shape** at `time`, or take the key already there away
+  /// (K-339, K-340) — the ◆ on the mask's Path row.
+  ///
+  /// A planted key holds the shape the mask is *already showing* at that
+  /// moment, so pressing ◆ never moves anything: on an unanimated mask that
+  /// is its static path, and on an animated one it is what the shapes either
+  /// side interpolate to. Planting the first key is what starts the shape
+  /// animating.
+  ///
+  /// `time` is composition time, as every other keyframe time that crosses
+  /// here; the layer's own offset is taken back off inside.
+  void toggleMaskPathKey(
+          {required UuidValue id, required BridgeRational time}) =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceToggleMaskPathKey(
+          that: this, id: id, time: time);
 
   /// Turn Retime on or off (Ctrl+Alt+T), returning whether it is now on.
   ///

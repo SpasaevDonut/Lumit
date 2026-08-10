@@ -378,10 +378,11 @@ void main() {
           ],
           closed: true,
           inverted: false,
-          opacity: 100,
+          opacity: const BridgeScalar.static_(100),
           mode: BridgeMaskMode.add,
-          feather: 0,
-          expansion: 0,
+          feather: const BridgeScalar.static_(0),
+          expansion: const BridgeScalar.static_(0),
+          pathKeyTimes: const [],
         ),
       );
       p.uiState.model.refresh();
@@ -419,10 +420,11 @@ void main() {
           ],
           closed: true,
           inverted: false,
-          opacity: 100,
+          opacity: const BridgeScalar.static_(100),
           mode: BridgeMaskMode.add,
-          feather: 0,
-          expansion: 0,
+          feather: const BridgeScalar.static_(0),
+          expansion: const BridgeScalar.static_(0),
+          pathKeyTimes: const [],
         ),
       );
       (p.uiState as LumitUiState).model.refresh();
@@ -456,11 +458,11 @@ void main() {
       await gesture.up();
       await tester.pumpAndSettle();
 
-      expect(layer.getMasks().single.opacity, lessThan(100),
+      expect(stillValue(layer.getMasks().single.opacity), lessThan(100),
           reason: 'the drag reached the mask');
 
       p.state.project!.undo();
-      expect(layer.getMasks().single.opacity, 100,
+      expect(stillValue(layer.getMasks().single.opacity), 100,
           reason: 'ONE undo returns the opacity it had before the drag');
     });
 
@@ -482,7 +484,7 @@ void main() {
         await tester.pump();
       }
 
-      expect(layer.getMasks().single.opacity, 100,
+      expect(stillValue(layer.getMasks().single.opacity), 100,
           reason: 'a drag in flight writes nothing');
       expect(
           find.descendant(of: field, matching: find.textContaining('100%')),
@@ -493,7 +495,7 @@ void main() {
 
       await gesture.up();
       await tester.pumpAndSettle();
-      expect(layer.getMasks().single.opacity, lessThan(100),
+      expect(stillValue(layer.getMasks().single.opacity), lessThan(100),
           reason: 'the release is what commits');
     });
 
@@ -548,7 +550,9 @@ void main() {
       final layer = p.comp.addSolidLayer();
       await openMaskRow(tester, p, layer, 'Ellipse');
       layer.setMask(
-          mask: maskWith(layer.getMasks().single, feather: 20, expansion: 5));
+          mask: maskWith(layer.getMasks().single,
+              feather: const BridgeScalar.static_(20),
+              expansion: const BridgeScalar.static_(5)));
       p.uiState.model.refresh();
       await tester.pumpAndSettle();
 
@@ -557,18 +561,18 @@ void main() {
       expect(find.text('Feather'), findsOneWidget);
 
       final gesture = await dragLeft(tester, field, 20, release: false);
-      expect(layer.getMasks().single.feather, 20,
+      expect(stillValue(layer.getMasks().single.feather), 20,
           reason: 'a drag in flight writes nothing');
       expect(tester.takeException(), isNull,
           reason: 'the preview request is a courtesy and never a crash');
 
       await gesture.up();
       await tester.pumpAndSettle();
-      expect(layer.getMasks().single.feather, lessThan(20),
+      expect(stillValue(layer.getMasks().single.feather), lessThan(20),
           reason: 'the release is what commits');
 
       p.state.project!.undo();
-      expect(layer.getMasks().single.feather, 20,
+      expect(stillValue(layer.getMasks().single.feather), 20,
           reason: 'ONE undo returns the feather it had before the drag');
     });
 
@@ -583,7 +587,7 @@ void main() {
       await dragLeft(
           tester, find.byKey(ValueKey<String>('tl-mask-feather-$id')), 40);
 
-      expect(layer.getMasks().single.feather, 0,
+      expect(stillValue(layer.getMasks().single.feather), 0,
           reason: 'dragging past zero offers nothing below it');
     });
 
@@ -600,17 +604,84 @@ void main() {
       expect(find.text('Expansion'), findsOneWidget);
 
       final gesture = await dragLeft(tester, field, 20, release: false);
-      expect(layer.getMasks().single.expansion, 0,
+      expect(stillValue(layer.getMasks().single.expansion), 0,
           reason: 'a drag in flight writes nothing');
 
       await gesture.up();
       await tester.pumpAndSettle();
-      expect(layer.getMasks().single.expansion, lessThan(0),
+      expect(stillValue(layer.getMasks().single.expansion), lessThan(0),
           reason: 'a mask can be shrunk as well as grown');
 
       p.state.project!.undo();
-      expect(layer.getMasks().single.expansion, 0,
+      expect(stillValue(layer.getMasks().single.expansion), 0,
           reason: 'ONE undo returns the expansion it had before the drag');
+    });
+
+
+    /// **Every mask value keyframes, with the same stopwatch as everything
+    /// else** (K-340). The branch that added mask animation exposed none of it
+    /// to the frontend: there was no Path row at all, and no mask property
+    /// carried a clock.
+    testWidgets('every mask property has a stopwatch and keys with it',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await openMaskRow(tester, p, layer, 'Ellipse');
+      final id = layer.getMasks().single.id;
+
+      // All four rows exist, shape first.
+      expect(find.text('Path'), findsOneWidget);
+      expect(find.text('Opacity'), findsOneWidget);
+      expect(find.text('Feather'), findsOneWidget);
+      expect(find.text('Expansion'), findsOneWidget);
+
+      for (final name in ['opacity', 'feather', 'expansion']) {
+        final stopwatch =
+            find.byKey(ValueKey<String>('kf-stopwatch-tl-mask-$name-$id'));
+        expect(stopwatch, findsOneWidget, reason: '$name has no stopwatch');
+        await tester.tap(stopwatch);
+        await tester.pumpAndSettle();
+      }
+
+      final mask = layer.getMasks().single;
+      for (final scalar in [mask.opacity, mask.feather, mask.expansion]) {
+        expect(scalar, isA<BridgeScalar_Keyframed>(),
+            reason: 'the stopwatch planted a key holding what was there');
+      }
+      // Turning it on never moves the picture: the key holds the value that
+      // was already showing.
+      expect(
+          sampleScalar(
+              scalar: mask.opacity, time: p.comp.timeOfFrame(frame: 0)),
+          100);
+    });
+
+    /// **The shape keyframes too, and its row is diamonds without a field**
+    /// (K-339, K-340): a path has no number to put in one.
+    testWidgets('the mask path row keys the shape and shows no value field',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await openMaskRow(tester, p, layer, 'Ellipse');
+      final id = layer.getMasks().single.id;
+
+      expect(find.byKey(ValueKey<String>('tl-mask-path-$id')), findsNothing,
+          reason: 'a shape has no single number, so the row has no field');
+
+      expect(layer.getMasks().single.pathKeyTimes, isEmpty);
+      await tester
+          .tap(find.byKey(ValueKey<String>('kf-stopwatch-tl-mask-path-$id')));
+      await tester.pumpAndSettle();
+      expect(layer.getMasks().single.pathKeyTimes, hasLength(1),
+          reason: 'the stopwatch planted a key on the shape');
+
+      // And off again keeps the shape rather than dropping it.
+      final before = layer.getMasks().single.vertices.length;
+      await tester
+          .tap(find.byKey(ValueKey<String>('kf-stopwatch-tl-mask-path-$id')));
+      await tester.pumpAndSettle();
+      expect(layer.getMasks().single.pathKeyTimes, isEmpty);
+      expect(layer.getMasks().single.vertices, hasLength(before));
     });
 
     /// **A mask row is a property row (K-234).** It joins the same selection

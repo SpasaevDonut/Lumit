@@ -1964,6 +1964,14 @@
       }
     }
   },
+  "maskOpacity": "Opacity",
+  "@maskOpacity": {
+    "description": "The name of a mask's opacity row in the Timeline fold-out."
+  },
+  "maskPath": "Path",
+  "@maskPath": {
+    "description": "The name of a mask's shape row in the Timeline fold-out — the row that keyframes the drawn shape itself."
+  },
   "menu3dLayer": "3D layer",
   "@menu3dLayer": {
     "description": "Menu item."

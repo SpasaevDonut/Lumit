@@ -474,9 +474,16 @@ there is something to say.
   keyframed.
 - Masks appear in the layer's Timeline twirl-down under a **Masks** heading — above Effects,
   because a mask gates the layer's alpha before its effects run (docs/06 render order) — and
-  the heading appears only once the layer has one, exactly as Effects does. Each row carries
-  the mask's name, its invert switch and its opacity, and its context menu renames and
+  the heading appears only once the layer has one, exactly as Effects does. The mask's own
+  row carries what the mask *is* — its name, its invert switch, and its **mode** under the
+  same header a layer's blend mode sits under (K-340) — and its context menu renames and
   deletes it.
+- **A mask's values are property rows, and every one of them keyframes** (K-340). Under the
+  mask sit **Path**, **Opacity**, **Feather** and **Expansion**, each with the same
+  stopwatch, the same ◄ ◆ ► navigator and the same lane diamonds as a transform property,
+  and each with its value in the same column an effect parameter's value sits in. Path is
+  the shape itself: it has no number, so its row has no field and its lane shows diamonds
+  without a curve (K-339).
 - **A mask (and a shape item) is renamed in place.** A shape drawn with a tool is named
   after that tool, which is right until two ellipses need telling apart, so the name is
   editable: **double-click** it, or pick **Rename** from the row's menu. `Enter` or a click

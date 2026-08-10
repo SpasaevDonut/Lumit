@@ -663,6 +663,21 @@ fn feed_layer(
             }
             h.update(&[u8::from(path.closed)]);
         }
+        // The same argument, for the same reason, about the three numbers a
+        // mask can now animate (K-340): a keyed opacity serialises identically
+        // at every frame, so without its evaluated value here the mask would
+        // hold one opacity for the whole of playback. Fed only when the
+        // property actually holds keys, so a still mask keeps the exact name it
+        // already had and nothing banked is retired.
+        for mask in &layer.masks {
+            for property in [&mask.opacity, &mask.feather, &mask.expansion] {
+                if matches!(property.animation, lumit_core::anim::Animation::Static(_)) {
+                    continue;
+                }
+                h.update(b"maskvalue");
+                feed_f64(h, property.value_at(lt));
+            }
+        }
     }
 
     // Matte: the matte source's content at this time, plus the mode flags.

@@ -23,6 +23,7 @@
 import 'dart:math' as math;
 
 import 'package:lumit_flutter/l10n/strings.dart';
+import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/state/tools.dart';
 import 'package:uuid/uuid.dart';
@@ -249,10 +250,13 @@ BridgeMask shapeMask({
       vertices: vertices,
       closed: closed,
       inverted: false,
-      opacity: 100,
+      opacity: const BridgeScalar.static_(100),
       mode: BridgeMaskMode.add,
-      feather: 0,
-      expansion: 0,
+      feather: const BridgeScalar.static_(0),
+      expansion: const BridgeScalar.static_(0),
+      // A shape just drawn has no keys; a mask being edited keeps its own,
+      // which the engine patches back.
+      pathKeyTimes: const [],
     );
 
 /// What a shape drawn by [tool] is called. Named for the shape rather than

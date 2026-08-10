@@ -3179,6 +3179,8 @@ class _FoldRow extends StatelessWidget {
           mask: mask,
           value: value,
           valueColumn: valueColumn,
+          playheadFrame: playheadFrame,
+          onSeek: onSeek,
           onChanged: () {
             onEditProperty(path);
             onChanged();
@@ -3564,10 +3566,10 @@ BridgeMask maskWith(
   BridgeMask m, {
   String? name,
   bool? inverted,
-  double? opacity,
+  BridgeScalar? opacity,
   BridgeMaskMode? mode,
-  double? feather,
-  double? expansion,
+  BridgeScalar? feather,
+  BridgeScalar? expansion,
 }) =>
     BridgeMask(
       id: m.id,
@@ -3579,6 +3581,9 @@ BridgeMask maskWith(
       mode: mode ?? m.mode,
       feather: feather ?? m.feather,
       expansion: expansion ?? m.expansion,
+      // Where the shape's own keys are is the engine's to say; an edit here
+      // never moves them (`set_mask` patches them back).
+      pathKeyTimes: m.pathKeyTimes,
     );
 
 /// What a mask mode is called on its dropdown.
@@ -3739,47 +3744,6 @@ class _MaskRow extends StatefulWidget {
 }
 
 class _MaskRowState extends State<_MaskRow> with _InlineRename<_MaskRow> {
-  /// The opacity a drag in flight is showing, before it commits. Held here so
-  /// the whole gesture is **one** op and so one Ctrl+Z undoes the whole drag:
-  /// writing on every tick filled the undo stack with near-identical steps,
-  /// and one undo backed out a single percent — which looked like nothing.
-  double? _staged;
-
-  /// Keeps the drag's preview requests about one render apart, as every other
-  /// dragged value does.
-  final PreviewThrottle _throttle = PreviewThrottle();
-
-  @override
-  void dispose() {
-    _throttle.cancel();
-    super.dispose();
-  }
-
-  /// Show the opacity the drag is passing through without writing it (K-240).
-  ///
-  /// The last of the three rows to get this. Staging alone made the drag one
-  /// undo step (K-234) and left the picture still until the button came up;
-  /// paint and shape art were fixed under K-239 and this is the same fix, in
-  /// the same shape, through the same clone-and-patch render path.
-  void _preview(double opacity) {
-    final ui = Provider.of<LumitUiState>(context, listen: false);
-    _throttle.request(() {
-      try {
-        widget.comp.renderFrameWithMaskPreview(
-          frame: BigInt.from(ui.playheadFrame.value),
-          scale: ui.viewerScale,
-          layer: widget.layer,
-          masks: [
-            for (final m in widget.layer.getMasks())
-              if (m.id == widget.mask.id) maskWith(m, opacity: opacity) else m,
-          ],
-        );
-      } catch (_) {
-        // A preview is a courtesy; the drag carries on without it.
-      }
-    });
-  }
-
   @override
   String get renameCurrent => widget.mask.name;
 
@@ -3788,22 +3752,15 @@ class _MaskRowState extends State<_MaskRow> with _InlineRename<_MaskRow> {
 
   /// Write the mask back with one field changed. The engine takes the whole
   /// mask, so this is the only shape an edit has.
-  void _write(
-      {String? name, bool? inverted, double? opacity, BridgeMaskMode? mode}) {
+  void _write({String? name, bool? inverted, BridgeMaskMode? mode}) {
     try {
       widget.layer.setMask(
-        mask: maskWith(widget.mask,
-            name: name, inverted: inverted, opacity: opacity, mode: mode),
+        mask: maskWith(widget.mask, name: name, inverted: inverted, mode: mode),
       );
       widget.onChanged();
     } catch (_) {
       // The mask or its layer went away between the draw and the click.
     }
-  }
-
-  void _commitOpacity(num v) {
-    setState(() => _staged = null);
-    _write(opacity: v.toDouble());
   }
 
   @override
@@ -3847,41 +3804,10 @@ class _MaskRowState extends State<_MaskRow> with _InlineRename<_MaskRow> {
             ),
           ),
           const SizedBox(width: 6),
-          // Opacity sits where an effect parameter's value sits — left of the
-          // value column, not hard against its right edge — so the numbers
-          // down a twirled-open layer form one column whatever kind of row
-          // they belong to.
-          SizedBox(
-            width: valueColumn.width,
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: SizedBox(
-                width: 56,
-                // Staged like every other dragged value here: the drag shows
-                // live and commits once on release, so it is one op and one
-                // undo step.
-                child: DragValueField(
-                  key: ValueKey<String>('tl-mask-opacity-${mask.id}'),
-                  value: _staged ?? mask.opacity,
-                  min: 0,
-                  max: 100,
-                  suffix: '%',
-                  onChanged: _commitOpacity,
-                  onChangeLive: (v) {
-                    setState(() => _staged = v.toDouble());
-                    _preview(v.toDouble());
-                  },
-                  onChangeEnd: _commitOpacity,
-                  onDragCancel: () {
-                    setState(() => _staged = null);
-                    // The picture is showing a value nobody committed; put
-                    // the document's own back on screen.
-                    _preview(widget.mask.opacity);
-                  },
-                ),
-              ),
-            ),
-          ),
+          // Nothing in the value column: the mask's own numbers each have a
+          // row of their own under it now (K-340), so the header keeps only
+          // what the mask *is* — its name, its invert switch and its mode.
+          SizedBox(width: valueColumn.width),
           // How the mask combines with the ones above it — the same kind of
           // choice a layer's blend mode is, so it sits under that same header,
           // left-aligned in the cell as the blend picker is.
@@ -3944,12 +3870,20 @@ class _MaskRowState extends State<_MaskRow> with _InlineRename<_MaskRow> {
   }
 }
 
-/// A mask's feather or its expansion, on a row under the mask (K-222).
+/// One of a mask's values on a row under it (K-222, K-340): its shape, its
+/// opacity, its feather or its expansion.
 ///
-/// Both are in layer pixels — feather never below zero, expansion free to go
-/// negative so a mask can be shrunk as well as grown. The drag is staged and
-/// previewed exactly as the mask's opacity is, so the whole gesture is one op
-/// and one undo step (K-234, K-240).
+/// **Every one of them animates, and animates the way everything else does.**
+/// The row carries the same stopwatch and ◄ ◆ ► the transform and effect rows
+/// carry, reads its value at the playhead, and writes an edit into the key
+/// sitting there — so a mask is keyed with the same gesture as a position.
+///
+/// The **shape** is the exception in one respect only: a path has no number to
+/// put in a field, so its row is a name, a stopwatch and its diamonds, and the
+/// shape itself is edited where it is drawn (K-339).
+///
+/// The drag is staged and previewed exactly as it always was, so the whole
+/// gesture is one op and one undo step (K-234, K-240).
 ///
 /// The row has no label tap: the mask itself is what Delete acts on, and a
 /// selectable value row under it would give Delete a path it cannot resolve to
@@ -3960,6 +3894,8 @@ class _MaskValueRow extends StatefulWidget {
   final BridgeMask mask;
   final MaskValue value;
   final ValueColumn valueColumn;
+  final int playheadFrame;
+  final ValueChanged<int> onSeek;
   final VoidCallback onChanged;
 
   const _MaskValueRow({
@@ -3968,6 +3904,8 @@ class _MaskValueRow extends StatefulWidget {
     required this.mask,
     required this.value,
     required this.valueColumn,
+    required this.playheadFrame,
+    required this.onSeek,
     required this.onChanged,
   });
 
@@ -3979,13 +3917,42 @@ class _MaskValueRowState extends State<_MaskValueRow> {
   double? _staged;
   final PreviewThrottle _throttle = PreviewThrottle();
 
-  bool get _isFeather => widget.value == MaskValue.feather;
+  bool get _isPath => widget.value == MaskValue.path;
 
-  double get _stored =>
-      _isFeather ? widget.mask.feather : widget.mask.expansion;
+  /// This row's animation. The path has none of its own — its keys are whole
+  /// shapes, not numbers — so it is not one of these.
+  BridgeScalar get _scalar => switch (widget.value) {
+        MaskValue.opacity => widget.mask.opacity,
+        MaskValue.feather => widget.mask.feather,
+        MaskValue.expansion => widget.mask.expansion,
+        MaskValue.path => const BridgeScalar.static_(0),
+      };
 
-  BridgeMask _patched(BridgeMask m, double v) =>
-      _isFeather ? maskWith(m, feather: v) : maskWith(m, expansion: v);
+  String get _label => switch (widget.value) {
+        MaskValue.path => l10n.maskPath,
+        MaskValue.opacity => l10n.maskOpacity,
+        MaskValue.feather => l10n.maskFeather,
+        MaskValue.expansion => l10n.maskExpansion,
+      };
+
+  /// What a drag on this row may ask for. Feather is a width, so it has no
+  /// negative side; expansion grows one way and shrinks the other; opacity is
+  /// a percentage.
+  (double, double) get _range => switch (widget.value) {
+        MaskValue.opacity => (0, 100),
+        MaskValue.feather => (0, 1000),
+        _ => (-1000, 1000),
+      };
+
+  int get _decimals => widget.value == MaskValue.opacity ? 0 : 1;
+
+  String get _suffix => widget.value == MaskValue.opacity ? '%' : ' px';
+
+  BridgeMask _patched(BridgeMask m, BridgeScalar v) => switch (widget.value) {
+        MaskValue.opacity => maskWith(m, opacity: v),
+        MaskValue.feather => maskWith(m, feather: v),
+        _ => maskWith(m, expansion: v),
+      };
 
   @override
   void dispose() {
@@ -3994,7 +3961,7 @@ class _MaskValueRowState extends State<_MaskValueRow> {
   }
 
   /// Show the value the drag is passing through without writing it (K-240).
-  void _preview(double v) {
+  void _preview(BridgeScalar v) {
     final ui = Provider.of<LumitUiState>(context, listen: false);
     _throttle.request(() {
       try {
@@ -4013,60 +3980,107 @@ class _MaskValueRowState extends State<_MaskValueRow> {
     });
   }
 
-  void _commit(num v) {
+  void _write(BridgeScalar v) {
     setState(() => _staged = null);
     try {
-      widget.layer.setMask(mask: _patched(widget.mask, v.toDouble()));
+      widget.layer.setMask(mask: _patched(widget.mask, v));
       widget.onChanged();
     } catch (_) {
       // The mask or its layer went away mid-drag.
     }
   }
 
+  /// A still value: the number typed or dragged becomes the value.
+  void _commitStatic(num v) => _write(BridgeScalar.static_(v.toDouble()));
+
+  /// An animated one: the edit lands on the key under the playhead, or plants
+  /// one there — never flattening the curve (docs/07 §4.3).
+  void _commitKeyed(double v) =>
+      _write(scalarWithValueAt(_scalar, v, widget.comp, widget.playheadFrame));
+
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
     return Row(
       children: [
+        if (_isPath)
+          MaskPathKeyframesFrb(
+            layer: widget.layer,
+            mask: widget.mask,
+            comp: widget.comp,
+            playheadFrame: widget.playheadFrame,
+            onSeek: widget.onSeek,
+            onChanged: widget.onChanged,
+          )
+        else
+          KeyframeControlsFrb(
+            scalars: [_scalar],
+            onWrite: (s) => _write(s.first),
+            comp: widget.comp,
+            playheadFrame: widget.playheadFrame,
+            onSeek: widget.onSeek,
+            rowKey: 'tl-mask-${widget.value.name}-${widget.mask.id}',
+          ),
+        const SizedBox(width: 4),
         Expanded(
-          child: Text(_isFeather ? l10n.maskFeather : l10n.maskExpansion,
-              style: t.body, overflow: TextOverflow.ellipsis),
+          child: Text(_label, style: t.body, overflow: TextOverflow.ellipsis),
         ),
         // Left of the value column, exactly where an effect parameter's field
         // sits, so every number down an open layer forms one column.
         SizedBox(
           width: widget.valueColumn.width,
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: SizedBox(
-              width: 72,
-              child: DragValueField(
-                key: ValueKey<String>(
-                    'tl-mask-${widget.value.name}-${widget.mask.id}'),
-                value: _staged ?? _stored,
-                // Feather is a width, so it has no negative side; expansion
-                // grows one way and shrinks the other.
-                min: _isFeather ? 0 : -1000,
-                max: 1000,
-                decimals: 1,
-                suffix: ' px',
-                onChanged: _commit,
-                onChangeLive: (v) {
-                  setState(() => _staged = v.toDouble());
-                  _preview(v.toDouble());
-                },
-                onChangeEnd: _commit,
-                onDragCancel: () {
-                  setState(() => _staged = null);
-                  // Put the document's own value back on screen.
-                  _preview(_stored);
-                },
-              ),
-            ),
-          ),
+          child: _isPath
+              ? const SizedBox.shrink()
+              : Align(
+                  alignment: Alignment.centerLeft,
+                  child: SizedBox(width: 72, child: _field()),
+                ),
         ),
         SizedBox(width: widget.valueColumn.rightInset),
       ],
+    );
+  }
+
+  Widget _field() {
+    final (min, max) = _range;
+    final key =
+        ValueKey<String>('tl-mask-${widget.value.name}-${widget.mask.id}');
+    final scalar = _scalar;
+    if (scalar is! BridgeScalar_Keyframed) {
+      final stored =
+          _staged ?? (scalar is BridgeScalar_Static ? scalar.field0 : 0.0);
+      return DragValueField(
+        key: key,
+        value: stored,
+        min: min,
+        max: max,
+        decimals: _decimals,
+        suffix: _suffix,
+        onChanged: _commitStatic,
+        onChangeLive: (v) {
+          setState(() => _staged = v.toDouble());
+          _preview(BridgeScalar.static_(v.toDouble()));
+        },
+        onChangeEnd: _commitStatic,
+        onDragCancel: () {
+          setState(() => _staged = null);
+          // Put the document's own value back on screen.
+          _preview(scalar);
+        },
+      );
+    }
+    // Animated: the field shows what the curve reads at the playhead, and an
+    // edit writes the key there. No live preview mid-drag — staging a keyed
+    // value through the static preview would lie about the curve.
+    return KeyedValueField(
+      fieldKey: key,
+      value: sampleScalar(
+          scalar: scalar, time: timeOfFrame(widget.comp, widget.playheadFrame)),
+      min: min,
+      max: max,
+      decimals: _decimals,
+      suffix: _suffix,
+      onCommit: _commitKeyed,
     );
   }
 }
