@@ -167,7 +167,7 @@ impl Clip {
 
     /// This clip with a single speed *ramp* — speed running straight from `v0`
     /// to `v1` across the clip — its place on the layer unchanged (beat-sync).
-    /// The montage velocity gesture; `source_out` follows from the integral.
+    /// The montage speed gesture; `source_out` follows from the integral.
     ///
     /// The eased shapes the segment store offered (Slow/Fast/Smooth/Sharp) are
     /// not here: they belong to the preset shelf, which is being reworked
@@ -950,7 +950,7 @@ mod tests {
     }
 
     #[test]
-    fn with_ramp_sets_a_velocity_ramp() {
+    fn with_ramp_sets_a_speed_ramp() {
         // 4 s clip from source 0, speed running straight 1× → 3×: the source
         // used is the area under that line, 4 · (1 + 3)/2 = 8.
         let base = clip(Uuid::now_v7(), 0, 4);

@@ -398,12 +398,12 @@ class Workspace extends ChangeNotifier {
     if (custom != null) {
       setCustomTheme(custom);
     } else {
-      setScheme2(choice.scheme!);
+      setScheme(choice.scheme!);
     }
   }
 
   /// Select a built-in scheme, leaving any custom theme behind.
-  void setScheme2(LumitColorScheme s) {
+  void setScheme(LumitColorScheme s) {
     colorScheme = s;
     customThemeName = null;
     recompose();
@@ -536,12 +536,6 @@ class Workspace extends ChangeNotifier {
     precomposeAdjustDuration = adjustDuration;
     precomposeOpenNewComp = openNewComp;
     notifyListeners();
-    save();
-  }
-
-  void setScheme(LumitColorScheme s) {
-    colorScheme = s;
-    recompose();
     save();
   }
 

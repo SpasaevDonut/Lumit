@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'dart:io' show File, Platform;
 import 'dart:ui' show AppExitResponse;
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/gestures.dart' show GestureBinding;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -208,7 +209,9 @@ Future<void> main(List<String> args) async {
   // tidying problem is not a reason for an editor not to open.
   tidyAfterUpdate(InstallSite.detect());
 
-  await BridgeLib.init(handler: CustomHandler());
+  // The call tracer takes StackTrace.current on every bridge call, which is
+  // debugging money a release build must not spend.
+  await BridgeLib.init(handler: kDebugMode ? CustomHandler() : null);
   await ExpressionsMetadata.load();
   await ExpressionTextEditingController.initSyntaxHighlighting();
   final state = LumitState();

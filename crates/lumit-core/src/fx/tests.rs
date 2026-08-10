@@ -5482,6 +5482,36 @@ fn lens_flare_blend_options_all_resolve() {
     }
 }
 
+/// The Lens flare's float parameters read through the expression context like
+/// every other effect's. A merge had left the flare's arm on the context-free
+/// `float_at`, where `time` evaluates to nothing — so an expression-driven
+/// flare silently ignored its expressions while every neighbour honoured
+/// theirs.
+#[test]
+fn lens_flare_params_evaluate_expressions_in_context() {
+    let mut inst = instantiate("lens_flare").unwrap();
+    for p in &mut inst.params {
+        if p.id == "intensity" {
+            let mut prop = Property::fixed(1.0);
+            prop.animation = Animation::Expression("time".into());
+            p.value = EffectValue::Float(prop);
+        }
+    }
+    let context = Arc::new(ExpressionContext {
+        comp_time: 3.0,
+        ..ExpressionContext::detached()
+    });
+    let ops = super::resolve_stack(&[inst], 0.0, 2202.9, 1.0, &MarkerContext::NONE, context);
+    let [Resolved::LensFlare(p)] = ops.as_slice() else {
+        panic!("lens_flare must resolve to exactly one op");
+    };
+    assert!(
+        (p.intensity - 3.0).abs() < 1e-6,
+        "intensity must follow the expression through the context: {}",
+        p.intensity
+    );
+}
+
 // The blend table itself (K-289), against the formulas written out by hand.
 // The CPU twin is the oracle the WGSL `flare_blend` is pinned to, so it has
 // to be right on its own terms first.

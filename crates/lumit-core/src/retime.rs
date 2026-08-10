@@ -2980,7 +2980,8 @@ mod keyframe_seam_tests {
         assert!((store.evaluate(2.0) - back.evaluate(2.0)).abs() < 1e-9);
         assert!(
             (store.evaluate(0.1) - back.evaluate(0.1)).abs() > 1e-3,
-            "the ease is what is lost; if this ever holds, the seam has been              made lossless and the clip migration may be reconsidered"
+            "the ease is what is lost; if this ever holds, the seam has been \
+             made lossless and the clip migration may be reconsidered"
         );
     }
 

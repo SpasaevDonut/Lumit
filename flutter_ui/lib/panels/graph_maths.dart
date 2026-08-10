@@ -15,7 +15,6 @@
 // pinned by the impl note on both sides, and the golden tests hold the two
 // implementations together.
 
-import 'package:flutter/rendering.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 
 /// A rational time as plain seconds — the evaluation domain (docs/14 §2:
@@ -157,10 +156,10 @@ double evaluateKeys(List<BridgeKeyframe> keys, double t) {
 double evaluateScalar(BridgeScalar scalar, double t) => switch (scalar) {
       BridgeScalar_Static(:final field0) => field0,
       BridgeScalar_Keyframed(:final field0) => evaluateKeys(field0, t),
-      BridgeScalar_Expression() => () {
-        debugPrint("TODO: implement evaluate scalar expression in flutter ui");
-        return 0.0;
-      }()
+      // An expression has no curve to draw here: only the engine can run it,
+      // and this evaluator exists precisely because a paint may not cross the
+      // bridge. The graph shows an expression-driven scalar as flat zero.
+      BridgeScalar_Expression() => 0.0,
     };
 
 /// dv/dt at `t` seconds — the engine's `evaluate_speed`: 0 outside the keys

@@ -143,7 +143,7 @@ void main() {
     test('duplicating twice numbers the second rather than overwriting', () {
       final ws = _workspace('theme-duplicate-twice');
       final first = ws.duplicateActiveTheme();
-      ws.setScheme2(LumitColorScheme.dark);
+      ws.setScheme(LumitColorScheme.dark);
       final second = ws.duplicateActiveTheme();
 
       expect(first, 'Dark copy');

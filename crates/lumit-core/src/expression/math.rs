@@ -96,7 +96,7 @@ pub mod math {
         smooth_step(to_f64(value))
     }
 
-    /// remap a value from one range to another
+    /// rescale a value from one range to another
     pub fn fit(
         value: Dynamic,
         old_min: Dynamic,
@@ -112,7 +112,7 @@ pub mod math {
         new_min + (value - old_min) * (new_max - new_min) / (old_max - old_min)
     }
 
-    /// remap a value form one range to another, without exceeding the limit of the new range
+    /// rescale a value from one range to another, without exceeding the limit of the new range
     pub fn fit_clamped(
         value: Dynamic,
         old_min: Dynamic,
@@ -130,7 +130,7 @@ pub mod math {
         new_min + t * (new_max - new_min)
     }
 
-    /// remap a value between 0 and 1 to a different range
+    /// rescale a value between 0 and 1 to a different range
     pub fn fit01(value: Dynamic, min: Dynamic, max: Dynamic) -> f64 {
         fit(
             value,

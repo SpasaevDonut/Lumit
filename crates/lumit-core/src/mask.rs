@@ -178,24 +178,13 @@ impl Mask {
         self.mode != MaskMode::None && self.opacity.value_at(t) > 0.0
     }
 
-    pub fn rectangle(x: f64, y: f64, w: f64, h: f64) -> Self {
-        let corner = |px: f64, py: f64| Vertex {
-            pos: (px, py),
-            tan_in: (0.0, 0.0),
-            tan_out: (0.0, 0.0),
-        };
+    /// A fresh, default-switched mask around `path`: Add mode, full opacity,
+    /// hard-edged, unanimated.
+    fn from_path(name: &str, path: BezierPath) -> Self {
         Self {
             id: Uuid::now_v7(),
-            name: "Rectangle".into(),
-            path: BezierPath {
-                vertices: vec![
-                    corner(x, y),
-                    corner(x + w, y),
-                    corner(x + w, y + h),
-                    corner(x, y + h),
-                ],
-                closed: true,
-            },
+            name: name.into(),
+            path,
             path_keys: Vec::new(),
             inverted: false,
             opacity: Property::fixed(100.0),
@@ -204,6 +193,26 @@ impl Mask {
             expansion: Property::zero(),
             extra: serde_json::Map::new(),
         }
+    }
+
+    pub fn rectangle(x: f64, y: f64, w: f64, h: f64) -> Self {
+        let corner = |px: f64, py: f64| Vertex {
+            pos: (px, py),
+            tan_in: (0.0, 0.0),
+            tan_out: (0.0, 0.0),
+        };
+        Self::from_path(
+            "Rectangle",
+            BezierPath {
+                vertices: vec![
+                    corner(x, y),
+                    corner(x + w, y),
+                    corner(x + w, y + h),
+                    corner(x, y + h),
+                ],
+                closed: true,
+            },
+        )
     }
 
     /// An `n`-point star with straight edges (corner vertices only), outer
@@ -222,21 +231,13 @@ impl Mask {
                 tan_out: (0.0, 0.0),
             });
         }
-        Self {
-            id: Uuid::now_v7(),
-            name: "Star".into(),
-            path: BezierPath {
+        Self::from_path(
+            "Star",
+            BezierPath {
                 vertices,
                 closed: true,
             },
-            path_keys: Vec::new(),
-            inverted: false,
-            opacity: Property::fixed(100.0),
-            mode: MaskMode::Add,
-            feather: Property::zero(),
-            expansion: Property::zero(),
-            extra: serde_json::Map::new(),
-        }
+        )
     }
 
     /// Ellipse via the standard 4-vertex cubic approximation (kappa).
@@ -247,10 +248,9 @@ impl Mask {
             tan_in: tin,
             tan_out: tout,
         };
-        Self {
-            id: Uuid::now_v7(),
-            name: "Ellipse".into(),
-            path: BezierPath {
+        Self::from_path(
+            "Ellipse",
+            BezierPath {
                 vertices: vec![
                     v((cx, cy - ry).0, cy - ry, (-rx * K, 0.0), (rx * K, 0.0)),
                     v(cx + rx, cy, (0.0, -ry * K), (0.0, ry * K)),
@@ -259,14 +259,7 @@ impl Mask {
                 ],
                 closed: true,
             },
-            path_keys: Vec::new(),
-            inverted: false,
-            opacity: Property::fixed(100.0),
-            mode: MaskMode::Add,
-            feather: Property::zero(),
-            expansion: Property::zero(),
-            extra: serde_json::Map::new(),
-        }
+        )
     }
 
     /// The shape this mask has at time `t` (seconds, the owner's timebase —

@@ -128,6 +128,7 @@ impl Gray {
 /// B(x + (u, v))` — the displacement of the pixel at `x` from A to B.
 /// `valid` marks pixels whose flow came from at least one photometrically
 /// trusted patch (0 = textureless or mismatched everywhere; treat as suspect).
+#[derive(Clone)]
 pub struct FlowField {
     pub w: usize,
     pub h: usize,

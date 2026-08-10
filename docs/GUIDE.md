@@ -4708,9 +4708,9 @@ once). The Windows installer is still unsigned, because that needs a
 code-signing certificate nobody has bought yet.
 
 The Mac side is signed, and it involves two separate things that are easy to
-confuse. **Signing** puts your identity on the app: this came from Mackenzie
-Reed, and here is Apple's certificate saying Apple agrees that is a real
-person. **Notarisation** is a second step where you upload the finished app to
+confuse. **Signing** puts your identity on the app: this came from the project
+owner's Apple Developer identity, and here is Apple's certificate saying
+Apple agrees that is a real person. **Notarisation** is a second step where you upload the finished app to
 Apple, their automated scanner checks it for malware, and they hand back a
 "ticket" — a note saying this exact build passed. **Stapling** attaches that
 ticket to the file itself, so a Mac can see the app is approved without asking

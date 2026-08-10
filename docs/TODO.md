@@ -579,11 +579,6 @@ list, not a re-statement of the roadmap.
     tag is the way to rehearse it. Signing the Windows installer is still
     blocked on buying a certificate, so the installer ships unsigned and
     SmartScreen still warns.
-- **Website.** The release-notes page at `/releases` is built and empty: the notes
-    themselves are written by hand, one Markdown file per version under
-    `web/src/content/releases` (copy `_template.md`; see `web/README.md`). Until
-    the first one lands the page points at GitHub releases. Delete this line when
-    v0.1.0's notes are written.
 - **Phase 2 - Retime.** Flow interpolation policies; automatic beat snapping
     across edit/retime points ([04-RETIMING.md](04-RETIMING.md),
     [09-AUDIO.md](09-AUDIO.md)).
