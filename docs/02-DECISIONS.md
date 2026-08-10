@@ -7688,3 +7688,24 @@ one the moment the drag starts, holding the value already showing — nothing mo
 then has a key to carry, which is what makes it visible in the graph as it goes. An **unkeyed**
 property is drawn at its new value and gains no diamond: the drag is not planting a key, and a
 glyph would say it was.
+
+**K-334 · DECIDED · A press on a row's controls selects the row, and Alt is asked of the
+operating system.** Two more findings from the owner testing K-333, both of which turn earlier
+fixes from nearly-right to right.
+
+**Selection.** K-196 put selection on the property's *name*; every other press on a row — the
+stopwatch, the ◄ ◆ ► navigator, the value field — acted without choosing. That is why the graph
+still did not follow a value drag after K-333 wired the preview: the pane draws **selected**
+channels, the drag was on an unselected row, and the channel it should have moved was not on
+screen at all. Any unmodified pointer-down on a property row now selects it (replace, not
+toggle — `_selectOnEdit`'s behaviour), on pointer-DOWN so the channel exists before the drag's
+first tick. Modified presses keep the label's Ctrl/Shift semantics; group headings keep their
+pick-and-twirl click (K-300). Extends K-196.
+
+**Alt.** K-333's second reading (the unbounded zoom) was real and stays, but the first reading
+was righter than its fix: Alt genuinely sticks, and `syncKeyboardState` cannot unstick it
+because it re-asks the same embedding that missed the key-up. `altActuallyHeld()` asks the OS
+(`GetKeyState`) — only ever to clear a false positive, trusting the framework when it says Alt
+is up, and trusting simulated modifiers under `flutter test`. Used everywhere the graph gates
+behaviour on Alt: the wheel zoom, Alt-click key removal, and handle break/join — a stuck Alt was
+also silently deleting keys on plain clicks and flipping every handle drag to broken.

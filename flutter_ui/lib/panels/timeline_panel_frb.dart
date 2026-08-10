@@ -2923,35 +2923,53 @@ class _FoldRow extends StatelessWidget {
     final selected = selectedProperties.contains(path);
     final contains =
         !selected && selectedProperties.any((p) => isUnderPath(path, p));
-    // Selection rides on the property's *name* (docs/07 §4.3): the label
-    // taps inside the row widgets call [onSelectProperty]; a click on the
-    // rest of the row — its fields, its empty space — selects nothing.
-    return Container(
-      height: _rowHeight,
-      // Selected is the full surface; a row that merely *contains* the
-      // selection — the effect heading over a picked parameter — is the
-      // same at half strength, exactly as a layer row marks itself.
-      decoration: BoxDecoration(
-        color: selected
-            ? t.selectionFill
-            : contains
-                ? t.selectionFill.withValues(alpha: 0.45)
-                : null,
+    // Selection rides on the property's *name* (docs/07 §4.3) — and on any
+    // press that *acts* on the row (K-334): the stopwatch, the ◄ ◆ ►
+    // navigator, a value drag. Touching a row's controls IS choosing it, and
+    // before this a value drag on an unselected row moved a curve the graph
+    // was not even showing. Pointer-down rather than tap, so the selection —
+    // and with it the graph channel — exists before the first drag tick. A
+    // modified press is left to the label's own Ctrl/Shift semantics, and a
+    // group heading keeps its pick-and-twirl click (K-300).
+    return Listener(
+      onPointerDown: row is FoldGroupRow || row is FoldWaveformRow
+          ? null
+          : (_) {
+              final keys = HardwareKeyboard.instance;
+              if (keys.isControlPressed ||
+                  keys.isMetaPressed ||
+                  keys.isShiftPressed) {
+                return;
+              }
+              onEditProperty(path);
+            },
+      child: Container(
+        height: _rowHeight,
+        // Selected is the full surface; a row that merely *contains* the
+        // selection — the effect heading over a picked parameter — is the
+        // same at half strength, exactly as a layer row marks itself.
+        decoration: BoxDecoration(
+          color: selected
+              ? t.selectionFill
+              : contains
+                  ? t.selectionFill.withValues(alpha: 0.45)
+                  : null,
+        ),
+        padding: EdgeInsets.only(left: indent, right: 4),
+        // A locked layer's rows are read-only, not hidden (K-291): the numbers
+        // are still the document's and the curves still draw, but nothing on the
+        // row can be touched. The engine refuses the edit anyway — this is what
+        // stops the interface offering a gesture that would only be refused.
+        //
+        // A *group* row is exempt: twirling one open is navigation, not editing,
+        // and a locked layer that could not be looked inside would be worse than
+        // one that can.
+        child: locked && row is! FoldGroupRow && row is! FoldWaveformRow
+            ? AbsorbPointer(
+                child: Opacity(opacity: 0.5, child: _control(context)),
+              )
+            : _control(context),
       ),
-      padding: EdgeInsets.only(left: indent, right: 4),
-      // A locked layer's rows are read-only, not hidden (K-291): the numbers
-      // are still the document's and the curves still draw, but nothing on the
-      // row can be touched. The engine refuses the edit anyway — this is what
-      // stops the interface offering a gesture that would only be refused.
-      //
-      // A *group* row is exempt: twirling one open is navigation, not editing,
-      // and a locked layer that could not be looked inside would be worse than
-      // one that can.
-      child: locked && row is! FoldGroupRow && row is! FoldWaveformRow
-          ? AbsorbPointer(
-              child: Opacity(opacity: 0.5, child: _control(context)),
-            )
-          : _control(context),
     );
   }
 

@@ -17,8 +17,6 @@
 // model. The bridge is only crossed when a gesture commits — one write per
 // channel, batched per layer, so a drag stays one undo step per property.
 
-import 'dart:async';
-
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -32,6 +30,7 @@ import 'package:lumit_flutter/state/preview_throttle.dart';
 import 'package:provider/provider.dart';
 
 import '../l10n/strings.dart';
+import '../state/os_keys.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 import '../widgets/marquee.dart';
@@ -1201,14 +1200,6 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
 
   void _wheel(PointerScrollEvent event) {
     final keys = HardwareKeyboard.instance;
-    // **Windows eats the Alt key-up.** Alt is the system's menu-activation
-    // chord, so the release that ends an Alt+wheel zoom often never reaches
-    // the app: Flutter goes on believing Alt is held, every later wheel is
-    // read as another zoom, and plain, Shift and Ctrl scrolling all stay dead
-    // until the user presses Alt again and lets go somewhere the app can see
-    // it (K-333). Asking the platform what is *actually* held puts it right,
-    // and costs nothing on a wheel event.
-    if (keys.isAltPressed) unawaited(keys.syncKeyboardState());
     if (keys.isControlPressed || keys.isShiftPressed) {
       widget.onWheelTime(event, event.localPosition.dx);
       return;
@@ -1218,7 +1209,7 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
     final range = _manual[widget.lens] ??= _lastRange;
     final (lo, hi) = range;
     final span = hi - lo;
-    if (keys.isAltPressed) {
+    if (altActuallyHeld()) {
       // Zoom about the pointer: the value under the cursor stays put. The
       // anchor is clamped to the pane, because the pointer signal is reported
       // against a listener that is taller than the graph — an anchor from
@@ -1651,7 +1642,7 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
     final joined = side is BridgeSideInterp_Bezier &&
         other is BridgeSideInterp_Bezier &&
         (side.field0.speed - other.field0.speed).abs() < 1e-9;
-    final alt = HardwareKeyboard.instance.isAltPressed;
+    final alt = altActuallyHeld();
     final hasOther = _neighbour(keys, index, !isOut) != null;
     final speed = switch (side) {
       BridgeSideInterp_Bezier(:final field0) => field0.speed,
@@ -2219,7 +2210,7 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
               // gesture for *planting* a key on empty curve, where there is no
               // competing single click to slow down.
               onTap: () {
-                if (HardwareKeyboard.instance.isAltPressed || widget.penArmed) {
+                if (altActuallyHeld() || widget.penArmed) {
                   _removeKey(channel, i);
                   return;
                 }

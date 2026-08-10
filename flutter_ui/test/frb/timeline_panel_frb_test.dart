@@ -1644,6 +1644,38 @@ void main() {
           reason: "and so does the property's layer");
     });
 
+    /// **Any press that acts on a row selects it** (K-334): the stopwatch, the
+    /// navigator, a value drag. Touching a row's controls is choosing it — and
+    /// it is what puts the channel in the graph before a drag's first tick.
+    testWidgets('pressing a row control selects the row', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await mount(tester, p);
+      final id = layer.internallayerId;
+
+      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
+      await tester.pump();
+      await tester.tap(find.text('Transform'));
+      await tester.pump();
+
+      final t = LumitTheme.dark();
+      Color? fillOver(String text) {
+        final box = find.ancestor(
+            of: find.text(text), matching: find.byType(Container));
+        return (tester.widget<Container>(box.first).decoration as BoxDecoration)
+            .color;
+      }
+
+      expect(fillOver('Opacity'), isNull, reason: 'nothing picked to start');
+
+      // The stopwatch, not the label.
+      await tester.tap(find.byKey(const ValueKey<String>(
+          'kf-stopwatch-tl-tf-opacity')));
+      await tester.pump();
+      expect(fillOver('Opacity'), t.selectionFill,
+          reason: 'pressing the stopwatch chose the row');
+    });
+
     /// **Picking a layer on the picture reaches the Timeline** (K-275).
     ///
     /// The Viewer's click goes straight to the shell's selection
