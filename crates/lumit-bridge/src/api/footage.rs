@@ -107,6 +107,12 @@ impl FootageReference {
         let picked = PathBuf::from(&path);
         let proj = self.project()?;
 
+        // The files this relink points at, so the probe worker can be reading
+        // them while the user is still looking at the picker's afterglow: the
+        // panel asks every repointed item for its status the moment the change
+        // lands.
+        let mut repointed: Vec<PathBuf> = Vec::new();
+
         let ops = {
             let p = proj.read().map_err(|_| BridgeError::ReadFailed)?;
             let doc = p.store.snapshot();
@@ -155,6 +161,7 @@ impl FootageReference {
                     }
                 }
                 media.fingerprint = lumit_project::fingerprint_path(&candidate).ok();
+                repointed.push(candidate);
                 ops.push(lumit_core::Op::SetMediaRef {
                     id: other.id,
                     media: Box::new(media),
@@ -174,6 +181,13 @@ impl FootageReference {
             lumit_core::Op::Batch { ops }
         };
         proj.store.commit(op).map_err(BridgeError::OpError)?;
+        drop(proj);
+
+        // After the commit and outside the lock: queueing is a channel send,
+        // but the rule is the rule (docs/14 §3).
+        for path in &repointed {
+            crate::probe::request(path);
+        }
         Ok(())
     }
 
@@ -258,7 +272,7 @@ impl FootageReference {
         let Some(path) = Self::resolve_path(&proj, footage) else {
             return Ok(None);
         };
-        let Ok(info) = lumit_media::probe::probe(&path) else {
+        let Some(info) = crate::probe::ensure_probed(&path) else {
             return Ok(None);
         };
 
@@ -310,14 +324,21 @@ impl FootageReference {
                 // without one answers that it resolved, because reporting
                 // "missing" for a file plainly on disk would send the user to
                 // relink something that is not lost.
+                //
+                // Through the probe worker's cache, which is keyed by the
+                // file's own size and modification time — so this still asks
+                // *this* file, and a file that has been replaced or has gone
+                // away since the last question is read again rather than
+                // answered from memory.
                 #[cfg(not(feature = "media"))]
-                let probe: Result<(), ()> = Ok(());
+                let probed = true;
                 #[cfg(feature = "media")]
-                let probe = lumit_media::probe::probe(&path);
+                let probed = crate::probe::ensure_probed(&path).is_some();
 
-                match probe {
-                    Ok(_) => Ok(LumitMediaStatus::Ready),
-                    Err(_) => Ok(LumitMediaStatus::Missing),
+                if probed {
+                    Ok(LumitMediaStatus::Ready)
+                } else {
+                    Ok(LumitMediaStatus::Missing)
                 }
             }
             _ => Err(BridgeError::InvalidItem),

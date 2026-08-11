@@ -3464,6 +3464,45 @@ ordinary error rather than crashing Dart (CI's `no-panics-in-frb-api` job greps
 for the shortcuts that would break this), and a call that takes a handle *by
 value* empties the Dart side — never keep one you have handed over.
 
+### Reading what a file is, without stopping the editor
+
+Before Lumit can put a clip in a composition it has to know some plain facts about
+it: how big the picture is, how fast it runs, how long it lasts, whether it has
+sound. Finding out is called **probing**, and it is not a decode — it is opening
+the file far enough to read the label. It is still a file being opened, though,
+and off a slow drive or a network share that takes long enough to feel.
+
+It used to be felt, because it happened *while you waited*. Dropping footage into
+a composition asked the file its size and length on the very thread the interface
+was calling on, so the editor stopped until the answer came back.
+
+`crates/lumit-bridge/src/probe.rs` is the fix, and it has two halves:
+
+- **A worker thread that reads ahead.** Importing a file, opening a project or
+  relinking one says "this file will be asked about soon" and carries on
+  immediately. The worker opens each file in the background and writes what it
+  finds into a small shared notebook.
+- **A fallback that never guesses.** When something genuinely needs the answer
+  now — placing a layer, which has to know the media's real length — it looks in
+  the notebook, and if the answer is not there yet it reads the file itself,
+  there and then. That is the important half: the worker makes the answer *fast*,
+  it never changes what the answer *is*. A file nobody warmed gives exactly the
+  same layer as a file that was.
+
+The notebook entry is filed under the file's own size and modification time, so
+an answer can only ever be read back for the file it was taken from. Replace the
+file, move it, delete it, relink to a different one, and the entry no longer
+matches: it is read again. That is what lets the Project panel keep asking "is
+this media still there" honestly while paying for the real question only once.
+It is bounded (a few hundred files) and emptied when a project closes, which also
+cancels anything the worker still had queued for the project that is going away —
+the same "check whether your work is still wanted" habit the rest of the engine
+has.
+
+There is nothing to poll and nothing to drain. Every panel that shows a fact
+about a footage file already asks for it when it draws; the worker only decides
+whether that question costs a file open or a look-up.
+
 ### How the picture reaches the screen
 
 Video frames are far too large to pass through function calls sixty times a

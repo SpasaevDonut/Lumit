@@ -340,9 +340,23 @@ that read-back is gone.
     the boundary for each of them for each frame of playback. The transport is the
     same shape of question and gets the same answer: it reports what the build
     compiled to, thus the frontend reads it once and keeps it.
-- **Known synchronous seams** (probing on import, beat detection) still run on the
-calling thread and are honest follow-ups in [TODO.md](TODO.md); they function
-today, the conversion is a threading refactor, not a missing capability.
+- **Probing** runs on a worker thread inside `lumit-bridge::probe`, with a
+    synchronous fallback. `request` queues a file and returns at once — import,
+    project open and relink all queue — and `ensure_probed` is what every route
+    that needs a file's statistics calls: a look-up when the worker has been
+    there, a probe on the spot when it has not. The fallback is what makes this
+    a speed-up rather than a change of behaviour, and it is why the synchronous
+    ops that need a real answer (`add_footage_layer` above all) can stay
+    synchronous.
+    **Nothing is drained or polled**, deliberately. An answer is filed under the
+    file's own size and modification time, so it can only be read back for the
+    file it was taken from; a file that has been replaced or has gone away
+    re-stamps and is read again, which keeps `get_status` as honest as it was
+    when it opened the container every time. The cache is bounded and is emptied
+    when a project closes, which also cancels that project's queued work.
+- **Known synchronous seam**: beat detection still runs on the calling thread and
+is an honest follow-up in [TODO.md](TODO.md); it functions today, the conversion
+is a threading refactor, not a missing capability.
 
 The historical record of the port that produced this seam is frozen in
 [archive/flutter-port/](archive/flutter-port/).

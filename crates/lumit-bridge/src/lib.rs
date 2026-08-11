@@ -38,6 +38,10 @@
 //!   render times for the indicators (docs/13 §7.1).
 //! - [`peaks`] — the session's waveform peak cache: one multi-zoom summary per
 //!   audio file, so a lane redraws at any zoom without decoding again (K-280).
+//! - [`probe`] — the probe worker and the session's probe cache: footage is
+//!   read for its vital statistics on a background thread, with a synchronous
+//!   fallback so an op that needs the answer now still gets exactly the answer
+//!   the prober gives.
 //! - [`realtime`] — the adaptive playback tier decision core (K-171).
 //! - [`audio`] — comp audio playback and the sample clock (`media` feature).
 //! - [`export`] — the export runner and its progress reporting.
@@ -69,6 +73,7 @@ mod names;
 mod peaks;
 mod playback;
 mod prefetch;
+mod probe;
 mod profiling;
 mod realtime;
 mod render;

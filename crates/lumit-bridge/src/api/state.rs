@@ -527,6 +527,24 @@ impl LumitBridgeState {
         let project_dir = path.parent().unwrap_or_else(|| Path::new(""));
         let (_relinked, _missing) = lumit_project::resolve_all_media(&mut doc, project_dir, &[]);
 
+        // Every footage file this project holds, handed to the probe worker
+        // before a panel has had a chance to ask about any of them. Opening a
+        // project is exactly when a Project panel full of rows is about to ask
+        // each of its items what it is, and reading them in the background is
+        // the difference between a list that fills and one that appears.
+        // Queued after `resolve_all_media`, so the paths are the resolved ones,
+        // and before the registry lock is taken (docs/14 §3).
+        let warm: Vec<PathBuf> = doc
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                lumit_core::model::ProjectItem::Footage(f) if !f.media.absolute_path.is_empty() => {
+                    Some(PathBuf::from(&f.media.absolute_path))
+                }
+                _ => None,
+            })
+            .collect();
+
         let journal = journal_for(&doc);
         let store = DocumentStore::new(doc);
         let state = LumitBridgeState {
@@ -558,14 +576,24 @@ impl LumitBridgeState {
             }
             // The waveform summaries are keyed by file path and shared between
             // projects, so they are not any one project's to clear — but the
-            // project being closed is the reason they were built (K-280).
+            // project being closed is the reason they were built (K-280). The
+            // probe answers are shared the same way and go for the same reason,
+            // and clearing them also cancels whatever the probe worker still
+            // had queued for the project that is closing.
             crate::peaks::clear();
+            crate::probe::clear();
 
             // Clear any other project that is currently open
             // Will also prevent any existing references from working
             p.clear();
 
             p.insert(id, Arc::new(RwLock::new(state)));
+        }
+
+        // After the clear, so this project's requests are not the ones
+        // cancelled, and outside the registry lock.
+        for file in &warm {
+            crate::probe::request(file);
         }
 
         Ok(Some(ProjectReference::new(id)))

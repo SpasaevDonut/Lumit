@@ -529,12 +529,9 @@ entry above.
     the only coverage of that path.
 
 **Threading / platform:**
-- **Move footage probing off-thread** - synchronous today; needs a probe worker
-    drained on `lumit_bridge_snapshot` plus a synchronous `ensure_probed` fallback
-    for `convert_to_sequenced`, `trim_to_source_end`, `add_footage_layer` and
-    relink. **Beat detection is the same shape** - it runs on the calling thread
-    ([17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md) §Threading) and wants the same
-    worker treatment.
+- **Beat detection still runs on the calling thread**
+    ([17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md) §Threading) and wants the
+    same worker treatment footage probing has (`lumit-bridge/src/probe.rs`).
 - **Shared-texture producer/consumer fence** - only if a live run shows tearing;
     verify on the machine first.
 - **Linux packaging** - the Flutter Linux build needs its own packaging when a

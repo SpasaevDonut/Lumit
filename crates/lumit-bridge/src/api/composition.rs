@@ -1250,7 +1250,12 @@ impl CompositionReference {
             let Some(path) = FootageReference::resolve_path(state, footage) else {
                 return false;
             };
-            let Ok(info) = lumit_media::probe::probe(&path) else {
+            // `ensure_probed`, not the prober: the file was queued for the
+            // worker when it was imported, so this is normally a look-up. It
+            // probes here and now when it is not, because `add_footage_layer`
+            // is synchronous and must answer with what the file actually is
+            // rather than with a guess it would have to revise.
+            let Some(info) = crate::probe::ensure_probed(&path) else {
                 return false;
             };
             let Some(video) = info.video.as_ref() else {
@@ -1289,7 +1294,7 @@ impl CompositionReference {
             let Some(path) = FootageReference::resolve_path(state, footage) else {
                 return fallback;
             };
-            let Ok(info) = lumit_media::probe::probe(&path) else {
+            let Some(info) = crate::probe::ensure_probed(&path) else {
                 return fallback;
             };
             let frames = (info.duration_seconds * comp.frame_rate.fps()).round() as i64;
@@ -1300,7 +1305,7 @@ impl CompositionReference {
                 .unwrap_or(comp.duration.0);
             // Audio-only media has no video stream at all, so it takes the comp's
             // size — there is no natural size to anchor on.
-            let (nat_w, nat_h) = match info.video {
+            let (nat_w, nat_h) = match &info.video {
                 Some(v) if v.width > 0 && v.height > 0 => (f64::from(v.width), f64::from(v.height)),
                 _ => (f64::from(comp.width), f64::from(comp.height)),
             };
