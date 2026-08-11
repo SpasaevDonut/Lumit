@@ -124,12 +124,16 @@ fn run(rx: &Receiver<Job>) {
             // and the caller — if one is still waiting — is told why.
             Err(BridgeError::InvalidProject)
         };
-        // A caller that has gone away drops the receiver; that is not a
-        // failure, it is the answer being no longer wanted.
-        let _ = job.reply.send(answer);
+        // Off the queue *before* the answer goes out, so a caller that has its
+        // answer is a caller whose job is finished by every measure — the
+        // other order let a test (and a `MAX_QUEUED` check) see a job that had
+        // already replied still counted as waiting.
         if let Ok(mut held) = depth().lock() {
             *held = held.saturating_sub(1);
         }
+        // A caller that has gone away drops the receiver; that is not a
+        // failure, it is the answer being no longer wanted.
+        let _ = job.reply.send(answer);
     }
 }
 
