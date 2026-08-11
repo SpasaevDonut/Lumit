@@ -489,8 +489,12 @@ class UpdateService extends ChangeNotifier {
           // the size the release published is the best answer there is.
           final expected = total > 0 ? total : release.assetBytes;
           final fraction = expected > 0 ? received / expected : 0.0;
+          final was = (_progress * 100).round();
           _progress = fraction.clamp(0.0, 1.0).toDouble();
-          notifyListeners();
+          // Once per whole per cent, not once per HTTP chunk: every listener
+          // rebuild (the menu bar among them) is far dearer than a download
+          // chunk, and no progress bar reads finer than a per cent anyway.
+          if ((_progress * 100).round() != was) notifyListeners();
         },
         cancelled: () => _cancelRequested,
       );

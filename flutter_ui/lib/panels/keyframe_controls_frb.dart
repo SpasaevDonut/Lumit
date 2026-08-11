@@ -322,7 +322,10 @@ class KeyframeControlsFrb extends StatelessWidget {
         key: ValueKey<String>(keyName),
         frameless: true,
         small: true,
-        padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
+        // No vertical padding: the icon is 16 px and an Effect controls row
+        // gives its controls 18 (`fxRowHeight`), which the border then fills.
+        // Padding on top of that spilled the icon out of the row.
+        padding: const EdgeInsets.symmetric(horizontal: 3),
         onPressed: enabled ? onPressed : null,
         child: child,
       );

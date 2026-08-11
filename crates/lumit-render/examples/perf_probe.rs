@@ -50,7 +50,7 @@ fn layer(kind: LayerKind, name: &str) -> lumit_core::model::Layer {
     }
 }
 
-fn doc_with(kind: LayerKind, extra_item: Option<ProjectItem>) -> (Document, Uuid) {
+fn doc_with(kind: LayerKind, extra_item: Option<ProjectItem>) -> (std::sync::Arc<Document>, Uuid) {
     let mut doc = Document::new();
     if let Some(item) = extra_item {
         doc.items.push(item);
@@ -70,7 +70,7 @@ fn doc_with(kind: LayerKind, extra_item: Option<ProjectItem>) -> (Document, Uuid
         motion_blur: lumit_core::model::MotionBlur::default(),
         extra: serde_json::Map::new(),
     }));
-    (doc, comp_id)
+    (std::sync::Arc::new(doc), comp_id)
 }
 
 fn quality(scale: f32) -> Quality {
@@ -82,7 +82,13 @@ fn quality(scale: f32) -> Quality {
     }
 }
 
-fn run(label: &str, r: &mut HeadlessRenderer, doc: &Document, comp: Uuid, scale: f32) {
+fn run(
+    label: &str,
+    r: &mut HeadlessRenderer,
+    doc: &std::sync::Arc<Document>,
+    comp: Uuid,
+    scale: f32,
+) {
     let start = Instant::now();
     for f in 0..N {
         r.render_prepared(doc, comp, f, quality(scale), true, false)
@@ -93,7 +99,13 @@ fn run(label: &str, r: &mut HeadlessRenderer, doc: &Document, comp: Uuid, scale:
 }
 
 #[cfg(all(windows, feature = "shared-texture"))]
-fn run_present(label: &str, r: &mut HeadlessRenderer, doc: &Document, comp: Uuid, scale: f32) {
+fn run_present(
+    label: &str,
+    r: &mut HeadlessRenderer,
+    doc: &std::sync::Arc<Document>,
+    comp: Uuid,
+    scale: f32,
+) {
     let start = Instant::now();
     for f in 0..N {
         let p = r

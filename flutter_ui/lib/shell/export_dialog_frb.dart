@@ -26,6 +26,7 @@ import '../l10n/strings.dart';
 import '../state/file_dialogs.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
+import 'status_line_frb.dart';
 
 /// The delivery presets offered, with the empty string for a custom export —
 /// exactly the names the engine's own preset table knows, because a preset
@@ -470,6 +471,8 @@ class _ExportDialogState extends State<_ExportDialog> {
       setState(() => _refused = '$error');
       return;
     }
+    // Wake the status line, which polls only while an export is live.
+    statusLineExportStarted.value++;
 
     _poll?.cancel();
     _poll = Timer.periodic(_pollInterval, (_) => _refresh());

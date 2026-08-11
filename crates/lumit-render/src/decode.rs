@@ -558,7 +558,7 @@ fn flow_for(
 ) -> (lumit_flow::FlowField, lumit_flow::FlowField) {
     let key = (item, frame_a, frame_b, flow_settings_key(set));
     if let Some(hit) = flow_cache.get(&key) {
-        return (clone_field(&hit.fwd), clone_field(&hit.bwd));
+        return (hit.fwd.clone(), hit.bwd.clone());
     }
     let (fwd, bwd) = flow_engine
         .get_or_insert_with(|| flow_engine_for(gpu))
@@ -566,21 +566,11 @@ fn flow_for(
     flow_cache.insert(
         key,
         CachedFlow {
-            fwd: clone_field(&fwd),
-            bwd: clone_field(&bwd),
+            fwd: fwd.clone(),
+            bwd: bwd.clone(),
         },
     );
     (fwd, bwd)
-}
-
-fn clone_field(f: &lumit_flow::FlowField) -> lumit_flow::FlowField {
-    lumit_flow::FlowField {
-        w: f.w,
-        h: f.h,
-        u: f.u.clone(),
-        v: f.v.clone(),
-        valid: f.valid.clone(),
-    }
 }
 
 /// The flow engine for this pool: on the renderer's device when one was shared

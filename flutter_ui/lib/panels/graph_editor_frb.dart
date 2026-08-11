@@ -465,7 +465,7 @@ List<BridgeKeyframe> _withKeyAt(
 /// A key's position on the frame axis, fractional (a key may sit between
 /// frames with the magnet off).
 double _keyFrame(BridgeKeyframe key, double fps) =>
-    key.time.num / key.time.den.toDouble() * fps;
+    rationalSeconds(key.time) * fps;
 
 /// Set one or both sides of every selected key to [side] — the F9 family and
 /// the bottom bar's Linear / Bezier / Hold buttons. `inSide`/`outSide` pick
@@ -1067,8 +1067,7 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
 
   /// When and where the pane was last clicked, for spotting a double-click
   /// (see [_tapPane]).
-  DateTime? _lastPaneTap;
-  Offset? _lastPaneTapAt;
+  final _paneTap = DoubleTap();
   _HandleDrag? _handleDrag;
 
   /// The vertical range on screen while a gesture is in flight — held still
@@ -1416,21 +1415,12 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
     }
     // The second click of a double-click plants a key on the curve.
     //
-    // Counted here rather than with an `onDoubleTap` beside the pane's own
-    // gesture, because the pane reports taps through `onTapUp`, which claims
-    // the gesture arena the moment the first tap lifts — a double-tap
+    // Counted with [DoubleTap] rather than an `onDoubleTap` beside the pane's
+    // own gesture, because the pane reports taps through `onTapUp`, which
+    // claims the gesture arena the moment the first tap lifts — a double-tap
     // recogniser next to it never gets to form, so the gesture simply never
-    // fired. Two timestamps do the same job with none of the arena's opinions.
-    final now = DateTime.now();
-    final last = _lastPaneTap;
-    final lastAt = _lastPaneTapAt;
-    _lastPaneTap = now;
-    _lastPaneTapAt = local;
-    if (last != null &&
-        lastAt != null &&
-        now.difference(last) < kDoubleTapTimeout &&
-        (lastAt - local).distance < _keyGrab) {
-      _lastPaneTap = null;
+    // fired. Timestamps do the same job with none of the arena's opinions.
+    if (_paneTap.tap(at: local, slop: _keyGrab)) {
       _addKeyAt(local, range, height);
       return;
     }

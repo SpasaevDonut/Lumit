@@ -39,6 +39,7 @@ import '../state/dock.dart';
 import 'fx_console_frb.dart';
 import 'menu_bar_frb.dart';
 import 'precompose_dialog_frb.dart';
+import 'status_line_frb.dart';
 
 /// What the ring is about, drawn in its middle so the context is never a
 /// guess: the picked effect's name, the selected layer's, the composition's,
@@ -301,8 +302,8 @@ RadialEntry _addToCompEntry(
       case ItemReference_Composition(:final field0):
         // A comp cannot nest into itself; the slice says so up front rather
         // than no-opping after the flick.
-        enabled = comp != null &&
-            !item.equals(item: ItemReference.composition(comp));
+        enabled =
+            comp != null && !item.equals(item: ItemReference.composition(comp));
         run = () {
           try {
             comp!.addPrecompLayer(comp: field0);
@@ -453,6 +454,8 @@ void saveSnapshotFrb(LumitState app, LumitUiState ui) {
       ),
       path: path,
     );
+    // Wake the status line, which polls only while an export is live.
+    statusLineExportStarted.value++;
   } on Object {
     // An export already running is the everyday refusal, and a calm one: the
     // status line is already showing that export's progress, which answers

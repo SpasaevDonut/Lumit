@@ -19,11 +19,8 @@ pub mod comp {
 
     /// get the current composition
     pub fn comp(context: NativeCallContext) -> Comp {
-        let context = ExpressionContext::from_call(&context);
-
-        match context.comp {
-            Some(comp) => Comp { id: Some(comp) },
-            None => Comp { id: None },
+        Comp {
+            id: ExpressionContext::from_call(&context).comp,
         }
     }
 
@@ -31,13 +28,8 @@ pub mod comp {
     #[rhai_fn(get = "name")]
     pub fn name(context: NativeCallContext, this: &mut Comp) -> String {
         let context = ExpressionContext::from_call(&context);
-
-        if let Some(id) = this.id {
-            if let Some(comp) = context.document.comp(id) {
-                return comp.name.clone();
-            }
-        }
-
-        "Invalid Comp Reference".into()
+        this.id
+            .and_then(|id| context.document.comp(id))
+            .map_or_else(|| "Invalid Comp Reference".into(), |c| c.name.clone())
     }
 }

@@ -13,10 +13,12 @@ import 'package:flutter_test/flutter_test.dart';
 /// Tooltips that are allowed to run long, and why.
 ///
 /// docs/07-UI-SPEC.md §13.2 reserves the sentence-length "rich" tooltip for
-/// concepts with Lumit-specific behaviour. These six are the whole list: the
+/// concepts with Lumit-specific behaviour. These eight are the whole list: the
 /// cache meters, whose tooltips carry live numbers and warn that clicking
-/// throws work away, and the two playback modes, which are the adaptive
-/// degradation the spec names outright. Anything else must fit in five words.
+/// throws work away, the two playback modes, which are the adaptive
+/// degradation the spec names outright, and the Flow switch, which says what
+/// frame synthesis will do before it is turned on (K-088). Anything else must
+/// fit in five words.
 const _richTooltips = {
   'tipCacheEmpty',
   'tipCacheRam',
@@ -24,6 +26,8 @@ const _richTooltips = {
   'tipCacheDisk',
   'tipPlaybackAdaptive',
   'tipPlaybackEveryFrame',
+  'tipFlowOn',
+  'tipFlowOff',
 };
 
 /// docs/01-GLOSSARY.md §9, as it applies to what the user reads. `render` is

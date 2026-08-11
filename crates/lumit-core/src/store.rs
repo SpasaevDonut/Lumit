@@ -7,7 +7,7 @@
 
 use crate::model::Document;
 use crate::ops::{apply, Op, OpError};
-use arc_swap::ArcSwap;
+use arc_swap::{ArcSwap, ArcSwapOption};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -54,14 +54,14 @@ type ChangeCallback = Arc<dyn Fn(DocumentChange) + Send + Sync>;
 pub struct DocumentStore {
     current: ArcSwap<Document>,
     journal: Mutex<Journal>,
-    /// The change observer. Behind a `Mutex` rather than owned outright so it
-    /// can be attached to a store that is **already shared** (K-273): a
-    /// `&mut self` setter meant the observer had to be registered before the
-    /// store went into its `Arc`, which is an ordering rule no type enforced
-    /// and one every caller had to remember. The lock is only ever held to
-    /// clone the `Arc` out or to swap it — never across the callback itself,
-    /// which crosses into the frontend (docs/14 §3: no locks across FFI).
-    on_change: Mutex<Option<ChangeCallback>>,
+    /// The change observer. Behind an `ArcSwapOption` rather than owned
+    /// outright so it can be attached to a store that is **already shared**
+    /// (K-273): a `&mut self` setter meant the observer had to be registered
+    /// before the store went into its `Arc`, which is an ordering rule no type
+    /// enforced and one every caller had to remember. Reading and swapping are
+    /// lock-free, so the callback — which crosses into the frontend — can
+    /// never run under a lock (docs/14 §3: no locks across FFI).
+    on_change: ArcSwapOption<ChangeCallback>,
     /// Bumped once per published snapshot (commit, undo, redo, replace).
     /// A reader that remembers the number it last saw can ask "has anything
     /// changed?" for the cost of one atomic load — the frontend's read model
@@ -74,7 +74,7 @@ impl DocumentStore {
         Self {
             current: ArcSwap::from_pointee(doc),
             journal: Mutex::new(Journal::default()),
-            on_change: Mutex::new(None),
+            on_change: ArcSwapOption::empty(),
             revision: std::sync::atomic::AtomicU64::new(0),
         }
     }
@@ -100,7 +100,7 @@ impl DocumentStore {
     /// store, which is impossible if it has to be attached first (K-273).
     /// Registering a second observer replaces the first; there is one.
     pub fn set_callback(&self, callback: ChangeCallback) {
-        *self.on_change.lock() = Some(callback);
+        self.on_change.store(Some(Arc::new(callback)));
     }
 
     /// Tell the observer, if there is one. Callers must drop the journal lock
@@ -109,12 +109,10 @@ impl DocumentStore {
     /// across FFI. Dropping it also lets the observer re-enter the store —
     /// notifying under the lock would deadlock on its first `commit`.
     fn notify(&self, op: Op) {
-        // Cloned out under the lock and called after it is released: the
-        // callback re-enters the store (the bridge commits from inside it) and
-        // crosses FFI, and either under the lock would be a deadlock or a
-        // rule broken.
-        let callback = self.on_change.lock().clone();
-        if let Some(callback) = callback {
+        // A lock-free read: the callback re-enters the store (the bridge
+        // commits from inside it) and crosses FFI, so it must never run under
+        // any lock.
+        if let Some(callback) = self.on_change.load_full() {
             callback(DocumentChange { op });
         }
     }

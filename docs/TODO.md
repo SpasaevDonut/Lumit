@@ -365,17 +365,12 @@ alone - no mtime, no LRU bound (§4).
 code (`flutter_ui/lib/l10n/`, `crowdin.yml`); what is left is other people's turn and
 three small gaps:
 
-- **Confirm the Crowdin language settings took, on the next pull (K-311).** The project
-  exists and the first pull has landed: German, Kazakh, Ukrainian, Simplified and
-  Traditional Chinese. That pull also reddened main twice over, and both causes were
-  settings rather than code: Crowdin wrote its own `zh-CN` into `@@locale`, which Flutter's
-  generator refuses when it disagrees with the file name, and en-US was on as a target
-  language, which lands a copy of the British source (K-303). Both have since been changed
-  on Crowdin — the language mapping now sends `zh` and `zh_Hant`, and en-US is off — but
-  neither has been through a sync yet. What is owed is the check: after the next
-  `crowdin pull translations`, `test/l10n/arb_test.dart` passing is the proof. If the
-  `@@locale` values come back hyphenated anyway, Crowdin ignores its mapping for file
-  content and the fix moves into CI, as a step on the sync branch that rewrites the key.
+- **Confirm the Crowdin language settings took, on the next pull (K-311).** The first
+  pull landed five languages and reddened main twice, both from Crowdin settings, both
+  since corrected there (the `zh`/`zh_Hant` mapping, en-US off) but not yet synced.
+  After the next `crowdin pull translations`, `test/l10n/arb_test.dart` passing is the
+  proof; if `@@locale` comes back hyphenated anyway, the fix moves into CI as a
+  rewrite step on the sync branch (K-303 has the history).
 - **The two numbered shortcut labels stay English.** `lumit-keymap` builds "Add marker
   {n} at the playhead" and "Go to marker {n}" with `format!`, so they are not literals
   the lookup table can hold (`lib/l10n/engine_labels.dart`). Give the bridge the number
@@ -385,23 +380,14 @@ three small gaps:
   step once the project exists.
 
 **Lens flare follow-ups (K-256..K-264, [impl/lens-flare.md](impl/lens-flare.md))** — the
-shipped core is docs/08 §3.27; its performance items sit in **Now** above. Still owed,
-each stable against the shipped parameters: the
-**Lights source wiring** (the mode is in the
-dropdown and resolves as Manual until light layers can act as flare sources); an
-**image aperture** file parameter; the **lens
-designer** (a window building a prescription element by element with a live lens
-diagram — the `lens_file` parameter landed in K-264, so the designer's output has a
-place to go); an **Occlusion layer** reference fading the flare when the light is
-covered; **adaptive grid refinement at vignette folds** — the K-264/K-265 known limits: a
-mild ripple on hard vignetted edges of extreme-defocus ghosts at Normal, and the
-toothed fold corona on a zoom shot past its native stop (K-265 lists the six
-ablations already ruled out — do not re-chase it with guards); refinement at the
-folds is the real cure for both. The panel side owes the pair row's dropper to
-**Transform's px@comp pairs** (the pixel-writing pick exists since K-260 — the flare's
-Light uses it; Transform's rows just aren't wired to it), **Radial blur's centre
-migration** from the grandfathered % of frame to px@comp (K-260 convention), and one-op
-writes for a paired keyframe toggle (two ops today).
+shipped core is docs/08 §3.27; its performance items sit in **Now** above. Still owed:
+the **Lights source wiring**; an **image aperture** file parameter; the **lens
+designer** (`lens_file` landed in K-264, so its output has a place to go); an
+**Occlusion layer** reference; **adaptive grid refinement at vignette folds**, the real
+cure for both K-264/K-265 known limits (K-265 lists the six ablations already ruled
+out — do not re-chase them with guards). Panel side: the pair row's dropper on
+**Transform's px@comp pairs** (the pick exists since K-260); **Radial blur's centre
+migration** to px@comp (K-260); one-op writes for a paired keyframe toggle.
 
 **The stale-fd race on a Linux Viewer resize** (`lumit-render/src/headless.rs`'s
 `shared_dmabuf` re-create, with `lumit-gpu/src/shared_linux.rs`'s `Drop`). The
@@ -434,6 +420,30 @@ are the reference for behaviour, not wiring targets):
 fields for the selected layer, the Viewer's missing-file probe, and the
 marker/work-area reads on a Timeline rebuild. Fold any into
 `BridgeLayerInfo`/`BridgeCompModel` if they show up in the budget ranking.
+
+**Thin-view debts the 2026-08-10 audit left for engine API** - each is Dart
+doing the engine's job and each wants one bridge call:
+- `viewer_camera.dart` re-derives the renderer's Ry·Rx·Rz basis and picks the
+    active camera itself; wants `comp.activeCameraPose(frame)`.
+- `viewer_type.dart` mirrors the engine's text-width estimate (caret, anchor,
+    gizmo all share it); wants a `layer.textMetrics` read.
+- `viewer_gizmo.dart`'s `_pathBeingEdited` parses `<layer>/masks/<mask>/path`
+    strings in a widget; wants the selection model to expose the pair.
+- The shape tool's Ctrl+Z pops draft points locally (a second undo meaning);
+    wants engine-side draft ops so undo stays the document's.
+- `fx_console_context.dart`'s `_keyTransformGroup` builds and sorts keyframe
+    lists in Dart, two bridge calls per comparison; wants a held-keyframe write
+    op on the layer.
+- `FlowRowsFrb.build` (Effect controls) still reads four flow getters in
+    build; same class of defect the audit cleared from the Timeline's rows.
+- `theme_tokens.dart`'s `_with` restatement wants `LumitTheme.copyWith` in
+    `theme.dart`, whose four-field shape is documented as deliberate - an
+    owner call, not a mechanical fold.
+- `headless.rs`'s four per-platform present-target-pool bodies share one dance;
+    fold them on a machine that compiles the macOS/Linux paths.
+- `ExpressionContext::comp_time` is raw `f64` across an engine boundary
+    (docs/14 typed time); rhai's seam is f64 regardless, so the typed carry is
+    a three-file ripple best taken while `fx/resolved.rs` is quiet.
 
 **`LumitAppNew` rebuilds the whole app on any `LumitUiState.notifyListeners`** (a
 `ListenableBuilder` above everything), and un-scoped document changes do the same
@@ -468,10 +478,11 @@ move** (§9 - the toolchain pin landed in K-272, the edition did not); the
 `indexing_slicing` / `arithmetic_side_effects` clippy denies after a hot-path sweep (§4);
 `clippy::pedantic` with curated allows (§7); the golden-frame EXR export corpus (§6).
 
-**Three unmaintained dependencies are deliberately ignored in `deny.toml`** (K-272).
+**Four unmaintained dependencies are deliberately ignored in `deny.toml`** (K-272).
 `ttf-parser` (via fontdue, via `lumit-text`) is the one with a real successor: moving
 the rasteriser to `skrifa` is its own piece of work with its own glyph-metric tests.
-`bincode` 1.x and `paste` leave when the dependencies that pull them update.
+`bincode` 1.x, `paste` and `smartstring` (via rhai, retired 2026-08-11 in favour of
+compact_str/smol_str) leave when the dependencies that pull them update.
 
 **A genuinely FFmpeg-free build is not possible yet (K-273).** `lumit_bridge
 --no-default-features` compiles the bridge's own decode paths out, but `lumit-render` and
@@ -579,11 +590,6 @@ list, not a re-statement of the roadmap.
     tag is the way to rehearse it. Signing the Windows installer is still
     blocked on buying a certificate, so the installer ships unsigned and
     SmartScreen still warns.
-- **Website.** The release-notes page at `/releases` is built and empty: the notes
-    themselves are written by hand, one Markdown file per version under
-    `web/src/content/releases` (copy `_template.md`; see `web/README.md`). Until
-    the first one lands the page points at GitHub releases. Delete this line when
-    v0.1.0's notes are written.
 - **Phase 2 - Retime.** Flow interpolation policies; automatic beat snapping
     across edit/retime points ([04-RETIMING.md](04-RETIMING.md),
     [09-AUDIO.md](09-AUDIO.md)).

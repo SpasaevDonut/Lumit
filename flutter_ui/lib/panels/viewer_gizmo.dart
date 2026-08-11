@@ -25,7 +25,6 @@
 
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -41,6 +40,8 @@ import '../state/preview_throttle.dart';
 import '../widgets/controls.dart';
 import 'viewer_anchor.dart';
 import 'viewer_layer_map.dart';
+import 'viewer_shapes.dart' show bezierPath;
+import 'viewer_tool_cursor.dart' show paintAnchorMark, paintMarquee;
 import 'layer_fold_frb.dart';
 
 /// How big a scale handle is drawn, and how far from it a press still counts.
@@ -191,46 +192,40 @@ class LayerBox {
   Offset shapePoint(double x, double y) =>
       map.toScreen(x - artOrigin.dx, y - artOrigin.dy);
 
-  /// The same box with the layer scaled to [sxPercent] / [syPercent] — the
-  /// shape a scale in flight has, before it is committed (K-230). Negative is
-  /// allowed and means what it says: the layer is turned over.
-  LayerBox scaledTo(double sxPercent, double syPercent) => LayerBox(
+  /// The same box with some of its view-state replaced — what the in-flight
+  /// gestures below are built from. Everything not named is carried, so a copy
+  /// can never silently drop a field the way the hand-rolled rebuilds did: a
+  /// shape layer's art vanished from the overlay during every scale, turn and
+  /// pivot, because [shapeContents] and [artOrigin] were never copied.
+  LayerBox copyWith({ViewerLayerMap? map, double? rotationDegrees}) => LayerBox(
         layer: layer,
         id: id,
-        map: map.scaledTo(sxPercent, syPercent),
+        map: map ?? this.map,
         bounds: bounds,
         draggable: draggable,
         scalable: scalable,
-        rotationDegrees: rotationDegrees,
+        rotationDegrees: rotationDegrees ?? this.rotationDegrees,
         masks: masks,
+        shapeContents: shapeContents,
+        artOrigin: artOrigin,
       );
+
+  /// The same box with the layer scaled to [sxPercent] / [syPercent] — the
+  /// shape a scale in flight has, before it is committed (K-230). Negative is
+  /// allowed and means what it says: the layer is turned over.
+  LayerBox scaledTo(double sxPercent, double syPercent) =>
+      copyWith(map: map.scaledTo(sxPercent, syPercent));
 
   /// The same box with the pivot moved and Position compensating — the shape a
   /// pan-behind in flight has (K-235). The box does not move; the anchor mark
   /// on it does, which is the whole of what panning behind looks like.
-  LayerBox pivotedAt(Offset anchor, Offset position) => LayerBox(
-        layer: layer,
-        id: id,
-        map: map.pivotedAt(anchor.dx, anchor.dy, position: position),
-        bounds: bounds,
-        draggable: draggable,
-        scalable: scalable,
-        rotationDegrees: rotationDegrees,
-        masks: masks,
-      );
+  LayerBox pivotedAt(Offset anchor, Offset position) =>
+      copyWith(map: map.pivotedAt(anchor.dx, anchor.dy, position: position));
 
   /// The same box with the layer turned to [degrees] — the shape a rotation in
   /// flight has, before it is committed (K-230).
-  LayerBox turnedTo(double degrees) => LayerBox(
-        layer: layer,
-        id: id,
-        map: map.turnedTo(degrees),
-        bounds: bounds,
-        draggable: draggable,
-        scalable: scalable,
-        rotationDegrees: degrees,
-        masks: masks,
-      );
+  LayerBox turnedTo(double degrees) =>
+      copyWith(map: map.turnedTo(degrees), rotationDegrees: degrees);
 
   /// The box's four corners in screen space, clockwise from the layer's own
   /// top-left. A rotated layer therefore gives a rotated quad, not an
@@ -841,7 +836,7 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
         case _GizmoDrag.anchor:
           final anchor = _anchorNow();
           if (anchor != null) {
-            return box.pivotedAt(anchor, _panBehindFor(box, anchor));
+            return box.pivotedAt(anchor, panBehindFor(box, anchor));
           }
         default:
           break;
@@ -1062,7 +1057,7 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
 
   void _sendMovePreview(LayerBox box) {
     final (x, y) = _movedPosition(box);
-    _sendPreview(box, (tf) => transformWithPosition(tf, x, y));
+    _sendPreview(box, (tf) => transformWith(tf, positionX: x, positionY: y));
   }
 
   /// Ask for the provisional picture, and never let a refusal end the gesture.
@@ -1136,8 +1131,8 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
     final box = _acting;
     final scale = _scaleNow();
     if (box == null || scale == null) return;
-    _throttle.request(() =>
-        _sendPreview(box, (tf) => transformWithScale(tf, scale.$1, scale.$2)));
+    _throttle.request(() => _sendPreview(
+        box, (tf) => transformWith(tf, scaleX: scale.$1, scaleY: scale.$2)));
   }
 
   void _commitScale() {
@@ -1177,7 +1172,7 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
     final rotation = _rotationNow();
     if (box == null || rotation == null) return;
     _throttle.request(
-        () => _sendPreview(box, (tf) => transformWithRotation(tf, rotation)));
+        () => _sendPreview(box, (tf) => transformWith(tf, rotation: rotation)));
   }
 
   void _commitRotate() {
@@ -1194,51 +1189,29 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
 
   /// Where the anchor is being dragged to, in layer space, with the same two
   /// modifiers the Anchor point tool has (K-220): Shift locks the drag to one
-  /// screen axis, Ctrl/Cmd snaps to the layer's own key points.
+  /// screen axis, Ctrl/Cmd snaps to the layer's own key points. The rules are
+  /// [wantedAnchorAt], shared with that tool, so the two cannot drift apart.
   Offset? _anchorNow() {
     final box = _acting;
     if (box == null) return null;
-    var delta = _pointer - _origin;
-    if (HardwareKeyboard.instance.isShiftPressed) {
-      delta = constrainToAxis(delta);
-    }
     final started = box.map.toScreen(box.map.ax, box.map.ay);
-    final wanted = box.map.layerOf(started + delta);
-    final snapping = defaultTargetPlatform == TargetPlatform.macOS
-        ? HardwareKeyboard.instance.isMetaPressed
-        : HardwareKeyboard.instance.isControlPressed;
-    return snapping ? snapAnchor(wanted, box) : wanted;
+    return wantedAnchorAt(box, started + (_pointer - _origin),
+        lockFrom: started);
   }
-
-  /// The Position that keeps the picture still while the anchor moves.
-  Offset _panBehindFor(LayerBox box, Offset anchor) => panBehindPosition(
-        oldAnchor: Offset(box.map.ax, box.map.ay),
-        newAnchor: anchor,
-        position: Offset(box.map.px, box.map.py),
-        scaleXPercent: box.map.sx * 100,
-        scaleYPercent: box.map.sy * 100,
-        rotationDegrees: box.rotationDegrees,
-      );
 
   void _previewAnchor() {
     final box = _acting;
     final anchor = _anchorNow();
     if (box == null || anchor == null) return;
-    final position = _panBehindFor(box, anchor);
+    final position = panBehindFor(box, anchor);
     _throttle.request(() => _sendPreview(
           box,
-          (tf) => BridgeTransform(
-            anchorX: BridgeScalar.static_(anchor.dx),
-            anchorY: BridgeScalar.static_(anchor.dy),
-            positionX: BridgeScalar.static_(position.dx),
-            positionY: BridgeScalar.static_(position.dy),
-            positionZ: tf.positionZ,
-            scaleX: tf.scaleX,
-            scaleY: tf.scaleY,
-            rotation: tf.rotation,
-            rotationX: tf.rotationX,
-            rotationY: tf.rotationY,
-            opacity: tf.opacity,
+          (tf) => transformWith(
+            tf,
+            anchorX: anchor.dx,
+            anchorY: anchor.dy,
+            positionX: position.dx,
+            positionY: position.dy,
           ),
         ));
   }
@@ -1247,7 +1220,7 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
     final box = _acting;
     final anchor = _anchorNow();
     if (box == null || anchor == null || _delta == Offset.zero) return;
-    final position = _panBehindFor(box, anchor);
+    final position = panBehindFor(box, anchor);
     try {
       // One op for the four properties: half of this edit moves the picture,
       // which is the one thing panning behind promises not to do (K-220).
@@ -1364,10 +1337,10 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
           contents: contents,
           transform: shift == Offset.zero
               ? null
-              : transformWithPosition(
+              : transformWith(
                   box.layer.getTransform(),
-                  box.map.px + shift.dx,
-                  box.map.py + shift.dy,
+                  positionX: box.map.px + shift.dx,
+                  positionY: box.map.py + shift.dy,
                 ),
         );
         return;
@@ -1427,55 +1400,35 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
   }
 }
 
-/// The transform with one property replaced — the shape the preview call wants,
-/// spelled out three times because the generated struct has no copy-with.
-///
-/// Public because the Rotation tool (viewer_rotate.dart) writes through the same
-/// preview path: one copy of "the transform, but turned" for both.
-BridgeTransform transformWithPosition(BridgeTransform tf, double x, double y) =>
-    BridgeTransform(
-      anchorX: tf.anchorX,
-      anchorY: tf.anchorY,
-      positionX: BridgeScalar.static_(x),
-      positionY: BridgeScalar.static_(y),
-      positionZ: tf.positionZ,
-      scaleX: tf.scaleX,
-      scaleY: tf.scaleY,
-      rotation: tf.rotation,
-      rotationX: tf.rotationX,
-      rotationY: tf.rotationY,
-      opacity: tf.opacity,
-    );
-
-BridgeTransform transformWithScale(BridgeTransform tf, double sx, double sy) =>
-    BridgeTransform(
-      anchorX: tf.anchorX,
-      anchorY: tf.anchorY,
-      positionX: tf.positionX,
-      positionY: tf.positionY,
-      positionZ: tf.positionZ,
-      scaleX: BridgeScalar.static_(sx),
-      scaleY: BridgeScalar.static_(sy),
-      rotation: tf.rotation,
-      rotationX: tf.rotationX,
-      rotationY: tf.rotationY,
-      opacity: tf.opacity,
-    );
-
-BridgeTransform transformWithRotation(BridgeTransform tf, double degrees) =>
-    BridgeTransform(
-      anchorX: tf.anchorX,
-      anchorY: tf.anchorY,
-      positionX: tf.positionX,
-      positionY: tf.positionY,
-      positionZ: tf.positionZ,
-      scaleX: tf.scaleX,
-      scaleY: tf.scaleY,
-      rotation: BridgeScalar.static_(degrees),
-      rotationX: tf.rotationX,
-      rotationY: tf.rotationY,
-      opacity: tf.opacity,
-    );
+/// [tf] with the named channels replaced by static values — the copy-with the
+/// generated struct does not have, shared by every preview that patches a
+/// transform (this gizmo, the Rotation tool and the Anchor point tool alike).
+BridgeTransform transformWith(
+  BridgeTransform tf, {
+  double? anchorX,
+  double? anchorY,
+  double? positionX,
+  double? positionY,
+  double? scaleX,
+  double? scaleY,
+  double? rotation,
+}) {
+  BridgeScalar put(double? value, BridgeScalar keep) =>
+      value == null ? keep : BridgeScalar.static_(value);
+  return BridgeTransform(
+    anchorX: put(anchorX, tf.anchorX),
+    anchorY: put(anchorY, tf.anchorY),
+    positionX: put(positionX, tf.positionX),
+    positionY: put(positionY, tf.positionY),
+    positionZ: tf.positionZ,
+    scaleX: put(scaleX, tf.scaleX),
+    scaleY: put(scaleY, tf.scaleY),
+    rotation: put(rotation, tf.rotation),
+    rotationX: tf.rotationX,
+    rotationY: tf.rotationY,
+    opacity: tf.opacity,
+  );
+}
 
 /// Everything the gizmo draws: the selected boxes, the hovered one, the
 /// handles, and the marquee.
@@ -1548,7 +1501,8 @@ class _GizmoPainter extends CustomPainter {
       // The pivot, which is now a handle in its own right (K-221): drawn as
       // the anchor's ring-and-cross rather than a square, so it never reads as
       // a ninth scale handle.
-      _anchor(canvas, handles.handleAt(GizmoHandle.anchor) + moved);
+      paintAnchorMark(
+          canvas, handles.handleAt(GizmoHandle.anchor) + moved, accent);
     }
 
     for (final box in maskedBoxes) {
@@ -1578,20 +1532,11 @@ class _GizmoPainter extends CustomPainter {
     }
 
     for (final anchor in anchors) {
-      _anchor(canvas, anchor + moved);
+      paintAnchorMark(canvas, anchor + moved, accent);
     }
 
     final band = marquee;
-    if (band != null) {
-      canvas.drawRect(band, Paint()..color = accent.withValues(alpha: 0.12));
-      canvas.drawRect(
-        band,
-        Paint()
-          ..color = accent
-          ..strokeWidth = 1
-          ..style = PaintingStyle.stroke,
-      );
-    }
+    if (band != null) paintMarquee(canvas, band, accent);
   }
 
   void _outline(Canvas canvas, List<Offset> corners, Color colour) {
@@ -1659,19 +1604,14 @@ class _GizmoPainter extends CustomPainter {
       return screen(v.x + v.tanInX, v.y + v.tanInY) + moved + nudgeFor(i);
     }
 
-    final path = Path()..moveTo(at(0).dx, at(0).dy);
-    for (var i = 1; i < vertices.length; i++) {
-      path.cubicTo(out(i - 1).dx, out(i - 1).dy, into(i).dx, into(i).dy,
-          at(i).dx, at(i).dy);
-    }
-    if (closed && vertices.length > 2) {
-      final last = vertices.length - 1;
-      path.cubicTo(out(last).dx, out(last).dy, into(0).dx, into(0).dy, at(0).dx,
-          at(0).dy);
-      path.close();
-    }
     canvas.drawPath(
-      path,
+      bezierPath(
+        count: vertices.length,
+        at: at,
+        tangentOut: out,
+        tangentIn: into,
+        closed: closed,
+      ),
       Paint()
         ..color = accent
         ..style = PaintingStyle.stroke
@@ -1695,18 +1635,6 @@ class _GizmoPainter extends CustomPainter {
         );
       }
     }
-  }
-
-  /// The anchor point: a small ring with a cross through it — the same mark the
-  /// anchor-point tool's icon carries, so the two read as one idea.
-  void _anchor(Canvas canvas, Offset at) {
-    final paint = Paint()
-      ..color = accent
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1;
-    canvas.drawCircle(at, 4, paint);
-    canvas.drawLine(at - const Offset(8, 0), at + const Offset(8, 0), paint);
-    canvas.drawLine(at - const Offset(0, 8), at + const Offset(0, 8), paint);
   }
 
   void _knob(Canvas canvas, Offset at) {

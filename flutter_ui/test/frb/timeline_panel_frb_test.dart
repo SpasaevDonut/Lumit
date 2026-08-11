@@ -434,12 +434,8 @@ void main() {
       );
       (p.uiState as LumitUiState).model.refresh();
       await mount(tester, p);
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
-      await tester.pumpAndSettle();
-      await tester.tap(find
-          .byKey(ValueKey<String>('tl-group-${layer.internallayerId}/masks')));
-      await tester.pumpAndSettle();
+      await openFold(tester, layer.internallayerId,
+          groupPath: 'masks', settle: true);
       expect(find.text(name), findsOneWidget);
     }
 
@@ -1075,12 +1071,8 @@ void main() {
       );
       p.uiState.model.refresh();
       await mount(tester, p);
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
-      await tester.pumpAndSettle();
-      await tester.tap(find
-          .byKey(ValueKey<String>('tl-group-${layer.internallayerId}/paint')));
-      await tester.pumpAndSettle();
+      await openFold(tester, layer.internallayerId,
+          groupPath: 'paint', settle: true);
 
       final id = layer.getPaint().single.id;
       final field = find.byKey(ValueKey<String>('tl-stroke-opacity-$id'));
@@ -1130,12 +1122,8 @@ void main() {
       );
       p.uiState.model.refresh();
       await mount(tester, p);
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
-      await tester.pumpAndSettle();
-      await tester.tap(find
-          .byKey(ValueKey<String>('tl-group-${layer.internallayerId}/paint')));
-      await tester.pumpAndSettle();
+      await openFold(tester, layer.internallayerId,
+          groupPath: 'paint', settle: true);
 
       final id = layer.getPaint().single.id;
       final field = find.byKey(ValueKey<String>('tl-stroke-opacity-$id'));
@@ -1192,9 +1180,7 @@ void main() {
       p.uiState.model.refresh();
       await mount(tester, p);
 
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
-      await tester.pumpAndSettle();
+      await openFold(tester, layer.internallayerId, settle: true);
       expect(find.text('Contents'), findsOneWidget);
 
       await tester.tap(find.byKey(
@@ -1239,12 +1225,8 @@ void main() {
       );
       p.uiState.model.refresh();
       await mount(tester, p);
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(
-          ValueKey<String>('tl-group-${layer.internallayerId}/contents')));
-      await tester.pumpAndSettle();
+      await openFold(tester, layer.internallayerId,
+          groupPath: 'contents', settle: true);
 
       final id = layer.getShapeContents().single.id;
       final name = find.byKey(ValueKey<String>('tl-shape-name-$id'));
@@ -1552,9 +1534,7 @@ void main() {
       final p = withComp();
       final layer = p.comp.addSolidLayer();
       await mount(tester, p);
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
-      await tester.pump();
+      await openFold(tester, layer.internallayerId);
       expect(find.text('Retime'), findsNothing,
           reason: 'a layer with no Retime shows no row for it');
 
@@ -1596,9 +1576,7 @@ void main() {
       p.uiState.playheadFrame.value = 0;
       p.uiState.model.refresh();
       await mount(tester, p);
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
-      await tester.pump();
+      await openFold(tester, layer.internallayerId);
 
       // Frame zero of the source at frame zero of the comp: an identity map
       // starts where the media does.
@@ -1634,9 +1612,7 @@ void main() {
       p.uiState.playheadFrame.value = 30;
       p.uiState.model.refresh();
       await mount(tester, p);
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
-      await tester.pump();
+      await openFold(tester, layer.internallayerId);
 
       // The row probes the footage's rate over an async frb call; real
       // event-loop turns deliver the answer.
@@ -1667,11 +1643,7 @@ void main() {
         ]),
       );
       await mount(tester, p);
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
-      await tester.pump();
-      await tester.tap(find.text('Transform'));
-      await tester.pump();
+      await openFold(tester, layer.internallayerId, group: 'Transform');
 
       List<BridgeKeyframe> keys() =>
           (layer.getTransform().opacity as BridgeScalar_Keyframed).field0;
@@ -1717,11 +1689,7 @@ void main() {
         ]),
       );
       await mount(tester, p);
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
-      await tester.pump();
-      await tester.tap(find.text('Transform'));
-      await tester.pump();
+      await openFold(tester, layer.internallayerId, group: 'Transform');
 
       List<BridgeKeyframe> keys() =>
           (layer.getTransform().opacity as BridgeScalar_Keyframed).field0;
@@ -1763,11 +1731,7 @@ void main() {
         ]),
       );
       await mount(tester, p);
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
-      await tester.pump();
-      await tester.tap(find.text('Transform'));
-      await tester.pump();
+      await openFold(tester, layer.internallayerId, group: 'Transform');
 
       final laneKey = ValueKey<String>(
           'tl-keys-${layer.internallayerId}/transform/opacity');
@@ -1822,11 +1786,7 @@ void main() {
         ]),
       );
       await mount(tester, p);
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
-      await tester.pump();
-      await tester.tap(find.text('Transform'));
-      await tester.pump();
+      await openFold(tester, layer.internallayerId, group: 'Transform');
 
       List<BridgeKeyframe> keys() =>
           (layer.getTransform().opacity as BridgeScalar_Keyframed).field0;
@@ -1866,11 +1826,7 @@ void main() {
         ]),
       );
       await mount(tester, p);
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
-      await tester.pump();
-      await tester.tap(find.text('Transform'));
-      await tester.pump();
+      await openFold(tester, layer.internallayerId, group: 'Transform');
 
       List<BridgeKeyframe> keys() =>
           (layer.getTransform().opacity as BridgeScalar_Keyframed).field0;
@@ -1943,11 +1899,7 @@ void main() {
         ),
       ]);
       await mount(tester, p);
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
-      await tester.pump();
-      await tester.tap(find.text('Transform'));
-      await tester.pump();
+      await openFold(tester, layer.internallayerId, group: 'Transform');
 
       List<BridgeKeyframe> keys() =>
           (layer.getTransform().opacity as BridgeScalar_Keyframed).field0;
@@ -2023,11 +1975,7 @@ void main() {
         ),
       ]);
       await mount(tester, p);
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
-      await tester.pump();
-      await tester.tap(find.text('Transform'));
-      await tester.pump();
+      await openFold(tester, layer.internallayerId, group: 'Transform');
 
       List<BridgeKeyframe> keys() =>
           (layer.getTransform().opacity as BridgeScalar_Keyframed).field0;
@@ -2104,11 +2052,7 @@ void main() {
         ]),
       );
       await mount(tester, p);
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
-      await tester.pump();
-      await tester.tap(find.text('Transform'));
-      await tester.pump();
+      await openFold(tester, layer.internallayerId, group: 'Transform');
 
       List<BridgeKeyframe> keys() =>
           (layer.getTransform().opacity as BridgeScalar_Keyframed).field0;
@@ -2147,10 +2091,7 @@ void main() {
       await mount(tester, p);
       final id = layer.internallayerId;
 
-      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
-      await tester.pump();
-      await tester.tap(find.text('Effects'));
-      await tester.pump();
+      await openFold(tester, id, group: 'Effects');
       await tester.tap(find.text('Gaussian blur'));
       await tester.pump();
 
@@ -2192,10 +2133,7 @@ void main() {
       await mount(tester, p);
       final id = layer.internallayerId;
 
-      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
-      await tester.pump();
-      await tester.tap(find.text('Transform'));
-      await tester.pump();
+      await openFold(tester, id, group: 'Transform');
 
       final t = LumitTheme.dark();
       Color? fillOver(String text) {
@@ -2233,10 +2171,7 @@ void main() {
       final id = first.internallayerId;
 
       // Select a property on the first layer, the ordinary way.
-      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
-      await tester.pump();
-      await tester.tap(find.text('Effects'));
-      await tester.pump();
+      await openFold(tester, id, group: 'Effects');
       await tester.tap(find.text('Gaussian blur'));
       await tester.pump();
       await tester.tap(find.text('Radius'));
@@ -2290,20 +2225,15 @@ void main() {
             .color;
       }
 
-      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
-      await tester.pump();
-      await tester.tap(find.text('Transform'));
-      await tester.pump();
+      await openFold(tester, id, group: 'Transform');
       await tester.tap(find.text('Opacity'));
       await tester.pump();
       expect(fillOver('Opacity'), t.selectionFill);
 
       // Shut the layer, open it again — the Transform twirl inside it is
       // remembered, so the rows come straight back. Nothing should be lit.
-      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
-      await tester.pump();
-      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
-      await tester.pump();
+      await openFold(tester, id);
+      await openFold(tester, id);
       expect(fillOver('Opacity'), isNull,
           reason: 'a selection you could not see is not a selection');
     });
@@ -2325,11 +2255,7 @@ void main() {
             .color;
       }
 
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-twirl-${first.internallayerId}')));
-      await tester.pump();
-      await tester.tap(find.text('Transform'));
-      await tester.pump();
+      await openFold(tester, first.internallayerId, group: 'Transform');
       await tester.tap(find.text('Opacity'));
       await tester.pump();
       expect(fillOver('Opacity'), t.selectionFill);
@@ -2443,9 +2369,7 @@ void main() {
       await mount(tester, p);
 
       // Twirled open the ordinary way, the Retime row is there (docs/07 §4.3).
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
-      await tester.pump();
+      await openFold(tester, layer.internallayerId);
       expect(find.text('Retime'), findsAtLeastNWidgets(1));
 
       await tester.sendKeyEvent(LogicalKeyboardKey.keyS);
@@ -2601,9 +2525,7 @@ void main() {
           find.byKey(ValueKey<String>('tl-name-${upper.internallayerId}')));
       await tester.pump(const Duration(milliseconds: 400));
 
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-twirl-${lower.internallayerId}')));
-      await tester.pump();
+      await openFold(tester, lower.internallayerId);
       expect(find.byKey(ValueKey<String>('tl-lanes-${lower.internallayerId}')),
           findsOneWidget,
           reason: 'the fold opened');
@@ -2638,11 +2560,7 @@ void main() {
         ]),
       );
       await mount(tester, p);
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
-      await tester.pump();
-      await tester.tap(find.text('Transform'));
-      await tester.pump();
+      await openFold(tester, layer.internallayerId, group: 'Transform');
 
       final laneKey = ValueKey<String>(
           'tl-keys-${layer.internallayerId}/transform/opacity');
@@ -2679,10 +2597,7 @@ void main() {
       await mount(tester, p);
       final id = layer.internallayerId;
 
-      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
-      await tester.pump();
-      await tester.tap(find.text('Transform'));
-      await tester.pump();
+      await openFold(tester, id, group: 'Transform');
 
       double widthOf(String key) =>
           tester.getSize(find.byKey(ValueKey<String>(key))).width;
@@ -3872,8 +3787,7 @@ void main() {
       await mount(tester, p);
       final id = layer.internallayerId;
 
-      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
-      await tester.pump();
+      await openFold(tester, id);
       await settleFrb(tester, minRounds: 4);
       // The effect's own heading sits inside the Effects group, so that has to
       // be open before there is a row to right-click.
@@ -3921,8 +3835,7 @@ void main() {
       await mount(tester, p);
       final id = layer.internallayerId;
 
-      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
-      await tester.pump();
+      await openFold(tester, id);
       await settleFrb(tester, minRounds: 4);
       final effects = find.byKey(ValueKey<String>('tl-group-$id/effects'));
       await tester.tapAt(Offset(
@@ -3962,8 +3875,7 @@ void main() {
       final id = layer.internallayerId;
 
       // Twirl the layer open so its Transform rows are on screen.
-      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
-      await tester.pump();
+      await openFold(tester, id);
       await settleFrb(tester, minRounds: 4);
       final transformGroup =
           find.byKey(ValueKey<String>('tl-group-$id/transform'));
@@ -4177,11 +4089,7 @@ void main() {
       await tester
           .tap(find.byKey(ValueKey<String>('tl-name-${top.internallayerId}')));
       await tester.pump(kDoubleTapTimeout * 2);
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-twirl-${below.internallayerId}')));
-      await tester.pump();
-      await tester.tap(find.text('Transform'));
-      await tester.pump();
+      await openFold(tester, below.internallayerId, group: 'Transform');
 
       Color? rowColour(UuidValue id) {
         // The row's fill rides in the body's decoration, inside the drop
@@ -4257,11 +4165,7 @@ void main() {
       final p = withComp();
       final layer = p.comp.addSolidLayer();
       await mount(tester, p);
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
-      await tester.pump();
-      await tester.tap(find.text('Transform'));
-      await tester.pump();
+      await openFold(tester, layer.internallayerId, group: 'Transform');
 
       final before =
           (layer.getTransform().positionX as BridgeScalar_Static).field0;
@@ -4284,9 +4188,7 @@ void main() {
       layer.addEffect(name: 'blur');
       await mount(tester, p);
 
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
-      await tester.pump();
+      await openFold(tester, layer.internallayerId);
       expect(find.text('Effects'), findsOneWidget,
           reason: 'the group appears because there is something in it');
 
@@ -4418,9 +4320,7 @@ void main() {
       expect(zoomed.buckets, 64,
           reason: 'a tenth of the audio, in the same number of buckets');
 
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-twirl-${silent.internallayerId}')));
-      await tester.pump();
+      await openFold(tester, silent.internallayerId);
       expect(find.text('Audio'), findsOneWidget,
           reason: 'still only the one — a solid has nothing to be heard');
     });
@@ -4484,11 +4384,7 @@ void main() {
             closeTo(tester.getTopLeft(barOf(layer)).dy, 0.01));
       }
 
-      await tester.tap(
-          find.byKey(ValueKey<String>('tl-twirl-${upper.internallayerId}')));
-      await tester.pump();
-      await tester.tap(find.text('Transform'));
-      await tester.pump();
+      await openFold(tester, upper.internallayerId, group: 'Transform');
 
       for (final layer in [upper, lower]) {
         expect(
@@ -4499,6 +4395,32 @@ void main() {
       }
     });
   }, skip: !engineAvailable);
+}
+
+/// Twirl a layer open, and optionally open one group heading under it — the
+/// four-line block the fold-out tests were repeating everywhere. [group] taps
+/// the heading by its visible label; [groupPath] by its key suffix
+/// (`masks`, `paint`, ...). [settle] pumps each tap to rest, for the flows
+/// whose fold has async follow-up to finish.
+Future<void> openFold(
+  WidgetTester tester,
+  Object layerId, {
+  String? group,
+  String? groupPath,
+  bool settle = false,
+}) async {
+  Future<void> pump() => settle ? tester.pumpAndSettle() : tester.pump();
+  await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$layerId')));
+  await pump();
+  if (group != null) {
+    await tester.tap(find.text(group));
+    await pump();
+  }
+  if (groupPath != null) {
+    await tester
+        .tap(find.byKey(ValueKey<String>('tl-group-$layerId/$groupPath')));
+    await pump();
+  }
 }
 
 /// A real, probeable WAV: 16-bit mono PCM, a tenth of a second of silence.

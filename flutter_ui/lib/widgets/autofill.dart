@@ -1,15 +1,6 @@
-
 import 'package:flutter/material.dart';
 import 'package:lumit_flutter/data/expressions_metadata.dart';
 import 'package:lumit_flutter/theme/theme.dart';
-
-abstract class AutofillGenerator<T> {
-  List<T> getSuggestions(String text, int cursor);
-
-  Widget buildSuggestion(T data, LumitTheme context);
-
-  void applySuggestion(T suggestion, TextEditingController controller);
-}
 
 class ExpressionsSuggestion {
   FunctionDef function;
@@ -17,9 +8,10 @@ class ExpressionsSuggestion {
   ExpressionsSuggestion(this.function);
 }
 
-class ExpressionAutofillGenerator
-    implements AutofillGenerator<ExpressionsSuggestion> {
-  @override
+/// Completion for the expression editor: suggests the API's functions for the
+/// word under the cursor, and knows how to draw and apply one. The one
+/// autofill source there is — [HouseTextField] takes it directly.
+class ExpressionAutofillGenerator {
   void applySuggestion(
       ExpressionsSuggestion suggestion, TextEditingController controller) {
     var replacement = suggestion.function.name;
@@ -38,7 +30,6 @@ class ExpressionAutofillGenerator
         TextSelection(baseOffset: caret, extentOffset: caret);
   }
 
-  @override
   Widget buildSuggestion(ExpressionsSuggestion suggestion, LumitTheme theme) {
     var t = theme;
     var data = suggestion.function;
@@ -105,7 +96,6 @@ class ExpressionAutofillGenerator
     return (text.substring(start, end), start, end);
   }
 
-  @override
   List<ExpressionsSuggestion> getSuggestions(String text, int cursor) {
     var word = getCurrentWord(text, cursor);
 

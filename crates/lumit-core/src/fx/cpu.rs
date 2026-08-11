@@ -913,94 +913,112 @@ fn echo_blend(mode: u32, a: [f32; 4], n: [f32; 4]) -> [f32; 4] {
                 o[c] = n[c] + a[c] * k;
             }
         }
+        // 2..=13: the shared light-combine table, accumulator as backdrop.
+        m => o = light_blend(m - 2, a, n),
+    }
+    o
+}
+
+/// The order-independent light-combine table Echo and the Lens flare share
+/// (K-149, K-289, T21): `mode` 0..=9 is Add, Screen, Multiply, Overlay,
+/// Soft light, Hard light, Lighten, Darken, Difference, Exclusion; 10 is
+/// Subtract and anything higher is Divide, the catch-all both menus end on.
+/// `d` is the backdrop (Echo's accumulator, the flare's layer), `s` the
+/// source, both premultiplied linear RGBA, every mode per channel on all
+/// four — light combined with light, never a perceptual re-encode. Written
+/// in the exact arithmetic order both WGSL twins use, so CPU and GPU agree
+/// bit-for-bit (§1.6).
+pub(crate) fn light_blend(mode: u32, d: [f32; 4], s: [f32; 4]) -> [f32; 4] {
+    let mut o = [0.0f32; 4];
+    match mode {
+        // Add: light sums.
+        0 => {
+            for c in 0..4 {
+                o[c] = d[c] + s[c];
+            }
+        }
+        // Screen.
+        1 => {
+            for c in 0..4 {
+                o[c] = d[c] + s[c] - d[c] * s[c];
+            }
+        }
+        // Multiply.
         2 => {
-            // Add: echoes sum light behind the leading frame.
             for c in 0..4 {
-                o[c] = a[c] + n[c];
+                o[c] = d[c] * s[c];
             }
         }
+        // Overlay = hard light with the backdrop as the switch.
         3 => {
-            // Screen.
             for c in 0..4 {
-                o[c] = a[c] + n[c] - a[c] * n[c];
+                o[c] = if d[c] <= 0.5 {
+                    2.0 * d[c] * s[c]
+                } else {
+                    1.0 - 2.0 * (1.0 - d[c]) * (1.0 - s[c])
+                };
             }
         }
+        // Soft light (W3C), source = s, backdrop = d.
         4 => {
-            // Multiply.
             for c in 0..4 {
-                o[c] = a[c] * n[c];
+                let dd = if d[c] <= 0.25 {
+                    ((16.0 * d[c] - 12.0) * d[c] + 4.0) * d[c]
+                } else {
+                    d[c].sqrt()
+                };
+                o[c] = if s[c] <= 0.5 {
+                    d[c] - (1.0 - 2.0 * s[c]) * d[c] * (1.0 - d[c])
+                } else {
+                    d[c] + (2.0 * s[c] - 1.0) * (dd - d[c])
+                };
             }
         }
+        // Hard light: the source is the switch.
         5 => {
-            // Overlay = hard light with the accumulator as the switch.
             for c in 0..4 {
-                o[c] = if a[c] <= 0.5 {
-                    2.0 * a[c] * n[c]
+                o[c] = if s[c] <= 0.5 {
+                    2.0 * d[c] * s[c]
                 } else {
-                    1.0 - 2.0 * (1.0 - a[c]) * (1.0 - n[c])
+                    1.0 - 2.0 * (1.0 - d[c]) * (1.0 - s[c])
                 };
             }
         }
+        // Lighten (per-channel max).
         6 => {
-            // Soft light (W3C), s = n, d = a.
             for c in 0..4 {
-                let d = a[c];
-                let dd = if d <= 0.25 {
-                    ((16.0 * d - 12.0) * d + 4.0) * d
-                } else {
-                    d.sqrt()
-                };
-                o[c] = if n[c] <= 0.5 {
-                    d - (1.0 - 2.0 * n[c]) * d * (1.0 - d)
-                } else {
-                    d + (2.0 * n[c] - 1.0) * (dd - d)
-                };
+                o[c] = d[c].max(s[c]);
             }
         }
+        // Darken (per-channel min).
         7 => {
-            // Hard light: the echo is the switch.
             for c in 0..4 {
-                o[c] = if n[c] <= 0.5 {
-                    2.0 * a[c] * n[c]
-                } else {
-                    1.0 - 2.0 * (1.0 - a[c]) * (1.0 - n[c])
-                };
+                o[c] = d[c].min(s[c]);
             }
         }
+        // Difference.
         8 => {
-            // Lighten: per-channel max (the old "Max").
             for c in 0..4 {
-                o[c] = a[c].max(n[c]);
+                o[c] = (d[c] - s[c]).abs();
             }
         }
+        // Exclusion.
         9 => {
-            // Darken: per-channel min.
             for c in 0..4 {
-                o[c] = a[c].min(n[c]);
+                o[c] = d[c] + s[c] - 2.0 * d[c] * s[c];
             }
         }
+        // Subtract, floored at black.
         10 => {
-            // Difference.
             for c in 0..4 {
-                o[c] = (a[c] - n[c]).abs();
+                o[c] = (d[c] - s[c]).max(0.0);
             }
         }
-        11 => {
-            // Exclusion.
-            for c in 0..4 {
-                o[c] = a[c] + n[c] - 2.0 * a[c] * n[c];
-            }
-        }
-        12 => {
-            // Subtract: take the echo's light out of the trail, floored at black.
-            for c in 0..4 {
-                o[c] = (a[c] - n[c]).max(0.0);
-            }
-        }
+        // Divide, floored at black (linear, unclamped above), and the
+        // catch-all for an index no menu can produce.
         _ => {
-            // Divide: accumulator ÷ echo, floored at black (linear, unclamped above).
             for c in 0..4 {
-                o[c] = (a[c] / n[c].max(1e-6)).max(0.0);
+                o[c] = (d[c] / s[c].max(1e-6)).max(0.0);
             }
         }
     }

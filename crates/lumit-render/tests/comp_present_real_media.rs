@@ -27,7 +27,7 @@ use lumit_render::plan::Quality;
 use uuid::Uuid;
 
 /// A document holding one comp of `w × h` at `fps`, with the clip on it.
-fn doc_with_clip(path: &str, w: u32, h: u32, fps: (u32, u32)) -> (Document, Uuid) {
+fn doc_with_clip(path: &str, w: u32, h: u32, fps: (u32, u32)) -> (std::sync::Arc<Document>, Uuid) {
     let mut doc = Document::new();
     let item_id = Uuid::now_v7();
     doc.items.push(ProjectItem::Footage(FootageItem {
@@ -79,7 +79,7 @@ fn doc_with_clip(path: &str, w: u32, h: u32, fps: (u32, u32)) -> (Document, Uuid
         motion_blur: lumit_core::model::MotionBlur::default(),
         extra: serde_json::Map::new(),
     }));
-    (doc, comp_id)
+    (std::sync::Arc::new(doc), comp_id)
 }
 
 /// Render and present a comp of the clip, then a *second* comp of a different

@@ -23,7 +23,9 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/assets.dart';
+import 'package:lumit_flutter/panels/transform_rows_frb.dart' show writeScalar;
 import 'package:lumit_flutter/panels/viewer_gizmo.dart';
+import 'package:lumit_flutter/panels/viewer_layer_map.dart';
 import 'package:lumit_flutter/panels/viewer_panel_frb.dart';
 import 'package:lumit_flutter/panels/viewer_paint.dart';
 import 'package:lumit_flutter/panels/viewer_zoom.dart';
@@ -415,6 +417,7 @@ void main() {
     /// one tap off.
     testWidgets('the tone-map switch is in the bar and flips', (tester) async {
       final p = withLayer();
+      p.uiState.workspace.interface.showToneMap = true;
       await mount(tester, p);
 
       final button = find.byKey(const ValueKey('viewer-tone-map'));
@@ -432,12 +435,60 @@ void main() {
       await settleFrb(tester, until: () => p.uiState.previewProgress.idle);
     });
 
+    /// The tone map is asked for, not given: the button is off the bar unless
+    /// Settings → Interface says otherwise, while the exposure stays.
+    testWidgets('the tone-map switch is absent until the setting asks for it',
+        (tester) async {
+      final p = withLayer();
+      await mount(tester, p);
+
+      expect(find.byKey(const ValueKey('viewer-tone-map')), findsNothing);
+      expect(find.byKey(const ValueKey('viewer-exposure')), findsOneWidget,
+          reason: 'only the tone map is gated, not the exposure');
+
+      p.uiState.workspace.interface.showToneMap = true;
+      await mount(tester, p);
+      expect(find.byKey(const ValueKey('viewer-tone-map')), findsOneWidget);
+
+      await settleFrb(tester, until: () => p.uiState.previewProgress.idle);
+    });
+
+    /// Hiding the button must not strand an engaged tone map: a session saved
+    /// while it was on would otherwise keep changing the picture with nothing
+    /// left to turn it off. The setting gates the *look*, not just the button.
+    testWidgets('a stored tone map is disengaged while the setting is off',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.workspace.interface.showToneMap = true;
+      await mount(tester, p);
+
+      await tester.tap(find.byKey(const ValueKey('viewer-tone-map')));
+      await tester.pump();
+      expect(p.uiState.viewerLook.toneMap, isTrue);
+
+      p.uiState.workspace.interface.showToneMap = false;
+      await tester.pump();
+      expect(p.uiState.viewerLook.toneMap, isFalse,
+          reason: 'the look the Viewer and the engine read is disengaged');
+      expect(p.uiState.session().viewerLooks[p.comp.internalid.toString()],
+          (stops: 0.0, toneMap: true),
+          reason: 'the stored value is untouched, so turning it back on '
+              'returns the comp to how it was');
+
+      p.uiState.workspace.interface.showToneMap = true;
+      await tester.pump();
+      expect(p.uiState.viewerLook.toneMap, isTrue);
+
+      await settleFrb(tester, until: () => p.uiState.previewProgress.idle);
+    });
+
     /// **Both controls are per composition** (K-314): they are a way of looking
     /// at one comp, so fronting another must show that one's own view rather
     /// than carrying the first one's exposure across.
     testWidgets('the exposure and tone map are remembered per composition',
         (tester) async {
       final p = withLayer();
+      p.uiState.workspace.interface.showToneMap = true;
       final other = p.state.project!.newComposition(name: 'Other');
       await mount(tester, p);
 
@@ -1113,6 +1164,55 @@ void main() {
       await tester.pumpAndSettle();
       expect(p.uiState.liveRotations.value, isEmpty,
           reason: 'and the moment it lands, the document is the only truth');
+    });
+
+    /// **And the wireframe follows a value scrub, for the same reason.** The
+    /// turn above is a drag on the picture; this is a drag in the property
+    /// rows, which previews the picture through the same provisional-transform
+    /// path. The rows publish what they are previewing and the boxes read it,
+    /// so Position and Scale move the box as they are dragged rather than on
+    /// release. The document is not written to until the drag lands.
+    testWidgets('the boxes follow a value scrub while it is still being made',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.setSelection([p.layer]);
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      ViewerLayerMap mapOfBox() => tester
+          .widget<ViewerGizmoLayer>(find.byType(ViewerGizmoLayer))
+          .boxes
+          .firstWhere((b) => b.id == p.layer.internallayerId)
+          .map;
+
+      final settled = mapOfBox();
+      expect(p.uiState.liveTransforms.value, isEmpty,
+          reason: 'nothing is being scrubbed yet');
+
+      // What a Position drag in the rows publishes: the document's transform
+      // with the one property replaced, exactly what it sends for the picture.
+      final committed = p.layer.getTransform();
+      p.uiState.liveTransforms.value = {
+        p.layer.internallayerId: writeScalar(
+          committed,
+          BridgeTransformProp.positionX,
+          BridgeScalar.static_((settled.px) + 120),
+        ),
+      };
+      await tester.pump();
+
+      expect(mapOfBox().px, closeTo(settled.px + 120, 0.01),
+          reason: 'the box is drawn from the value being dragged');
+      expect((p.layer.getTransform().positionX as BridgeScalar_Static).field0,
+          closeTo(settled.px, 0.01),
+          reason: 'while the document still holds the old one');
+
+      // Release: the row clears what it published and the document is the
+      // only truth again. A value left behind here would freeze the box.
+      p.uiState.liveTransforms.value = const {};
+      await tester.pump();
+      expect(mapOfBox().px, closeTo(settled.px, 0.01),
+          reason: 'and the box goes back to what the document says');
     });
 
     testWidgets('Shift locks the turn to 45 degrees', (tester) async {

@@ -47,26 +47,14 @@ pub static LENS_LIBRARY: [LensFile; 20] = [
     LensFile { name: "Zeiss · Ultra Prime Sonnar 135mm T1.9", native_fstop: 1.80, text: include_str!("../../lens_files/Zeiss_135mm_F1.8_(Zeiss_Ultra_Prime_Sonnar_T_135mm_T1.9).lens") },
 ];
 
-/// The Lens dropdown's labels, index-aligned with [`LENS_LIBRARY`].
-pub static LENS_OPTIONS: [&str; 20] = [
-    "7Artisans · 50mm F0.95",
-    "Angenieux · DEM 180mm F2.3 APO",
-    "Canon · 50mm f1.2 (1956)",
-    "Canon · 85mm f1.5 (1952)",
-    "Canon · EF 100mm f2.8 Macro",
-    "Canon · EF 400mm f2.8L IS II",
-    "Canon · EF 70-200mm f2.8L",
-    "Canon · FD 300mm f2.8 SSC Fluorite",
-    "Leica · Elmarit 90mm F2.8",
-    "Leica · Summilux 35mm f1.4",
-    "Leica · Summilux-C 100mm T1.4",
-    "Meyer Görlitz · Kino Plasmat 100mm F2",
-    "Meyer Görlitz · Orestor 135mm F2.8",
-    "Ross · F10 APO Process Xpres",
-    "Voigtländer · Nokton 35mm F1.2 Asph",
-    "Voigtländer · Nokton 50mm F1.0 Asph",
-    "Zeiss · Arri Master Prime T1.3 50mm",
-    "Zeiss · Biotar 50mm F1.4",
-    "Zeiss · Tessar 100mm F4.5",
-    "Zeiss · Ultra Prime Sonnar 135mm T1.9",
-];
+/// The Lens dropdown's labels, derived from [`LENS_LIBRARY`] so the two can
+/// never drift out of alignment.
+pub static LENS_OPTIONS: [&str; LENS_LIBRARY.len()] = {
+    let mut out = [""; LENS_LIBRARY.len()];
+    let mut i = 0;
+    while i < out.len() {
+        out[i] = LENS_LIBRARY[i].name;
+        i += 1;
+    }
+    out
+};

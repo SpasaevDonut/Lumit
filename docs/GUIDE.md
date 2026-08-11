@@ -3512,15 +3512,21 @@ Both are per composition and are remembered in the session (above), so a comp
 reopens looking how you left it, and neither is an edit: Ctrl+Z will not undo an
 exposure nudge and setting one does not make the project dirty.
 
-The cache had to be told about them, and the answer is pleasingly blunt: **while
-either control is engaged, frames have no name.** A frame with no name cannot be
-filed in any of the three tiers, so nothing exposed is ever banked, and the
-neutral frames already banked are untouched and come straight back as hits the
-moment both controls return to neutral. The alternative — folding the exposure
-into the name — would have meant threading it through all three tiers for the
-sake of caching frames nobody keeps. The cost of the blunt answer is that the
-picture is composited afresh while you scrub the exposure, and that is the right
-trade for a control you nudge and then put back.
+The cache had to be told about them, and the answer is that **a look is part of
+the frame's name** (K-346). Remember that a banked frame is the finished
+display-ready picture, so a frame seen through an exposure genuinely is a
+different picture from the same frame seen plainly — and the cache names frames
+by what is in them. So the exposure and the tone-map switch are mixed into the
+name, and each way of looking banks its own frames. Neutral keeps exactly the
+name it always had, which is why everything banked before you touched a control
+is still there when you put it back.
+
+It used to work the other way: while either control was engaged frames had *no*
+name at all, and a frame with no name cannot be filed in any tier. That sounded
+tidy and read as a fault — leave the tone map on and the whole cache ladder is
+switched off for the session, with nothing on screen to say so. Naming each look
+separately costs only that several looks compete for the same budget, which the
+tiers already know how to sort out by eviction.
 
 **The cache bar** under the time ruler shows what is held: mint at the current
 preview resolution, dimmed mint only at a coarser one, steel-blue on disk,
@@ -3804,25 +3810,25 @@ piece of code finds them, draws them and moves them. The only difference is
 which call writes the change back — and that difference is carried in the name
 each point is filed under, so a shape point can never be saved as a mask.
 
-**Where a shape's points are, and why that took a second go.** A shape layer is
+**Where a shape's points are.** A shape layer is
 sized by the art it holds: the layer *is* the box the drawing fits into, and it
 grows and shrinks as the drawing is edited. That means the numbers stored for a
 point — where it sits in the drawing — are not the same as where it sits *on the
-layer*, which is measured from the box's top-left corner. The Viewer drew the
-points as though the two were the same, so they appeared a whole box away from
-the art, while the wireframe rectangle and the picture (which only need the box's
-*size*) looked right. Subtracting the corner puts them back on the art (K-308).
+layer*, which is measured from the box's top-left corner. Drawing a point
+without subtracting that corner puts it a whole box away from the art — while
+the wireframe rectangle and the picture, which only need the box's *size*,
+still look right — so the Viewer subtracts it (K-308).
 
 Two things follow from the box being the drawing. The first: the outermost points
 of a shape sit exactly where the box's resize handles do, so on a drawn square
-every corner used to start a resize instead of an edit — a press close enough to a
-point now means the point, and the handles keep the rest of the reach. The second:
+every corner is both — a press close enough to a
+point means the point, and the handles keep the rest of the reach. The second:
 dragging an outermost point *moves the box*, so everything else in the drawing
-would slide the other way. The engine now moves the layer by the same amount in
+would slide the other way. The engine moves the layer by the same amount in
 the same edit, which is why the rest of the art stays put and why undo still puts
 everything back in one step.
 
-The picture also keeps up as you drag now, rather than waiting for you to let go:
+The picture keeps up as you drag, rather than waiting for you to let go:
 the drag asks the engine for a provisional frame, at most one every twenty
 milliseconds, exactly as dragging a layer about does.
 
@@ -3833,19 +3839,17 @@ waiting to be wired: the file format has no way to say "these two arms are
 linked" versus "this is a corner", so adding the gesture means adding that to
 the format first, and deciding what an older project means without it.
 
-### What the lock switch actually does
+### What the lock switch does
 
-Locking a layer used to stop you dragging its bar, cutting it, renaming it,
-reordering it or deleting it — but you could still open its twirl-down and
-change its position, its effects or its volume. The switch said "no edits until
-unlocked" and meant something narrower.
+Locking a layer means **no edits until unlocked** — not just the obvious ones
+like dragging its bar, cutting, renaming, reordering or deleting, but
+everything reachable through its twirl-down too: position, effects, volume.
 
-Now the refusal lives in the **engine**, in the one place every edit passes
-through on its way into the document. That matters more than it sounds: there
-are twenty-nine different kinds of edit a layer can receive, and guarding them
-one interface control at a time means remembering to do it again every time a
-new control is added — which is exactly how the hole opened, since the three
-kinds of row that leaked are the three newest.
+The refusal lives in the **engine**, in the one place every edit passes through
+on its way into the document. That matters more than it sounds: there are
+twenty-nine different kinds of edit a layer can receive, and guarding them one
+interface control at a time means remembering to do it again every time a new
+control is added — the newest rows are always the ones such a guard forgets.
 
 The rows are also shown greyed and untouchable, so you are not offered a gesture
 that would only be refused. Headings still open and close: looking inside a
@@ -3864,10 +3868,9 @@ the unlock before it reaches the edit underneath.
 ### Why a keyframe jumps onto things
 
 Drag a keyframe along its lane with the magnet on — the horseshoe in the bar
-under the Timeline — and it now wants to land on the things already there: the
+under the Timeline — and it wants to land on the things already there: the
 start or end of a layer, a cut inside a sequence, another keyframe, a marker,
-the playhead, the edges of the work area. Before, the only thing it wanted was
-a whole frame.
+the playhead, the edges of the work area — not merely on whole frames.
 
 **The reach is measured in screen pixels, not in time**, and that is the part
 worth understanding. Zoomed right out, a hundred frames might be ten pixels
@@ -3890,19 +3893,6 @@ Beat markers need no special mention in any of this, and that is by design: beat
 detection writes ordinary markers, so dragging near a beat lands on it because
 it lands on markers.
 
-One thing the indicator broke on its way in, now fixed. The line is a piece of
-the lane that only exists while a snap is holding the drag, and it was drawn
-*before* the diamonds rather than after them. Flutter keeps a widget's identity
-by its position in a list unless you name it, so a line appearing at the front
-of that list shunted every diamond one place along, and each of them was rebuilt
-as though it were a different diamond — including the one your pointer was
-holding. A control rebuilt mid-drag loses the pointer, and losing the pointer
-ends the drag: the key committed the two or three pixels it had travelled by
-then and ignored the rest of the gesture. That is what "a keyframe will only
-move one frame, and dragging it again puts it back" was — the second drag being
-caught by the same target and landing back on it. The diamonds and the line are
-named now, so each is rebuilt as itself and a drag lasts until you let go.
-
 Right now this covers dragging a keyframe on its lane. Dragging a layer's bar,
 the razor, the work-area handles and markers themselves still land wherever you
 point. The arithmetic is written once and shared, so each of those is wiring
@@ -3912,8 +3902,7 @@ rather than a fresh design.
 
 **The zoom moves rather than jumping.** Magnification is a *place* changing, not
 a number being nudged: jump straight from one zoom to another and you lose where
-you were. The Viewer has moved smoothly for a while; the Timeline used to cut.
-It now uses the same piece of code.
+you were. The Viewer and the Timeline share one piece of code for that flight.
 
 Three details in that motion, each there for a reason:
 
@@ -3979,14 +3968,23 @@ moved the offset, lay out again" — so the correction now happens there, where
 the width and the offset are known at the same time, and nothing outside that
 moment ever sees a mismatch.
 
+Two details of that anchoring are rules, not accidents (K-320). The slider's
+anchor — where the playhead is on screen — is measured once, when the drag
+begins, and held for the whole gesture: measuring afresh on every drag update
+reads a fresh zoom against a scroll offset that has not been corrected yet, two
+numbers describing different moments. And the width the correction works from is
+the scroll position's own content extent — the same numbers the correction is
+applied with — never a viewport size cached during build, which disagrees by a
+little at every zoom and by more the further in you are.
+
 **And a zoom only rebuilds the lanes.** This is the other half of the same
 problem. The Timeline is two halves of one table: the layer names on the left,
-the bars on the right. Nothing on the left depends on the zoom — but the panel
-used to redraw *all* of it every time the zoom moved a fraction, which during an
-animation is sixty times a second, and each of those redraws asked the engine
-again for the work area, the render cache and more. Now the right-hand half
-listens for the zoom by itself and the left-hand half sits still. The Timeline
-already did exactly this for the playhead, for exactly the same reason.
+the bars on the right. Nothing on the left depends on the zoom, so the
+right-hand half listens for the zoom by itself and the left-hand half sits
+still — redrawing the whole table on every fraction the zoom moves would mean,
+during an animation, sixty redraws a second, each asking the engine again for
+the work area, the render cache and more. The Timeline does exactly the same
+for the playhead, for exactly the same reason.
 
 A plain wheel still scrolls, as it always did — it never zooms without a
 modifier, which is a rule the specification is firm about and this did not
@@ -4018,12 +4016,9 @@ a side door that skips undo, the journal and the dirty flag.
 ### Themes you can pass around (K-298)
 
 A theme you make is a name, a light-or-dark base, and a bag of colours (K-202).
-Until now it lived only in the settings file, which is machine-local — so a theme
-was stuck on the computer it was made on, and the only way to try a variation was
-to save over the one you liked.
-
-Three things changed, all in the Flutter frontend and none of them touching the
-engine:
+It lives in the settings file, which is machine-local — so without a way out, a
+theme would be stuck on the computer it was made on. Three things give it one,
+all in the Flutter frontend and none of them touching the engine:
 
 - **A theme is a file.** `flutter_ui/lib/theme/theme_file.dart` writes one out as
   `.lumtheme` — a short, indented JSON document you can read: what it is, a
@@ -4053,43 +4048,22 @@ copy…** inside the colour editor, which branches a theme without first
 overwriting it. The picker also draws eight swatches of the selected theme beside
 its name, so you can recognise a theme without applying it.
 
-### Why the letters got lighter (K-316)
-
-Type comes in weights — how thick the strokes of each letter are. Regular is
-the weight books are printed in; Medium is a step thicker, meant for the odd
-word that has to stand out. The design spec (docs/15-DESIGN.md §7.1) always
-said Lumit's ordinary text — menus, buttons, property names, panel copy — is
-plain regular Inter, with Medium kept for the few things that earn emphasis:
-dialog headings and the panel tab labels.
-
-The app never actually did that, for a quiet packaging reason: only the Medium
-font file was bundled, so whatever weight the code asked for, Medium is what
-drew. Every word in the interface was a step bolder than designed, and when
-everything is emphasised the emphasis stops meaning anything — a wall of
-slightly-heavy text is *harder* to scan, not easier.
-
-The fix is two-part: the Regular file is now bundled beside Medium, and the
-theme's `body`, `small` and `caption` styles ask for regular weight while
-`heading` and a new `bodyStrong` (used by the dock's tab pills) keep Medium. A
-test in `theme_test.dart` pins the weights so nothing drifts back to
-all-Medium without saying so.
-
-### The corner you no longer have to travel (K-318)
+### The safe triangle under a submenu (K-318)
 
 Open a menu, hover a row with an arrow on it, and a second menu flies out to the
-right. Now move towards it. The obvious path is a diagonal — up-and-right, or
+right. The natural path towards it is a diagonal — up-and-right, or
 down-and-right — and that diagonal crosses the rows *underneath* the one you
-started on. The menu, watching only for "which row is the pointer over", saw one
-of those rows, decided you had changed your mind, and took the flyout away
-before you got there. The workaround everyone learns without noticing is to
-travel the corner: straight right first, then down. That is a small tax paid on
-every single submenu.
+started on. A menu watching only for "which row is the pointer over" would see
+one of those rows, decide you had changed your mind, and take the flyout away
+before you got there — the tax every such menu makes you pay is travelling the
+corner instead: straight right first, then down.
 
-The fix is old and has a name — the **safe triangle**. When a flyout is open,
-draw an imaginary triangle from where your pointer is to the two near corners of
-the flyout. Anything inside that triangle is *travel*: you are on your way to
-the flyout, whatever row you happen to be passing over. So while the pointer is
-in there, the menu holds the switch back rather than acting on it.
+The guard against that is old and has a name — the **safe triangle**. While a
+flyout is open, an imaginary triangle runs from where your pointer is to the two
+near corners of the flyout. Anything inside that triangle is *travel*: you are
+on your way to the flyout, whatever row you happen to be passing over. So while
+the pointer is in there, the menu holds the switch back rather than acting on
+it.
 
 Two details stop that from becoming its own annoyance:
 
@@ -4105,7 +4079,7 @@ Flutter in it beyond the `Offset` and `Rect` types, which is what lets it be
 tested as plain arithmetic: is this point inside this triangle? The timers and
 the "which row is hovered" bookkeeping live with the floating menu surface every
 popup already shares, so the menu bar, the Add effect browser and every
-right-click menu got this at the same moment, from one change.
+right-click menu get the same guard from the same code.
 
 A guard like this is invisible when it works and invisible when it does not,
 which makes it miserable to test by feel. So the Debug panel has a switch —
@@ -4115,182 +4089,117 @@ turns amber at the moment the guard is actually holding a row switch back, which
 is the moment worth watching. It only draws; the guard cannot see it and decides
 exactly what it would have decided with the switch off.
 
-### Windows you can drive without the mouse (K-319)
+### How windows answer the keyboard (K-319)
 
-Three complaints turned out to be one missing thing.
-
-**The buttons were pictures.** A `HouseButton` drew itself, watched for a click,
-and that was all — it could not hold keyboard focus, so Tab never reached it and
-Enter never pressed it. Every house control now carries a **focus node**: the
-buttons, the checkboxes, the radios, and the resting state of a value box. A
-focused control draws the accent ring the design spec has always asked for, and
+**Every house control holds focus.** The buttons, the checkboxes, the radios,
+and the resting state of a value box all carry a **focus node**, so Tab reaches
+them. A focused control draws the accent ring the design spec asks for, and
 answers Enter (and Space, where "press" is what it does).
 
 **"Enter presses the OK button" is not a special case.** Rather than wiring one
-button to the Enter key, each window now says which of its buttons is the
+button to the Enter key, each window says which of its buttons is the
 *default* — the affirmative one, or the safe one where the affirmative deletes
 something — and that button simply **takes focus when the window opens**. Enter
 then presses whatever is focused, which is that button until you Tab somewhere
 else. One rule instead of a special case, and it means a whole window is
 operable from the keyboard rather than just its OK button.
 
-There is a companion rule that already existed for text fields and now covers
-controls too: while a control holds focus, the application's global shortcuts
-stand down. Otherwise Enter on a dialogue's button would *also* rename a layer
-in the Timeline behind it — which is a real bug this project has already had
-once (K-243).
+There is a companion rule covering text fields and controls alike: while one
+holds focus, the application's global shortcuts stand down. Otherwise Enter on
+a dialogue's button would *also* rename a layer in the Timeline behind it
+(K-243).
 
-**Escape closes a window, which it did not.** The code said it did — there was a comment
-claiming Escape was handled "via the route" — but a Lumit dialogue is not a *route*, it is a
-panel painted into the overlay, so there was no route to handle anything and Escape did
-nothing in every dialogue in the application. This was found by going looking for what
-Flutter already provides rather than writing more of our own: the framework binds Escape to
-something called a "dismiss intent" all by itself, and a window only has to say what
-dismissing means for it. Here it means the same as clicking the dimmed background — the
-window closes and answers "cancelled".
+**Escape closes a window.** A Lumit dialogue is not a Flutter *route* — it is a
+panel painted into the overlay — so it cannot lean on route behaviour. Instead
+it uses what the framework already provides: Flutter binds Escape to something
+called a "dismiss intent" all by itself, and a window only has to say what
+dismissing means for it. Here it means the same as clicking the dimmed
+background — the window closes and answers "cancelled".
 
-**Tab now goes the way you read.** Left to right, then top to bottom. It sounds
+**Tab goes the way you read.** Left to right, then top to bottom. It sounds
 like it should be the default, and it is not: the toolkit walks the *widget
 tree*, and a layout that nests a column inside a row visits things in whatever
 order the code composed them, which can be down-then-across, or worse. Flutter
 ships a policy that sorts by actual screen position instead
-(`ReadingOrderTraversalPolicy`); every modal is now wrapped in one, plus a focus
+(`ReadingOrderTraversalPolicy`); every modal is wrapped in one, plus a focus
 scope so Tab cycles inside the window rather than wandering off into the panels
 behind it.
 
-### Clicks that wobble, and text you can drag over (K-319)
+### How a value box tells a scrub from a click (K-319)
 
 A value box in Lumit does two jobs: drag it sideways to scrub the number, click
 it to type one. Deciding which of those you meant happens in Flutter's *gesture
 arena* — the pointer goes down, and whoever recognises a gesture first wins.
 Move sideways more than a few pixels and the drag wins; stay still and the tap
-wins.
-
-The gap was what happened to a press that wandered a little but never actually
-scrubbed a whole step. The drag recogniser won it, ticked nothing, and released
-into nothing at all: no value change, no editor. To a person that is a click
-that the box swallowed, and mice wobble constantly. Now a drag that ends without
-ever crossing one increment is understood for what it is — a click — and opens
-the editor.
+wins. One case belongs to neither: a press that wanders a little but never
+scrubs a whole step. Mice wobble constantly, so a drag that ends without ever
+crossing one increment is understood for what it is — a click — and opens the
+editor, rather than releasing into nothing.
 
 Two more things about that editor. It opens with the whole value **selected**,
 because a value is retyped far more often than it is amended, and a caret parked
-at the end means every edit begins with a select-all of your own. And it now has
-real text selection: press to place the caret, drag to highlight. It sounds like
-something you get for free, and you do not — a bare `EditableText` takes keys but
-has no selection gestures attached until you wrap it in the builder that
-provides them, which the plain text fields had and the numeric ones did not.
+at the end means every edit begins with a select-all of your own. And it has
+real text selection: press to place the caret, drag to highlight. That is not
+something you get for free — a bare `EditableText` takes keys but has no
+selection gestures attached until you wrap it in the builder that provides
+them.
 
-The ordinary text fields gained one further thing: they take focus on the
-pointer's **down** stroke rather than waiting for the tap to resolve. Somebody
-who presses in a field and immediately drags is selecting text in one motion,
-and the field has to be theirs before the highlight starts or the drag selects
-nothing.
+The ordinary text fields take focus on the pointer's **down** stroke rather
+than waiting for the tap to resolve. Somebody who presses in a field and
+immediately drags is selecting text in one motion, and the field has to be
+theirs before the highlight starts or the drag selects nothing.
 
-### Why the zoom slider still pinged, after it was fixed (K-320)
+### One rule for renaming (K-321)
 
-The Timeline's zoom keeps something still while the lanes grow — the playhead,
-when you use the slider. That mechanism (K-293) was right. What was wrong was
-*when* it measured.
+**`Enter` renames whatever the focused panel has selected** — a layer in the
+Timeline, an item in the Project panel, an effect in Effect controls.
+Double-clicking, and clicking an already-selected row, mean *open* everywhere,
+without exception. Nothing renames on a click, because clicking a selected row
+is the same gesture as a slightly slow double-click — a rename that opens on it
+keeps landing under pointers that meant "open".
 
-Keeping the playhead still means working out where it is on screen right now,
-and then, after the lanes have grown, moving the scroll so it is still there.
-The panel did that measurement on **every drag update**. But a drag update
-arrives, applies the new zoom, and returns — the scroll offset is only corrected
-later, during layout. So the second update measured a *fresh zoom against a
-stale offset*: two numbers describing different moments. Each update anchored
-somewhere slightly wrong, and the lanes lurched. Near the edges of the view it
-was worse, because the "is the playhead visible?" test flipped back and forth
-between "keep it where it is" and "bring it to the middle".
+Each panel's Enter is a separate keyboard binding in a separate context, which
+is how one press cannot open two editors at once: a per-panel binding is only
+live in the panel that has focus, and each panel's handler checks that it is
+the focused one before acting.
 
-The fix is to measure once. The slider now says when its drag begins and when it
-ends, and the anchor is chosen at the start and held for the whole gesture —
-which is what the flight always assumed anyway. The other half is where the
-width comes from: it is now read from the scroll position's own content extent,
-the same numbers the correction is applied with, rather than from a viewport
-size cached during build. Those two disagreed by a little at every zoom, and the
-disagreement grew the further in you were.
+**Effects can carry a name of their own.** A blur called "Gaussian blur" three
+times down a stack tells you nothing; "Blur the sign" does. An effect instance
+has one optional field, `custom_name`, shown in place of the effect's label
+where it is set — in the Effect controls heading and in the Timeline's fold-out
+alike. It is a *display* name only: `match_name` is the schema key everything
+else looks the effect up by, so nothing about rendering or expressions changes,
+and clearing the field puts the label back.
 
-### One way to rename anything (K-321)
+The saved-file rule is the one that makes a field like this safe: it is written
+**only when it is set**. A project with no renamed effects is byte-for-byte the
+file it was before, and an older project simply reads as "no name given".
+Nothing needs migrating.
 
-Renaming had drifted into three different gestures in three places, and one of
-them was actively in the way: in the Project panel, clicking a row that was
-already selected opened its name for editing. That is the *same gesture* as a
-slightly slow double-click, so names kept opening for editing under people's
-pointers when they meant to open the item.
+### Leaving an inline editor (K-243, K-323)
 
-It is one rule now: **`Enter` renames whatever the focused panel has selected.**
-A layer in the Timeline (which already worked this way), an item in the Project
-panel, an effect in Effect controls. Double-clicking, and clicking an
-already-selected row, mean *open* everywhere, without exception.
+Every ordinary way of leaving an inline editor — an effect's name, a layer's
+name, a Project item's name, a value box — *keeps* what you typed: pressing
+Enter, clicking somewhere else, tabbing away (K-243). Abandoning a rename by
+clicking elsewhere should not silently throw the work away. **Escape is the one
+way out that writes nothing** (K-323): the editor shuts and the thing keeps the
+name or the number it already had.
 
-Each of those is a separate keyboard binding in a separate context, which is how
-one Enter press cannot open two editors at once: a per-panel binding is only
-live in the panel that has focus, and each panel's handler checks that it is the
-focused one before acting.
+Escape is attached to each editor's own **focus node** rather than to the
+general shortcut machinery, and the reason is specific. The "dismiss" request
+Flutter binds Escape to travels up the widget tree looking for a handler — that
+is how modals close — but an inline editor is not a dialog, it is a text field
+that has replaced a label where it stood, so the request finds nobody. And
+Flutter's text editor has its own idea of what dismissing means (hiding the
+selection toolbar), so a handler placed above it could be quietly swallowed.
+A focus node gets first refusal on keys, which is the one place the handling
+cannot be intercepted.
 
-**Effects can now carry a name of their own**, which is the new part. A blur
-called "Gaussian blur" three times down a stack tells you nothing; "Blur the
-sign" does. The instance gains one optional field, `custom_name`, and where it
-is set it is shown in place of the effect's label — in the Effect controls
-heading and in the Timeline's fold-out alike. It is a *display* name only:
-`match_name` is the schema key everything else looks the effect up by, and it is
-untouched, so nothing about rendering or expressions changes. Clearing the field
-puts the label back.
-
-The saved-file question is worth stating plainly, because it is the one that
-decides whether a feature like this is safe: the field is written **only when it
-is set**. A project with no renamed effects is byte-for-byte the file it was
-before, and an older project simply reads as "no name given". Nothing needs
-migrating.
-
-### The way back out of an editor (K-323)
-
-An earlier change (K-243) settled that every way of leaving an inline rename
-*keeps* what you typed: pressing Enter, clicking somewhere else, tabbing away.
-That was the right call — abandoning a rename by clicking elsewhere should not
-silently throw the work away. But taken together it meant there was no way to
-change your mind at all. Whatever you had typed was going to be written.
-
-Escape is that way out now: the editor shuts and nothing is written, so the
-thing keeps the name or the number it already had. It works on all four
-editors that had the problem — an effect's name, a layer's name, a Project
-item's name, and any value box you are typing into.
-
-Why it did not already work is the interesting part. Modals got Escape earlier
-(K-319) by leaning on a mechanism Flutter already has: the framework binds
-Escape to a "dismiss" request that travels up the widget tree looking for
-something willing to handle it, and each dialog says what dismissing means for
-it. An inline rename is not a dialog — it is a text field that has replaced a
-label where it stood — so that request travelled up and found nobody, and the
-key did nothing at all.
-
-The fix attaches Escape to each editor's own **focus node**. A focus node gets
-first refusal on keys before the general shortcut machinery runs, which matters
-here for a specific reason: Flutter's text editor has its own idea of what the
-dismiss request means (hiding the selection toolbar), so a handler placed above
-it could have been quietly swallowed. Handling the raw key at the field itself
-is the version that cannot be intercepted.
-
-One trap worth remembering, because it is the sort that produces a bug that
-looks like the opposite of what you wrote: the value box commits its number
-whenever it loses focus, and closing the editor is *what loses focus*. So
-cancelling has to mark the editor closed before it takes it down, or Escape
-would commit the very value it was asked to discard.
-
-### The panel that was never on screen (K-322)
-
-The default workspace put **Effects & presets** as the *third tab of the left
-group*, behind Project and Effect controls — so on a fresh install you never saw
-it — and gave the fronted spot in the right-hand column to the **Debug** view,
-which is a developer panel. The specification had said "right column Effects &
-Presets" all along; the code had never matched it.
-
-It matches now. Left group: Project (open), Effect controls, Hierarchy. Right
-column: Effects & presets (open), Scopes, Debug. Nothing about the proportions
-changed, and the other three workspace presets are as they were. This is the
-*factory* layout, so a workspace you have already arranged is untouched — you
-would see the new one by resetting the workspace, or on a new install.
+One trap worth remembering, because it produces a bug that looks like the
+opposite of what you wrote: a value box commits its number whenever it loses
+focus, and closing the editor is *what loses focus*. So cancelling marks the
+editor closed before it takes it down — otherwise Escape would commit the very
+value it was asked to discard.
 
 ### The Ctrl+Space console, and why a ring beats a list (K-324, K-325)
 
@@ -4397,9 +4306,7 @@ effects plus the thing you were about to do. Both build their lists in the same
 file as the menu items, so neither can drift into a different idea of what
 "New composition" means.
 
-This also closes something that had been deferred since K-102, where the radial
-menu was blocked on there being no pie-menu library for the old toolkit. The
-move to Flutter (K-174) removed the blocker: a ring is a stack of positioned
+No pie-menu library is involved: a ring is a stack of positioned
 labels over a gesture detector, and the only real content is the arithmetic of
 which slice a direction means — which is why that arithmetic, and the sums
 that place the ring and bar on screen, live in their own file,
@@ -4442,6 +4349,11 @@ behind it.
 - **A readout that counts must not resize as it counts** (K-287). Numbers get a
   slot as wide as the longest thing they can ever say, and a badge that comes
   and goes keeps its slot while it is away. See below.
+- **Ordinary text is regular weight; Medium is emphasis only** — dialog headings
+  and the dock's tab pills (`bodyStrong`), per docs/15-DESIGN.md §7.1 (K-316).
+  When everything is emphasised the emphasis stops meaning anything, so both
+  font files are bundled and `theme_test.dart` pins which styles use which
+  weight, so nothing drifts back to all-Medium without saying so.
 - **Tests must let real time pass.** `settleFrb` in
   `flutter_ui/test/frb/frb_test_support.dart` alternates real-time slices with
   fake-clock pumps until the expected state arrives; `await tester.pump()` alone
@@ -4481,18 +4393,17 @@ Viewer's degradation badge (the "Half" chip that appears when playback has had t
 soften the picture) keeps its empty slot when it is not showing, so it does not
 shove the bar sideways as it comes and goes.
 
-### Where the memory went (K-294)
+### Reading the memory report (K-294)
 
-**The problem this solves.** Twice now Lumit has been found holding tens of
-gigabytes of memory on a Mac. Both times the hard part was not fixing it — it
-was working out *what* was holding it. Lumit keeps several stores of pictures:
-finished frames in memory, finished frames on the graphics card, decoded frames
-from video files, frames queued to be written to disk. Each has a budget and
-each throws things away to stay inside it. So either one of them was misbehaving,
-or something outside all of them was holding memory nobody was counting — and
-from outside the program those two look identical.
+**The problem this solves.** Lumit keeps several stores of pictures: finished
+frames in memory, finished frames on the graphics card, decoded frames from
+video files, frames queued to be written to disk. Each has a budget and each
+throws things away to stay inside it. When the whole process is holding more
+memory than it should, either one of those stores is misbehaving, or something
+outside all of them is holding memory nobody is counting — and from outside the
+program those two look identical.
 
-**The fix is a subtraction.** Settings ▸ Performance now opens with a Memory
+**The report is a subtraction.** Settings ▸ Performance opens with a Memory
 section: the total the operating system says Lumit is holding, then what each
 store admits to, and then the difference. If the stores add up to half a gigabyte
 and the total says eighty-five, the answer is "none of these" — which sounds like
@@ -4522,50 +4433,36 @@ mean pictures Lumit had finished with were never actually destroyed — which is
 different fault from any cache being too big, and on a Mac that memory is inside
 the total at the top.
 
-Counting them, rather than measuring them, is deliberate. The first version of
-this row asked the driver for bytes, and on a Mac the answer was "not reported
-by this driver" — that particular question only has an answer on Windows and
-Linux. A count is a count on every machine, and it happens to be the sharper
+Counting them, rather than measuring them, is deliberate. Asking the driver for
+bytes only has an answer on Windows and Linux — a Mac's driver does not report
+it — while a count is a count on every machine, and it happens to be the sharper
 question anyway: it distinguishes a big cache from a leak, which bytes alone
 cannot.
+
+Two things behind that row are worth knowing (K-295). Telling the graphics card
+"I have finished with this picture" does not give the memory back — it marks it
+finished, and the memory returns the next time the program asks the card to
+tidy up. A program drawing to a window asks constantly without meaning to,
+because showing a frame *is* asking; Lumit spends much of its time drawing into
+its caches instead, with no window involved. So the engine asks once per turn
+of its own loop, whether anything is on screen or not — which costs nothing
+when there is nothing to collect, and means finished pictures never pile up
+waiting for something to ask.
+
+And the asking comes in two forms. "Collect anything you have finished with,
+and don't keep me waiting" is the one the loop uses, because a loop that must
+produce a picture cannot afford to stand still. But work handed to a graphics
+card happens when the card gets to it, not when it is handed over, so there is
+always a queue of frames in flight — and everything still in that queue is
+memory the card cannot possibly release yet. A **measurement**, this report or
+a test reading it, must use the other form — "finish what you have, *then*
+collect" — or the queue reads as a leak: the number only means anything once
+the card has caught up.
 
 The report is a **debug-build tool**: it is there while a fault is being hunted,
 and a shipped Lumit does not show it. Asking somebody editing a video to
 interpret a live texture count is handing them the engineering instead of the
 tool.
-
-### And the repair it found (K-295)
-
-Here is what the instrument caught. Telling the graphics card "I have finished
-with this picture" does not give the memory back. It marks it finished, and the
-memory returns the next time the program asks the card to tidy up. A program
-that is drawing to a window asks constantly, without meaning to, because showing
-a frame *is* asking. Lumit spends much of its time drawing into its caches
-instead — no window, no asking, and so a pile of finished pictures nobody had
-collected.
-
-That is why the memory came back when the owner switched panels: the switch
-happened to ask. Now the engine asks once per turn of its own loop, whether
-anything is on screen or not, which costs nothing when there is nothing to
-collect and means the pile is never more than a moment old.
-
-**Two ways to ask, and the test needed the other one.** Asking the card to tidy
-up comes in two forms. "Collect anything you have finished with, and don't keep
-me waiting" is the one the loop uses, because a loop that must produce a picture
-cannot afford to stand still. But work handed to a graphics card does not happen
-when you hand it over — it happens when the card gets to it, and a computer can
-hand over frames far faster than a card draws them. So there is always a queue,
-and everything still in that queue is memory the card cannot possibly release
-yet. Ask the impatient way and the answer includes the queue.
-
-The other form is "finish what you have, *then* collect", and it waits. That is
-wrong inside a loop and exactly right for two other moments: an engine with
-nothing left to draw, and a **measurement**. This matters because a test was
-asking the impatient question and reading the queue as though it were a leak: on
-a Mac it saw 113 abandoned pictures where the truth was a handful, and on Windows
-577, while the same test on the build machine — which has no real graphics card,
-so nothing ever queues — saw eighteen and looked perfectly healthy. The number
-only means anything once the card has caught up.
 
 ## 10. The app icon and the brand files
 
@@ -4708,9 +4605,9 @@ once). The Windows installer is still unsigned, because that needs a
 code-signing certificate nobody has bought yet.
 
 The Mac side is signed, and it involves two separate things that are easy to
-confuse. **Signing** puts your identity on the app: this came from Mackenzie
-Reed, and here is Apple's certificate saying Apple agrees that is a real
-person. **Notarisation** is a second step where you upload the finished app to
+confuse. **Signing** puts your identity on the app: this came from the project
+owner's Apple Developer identity, and here is Apple's certificate saying
+Apple agrees that is a real person. **Notarisation** is a second step where you upload the finished app to
 Apple, their automated scanner checks it for malware, and they hand back a
 "ticket" — a note saying this exact build passed. **Stapling** attaches that
 ticket to the file itself, so a Mac can see the app is approved without asking
@@ -4966,22 +4863,18 @@ notices for months. `test/l10n/engine_labels_test.dart` prevents that: it reads
 the Rust source files directly and fails if the engine can say a word the table
 has no entry for.
 
-### Why the tooltips got shorter
+### A tooltip is a name and a shortcut
 
-While the words were being moved, they were also read — all of them, in one place,
-for the first time. A lot of the tooltips had quietly grown into paragraphs
-explaining things the button already said. A Reset button whose tooltip read *"Put
-every parameter back to its default, removing its keyframes"* is a sentence you
-have to stop and read to learn something you already knew.
-
-The specification always asked for the opposite: `docs/07-UI-SPEC.md` §13.2 says
-a tooltip is the control's **name and its shortcut**, and reserves the
-sentence-length kind for genuinely Lumit-specific ideas. So every tooltip is now
-under five words and most are two — *Reset all parameters*, *Add keyframe*,
-*Label colour*. Six are allowed to be longer, and they are listed by name in
-`test/l10n/arb_test.dart` with the reason: the three cache meters, whose tooltips
-carry live numbers and warn you that clicking throws work away, and the two
-playback modes. Anything else that grows past five words fails that test.
+`docs/07-UI-SPEC.md` §13.2 says a tooltip is the control's **name and its
+shortcut**, and reserves the sentence-length kind for genuinely Lumit-specific
+ideas. A Reset button whose tooltip reads *"Put every parameter back to its
+default, removing its keyframes"* is a sentence you have to stop and read to
+learn something you already knew. So every tooltip is under five words and most
+are two — *Reset all parameters*, *Add keyframe*, *Label colour*. Six are
+allowed to be longer, and they are listed by name in `test/l10n/arb_test.dart`
+with the reason: the three cache meters, whose tooltips carry live numbers and
+warn you that clicking throws work away, and the two playback modes. Anything
+else that grows past five words fails that test.
 
 ### Choosing a language
 
@@ -5206,3 +5099,19 @@ as it did — this substitution applies to shapes alone, which are the only prop
 no value of their own.
 
 This is also what After Effects shows for a mask path, and for the same reason.
+
+## 13. The two public web sites
+
+`web/` and `web-docs/` are the public face of the project: **lumitlab.com**,
+the marketing and download page, and **docs.lumitlab.com**, the user
+documentation (K-279). Both are built with **Astro**, a website builder that
+takes pages written mostly as ordinary text and turns them into plain HTML
+files at build time — there is no application running on a server afterwards,
+just files handed to whoever asks, which is why each site builds in about a
+second and costs nothing to host.
+
+They sit outside the Cargo workspace and nothing depends on them: no engine
+crate, no Flutter code and no test reaches into them, so a change to either
+site can never break a build of Lumit itself, nor the other way round. The
+practical details — running one locally, how deployment to Cloudflare works,
+and the traps in it — are in `web/README.md`.

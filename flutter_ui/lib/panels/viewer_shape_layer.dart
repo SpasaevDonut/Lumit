@@ -174,11 +174,11 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
     final at = _penPointer;
     final start = _draft.first;
     if (at == null || start == null) return false;
-    final box = _target;
+    final space = _space;
     return withinClosingDistance(
-      _space.ofScreen(at),
+      space.ofScreen(at),
       start,
-      screenScale: box == null ? _screenScale : box.map.viewScale * box.map.sx,
+      screenScale: space.screenScale,
     );
   }
 
@@ -191,18 +191,6 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
     return null;
   }
 
-  /// A point on screen in the composition's own pixels — what a shape layer's
-  /// art is built in when there is no layer to ask (K-237).
-  (double, double) _compPoint(Offset at) {
-    final scale = widget.compSize.width == 0
-        ? 1.0
-        : widget.fitted.width / widget.compSize.width;
-    return (
-      (at.dx - widget.fitted.left) / scale,
-      (at.dy - widget.fitted.top) / scale,
-    );
-  }
-
   /// The space the art being drawn lives in, and how to get it back on screen
   /// (K-238).
   ///
@@ -211,26 +199,12 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
   /// case that makes a *shape layer*, which is most of the reason to reach for
   /// a shape tool — there was no map, so nothing was drawn: you dragged and saw
   /// nothing until you let go. The composition's own placement is the map in
-  /// that case, and it is the same one `_compPoint` inverts.
+  /// that case.
   ShapeSpace get _space {
     final box = _target;
-    if (box != null) {
-      return ShapeSpace(
-        toScreen: box.map.toScreen,
-        ofScreen: (at) {
-          final p = box.map.layerOf(at);
-          return (p.dx, p.dy);
-        },
-      );
-    }
-    final scale = _screenScale;
-    return ShapeSpace(
-      toScreen: (x, y) => Offset(
-        widget.fitted.left + x * scale,
-        widget.fitted.top + y * scale,
-      ),
-      ofScreen: _compPoint,
-    );
+    if (box != null) return ShapeSpace.ofLayer(box);
+    return ShapeSpace.ofComp(
+        fitted: widget.fitted, compSize: widget.compSize);
   }
 
   @override
@@ -238,6 +212,7 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
     if (!widget.active) return const SizedBox.shrink();
     final t = ThemeScope.of(context).theme;
     final target = _target;
+    final space = _space;
     return Positioned.fill(
       // The system pointer is hidden, because the drawn pointer below replaces
       // it (K-226): the eyedropper's crosshair, badged with this tool's own
@@ -263,7 +238,7 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
                 child: CustomPaint(
                   painter: ShapePreviewPainter(
                     tool: widget.tool,
-                    space: _space,
+                    space: space,
                     // What the art would be committed with. A mask has no
                     // colour of its own — it cuts — so a drag on a selected
                     // layer previews in the accent instead of promising a fill
@@ -275,7 +250,7 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
                         ? colourOf(widget.uiState.tools.stroke)
                         : null,
                     strokeWidth: target == null
-                        ? widget.uiState.tools.strokeWidth * _screenScale
+                        ? widget.uiState.tools.strokeWidth * space.screenScale
                         : 0,
                     from: _from,
                     to: _to,
@@ -350,27 +325,23 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
     // A drag of a few pixels is a slip of the hand, not a shape.
     if ((to - from).distance < 4) return;
 
-    final box = _target;
-    if (box == null) {
-      // Nothing selected: After Effects' other half of this gesture — a new
-      // shape layer at the top of the composition (K-237).
-      _commitShapeLayer(shapePath(
-        tool: widget.tool,
-        from: _compPoint(from),
-        to: _compPoint(to),
-        square: HardwareKeyboard.instance.isShiftPressed,
-      ));
-      return;
-    }
-    final a = box.map.layerOf(from);
-    final b = box.map.layerOf(to);
+    // The layer's coordinates when one is selected, the composition's when
+    // not — the same path either way, and only what it will belong to differs
+    // (K-237): a mask on the layer, or a new shape layer at the top of the
+    // composition.
+    final space = _space;
     final path = shapePath(
       tool: widget.tool,
-      from: (a.dx, a.dy),
-      to: (b.dx, b.dy),
+      from: space.ofScreen(from),
+      to: space.ofScreen(to),
       square: HardwareKeyboard.instance.isShiftPressed,
     );
-    _commit(box, path);
+    final box = _target;
+    if (box == null) {
+      _commitShapeLayer(path);
+    } else {
+      _commit(box, path);
+    }
   }
 
   void _onPanCancel() => setState(() {
@@ -385,27 +356,18 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
   /// A plain click: place a corner, or close the path when it lands on the
   /// first point.
   void _onPenTap(TapUpDetails details) {
-    final box = _target;
     // The path is built in the layer's coordinates when there is a layer, and
     // in the composition's when there is not — the same path either way, and
     // the difference is only which thing it will belong to (K-237).
-    final at = box == null
-        ? _compPoint(details.localPosition)
-        : () {
-            final p = box.map.layerOf(details.localPosition);
-            return (p.dx, p.dy);
-          }();
+    final space = _space;
+    final at = space.ofScreen(details.localPosition);
     final start = _draft.first;
     if (start != null &&
         _draft.canClose &&
-        withinClosingDistance(
-          at,
-          start,
-          screenScale:
-              box == null ? _screenScale : box.map.viewScale * box.map.sx,
-        )) {
+        withinClosingDistance(at, start, screenScale: space.screenScale)) {
       final path = _draft.vertices;
       setState(() => _draft = const PathDraft());
+      final box = _target;
       if (box == null) {
         _commitShapeLayer(path);
       } else {
@@ -416,11 +378,6 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
     setState(() => _draft = _draft.withCorner(at));
   }
 
-  /// How many screen pixels one composition pixel covers.
-  double get _screenScale => widget.compSize.width == 0
-      ? 1.0
-      : widget.fitted.width / widget.compSize.width;
-
   /// A click that turned into a drag: the vertex is placed where the press was
   /// and its handles are pulled out to the pointer.
   void _finishHandleDrag() {
@@ -430,23 +387,11 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
       _handleFrom = null;
       _handleTo = null;
     });
-    final box = _target;
     if (from == null || to == null) return;
-    final at = box == null
-        ? _compPoint(from)
-        : () {
-            final p = box.map.layerOf(from);
-            return (p.dx, p.dy);
-          }();
-    final handle = box == null
-        ? _compPoint(to)
-        : () {
-            final p = box.map.layerOf(to);
-            return (p.dx, p.dy);
-          }();
+    final space = _space;
     setState(() => _draft = _draft.withBezier(
-          at,
-          handle,
+          space.ofScreen(from),
+          space.ofScreen(to),
           independent: HardwareKeyboard.instance.isAltPressed,
         ));
   }
@@ -516,7 +461,39 @@ class ShapeSpace {
   final Offset Function(double x, double y) toScreen;
   final (double, double) Function(Offset at) ofScreen;
 
-  const ShapeSpace({required this.toScreen, required this.ofScreen});
+  /// How many screen pixels one of this space's pixels covers — what every
+  /// fixed-screen-distance rule (the Pen's closing ring, K-232) divides by.
+  final double screenScale;
+
+  const ShapeSpace({
+    required this.toScreen,
+    required this.ofScreen,
+    this.screenScale = 1,
+  });
+
+  /// The selected layer's own coordinates, through its map.
+  factory ShapeSpace.ofLayer(LayerBox box) => ShapeSpace(
+        toScreen: box.map.toScreen,
+        ofScreen: (at) {
+          final p = box.map.layerOf(at);
+          return (p.dx, p.dy);
+        },
+        screenScale: box.map.viewScale * box.map.sx,
+      );
+
+  /// The composition's own placement — the space a new shape layer's art is
+  /// built in when there is no layer to ask (K-237). The same conversion the
+  /// Type tool places a click with, so the two cannot drift apart.
+  factory ShapeSpace.ofComp({required Rect fitted, required Size compSize}) {
+    final scale = compSize.width == 0 ? 1.0 : fitted.width / compSize.width;
+    return ShapeSpace(
+      toScreen: (x, y) =>
+          Offset(fitted.left + x * scale, fitted.top + y * scale),
+      ofScreen: (at) =>
+          ((at.dx - fitted.left) / scale, (at.dy - fitted.top) / scale),
+      screenScale: scale,
+    );
+  }
 }
 
 class ShapePreviewPainter extends CustomPainter {
@@ -715,33 +692,18 @@ class ShapePreviewPainter extends CustomPainter {
 
   /// A mask path in layer space, as a screen path — cubics between each pair of
   /// vertices, using their facing handles, which is exactly how the engine
-  /// reads the same numbers.
-  Path _screenPath(List<BridgeVertex> vertices, {required bool closed}) {
-    final path = Path();
-    Offset at(BridgeVertex v) => space.toScreen(v.x, v.y);
-    Offset out(BridgeVertex v) =>
-        space.toScreen(v.x + v.tanOutX, v.y + v.tanOutY);
-    Offset into(BridgeVertex v) =>
-        space.toScreen(v.x + v.tanInX, v.y + v.tanInY);
-
-    path.moveTo(at(vertices.first).dx, at(vertices.first).dy);
-    for (var i = 1; i < vertices.length; i++) {
-      final a = vertices[i - 1];
-      final b = vertices[i];
-      final c1 = out(a);
-      final c2 = into(b);
-      path.cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, at(b).dx, at(b).dy);
-    }
-    if (closed && vertices.length > 2) {
-      final a = vertices.last;
-      final b = vertices.first;
-      final c1 = out(a);
-      final c2 = into(b);
-      path.cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, at(b).dx, at(b).dy);
-      path.close();
-    }
-    return path;
-  }
+  /// reads the same numbers. The cubic walk itself is [bezierPath], shared
+  /// with the gizmo's outlines.
+  Path _screenPath(List<BridgeVertex> vertices, {required bool closed}) =>
+      bezierPath(
+        count: vertices.length,
+        at: (i) => space.toScreen(vertices[i].x, vertices[i].y),
+        tangentOut: (i) => space.toScreen(vertices[i].x + vertices[i].tanOutX,
+            vertices[i].y + vertices[i].tanOutY),
+        tangentIn: (i) => space.toScreen(vertices[i].x + vertices[i].tanInX,
+            vertices[i].y + vertices[i].tanInY),
+        closed: closed,
+      );
 
   @override
   bool shouldRepaint(ShapePreviewPainter old) => true;

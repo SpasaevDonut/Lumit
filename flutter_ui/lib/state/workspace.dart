@@ -398,12 +398,12 @@ class Workspace extends ChangeNotifier {
     if (custom != null) {
       setCustomTheme(custom);
     } else {
-      setScheme2(choice.scheme!);
+      setScheme(choice.scheme!);
     }
   }
 
   /// Select a built-in scheme, leaving any custom theme behind.
-  void setScheme2(LumitColorScheme s) {
+  void setScheme(LumitColorScheme s) {
     colorScheme = s;
     customThemeName = null;
     recompose();
@@ -498,8 +498,7 @@ class Workspace extends ChangeNotifier {
   /// would be a poor joke.
   void setAutoUpdate(bool on) {
     autoUpdate = on;
-    notifyListeners();
-    save();
+    settingsChanged();
   }
 
   /// Record that a check has just happened, so the next launch does not repeat
@@ -511,20 +510,17 @@ class Workspace extends ChangeNotifier {
 
   void setThemedScopes(bool on) {
     themedScopes = on;
-    notifyListeners();
-    save();
+    settingsChanged();
   }
 
   void setThemedViewerSurround(bool on) {
     themedViewerSurround = on;
-    notifyListeners();
-    save();
+    settingsChanged();
   }
 
   void setSmoothZoomedViewer(bool on) {
     smoothZoomedViewer = on;
-    notifyListeners();
-    save();
+    settingsChanged();
   }
 
   void setPrecomposeSettings({
@@ -535,14 +531,7 @@ class Workspace extends ChangeNotifier {
     precomposeMoveAttributes = moveAttributes;
     precomposeAdjustDuration = adjustDuration;
     precomposeOpenNewComp = openNewComp;
-    notifyListeners();
-    save();
-  }
-
-  void setScheme(LumitColorScheme s) {
-    colorScheme = s;
-    recompose();
-    save();
+    settingsChanged();
   }
 
   void setShape(ThemeShape s) {
@@ -559,16 +548,12 @@ class Workspace extends ChangeNotifier {
 
   void setAnimationLevel(AnimationLevel a) {
     animationLevel = a;
-    notifyListeners();
-    save();
+    settingsChanged();
   }
 
-  /// A field of [interface] or [performance] was edited in place: persist it
-  /// and tell everything drawing from it.
-  ///
-  /// Those two are plain mutable structs rather than a setter per field —
-  /// they carry working preferences, not document state — so this is the one
-  /// call that makes such an edit stick.
+  /// A setting was edited in place: persist it and tell everything drawing
+  /// from it. The one notify-and-save funnel — [interface] and [performance]
+  /// edits call it directly, and the boolean setters above fold into it.
   void settingsChanged() {
     notifyListeners();
     save();
@@ -601,10 +586,7 @@ class Workspace extends ChangeNotifier {
   /// one the panels may no longer match.
   WorkspacePreset? activePreset;
 
-  void touch() {
-    notifyListeners();
-    save();
-  }
+  void touch() => settingsChanged();
 
   /// Remember the file a project was just opened from or saved to, so the next
   /// launch can reopen it. Persisted immediately; no theme rebuild is needed, so

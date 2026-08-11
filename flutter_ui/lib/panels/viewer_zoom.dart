@@ -133,10 +133,6 @@ class _ViewerZoomLayerState extends State<ViewerZoomLayer> {
   /// the picture, which is where a drawn pointer should draw nothing.
   Offset? _pointer;
 
-  /// The mouse the pointer events are coming from, so the hidden cursor can be
-  /// asked for again for that same device — see [_hideSystemCursorAgain].
-  int? _device;
-
   /// Whether Alt is held, tracked rather than read at the moment of the click.
   ///
   /// The cursor has to say which way the click will go *before* it is clicked —
@@ -173,36 +169,12 @@ class _ViewerZoomLayerState extends State<ViewerZoomLayer> {
   }
 
   bool _onKey(KeyEvent event) {
+    // Re-hiding the system cursor after Alt takes it back is
+    // [DrawnPointerRegion]'s own job (K-235); this only repaints the sign.
     final held = HardwareKeyboard.instance.isAltPressed;
-    if (held != _alt && mounted) {
-      setState(() => _alt = held);
-      _hideSystemCursorAgain();
-    }
+    if (held != _alt && mounted) setState(() => _alt = held);
     // Never consumed: Alt is a modifier here, not a shortcut.
     return false;
-  }
-
-  /// Ask the platform to hide the pointer again (K-235).
-  ///
-  /// Alt is the key Windows reserves for the window menu, and pressing it takes
-  /// the pointer's own state with it: the arrow comes back and sits beside our
-  /// drawn magnifier, which is two pointers — exactly what hiding the system
-  /// one is for. Flutter will not re-apply a cursor by itself here, because it
-  /// only does so when the answer *changes*, and "hidden" to "hidden" is no
-  /// change at all.
-  ///
-  /// So the same request Flutter's own cursor manager makes is made directly,
-  /// for the device the pointer events are arriving from. Nothing in the widget
-  /// tree moves — an earlier attempt gave the region a new identity to force
-  /// the question, which rebuilt the gesture detector under it and dropped any
-  /// drag that was in flight.
-  void _hideSystemCursorAgain() {
-    final device = _device;
-    if (device == null || _pointer == null) return;
-    SystemChannels.mouseCursor.invokeMethod<void>(
-      'activateSystemCursor',
-      <String, dynamic>{'device': device, 'kind': 'none'},
-    );
   }
 
   Rect? get _box {
@@ -223,57 +195,50 @@ class _ViewerZoomLayerState extends State<ViewerZoomLayer> {
       // only one there is.
       child: DrawnPointerRegion(
         onPointer: (at) => setState(() => _pointer = at),
-        child: Listener(
-          // Which mouse is being used, for the cursor request above. A Listener
-          // rather than a wider change: it consumes nothing and takes no
-          // gesture away from the detector under it.
-          onPointerHover: (event) => _device = event.device,
-          onPointerMove: (event) => _device = event.device,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            // `_alt`, not the platform's answer: what the pointer showed is
-            // what the click must do, or the tool does the opposite of what it
-            // has just promised (K-236).
-            onTapUp: (details) =>
-                widget.onZoomAt(details.localPosition, out: _alt),
-            onPanStart: (details) => setState(() {
-              _from = details.localPosition;
-              _to = details.localPosition;
-              _pointer = details.localPosition;
-            }),
-            onPanUpdate: (details) => setState(() {
-              _to = details.localPosition;
-              _pointer = details.localPosition;
-            }),
-            onPanEnd: (_) {
-              final box = _box;
-              setState(() {
-                _from = null;
-                _to = null;
-              });
-              // A drag of a few pixels is a click that wobbled: zooming to a
-              // 3-pixel box would throw the picture into the far distance.
-              if (box == null || (box.width < 8 && box.height < 8)) return;
-              widget.onZoomBox(box, out: _alt);
-            },
-            onPanCancel: () => setState(() {
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          // `_alt`, not the platform's answer: what the pointer showed is
+          // what the click must do, or the tool does the opposite of what it
+          // has just promised (K-236).
+          onTapUp: (details) =>
+              widget.onZoomAt(details.localPosition, out: _alt),
+          onPanStart: (details) => setState(() {
+            _from = details.localPosition;
+            _to = details.localPosition;
+            _pointer = details.localPosition;
+          }),
+          onPanUpdate: (details) => setState(() {
+            _to = details.localPosition;
+            _pointer = details.localPosition;
+          }),
+          onPanEnd: (_) {
+            final box = _box;
+            setState(() {
               _from = null;
               _to = null;
-            }),
-            child: Stack(children: [
-              Positioned.fill(
-                child: CustomPaint(
-                  painter: _ZoomBoxPainter(box: _box, accent: widget.accent),
-                ),
+            });
+            // A drag of a few pixels is a click that wobbled: zooming to a
+            // 3-pixel box would throw the picture into the far distance.
+            if (box == null || (box.width < 8 && box.height < 8)) return;
+            widget.onZoomBox(box, out: _alt);
+          },
+          onPanCancel: () => setState(() {
+            _from = null;
+            _to = null;
+          }),
+          child: Stack(children: [
+            Positioned.fill(
+              child: CustomPaint(
+                painter: _ZoomBoxPainter(box: _box, accent: widget.accent),
               ),
-              MagnifierPointer(
-                at: _pointer,
-                out: _alt,
-                mark: widget.mark,
-                outline: widget.outline,
-              ),
-            ]),
-          ),
+            ),
+            MagnifierPointer(
+              at: _pointer,
+              out: _alt,
+              mark: widget.mark,
+              outline: widget.outline,
+            ),
+          ]),
         ),
       ),
     );
@@ -292,14 +257,7 @@ class _ZoomBoxPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final rect = box;
     if (rect == null) return;
-    canvas.drawRect(rect, Paint()..color = accent.withValues(alpha: 0.12));
-    canvas.drawRect(
-      rect,
-      Paint()
-        ..color = accent
-        ..strokeWidth = 1
-        ..style = PaintingStyle.stroke,
-    );
+    paintMarquee(canvas, rect, accent);
   }
 
   @override

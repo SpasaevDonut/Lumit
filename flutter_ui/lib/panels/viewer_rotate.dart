@@ -278,7 +278,7 @@ class _ViewerRotateLayerState extends State<ViewerRotateLayer> {
           frame: BigInt.from(widget.uiState.playheadFrame.value),
           scale: widget.uiState.viewerScale,
           layer: box.layer,
-          transform: transformWithRotation(box.layer.getTransform(), degrees),
+          transform: transformWith(box.layer.getTransform(), rotation: degrees),
         );
       } catch (_) {
         // A preview is a courtesy; the turn still lands (K-217).
@@ -370,18 +370,12 @@ class _RotateCursorPainter extends CustomPainter {
     // The arc is drawn round the pointer and turned so its middle faces away
     // from the anchor: the curve then always reads as "round the pivot".
     canvas.rotate(angle);
-    _draw(canvas, outline, 3.4);
-    _draw(canvas, mark, 1.6);
+    paintTwoPassStroke(outline, mark, (paint) => _draw(canvas, paint),
+        outlineWidth: 3.4, markWidth: 1.6, rounded: true);
     canvas.restore();
   }
 
-  void _draw(Canvas canvas, Color colour, double width) {
-    final paint = Paint()
-      ..color = colour
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = width
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
+  void _draw(Canvas canvas, Paint paint) {
     final rect = Rect.fromCircle(center: Offset.zero, radius: rotateCursorRadius);
     canvas.drawArc(rect, -sweep / 2, sweep, false, paint);
 
