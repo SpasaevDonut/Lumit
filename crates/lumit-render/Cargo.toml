@@ -24,6 +24,11 @@ lumit-text = { path = "../lumit-text" }
 # The compositor speaks wgpu directly. The version is pinned to the one
 # lumit-gpu links, or the handles would not unify.
 wgpu = "24"
+# Frame names must mean the same thing next week as today, because the disk
+# tier keeps them between sessions — so the Viewer's look is folded into a
+# name with the same hash lumit-eval builds the name with, not with a hasher
+# whose output may move with the toolchain.
+blake3 = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v7"] }
