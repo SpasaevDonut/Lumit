@@ -133,7 +133,7 @@ struct DiskWant {
 #[frb(ignore)]
 fn frame_name(
     state: &mut WorkerState,
-    document: &lumit_core::Document,
+    document: &std::sync::Arc<lumit_core::Document>,
     revision: u64,
     comp: Uuid,
     frame: u64,
@@ -686,7 +686,7 @@ fn publish_cache_bar(state: &mut WorkerState, stream: &mut WorkerResponseStream)
 #[frb(ignore)]
 fn frame_tier(
     state: &mut WorkerState,
-    document: &lumit_core::Document,
+    document: &std::sync::Arc<lumit_core::Document>,
     revision: u64,
     comp: Uuid,
     frame: u64,
@@ -922,7 +922,7 @@ fn wants_disk_lead(on_card: bool, in_memory: bool, on_disk: bool, already_asked:
 #[frb(ignore)]
 fn prepare_frame(
     state: &mut WorkerState,
-    document: &lumit_core::Document,
+    document: &std::sync::Arc<lumit_core::Document>,
     comp: Uuid,
     frame: u64,
     quality: lumit_render::Quality,
@@ -2866,6 +2866,7 @@ fn render_comp_with_preview(
     // document never committed, so they must neither be served back later nor
     // displace honest frames. It IS the case the bar exists for, though: a
     // dragged value on a heavy comp is exactly where the picture goes quiet.
+    let document = std::sync::Arc::new(document);
     watched(state, stream, req.frame, |state, stream| {
         publish_frame(
             state,
@@ -3144,7 +3145,7 @@ fn sample_layer_alone(
     let (rgba, w, h) = state
         .renderer
         .render_preview(
-            &patched,
+            &std::sync::Arc::new(patched),
             req.comp.id,
             req.frame,
             quality_for(req.scale),
@@ -3236,7 +3237,7 @@ fn publish_frame(
     comp: Uuid,
     frame: u64,
     scale: f32,
-    document: &lumit_core::Document,
+    document: &std::sync::Arc<lumit_core::Document>,
     stream: &mut WorkerResponseStream,
     mode: BridgePlaybackMode,
     cacheable: bool,
@@ -3329,7 +3330,7 @@ fn publish_zero_copy(
     comp: Uuid,
     frame: u64,
     scale: f32,
-    document: &lumit_core::Document,
+    document: &std::sync::Arc<lumit_core::Document>,
     stream: &mut WorkerResponseStream,
     mode: BridgePlaybackMode,
     cacheable: bool,

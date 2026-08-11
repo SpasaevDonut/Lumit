@@ -37,6 +37,7 @@ use lumit_core::model::{Composition, Document, FootageItem, LayerKind, ProjectIt
 use lumit_gpu::scaled_size;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// The persistent GPU engines a render needs, held between calls so shaders
@@ -638,7 +639,7 @@ impl HeadlessRenderer {
     /// would; a caller that then renders pays for the probe only once.
     pub fn frame_key(
         &mut self,
-        doc: &Document,
+        doc: &Arc<Document>,
         comp_id: Uuid,
         frame: u64,
         quality: Quality,
@@ -678,7 +679,7 @@ impl HeadlessRenderer {
     #[must_use]
     pub fn frame_key_presynced(
         &self,
-        doc: &Document,
+        doc: &Arc<Document>,
         comp_id: Uuid,
         frame: u64,
         quality: Quality,
@@ -710,7 +711,7 @@ impl HeadlessRenderer {
     /// same pixels, and both get the drag fast path.
     fn preview_display_texture(
         &mut self,
-        doc: &Document,
+        doc: &Arc<Document>,
         comp_id: Uuid,
         frame: u64,
         quality: Quality,
@@ -722,7 +723,7 @@ impl HeadlessRenderer {
     /// `bgra` is for the shared-texture Viewer only (see `render_to_shared`).
     fn preview_display_texture_fmt(
         &mut self,
-        doc: &Document,
+        doc: &Arc<Document>,
         comp_id: Uuid,
         frame: u64,
         quality: Quality,
@@ -863,7 +864,7 @@ impl HeadlessRenderer {
     /// returned buffer already carries the slate.
     pub fn render_preview(
         &mut self,
-        doc: &Document,
+        doc: &Arc<Document>,
         comp_id: Uuid,
         frame: u64,
         quality: Quality,
@@ -1047,7 +1048,7 @@ impl HeadlessRenderer {
     /// "the frame as an export would write it".
     pub fn render_rgba(
         &mut self,
-        doc: &Document,
+        doc: &Arc<Document>,
         comp_id: Uuid,
         frame: u64,
         scale: f32,
@@ -1114,7 +1115,7 @@ impl HeadlessRenderer {
     /// (see [`Self::frame_key`]) — never filed under a promise it cannot keep.
     pub fn render_prepared(
         &mut self,
-        doc: &Document,
+        doc: &Arc<Document>,
         comp_id: Uuid,
         frame: u64,
         quality: Quality,
@@ -1137,7 +1138,7 @@ impl HeadlessRenderer {
     /// unnameable frame (footage still being probed) gets.
     pub fn render_prepared_named(
         &mut self,
-        doc: &Document,
+        doc: &Arc<Document>,
         comp_id: Uuid,
         frame: u64,
         quality: Quality,
@@ -1506,7 +1507,7 @@ impl HeadlessRenderer {
     #[cfg(all(windows, feature = "shared-texture"))]
     pub fn render_to_shared(
         &mut self,
-        doc: &Document,
+        doc: &Arc<Document>,
         comp_id: Uuid,
         frame: u64,
         quality: Quality,
@@ -1586,7 +1587,7 @@ impl HeadlessRenderer {
     #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
     pub fn render_to_shared_dmabuf(
         &mut self,
-        doc: &Document,
+        doc: &Arc<Document>,
         comp_id: Uuid,
         frame: u64,
         quality: Quality,
@@ -1662,7 +1663,7 @@ impl HeadlessRenderer {
     #[cfg(all(target_os = "macos", feature = "shared-texture-macos"))]
     pub fn render_to_shared(
         &mut self,
-        doc: &Document,
+        doc: &Arc<Document>,
         comp_id: Uuid,
         frame: u64,
         quality: Quality,
@@ -2588,7 +2589,7 @@ mod tests {
                     }
                 }
             }
-            r.render_preview(&dragging, comp_id, 0, q, 1.0)
+            r.render_preview(&std::sync::Arc::new(dragging.clone()), comp_id, 0, q, 1.0)
                 .expect("drag tick");
         }
         assert_eq!(
@@ -2726,8 +2727,15 @@ mod tests {
         let mut doc = (*store.snapshot()).clone();
         let q = crate::plan::Quality::default();
 
-        r.render_prepared(&doc, comp_id, 0, q, false, true)
-            .expect("first render");
+        r.render_prepared(
+            &std::sync::Arc::new(doc.clone()),
+            comp_id,
+            0,
+            q,
+            false,
+            true,
+        )
+        .expect("first render");
         let hits = r.frame_texture_hits();
 
         // Rename the layer and nudge the work area: neither is in the picture.
@@ -2739,8 +2747,15 @@ mod tests {
                 lumit_core::time::CompTime(lumit_core::time::Rational::new(1, 2).unwrap()),
             ));
         }
-        r.render_prepared(&doc, comp_id, 0, q, false, true)
-            .expect("render after the picture-free edit");
+        r.render_prepared(
+            &std::sync::Arc::new(doc.clone()),
+            comp_id,
+            0,
+            q,
+            false,
+            true,
+        )
+        .expect("render after the picture-free edit");
         assert_eq!(
             r.frame_texture_hits(),
             hits + 1,
@@ -2752,8 +2767,15 @@ mod tests {
         if let Some(comp) = doc.comp_mut(comp_id) {
             comp.layers[0].transform.opacity = lumit_core::anim::Property::fixed(40.0);
         }
-        r.render_prepared(&doc, comp_id, 0, q, false, true)
-            .expect("render after a real edit");
+        r.render_prepared(
+            &std::sync::Arc::new(doc.clone()),
+            comp_id,
+            0,
+            q,
+            false,
+            true,
+        )
+        .expect("render after a real edit");
         assert_eq!(
             r.frame_texture_hits(),
             hits + 1,
@@ -2791,10 +2813,17 @@ mod tests {
         // A budget that holds exactly one 8×8 frame, so the second picture
         // evicts the first.
         r.set_frame_texture_budget(8 * 8 * 4 + 64);
-        r.render_prepared(&doc, comp_id, 0, q, false, true)
-            .expect("composite the frame the ladder will demote");
+        r.render_prepared(
+            &std::sync::Arc::new(doc.clone()),
+            comp_id,
+            0,
+            q,
+            false,
+            true,
+        )
+        .expect("composite the frame the ladder will demote");
         let first = r
-            .frame_key(&doc, comp_id, 0, q)
+            .frame_key(&std::sync::Arc::new(doc.clone()), comp_id, 0, q)
             .expect("a solid-only comp is nameable");
         assert!(r.has_frame_texture(first, false));
 
@@ -2803,8 +2832,15 @@ mod tests {
         if let Some(comp) = doc.comp_mut(comp_id) {
             comp.layers[0].transform.opacity = lumit_core::anim::Property::fixed(30.0);
         }
-        r.render_prepared(&doc, comp_id, 0, q, false, true)
-            .expect("composite a second picture, evicting the first");
+        r.render_prepared(
+            &std::sync::Arc::new(doc.clone()),
+            comp_id,
+            0,
+            q,
+            false,
+            true,
+        )
+        .expect("composite a second picture, evicting the first");
         assert!(!r.has_frame_texture(first, false), "the first was evicted");
 
         // The read-back lands within a few polls; it is running on the card.
@@ -2846,8 +2882,15 @@ mod tests {
         if let Some(comp) = doc.comp_mut(comp_id) {
             comp.layers[0].transform.opacity = lumit_core::anim::Property::fixed(70.0);
         }
-        r.render_prepared(&doc, comp_id, 0, q, false, true)
-            .expect("a third picture takes the promoted frame's place");
+        r.render_prepared(
+            &std::sync::Arc::new(doc.clone()),
+            comp_id,
+            0,
+            q,
+            false,
+            true,
+        )
+        .expect("a third picture takes the promoted frame's place");
         assert!(
             !r.has_frame_texture(first, false),
             "the promoted frame went"
@@ -2933,8 +2976,15 @@ mod tests {
         if let Some(comp) = doc.comp_mut(comp_id) {
             comp.layers[0].transform.opacity = lumit_core::anim::Property::fixed(25.0);
         }
-        r.render_prepared(&doc, comp_id, 0, q, false, true)
-            .expect("a second picture takes its place");
+        r.render_prepared(
+            &std::sync::Arc::new(doc.clone()),
+            comp_id,
+            0,
+            q,
+            false,
+            true,
+        )
+        .expect("a second picture takes its place");
         assert!(!r.has_frame_texture(key, false), "the first was evicted");
         let mut came_down = Vec::new();
         for _ in 0..40 {
@@ -3059,7 +3109,9 @@ mod tests {
         let colour = LinearColour([0.8, 0.1, 0.1, 1.0]);
 
         let (plain, plain_comp, _) = matrix_base(cw, ch, colour);
-        let (without, w, h) = r.render_rgba(&plain, plain_comp, 0, 1.0).expect("render");
+        let (without, w, h) = r
+            .render_rgba(&std::sync::Arc::new(plain.clone()), plain_comp, 0, 1.0)
+            .expect("render");
 
         let (mut with_null, null_comp, _) = matrix_base(cw, ch, colour);
         let mut null = matrix_layer("Null", LayerKind::Null, cw, ch);
@@ -3072,7 +3124,7 @@ mod tests {
             .layers
             .insert(0, null);
         let (with, w2, h2) = r
-            .render_rgba(&with_null, null_comp, 0, 1.0)
+            .render_rgba(&std::sync::Arc::new(with_null.clone()), null_comp, 0, 1.0)
             .expect("render");
 
         assert_eq!((w, h), (w2, h2));
@@ -3981,7 +4033,9 @@ mod tests {
             comp.layers.push(matte);
         }
 
-        let (rgba, w, h) = r.render_rgba(&doc, comp_id, 0, 1.0).expect("render");
+        let (rgba, w, h) = r
+            .render_rgba(&std::sync::Arc::new(doc.clone()), comp_id, 0, 1.0)
+            .expect("render");
         assert_eq!((w, h), (cw, ch));
         let at = |x: u32, y: u32| {
             let i = ((y * w + x) * 4) as usize;
@@ -4057,7 +4111,13 @@ mod tests {
                 ..Quality::default()
             };
             let (rgba, w, h) = r
-                .render_preview(&doc, comp_id, 0, quality, scale)
+                .render_preview(
+                    &std::sync::Arc::new(doc.clone()),
+                    comp_id,
+                    0,
+                    quality,
+                    scale,
+                )
                 .expect("render");
             let at = |fx: f32| {
                 let x = ((w as f32 * fx) as u32).min(w - 1);

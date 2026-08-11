@@ -11,30 +11,28 @@ pub struct Layer {
     layer_id: Option<Uuid>,
 }
 
-fn get_layer(context: &NativeCallContext, this: &Layer) -> Option<model::Layer> {
+/// Find the referenced layer and hand `read` a borrow of it, along with the
+/// call's context. The accessors below want one field or one property each,
+/// and a layer read happens per property per frame — so nothing here clones
+/// the layer (its keyframes, effects, masks and paint included) just to look
+/// at it.
+fn with_layer<T>(
+    context: &NativeCallContext,
+    this: &Layer,
+    read: impl FnOnce(&Arc<ExpressionContext>, &model::Layer) -> T,
+) -> Option<T> {
     let context = ExpressionContext::from_call(context);
-
-    if let Some(id) = this.comp_id {
-        if let Some(comp) = context.document.comp(id) {
-            if let Some(layer_id) = this.layer_id {
-                if let Some(layer) = comp.layers.iter().find(|l| l.id == layer_id) {
-                    return Some(layer.clone());
-                }
-            }
-        }
-    }
-
-    None
+    let comp = context.document.comp(this.comp_id?)?;
+    let layer_id = this.layer_id?;
+    let layer = comp.layers.iter().find(|l| l.id == layer_id)?;
+    Some(read(&context, layer))
 }
 
 fn _time(context: &NativeCallContext, this: &mut Layer) -> f64 {
-    if let Some(layer) = get_layer(context, this) {
-        let context = ExpressionContext::from_call(context);
-
-        return context.comp_time - layer.in_point.0.to_f64();
-    }
-
-    -1.0
+    with_layer(context, this, |context, layer| {
+        context.comp_time - layer.in_point.0.to_f64()
+    })
+    .unwrap_or(-1.0)
 }
 
 /// One of the referenced layer's transform properties, evaluated at that
@@ -50,16 +48,13 @@ fn transform_property(
     this: &mut Layer,
     pick: impl Fn(&model::TransformGroup) -> &crate::anim::Property,
 ) -> f64 {
-    let Some(layer) = get_layer(call, this) else {
-        return -1.0;
-    };
-
-    let t = _time(call, this);
-
-    let mut context = ExpressionContext::from_call(call).increase_depth();
-    context.layer = this.layer_id;
-
-    pick(&layer.transform).value_at_with_context(t, Arc::new(context))
+    with_layer(call, this, |context, layer| {
+        let t = context.comp_time - layer.in_point.0.to_f64();
+        let mut deeper = context.increase_depth();
+        deeper.layer = this.layer_id;
+        pick(&layer.transform).value_at_with_context(t, Arc::new(deeper))
+    })
+    .unwrap_or(-1.0)
 }
 
 // Rhai's `#[export_module]` expands to argument-unwrapping code of its own,
@@ -125,11 +120,8 @@ pub mod layers {
     /// get the name of a layer
     #[rhai_fn(get = "name")]
     pub fn name(context: NativeCallContext, this: &mut Layer) -> String {
-        if let Some(layer) = get_layer(&context, this) {
-            return layer.name;
-        }
-
-        "Invalid Layer Reference".into()
+        with_layer(&context, this, |_, layer| layer.name.clone())
+            .unwrap_or_else(|| "Invalid Layer Reference".into())
     }
 
     /// get the current time of this layer

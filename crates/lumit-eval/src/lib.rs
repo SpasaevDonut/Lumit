@@ -105,7 +105,7 @@ pub trait SourceStamper {
 /// footage is not yet identifiable (no probe), in which case the frame is
 /// rendered live and simply not cached.
 pub fn comp_frame_key(
-    doc: &Document,
+    doc: &Arc<Document>,
     comp: &Composition,
     t: f64,
     quality: Quality,
@@ -113,12 +113,11 @@ pub fn comp_frame_key(
 ) -> Option<FrameKey> {
     let mut visited = Vec::new();
     let mut h = blake3::Hasher::new();
-    // Taken once per key, not once per layer. An expression context needs an
-    // owned handle on the document, and cloning the project per layer is
-    // quadratic in layer count — 30ms a frame at two hundred layers, which is
-    // twice the whole 60fps budget spent before anything is drawn.
-    let doc = Arc::new(doc.clone());
-    feed_comp(&mut h, &doc, comp, t, quality, stamper, &mut visited)?;
+    // Takes the document as an `&Arc` because an expression context needs an
+    // owned handle on it: the caller's Arc is shared, so naming a frame clones
+    // a pointer, never the project. (A deep clone here once cost hundreds of
+    // MB per cache-bar refinement turn on a large project.)
+    feed_comp(&mut h, doc, comp, t, quality, stamper, &mut visited)?;
     let bytes = h.finalize();
     let mut k = [0u8; 16];
     k.copy_from_slice(&bytes.as_bytes()[..16]);
@@ -626,8 +625,10 @@ fn feed_layer(
     // banked by an earlier version.
     if !layer.paint.is_empty() {
         h.update(b"paint");
-        let json = serde_json::to_string(&layer.paint).unwrap_or_default();
-        h.update(json.as_bytes());
+        // Serialised straight into the hasher (it is an `io::Write`): the same
+        // bytes `to_string` built, with no intermediate String per layer per
+        // frame key. Serialising plain data cannot fail.
+        let _ = serde_json::to_writer(&mut *h, &layer.paint);
     }
 
     // Masks: static paths are plain data, so the serialised list names them.
@@ -644,8 +645,8 @@ fn feed_layer(
         h.update(b"nomask");
     } else {
         h.update(b"masks");
-        let json = serde_json::to_string(&layer.masks).unwrap_or_default();
-        h.update(json.as_bytes());
+        // Straight into the hasher, as with paint above.
+        let _ = serde_json::to_writer(&mut *h, &layer.masks);
         for mask in layer.masks.iter().filter(|m| m.path_is_animated()) {
             h.update(b"maskpath");
             let path = mask.path_at(lt);
@@ -1199,7 +1200,16 @@ mod tests {
     }
 
     fn key(doc: &Document, comp: &Composition, t: f64) -> FrameKey {
-        comp_frame_key(doc, comp, t, Quality::default(), &StubStamper).unwrap()
+        // Tests hold plain Documents; the Arc the real callers share is
+        // manufactured here so the call sites stay one line.
+        comp_frame_key(
+            &Arc::new(doc.clone()),
+            comp,
+            t,
+            Quality::default(),
+            &StubStamper,
+        )
+        .unwrap()
     }
 
     /// Same content, different instance ids and names → the same key. This
@@ -1504,7 +1514,13 @@ mod tests {
         assert_ne!(base, key(&doc, &c5, 1.0));
 
         // Quality tier.
-        let half = comp_frame_key(&doc, &comp, 1.0, Quality { divisor: 2 }, &StubStamper);
+        let half = comp_frame_key(
+            &Arc::new(doc.clone()),
+            &comp,
+            1.0,
+            Quality { divisor: 2 },
+            &StubStamper,
+        );
         assert_ne!(Some(base), half);
     }
 
@@ -2120,8 +2136,22 @@ mod tests {
             item: Uuid::now_v7(),
         };
         let comp = comp_with(vec![l]);
-        assert!(comp_frame_key(&doc, &comp, 1.0, Quality::default(), &UnknownStamper).is_none());
-        assert!(comp_frame_key(&doc, &comp, 1.0, Quality::default(), &StubStamper).is_some());
+        assert!(comp_frame_key(
+            &Arc::new(doc.clone()),
+            &comp,
+            1.0,
+            Quality::default(),
+            &UnknownStamper
+        )
+        .is_none());
+        assert!(comp_frame_key(
+            &Arc::new(doc.clone()),
+            &comp,
+            1.0,
+            Quality::default(),
+            &StubStamper
+        )
+        .is_some());
     }
 
     /// A retime keys the RETIMED source frame: half-speed at t=2 must key the
@@ -2142,7 +2172,14 @@ mod tests {
         // layer time reading five of source.
         let half = footage(Some(linear_retime(&[(0.0, 0.0), (10.0, 5.0)])));
         let k = |c: &Composition, t| {
-            comp_frame_key(&doc, c, t, Quality::default(), &StubStamper).unwrap()
+            comp_frame_key(
+                &Arc::new(doc.clone()),
+                c,
+                t,
+                Quality::default(),
+                &StubStamper,
+            )
+            .unwrap()
         };
         // half-speed at t=2 (source 1.0) == plain at t=1 (source 1.0).
         assert_eq!(k(&half, 2.0), k(&plain, 1.0));
@@ -2169,7 +2206,14 @@ mod tests {
             comp_with(vec![l])
         };
         let k = |c: &Composition| {
-            comp_frame_key(&doc, c, 1.0, Quality::default(), &StubStamper).unwrap()
+            comp_frame_key(
+                &Arc::new(doc.clone()),
+                c,
+                1.0,
+                Quality::default(),
+                &StubStamper,
+            )
+            .unwrap()
         };
         let plain = k(&footage(Interpolation::Nearest));
         let blend = k(&footage(Interpolation::Blend));
@@ -2233,7 +2277,14 @@ mod tests {
             comp_with(vec![l])
         };
         let key = |c: &Composition, t: f64| {
-            comp_frame_key(&doc, c, t, Quality::default(), &StubStamper).unwrap()
+            comp_frame_key(
+                &Arc::new(doc.clone()),
+                c,
+                t,
+                Quality::default(),
+                &StubStamper,
+            )
+            .unwrap()
         };
         // Both times land in the same stamped integer frame (the stub rounds
         // source·60; 1.000 and 1.004 both round to 60), so it is the sub-frame
@@ -2279,7 +2330,14 @@ mod tests {
             comp_with(vec![l])
         };
         let k = |c: &Composition, t: f64| {
-            comp_frame_key(&doc, c, t, Quality::default(), &StubStamper).unwrap()
+            comp_frame_key(
+                &Arc::new(doc.clone()),
+                c,
+                t,
+                Quality::default(),
+                &StubStamper,
+            )
+            .unwrap()
         };
         // Echo live hashes the temporal neighbour block; bypassed it does not.
         assert_ne!(k(&layer(true), 1.0), k(&layer(false), 1.0));
@@ -2307,7 +2365,14 @@ mod tests {
             comp_with(vec![l])
         };
         let k = |c: &Composition, t: f64| {
-            comp_frame_key(&doc, c, t, Quality::default(), &StubStamper).unwrap()
+            comp_frame_key(
+                &Arc::new(doc.clone()),
+                c,
+                t,
+                Quality::default(),
+                &StubStamper,
+            )
+            .unwrap()
         };
         // Live hashes the next-frame block; bypassed does not.
         assert_ne!(k(&layer(true), 1.0), k(&layer(false), 1.0));
@@ -2407,7 +2472,14 @@ mod tests {
             comp_with(vec![l])
         };
         let k = |c: &Composition| {
-            comp_frame_key(&doc, c, 1.0, Quality::default(), &StubStamper).unwrap()
+            comp_frame_key(
+                &Arc::new(doc.clone()),
+                c,
+                1.0,
+                Quality::default(),
+                &StubStamper,
+            )
+            .unwrap()
         };
         assert_ne!(k(&footage(None)), k(&footage(Some(24.0))));
         assert_ne!(k(&footage(Some(24.0))), k(&footage(Some(12.0))));
@@ -2430,7 +2502,15 @@ mod tests {
         let mut l = text_layer("", 0.0, 10.0, 0.0);
         l.kind = LayerKind::Sequence { clips };
         let comp = comp_with(vec![l]);
-        let k = |t| comp_frame_key(&doc, &comp, t, Quality::default(), &StubStamper);
+        let k = |t| {
+            comp_frame_key(
+                &Arc::new(doc.clone()),
+                &comp,
+                t,
+                Quality::default(),
+                &StubStamper,
+            )
+        };
         // Both clips resolve (Some); the gap is still keyable (transparent).
         assert!(k(1.0).is_some() && k(4.0).is_some() && k(2.5).is_some());
         // Different clips → different keys; the gap differs from both.

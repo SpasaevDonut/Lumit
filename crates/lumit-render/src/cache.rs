@@ -121,7 +121,7 @@ impl lumit_eval::SourceStamper for Stamper<'_> {
 /// some footage is still unprobed (rendered live, never banked).
 #[must_use]
 pub fn frame_key(
-    doc: &Document,
+    doc: &std::sync::Arc<Document>,
     comp: &Composition,
     frame: usize,
     quality: Quality,
@@ -220,7 +220,7 @@ mod tests {
     use lumit_core::time::{CompTime, Duration, FrameRate, Rational};
     use std::collections::HashMap;
 
-    fn footage_comp() -> (Document, Composition, Uuid) {
+    fn footage_comp() -> (std::sync::Arc<Document>, Composition, Uuid) {
         let mut doc = Document::new();
         let item = Uuid::now_v7();
         doc.items
@@ -271,7 +271,7 @@ mod tests {
             extra: serde_json::Map::new(),
         };
         doc.items.push(ProjectItem::Composition(comp.clone()));
-        (doc, comp, item)
+        (std::sync::Arc::new(doc), comp, item)
     }
 
     fn probed(item: Uuid) -> HashMap<Uuid, SourceProbe> {

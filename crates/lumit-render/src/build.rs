@@ -253,7 +253,7 @@ pub fn motion_blur_samples(
 /// at comp time `t_comp` with every effect resolved at `t_comp` too — a thin
 /// wrapper over [`build_comp_draws_at`] with the sample and frame times equal.
 pub fn build_comp_draws(
-    doc: &lumit_core::model::Document,
+    doc: &Arc<lumit_core::model::Document>,
     comp: &lumit_core::model::Composition,
     t_comp: f64,
     pixels_by_layer: &std::collections::HashMap<uuid::Uuid, &CompLayerPixels>,
@@ -273,7 +273,7 @@ pub fn build_comp_draws(
 /// (each layer's own `start_offset` subtracted) so the flag is honoured at every
 /// depth.
 pub fn build_comp_draws_at(
-    doc: &lumit_core::model::Document,
+    doc: &Arc<lumit_core::model::Document>,
     comp: &lumit_core::model::Composition,
     t_comp: f64,
     frame_t: f64,
@@ -285,7 +285,10 @@ pub fn build_comp_draws_at(
         t_comp >= l.in_point.0.to_f64() && t_comp < l.out_point.0.to_f64()
     };
 
-    let expr_doc = Arc::new(doc.clone());
+    // The caller's Arc: an expression context takes an owned handle, and this
+    // shares one rather than deep-cloning the project per build (and per
+    // nesting level — this function recurses through Precomps).
+    let expr_doc = doc;
 
     let pixels_for = |layer: &lumit_core::model::Layer| -> Option<LayerPixels> {
         let context = Arc::new(ExpressionContext {
@@ -1168,7 +1171,7 @@ fn flare_lens_files(effects: &[lumit_core::model::EffectInstance], lt: f64) -> V
 #[allow(clippy::too_many_arguments)]
 pub fn render_below_at(
     realiser: &Realiser,
-    doc: &lumit_core::model::Document,
+    doc: &Arc<lumit_core::model::Document>,
     comp: &lumit_core::model::Composition,
     below: &[lumit_core::model::Layer],
     tau: f64,
@@ -1199,7 +1202,7 @@ pub fn render_below_at(
 /// dropped to stills ([`strip_temporal_inputs`]).
 #[allow(clippy::too_many_arguments)]
 pub fn below_draws_at(
-    doc: &lumit_core::model::Document,
+    doc: &Arc<lumit_core::model::Document>,
     comp: &lumit_core::model::Composition,
     below: &[lumit_core::model::Layer],
     tau: f64,
@@ -1241,7 +1244,7 @@ pub fn below_draws_at(
 /// later step), so it returns None here.
 #[allow(clippy::too_many_arguments)]
 pub fn posterize_below(
-    doc: &lumit_core::model::Document,
+    doc: &Arc<lumit_core::model::Document>,
     comp: &lumit_core::model::Composition,
     layer: &lumit_core::model::Layer,
     idx: usize,
@@ -1287,7 +1290,7 @@ pub fn posterize_below(
 /// at the frame time (§5).
 #[allow(clippy::too_many_arguments)]
 pub fn accumulation_mb_below(
-    doc: &lumit_core::model::Document,
+    doc: &Arc<lumit_core::model::Document>,
     comp: &lumit_core::model::Composition,
     layer: &lumit_core::model::Layer,
     idx: usize,
@@ -1539,7 +1542,13 @@ mod render_below_at_tests {
 
         let width_at = |t: f64| {
             let mut visited = vec![comp.id];
-            let draws = build_comp_draws(&doc, &comp, t, &pixels, &mut visited);
+            let draws = build_comp_draws(
+                &std::sync::Arc::new(doc.clone()),
+                &comp,
+                t,
+                &pixels,
+                &mut visited,
+            );
             match &draws.first().expect("one draw").source {
                 DrawSource::Pixels { tex_w, .. } => *tex_w,
                 _ => panic!("a text layer draws its own pixels"),
@@ -1600,7 +1609,13 @@ mod render_below_at_tests {
         let t = 0.3;
 
         let mut v1 = vec![comp.id];
-        let draws = build_comp_draws(&doc, &comp, t, &pixels, &mut v1);
+        let draws = build_comp_draws(
+            &std::sync::Arc::new(doc.clone()),
+            &comp,
+            t,
+            &pixels,
+            &mut v1,
+        );
         let normal = realiser.realise(comp.camera_pose(t), comp.width, comp.height, bg, &draws);
         let normal_bytes = engine
             .readback8(
@@ -1614,7 +1629,7 @@ mod render_below_at_tests {
         let mut v2 = vec![comp.id];
         let below = render_below_at(
             &realiser,
-            &doc,
+            &std::sync::Arc::new(doc.clone()),
             &comp,
             &comp.layers,
             t,
@@ -1720,7 +1735,13 @@ mod render_below_at_tests {
         let pixels: HashMap<Uuid, &CompLayerPixels> = HashMap::new();
         let mut visited = vec![comp.id];
         // t = 0.35, 10 fps grid → held tau = floor(3.5)/10 = 0.3.
-        let draws = build_comp_draws(&doc, &comp, 0.35, &pixels, &mut visited);
+        let draws = build_comp_draws(
+            &std::sync::Arc::new(doc.clone()),
+            &comp,
+            0.35,
+            &pixels,
+            &mut visited,
+        );
         let adj = draws
             .iter()
             .find(|d| matches!(d.source, DrawSource::Adjust))
@@ -1773,7 +1794,13 @@ mod render_below_at_tests {
         let doc = Document::new();
         let pixels: HashMap<Uuid, &CompLayerPixels> = HashMap::new();
         let mut visited = vec![comp.id];
-        let draws = build_comp_draws(&doc, &comp, 0.35, &pixels, &mut visited);
+        let draws = build_comp_draws(
+            &std::sync::Arc::new(doc.clone()),
+            &comp,
+            0.35,
+            &pixels,
+            &mut visited,
+        );
         let adj = draws
             .iter()
             .find(|d| matches!(d.source, DrawSource::Adjust))
@@ -1850,7 +1877,13 @@ mod render_below_at_tests {
         let doc = Document::new();
         let pixels: HashMap<Uuid, &CompLayerPixels> = HashMap::new();
         let mut visited = vec![comp.id];
-        let draws = build_comp_draws(&doc, &comp, 0.35, &pixels, &mut visited);
+        let draws = build_comp_draws(
+            &std::sync::Arc::new(doc.clone()),
+            &comp,
+            0.35,
+            &pixels,
+            &mut visited,
+        );
         let d = draws
             .iter()
             .find(|d| !matches!(d.source, DrawSource::Adjust))
@@ -1916,7 +1949,13 @@ mod render_below_at_tests {
 
         // The posterised frame at t = 0.35.
         let mut v1 = vec![comp.id];
-        let draws = build_comp_draws(&doc, &comp, 0.35, &pixels, &mut v1);
+        let draws = build_comp_draws(
+            &std::sync::Arc::new(doc.clone()),
+            &comp,
+            0.35,
+            &pixels,
+            &mut v1,
+        );
         let posterised =
             realiser.realise(comp.camera_pose(0.35), comp.width, comp.height, bg, &draws);
         let posterised_bytes = engine
@@ -1932,7 +1971,15 @@ mod render_below_at_tests {
         // frame_t = 0.35 matches what the posterise adjustment passes (its own
         // frame time), so the two below-renders build the identical draws.
         let held = render_below_at(
-            &realiser, &doc, &comp, below, 0.3, 0.35, None, &pixels, &mut v2,
+            &realiser,
+            &std::sync::Arc::new(doc.clone()),
+            &comp,
+            below,
+            0.3,
+            0.35,
+            None,
+            &pixels,
+            &mut v2,
         );
         let held_bytes = engine
             .readback8(
@@ -2010,7 +2057,13 @@ mod render_below_at_tests {
         let doc = Document::new();
         let pixels: HashMap<Uuid, &CompLayerPixels> = HashMap::new();
         let mut visited = vec![comp.id];
-        let draws = build_comp_draws(&doc, &comp, 0.5, &pixels, &mut visited);
+        let draws = build_comp_draws(
+            &std::sync::Arc::new(doc.clone()),
+            &comp,
+            0.5,
+            &pixels,
+            &mut visited,
+        );
         let adj = draws
             .iter()
             .find(|d| matches!(d.source, DrawSource::Adjust))
@@ -2066,7 +2119,8 @@ mod render_below_at_tests {
         let pixels: HashMap<Uuid, &CompLayerPixels> = HashMap::new();
         let render = |comp: &Composition, t: f64| -> Vec<u8> {
             let mut v = vec![comp.id];
-            let draws = build_comp_draws(&doc, comp, t, &pixels, &mut v);
+            let draws =
+                build_comp_draws(&std::sync::Arc::new(doc.clone()), comp, t, &pixels, &mut v);
             let bg = comp.background.0.map(f64::from);
             let tex = realiser.realise(comp.camera_pose(t), comp.width, comp.height, bg, &draws);
             engine

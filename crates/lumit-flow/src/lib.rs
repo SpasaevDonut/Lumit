@@ -302,18 +302,24 @@ pub(crate) fn downsample(g: &Gray) -> Gray {
 /// Sobel gradients of `g`, normalised to intensity-per-pixel (÷8), clamped
 /// borders (impl note §1: Sobel gradient textures per level).
 pub(crate) fn sobel(g: &Gray) -> (Vec<f32>, Vec<f32>) {
-    let (w, h) = (g.w, g.h);
+    sobel_slice(&g.data, g.w, g.h)
+}
+
+/// [`sobel`] on a bare scalar plane, so a caller holding plain `Vec<f32>`s
+/// (the refine loop's warped gradients) need not clone them into a `Gray`.
+pub(crate) fn sobel_slice(data: &[f32], w: usize, h: usize) -> (Vec<f32>, Vec<f32>) {
     let mut gx = vec![0f32; w * h];
     let mut gy = vec![0f32; w * h];
+    let at = |x: usize, y: usize| data[y * w + x];
     for y in 0..h {
         for x in 0..w {
             let xm = x.saturating_sub(1);
             let xp = (x + 1).min(w - 1);
             let ym = y.saturating_sub(1);
             let yp = (y + 1).min(h - 1);
-            let (tl, t, tr) = (g.at(xm, ym), g.at(x, ym), g.at(xp, ym));
-            let (l, r) = (g.at(xm, y), g.at(xp, y));
-            let (bl, b, br) = (g.at(xm, yp), g.at(x, yp), g.at(xp, yp));
+            let (tl, t, tr) = (at(xm, ym), at(x, ym), at(xp, ym));
+            let (l, r) = (at(xm, y), at(xp, y));
+            let (bl, b, br) = (at(xm, yp), at(x, yp), at(xp, yp));
             gx[y * w + x] = ((tr + 2.0 * r + br) - (tl + 2.0 * l + bl)) / 8.0;
             gy[y * w + x] = ((bl + 2.0 * b + br) - (tl + 2.0 * t + tr)) / 8.0;
         }
@@ -719,6 +725,9 @@ fn refine(
         return (u, v, vec![0; n]);
     }
     let (ax, ay) = sobel(a);
+    // B's gradients once, not once per outer iteration: the frame never
+    // changes inside the loop, only where it is sampled.
+    let (bx, by) = sobel(b);
     let idx = |x: usize, y: usize| y * w + x;
 
     for _ in 0..outer {
@@ -728,7 +737,6 @@ fn refine(
         let mut bw = vec![0f32; n];
         let mut bwx = vec![0f32; n];
         let mut bwy = vec![0f32; n];
-        let (bx, by) = sobel(b);
         for y in 0..h {
             for x in 0..w {
                 let i = idx(x, y);
@@ -742,16 +750,8 @@ fn refine(
         let mut du = vec![0f32; n];
         let mut dv = vec![0f32; n];
         // Second derivatives of the warped frame, for the gradient term.
-        let (bwxx, bwxy) = sobel(&Gray {
-            w,
-            h,
-            data: bwx.clone(),
-        });
-        let (bwyx, bwyy) = sobel(&Gray {
-            w,
-            h,
-            data: bwy.clone(),
-        });
+        let (bwxx, bwxy) = sobel_slice(&bwx, w, h);
+        let (bwyx, bwyy) = sobel_slice(&bwy, w, h);
         // Red–black (checkerboard) sweeps rather than plain raster order.
         //
         // SOR wants each pixel to use its neighbours' *just-updated* values,

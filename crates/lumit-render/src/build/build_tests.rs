@@ -73,7 +73,13 @@ fn footage_geometry_uses_native_size_not_decoded_size() {
     map.insert(layer.id, &lp);
     let doc = Document::new();
     let mut visited = vec![comp.id];
-    let draws = build_comp_draws(&doc, &comp, 0.0, &map, &mut visited);
+    let draws = build_comp_draws(
+        &std::sync::Arc::new(doc.clone()),
+        &comp,
+        0.0,
+        &map,
+        &mut visited,
+    );
 
     assert_eq!(draws.len(), 1);
     // Geometry uses native size (zoom-independent), not the 480x270 decode.
@@ -160,7 +166,13 @@ fn collapsed_precomp_splices_inner_draws_with_parent_placement() {
     };
     let map: HashMap<Uuid, &CompLayerPixels> = HashMap::new();
     let mut visited = vec![parent.id];
-    let draws = build_comp_draws(&doc, &parent, 0.0, &map, &mut visited);
+    let draws = build_comp_draws(
+        &std::sync::Arc::new(doc.clone()),
+        &parent,
+        0.0,
+        &map,
+        &mut visited,
+    );
     // Spliced: one draw, pixel source (the inner text), pre = the parent
     // Precomp layer's placement matrix — exactly the compositor's maths.
     assert_eq!(draws.len(), 1);
@@ -194,7 +206,13 @@ fn collapsed_precomp_splices_inner_draws_with_parent_placement() {
     let mut off = parent.clone();
     off.layers[0].switches.collapse = false;
     let mut visited = vec![off.id];
-    let draws = build_comp_draws(&doc, &off, 0.0, &map, &mut visited);
+    let draws = build_comp_draws(
+        &std::sync::Arc::new(doc.clone()),
+        &off,
+        0.0,
+        &map,
+        &mut visited,
+    );
     assert_eq!(draws.len(), 1);
     let DrawSource::Nested { background, .. } = &draws[0].source else {
         panic!("an uncollapsed Precomp renders to an intermediate");
@@ -209,7 +227,13 @@ fn collapsed_precomp_splices_inner_draws_with_parent_placement() {
         .masks
         .push(lumit_core::mask::Mask::rectangle(0.0, 0.0, 10.0, 10.0));
     let mut visited = vec![forced.id];
-    let draws = build_comp_draws(&doc, &forced, 0.0, &map, &mut visited);
+    let draws = build_comp_draws(
+        &std::sync::Arc::new(doc.clone()),
+        &forced,
+        0.0,
+        &map,
+        &mut visited,
+    );
     assert_eq!(draws.len(), 1);
     assert!(matches!(draws[0].source, DrawSource::Nested { .. }));
 }
@@ -276,7 +300,13 @@ fn patch_layer_prop_overrides_the_previewed_value() {
     map.insert(layer.id, &lp);
     let doc = Document::new();
     let mut visited = vec![patched.id];
-    let draws = build_comp_draws(&doc, &patched, 0.0, &map, &mut visited);
+    let draws = build_comp_draws(
+        &std::sync::Arc::new(doc.clone()),
+        &patched,
+        0.0,
+        &map,
+        &mut visited,
+    );
     assert_eq!(draws.len(), 1);
     assert_eq!(draws[0].position.0, 500.0);
 }
@@ -347,7 +377,13 @@ fn a_live_adjustment_layer_emits_a_staging_draw() {
     };
     let map: HashMap<Uuid, &CompLayerPixels> = HashMap::new();
     let mut visited = vec![comp.id];
-    let draws = build_comp_draws(&doc, &comp, 0.0, &map, &mut visited);
+    let draws = build_comp_draws(
+        &std::sync::Arc::new(doc.clone()),
+        &comp,
+        0.0,
+        &map,
+        &mut visited,
+    );
     // Bottom-up: the solid first, then the staging point above it.
     assert_eq!(draws.len(), 2);
     assert!(matches!(draws[0].source, DrawSource::Pixels { .. }));
@@ -369,7 +405,13 @@ fn a_live_adjustment_layer_emits_a_staging_draw() {
         let mut comp = comp.clone();
         comp.layers[0] = dead;
         let mut visited = vec![comp.id];
-        let draws = build_comp_draws(&doc, &comp, 0.0, &map, &mut visited);
+        let draws = build_comp_draws(
+            &std::sync::Arc::new(doc.clone()),
+            &comp,
+            0.0,
+            &map,
+            &mut visited,
+        );
         assert_eq!(draws.len(), 1, "a dead adjustment stack must not stage");
         assert!(matches!(draws[0].source, DrawSource::Pixels { .. }));
     }
@@ -461,10 +503,16 @@ fn a_flare_matte_pointed_at_its_own_layer_reads_this_layers_input() {
     let map: HashMap<Uuid, &CompLayerPixels> = HashMap::new();
     let slots = |comp: &Composition| -> Vec<Vec<LayerInputDraw>> {
         let mut visited = vec![comp.id];
-        build_comp_draws(&doc, comp, 0.0, &map, &mut visited)
-            .into_iter()
-            .map(|d| d.flare_mattes)
-            .collect()
+        build_comp_draws(
+            &std::sync::Arc::new(doc.clone()),
+            comp,
+            0.0,
+            &map,
+            &mut visited,
+        )
+        .into_iter()
+        .map(|d| d.flare_mattes)
+        .collect()
     };
 
     // 1. An adjustment layer, the case that did not work at all before.
@@ -572,7 +620,13 @@ fn a_paint_stroke_reaches_the_layers_pixels() {
 
     let map: HashMap<Uuid, &CompLayerPixels> = HashMap::new();
     let mut visited = vec![painted.id];
-    let draws = build_comp_draws(&doc, &painted, 0.0, &map, &mut visited);
+    let draws = build_comp_draws(
+        &std::sync::Arc::new(doc.clone()),
+        &painted,
+        0.0,
+        &map,
+        &mut visited,
+    );
     assert_eq!(draws.len(), 1);
     let DrawSource::Pixels { rgba, tex_w, .. } = &draws[0].source else {
         panic!("a solid draws pixels");
