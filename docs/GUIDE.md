@@ -3545,6 +3545,18 @@ Both are per composition and are remembered in the session (above), so a comp
 reopens looking how you left it, and neither is an edit: Ctrl+Z will not undo an
 exposure nudge and setting one does not make the project dirty.
 
+**And the Viewer says so, in one place.** The **colour-management badge** on the
+bar always names the display transform the picture is being shown through —
+scene-linear to sRGB, the one built-in pair today — and while either of those
+two controls is engaged it reads "· preview" instead, in the accent. The two
+controls do light up while they are on, but that only says *this control is on*,
+and only where you are already looking; the sentence that matters is "what you
+are watching is not what the export will be", and it belongs somewhere you can
+read without leaving the picture. Its tooltip is also, for the moment, the only
+place on screen that says what tone mapping actually does — an icon's own
+tooltip is its name and nothing more, which is a rule, and a readout is allowed
+a sentence, which is the exception this fits through.
+
 The cache had to be told about them, and the answer is pleasingly blunt: **while
 either control is engaged, frames have no name.** A frame with no name cannot be
 filed in any of the three tiers, so nothing exposed is ever banked, and the

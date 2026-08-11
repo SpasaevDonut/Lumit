@@ -73,17 +73,20 @@ These are v1-scope surfaces it does not yet match.
     the dropdown the bar is supposed to carry is not built, **Third** and
     **Auto** have no rows, and the choice is shell-wide rather than stored per
     composition in the project as §2.2 asks.
-- **The colour-management indicator** (§2.2 item 8) — and it is now owed twice.
-    Exposure and tone mapping (K-314) are built, and §2.2 says the badge is where
-    the Viewer states that the picture is not the export while either is engaged.
-    Until the badge exists the two controls simply draw themselves in the accent
-    while engaged, which is honest but says it only where you are already
-    looking. Building the badge means moving that statement into it.
-- **Tone mapping wants a hint somewhere findable** (owner, 2026-08-08). It is an
-    icon with no label, and its tooltip is the control's *name* because §13.2
-    keeps tooltips to that — so nothing on screen says what the toggle does. The
-    explanation currently exists only in the translator's description and in
-    K-314. Wherever hints of this kind end up living, this is a first candidate.
+- **The colour-management badge is a readout and cannot yet be clicked**
+    (§2.2 item 8). It is built: always on the bar, naming the display
+    transform, and saying the picture is not the export while the exposure or
+    the tone map is engaged (K-314). §2.2 also asks that clicking it open
+    colour settings — there are none to open, so it is plainly not a control
+    rather than a button that does nothing. It names the one built-in transform
+    pair (scene-linear → sRGB) as a constant; when the transform becomes a
+    choice (docs/06 §3.3's OCIO slot) this is the readout that must follow it.
+- **Tone mapping's explanation now lives in the badge's tooltip** and nowhere
+    else on screen (owner, 2026-08-08). The toggle itself is an icon whose own
+    tooltip is its name, because §13.2 keeps tooltips to that; the badge is a
+    readout, which §13.2 does allow a sentence, so that is where "what this
+    does" went. If hints of this kind ever get a home of their own, this is
+    still a candidate to move.
 
 **Toolbar tools ([07-UI-SPEC.md](07-UI-SPEC.md) §1.7):** what is armed is a
 *tool*; what each tool then does is the backlog.

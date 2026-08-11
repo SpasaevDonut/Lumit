@@ -1605,10 +1605,10 @@ class _Toolbar extends StatelessWidget {
           ),
           const SizedBox(width: 6),
           // Exposure and the tone map (K-314, docs/07 §2.2 items 12-13): the
-          // two preview-only controls. Both read in the accent while they are
-          // engaged, which is — until the colour-management badge of item 8
-          // exists — the whole of how the Viewer says the picture is not the
-          // export. That badge is where the statement belongs (docs/TODO.md).
+          // two preview-only controls. Each reads in the accent while it is
+          // engaged, which says "this control is on" and nothing more — that
+          // the *picture* is not the export is the colour-management badge's
+          // to say (item 8, further along this bar).
           lumitIcon(
             LumitIcon.aperture,
             size: iconSize,
@@ -1736,6 +1736,8 @@ class _Toolbar extends StatelessWidget {
             maxFrame: _lastFrameOf(settings),
             tooltip: l10n.tipFrameOnScreen,
           ),
+          const SizedBox(width: 8),
+          _ColourManagementBadge(look: look),
           // The degradation badge (docs/13 §B5, docs/07 §2.2): when adaptive
           // playback has dropped below Full, say so on the bar — a softer
           // picture must never be a mystery. The tier rides in on the frame,
@@ -1805,6 +1807,66 @@ const double _playbackModeWidth = 92;
 /// The slot the degradation badge sits in, kept whether or not the badge is
 /// showing.
 const double _tierBadgeWidth = 52;
+
+/// The slot the colour-management badge sits in — wide enough for the longer of
+/// its two readings, so engaging the exposure cannot shove the transport along.
+const double _colourBadgeWidth = 148;
+
+/// **What am I looking at?** — the colour-management badge (docs/07 §2.2 item 8).
+///
+/// It is always on the bar, and it always names the display transform the
+/// picture is being shown through: working space to display, which for now is
+/// the one built-in pair, scene-linear to sRGB (docs/06 §3.3 — OCIO slots in
+/// here later and this is the readout it will feed).
+///
+/// **And while either preview-only control is engaged, it says so.** Exposure
+/// and the tone map live inside that same display transform (K-314) and change
+/// nothing the export will ever see; the two controls draw themselves in the
+/// accent while they are on, but that only says "this control is on" and only
+/// says it where you are already looking. The statement that *the picture is
+/// not the export* belongs here, stated calmly rather than warned about
+/// (15-DESIGN) — a badge you can read without leaving the picture.
+///
+/// A readout, not a control. §2.2 asks that clicking it open colour settings;
+/// there are none to open yet (docs/TODO.md), and a badge that looked pressable
+/// and did nothing would be worse than one that plainly is not.
+class _ColourManagementBadge extends StatelessWidget {
+  final ViewerLook look;
+
+  const _ColourManagementBadge({required this.look});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    final engaged = look.stops != 0 || look.toneMap;
+    return SizedBox(
+      width: _colourBadgeWidth,
+      child: LumitTooltip(
+        message: engaged ? l10n.tipViewerPreviewView : l10n.tipDisplayTransform,
+        child: Center(
+          child: Container(
+            key: const ValueKey('viewer-colour-badge'),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+            decoration: BoxDecoration(
+              color: t.surface2,
+              borderRadius: BorderRadius.circular(t.tokens.controlRadius),
+            ),
+            child: Text(
+              engaged
+                  ? l10n.viewerDisplayTransformPreview(
+                      l10n.viewerDisplayTransform)
+                  : l10n.viewerDisplayTransform,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: t.small
+                  .copyWith(color: engaged ? t.accent : t.textSecondary),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 /// Which playback behaviour is in force, and a click to change it.
 ///

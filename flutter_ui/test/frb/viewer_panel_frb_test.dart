@@ -432,6 +432,47 @@ void main() {
       await settleFrb(tester, until: () => p.uiState.previewProgress.idle);
     });
 
+    /// **The colour-management badge** (docs/07 §2.2 item 8). Always on the
+    /// bar, naming the display transform, and while either preview-only
+    /// control is engaged it is where the Viewer says the picture on screen is
+    /// not the export — which until now was said only by the two controls
+    /// drawing themselves in the accent.
+    testWidgets('the colour-management badge says when a view is engaged',
+        (tester) async {
+      final p = withLayer();
+      await mount(tester, p);
+      final t = LumitTheme.forScheme(LumitColorScheme.dark, ThemeShape.sharp);
+
+      final badge = find.byKey(const ValueKey('viewer-colour-badge'));
+      expect(badge, findsOneWidget, reason: 'it is always on the bar');
+
+      Text badgeText() => tester.widget<Text>(
+          find.descendant(of: badge, matching: find.byType(Text)));
+
+      expect(badgeText().data, 'Linear → sRGB');
+      expect(badgeText().style?.color, t.textSecondary);
+
+      // The tone map is engaged: the badge, not just the control, says so.
+      await tester.tap(find.byKey(const ValueKey('viewer-tone-map')));
+      await tester.pump();
+      expect(badgeText().data, contains('preview'));
+      expect(badgeText().data, contains('Linear → sRGB'),
+          reason: 'it still names the transform it is showing through');
+      expect(badgeText().style?.color, t.accent);
+
+      // Back to neutral, back to a plain statement of the transform.
+      await tester.tap(find.byKey(const ValueKey('viewer-tone-map')));
+      await tester.pump();
+      expect(badgeText().data, 'Linear → sRGB');
+
+      // And the exposure engages it on its own.
+      await scrub(tester, find.byKey(const ValueKey('viewer-exposure')), 10);
+      await tester.pump();
+      expect(badgeText().data, contains('preview'));
+
+      await settleFrb(tester, until: () => p.uiState.previewProgress.idle);
+    });
+
     /// **Both controls are per composition** (K-314): they are a way of looking
     /// at one comp, so fronting another must show that one's own view rather
     /// than carrying the first one's exposure across.
