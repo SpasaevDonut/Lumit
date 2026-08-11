@@ -112,6 +112,57 @@ pub struct FxEngine {
 }
 
 impl FxEngine {
+    /// Let this engine make a Lens flare's bake **beside** the frame rather
+    /// than inside it (K-346).
+    ///
+    /// Off by default, and that default is the safe one: an engine nobody has
+    /// told otherwise bakes inside the frame exactly as it always did, so a
+    /// path that has not opted in — the exporter's, which builds its own
+    /// engine on its own device — cannot draw a provisional picture by
+    /// omission. The Viewer's engine turns it on, and a frame whose lens is
+    /// still being baked draws the lens the last frame drew (or, with none
+    /// yet, no flare) instead of stopping for half a second of optics.
+    pub fn set_deferred_flare_bakes(&self, deferred: bool) {
+        self.lens_flare
+            .deferred
+            .store(deferred, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Whether a flare bake is being made right now.
+    #[must_use]
+    pub fn flare_bake_pending(&self) -> bool {
+        self.lens_flare.bake_pending()
+    }
+
+    /// A number that moves whenever a flare bake is queued or lands.
+    ///
+    /// What a caller compares either side of a render to answer the only
+    /// question deferring the bake raises: *did this frame draw the lens its
+    /// parameters name?* If the number moved, it may not have, and the frame
+    /// must not be filed under a name that says it did — the frame caches are
+    /// keyed by what is *in* a frame (K-178), and an entry that lies about
+    /// that outlives every edit and undo that might have fixed it.
+    #[must_use]
+    pub fn flare_bake_generation(&self) -> u64 {
+        self.lens_flare
+            .generation
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Start making a lens's bake now, before any frame asks to draw it.
+    ///
+    /// The same queue a deferred miss uses, offered by name so a caller that
+    /// knows a lens is *about* to be wanted can have the optics started
+    /// early — and so the rule that a frame made while a bake is in flight is
+    /// unnameable can be checked without waiting on a real half-second of it.
+    ///
+    /// Answers whether it was queued: `false` when the key is already held or
+    /// already baking, or when this machine gave us no bake thread. Queueing
+    /// is never required — a miss makes the bake either way.
+    pub fn warm_flare_bake(&self, key: u64, bake: &lens_flare::FlareBake) -> bool {
+        self.lens_flare.warm(key, bake)
+    }
+
     /// One compute pass: `src` and `orig` sampled, `dst` written, `params`
     /// as the uniform — the shared plumbing every kernel dispatch uses.
     #[allow(clippy::too_many_arguments)]

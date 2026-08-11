@@ -1012,7 +1012,13 @@ pub fn run_ops(
                     h,
                     &op,
                     matte,
-                    &move || {
+                    // The bake as something the bake thread can own and run
+                    // (K-346): one small `Arc` a flare a frame, beside a pass
+                    // that traces hundreds of thousands of rays. Whether it is
+                    // actually run beside the frame or inside it is the
+                    // engine's policy, not this call's — see
+                    // `FxEngine::set_deferred_flare_bakes`.
+                    &(std::sync::Arc::new(move || {
                         let b = lf::bake_with(&params, custom_text.as_deref());
                         lumit_gpu::fx::FlareBakeData {
                             surfaces: b
@@ -1042,7 +1048,7 @@ pub fn run_ops(
                             starburst: b.starburst,
                             sb_res: lf::STARBURST_RES,
                         }
-                    },
+                    }) as lumit_gpu::fx::FlareBake),
                     &probe,
                 );
             }

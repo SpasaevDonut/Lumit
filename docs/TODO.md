@@ -27,12 +27,6 @@ These sit above everything else: they are what the editor feels like in the hand
     regression and not a flaky test - and it means the two flare performance
     items below cannot be measured honestly until it is understood. Find which
     stage varies before changing anything.
-- **Take the lens flare's bake off the render thread.** Choosing a lens blocks
-    the picture for about half a second of pure CPU optics (measured, K-263) -
-    the single longest stall the effect has - and the bake is still a closure the
-    render thread runs inside the frame (`lumit-render/src/fxops.rs`, the
-    `Resolved::LensFlare` arm). Run it beside the render and a freeze becomes a
-    wait you can see.
 - **The flare's raster still draws the cells it culled.** After K-263 a batch
     draws exactly its own cells, but a cell the guards kill is still stored and
     still submitted as a degenerate off-screen triangle. Compacting to just the

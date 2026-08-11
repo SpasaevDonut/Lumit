@@ -109,6 +109,11 @@ pub struct WorkerState {
     /// When the last request arrived — the fill waits out a ~200 ms lull
     /// after it (docs/06 §5.5), so a scrub in progress is never contended.
     last_request: std::time::Instant,
+    /// The flare-bake generation this worker has already reacted to (K-346).
+    /// When the renderer's moves past it, a bake has been queued or has landed
+    /// — and a landing is the moment the picture on screen stops being the
+    /// right one, because the frame showing was drawn with the lens before it.
+    bakes_seen: u64,
     /// The one soloed-layer render the dropper is reading, against the
     /// `(comp, frame, layer, generation)` it was made for — see
     /// [`sample_layer_alone`]. One entry, because the dropper only ever reads
@@ -1068,6 +1073,51 @@ fn idle_backup(state: &mut WorkerState) {
 }
 
 /// Render ONE uncached frame near the playhead into the VRAM frame cache —
+/// Make the shown frame again when a Lens flare's bake has landed (K-346).
+///
+/// While a bake is in flight the Viewer keeps showing the lens before it — that
+/// is the whole point, a wait instead of a freeze — but nothing else would ever
+/// ask for that frame again, so without this the picture would stay one lens
+/// behind until the user moved something. Nothing happens on any other tick:
+/// the generation only moves when a bake is queued or lands, so an idle editor
+/// with no flare in it does not so much as compare two numbers twice.
+#[frb(ignore)]
+fn republish_after_bake(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
+    let now = state.renderer.flare_bake_generation();
+    if now == state.bakes_seen {
+        return;
+    }
+    // Still baking: the number moved because one was *queued*. Wait for it —
+    // republishing now would make another provisional frame.
+    if state.renderer.flare_bake_pending() {
+        return;
+    }
+    state.bakes_seen = now;
+    // The fill was stopped while the frames were unnameable; there is
+    // something to bank again.
+    state.fill_exhausted = false;
+    let Some((comp_ref, frame, scale)) = state.last_shown.clone() else {
+        return;
+    };
+    let Ok(project) = state.project.state() else {
+        return;
+    };
+    let Ok(document) = project.read().map(|held| held.store.snapshot()) else {
+        return;
+    };
+    drop(project);
+    publish_frame(
+        state,
+        comp_ref.id,
+        frame,
+        scale,
+        &document,
+        stream,
+        BridgePlaybackMode::EveryFrame,
+        true,
+    );
+}
+
 /// the idle-time background fill (docs/06 §5.5, forward-biased per
 /// [`crate::playback::fill_order`]). One frame per call so a request arriving
 /// mid-fill waits at most one render; sets `fill_exhausted` when there is
@@ -1080,6 +1130,13 @@ fn idle_fill(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
     // as the exposure is off zero. There is nothing to fill while the picture
     // is not the composite, so the fill is simply finished.
     if !state.renderer.display_view().is_neutral() {
+        state.fill_exhausted = true;
+        return;
+    }
+    // Same shape while a Lens flare's bake is being made (K-346): every frame
+    // is unnameable until it lands, so filling would render and bank nothing.
+    // `republish_after_bake` sets the fill going again when it does.
+    if state.renderer.flare_bake_pending() {
         state.fill_exhausted = true;
         return;
     }
@@ -1885,6 +1942,14 @@ fn worker_loop(
             return;
         }
     };
+    // This is the *Viewer's* renderer, so a Lens flare's bake is made beside
+    // the frame rather than inside it (K-346): picking a lens shows the lens
+    // before it and swaps the new one in when the optics are done, instead of
+    // stopping the picture for about half a second. The exporter builds its
+    // own renderer and never asks for this, so an export still bakes exactly
+    // and is bit-for-bit what it was.
+    renderer.set_deferred_flare_bakes(true);
+
     // The two profiler sinks (docs/13 §7.1), installed for the session and fed
     // from inside a render — which is why they take a *clone* of the reply
     // stream rather than borrowing the one the loop below writes through: a
@@ -1956,6 +2021,7 @@ fn worker_loop(
         fill_exhausted: true,
         backup_exhausted: true,
         last_request: std::time::Instant::now(),
+        bakes_seen: 0,
         layer_sample: None,
     };
 
@@ -1990,6 +2056,12 @@ fn worker_loop(
             match receiver.recv_timeout(wait) {
                 Ok(request) => Some(request),
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    // A lens finished baking: the picture on screen was drawn
+                    // with the lens before it, so make it again (K-346). This
+                    // is what turns the old half-second freeze into a wait —
+                    // the frame the user is looking at keeps its old flare and
+                    // is replaced the moment the new optics are ready.
+                    republish_after_bake(&mut state, &mut stream);
                     let lull =
                         state.last_request.elapsed() >= std::time::Duration::from_millis(200);
                     if lull {
@@ -2934,22 +3006,32 @@ fn trace_scope(
                     scale_q: lumit_render::preview_scale_q(quality),
                     quality,
                 };
-                let mut render = || {
-                    state
-                        .renderer
-                        .render_preview(
-                            &document,
-                            req.comp.id,
-                            req.frame,
-                            quality_for(req.scale),
-                            req.scale,
-                        )
-                        .ok()
-                        .map(|(rgba, width, height)| (width, height, rgba))
-                };
-                let made = match key {
-                    Some(key) => crate::framecache::get_or_render(key, provenance, &mut render),
-                    None => render(),
+                let made = match key.and_then(crate::framecache::get) {
+                    Some(hit) => Some(hit),
+                    None => {
+                        // A flare bake queued *during* the render means the
+                        // picture is of the previous lens (K-346), so the name
+                        // taken before it no longer describes what was made.
+                        // Banked only when nothing moved.
+                        let bakes_before = state.renderer.flare_bake_generation();
+                        let made = state
+                            .renderer
+                            .render_preview(
+                                &document,
+                                req.comp.id,
+                                req.frame,
+                                quality_for(req.scale),
+                                req.scale,
+                            )
+                            .ok()
+                            .map(|(rgba, width, height)| (width, height, rgba));
+                        if let (Some(key), Some((w, h, px))) = (key, made.as_ref()) {
+                            if state.renderer.flare_bake_generation() == bakes_before {
+                                crate::framecache::put_rendered(key, provenance, *w, *h, px);
+                            }
+                        }
+                        made
+                    }
                 };
                 let Some(made) = made else {
                     eprintln!("Scope render failed, dropping the trace");
@@ -3055,28 +3137,41 @@ fn sample_pixels(
                     let name = state
                         .renderer
                         .frame_key(&document, req.comp.id, req.frame, quality);
-                    let mut render = || {
-                        state
-                            .renderer
-                            .render_preview(&document, req.comp.id, req.frame, quality, req.scale)
-                            .ok()
-                            .map(|(rgba, width, height)| (width, height, rgba))
-                    };
+
                     // A frame that cannot be named yet (its footage is still
-                    // being probed) is rendered and not banked: an entry under
-                    // a name the renderer did not keep is worse than no entry.
-                    let made = match name {
-                        Some(key) => crate::framecache::get_or_render(
-                            key,
-                            lumit_render::FrameProvenance {
-                                comp: req.comp.id,
-                                frame: req.frame,
-                                scale_q: lumit_render::preview_scale_q(quality),
-                                quality,
-                            },
-                            render,
-                        ),
-                        None => render(),
+                    // being probed, or a flare bake is being made) is rendered
+                    // and not banked: an entry under a name the renderer did
+                    // not keep is worse than no entry. The bake can also start
+                    // *during* the render, which only the render can report —
+                    // hence the check either side of it (K-346).
+                    let provenance = lumit_render::FrameProvenance {
+                        comp: req.comp.id,
+                        frame: req.frame,
+                        scale_q: lumit_render::preview_scale_q(quality),
+                        quality,
+                    };
+                    let made = match name.and_then(crate::framecache::get) {
+                        Some(hit) => Some(hit),
+                        None => {
+                            let bakes_before = state.renderer.flare_bake_generation();
+                            let made = state
+                                .renderer
+                                .render_preview(
+                                    &document,
+                                    req.comp.id,
+                                    req.frame,
+                                    quality,
+                                    req.scale,
+                                )
+                                .ok()
+                                .map(|(rgba, width, height)| (width, height, rgba));
+                            if let (Some(key), Some((w, h, px))) = (name, made.as_ref()) {
+                                if state.renderer.flare_bake_generation() == bakes_before {
+                                    crate::framecache::put_rendered(key, provenance, *w, *h, px);
+                                }
+                            }
+                            made
+                        }
                     };
                     made.and_then(|(w, h, rgba)| {
                         cut_patch(&rgba, w, h, u, v, req.window).map(|p| (p, w, h))

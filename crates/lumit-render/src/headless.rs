@@ -628,6 +628,48 @@ impl HeadlessRenderer {
         self.view
     }
 
+    /// Let this renderer make a Lens flare's bake beside the frame rather than
+    /// inside it (K-346), so choosing a lens is a wait you can watch instead of
+    /// half a second of stopped picture.
+    ///
+    /// **Off by default, and the exporter never turns it on.** An export builds
+    /// its own renderer on its own device, so it starts with an empty bake
+    /// cache and bakes inside the frame exactly as it always did — which is
+    /// what keeps K-031's preview-equals-export identity true and an export
+    /// bit-for-bit what it was. The Viewer's renderer turns it on.
+    ///
+    /// While a bake is being made, frames are **unnameable** (see
+    /// [`Self::frame_key`]) — the same mechanism unprobed footage and a
+    /// non-neutral display view use, and for the same reason: a frame drawn
+    /// with the previous lens must not be filed under a name that says it was
+    /// drawn with this one.
+    pub fn set_deferred_flare_bakes(&self, deferred: bool) {
+        if let Some(parts) = self.parts.as_ref() {
+            parts.fx.set_deferred_flare_bakes(deferred);
+        }
+    }
+
+    /// A number that moves whenever a flare bake is queued or lands.
+    ///
+    /// Read either side of a render to answer "did this frame draw the lens its
+    /// parameters name?", and read on an idle tick to notice that a bake has
+    /// landed and the picture is now worth making again.
+    #[must_use]
+    pub fn flare_bake_generation(&self) -> u64 {
+        self.parts
+            .as_ref()
+            .map_or(0, |parts| parts.fx.flare_bake_generation())
+    }
+
+    /// Whether a flare bake is being made right now — while it is, frames are
+    /// unnameable.
+    #[must_use]
+    pub fn flare_bake_pending(&self) -> bool {
+        self.parts
+            .as_ref()
+            .is_some_and(|parts| parts.fx.flare_bake_pending())
+    }
+
     /// The content-hash name of this comp frame ([`crate::cache::frame_key`]),
     /// computed from **this renderer's own** probe results so the name and the
     /// pixels can never disagree about what a source file is. `None` while some
@@ -645,6 +687,13 @@ impl HeadlessRenderer {
         quality: Quality,
     ) -> Option<u128> {
         if !self.view.is_neutral() {
+            return None;
+        }
+        // A flare bake in flight means any frame made now may be drawing the
+        // lens before it (K-346). Unnameable rather than misnamed: the tiers
+        // are keyed by what is *in* a frame (K-178), so an entry that lies
+        // about that outlives every edit and undo that could have fixed it.
+        if self.flare_bake_pending() {
             return None;
         }
         let comp = doc.comp(comp_id)?;
@@ -1160,8 +1209,15 @@ impl HeadlessRenderer {
             }
         }
         let started = std::time::Instant::now();
+        // A flare bake queued *during* this composite means the picture just
+        // made may be of the previous lens (K-346). The name was taken before
+        // the render, so it has to be dropped afterwards — the alternative is
+        // an entry that lies about its own content, which no later edit or
+        // undo can clear (K-178).
+        let bakes_before = self.flare_bake_generation();
         let (texture, _, _) =
             self.preview_display_texture_fmt(doc, comp_id, frame, quality, bgra)?;
+        let key = key.filter(|_| self.flare_bake_generation() == bakes_before);
         let texture = std::sync::Arc::new(texture);
         if let Some(key) = key {
             // What it actually cost, so the store's cost-aware eviction has
@@ -2508,6 +2564,87 @@ mod tests {
         // probe directly, but the cached map must not grow).
         assert!(builder.audio_jobs(&doc, &comp).is_empty());
         assert_eq!(builder.has_audio.len(), 1);
+    }
+
+    /// **The export contract for the deferred flare bake (K-346).** A fresh
+    /// renderer bakes lens flares *inside* the frame, exactly as it always did.
+    ///
+    /// This is how "an export is never a provisional picture" is kept true. An
+    /// export builds its own renderer (`export::run`), and nobody calls
+    /// `set_deferred_flare_bakes` on it — only the Viewer's worker does — so
+    /// the promise is a property of the code's shape rather than a rule anyone
+    /// has to remember. The default being the exact one is the load-bearing
+    /// half: a path that forgets to choose gets the safe behaviour.
+    #[test]
+    fn a_fresh_renderer_bakes_flares_inside_the_frame() {
+        let r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                lumit_gpu::no_adapter();
+                return;
+            }
+        };
+        assert!(
+            !r.flare_bake_pending(),
+            "a renderer that has made no frames has nothing baking"
+        );
+        assert_eq!(
+            r.flare_bake_generation(),
+            0,
+            "and nothing has been queued or landed"
+        );
+    }
+
+    /// A frame made while a lens is baking is **unnameable**, so nothing files
+    /// it under a name that says it was drawn with a lens it was not (K-346,
+    /// K-178). The same mechanism unprobed footage and a non-neutral display
+    /// view already use.
+    #[test]
+    fn a_baking_flare_makes_frames_unnameable() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                lumit_gpu::no_adapter();
+                return;
+            }
+        };
+        let (store, comp_id) = doc_with_solid(LinearColour([1.0, 1.0, 1.0, 1.0]), 8, 8);
+        let doc = store.snapshot();
+        assert!(
+            r.frame_key(&doc, comp_id, 0, Quality::default()).is_some(),
+            "an ordinary frame of a solid names itself"
+        );
+
+        // Queue a bake by hand: the effect engine is the authority the name
+        // asks, and driving it directly keeps this a test of the *rule*
+        // rather than of how long a real bake takes on a software rasteriser.
+        r.set_deferred_flare_bakes(true);
+        let queued = {
+            let Some(parts) = r.parts.as_ref() else {
+                return;
+            };
+            let bake = std::sync::Arc::new(|| lumit_gpu::fx::FlareBakeData {
+                surfaces: Vec::new(),
+                ghosts: Vec::new(),
+                spreads: Vec::new(),
+                sensor_z_mm: 0.0,
+                focal_mm: 1.0,
+                native_fstop: 1.0,
+                pupil_mm: 1.0,
+                start_z_mm: 0.0,
+                energy_gain: 1.0,
+                starburst: Vec::new(),
+                sb_res: 1,
+            }) as lumit_gpu::fx::FlareBake;
+            parts.fx.warm_flare_bake(0xfeed_face, &bake)
+        };
+        if !queued {
+            return; // no bake thread on this machine
+        }
+        assert!(
+            r.frame_key(&doc, comp_id, 0, Quality::default()).is_none(),
+            "while a lens is baking, no frame may be named"
+        );
     }
 
     /// An unknown comp id is a calm error, never a panic.

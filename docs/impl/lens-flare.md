@@ -301,10 +301,11 @@ dim, which is what that glass does. The bake key hashes lens, f-stop, blades, ro
 roundness and iris softness; light position, intensities, dispersion, coating, Ghost
 softness, focus, quality and mix are frame-time and never rebake.
 
-**The bake blocks the render thread, so its cost is a freeze.** About 0.66 s for a
-24-surface prescription on a middling CPU, of which the exposure probe's trace is roughly
-0.5 s and the starburst 0.12 s — the rest is pair ranking. Three K-263 economies, all
-exact:
+**The bake costs about 0.66 s** for a 24-surface prescription on a middling CPU, of which
+the exposure probe's trace is roughly 0.5 s and the starburst 0.12 s — the rest is pair
+ranking. It used to spend that on the render thread, so choosing a lens froze the picture;
+**it now runs on a bake thread beside the frame (K-346)** — see §5a. Three K-263 economies,
+all exact, cut it to that figure:
 
 - spreads are measured **after** the ranking and only for the first `MAX_RENDERED_PAIRS`
   (200, the Max ghosts ceiling), not for every surviving pair — a 60-surface prescription
@@ -320,9 +321,37 @@ exact:
   wavelength* — it is the shape of the hole, not a function of colour, and it costs an
   `atan2` and a `cos` a corner.
 
-What remains is the trace itself, near the arithmetic floor for scalar code. The
-outstanding fix is not a faster bake but a bake that does not block: see TODO's preview
-progress indicator.
+What remains is the trace itself, near the arithmetic floor for scalar code — which is why
+the fix was never a faster bake but a bake that does not block.
+
+### 5a. The bake runs beside the frame (K-346)
+
+`LensFlareFx` owns a **bake thread**. A frame that asks for a lens the engine does not hold
+hands the bake to it and draws **the lens the previous frame drew** — or, with none yet, no
+flare at all — and the frame after the bake lands draws the new one. The upload stays on
+the render thread (the only thread with the device): finished bakes are collected at the
+top of the next `baked()` call.
+
+Four invariants, and none of them is optional:
+
+- **Exact by default.** Deferring is a per-engine switch that is *off* until something
+  turns it on, and only the Viewer's renderer does. The exporter builds its own renderer on
+  its own device, so an export bakes inside the frame exactly as it always did and stays
+  bit-for-bit what it was (K-031 preview-equals-export is untouched).
+- **A provisional frame is unnameable.** `HeadlessRenderer::frame_key` answers `None` while
+  a bake is in flight, and the caches check `FxEngine::flare_bake_generation` either side of
+  a render because a bake can be queued *during* one. A frame drawn with the previous lens
+  and filed under the new lens's name is an entry that lies about its own content, and the
+  tiers are keyed by content (K-178) — nothing later would ever clear it.
+- **Cancellation is by supersession and it is exact.** The bake key is a hash of the
+  parameters, so a key nothing is asking for any more is a lens the user has moved past.
+  The thread takes everything queued behind a job before starting, keeps only the newest,
+  and answers the rest with *nothing* — which is what takes them off the in-flight list, so
+  a lens abandoned mid-drag does not leave every frame permanently unnameable.
+- **The bake is still pure.** Same key, same bake, wherever it runs; the frame that finally
+  shows the new lens is the frame the blocking version would have drawn. Pinned by
+  `lens_flare_a_deferred_bake_is_the_same_bake` (including the auto-exposure gain bit-for-
+  bit) and `lens_flare_deferred_bakes_answer_with_the_previous_lens_then_the_new_one`.
 
 The GPU side caches uploaded bakes by key, **evicting oldest-first at 24** (K-263).
 Emptying the map at the cap, as K-262 did, made trying lenses quadratic: every ninth pick

@@ -3533,6 +3533,49 @@ a marker list can never be compared with a marker list. Times and confidences
 can — and "the same audio at the same sensitivity finds the same beats" is
 exactly the promise that moving work between threads must not break.
 
+### The half-second the lens picker used to cost
+
+The Lens flare effect simulates a real camera lens: the ghosts are traced through an actual
+glass prescription, and the starburst is a Fourier transform of the iris. Most of that
+happens on the graphics card every frame, and it is fast. One part does not: the **bake** —
+working out the lens's ghost pairs, its starburst sprite and its exposure — is heavy
+maths on the ordinary processor, about half a second for a complicated lens. It only has to
+happen once per lens, and the result is kept, so trying lenses you have already seen is
+instant.
+
+The first time, though, it used to happen *inside the frame*, on the same thread that draws
+the picture. So choosing a lens from the picker stopped the Viewer dead for half a second,
+every time you tried one you had not tried before.
+
+It now runs on a **thread of its own, beside the frame**. Pick a lens, and the frame you are
+looking at carries on showing the lens you had — the picture keeps moving, keeps
+scrubbing, keeps responding — while the optics are worked out next door. The moment they
+are ready the frame is made again with the new lens and the Viewer catches up on its own.
+A freeze became a wait you can watch.
+
+Two things had to be true for that to be safe, and they are the interesting part.
+
+**An export must never be provisional.** A frame with the wrong lens in it is a disaster in
+a file you are delivering. So the "bake beside the frame" behaviour is *off* unless
+something switches it on, and only the Viewer switches it on. The exporter builds its own
+renderer, and nobody switches it on there — so the safe behaviour is what you get by
+forgetting, rather than something you have to remember.
+
+**A frame with the old lens in it must not be filed under the new lens's name.** Lumit
+names every finished frame by a fingerprint of *what is in it* (that is what lets an undo
+find its frames still waiting). A frame drawn with the previous lens but named for the new
+one would be a permanent lie: nothing you did afterwards — no edit, no undo — would ever
+clear it, because nothing would know it was wrong. So while a lens is baking, frames are
+simply **not named at all**. They are drawn and shown and thrown away, exactly as frames
+are while footage is still being read. It costs a re-render; it cannot cost a wrong picture
+that never goes away.
+
+There is one more rule, and it is about not wasting the half-second. If you drag the
+aperture slider, every position asks for a different bake. Only the last one is worth
+computing, so the bake thread takes everything waiting, keeps the newest, and drops the
+rest before they start — the same "is my work still wanted" habit the rest of the engine
+has.
+
 ### How the picture reaches the screen
 
 Video frames are far too large to pass through function calls sixty times a
