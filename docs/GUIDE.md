@@ -5179,3 +5179,19 @@ crate, no Flutter code and no test reaches into them, so a change to either
 site can never break a build of Lumit itself, nor the other way round. The
 practical details — running one locally, how deployment to Cloudflare works,
 and the traps in it — are in `web/README.md`.
+
+**Help ▸ Lumit help and Help ▸ Lumit online guides open the docs site**, and
+that is the one thread between the application and either site.
+`flutter_ui/lib/state/external_links.dart` holds the two addresses and one
+launcher: Lumit has no browser of its own and hands the address to the desktop
+— `rundll32 url.dll,FileProtocolHandler` on Windows, `open` on macOS,
+`xdg-open` elsewhere — exactly as the updater already does when it reveals a
+downloaded file. Nothing goes through a command shell (the URL is one argument
+of a program, never part of a line to be parsed), the scheme is checked so only
+`http` and `https` are ever handed over, and a machine that refuses gets a line
+in the status strip rather than a menu row that silently does nothing.
+
+Both rows point at pages, not sections. The docs site's sidebar headings are
+generated from folders and have no page of their own, so a link to `/use/`
+would be a 404 — "online guides" therefore goes to the first-composition
+walkthrough, which is where somebody asking for guides wanted to end up.

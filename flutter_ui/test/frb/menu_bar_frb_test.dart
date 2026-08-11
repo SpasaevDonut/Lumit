@@ -23,6 +23,7 @@ import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/state/dock.dart';
 import 'package:lumit_flutter/shell/menu_bar_frb.dart';
 import 'package:lumit_flutter/src/rust/api/project_item.dart';
+import 'package:lumit_flutter/state/external_links.dart';
 import 'package:lumit_flutter/state/viewer_view.dart';
 import 'package:lumit_flutter/theme/theme.dart';
 import 'package:provider/provider.dart';
@@ -783,6 +784,50 @@ void main() {
       expect(find.text('Check for updates'), findsOneWidget);
       expect(find.text('Check for updates (Not implemented)'), findsNothing);
       await dismiss(tester);
+    });
+
+    /// The two documentation rows hand a web address to the desktop (K-279).
+    /// The launcher is stopped up: a test suite must never open a browser.
+    testWidgets('Help ▸ the documentation rows open the docs site',
+        (tester) async {
+      final asked = <String>[];
+      final real = openExternalLink;
+      openExternalLink = (url) async {
+        asked.add(url);
+        return true;
+      };
+      addTearDown(() => openExternalLink = real);
+
+      await mount(tester);
+      await choose(tester, 'Help', 'Lumit help');
+      await tester.pump();
+      expect(asked, ['https://docs.lumitlab.com/']);
+
+      await choose(tester, 'Help', 'Lumit online guides');
+      await tester.pump();
+      expect(asked.last, 'https://docs.lumitlab.com/start/first-composition/');
+    });
+
+    /// A machine with no browser registered leaves a row that does nothing,
+    /// which reads as broken. It says so in the status line instead.
+    testWidgets('a link the desktop will not take says so', (tester) async {
+      final real = openExternalLink;
+      openExternalLink = (_) async => false;
+      addTearDown(() => openExternalLink = real);
+
+      final p = await mount(tester);
+      await choose(tester, 'Help', 'Lumit help');
+      await tester.pump();
+      expect(p.state.notice.value?.message, contains('docs.lumitlab.com'));
+      expect(p.state.notice.value?.error, isTrue);
+    });
+
+    /// Only a web address is ever handed over, whatever a caller passes.
+    test('the launcher refuses anything that is not a web address', () async {
+      expect(await launchInDefaultBrowser('file:///etc/passwd'), isFalse);
+      expect(await launchInDefaultBrowser('javascript:alert(1)'), isFalse);
+      expect(await launchInDefaultBrowser('https://'), isFalse);
+      expect(await launchInDefaultBrowser('not a url at all'), isFalse);
     });
 
     testWidgets('Help ▸ About Lumit opens the About window', (tester) async {

@@ -204,6 +204,15 @@
       }
     }
   },
+  "couldNotOpenLink": "Could not open {url}",
+  "@couldNotOpenLink": {
+    "description": "Bottom-strip notice when a Help menu link could not be handed to the machine's browser. {url} is a web address and is not translated.",
+    "placeholders": {
+      "url": {
+        "type": "String"
+      }
+    }
+  },
   "couldNotSaveProject": "Could not save the project",
   "@couldNotSaveProject": {
     "description": "Bottom-strip notice when a save failed."

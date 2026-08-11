@@ -553,10 +553,11 @@ entry above.
     command with a place waiting for it: Close project, History,
     layer settings and the mask/transform/blending/matte/style families, the
     whole Animation menu, the View menu's grid/ruler/wireframe/snap rows,
-    Trim and Crop comp to work area, Add to export queue and the help links
-    (Check for updates is built — K-296; so are the View menu's magnification
-    and resolution rows). Delete each mark as the command lands. Suggested
-    chords for the AE-shaped ones are in K-244.
+    Trim and Crop comp to work area, and Add to export queue (Check for
+    updates is built — K-296; so are the View menu's magnification and
+    resolution rows and the Help menu's two documentation links). Delete each
+    mark as the command lands. Suggested chords for the AE-shaped ones are in
+    K-244.
 
 - **A Flatpak remote, so `flatpak update` has something to update from (K-297).**
     Releases ship a single-file `.flatpak` bundle, which installs perfectly well

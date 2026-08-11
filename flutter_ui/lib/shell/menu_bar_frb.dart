@@ -36,6 +36,7 @@ import '../l10n/strings.dart';
 import '../panels/timeline_extras_frb.dart';
 import '../state/clipboard.dart';
 import '../state/dock.dart';
+import '../state/external_links.dart';
 import '../state/file_dialogs.dart';
 import '../state/keymap.dart';
 import '../state/viewer_view.dart';
@@ -788,8 +789,13 @@ List<MenuSection> lumitMenus(
           () => updateMenuEntry(context, app, ui, savePicker: savePicker),
         ),
         MenuEntry.divider(),
-        MenuEntry.todo(l10n.menuLumitHelp),
-        MenuEntry.todo(l10n.menuLumitOnlineGuides),
+        // The documentation, in whatever the user reads the web with (K-279).
+        // Both are pages on docs.lumitlab.com rather than one of them being
+        // the marketing site: "online guides" is where you are taught, and
+        // that is the walkthrough, not the download page.
+        MenuEntry(l10n.menuLumitHelp, () => _openLink(app, lumitDocsUrl)),
+        MenuEntry(
+            l10n.menuLumitOnlineGuides, () => _openLink(app, lumitGuidesUrl)),
         MenuEntry.divider(),
         MenuEntry(
           l10n.menuEnableDebugPanel,
@@ -897,6 +903,15 @@ String _retimeLabel(LayerReference? layer) {
 // different path than its menu item would be two implementations to keep
 // honest. [saveProjectFrb] was the first of these (K-203); the rest followed
 // when the menu grew shortcuts.
+
+/// Follow a Help-menu link, and say so in the status line when the desktop
+/// would not take it — a machine with no browser registered leaves a menu row
+/// that does nothing at all, which reads as broken rather than as a machine
+/// without a browser.
+Future<void> _openLink(LumitState app, String url) async {
+  if (await openExternalLink(url)) return;
+  app.postNotice(l10n.couldNotOpenLink(url), error: true);
+}
 
 Future<void> openProjectFrb(LumitState app,
     {Future<String?> Function()? picker}) async {
