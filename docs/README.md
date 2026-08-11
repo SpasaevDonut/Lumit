@@ -60,7 +60,7 @@ Keeping these separate is what stops the set from rotting:
 - [impl/](impl/) - implementation notes for the genuinely hard, low-level parts
 (rational time, cubic solving, wgpu patterns, hardware decode, the scheduler,
 optical flow, OFX hosting, beat detection, expressions, LUTs, layer inputs,
-temporal re-render, paint, shape layers, lens flare): the authoritative *how* for each
+temporal re-render, paint, shape layers, lens flare, anti-aliasing): the authoritative *how* for each
 topic — [impl/README.md](impl/README.md) holds the full table. Read the
 matching note before implementing its feature.
 - [research/](research/) - the background research that informed the specs.

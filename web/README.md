@@ -94,3 +94,11 @@ cannot drift from the body text. `web/public/lumit-wordmark.svg` is the static l
 
 The regeneration script is not checked in; the component is the source of truth. To
 change the geometry, edit the keyframes and the `viewBox` anchors directly.
+
+## Feature clips
+
+The front page's feature cards each look for a short clip under
+`public/clips/` (`playback.webm`, `retime.webm`, `sequence.webm`,
+`graph.webm`). The clips are not recorded yet, and a missing file is fine —
+the card simply renders without one. Record them at some point; the plumbing
+is already there.

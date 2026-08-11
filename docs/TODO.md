@@ -365,17 +365,12 @@ alone - no mtime, no LRU bound (§4).
 code (`flutter_ui/lib/l10n/`, `crowdin.yml`); what is left is other people's turn and
 three small gaps:
 
-- **Confirm the Crowdin language settings took, on the next pull (K-311).** The project
-  exists and the first pull has landed: German, Kazakh, Ukrainian, Simplified and
-  Traditional Chinese. That pull also reddened main twice over, and both causes were
-  settings rather than code: Crowdin wrote its own `zh-CN` into `@@locale`, which Flutter's
-  generator refuses when it disagrees with the file name, and en-US was on as a target
-  language, which lands a copy of the British source (K-303). Both have since been changed
-  on Crowdin — the language mapping now sends `zh` and `zh_Hant`, and en-US is off — but
-  neither has been through a sync yet. What is owed is the check: after the next
-  `crowdin pull translations`, `test/l10n/arb_test.dart` passing is the proof. If the
-  `@@locale` values come back hyphenated anyway, Crowdin ignores its mapping for file
-  content and the fix moves into CI, as a step on the sync branch that rewrites the key.
+- **Confirm the Crowdin language settings took, on the next pull (K-311).** The first
+  pull landed five languages and reddened main twice, both from Crowdin settings, both
+  since corrected there (the `zh`/`zh_Hant` mapping, en-US off) but not yet synced.
+  After the next `crowdin pull translations`, `test/l10n/arb_test.dart` passing is the
+  proof; if `@@locale` comes back hyphenated anyway, the fix moves into CI as a
+  rewrite step on the sync branch (K-303 has the history).
 - **The two numbered shortcut labels stay English.** `lumit-keymap` builds "Add marker
   {n} at the playhead" and "Go to marker {n}" with `format!`, so they are not literals
   the lookup table can hold (`lib/l10n/engine_labels.dart`). Give the bridge the number
@@ -385,23 +380,14 @@ three small gaps:
   step once the project exists.
 
 **Lens flare follow-ups (K-256..K-264, [impl/lens-flare.md](impl/lens-flare.md))** — the
-shipped core is docs/08 §3.27; its performance items sit in **Now** above. Still owed,
-each stable against the shipped parameters: the
-**Lights source wiring** (the mode is in the
-dropdown and resolves as Manual until light layers can act as flare sources); an
-**image aperture** file parameter; the **lens
-designer** (a window building a prescription element by element with a live lens
-diagram — the `lens_file` parameter landed in K-264, so the designer's output has a
-place to go); an **Occlusion layer** reference fading the flare when the light is
-covered; **adaptive grid refinement at vignette folds** — the K-264/K-265 known limits: a
-mild ripple on hard vignetted edges of extreme-defocus ghosts at Normal, and the
-toothed fold corona on a zoom shot past its native stop (K-265 lists the six
-ablations already ruled out — do not re-chase it with guards); refinement at the
-folds is the real cure for both. The panel side owes the pair row's dropper to
-**Transform's px@comp pairs** (the pixel-writing pick exists since K-260 — the flare's
-Light uses it; Transform's rows just aren't wired to it), **Radial blur's centre
-migration** from the grandfathered % of frame to px@comp (K-260 convention), and one-op
-writes for a paired keyframe toggle (two ops today).
+shipped core is docs/08 §3.27; its performance items sit in **Now** above. Still owed:
+the **Lights source wiring**; an **image aperture** file parameter; the **lens
+designer** (`lens_file` landed in K-264, so its output has a place to go); an
+**Occlusion layer** reference; **adaptive grid refinement at vignette folds**, the real
+cure for both K-264/K-265 known limits (K-265 lists the six ablations already ruled
+out — do not re-chase them with guards). Panel side: the pair row's dropper on
+**Transform's px@comp pairs** (the pick exists since K-260); **Radial blur's centre
+migration** to px@comp (K-260); one-op writes for a paired keyframe toggle.
 
 **The stale-fd race on a Linux Viewer resize** (`lumit-render/src/headless.rs`'s
 `shared_dmabuf` re-create, with `lumit-gpu/src/shared_linux.rs`'s `Drop`). The

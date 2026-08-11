@@ -8177,3 +8177,11 @@ times are not strictly ascending, because the evaluator walks them assuming so a
 half-applied reorder is not a mask. The shapes themselves never cross: a key holds a path,
 which the drawing tools edit (K-339).
 
+
+**K-345 · DECIDED · "Clip" is restricted as a noun, not as the keying/colour verb.** From
+the owner (2026-08-11), resolving a question the 2026-08-10 audit raised: the Matte key
+ships Keylight's control names — Clip black, Clip white, Clip rollback — and glossary §9's
+"clip only inside Sequence layers" reads as if it forbids them. It does not. The
+restriction is about the noun (a clip is an entry inside a Sequence layer, never a general
+word for a layer or footage); *to clip* in its keying and colour sense — clipping a matte,
+clipped highlights — is ordinary trade language and keeps its names. §9 now says so.
