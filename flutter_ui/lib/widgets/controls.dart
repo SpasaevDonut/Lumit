@@ -2136,9 +2136,7 @@ class _DragValueFieldState extends State<DragValueField>
                     close(null);
                     widget.setExpression?.call();
                   },
-                  // Not in l10n yet: the strings file has no key for it, and
-                  // adding one means an arb edit plus regeneration.
-                  child: const Text('Set expression'),
+                  child: Text(l10n.setExpression),
                 ),
             ],
           ),

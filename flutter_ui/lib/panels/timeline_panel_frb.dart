@@ -5298,7 +5298,7 @@ class _ColumnHeader extends StatelessWidget {
   }
 
   String _labelOf(TimelineGroup group) => switch (group) {
-        TimelineGroup.switches => 'A/V',
+        TimelineGroup.switches => l10n.columnAv,
         TimelineGroup.identity => l10n.columnLayer,
         TimelineGroup.render => l10n.columnSwitches,
         TimelineGroup.compose => l10n.columnCompose,
@@ -5362,7 +5362,7 @@ class _ColumnHeader extends StatelessWidget {
             cell(LumitIcon.flow, l10n.switchFlow),
             cell(LumitIcon.fx, l10n.switchEffects),
             cell(LumitIcon.motionBlur, l10n.switchMotionBlur),
-            cell(LumitIcon.cube3d, '3D layer'),
+            cell(LumitIcon.cube3d, l10n.switchThreeD),
           ],
         ),
       // The render-time column's header is its switch — see timeline_timings.
@@ -5981,9 +5981,7 @@ class _OutlineRowState extends State<_OutlineRow> {
             // because that is what flow *is* underneath (K-088: "the option
             // surfaces the policy").
             _switch(context, id, 'flow', LumitIcon.flow, info.flow, null,
-                tip: info.flow
-                    ? 'Flow — in-between frames are synthesised; click to turn off'
-                    : 'Flow — synthesise in-between frames with optical flow',
+                tip: info.flow ? l10n.tipFlowOn : l10n.tipFlowOff,
                 onTap: () {
               layer.setFlowEnabled(on_: !info.flow);
               widget.onChanged();
@@ -6000,7 +5998,7 @@ class _OutlineRowState extends State<_OutlineRow> {
               tip: l10n.switchMotionBlur),
           _switch(context, id, '3d', LumitIcon.cube3d, switches.threeD,
               BridgeLayerSwitch.threeD,
-              tip: '3D layer'),
+              tip: l10n.switchThreeD),
         ],
       ),
     );

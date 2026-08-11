@@ -212,7 +212,7 @@ class _ScopesPanelFrbState extends State<ScopesPanelFrb> {
 
   static String _label(ScopeKind kind) => switch (kind) {
         ScopeKind.waveform => l10n.foldWaveform,
-        ScopeKind.parade => 'RGB parade',
+        ScopeKind.parade => l10n.scopeParade,
         ScopeKind.vectorscope => l10n.scopeVectorscope,
         ScopeKind.histogram => l10n.scopeHistogram,
       };

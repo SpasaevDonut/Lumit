@@ -1298,7 +1298,7 @@ class _MissingBadgeState extends State<_MissingBadge> {
           lumitIcon(LumitIcon.unlink, size: iconSize, color: t.warning),
           const SizedBox(width: 6),
           Text(
-            '$_missing missing file${_missing == 1 ? '' : 's'}',
+            l10n.missingFileCount(_missing),
             style: t.small.copyWith(color: t.warning),
           ),
         ],
@@ -1789,15 +1789,15 @@ const double _tierBadgeWidth = 52;
 ///
 /// Which route frames take from the engine to the Viewer, in words.
 ///
-/// Read once and kept. It reports what this build compiled to, thus it is a
-/// constant — and it was asked for in a `build()` that runs for each frame of
-/// playback, which made a compile-time constant the most frequent question the
-/// frontend asked.
-final String _transportName = switch (viewerTransport()) {
-  BridgeViewerTransport.sharedTexture => 'shared texture, no copy',
-  BridgeViewerTransport.dmaBuf => 'DMA-BUF, no copy',
-  BridgeViewerTransport.readBack => 'read-back (pixels copied)',
-};
+/// The bridge is asked once and kept — it reports what this build compiled to,
+/// and it was asked for in a `build()` that runs for each frame of playback.
+/// The wording is a getter over that answer, so it follows the language.
+final BridgeViewerTransport _transport = viewerTransport();
+String get _transportName => switch (_transport) {
+      BridgeViewerTransport.sharedTexture => l10n.transportSharedTexture,
+      BridgeViewerTransport.dmaBuf => l10n.transportDmaBuf,
+      BridgeViewerTransport.readBack => l10n.transportReadBack,
+    };
 
 /// Which of the two playback behaviours is in force — the name of the mode and
 /// nothing else (K-287).

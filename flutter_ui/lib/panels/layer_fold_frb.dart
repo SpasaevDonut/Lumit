@@ -160,17 +160,27 @@ final class FoldFlowRow extends LayerFoldRow {
 /// frames flow works between), then how hard it looks, then what it does where
 /// it cannot see.
 enum FlowRowKind {
-  resolution('Flow resolution'),
-  inputRate('Input rate'),
-  detail('Vector detail'),
-  smoothness('Smoothness'),
-  occlusion('Occlusion'),
-  fallback('Fallback'),
-  hudGuard('HUD guard'),
-  always('Always on');
+  resolution,
+  inputRate,
+  detail,
+  smoothness,
+  occlusion,
+  fallback,
+  hudGuard,
+  always;
 
-  final String label;
-  const FlowRowKind(this.label);
+  /// The row's shown name — a getter rather than a stored constant so each
+  /// read speaks the current language.
+  String get label => switch (this) {
+        resolution => l10n.flowResolution,
+        inputRate => l10n.flowInputRate,
+        detail => l10n.flowVectorDetail,
+        smoothness => l10n.flowSmoothness,
+        occlusion => l10n.flowOcclusion,
+        fallback => l10n.flowFallback,
+        hudGuard => l10n.flowHudGuard,
+        always => l10n.flowAlwaysOn,
+      };
 }
 
 /// The waveform lane (K-172): the outline names it, the lane side draws the
@@ -520,7 +530,7 @@ List<LayerFoldRow> layerFoldRows({
     final flowOpen = open.contains(flowPath(id));
     rows.add(FoldGroupRow(
       path: flowPath(id),
-      label: 'Flow',
+      label: l10n.flowSection,
       open: flowOpen,
       depth: 1,
     ));

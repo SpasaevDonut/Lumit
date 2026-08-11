@@ -120,13 +120,19 @@ class CompTabsFrb extends StatelessWidget {
 /// nothing. One instance per surface that wants the gesture.
 class DoubleTap {
   DateTime? _last;
+  Offset? _lastAt;
 
-  /// Record a tap; true when it is the second inside [kDoubleTapTimeout].
-  bool tap() {
+  /// Record a tap; true when it is the second inside [kDoubleTapTimeout] —
+  /// and, when [at] is given, within [slop] of the first.
+  bool tap({Offset? at, double slop = 0}) {
     final now = DateTime.now();
     final last = _last;
+    final lastAt = _lastAt;
     _last = now;
-    if (last != null && now.difference(last) < kDoubleTapTimeout) {
+    _lastAt = at;
+    if (last != null &&
+        now.difference(last) < kDoubleTapTimeout &&
+        (at == null || lastAt == null || (lastAt - at).distance < slop)) {
       _last = null;
       return true;
     }
@@ -624,7 +630,7 @@ class _MarkerEditorState extends State<_MarkerEditor> {
                   ),
                   Expanded(
                     child: Text(
-                      marker.label.isEmpty ? '(no label)' : marker.label,
+                      marker.label.isEmpty ? l10n.markerNoLabel : marker.label,
                       style: t.body,
                       overflow: TextOverflow.ellipsis,
                     ),

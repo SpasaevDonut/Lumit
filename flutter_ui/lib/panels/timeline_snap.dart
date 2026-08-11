@@ -25,6 +25,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../src/rust/api/composition.dart';
+import 'graph_maths.dart' show rationalSeconds;
 
 /// What a snap landed on. The kind is for the *indicator* — a snap to a marker
 /// and a snap to the playhead are the same arithmetic and different news.
@@ -163,10 +164,7 @@ List<SnapTarget> snapTargetsOf({
       ..add(SnapTarget(work.end.toDouble(), SnapKind.workAreaEnd));
   }
   for (final marker in compMarkers) {
-    out.add(SnapTarget(
-      marker.time.num / marker.time.den.toDouble() * fps,
-      SnapKind.marker,
-    ));
+    out.add(SnapTarget(rationalSeconds(marker.time) * fps, SnapKind.marker));
   }
   for (final entry in layers) {
     final info = entry.info;
@@ -180,7 +178,7 @@ List<SnapTarget> snapTargetsOf({
     // own start, so it is offset by the in point to reach comp frames; the last
     // clip's end is the layer's out point, already in the list.
     for (final clip in info.clips) {
-      final start = clip.placeStart.num / clip.placeStart.den.toDouble() * fps;
+      final start = rationalSeconds(clip.placeStart) * fps;
       out.add(SnapTarget(info.inFrame + start, SnapKind.editPoint));
     }
   }

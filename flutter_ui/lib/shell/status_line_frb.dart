@@ -314,7 +314,7 @@ class CacheMeterFrb extends StatelessWidget {
         const SizedBox(width: 6),
         _TierMeter(
           keyName: 'cache-meter-ram',
-          label: 'RAM',
+          label: l10n.ramTier,
           used: ram.usedBytes.toInt(),
           budget: ram.budgetBytes.toInt(),
           tip: requests == 0
@@ -325,7 +325,7 @@ class CacheMeterFrb extends StatelessWidget {
         const SizedBox(width: 8),
         _TierMeter(
           keyName: 'cache-meter-vram',
-          label: 'VRAM',
+          label: l10n.vramTier,
           used: vram.usedBytes.toInt(),
           budget: vram.budgetBytes.toInt(),
           tip: l10n.tipCacheVram,

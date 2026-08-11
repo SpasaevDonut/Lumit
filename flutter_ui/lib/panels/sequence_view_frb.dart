@@ -462,7 +462,9 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
                           child: Text(
                             // A ramp has no single number to show, and printing one would
                             // be a lie about a curve — the envelope below reads it.
-                            speed == null ? 'ramp' : '${speed.round()}%',
+                            speed == null
+                                ? l10n.clipRamp
+                                : '${speed.round()}%',
                             style: t.small.copyWith(color: t.textPrimary),
                             overflow: TextOverflow.clip,
                             softWrap: false,

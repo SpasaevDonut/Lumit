@@ -171,9 +171,7 @@ class _OfferUpdate extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10),
             child: Text(
-              '${release.assetName} is ${release.sizeLabel}. Lumit downloads '
-              'it now and installs it when you restart, so you can carry on '
-              'working in the meantime.',
+              l10n.updateOfferBody(release.assetName, release.sizeLabel),
               style: t.small.copyWith(color: t.textMuted),
             ),
           ),
@@ -259,7 +257,7 @@ class _DownloadProgress extends StatelessWidget {
                     HouseProgressBar(fraction: fraction, height: 6),
                     const SizedBox(height: 6),
                     Text(
-                      '$done MB of ${release.sizeLabel}',
+                      l10n.updateProgressOf('$done', release.sizeLabel),
                       style: t.small.copyWith(color: t.textMuted),
                     ),
                   ],

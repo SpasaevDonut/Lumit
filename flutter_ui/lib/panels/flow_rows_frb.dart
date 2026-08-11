@@ -15,6 +15,7 @@ import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/retime.dart';
 
+import '../l10n/strings.dart';
 import '../state/comp_time.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
@@ -66,14 +67,14 @@ class FlowRowsFrb extends StatelessWidget {
     }
 
     return FxSection(
-      title: 'Flow',
+      title: l10n.flowSection,
       open: open,
       onToggle: onToggle,
       rows: [
         _choice(
           context,
           t,
-          'Flow resolution',
+          l10n.flowResolution,
           'flow-resolution',
           flowResolutionOptions,
           p.resolution,
@@ -83,7 +84,7 @@ class FlowRowsFrb extends StatelessWidget {
         _choice(
           context,
           t,
-          'Vector detail',
+          l10n.flowVectorDetail,
           'flow-detail',
           flowDetailOptions,
           p.detail,
@@ -92,7 +93,7 @@ class FlowRowsFrb extends StatelessWidget {
         _row(
           context,
           t,
-          'Smoothness',
+          l10n.flowSmoothness,
           SizedBox(
             width: _cellWidth,
             child: DragValueField(
@@ -108,7 +109,7 @@ class FlowRowsFrb extends StatelessWidget {
         _choice(
           context,
           t,
-          'Occlusion',
+          l10n.flowOcclusion,
           'flow-occlusion',
           flowOcclusionOptions,
           p.occlusion,
@@ -117,7 +118,7 @@ class FlowRowsFrb extends StatelessWidget {
         _choice(
           context,
           t,
-          'Fallback',
+          l10n.flowFallback,
           'flow-fallback',
           flowFallbackOptions,
           p.fallback,
@@ -126,7 +127,7 @@ class FlowRowsFrb extends StatelessWidget {
         _row(
           context,
           t,
-          'HUD guard',
+          l10n.flowHudGuard,
           HouseCheckbox(
             key: const ValueKey('flow-hud-guard'),
             value: p.hudGuard,
@@ -136,7 +137,7 @@ class FlowRowsFrb extends StatelessWidget {
         _row(
           context,
           t,
-          'Always on',
+          l10n.flowAlwaysOn,
           HouseCheckbox(
             key: const ValueKey('flow-always'),
             value: p.always,
@@ -226,8 +227,8 @@ class FlowRowsFrb extends StatelessWidget {
           onSeek: onSeek,
           rowKey: 'flow-input-rate',
         ),
-        name:
-            Text('Input rate', style: t.body, overflow: TextOverflow.ellipsis),
+        name: Text(l10n.flowInputRate,
+            style: t.body, overflow: TextOverflow.ellipsis),
         control: FlowRateControl(
           shown: shown,
           fieldWidth: _cellWidth,
@@ -261,10 +262,23 @@ class FlowRowsFrb extends StatelessWidget {
 /// stored value — the same order the engine's `OPTIONS` constants declare,
 /// which is what keeps a stored index and its name from drifting apart.
 /// Shared with the Timeline fold-out so the two surfaces cannot disagree.
-const List<String> flowResolutionOptions = ['Native', 'Half', 'Quarter'];
-const List<String> flowDetailOptions = ['Low', 'Medium', 'High', 'Ultra'];
-const List<String> flowOcclusionOptions = ['Visible only', 'Blend'];
-const List<String> flowFallbackOptions = ['Blend', 'Nearest'];
+/// Getters rather than consts so each read speaks the current language; the
+/// index-to-engine-code order is the part that must never change.
+List<String> get flowResolutionOptions => [
+      l10n.flowResolutionNative,
+      l10n.flowResolutionHalf,
+      l10n.flowResolutionQuarter,
+    ];
+List<String> get flowDetailOptions => [
+      l10n.flowDetailLow,
+      l10n.flowDetailMedium,
+      l10n.flowDetailHigh,
+      l10n.flowDetailUltra,
+    ];
+List<String> get flowOcclusionOptions =>
+    [l10n.flowOcclusionVisibleOnly, l10n.flowOcclusionBlend];
+List<String> get flowFallbackOptions =>
+    [l10n.flowFallbackBlend, l10n.flowFallbackNearest];
 
 /// A dropdown over one of the Flow group's option lists — the control both
 /// surfaces (this section and the Timeline fold-out) build their choices from.
@@ -323,7 +337,7 @@ class FlowRateControl extends StatelessWidget {
         if (flowPresetLabel(shown) == null) -1,
         ...flowRatePresets.map((p) => p.$1),
       ],
-      label: (v) => flowPresetLabel(v) ?? 'Custom',
+      label: (v) => flowPresetLabel(v) ?? l10n.custom,
       onChanged: (v) {
         if (v >= 0) onRate(v);
       },
@@ -341,7 +355,7 @@ class FlowRateControl extends StatelessWidget {
             // 0 is Auto rather than "zero frames per second", which is not
             // a thing — so the field says so instead of showing a number
             // that would read as a mistake.
-            suffix: shown < 0.5 ? '' : ' fps',
+            suffix: shown < 0.5 ? '' : ' ${l10n.unitFps}',
             onChanged: (v) => onRate(v.toDouble()),
           ),
         ),
@@ -363,16 +377,17 @@ class FlowRateControl extends StatelessWidget {
 /// cover the common animation cadences at 24 fps and the film/broadcast rates
 /// worth conforming high-speed capture to.
 /// A list rather than a map, because Dart will not const a map keyed by
-/// doubles — and the order here is the order the menu shows.
-const List<(double, String)> flowRatePresets = [
-  (0, 'Auto'),
-  (12, 'On 2s (12)'),
-  (8, 'On 3s (8)'),
-  (6, 'On 4s (6)'),
-  (24, '24 fps'),
-  (25, '25 fps'),
-  (30, '30 fps'),
-];
+/// doubles — and the order here is the order the menu shows. A getter so each
+/// read speaks the current language.
+List<(double, String)> get flowRatePresets => [
+      (0, l10n.flowPresetAuto),
+      (12, l10n.flowPresetCadence('2', '12')),
+      (8, l10n.flowPresetCadence('3', '8')),
+      (6, l10n.flowPresetCadence('4', '6')),
+      (24, l10n.flowPresetFps('24')),
+      (25, l10n.flowPresetFps('25')),
+      (30, l10n.flowPresetFps('30')),
+    ];
 
 /// The preset label for an exact rate, or null when the value is the user's own.
 String? flowPresetLabel(double fps) {

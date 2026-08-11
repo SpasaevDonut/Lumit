@@ -526,10 +526,10 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
   Widget _infoHeaderContent(LumitTheme t, ItemReference item, String id) {
     final missing = item is ItemReference_Footage && (_missing[id] ?? false);
     final type = switch (item) {
-      ItemReference_Footage() => 'footage',
-      ItemReference_Folder() => 'folder',
-      ItemReference_Composition() => 'composition',
-      ItemReference_Solid() => 'solid',
+      ItemReference_Footage() => l10n.projectTypeFootage,
+      ItemReference_Folder() => l10n.projectTypeFolder,
+      ItemReference_Composition() => l10n.projectTypeComposition,
+      ItemReference_Solid() => l10n.projectTypeSolid,
     };
 
     Widget? thumb;
@@ -589,7 +589,8 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
     switch (item) {
       case ItemReference_Footage():
         if (missing) {
-          return Text('missing', style: t.small.copyWith(color: t.warning));
+          return Text(l10n.projectItemMissing,
+              style: t.small.copyWith(color: t.warning));
         }
         final info = _mediaInfo[id];
         if (info != null) {
@@ -601,19 +602,20 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
           // Audio has no frames worth counting, so its last field is
           // milliseconds rather than a frame number.
           line = info.width > 0
-              ? '${info.width}×${info.height} · ${fps.toStringAsFixed(2)} fps'
+              ? '${info.width}×${info.height} · '
+                  '${fps.toStringAsFixed(2)} ${l10n.unitFps}'
                   ' · ${timecodeOfRate(frames, info.fpsNum, info.fpsDen)}'
-              : 'audio · ${timecodeOfSecondsMs(seconds)}';
+              : '${l10n.projectInfoAudio} · ${timecodeOfSecondsMs(seconds)}';
         }
       case ItemReference_Composition(:final field0):
         final s = field0.getSettings();
         final fps = s.fpsDen == 0 ? 0.0 : s.fpsNum / s.fpsDen;
         final frames = field0.durationFrames();
-        line = '${s.width}×${s.height} · ${fps.toStringAsFixed(2)} fps'
+        line = '${s.width}×${s.height} · '
+            '${fps.toStringAsFixed(2)} ${l10n.unitFps}'
             ' · ${timecodeOfRate(frames, s.fpsNum, s.fpsDen)}';
       case ItemReference_Folder(:final field0):
-        final count = field0.getChildren().length;
-        line = '$count item${count == 1 ? '' : 's'}';
+        line = l10n.projectItemCount(field0.getChildren().length);
       case ItemReference_Solid():
         break;
     }
@@ -786,7 +788,7 @@ class _MissingHeaderFrb extends StatelessWidget {
               lumitIcon(LumitIcon.unlink, size: iconSize, color: t.warning),
               const SizedBox(width: 6),
               Text(
-                '$count missing file${count == 1 ? '' : 's'}',
+                l10n.missingFileCount(count),
                 style: t.small.copyWith(color: t.warning),
               ),
             ],
@@ -1058,7 +1060,8 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
                 Expanded(child: _nameOrEditor(t)),
                 if (widget.missing) ...[
                   const SizedBox(width: 6),
-                  Text('missing', style: t.small.copyWith(color: t.warning)),
+                  Text(l10n.projectItemMissing,
+                      style: t.small.copyWith(color: t.warning)),
                   const SizedBox(width: 6),
                   LumitTooltip(
                     message: l10n.relink,

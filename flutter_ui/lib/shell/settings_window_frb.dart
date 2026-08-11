@@ -848,9 +848,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  km.conflicts.length == 1
-                      ? l10n.keymapClashGlobal
-                      : '${km.conflicts.length} shortcuts run two things',
+                  l10n.keymapClashGlobalCount(km.conflicts.length),
                   style: t.body,
                 ),
                 for (final clash in km.conflicts)
@@ -878,18 +876,15 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                km.shadows.length == 1
-                    ? l10n.keymapClashPanel
-                    : '${km.shadows.length} shortcuts mean something else in '
-                        'one panel',
+                l10n.keymapClashPanelCount(km.shadows.length),
                 style: t.small.copyWith(color: t.textMuted),
               ),
               for (final shadow in km.shadows)
                 Padding(
                   padding: const EdgeInsets.only(top: 2),
                   child: Text(
-                    '${chordLabel(shadow.chord)} — ${shadow.action} in the '
-                    '${shadow.context}, ${shadow.shadowed} elsewhere',
+                    l10n.keymapShadowLine(chordLabel(shadow.chord),
+                        shadow.action, shadow.context, shadow.shadowed),
                     style: t.small.copyWith(color: t.textMuted),
                   ),
                 ),
@@ -1057,7 +1052,8 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                '${_mib(stats.usedBytes.toInt())} MB in ${stats.entries}',
+                l10n.settingsUsedMbIn(
+                    _mib(stats.usedBytes.toInt()), '${stats.entries}'),
                 key: const ValueKey('settings-cache-used'),
                 style: t.small,
               ),
@@ -1092,7 +1088,8 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                '${_mib(vram.usedBytes.toInt())} MB in ${vram.entries}',
+                l10n.settingsUsedMbIn(
+                    _mib(vram.usedBytes.toInt()), '${vram.entries}'),
                 key: const ValueKey('settings-vram-used'),
                 style: t.small,
               ),
@@ -1127,7 +1124,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             l10n.settingsHelpThisProcess,
             Text(
               memory.processBytes == BigInt.zero
-                  ? 'not known here'
+                  ? l10n.settingsMemoryNotKnown
                   : _bytes(memory.processBytes),
               key: const ValueKey('settings-memory-process'),
               style: t.small,
@@ -1150,7 +1147,8 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             l10n.settingsHeldByTheGraphicsDriver,
             l10n.settingsHelpHeldByTheGraphicsDriver,
             Text(
-              '${memory.gpuTextures} pictures, ${memory.gpuBuffers} buffers',
+              l10n.settingsMemoryTexturesBuffers(
+                  '${memory.gpuTextures}', '${memory.gpuBuffers}'),
               key: const ValueKey('settings-memory-gpu'),
               style: t.small,
             ),
@@ -1164,8 +1162,9 @@ class _SettingsWindowState extends State<_SettingsWindow> {
               l10n.settingsGraphicsMemoryReserved,
               l10n.settingsHelpGraphicsMemoryReserved,
               Text(
-                '${_bytes(memory.gpuReservedBytes)} reserved, '
-                '${_bytes(memory.gpuAllocatedBytes)} in use',
+                l10n.settingsMemoryReservedInUse(
+                    _bytes(memory.gpuReservedBytes),
+                    _bytes(memory.gpuAllocatedBytes)),
                 key: const ValueKey('settings-memory-gpu-bytes'),
                 style: t.small,
               ),
@@ -1279,7 +1278,8 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                '${_mib(disk.usedBytes.toInt())} MB in ${disk.entries}',
+                l10n.settingsUsedMbIn(
+                    _mib(disk.usedBytes.toInt()), '${disk.entries}'),
                 key: const ValueKey('settings-disk-used'),
                 style: t.small,
               ),
@@ -1308,7 +1308,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
   static String _locationLabel(BridgeCacheLocation l) => switch (l) {
         BridgeCacheLocation.appData => l10n.cacheLocationWithLumit,
         BridgeCacheLocation.besideProject => l10n.cacheLocationBesideProject,
-        BridgeCacheLocation.custom => 'A folder I choose',
+        BridgeCacheLocation.custom => l10n.cacheLocationChosenFolder,
       };
 
   /// Point the cache somewhere, at whichever scope is in force. The project's own
@@ -1412,7 +1412,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             // A megabyte a pixel is far too fine on a 32 GB ceiling.
             speed: 16,
             decimals: 0,
-            suffix: ' MB',
+            suffix: ' ${l10n.unitMb}',
             onChanged: (mib) => onSet(BigInt.from(mib.round()) << 20),
           ),
         ),
@@ -1433,15 +1433,18 @@ class _SettingsWindowState extends State<_SettingsWindow> {
   }
 
   /// A round figure for a sentence: "32 GB", or megabytes when it is small.
-  static String _gib(double mib) =>
-      mib >= 1024 ? '${(mib / 1024).round()} GB' : '${mib.round()} MB';
+  static String _gib(double mib) => mib >= 1024
+      ? '${(mib / 1024).round()} ${l10n.unitGb}'
+      : '${mib.round()} ${l10n.unitMb}';
 
   /// Bytes as a person reads them — MB up to a gigabyte, GB above, one
   /// decimal so 85.4 GB does not print as 85.
   static String _bytes(BigInt bytes) {
     final b = bytes.toDouble();
-    if (b >= 1 << 30) return '${(b / (1 << 30)).toStringAsFixed(1)} GB';
-    return '${(b / (1 << 20)).toStringAsFixed(0)} MB';
+    if (b >= 1 << 30) {
+      return '${(b / (1 << 30)).toStringAsFixed(1)} ${l10n.unitGb}';
+    }
+    return '${(b / (1 << 20)).toStringAsFixed(0)} ${l10n.unitMb}';
   }
 
   static String _mib(int bytes) => (bytes / (1 << 20)).toStringAsFixed(0);
