@@ -1532,6 +1532,20 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   scrubbing can land on exactly the right frame. Indexing runs on a background thread
   (the UI never waits) and the result is cached on disk, keyed by a *fingerprint* of the
   file's content — change the file and the stale index is ignored automatically.
+- `crates/lumit-render/src/media_index.rs` — **the one place that decides whether to scan.**
+  That frame index costs seconds on a long clip, and it depends on nothing but the file's
+  bytes, so it is worked out once and parked in a small sidecar file in Lumit's cache
+  folder, named after the fingerprint. Everything that opens a decoder asks *this* helper
+  for the index — the probe that fills the Project panel, the Viewer's decode, the
+  decode-ahead thread, the thumbnails — so the sidecar one of them writes is the sidecar
+  the others read, and the second time you open a project nothing is scanned at all. It
+  had to be one shared helper: the probe used to warm the cache and the decoder used to
+  ignore it, which is why the first preview frame of a session used to sit there thinking
+  for a few seconds on every clip. If the file has changed since, the fingerprint no
+  longer matches and the index is rebuilt rather than believed; if the sidecar is corrupt,
+  or the cache folder is not writable, or the machine has nowhere to put it, everything
+  still works — it simply scans, like it did before the cache existed. The folder is
+  always safe to delete.
 - `crates/lumit-gpu/` — **the colour foundation.** All engine maths happens on
   "light-linear" values (where adding two lights behaves like real light); files and
   screens use sRGB encoding. This crate owns the only two crossings between those worlds

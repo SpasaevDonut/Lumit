@@ -1973,7 +1973,7 @@ fn probe_item(path: &Path) -> Probe {
     let Some(video) = probe.video.as_ref() else {
         return Probe::NoVideo;
     };
-    let Some(index) = load_or_build_index(path) else {
+    let Ok(index) = crate::media_index::load_or_build_index(path) else {
         return Probe::Slate;
     };
     Probe::Ok {
@@ -2012,24 +2012,6 @@ impl SourceProbes for ProbeView<'_> {
             },
         }
     }
-}
-
-/// Load the cached frame index for `path` if one matches, else build it and try
-/// to cache it — the same warm-the-cache dance the bridge's decode path runs, so
-/// the count here and the decoder the renderer opens share one index. `None`
-/// when the index cannot be built.
-fn load_or_build_index(path: &Path) -> Option<lumit_media::FrameIndex> {
-    let cache_dir = lumit_project::media_index_dir();
-    if let (Some(dir), Ok(fp)) = (&cache_dir, lumit_media::Fingerprint::of(path)) {
-        if let Some(index) = lumit_media::FrameIndex::load_cached(dir, &fp) {
-            return Some(index);
-        }
-    }
-    let index = lumit_media::index::build_frame_index(path).ok()?;
-    if let Some(dir) = &cache_dir {
-        let _ = index.save_to(dir);
-    }
-    Some(index)
 }
 
 #[cfg(test)]

@@ -455,8 +455,12 @@ fn decode(
     let dec = match decoders.entry(req.item) {
         std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
         std::collections::hash_map::Entry::Vacant(e) => {
+            // The sidecar cache first (crate::media_index): the index the
+            // probe already wrote when the project opened is the index this
+            // decoder opens with, so the first preview frame of a session
+            // costs a read rather than a fresh packet scan of the file.
             let index =
-                lumit_media::index::build_frame_index(&req.path).map_err(|e| e.to_string())?;
+                crate::media_index::load_or_build_index(&req.path).map_err(|e| e.to_string())?;
             let dec =
                 lumit_media::VideoDecoder::open(&req.path, index).map_err(|e| e.to_string())?;
             e.insert(dec)
@@ -835,6 +839,97 @@ mod tests {
                 slate: None,
             })
             .is_err());
+    }
+
+    /// **The decoder opens from the cached frame index.** Opening a decoder
+    /// used to scan every packet of the file, ignoring the sidecar the probe
+    /// had just written — seconds of work repeated in every session, paid at
+    /// the first preview frame after a project opened.
+    ///
+    /// Proven by seeding a sidecar that is genuinely this file's (it carries
+    /// the file's fingerprint, so the cache accepts it) but cut short to ten
+    /// frames. A decoder that reads it clamps a request for frame 40 to frame
+    /// 9; one that re-scans the file sees all 120 and answers frame 40.
+    #[test]
+    fn the_decoder_opens_from_the_cached_frame_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some(file) = lumit_media::index::tests_support::fixture(dir.path()) else {
+            eprintln!("skipping: no ffmpeg CLI available for fixture generation");
+            return;
+        };
+        let cache = dir.path().join("media-index");
+        let mut index = lumit_media::index::build_frame_index(&file).unwrap();
+        assert_eq!(index.frame_count(), 120, "the fixture is 120 frames");
+        index.entries.truncate(10);
+        index.save_to(&cache).unwrap();
+
+        let mut pool = DecodePool::new();
+        let px = crate::media_index::with_cache_dir(&cache, || {
+            pool.decode_footage(&Request {
+                generation: 0,
+                item: Uuid::now_v7(),
+                path: file.clone(),
+                frame: 40,
+                target_width: None,
+                slate: None,
+            })
+        })
+        .expect("the fixture decodes");
+
+        assert_eq!(
+            px.frame, 9,
+            "the decoder must open with the cached index, not a fresh scan"
+        );
+    }
+
+    /// The other half of the bargain: a sidecar written for different content
+    /// is never replayed. The file is re-encoded in place — same path, same
+    /// name, different bytes and a different length — and the decoder must
+    /// rebuild rather than trust the index it finds.
+    #[test]
+    fn a_changed_file_is_not_decoded_from_its_old_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some(file) = lumit_media::index::tests_support::fixture(dir.path()) else {
+            eprintln!("skipping: no ffmpeg CLI available for fixture generation");
+            return;
+        };
+        let cache = dir.path().join("media-index");
+        let mut index = lumit_media::index::build_frame_index(&file).unwrap();
+        index.entries.truncate(10);
+        index.save_to(&cache).unwrap();
+
+        // The clip is replaced by a longer one at the same path: the stale
+        // ten-frame index would clamp frame 40 to 9 if it were reused.
+        let Some(replacement) = lumit_media::index::tests_support::vfr_fixture(dir.path()) else {
+            eprintln!("skipping: no ffmpeg CLI available for fixture generation");
+            return;
+        };
+        std::fs::copy(&replacement, &file).unwrap();
+        let frames = lumit_media::index::build_frame_index(&file)
+            .unwrap()
+            .frame_count();
+        assert!(
+            frames > 40,
+            "the replacement must be longer than the stale index, got {frames} frames"
+        );
+
+        let mut pool = DecodePool::new();
+        let px = crate::media_index::with_cache_dir(&cache, || {
+            pool.decode_footage(&Request {
+                generation: 0,
+                item: Uuid::now_v7(),
+                path: file.clone(),
+                frame: 40,
+                target_width: None,
+                slate: None,
+            })
+        })
+        .expect("the replacement decodes");
+
+        assert_eq!(
+            px.frame, 40,
+            "a fingerprint mismatch must rebuild the index, never reuse it"
+        );
     }
 
     /// K-331: the flow cache is keyed by content — the source, the two frames,
