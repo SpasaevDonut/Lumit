@@ -36,6 +36,9 @@
 //!   disk), which back the Settings cache controls and the Timeline's cache bar.
 //! - `profiling` — whether the worker is measuring per-layer and per-effect
 //!   render times for the indicators (docs/13 §7.1).
+//! - [`beats`] — the beat-detection worker: one analysis at a time, on a
+//!   thread of its own, so a detection cannot sit on the pool every panel's
+//!   reads share.
 //! - [`peaks`] — the session's waveform peak cache: one multi-zoom summary per
 //!   audio file, so a lane redraws at any zoom without decoding again (K-280).
 //! - [`probe`] — the probe worker and the session's probe cache: footage is
@@ -65,6 +68,7 @@ mod frb_generated;
 // media+render when it also held the v0 ops that needed them.
 #[cfg(feature = "media")]
 mod audio;
+mod beats;
 mod edits;
 mod export;
 mod framecache;

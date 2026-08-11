@@ -3503,6 +3503,36 @@ There is nothing to poll and nothing to drain. Every panel that shows a fact
 about a footage file already asks for it when it draws; the worker only decides
 whether that question costs a file open or a look-up.
 
+### Finding the beat, without stopping everything else
+
+Beat detection is the same story one size up. Asking a composition where its
+beats are means mixing all of its audio down — which decodes every sound file it
+holds — and then analysing the result. On a long comp that is seconds.
+
+It never ran on the thread that draws the interface, so it was not a freeze in
+the obvious sense. But it did run on a small **pool** of threads that the bridge
+keeps for anything slow, and that pool is shared: it is also how the Project
+panel fetches thumbnails, how a layer finds out whether its source has sound,
+how the footage panel reads a file's statistics. Two or three detections at once
+could occupy the whole pool for seconds, and every panel waiting behind them
+stopped. Nothing cancelled, either — closing the project left the analysis
+running.
+
+`crates/lumit-bridge/src/beats.rs` gives detection a thread of its own, built
+the same way as the probe worker: requests queue and run one at a time, the
+caller waits for its own answer (so the button still reports how many markers it
+placed), each job remembers which project it was asked for, and closing that
+project makes the worker drop it instead of analysing music nobody has open. If
+the thread cannot be started at all, the caller simply does the work itself —
+the worker chooses where the work happens, never what the answer is.
+
+One detail worth knowing, because it is what keeps the promise testable: the
+worker answers with *times and confidences*, not with finished markers. Markers
+carry identifiers, and a fresh identifier is different every time by design, so
+a marker list can never be compared with a marker list. Times and confidences
+can — and "the same audio at the same sensitivity finds the same beats" is
+exactly the promise that moving work between threads must not break.
+
 ### How the picture reaches the screen
 
 Video frames are far too large to pass through function calls sixty times a

@@ -14,10 +14,17 @@
 //! not be.
 //!
 //! It can take a few seconds on a long comp — it mixes the audio and analyses
-//! the lot — so detection is deliberately NOT `#[frb(sync)]`: it runs on the
-//! bridge's worker pool and the interface never waits on it. The markers land
-//! as one committed op when it finishes, and the change stream repaints the
-//! panels exactly as any other edit does.
+//! the lot — so detection is deliberately NOT `#[frb(sync)]`: it runs off
+//! Dart's own thread and the interface never waits on it. The markers land as
+//! one committed op when it finishes, and the change stream repaints the panels
+//! exactly as any other edit does.
+//!
+//! The seconds themselves are spent on the **beat worker** ([`crate::beats`]),
+//! not here. flutter_rust_bridge would otherwise run the analysis on the pool
+//! it keeps for asynchronous calls, which every panel's reads share: a couple
+//! of detections at once sat on the whole pool and stopped them. This call now
+//! hands the job over and waits for its own answer, so it still returns the
+//! count it always did.
 
 use flutter_rust_bridge::frb;
 
@@ -29,8 +36,9 @@ impl CompositionReference {
     /// `sensitivity_percent` runs 0..100, where 50 is the standard setting and
     /// higher finds more. Returns how many markers were placed — zero is a
     /// legitimate answer for quiet or arrhythmic audio, and worth showing as
-    /// such rather than as a failure. Seconds-long on a long comp, so it is
-    /// async on purpose (docs/TODO: "move beat detection off-thread").
+    /// such rather than as a failure. Seconds-long on a long comp, which is why
+    /// the analysis itself happens on the beat worker ([`crate::beats`]) and
+    /// this call waits for it.
     pub fn detect_beats(&self, sensitivity_percent: u32) -> Result<u32, BridgeError> {
         let composition = self.composition()?;
         let document = {
@@ -39,36 +47,28 @@ impl CompositionReference {
             state.store.snapshot()
         };
 
-        // The audio, built through the same headless input path the exporter
-        // uses — so what is analysed is what will be exported.
-        let inputs = crate::render::with_export_inputs(&document, self.id)
-            .ok_or(BridgeError::NoAudioPipeline)?;
-        if inputs.audio.is_empty() {
-            return Err(BridgeError::NoAudio);
-        }
+        // The mixdown and the onset analysis, off this thread — and never with
+        // the project lock held, which is why the snapshot above is taken and
+        // let go before anything heavy starts (docs/14 §3).
+        let found = crate::beats::detect(
+            document,
+            self.id,
+            composition.duration.0.to_f64(),
+            sensitivity_percent,
+        )?;
 
-        const RATE: u32 = 48_000;
-        let samples =
-            lumit_render::export::mixdown(&inputs.audio, RATE, composition.duration.0.to_f64());
-        let delta =
-            lumit_audio::beat::delta_from_sensitivity(sensitivity_percent.clamp(0, 100) as u8);
-        let analysis = lumit_audio::beat::analyse_stereo(&samples, RATE, delta);
-
-        // Snapping pulls onsets that are nearly on the tempo grid onto it, so a
-        // performance that drifts by a few milliseconds still cuts cleanly. The
-        // 45 ms window is the egui frontend's, kept identical on purpose.
-        let times: Vec<f64> = analysis.onsets.iter().map(|o| o.time).collect();
-        let snapped = lumit_audio::beat::snap_to_grid(&times, analysis.bpm, 0.045);
-
-        let beats: Vec<lumit_core::markers::Marker> = snapped
+        // The markers are minted here, not by the worker: an id is not part of
+        // what the analysis found, and keeping it out of the answer is what
+        // lets "the same audio finds the same beats" be a checkable claim.
+        let beats: Vec<lumit_core::markers::Marker> = found
             .iter()
-            .zip(&analysis.onsets)
-            .filter_map(|(t, onset)| {
-                let time = lumit_core::Rational::from_f64_on_grid(t.max(0.0), 1000).ok()?;
+            .filter_map(|beat| {
+                let time = lumit_core::Rational::from_f64_on_grid(beat.time_seconds.max(0.0), 1000)
+                    .ok()?;
                 Some(lumit_core::markers::Marker::beat(
                     uuid::Uuid::now_v7(),
                     time,
-                    onset.confidence,
+                    beat.confidence,
                 ))
             })
             .collect();

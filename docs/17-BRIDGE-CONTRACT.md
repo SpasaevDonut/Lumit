@@ -354,9 +354,17 @@ that read-back is gone.
     re-stamps and is read again, which keeps `get_status` as honest as it was
     when it opened the container every time. The cache is bounded and is emptied
     when a project closes, which also cancels that project's queued work.
-- **Known synchronous seam**: beat detection still runs on the calling thread and
-is an honest follow-up in [TODO.md](TODO.md); it functions today, the conversion
-is a threading refactor, not a missing capability.
+- **Beat detection** runs on its own worker inside `lumit-bridge::beats`, in the
+    same shape: one analysis at a time, jobs carrying the generation they were
+    made in so closing a project drops them, and the caller analysing inline
+    when there is no worker to hand it to. `detect_beats` waits for its own
+    answer and still returns the count, so the surface is unchanged; what moved
+    is where the seconds are spent. It matters because the pool
+    flutter_rust_bridge runs asynchronous calls on is *shared* — thumbnails,
+    `has_audio`, `media_info` — and a couple of detections could hold the lot.
+    The analysis answers times and confidences; the marker ids are minted by
+    the caller afterwards, which is what keeps "the same audio finds the same
+    beats" a checkable claim (docs/impl/beat-detection.md §5.4).
 
 The historical record of the port that produced this seam is frozen in
 [archive/flutter-port/](archive/flutter-port/).

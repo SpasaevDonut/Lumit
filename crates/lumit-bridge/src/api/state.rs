@@ -582,6 +582,9 @@ impl LumitBridgeState {
             // had queued for the project that is closing.
             crate::peaks::clear();
             crate::probe::clear();
+            // And any beat detection queued for the project that is going: its
+            // audio is about to stop being anybody's audio.
+            crate::beats::clear();
 
             // Clear any other project that is currently open
             // Will also prevent any existing references from working

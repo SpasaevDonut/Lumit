@@ -529,9 +529,6 @@ entry above.
     the only coverage of that path.
 
 **Threading / platform:**
-- **Beat detection still runs on the calling thread**
-    ([17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md) §Threading) and wants the
-    same worker treatment footage probing has (`lumit-bridge/src/probe.rs`).
 - **Shared-texture producer/consumer fence** - only if a live run shows tearing;
     verify on the machine first.
 - **Linux packaging** - the Flutter Linux build needs its own packaging when a
