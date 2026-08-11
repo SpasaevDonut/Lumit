@@ -421,6 +421,30 @@ fields for the selected layer, the Viewer's missing-file probe, and the
 marker/work-area reads on a Timeline rebuild. Fold any into
 `BridgeLayerInfo`/`BridgeCompModel` if they show up in the budget ranking.
 
+**Thin-view debts the 2026-08-10 audit left for engine API** - each is Dart
+doing the engine's job and each wants one bridge call:
+- `viewer_camera.dart` re-derives the renderer's Ry·Rx·Rz basis and picks the
+    active camera itself; wants `comp.activeCameraPose(frame)`.
+- `viewer_type.dart` mirrors the engine's text-width estimate (caret, anchor,
+    gizmo all share it); wants a `layer.textMetrics` read.
+- `viewer_gizmo.dart`'s `_pathBeingEdited` parses `<layer>/masks/<mask>/path`
+    strings in a widget; wants the selection model to expose the pair.
+- The shape tool's Ctrl+Z pops draft points locally (a second undo meaning);
+    wants engine-side draft ops so undo stays the document's.
+- `fx_console_context.dart`'s `_keyTransformGroup` builds and sorts keyframe
+    lists in Dart, two bridge calls per comparison; wants a held-keyframe write
+    op on the layer.
+- `FlowRowsFrb.build` (Effect controls) still reads four flow getters in
+    build; same class of defect the audit cleared from the Timeline's rows.
+- `theme_tokens.dart`'s `_with` restatement wants `LumitTheme.copyWith` in
+    `theme.dart`, whose four-field shape is documented as deliberate - an
+    owner call, not a mechanical fold.
+- `headless.rs`'s four per-platform present-target-pool bodies share one dance;
+    fold them on a machine that compiles the macOS/Linux paths.
+- `ExpressionContext::comp_time` is raw `f64` across an engine boundary
+    (docs/14 typed time); rhai's seam is f64 regardless, so the typed carry is
+    a three-file ripple best taken while `fx/resolved.rs` is quiet.
+
 **`LumitAppNew` rebuilds the whole app on any `LumitUiState.notifyListeners`** (a
 `ListenableBuilder` above everything), and un-scoped document changes do the same
 via `LumitState`. Reads are nearly free; the widget-tree rebuild is not. Scoping

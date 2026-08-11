@@ -112,12 +112,7 @@ impl BridgeShapeItem {
         Self {
             id: item.id,
             name: item.name.clone(),
-            vertices: item
-                .path
-                .vertices
-                .iter()
-                .map(BridgeVertex::read)
-                .collect(),
+            vertices: item.path.vertices.iter().map(BridgeVertex::read).collect(),
             closed: item.path.closed,
             fill: item.fill.map(crate::api::assets::colour_of),
             stroke: item.stroke.map(crate::api::assets::colour_of),
@@ -134,11 +129,7 @@ impl BridgeShapeItem {
             id: self.id,
             name: self.name.clone(),
             path: lumit_core::mask::BezierPath {
-                vertices: self
-                    .vertices
-                    .iter()
-                    .map(BridgeVertex::write)
-                    .collect(),
+                vertices: self.vertices.iter().map(BridgeVertex::write).collect(),
                 closed: self.closed,
             },
             fill: self.fill.map(crate::api::assets::linear_of),
@@ -371,12 +362,7 @@ impl BridgeMask {
         Self {
             id: mask.id,
             name: mask.name.clone(),
-            vertices: mask
-                .path
-                .vertices
-                .iter()
-                .map(BridgeVertex::read)
-                .collect(),
+            vertices: mask.path.vertices.iter().map(BridgeVertex::read).collect(),
             closed: mask.path.closed,
             inverted: mask.inverted,
             opacity: BridgeScalar::read_at(&mask.opacity, offset),
@@ -411,11 +397,7 @@ impl BridgeMask {
             id: self.id,
             name: self.name.clone(),
             path: lumit_core::mask::BezierPath {
-                vertices: self
-                    .vertices
-                    .iter()
-                    .map(BridgeVertex::write)
-                    .collect(),
+                vertices: self.vertices.iter().map(BridgeVertex::write).collect(),
                 closed: self.closed,
             },
             inverted: self.inverted,
