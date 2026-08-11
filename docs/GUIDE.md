@@ -4057,6 +4057,35 @@ panel that may not even be on screen:
   render request and there is no third number to keep in step with the other
   two.
 
+### Moving between panels without the mouse
+
+`Ctrl+F6` moves the focus ring on to the next panel, `Ctrl+Shift+F6` back, and
+`Ctrl+F` puts the cursor in the focused panel's search box. Three small things,
+and two of the details in them are worth knowing.
+
+**The ring walks the arrangement, not a list of panels.** The order is the one
+the dock tree is visited in — roughly left to right and top to bottom — so a
+panel you have closed is simply not in the cycle, and rearranging the workspace
+rearranges the ring with it. A panel sitting behind a tab is brought to the
+front as the ring reaches it, because a focus ring on something nobody can see
+is a keystroke that appears to have done nothing.
+
+**The search chord asks rather than reaches.** The field belongs to whichever
+panel is focused, and the shell has no business reaching into a panel — so
+`Ctrl+F` bumps a request, and each panel that owns a search box listens and
+answers only when it is the focused one. That is what makes it impossible for
+one keystroke to focus two fields, and it means the chord is a quiet no-op in
+the six panels that have no search box rather than doing something arbitrary.
+
+There was a third thing to fix before either could work at all. Lumit asks the
+engine what a chord means *in the focused panel's context* — and the keymap's
+"Panels" context is one that no panel actually **is**, since its whole subject
+is moving *between* panels. So the lookup never asked for it and the three
+bindings were unreachable by construction. The keyboard now asks the Panels
+context after the focused panel and the app-wide table have both declined,
+which is exactly what it already did for the toolbar's "Tools" context, and for
+the same reason.
+
 ### What is remembered, and where
 
 - **The workspace** — panel arrangement, colour scheme, interface scale, tooltips,

@@ -14,6 +14,7 @@ import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/state/clipboard.dart';
 import 'package:lumit_flutter/state/dock.dart';
 import 'package:lumit_flutter/state/viewer_view.dart';
+import 'package:lumit_flutter/widgets/controls.dart';
 
 import 'frb_test_support.dart';
 
@@ -624,6 +625,68 @@ void main() {
       await tester.pump();
 
       expect(p.uiState.viewerZoomRequest.value?.$2, ViewerZoomCommand.zoomIn);
+    });
+
+    /// Moving between panels without the mouse (docs/07 §15, "Panels"). These
+    /// three bindings were in the shipped keymap with nothing behind them —
+    /// and could not have reached anything, because the Panels context is one
+    /// no panel *is*, so the focused-panel lookup never asked for it.
+    testWidgets('Ctrl+F6 walks the focus ring round the arrangement',
+        (tester) async {
+      final p = await mount(tester);
+      final order = panelsIn(p.uiState.split);
+      expect(order.length, greaterThan(2), reason: 'a ring needs somewhere to go');
+      expect(p.uiState.activePanel.value, isNull);
+
+      Future<void> cycle({bool back = false}) async {
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+        if (back) await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+        await tester.sendKeyEvent(LogicalKeyboardKey.f6);
+        if (back) await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+        await tester.pump();
+      }
+
+      await cycle();
+      expect(p.uiState.activePanel.value, order.first,
+          reason: 'with nothing focused, a cycle begins at the beginning');
+      await cycle();
+      expect(p.uiState.activePanel.value, order[1]);
+      await cycle(back: true);
+      expect(p.uiState.activePanel.value, order.first);
+      // Past the beginning it wraps rather than stopping.
+      await cycle(back: true);
+      expect(p.uiState.activePanel.value, order.last);
+    });
+
+    /// `Ctrl+F` is only meaningful where there is a field to put the cursor
+    /// in, and it must never focus two at once.
+    testWidgets('Ctrl+F focuses the search box of the panel that has one',
+        (tester) async {
+      final p = await mount(tester);
+
+      Future<void> pressCtrlF() async {
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+        await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+        await tester.pump();
+      }
+
+      // A panel with no search box leaves the chord alone.
+      p.uiState.activePanel.value = Panel.timeline;
+      await tester.pump();
+      await pressCtrlF();
+      expect(p.uiState.panelSearchRequest.value, 0);
+
+      p.uiState.activePanel.value = Panel.project;
+      await tester.pump();
+      await pressCtrlF();
+      expect(p.uiState.panelSearchRequest.value, 1);
+
+      final field = tester.widget<HouseTextField>(
+          find.byKey(const ValueKey('project-search')));
+      expect(field.focusNode?.hasFocus, isTrue,
+          reason: 'the cursor is in the Project panel\'s search field');
     });
   }, skip: !engineAvailable);
 }

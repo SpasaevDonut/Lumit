@@ -105,6 +105,14 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
   final TextEditingController _searchController = TextEditingController();
   String _search = '';
 
+  /// The search field's focus, owned here so `Ctrl+F` can put the cursor in it
+  /// (docs/07 §15, "Panels").
+  final FocusNode _searchFocus = FocusNode();
+
+  /// The shell state this panel is listening to, so the listener can be taken
+  /// off the same object it was put on.
+  LumitUiState? _boundUi;
+
   StreamSubscription<ScopedChange>? _changes;
 
   @override
@@ -136,13 +144,28 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
     // Timeline's commands; the handler stands down for modals, focused
     // fields, and whenever this panel is not the active one.
     HardwareKeyboard.instance.addHandler(_onKey);
+    // `Ctrl+F` puts the cursor in the search field (docs/07 §15). The shell
+    // asks rather than reaching in, and this answers only while the Project
+    // panel is the focused one — the Effects & presets panel answers the same
+    // request for its own field.
+    _boundUi = Provider.of<LumitUiState>(context, listen: false);
+    _boundUi!.panelSearchRequest.addListener(_onSearchRequested);
+  }
+
+  void _onSearchRequested() {
+    if (!mounted) return;
+    if (_boundUi?.searchRequestIsFor(Panel.project) ?? false) {
+      _searchFocus.requestFocus();
+    }
   }
 
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_onKey);
+    _boundUi?.panelSearchRequest.removeListener(_onSearchRequested);
     _changes?.cancel();
     _searchController.dispose();
+    _searchFocus.dispose();
     _dropThumbs();
     super.dispose();
   }
@@ -433,6 +456,7 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
         child: HouseTextField(
           key: const ValueKey('project-search'),
           controller: _searchController,
+          focusNode: _searchFocus,
           width: double.infinity,
           hint: l10n.searchProject,
         ),

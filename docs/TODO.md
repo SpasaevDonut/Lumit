@@ -220,10 +220,6 @@ cache ceiling falls back to the frontend's documented figure on macOS and
 Linux. Wants Metal's `recommendedMaxWorkingSetSize` and the Vulkan adapter's
 device-local heap (K-033).
 
-**Bound keys with nothing behind them.** The **Panels** context's three bindings
-(`panel.focus.next`, `panel.focus.prev`, `panel.search.focus`) have no commands.
-Either build them or drop the bindings.
-
 **Appearance.** The seven built-in schemes still restate every colour
 individually; only the two Timeline tokens default from the mode. Owed after
 K-298: a swatch strip per row **inside** the picker's menu (it previews the

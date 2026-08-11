@@ -484,6 +484,59 @@ class LumitUiState extends ChangeNotifier {
   DockSplit get split => workspace.dock;
   ValueNotifier<Panel?> activePanel = ValueNotifier(null);
 
+  /// Move the focus ring on by [by] panels in the arrangement's own order —
+  /// `Ctrl+F6` forwards, `Ctrl+Shift+F6` back (docs/07 §15, "Panels").
+  ///
+  /// The arrangement's order, not the enum's: what the ring walks is what is on
+  /// screen, left to right and top to bottom as the tree visits it, so a panel
+  /// dropped from the workspace is simply not in the cycle. A panel sitting
+  /// behind a tab is *brought to the front* as it is reached, because a focus
+  /// ring on something nobody can see is a keystroke that appears to have done
+  /// nothing.
+  ///
+  /// Answers whether it moved, so an arrangement with nothing in it leaves the
+  /// chord to whatever else might want it.
+  bool cyclePanelFocus(int by) {
+    final panels = panelsIn(split);
+    if (panels.isEmpty) return false;
+    final current = activePanel.value;
+    final at = current == null ? -1 : panels.indexOf(current);
+    // Nothing focused yet: the first panel is where a cycle begins, whichever
+    // way it was asked to go.
+    final next =
+        at < 0 ? panels.first : panels[(at + by) % panels.length];
+    activatePanelTab(split, next);
+    activePanel.value = next;
+    // Which tab a group fronts is part of the arrangement, and the arrangement
+    // persists — `touch` both redraws the dock and writes it down.
+    workspace.touch();
+    return true;
+  }
+
+  /// Bumped when `Ctrl+F` asks the focused panel to put the cursor in its
+  /// search box (docs/07 §15).
+  ///
+  /// A notifier for the same reason as [togglePlayRequest]: the field belongs
+  /// to whichever panel is focused, and the shell has no business reaching into
+  /// one. Each panel with a search box listens and answers only when it is the
+  /// focused one, so one request can never focus two fields.
+  final ValueNotifier<int> panelSearchRequest = ValueNotifier(0);
+
+  /// Ask the focused panel for its search box, and say whether there is one to
+  /// ask for. Only two panels have one (docs/07 §15); anywhere else the chord
+  /// is left alone rather than swallowed.
+  bool requestPanelSearch() {
+    final panel = activePanel.value;
+    if (panel != Panel.project && panel != Panel.effectsAndPresets) {
+      return false;
+    }
+    panelSearchRequest.value++;
+    return true;
+  }
+
+  /// Whether [panel] is the one a [panelSearchRequest] is meant for.
+  bool searchRequestIsFor(Panel panel) => activePanel.value == panel;
+
   /// A finer selection's claim on Delete (K-234), set by the Timeline while it
   /// is mounted and cleared when it goes.
   ///
@@ -1393,6 +1446,7 @@ class LumitUiState extends ChangeNotifier {
     paletteRequest.dispose();
     consoleRequest.dispose();
     viewerZoomRequest.dispose();
+    panelSearchRequest.dispose();
     super.dispose();
   }
 
@@ -1979,11 +2033,11 @@ class _LumitAppViewState extends State<LumitAppView> {
     // panel is active — the engine falls back to Global itself, so one call
     // answers both. (This handler runs wherever focus is; the active panel is
     // what the dock last fronted, which is what a user would call "where I am".)
-    final action = ui.keymap.actionFor(_contextOf(ui.activePanel.value), event);
+    var action = ui.keymap.actionFor(_contextOf(ui.activePanel.value), event);
     if (action == null) {
-      // The Tools context is the one context no panel *is* (docs/07 §15 scopes
-      // it to the toolbar, not to a pane), so it is asked for separately and
-      // only once the focused panel and the app-wide table have both declined.
+      // The Tools context is a context no panel *is* (docs/07 §15 scopes it to
+      // the toolbar, not to a pane), so it is asked for separately and only
+      // once the focused panel and the app-wide table have both declined.
       // That ordering is what keeps a panel free to claim a letter a tool also
       // uses — `C` cuts a clip in the Timeline and arms the razor everywhere
       // else — without either binding having to know about the other.
@@ -1991,7 +2045,14 @@ class _LumitAppViewState extends State<LumitAppView> {
       if (tool != null && ui.tools.handleAction(tool)) {
         return KeyEventResult.handled;
       }
-      return KeyEventResult.ignored;
+      // **Panels** is the other one, and for the same reason: its three
+      // bindings are about moving *between* panels, so scoping them to one
+      // would make them unreachable from every other. Asked last, so a panel
+      // that binds `Ctrl+F` for itself one day would still win where it is
+      // focused. The engine falls back to Global from here too, which the
+      // first lookup has already covered, so nothing can be dispatched twice.
+      action = ui.keymap.actionFor(BridgeKeyContext.panels, event);
+      if (action == null) return KeyEventResult.ignored;
     }
     // A tool action can also arrive from the primary lookup, if someone rebinds
     // one into a context a panel is. Same handler either way.
@@ -2047,6 +2108,13 @@ class _LumitAppViewState extends State<LumitAppView> {
         ui.setPreviewResolution(PreviewResolution.half);
       case 'viewer.res.quarter':
         ui.setPreviewResolution(PreviewResolution.quarter);
+      // Moving between panels without the mouse (docs/07 §15, "Panels").
+      case 'panel.focus.next':
+        handled = ui.cyclePanelFocus(1);
+      case 'panel.focus.prev':
+        handled = ui.cyclePanelFocus(-1);
+      case 'panel.search.focus':
+        handled = ui.requestPanelSearch();
       case 'console.open':
         // The menu bar owns the console's lists too, so the key asks for it
         // rather than assembling a second one (K-324).
