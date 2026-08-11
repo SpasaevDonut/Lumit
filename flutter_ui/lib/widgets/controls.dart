@@ -592,12 +592,16 @@ class BareDropdown<T> extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
     return HouseButton(
-      // Vertical 2 rather than the button default's 3: a dropdown's label is
-      // body text, whose line box plus 3 above and below stands taller than a
-      // property row, and the row is what gives — clipping the label's
-      // descenders. Two fits with a little to spare, and the label keeps the
-      // size of the numbers it sits beside. Horizontal is the button's own.
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      // Vertical 1 rather than the button default's 3, so a label's descenders
+      // are not clipped in a property row. The sum is tighter than it looks: a
+      // row gives the button 18, the decoration's border insets the child by 1
+      // top and bottom, and body text at 11 carries a line box of about 13.3 —
+      // so the padding has 3.4 to spend and 3 does not fit. At 1 the label has
+      // 14 to sit in and centres there with room for the tails on p, q and g.
+      // Shrinking the text instead would not have done it: 10 still asks for
+      // 12.1, which clears 3 by nothing at all. Horizontal is the button's own,
+      // so nothing moves sideways.
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
       onPressed: () async {
         final box = context.findRenderObject()! as RenderBox;
         final origin = box.localToGlobal(Offset.zero);
@@ -684,12 +688,16 @@ class BareSearchDropdown extends StatelessWidget {
     final t = ThemeScope.of(context).theme;
     final label = value >= 0 && value < options.length ? options[value] : '—';
     return HouseButton(
-      // Vertical 2 rather than the button default's 3: a dropdown's label is
-      // body text, whose line box plus 3 above and below stands taller than a
-      // property row, and the row is what gives — clipping the label's
-      // descenders. Two fits with a little to spare, and the label keeps the
-      // size of the numbers it sits beside. Horizontal is the button's own.
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      // Vertical 1 rather than the button default's 3, so a label's descenders
+      // are not clipped in a property row. The sum is tighter than it looks: a
+      // row gives the button 18, the decoration's border insets the child by 1
+      // top and bottom, and body text at 11 carries a line box of about 13.3 —
+      // so the padding has 3.4 to spend and 3 does not fit. At 1 the label has
+      // 14 to sit in and centres there with room for the tails on p, q and g.
+      // Shrinking the text instead would not have done it: 10 still asks for
+      // 12.1, which clears 3 by nothing at all. Horizontal is the button's own,
+      // so nothing moves sideways.
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
       onPressed: () async {
         final box = context.findRenderObject()! as RenderBox;
         final origin = box.localToGlobal(Offset.zero);
@@ -872,12 +880,16 @@ class BareLazyDropdown<T> extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
     return HouseButton(
-      // Vertical 2 rather than the button default's 3: a dropdown's label is
-      // body text, whose line box plus 3 above and below stands taller than a
-      // property row, and the row is what gives — clipping the label's
-      // descenders. Two fits with a little to spare, and the label keeps the
-      // size of the numbers it sits beside. Horizontal is the button's own.
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      // Vertical 1 rather than the button default's 3, so a label's descenders
+      // are not clipped in a property row. The sum is tighter than it looks: a
+      // row gives the button 18, the decoration's border insets the child by 1
+      // top and bottom, and body text at 11 carries a line box of about 13.3 —
+      // so the padding has 3.4 to spend and 3 does not fit. At 1 the label has
+      // 14 to sit in and centres there with room for the tails on p, q and g.
+      // Shrinking the text instead would not have done it: 10 still asks for
+      // 12.1, which clears 3 by nothing at all. Horizontal is the button's own,
+      // so nothing moves sideways.
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
       onPressed: () async {
         final box = context.findRenderObject()! as RenderBox;
         final origin = box.localToGlobal(Offset.zero);
