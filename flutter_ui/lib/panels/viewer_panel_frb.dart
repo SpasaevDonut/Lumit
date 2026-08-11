@@ -645,7 +645,14 @@ class _Stage extends StatelessWidget {
     for (final entry in model.heldLayers) {
       if (entry.info.kind == BridgeLayerKind.camera) continue;
       if (!entry.info.switches.visible) continue;
-      final tf = entry.info.transform;
+      // A value scrub in the property rows previews the picture at a
+      // provisional transform while the document still holds the old one, so
+      // the box is drawn from that same provisional value and the two move
+      // together (the reasoning [LumitUiState.liveRotations] sets out, for the
+      // rows rather than the on-picture tools). Absent whenever nothing is
+      // being dragged, which is nearly always.
+      final tf = uiState.liveTransforms.value[entry.layer.internallayerId] ??
+          entry.info.transform;
       final px = still(tf.positionX);
       final py = still(tf.positionY);
       if (px == null || py == null) continue;
@@ -762,6 +769,7 @@ class _Stage extends StatelessWidget {
                   uiState.model,
                   uiState.liveRotations,
                   uiState.liveText,
+                  uiState.liveTransforms,
                 ]),
                 builder: (context, _) {
                   final boxes = _boxes();

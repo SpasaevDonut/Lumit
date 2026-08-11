@@ -1030,6 +1030,22 @@ class LumitUiState extends ChangeNotifier {
   final ValueNotifier<Map<UuidValue, ({String text, double size})>> liveText =
       ValueNotifier(const {});
 
+  /// The transform a value scrub is part way through, by layer id.
+  ///
+  /// The third of the same family, and for the reason [liveRotations] gives:
+  /// dragging Position or Scale — in the property rows or on a curve in the
+  /// graph — previews the *picture* at the new value while the document still
+  /// holds the old one, so the box drawn from the document sat still until the
+  /// drag was released. The row that is dragging publishes the provisional
+  /// transform it already built for the preview, and the boxes read it.
+  ///
+  /// At most one layer at a time: a gesture is one property of one layer
+  /// (see `previewChannelEdits`). Empty whenever nothing is being scrubbed —
+  /// and it must be emptied on release, or the box would hold the last
+  /// provisional value for ever.
+  final ValueNotifier<Map<UuidValue, BridgeTransform>> liveTransforms =
+      ValueNotifier(const {});
+
   /// Forget layers that are no longer in the composition (K-238).
   ///
   /// **Why this is not merely tidy.** A selection is not only a highlight — it

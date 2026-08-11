@@ -23,7 +23,9 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/assets.dart';
+import 'package:lumit_flutter/panels/transform_rows_frb.dart' show writeScalar;
 import 'package:lumit_flutter/panels/viewer_gizmo.dart';
+import 'package:lumit_flutter/panels/viewer_layer_map.dart';
 import 'package:lumit_flutter/panels/viewer_panel_frb.dart';
 import 'package:lumit_flutter/panels/viewer_paint.dart';
 import 'package:lumit_flutter/panels/viewer_zoom.dart';
@@ -1162,6 +1164,55 @@ void main() {
       await tester.pumpAndSettle();
       expect(p.uiState.liveRotations.value, isEmpty,
           reason: 'and the moment it lands, the document is the only truth');
+    });
+
+    /// **And the wireframe follows a value scrub, for the same reason.** The
+    /// turn above is a drag on the picture; this is a drag in the property
+    /// rows, which previews the picture through the same provisional-transform
+    /// path. The rows publish what they are previewing and the boxes read it,
+    /// so Position and Scale move the box as they are dragged rather than on
+    /// release. The document is not written to until the drag lands.
+    testWidgets('the boxes follow a value scrub while it is still being made',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.setSelection([p.layer]);
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      ViewerLayerMap mapOfBox() => tester
+          .widget<ViewerGizmoLayer>(find.byType(ViewerGizmoLayer))
+          .boxes
+          .firstWhere((b) => b.id == p.layer.internallayerId)
+          .map;
+
+      final settled = mapOfBox();
+      expect(p.uiState.liveTransforms.value, isEmpty,
+          reason: 'nothing is being scrubbed yet');
+
+      // What a Position drag in the rows publishes: the document's transform
+      // with the one property replaced, exactly what it sends for the picture.
+      final committed = p.layer.getTransform();
+      p.uiState.liveTransforms.value = {
+        p.layer.internallayerId: writeScalar(
+          committed,
+          BridgeTransformProp.positionX,
+          BridgeScalar.static_((settled.px) + 120),
+        ),
+      };
+      await tester.pump();
+
+      expect(mapOfBox().px, closeTo(settled.px + 120, 0.01),
+          reason: 'the box is drawn from the value being dragged');
+      expect((p.layer.getTransform().positionX as BridgeScalar_Static).field0,
+          closeTo(settled.px, 0.01),
+          reason: 'while the document still holds the old one');
+
+      // Release: the row clears what it published and the document is the
+      // only truth again. A value left behind here would freeze the box.
+      p.uiState.liveTransforms.value = const {};
+      await tester.pump();
+      expect(mapOfBox().px, closeTo(settled.px, 0.01),
+          reason: 'and the box goes back to what the document says');
     });
 
     testWidgets('Shift locks the turn to 45 degrees', (tester) async {
