@@ -3267,7 +3267,7 @@ fn publish_zero_copy(
     comp: Uuid,
     frame: u64,
     scale: f32,
-    document: &lumit_core::Document,
+    document: &std::sync::Arc<lumit_core::Document>,
     stream: &mut WorkerResponseStream,
     mode: BridgePlaybackMode,
     cacheable: bool,
