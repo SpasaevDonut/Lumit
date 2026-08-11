@@ -43,10 +43,10 @@ fn test_cache_dir() -> Option<PathBuf> {
     None
 }
 
-/// Tests must never write into the user's real cache folder, so they point the
-/// sidecar directory at a temporary one for the duration of a call. Thread-local:
-/// the test binary runs its tests in parallel threads, and one test's override
-/// must not be another's.
+// Tests must never write into the user's real cache folder, so they point the
+// sidecar directory at a temporary one for the duration of a call. Thread-local:
+// the test binary runs its tests in parallel threads, and one test's override
+// must not be another's.
 #[cfg(test)]
 thread_local! {
     static TEST_CACHE_DIR: std::cell::RefCell<Option<PathBuf>> =
