@@ -50,10 +50,12 @@ pub mod math {
         to_f64(value).cos()
     }
 
+    /// compute the hyperbolic sine of a value
     pub fn sinh(value: Dynamic) -> f64 {
         to_f64(value).sinh()
     }
 
+    /// compute the hyperbolic cosine of a value
     pub fn cosh(value: Dynamic) -> f64 {
         to_f64(value).cosh()
     }

@@ -59,6 +59,31 @@ pub struct BridgeVertex {
     pub tan_out_y: f64,
 }
 
+impl BridgeVertex {
+    /// One engine vertex, read across the seam.
+    #[frb(ignore)]
+    pub(crate) fn read(v: &lumit_core::mask::Vertex) -> Self {
+        Self {
+            x: v.pos.0,
+            y: v.pos.1,
+            tan_in_x: v.tan_in.0,
+            tan_in_y: v.tan_in.1,
+            tan_out_x: v.tan_out.0,
+            tan_out_y: v.tan_out.1,
+        }
+    }
+
+    /// The engine vertex this describes.
+    #[frb(ignore)]
+    pub(crate) fn write(&self) -> lumit_core::mask::Vertex {
+        lumit_core::mask::Vertex {
+            pos: (self.x, self.y),
+            tan_in: (self.tan_in_x, self.tan_in_y),
+            tan_out: (self.tan_out_x, self.tan_out_y),
+        }
+    }
+}
+
 /// One piece of vector art on a shape layer (K-237): a path, and how it is
 /// painted.
 ///
@@ -91,14 +116,7 @@ impl BridgeShapeItem {
                 .path
                 .vertices
                 .iter()
-                .map(|v| BridgeVertex {
-                    x: v.pos.0,
-                    y: v.pos.1,
-                    tan_in_x: v.tan_in.0,
-                    tan_in_y: v.tan_in.1,
-                    tan_out_x: v.tan_out.0,
-                    tan_out_y: v.tan_out.1,
-                })
+                .map(BridgeVertex::read)
                 .collect(),
             closed: item.path.closed,
             fill: item.fill.map(crate::api::assets::colour_of),
@@ -119,11 +137,7 @@ impl BridgeShapeItem {
                 vertices: self
                     .vertices
                     .iter()
-                    .map(|v| lumit_core::mask::Vertex {
-                        pos: (v.x, v.y),
-                        tan_in: (v.tan_in_x, v.tan_in_y),
-                        tan_out: (v.tan_out_x, v.tan_out_y),
-                    })
+                    .map(BridgeVertex::write)
                     .collect(),
                 closed: self.closed,
             },
@@ -361,14 +375,7 @@ impl BridgeMask {
                 .path
                 .vertices
                 .iter()
-                .map(|v| BridgeVertex {
-                    x: v.pos.0,
-                    y: v.pos.1,
-                    tan_in_x: v.tan_in.0,
-                    tan_in_y: v.tan_in.1,
-                    tan_out_x: v.tan_out.0,
-                    tan_out_y: v.tan_out.1,
-                })
+                .map(BridgeVertex::read)
                 .collect(),
             closed: mask.path.closed,
             inverted: mask.inverted,
@@ -407,11 +414,7 @@ impl BridgeMask {
                 vertices: self
                     .vertices
                     .iter()
-                    .map(|v| lumit_core::mask::Vertex {
-                        pos: (v.x, v.y),
-                        tan_in: (v.tan_in_x, v.tan_in_y),
-                        tan_out: (v.tan_out_x, v.tan_out_y),
-                    })
+                    .map(BridgeVertex::write)
                     .collect(),
                 closed: self.closed,
             },

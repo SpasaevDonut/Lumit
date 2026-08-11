@@ -7,8 +7,9 @@ use crate::{expression::ExpressionContext, model};
 
 #[derive(Clone, CustomType)]
 pub struct Layer {
-    comp_id: Option<Uuid>,
-    layer_id: Option<Uuid>,
+    /// `(comp id, layer id)` when the reference resolved; `None` is the
+    /// invalid-reference sentinel every accessor answers politely for.
+    ids: Option<(Uuid, Uuid)>,
 }
 
 /// Find the referenced layer and hand `read` a borrow of it, along with the
@@ -21,9 +22,9 @@ fn with_layer<T>(
     this: &Layer,
     read: impl FnOnce(&Arc<ExpressionContext>, &model::Layer) -> T,
 ) -> Option<T> {
+    let (comp_id, layer_id) = this.ids?;
     let context = ExpressionContext::from_call(context);
-    let comp = context.document.comp(this.comp_id?)?;
-    let layer_id = this.layer_id?;
+    let comp = context.document.comp(comp_id)?;
     let layer = comp.layers.iter().find(|l| l.id == layer_id)?;
     Some(read(&context, layer))
 }
@@ -51,7 +52,7 @@ fn transform_property(
     with_layer(call, this, |context, layer| {
         let t = context.comp_time - layer.in_point.0.to_f64();
         let mut deeper = context.increase_depth();
-        deeper.layer = this.layer_id;
+        deeper.layer = Some(layer.id);
         pick(&layer.transform).value_at_with_context(t, Arc::new(deeper))
     })
     .unwrap_or(-1.0)
@@ -70,22 +71,8 @@ pub mod layers {
     /// get the current layer
     pub fn layer(context: NativeCallContext) -> Layer {
         let context = ExpressionContext::from_call(&context);
-
-        match context.comp {
-            Some(comp) => match context.layer {
-                Some(layer) => Layer {
-                    comp_id: Some(comp),
-                    layer_id: Some(layer),
-                },
-                None => Layer {
-                    comp_id: None,
-                    layer_id: None,
-                },
-            },
-            None => Layer {
-                comp_id: None,
-                layer_id: None,
-            },
+        Layer {
+            ids: context.comp.zip(context.layer),
         }
     }
 
@@ -93,27 +80,12 @@ pub mod layers {
     /// get a layer by name
     pub fn layer_by_name(context: NativeCallContext, name: String) -> Layer {
         let context = ExpressionContext::from_call(&context);
-
-        match context.comp {
-            Some(c) => {
-                if let Some(comp) = context.document.comp(c) {
-                    if let Some(layer) = comp.layers.iter().find(|f| f.name == name) {
-                        return Layer {
-                            comp_id: Some(comp.id),
-                            layer_id: Some(layer.id),
-                        };
-                    }
-                }
-
-                Layer {
-                    comp_id: None,
-                    layer_id: None,
-                }
-            }
-            None => Layer {
-                comp_id: None,
-                layer_id: None,
-            },
+        Layer {
+            ids: context.comp.and_then(|c| {
+                let comp = context.document.comp(c)?;
+                let layer = comp.layers.iter().find(|f| f.name == name)?;
+                Some((comp.id, layer.id))
+            }),
         }
     }
 

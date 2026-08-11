@@ -408,19 +408,21 @@ impl Keymap {
     /// (docs/07 §15 conflict detection). Empty when the keymap is unambiguous.
     #[must_use]
     pub fn conflicts(&self) -> Vec<Conflict> {
-        let mut out: Vec<Conflict> = Vec::new();
-        let mut seen_chords: Vec<&Chord> = Vec::new();
+        // Group bindings by chord once (first-seen chord order preserved),
+        // instead of re-scanning the whole list per binding.
+        let mut groups: std::collections::HashMap<&Chord, Vec<&Binding>> =
+            std::collections::HashMap::new();
+        let mut order: Vec<&Chord> = Vec::new();
         for b in &self.bindings {
-            if seen_chords.contains(&&b.chord) {
-                continue;
+            let group = groups.entry(&b.chord).or_default();
+            if group.is_empty() {
+                order.push(&b.chord);
             }
-            seen_chords.push(&b.chord);
-            // Every binding on this chord, and whether any is Global.
-            let same: Vec<&Binding> = self
-                .bindings
-                .iter()
-                .filter(|o| o.chord == b.chord)
-                .collect();
+            group.push(b);
+        }
+        let mut out: Vec<Conflict> = Vec::new();
+        for chord in order {
+            let same = &groups[chord];
             // Collect the distinct actions that can genuinely collide: two
             // bindings in the *same* context, which nothing can tell apart.
             //
@@ -433,18 +435,20 @@ impl Keymap {
             // used, which is how `L` could not mean "reveal Audio" in the
             // Timeline while J/K/L still shuttled everywhere else.
             // [`Keymap::shadows`] reports those pairs instead.
+            let mut per_context: std::collections::HashMap<KeyContext, usize> =
+                std::collections::HashMap::new();
+            for b in same {
+                *per_context.entry(b.context).or_default() += 1;
+            }
             let mut actions: Vec<ActionId> = Vec::new();
-            for x in &same {
-                let clashes = same
-                    .iter()
-                    .any(|y| !std::ptr::eq(*x, *y) && x.context == y.context);
-                if clashes && !actions.contains(&x.action) {
-                    actions.push(x.action.clone());
+            for b in same {
+                if per_context[&b.context] > 1 && !actions.contains(&b.action) {
+                    actions.push(b.action.clone());
                 }
             }
             if actions.len() > 1 {
                 out.push(Conflict {
-                    chord: b.chord.clone(),
+                    chord: chord.clone(),
                     actions,
                 });
             }
@@ -817,24 +821,56 @@ pub fn with_new_defaults(stored: Keymap) -> Keymap {
     out
 }
 
-/// The "After Effects" muscle-memory preset (docs/07 §15): starts from the
-/// default and re-points the deviating transport/navigation keys to their AE
-/// meanings, so J/K/L become keyframe-ish habits again. A representative subset.
+/// The "After Effects" muscle-memory preset (docs/07 §15).
+///
+/// Starts from the shipped default — which already follows After Effects
+/// wherever the two agree: the V/H/Z/Y/Q/G/W tool letters, the P/S/R/T/A/E/M/U
+/// reveals, `[` / `]` and Alt+`[` / Alt+`]` for layer in/out and trims,
+/// Home/End and the Page keys, Space transport, I/O to the layer's in/out
+/// point, B/N for the work area, Mod+D duplicate, Mod+Shift+D split,
+/// Mod+Shift+C precompose, the F9 eases, and Mod+Alt+T for Retime — and
+/// re-points the places where the default deviates from AE:
+///
+/// - **J / K** go to the previous / next keyframe, app-wide (AE's habit), and
+///   the Vegas-style J/K/L shuttle is dropped — AE has no shuttle, and freeing
+///   those letters is the preset's whole point. In the Timeline, `L` keeps
+///   revealing a layer's Audio, which is also AE's `L`.
+/// - **C** selects the camera tool and **Shift+C** the razor: AE's `C` cycles
+///   its camera tools, and the razor — which AE does not have as a tool —
+///   takes the modified key the two swapped.
+///
+/// Every binding re-points an action id the app already ships; the preset
+/// adds no new actions and no user-facing strings of its own.
 #[must_use]
 pub fn after_effects_preset() -> Keymap {
     let mut km = default_keymap();
-    // AE has no J/K/L shuttle; drop them so they don't clash with AE habits.
+    // AE has no J/K/L shuttle; the letters go back to their AE meanings.
     for k in ["J", "K", "L"] {
         if let Ok(chord) = k.parse::<Chord>() {
             km.unbind(KeyContext::Global, &chord);
         }
     }
-    // Keyframe nav returns to J/K in AE muscle memory (illustrative).
-    if let Ok(chord) = "J".parse::<Chord>() {
-        km.bind(KeyContext::Timeline, chord, "keyframe.prev".into());
+    // `bind`, not `rebind_action`, for the keyframe pair: `,` / `.` stay as a
+    // second way in, exactly as the default keeps `*` beside `Shift+M`.
+    let extra = [
+        (KeyContext::Global, "J", "keyframe.prev"),
+        (KeyContext::Global, "K", "keyframe.next"),
+    ];
+    for (context, chord, action) in extra {
+        if let Ok(chord) = chord.parse::<Chord>() {
+            km.bind(context, chord, action.into());
+        }
     }
-    if let Ok(chord) = "K".parse::<Chord>() {
-        km.bind(KeyContext::Timeline, chord, "keyframe.next".into());
+    // The camera/razor swap. Camera first: rebinding it to `C` evicts the
+    // razor from the letter, so the razor can then take `Shift+C` cleanly.
+    let swaps = [
+        (KeyContext::Tools, "C", "tool.camera"),
+        (KeyContext::Tools, "Shift+C", "tool.razor"),
+    ];
+    for (context, chord, action) in swaps {
+        if let Ok(chord) = chord.parse::<Chord>() {
+            km.rebind_action(context, &action.into(), chord);
+        }
     }
     km
 }
@@ -1167,6 +1203,67 @@ mod tests {
             "the shipped default must not ship with clashes"
         );
         assert!(after_effects_preset().conflicts().is_empty());
+    }
+
+    /// The After Effects preset re-points the default's deviations — J/K to
+    /// keyframe navigation with the shuttle gone, the camera/razor letter swap
+    /// — and leaves the chords the two programs already agree on alone.
+    #[test]
+    fn the_after_effects_preset_repoints_the_ae_habits() {
+        let km = after_effects_preset();
+        // J/K are AE's keyframe navigation, app-wide; the shuttle is gone.
+        assert_eq!(
+            km.lookup(KeyContext::Timeline, &chord("J")),
+            Some(&"keyframe.prev".into())
+        );
+        assert_eq!(
+            km.lookup(KeyContext::Viewer, &chord("K")),
+            Some(&"keyframe.next".into())
+        );
+        assert!(!km
+            .bindings
+            .iter()
+            .any(|b| b.action.0.starts_with("playback.shuttle")));
+        // `,` / `.` still work as the second way in.
+        assert_eq!(
+            km.lookup(KeyContext::Global, &chord(",")),
+            Some(&"keyframe.prev".into())
+        );
+        // The camera/razor swap: AE's `C` cycles cameras.
+        assert_eq!(
+            km.lookup(KeyContext::Tools, &chord("C")),
+            Some(&"tool.camera".into())
+        );
+        assert_eq!(
+            km.lookup(KeyContext::Tools, &chord("Shift+C")),
+            Some(&"tool.razor".into())
+        );
+        // `L` still reveals a layer's Audio in the Timeline — AE's `L` too —
+        // and no longer shadows anything, since the shuttle is gone.
+        assert_eq!(
+            km.lookup(KeyContext::Timeline, &chord("L")),
+            Some(&"reveal.audio".into())
+        );
+        assert!(km.shadows().is_empty());
+        // Chords the two programs agree on are untouched.
+        for (context, chord_text, action) in [
+            (KeyContext::Global, "Space", "playback.toggle"),
+            (KeyContext::Tools, "V", "tool.select"),
+            (KeyContext::Tools, "Y", "tool.anchor"),
+            (KeyContext::Tools, "G", "tool.pen"),
+            (KeyContext::Timeline, "Mod+D", "layer.duplicate"),
+            (KeyContext::Timeline, "[", "layer.move.in"),
+            (KeyContext::Timeline, "Alt+]", "layer.trim.out"),
+            (KeyContext::Global, "Home", "playback.comp.start"),
+            (KeyContext::Global, "Mod+Alt+T", "layer.retime.enable"),
+            (KeyContext::Graph, "F9", "graph.ease"),
+        ] {
+            assert_eq!(
+                km.lookup(context, &chord(chord_text)),
+                Some(&action.into()),
+                "{chord_text} should still run {action}"
+            );
+        }
     }
 
     #[test]

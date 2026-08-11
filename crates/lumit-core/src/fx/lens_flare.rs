@@ -168,105 +168,15 @@ pub const BLEND_ADD: u32 = 1;
 /// [`BLEND_NORMAL`] ignores `d` entirely and returns the element on opaque
 /// black; the alpha clamp at the end is the caller's, not this function's.
 pub fn flare_blend(mode: u32, d: [f32; 4], e: [f32; 4]) -> [f32; 4] {
-    let mut o = [0.0_f32; 4];
     match mode {
         // Normal: the element replaces the layer, on the opaque black it
         // was rendered against. The old Background = Black, as a blend.
-        BLEND_NORMAL => {
-            o = [e[0], e[1], e[2], 1.0];
-        }
-        // Add (the default): light sums. Bit-identical to the pre-menu
+        BLEND_NORMAL => [e[0], e[1], e[2], 1.0],
+        // 1..: the light-combine table Echo's combine shares (K-149), the
+        // layer as backdrop. Index 1 (Add) is bit-identical to the pre-menu
         // behaviour, so a project that never touched this renders the same.
-        1 => {
-            for c in 0..4 {
-                o[c] = d[c] + e[c];
-            }
-        }
-        // Screen.
-        2 => {
-            for c in 0..4 {
-                o[c] = d[c] + e[c] - d[c] * e[c];
-            }
-        }
-        // Multiply.
-        3 => {
-            for c in 0..4 {
-                o[c] = d[c] * e[c];
-            }
-        }
-        // Overlay = hard light with the LAYER as the switch.
-        4 => {
-            for c in 0..4 {
-                o[c] = if d[c] <= 0.5 {
-                    2.0 * d[c] * e[c]
-                } else {
-                    1.0 - 2.0 * (1.0 - d[c]) * (1.0 - e[c])
-                };
-            }
-        }
-        // Soft light (W3C), source = the element, backdrop = the layer.
-        5 => {
-            for c in 0..4 {
-                let dd = if d[c] <= 0.25 {
-                    ((16.0 * d[c] - 12.0) * d[c] + 4.0) * d[c]
-                } else {
-                    d[c].sqrt()
-                };
-                o[c] = if e[c] <= 0.5 {
-                    d[c] - (1.0 - 2.0 * e[c]) * d[c] * (1.0 - d[c])
-                } else {
-                    d[c] + (2.0 * e[c] - 1.0) * (dd - d[c])
-                };
-            }
-        }
-        // Hard light: the element is the switch.
-        6 => {
-            for c in 0..4 {
-                o[c] = if e[c] <= 0.5 {
-                    2.0 * d[c] * e[c]
-                } else {
-                    1.0 - 2.0 * (1.0 - d[c]) * (1.0 - e[c])
-                };
-            }
-        }
-        // Lighten (per-channel max).
-        7 => {
-            for c in 0..4 {
-                o[c] = d[c].max(e[c]);
-            }
-        }
-        // Darken (per-channel min).
-        8 => {
-            for c in 0..4 {
-                o[c] = d[c].min(e[c]);
-            }
-        }
-        // Difference.
-        9 => {
-            for c in 0..4 {
-                o[c] = (d[c] - e[c]).abs();
-            }
-        }
-        // Exclusion.
-        10 => {
-            for c in 0..4 {
-                o[c] = d[c] + e[c] - 2.0 * d[c] * e[c];
-            }
-        }
-        // Subtract.
-        11 => {
-            for c in 0..4 {
-                o[c] = (d[c] - e[c]).max(0.0);
-            }
-        }
-        // Divide, and the catch-all for an index no menu can produce.
-        _ => {
-            for c in 0..4 {
-                o[c] = (d[c] / e[c].max(1e-6)).max(0.0);
-            }
-        }
+        m => super::cpu::light_blend(m - 1, d, e),
     }
-    o
 }
 
 /// Per-quality pupil grid side, traced wavelength count, and flare-buffer
@@ -395,7 +305,9 @@ pub fn detect_lights(
     for y in 0..h {
         for x in 0..w {
             let i = ((y * w + x) * 4) as usize;
-            let luma = 0.2126 * matte[i] + 0.7152 * matte[i + 1] + 0.0722 * matte[i + 2];
+            let luma = super::cpu::LUMA[0] * matte[i]
+                + super::cpu::LUMA[1] * matte[i + 1]
+                + super::cpu::LUMA[2] * matte[i + 2];
             let t = (y / DETECT_TILE) as usize * tx + (x / DETECT_TILE) as usize;
             if luma > tiles[t].0 {
                 tiles[t] = (luma, y * w + x);
@@ -570,7 +482,7 @@ pub struct Prescription {
 /// lines (`name:`, `focal_length:`), then `surfaces:` rows of
 /// `radius thickness ior abbe semi_ap coating` with `stop`/`inf` keywords.
 /// Malformed rows are skipped; a file with under 3 surfaces is rejected.
-pub fn parse_lens(text: &str) -> Option<Prescription> {
+pub(crate) fn parse_lens(text: &str) -> Option<Prescription> {
     let mut focal = 0.0_f32;
     let mut in_surfaces = false;
     let mut rows: Vec<(f32, f32, f32, f32, f32, f32, bool)> = Vec::new();
@@ -657,7 +569,7 @@ pub fn fstop_scale(native_fstop: f32, fstop: f32) -> f32 {
 
 /// Cauchy dispersion pair from a prescription's (n_d, V) — impl note §1
 /// deviation D1. Returns (A, B[µm²]); air (n ≤ 1 or V ≤ 0) is (n_d, 0).
-pub fn cauchy_from_abbe(n_d: f32, v: f32) -> (f32, f32) {
+pub(crate) fn cauchy_from_abbe(n_d: f32, v: f32) -> (f32, f32) {
     if n_d <= 1.0001 || v <= 0.1 {
         return (n_d.max(1.0), 0.0);
     }
@@ -753,7 +665,7 @@ pub fn surface_reflectance(
 /// None.
 // Negated comparison deliberate: NaN reads as dead (see `intersect`).
 #[allow(clippy::neg_cmp_op_on_partial_ord)]
-pub fn refract3(i: [f32; 3], n: [f32; 3], o: f32) -> Option<[f32; 3]> {
+pub(crate) fn refract3(i: [f32; 3], n: [f32; 3], o: f32) -> Option<[f32; 3]> {
     let cos_i = -(i[0] * n[0] + i[1] * n[1] + i[2] * n[2]);
     let sin2_t = o * o * (1.0 - cos_i * cos_i);
     if sin2_t >= 1.0 {
@@ -774,7 +686,7 @@ pub fn refract3(i: [f32; 3], n: [f32; 3], o: f32) -> Option<[f32; 3]> {
 }
 
 /// Mirror reflection of incidence `i` about unit normal `n`.
-pub fn reflect3(i: [f32; 3], n: [f32; 3]) -> [f32; 3] {
+pub(crate) fn reflect3(i: [f32; 3], n: [f32; 3]) -> [f32; 3] {
     let d = 2.0 * (i[0] * n[0] + i[1] * n[1] + i[2] * n[2]);
     let v = [i[0] - d * n[0], i[1] - d * n[1], i[2] - d * n[2]];
     let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-12);
@@ -926,27 +838,31 @@ pub fn trace_splat(
     if n < 3 || a_idx >= b_idx || b_idx >= n {
         return None;
     }
-    let mut pos = origin;
-    let mut rdir = dir;
-    let mut weight = 1.0_f32;
-    let mut current_ior = 1.0_f32;
-    // Worst relative aperture crossing along the walk: rays that graze a
-    // housing edge fade smoothly (the 0.95..1 feather below) instead of the
-    // hard clip alone — without it, a defocused ghost's cull boundary shows
-    // as giant staircase quads (K-261, the K-256 rrel feather reinstated).
-    // Tracked SQUARED and rooted once at the end (K-263): the worst crossing
-    // is the largest ratio either way — `max` and `sqrt` commute for
-    // non-negative values — so this is the same number for one square root a
-    // ray instead of one per surface, on the hottest loop the effect has.
-    let mut rrel2 = 0.0_f32;
-
-    let semi_of = |s: &FlareSurface| -> f32 {
-        if s.is_stop > 0.5 {
-            s.semi_ap_mm * stop_scale
-        } else {
-            s.semi_ap_mm
-        }
+    /// The walking ray: position, direction, surviving energy, the medium it
+    /// is in, and its worst relative aperture crossing so far. `rrel2` is
+    /// tracked SQUARED and rooted once at the end (K-263): the worst crossing
+    /// is the largest ratio either way — `max` and `sqrt` commute for
+    /// non-negative values — so this is the same number for one square root a
+    /// ray instead of one per surface, on the hottest loop the effect has.
+    /// Rays that graze a housing edge fade smoothly through the 0.95..1
+    /// feather at the end instead of the hard clip alone — without it, a
+    /// defocused ghost's cull boundary shows as giant staircase quads (K-261,
+    /// the K-256 rrel feather reinstated).
+    struct Ray {
+        pos: [f32; 3],
+        dir: [f32; 3],
+        weight: f32,
+        ior: f32,
+        rrel2: f32,
+    }
+    let mut ray = Ray {
+        pos: origin,
+        dir,
+        weight: 1.0,
+        ior: 1.0,
+        rrel2: 0.0,
     };
+
     let ior_at = |s: &FlareSurface| cauchy_ior(s.cauchy_a, s.cauchy_b, lambda_nm);
     let ior_before = |idx: usize| -> f32 {
         if idx == 0 {
@@ -956,16 +872,23 @@ pub fn trace_splat(
         }
     };
 
-    // Phase 1: forward through 0..=b, reflecting at b.
-    for (s_idx, s) in surfs.iter().enumerate().take(b_idx + 1) {
-        let semi = semi_of(s);
-        let (hit, norm, missed) = intersect(pos, rdir, s.radius_mm, s.z_mm)?;
-        pos = hit;
+    // One surface crossing — the body all three phases share, in the exact
+    // per-surface arithmetic order the WGSL twin mirrors. `n2` is the medium
+    // past the surface in the walk's direction; `reflect` bounces instead of
+    // refracting (the ghost pair's two mirror surfaces).
+    let step = |ray: &mut Ray, s: &FlareSurface, n2: f32, reflect: bool| -> Option<()> {
+        let semi = if s.is_stop > 0.5 {
+            s.semi_ap_mm * stop_scale
+        } else {
+            s.semi_ap_mm
+        };
+        let (hit, norm, missed) = intersect(ray.pos, ray.dir, s.radius_mm, s.z_mm)?;
+        ray.pos = hit;
         if missed {
             // Outside the element's glass entirely: the mount absorbs it.
             // Weight goes to zero through the housing feather; the ray
             // itself continues so its grid cells stay whole (K-264).
-            rrel2 = rrel2.max(4.0);
+            ray.rrel2 = ray.rrel2.max(4.0);
         }
         // The feather's denominator is the smaller of the clear aperture
         // and the glass's own lateral extent (K-264): a transcribed
@@ -978,125 +901,66 @@ pub fn trace_splat(
         } else {
             semi.min(s.radius_mm.abs()).max(1e-6)
         };
-        rrel2 = rrel2.max((pos[0] * pos[0] + pos[1] * pos[1]) / (semi_r * semi_r));
-        let n1 = current_ior;
-        let n2 = ior_at(s);
-        let cos_i = (norm[0] * rdir[0] + norm[1] * rdir[1] + norm[2] * rdir[2]).abs();
+        ray.rrel2 = ray
+            .rrel2
+            .max((ray.pos[0] * ray.pos[0] + ray.pos[1] * ray.pos[1]) / (semi_r * semi_r));
+        let n1 = ray.ior;
+        let cos_i = (norm[0] * ray.dir[0] + norm[1] * ray.dir[1] + norm[2] * ray.dir[2]).abs();
         let r = surface_reflectance(cos_i, n1, n2, s.coating_layers, lambda_nm, coating_mix);
-        if s_idx == b_idx {
-            rdir = reflect3(rdir, norm);
-            weight *= r;
+        if reflect {
+            ray.dir = reflect3(ray.dir, norm);
+            ray.weight *= r;
         } else {
-            match refract3(rdir, norm, n1 / n2) {
-                Some(d) => rdir = d,
+            match refract3(ray.dir, norm, n1 / n2) {
+                Some(d) => ray.dir = d,
                 // Total internal reflection: the transmitted energy is
                 // already ~0 (Fresnel reaches 1 smoothly on approach), so
                 // the ray continues STRAIGHT with its weight forced to
                 // zero (K-264) — the last cell-killer with no feather, and
                 // the stair-steps on hard vignetted ghost edges.
-                None => rrel2 = rrel2.max(4.0),
+                None => ray.rrel2 = ray.rrel2.max(4.0),
             }
-            weight *= 1.0 - r;
-            current_ior = n2;
+            ray.weight *= 1.0 - r;
+            ray.ior = n2;
         }
-    }
+        Some(())
+    };
 
-    // Phase 2: backward through b-1..=a, reflecting at a.
+    // Phase 1: forward through 0..=b, reflecting at b.
+    for (s_idx, s) in surfs.iter().enumerate().take(b_idx + 1) {
+        step(&mut ray, s, ior_at(s), s_idx == b_idx)?;
+    }
+    // Phase 2: backward through b-1..=a, reflecting at a. The mirror at `a`
+    // sends the ray forward again, into a's own glass.
     for s_idx in (a_idx..b_idx).rev() {
         let s = &surfs[s_idx];
-        let semi = semi_of(s);
-        let (hit, norm, missed) = intersect(pos, rdir, s.radius_mm, s.z_mm)?;
-        pos = hit;
-        if missed {
-            // Outside the element's glass entirely: the mount absorbs it.
-            // Weight goes to zero through the housing feather; the ray
-            // itself continues so its grid cells stay whole (K-264).
-            rrel2 = rrel2.max(4.0);
-        }
-        // The feather's denominator is the smaller of the clear aperture
-        // and the glass's own lateral extent (K-264): a transcribed
-        // prescription can claim a clear aperture wider than the sphere it
-        // sits on, and rays then MISSED the glass while their feather still
-        // read "well inside" — a one-cell hard step at the ghost's bore
-        // edge. Clamped, the feather reaches zero before the miss can.
-        let semi_r = if s.radius_mm.abs() < 1e-6 {
-            semi.max(1e-6)
-        } else {
-            semi.min(s.radius_mm.abs()).max(1e-6)
-        };
-        rrel2 = rrel2.max((pos[0] * pos[0] + pos[1] * pos[1]) / (semi_r * semi_r));
-        let n1 = current_ior;
-        let n2 = ior_before(s_idx);
-        let cos_i = (norm[0] * rdir[0] + norm[1] * rdir[1] + norm[2] * rdir[2]).abs();
-        let r = surface_reflectance(cos_i, n1, n2, s.coating_layers, lambda_nm, coating_mix);
-        if s_idx == a_idx {
-            rdir = reflect3(rdir, norm);
-            weight *= r;
-            current_ior = ior_at(s);
-        } else {
-            match refract3(rdir, norm, n1 / n2) {
-                Some(d) => rdir = d,
-                // TIR: continue straight, weight zero — see phase 1.
-                None => rrel2 = rrel2.max(4.0),
-            }
-            weight *= 1.0 - r;
-            current_ior = n2;
+        let reflect = s_idx == a_idx;
+        step(&mut ray, s, ior_before(s_idx), reflect)?;
+        if reflect {
+            ray.ior = ior_at(s);
         }
     }
-
     // Phase 3: forward through a+1..n.
     for s in surfs.iter().skip(a_idx + 1) {
-        let semi = semi_of(s);
-        let (hit, norm, missed) = intersect(pos, rdir, s.radius_mm, s.z_mm)?;
-        pos = hit;
-        if missed {
-            // Outside the element's glass entirely: the mount absorbs it.
-            // Weight goes to zero through the housing feather; the ray
-            // itself continues so its grid cells stay whole (K-264).
-            rrel2 = rrel2.max(4.0);
-        }
-        // The feather's denominator is the smaller of the clear aperture
-        // and the glass's own lateral extent (K-264): a transcribed
-        // prescription can claim a clear aperture wider than the sphere it
-        // sits on, and rays then MISSED the glass while their feather still
-        // read "well inside" — a one-cell hard step at the ghost's bore
-        // edge. Clamped, the feather reaches zero before the miss can.
-        let semi_r = if s.radius_mm.abs() < 1e-6 {
-            semi.max(1e-6)
-        } else {
-            semi.min(s.radius_mm.abs()).max(1e-6)
-        };
-        rrel2 = rrel2.max((pos[0] * pos[0] + pos[1] * pos[1]) / (semi_r * semi_r));
-        let n1 = current_ior;
-        let n2 = ior_at(s);
-        let cos_i = (norm[0] * rdir[0] + norm[1] * rdir[1] + norm[2] * rdir[2]).abs();
-        let r = surface_reflectance(cos_i, n1, n2, s.coating_layers, lambda_nm, coating_mix);
-        match refract3(rdir, norm, n1 / n2) {
-            Some(d) => rdir = d,
-            // TIR: continue straight, weight zero — see phase 1.
-            None => rrel2 = rrel2.max(4.0),
-        }
-        weight *= 1.0 - r;
-        current_ior = n2;
+        step(&mut ray, s, ior_at(s), false)?;
     }
 
     // Propagate to the (focus-shifted) sensor plane.
-    if rdir[2].abs() < 1e-12 {
+    if ray.dir[2].abs() < 1e-12 {
         return None;
     }
-    let t = (baked.sensor_z_mm + sensor_shift_mm - pos[2]) / rdir[2];
+    let t = (baked.sensor_z_mm + sensor_shift_mm - ray.pos[2]) / ray.dir[2];
     if !(t > 0.0) {
         return None;
     }
-    let x = pos[0] + rdir[0] * t;
-    let y = pos[1] + rdir[1] * t;
-    if !x.is_finite() || !y.is_finite() || !weight.is_finite() {
+    let x = ray.pos[0] + ray.dir[0] * t;
+    let y = ray.pos[1] + ray.dir[1] * t;
+    if !x.is_finite() || !y.is_finite() || !ray.weight.is_finite() {
         return None;
     }
     // Housing feather: full inside 0.95, gone at 1.0 (smoothstep).
-    let ft = ((1.0 - rrel2.sqrt()) / 0.05).clamp(0.0, 1.0);
-    weight *= ft * ft * (3.0 - 2.0 * ft);
-    Some(([x, y], weight))
+    let ft = ((1.0 - ray.rrel2.sqrt()) / 0.05).clamp(0.0, 1.0);
+    Some(([x, y], ray.weight * (ft * ft * (3.0 - 2.0 * ft))))
 }
 
 // ---------------------------------------------------------------------------
@@ -1177,7 +1041,7 @@ pub const FRAME_BOOST_CAP: u32 = 3;
 /// [`boost_grid`] applies it WITHOUT ever lowering the bake floor. Manual
 /// mode only — Matte lights exist GPU-side, so both twins keep the bake
 /// grids there and parity holds.
-pub fn frame_grid_needs(
+pub(crate) fn frame_grid_needs(
     baked: &FlareBaked,
     pair_count: usize,
     dir: [f32; 3],
@@ -1250,7 +1114,7 @@ pub fn frame_grid_needs(
 /// Apply one pair's frame-time grid need to its bake-spread grid (K-267):
 /// never below the bake floor, never past [`FRAME_BOOST_CAP`]× it, always
 /// inside `pair_grid`'s 8..512 clamp.
-pub fn boost_grid(pair_grid: u32, need: f32) -> u32 {
+pub(crate) fn boost_grid(pair_grid: u32, need: f32) -> u32 {
     let cap = pair_grid.saturating_mul(FRAME_BOOST_CAP);
     pair_grid.max((need.round() as u32).min(cap)).clamp(8, 512)
 }
@@ -1440,7 +1304,7 @@ pub fn lens_text_hash(text: &str) -> u64 {
 /// The aperture image for the starburst FFT: the pupil mask rendered into a
 /// texture (iris at 0.75 of the half-extent, leaving rim room for the
 /// diffraction spread).
-pub fn bake_aperture(p: &LensFlareParams, native_fstop: f32, res: u32) -> Vec<f32> {
+pub(crate) fn bake_aperture(p: &LensFlareParams, native_fstop: f32, res: u32) -> Vec<f32> {
     let n = res as usize;
     let mut img = vec![0.0_f32; n * n];
     let rot = p.aperture_rotation_deg.to_radians();
@@ -1468,7 +1332,7 @@ pub fn bake_aperture(p: &LensFlareParams, native_fstop: f32, res: u32) -> Vec<f3
 /// propagation term, integrated over the visible spectrum with the chromatic
 /// scale `λ_mid/λ`, CIE-weighted into linear working RGB ([Ritschel 2009]
 /// §4–5). Peak-normalised so blade edits keep overall brightness.
-pub fn bake_starburst(aperture: &[f32], res: u32) -> Vec<f32> {
+pub(crate) fn bake_starburst(aperture: &[f32], res: u32) -> Vec<f32> {
     let n = res as usize;
     // Pattern: |fftshift(fft(A · e^{iπ/(λd)(x²+y²)}))|, λ_mid, d = 1 m.
     let lambda_mm = cie::LAMBDA_MID as f64 * 1e-6;
@@ -2450,11 +2314,11 @@ pub fn cpu_flare(
     out
 }
 
-/// Separable box blur over an RGB buffer/// Separable box blur over an RGB buffer, `passes` times (3 passes
+/// Separable box blur over an RGB buffer, `passes` times (3 passes
 /// approximate a Gaussian) — FlareSim's Ghost Blur (K-261), shared by the
 /// CPU reference and mirrored by the WGSL blur kernel. `radius_px` 0 is a
 /// no-op.
-pub fn blur_flare(buf: &mut [f32], w: u32, h: u32, radius_px: u32, passes: u32) {
+pub(crate) fn blur_flare(buf: &mut [f32], w: u32, h: u32, radius_px: u32, passes: u32) {
     if radius_px == 0 || w == 0 || h == 0 {
         return;
     }
@@ -2626,7 +2490,9 @@ pub fn cpu_combine(
             ];
             let i = ((y * w + x) * 4) as usize;
             let o = [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]];
-            let luma = 0.2126 * add[0] + 0.7152 * add[1] + 0.0722 * add[2];
+            let luma = super::cpu::LUMA[0] * add[0]
+                + super::cpu::LUMA[1] * add[1]
+                + super::cpu::LUMA[2] * add[2];
             // The flare element (K-289): the light this frame drew, with the
             // coverage that light implies as its alpha — a premultiplied
             // black-backed overlay. Blend it with the layer, then saturate

@@ -32,21 +32,20 @@
 pub enum Band {
     /// The whole signal — what the single-wave lane draws.
     Full,
-    /// Below [`LOW_CROSSOVER_HZ`]: kicks, bass, room rumble.
+    /// Below `LOW_CROSSOVER_HZ`: kicks, bass, room rumble.
     Low,
     /// Between the two crossovers: most of a voice, most of a snare's body.
     Mid,
-    /// Above [`HIGH_CROSSOVER_HZ`]: hats, sibilance, transient edge.
+    /// Above `HIGH_CROSSOVER_HZ`: hats, sibilance, transient edge.
     High,
 }
 
 /// How many summaries one pyramid holds per block — the four of [`Band`].
-pub const BAND_COUNT: usize = 4;
+const BAND_COUNT: usize = 4;
 
 impl Band {
     /// Where this band's summaries sit inside a tier's band-major array.
-    #[must_use]
-    pub const fn index(self) -> usize {
+    const fn index(self) -> usize {
         match self {
             Band::Full => 0,
             Band::Low => 1,
@@ -65,29 +64,29 @@ impl Band {
 
 /// Bass/middle crossover, in Hz. Low enough that a kick and a bass line land
 /// under it and a voice's fundamental mostly does not.
-pub const LOW_CROSSOVER_HZ: f32 = 200.0;
+const LOW_CROSSOVER_HZ: f32 = 200.0;
 
 /// Middle/treble crossover, in Hz. Above it lives the transient edge — hats,
 /// sibilance, the click of a kick — which is what an edit is usually aimed at.
-pub const HIGH_CROSSOVER_HZ: f32 = 2_000.0;
+const HIGH_CROSSOVER_HZ: f32 = 2_000.0;
 
 /// The finest tier's block size, in samples: ~5 ms at 48 kHz, finer than any
 /// single pixel column an editor can zoom a waveform to.
-pub const FINEST_BLOCK: usize = 256;
+const FINEST_BLOCK: usize = 256;
 
 /// How much coarser each tier is than the one below it.
-pub const TIER_RATIO: usize = 16;
+const TIER_RATIO: usize = 16;
 
 /// How many tiers a pyramid holds: 256 / 4 096 / 65 536 samples per block,
 /// the three sizes docs/09 §4 names.
-pub const TIERS: usize = 3;
+const TIERS: usize = 3;
 
 /// How many of a tier's blocks must fit inside one bucket before that tier is
 /// coarse enough to read it from. A bucket covers whole blocks, so it always
 /// reaches a little past its own edges; asking for four blocks keeps that
 /// overspill under a quarter of a bucket, which is below what an eye can see
 /// on a lane, while still costing only a handful of merges per column.
-pub const BLOCKS_PER_BUCKET: usize = 4;
+const BLOCKS_PER_BUCKET: usize = 4;
 
 /// How long a source may be and still have its samples kept beside the pyramid
 /// (see [`PeakPyramid::samples`]). Past this the finest tier can never be
@@ -96,7 +95,7 @@ pub const BLOCKS_PER_BUCKET: usize = 4;
 /// column, which only drops under one [`FINEST_BLOCK`] for sources shorter than
 /// about ten minutes. Longer than that, keeping a sample copy would cost tens
 /// of megabytes to answer a question nobody can ask.
-pub const SAMPLE_KEEP_SECONDS: f64 = 600.0;
+const SAMPLE_KEEP_SECONDS: f64 = 600.0;
 
 /// How much of the signal to run the band filters over *before* the window
 /// being drawn, when a query is answered from the samples. A filter starts from
@@ -111,7 +110,7 @@ const SAMPLE_PREROLL: usize = 4096;
 /// cap a pyramid costs about 12 MB; past it the finest tier is coarsened by
 /// [`TIER_RATIO`] until it fits, which costs resolution only on files hours
 /// long.
-pub const MAX_BLOCKS: usize = 262_144;
+const MAX_BLOCKS: usize = 262_144;
 
 /// One block's summary: how far the signal swung either way across it, and how
 /// much energy it carried. `min`/`max` draw the body of the wave and `rms`
@@ -532,23 +531,11 @@ impl PeakPyramid {
         } else {
             (end_seconds, start_seconds)
         };
-        let rate = f64::from(self.sample_rate.max(1));
-        let first = (a * rate).floor().max(0.0);
-        let last = (b * rate).ceil().min(self.frames as f64);
-        if self.is_empty() || last <= first {
-            return PeakBlock::SILENT;
-        }
-        if self.wants_samples(last - first) {
-            return self
-                .range_from_samples(band, first, (last - first).max(1.0), 1)
-                .first()
-                .copied()
-                .unwrap_or(PeakBlock::SILENT);
-        }
-        let Some(tier) = self.tier_for(last - first) else {
-            return PeakBlock::SILENT;
-        };
-        self.block_range(tier, band, first as usize, last as usize)
+        // One bucket of `range` — the span *is* the bucket.
+        self.range(band, a, b, 1)
+            .first()
+            .copied()
+            .unwrap_or(PeakBlock::SILENT)
     }
 
     /// `buckets` summaries evenly spanning `[start_seconds, end_seconds)` of

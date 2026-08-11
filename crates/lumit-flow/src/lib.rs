@@ -934,13 +934,8 @@ fn flow_core(
     }
 }
 
-/// Dense forward flow A→B by DIS (coarse-to-fine inverse search), at the
-/// engine's default settings.
-pub fn flow(a: &Gray, b: &Gray) -> FlowField {
-    flow_with(a, b, &FlowSettings::default())
-}
-
-/// Dense forward flow A→B under explicit settings.
+/// Dense forward flow A→B by DIS (coarse-to-fine inverse search) under
+/// explicit settings.
 pub fn flow_with(a: &Gray, b: &Gray, set: &FlowSettings) -> FlowField {
     if a.w < PATCH || a.h < PATCH || a.w != b.w || a.h != b.h {
         return FlowField::zeroed(a.w, a.h);
@@ -954,11 +949,6 @@ pub fn flow_with(a: &Gray, b: &Gray, set: &FlowSettings) -> FlowField {
 
 /// Both directions at once (A→B, B→A), sharing the pyramids — the impl note's
 /// "reuse everything; it is 2× cost".
-pub fn flow_pair(a: &Gray, b: &Gray) -> (FlowField, FlowField) {
-    flow_pair_with(a, b, &FlowSettings::default())
-}
-
-/// Both directions under explicit settings.
 pub fn flow_pair_with(a: &Gray, b: &Gray, set: &FlowSettings) -> (FlowField, FlowField) {
     if a.w < PATCH || a.h < PATCH || a.w != b.w || a.h != b.h {
         return (FlowField::zeroed(a.w, a.h), FlowField::zeroed(b.w, b.h));
@@ -1219,21 +1209,8 @@ fn crossfade(a: &[u8], b: &[u8], phi: f32) -> Vec<u8> {
 /// weights. `phi` = 0 returns A, 1 returns B, bit-exactly. `fwd` is flow A→B,
 /// `bwd` is B→A, both at the frames' full resolution. Where **both** frames
 /// lost sight of a pixel, it falls back to a plain crossfade — the documented
-/// graceful degradation.
-pub fn synthesize(
-    a: &[u8],
-    b: &[u8],
-    w: usize,
-    h: usize,
-    fwd: &FlowField,
-    bwd: &FlowField,
-    phi: f32,
-) -> Vec<u8> {
-    synthesize_with(a, b, w, h, fwd, bwd, phi, &FlowSettings::default(), None)
-}
-
-/// Synthesis under explicit settings, with an optional HUD guard weight per
-/// pixel (from [`hud_weights`], at the frames' own size).
+/// graceful degradation. `hud` is an optional per-pixel HUD guard weight
+/// (from [`hud_weights`], at the frames' own size).
 ///
 /// The three §3.1 knobs land here. **Occlusion handling** chooses whether a
 /// pixel that exists in only one frame takes that frame alone or is weighted
@@ -1363,8 +1340,8 @@ fn grays_at(a: &[u8], b: &[u8], w: usize, h: usize, set: &FlowSettings) -> (Gray
 }
 
 /// The luma pair flow is measured on, at the settings' working resolution —
-/// the first half of [`interpolate_at`], exposed so a caller that caches
-/// measurements can do the two halves separately.
+/// the first half of [`FlowEngine::interpolate_at`], exposed so a caller that
+/// caches measurements can do the two halves separately.
 ///
 /// Returns `(A, B, reduced)`, `reduced` saying whether the working resolution
 /// is below the frames' own.
@@ -1395,64 +1372,22 @@ pub fn field_to_size(
     if f.w == w && f.h == h {
         return (f.u.clone(), f.v.clone(), conf.to_vec());
     }
-    let scale = w as f32 / f.w.max(1) as f32;
     let u = upsample_flow(&f.u, f.w, f.h, w, h);
     let v = upsample_flow(&f.v, f.w, f.h, w, h);
-    // `upsample_flow` applies the scaling the vectors want; undo it for the
-    // weight, which is the same number at every resolution.
-    let c = upsample_flow(conf, f.w, f.h, w, h)
+    (u, v, weights_to_size(conf, f.w, f.h, w, h))
+}
+
+/// Resample a 0..1 weight plane measured at `sw × sh` up to `w × h`.
+///
+/// `upsample_flow` applies the scaling flow vectors want (a flow field grows
+/// with the image); a weight is the same number at every resolution, so the
+/// scale is undone and the result clamped back to 0..1.
+fn weights_to_size(g: &[f32], sw: usize, sh: usize, w: usize, h: usize) -> Vec<f32> {
+    let scale = w as f32 / sw.max(1) as f32;
+    upsample_flow(g, sw, sh, w, h)
         .into_iter()
-        .map(|x| (x / scale).clamp(0.0, 1.0))
-        .collect();
-    (u, v, c)
-}
-
-/// End-to-end on the CPU: the flow-interpolated frame at `phi` between RGBA
-/// frames `a` and `b` (`w×h`), at the given working quality. This is the
-/// K-019 reference path (export with no capable GPU).
-pub fn interpolate_at(
-    a: &[u8],
-    b: &[u8],
-    w: usize,
-    h: usize,
-    phi: f32,
-    set: &FlowSettings,
-) -> Vec<u8> {
-    if phi <= 0.0 {
-        return a.to_vec();
-    }
-    if phi >= 1.0 {
-        return b.to_vec();
-    }
-    let (ga, gb, reduced) = grays_at(a, b, w, h, set);
-    let (fwd, bwd) = flow_pair_with(&ga, &gb, set);
-    // The guard is measured where the flow is, then carried up with it: the
-    // gradient test wants the same pixels the vectors were solved on.
-    let hud = set.hud_guard.then(|| hud_weights(&ga, &fwd));
-    let (fwd, bwd) = if reduced {
-        (upsample_field(&fwd, w, h), upsample_field(&bwd, w, h))
-    } else {
-        (fwd, bwd)
-    };
-    let hud = hud.map(|g| {
-        if reduced {
-            upsample_flow(&g, ga.w, ga.h, w, h)
-                .into_iter()
-                // upsample_flow scales values by the size ratio (a flow field
-                // grows with the image); a 0..1 weight must not.
-                .map(|v| (v / (w as f32 / ga.w.max(1) as f32)).clamp(0.0, 1.0))
-                .collect::<Vec<f32>>()
-        } else {
-            g
-        }
-    });
-    synthesize_with(a, b, w, h, &fwd, &bwd, phi, set, hud.as_deref())
-}
-
-/// CPU convenience at the engine defaults — what the `Flow` retiming policy
-/// calls when no engine is held.
-pub fn interpolate(a: &[u8], b: &[u8], w: usize, h: usize, phi: f32) -> Vec<u8> {
-    interpolate_at(a, b, w, h, phi, &FlowSettings::default())
+        .map(|v| (v / scale).clamp(0.0, 1.0))
+        .collect()
 }
 
 /// The backend-choosing engine callers hold on to: WGSL DIS on a GPU when one
@@ -1509,12 +1444,7 @@ impl FlowEngine {
     }
 
     /// Both flow directions at the frames' own resolution, on whichever
-    /// backend is live, at the engine defaults.
-    pub fn flow_pair(&mut self, a: &Gray, b: &Gray) -> (FlowField, FlowField) {
-        self.flow_pair_with(a, b, &FlowSettings::default())
-    }
-
-    /// Both flow directions under explicit settings.
+    /// backend is live, under explicit settings.
     ///
     /// The GPU backend takes only the settings its kernels honour so far; a
     /// setting it cannot express sends the pair to the CPU oracle rather than
@@ -1570,11 +1500,7 @@ impl FlowEngine {
         };
         let hud = hud.map(|g| {
             if reduced {
-                let scale = w as f32 / ga.w.max(1) as f32;
-                upsample_flow(&g, ga.w, ga.h, w, h)
-                    .into_iter()
-                    .map(|v| (v / scale).clamp(0.0, 1.0))
-                    .collect::<Vec<f32>>()
+                weights_to_size(&g, ga.w, ga.h, w, h)
             } else {
                 g
             }
@@ -1629,11 +1555,7 @@ impl FlowEngine {
             };
             let raw = hud_weights(&ga, fwd);
             if reduced {
-                let scale = w as f32 / ga.w.max(1) as f32;
-                upsample_flow(&raw, ga.w, ga.h, w, h)
-                    .into_iter()
-                    .map(|v| (v / scale).clamp(0.0, 1.0))
-                    .collect::<Vec<f32>>()
+                weights_to_size(&raw, ga.w, ga.h, w, h)
             } else {
                 raw
             }
@@ -1647,11 +1569,6 @@ impl FlowEngine {
             (fwd, bwd)
         };
         synthesize_with(a, b, w, h, fwd, bwd, phi, set, hud.as_deref())
-    }
-
-    /// Interpolation at the engine defaults.
-    pub fn interpolate(&mut self, a: &[u8], b: &[u8], w: usize, h: usize, phi: f32) -> Vec<u8> {
-        self.interpolate_at(a, b, w, h, phi, &FlowSettings::default())
     }
 }
 
@@ -1769,7 +1686,7 @@ mod tests {
         let (w, h) = (96, 96);
         let a = texture(w, h, 0.0, 0.0);
         let b = texture(w, h, 3.0, 2.0); // content shifted by (3, 2)
-        let f = flow(&a, &b);
+        let f = flow_with(&a, &b, &FlowSettings::default());
         let epe = mean_epe(&f, 16, |_, _| (3.0, 2.0));
         assert!(epe < 0.3, "mean endpoint error too high: {epe}");
     }
@@ -1783,7 +1700,7 @@ mod tests {
         let a = render(w, h, |x, y| perlin(x, y, 1));
         let b = render(w, h, |x, y| perlin(x - dx, y - dy, 1));
         let (ha, hb) = (downsample(&a), downsample(&b));
-        let (f, _) = flow_pair(&ha, &hb);
+        let (f, _) = flow_pair_with(&ha, &hb, &FlowSettings::default());
         // Error measured at the working (half) resolution, in its own pixels.
         let epe = mean_epe(&f, 24, |_, _| (dx / 2.0, dy / 2.0));
         assert!(epe < 0.3, "mean endpoint error too high at half res: {epe}");
@@ -1802,7 +1719,7 @@ mod tests {
             let (rx, ry) = (x - cx, y - cy);
             perlin(cx + cos * rx + sin * ry, cy - sin * rx + cos * ry, 2)
         });
-        let f = flow(&a, &b);
+        let f = flow_with(&a, &b, &FlowSettings::default());
         // Analytic flow: u(x) = R(x−c) − (x−c).
         let epe = mean_epe(&f, 24, |x, y| {
             let (rx, ry) = (x as f32 - cx, y as f32 - cy);
@@ -1818,7 +1735,7 @@ mod tests {
         let (dx, dy) = (6.0f32, 4.0f32);
         let a = render(w, h, |x, y| checker(x, y, 16.0));
         let b = render(w, h, |x, y| checker(x - dx, y - dy, 16.0));
-        let f = flow(&a, &b);
+        let f = flow_with(&a, &b, &FlowSettings::default());
         let epe = mean_epe(&f, 24, |_, _| (dx, dy));
         assert!(epe < 0.3, "mean endpoint error too high on checker: {epe}");
     }
@@ -1860,7 +1777,7 @@ mod tests {
         };
         let a = scene(0, 0);
         let b = scene(dx, dy);
-        let (f, g) = flow_pair(&a, &b);
+        let (f, g) = flow_pair_with(&a, &b, &FlowSettings::default());
         // The raw §2 test is what accuracy is measured on; the 1 px dilation
         // is a synthesis-safety margin whose perimeter alone would eat the
         // whole IoU error budget of a strip this size.
@@ -1890,8 +1807,10 @@ mod tests {
         let a: Vec<u8> = (0..w * h * 4).map(|i| (i % 251) as u8).collect();
         let b: Vec<u8> = (0..w * h * 4).map(|i| ((i * 7) % 251) as u8).collect();
         // phi 0 and 1 return the endpoints bit-exactly (degenerate path).
-        assert_eq!(interpolate(&a, &b, w, h, 0.0), a);
-        assert_eq!(interpolate(&a, &b, w, h, 1.0), b);
+        let mut eng = FlowEngine::cpu();
+        let set = FlowSettings::default();
+        assert_eq!(eng.interpolate_at(&a, &b, w, h, 0.0, &set), a);
+        assert_eq!(eng.interpolate_at(&a, &b, w, h, 1.0, &set), b);
     }
 
     #[test]
@@ -1914,7 +1833,7 @@ mod tests {
         let a = to_rgba(&texture(w, h, 0.0, 0.0));
         let b = to_rgba(&texture(w, h, 8.0, 0.0));
         let truth = to_rgba(&texture(w, h, 4.0, 0.0)); // the real in-between frame
-        let synth = interpolate(&a, &b, w, h, 0.5);
+        let synth = FlowEngine::cpu().interpolate_at(&a, &b, w, h, 0.5, &FlowSettings::default());
         let crossfade: Vec<u8> = a
             .iter()
             .zip(&b)
@@ -2362,10 +2281,11 @@ mod tests {
         let (w, h) = (6, 6);
         let a = vec![10u8; w * h * 4];
         let b = vec![200u8; w * h * 4];
-        let f = flow(&to_gray(&a, w, h), &to_gray(&b, w, h));
+        let set = FlowSettings::default();
+        let f = flow_with(&to_gray(&a, w, h), &to_gray(&b, w, h), &set);
         assert!(f.u.iter().all(|&u| u == 0.0));
         assert!(f.valid.iter().all(|&v| v == 0));
-        let mid = interpolate(&a, &b, w, h, 0.5);
+        let mid = FlowEngine::cpu().interpolate_at(&a, &b, w, h, 0.5, &set);
         assert_eq!(mid.len(), w * h * 4);
     }
 
@@ -2375,8 +2295,8 @@ mod tests {
         let (w, h) = (128, 96);
         let a = render(w, h, |x, y| perlin(x, y, 5));
         let b = render(w, h, |x, y| perlin(x - 4.3, y + 2.1, 5));
-        let (f1, g1) = flow_pair(&a, &b);
-        let (f2, g2) = flow_pair(&a, &b);
+        let (f1, g1) = flow_pair_with(&a, &b, &FlowSettings::default());
+        let (f2, g2) = flow_pair_with(&a, &b, &FlowSettings::default());
         assert_eq!(f1.u, f2.u);
         assert_eq!(f1.v, f2.v);
         assert_eq!(f1.valid, f2.valid);
@@ -2494,7 +2414,7 @@ mod tests {
         // the refinement, and the oracle's red-black sweeps mean the two can
         // agree step for step rather than merely in spirit.
         for (i, (a, b)) in scenes.iter().enumerate() {
-            let (cf, cg) = flow_pair(a, b);
+            let (cf, cg) = flow_pair_with(a, b, &FlowSettings::default());
             let (gf, gg) = g.flow_pair(a, b).unwrap();
             let (df, dg) = (mean_abs_diff(&cf, &gf), mean_abs_diff(&cg, &gg));
             assert!(df < 1e-3, "scene {i}: fwd CPU/GPU diff {df}");
@@ -2537,17 +2457,15 @@ mod tests {
         let (w, h) = (96, 96);
         let a = vec![40u8; w * h * 4];
         let b = vec![200u8; w * h * 4];
-        assert_eq!(eng.interpolate(&a, &b, w, h, 0.0), a);
-        assert_eq!(eng.interpolate(&a, &b, w, h, 1.0), b);
-        let mid = eng.interpolate(&a, &b, w, h, 0.5);
+        let set = FlowSettings::default();
+        assert_eq!(eng.interpolate_at(&a, &b, w, h, 0.0, &set), a);
+        assert_eq!(eng.interpolate_at(&a, &b, w, h, 1.0, &set), b);
+        let mid = eng.interpolate_at(&a, &b, w, h, 0.5, &set);
         assert_eq!(mid.len(), w * h * 4);
-        // A CPU-only engine must behave identically to the free function.
+        // A CPU-only engine reports itself honestly and still interpolates.
         let mut cpu = FlowEngine::cpu();
         assert_eq!(cpu.backend(), "dis-cpu");
-        assert_eq!(
-            cpu.interpolate(&a, &b, w, h, 0.5),
-            interpolate(&a, &b, w, h, 0.5)
-        );
+        assert_eq!(cpu.interpolate_at(&a, &b, w, h, 0.5, &set).len(), mid.len());
     }
 
     /// Perf numbers (impl note §6.5: flow pair ≤ 4 ms at half-res 1080p on
@@ -2622,9 +2540,10 @@ mod tests {
         let fb = px(&render(fw, fh, |x, y| perlin(x - 9.7, y + 4.3, 4)));
         let mut eng = FlowEngine::new_auto();
         eprintln!("engine backend: {}", eng.backend());
-        let _ = eng.interpolate(&fa, &fb, fw, fh, 0.5); // warm-up
+        let set = FlowSettings::default();
+        let _ = eng.interpolate_at(&fa, &fb, fw, fh, 0.5, &set); // warm-up
         let t0 = std::time::Instant::now();
-        let _ = eng.interpolate(&fa, &fb, fw, fh, 0.5);
+        let _ = eng.interpolate_at(&fa, &fb, fw, fh, 0.5, &set);
         eprintln!(
             "end-to-end 1080p interpolate at phi 0.5: {:?}",
             t0.elapsed()

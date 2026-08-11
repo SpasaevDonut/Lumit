@@ -157,14 +157,6 @@ impl Clip {
         ))
     }
 
-    /// This clip at a new constant `speed` (1.0 = source rate), its place on the
-    /// layer unchanged (the beat-sync covenant — edit points never move). The
-    /// source range it covers follows from the speed, so `source_out` is
-    /// re-derived; the clip id is preserved.
-    pub fn with_speed(&self, speed: Rational) -> Clip {
-        self.with_ramp(speed, speed)
-    }
-
     /// This clip with a single speed *ramp* — speed running straight from `v0`
     /// to `v1` across the clip — its place on the layer unchanged (beat-sync).
     /// The montage speed gesture; `source_out` follows from the integral.
@@ -287,20 +279,11 @@ impl Clip {
         let Animation::Keyframed(keys) = &self.retime.as_ref()?.animation else {
             return None;
         };
-        let [first, last] = keys.as_slice() else {
-            return None;
-        };
-        let d = last.time.checked_sub(first.time).ok()?.to_f64();
-        if d <= 0.0 {
+        if keys.len() != 2 {
             return None;
         }
-        let chord = (last.value - first.value) / d;
-        let speed = |side: &SideInterp| match side {
-            SideInterp::Bezier { speed, .. } => *speed,
-            SideInterp::Hold => 0.0,
-            SideInterp::Linear => chord,
-        };
-        Some((speed(&first.interp_out), speed(&last.interp_in)))
+        // A two-key map has one span, so its end speeds are the ramp.
+        self.end_speeds()
     }
 
     /// True when layer-local time `lt` (seconds) falls within this clip.
@@ -521,41 +504,7 @@ impl Clip {
         if duration <= self.place_duration {
             return None;
         }
-        let added = duration.checked_sub(self.place_duration).ok()?;
-        let speed = self.end_speeds().map_or(1.0, |(_, v1)| v1);
-        let source_out = self
-            .source_out
-            .checked_add(
-                Rational::from_f64_on_grid(speed * added.to_f64(), Rational::FLICK_DEN).ok()?,
-            )
-            .ok()?;
-
-        let retime = match &self.retime {
-            None => None,
-            Some(map) => {
-                let Animation::Keyframed(keys) = &map.animation else {
-                    return None;
-                };
-                let last = keys.last()?;
-                let mut grown = keys.clone();
-                grown.push(Keyframe {
-                    time: duration,
-                    value: last.value + speed * added.to_f64(),
-                    interp_in: SideInterp::Linear,
-                    interp_out: SideInterp::Linear,
-                });
-                Some(Property {
-                    animation: Animation::Keyframed(grown),
-                    extra: map.extra.clone(),
-                })
-            }
-        };
-        Some(Clip {
-            place_duration: duration,
-            source_out,
-            retime,
-            ..self.clone()
-        })
+        self.extended(duration.checked_sub(self.place_duration).ok()?, false)
     }
 
     /// Extend the clip's head outward to start at layer time `new_start`, the
@@ -566,45 +515,72 @@ impl Clip {
         if new_start >= self.place_start || new_start.is_negative() {
             return None;
         }
-        let added = self.place_start.checked_sub(new_start).ok()?;
-        let duration = self.place_duration.checked_add(added).ok()?;
-        let speed = self.end_speeds().map_or(1.0, |(v0, _)| v0);
-        let back = Rational::from_f64_on_grid(speed * added.to_f64(), Rational::FLICK_DEN).ok()?;
-        let source_in = self.source_in.checked_sub(back).ok()?;
+        self.extended(self.place_start.checked_sub(new_start).ok()?, true)
+    }
 
+    /// The shared body of the two extends: grow the clip by `added` at one end,
+    /// carrying the map on (or back) at the speed that end was already going.
+    fn extended(&self, added: Rational, at_start: bool) -> Option<Clip> {
+        let duration = self.place_duration.checked_add(added).ok()?;
+        let speed = self
+            .end_speeds()
+            .map_or(1.0, |(v0, v1)| if at_start { v0 } else { v1 });
+        // How much source the growth consumes, on the grid.
+        let consumed =
+            Rational::from_f64_on_grid(speed * added.to_f64(), Rational::FLICK_DEN).ok()?;
+
+        let flat = |time: Rational, value: f64| Keyframe {
+            time,
+            value,
+            interp_in: SideInterp::Linear,
+            interp_out: SideInterp::Linear,
+        };
         let retime = match &self.retime {
             None => None,
             Some(map) => {
                 let Animation::Keyframed(keys) = &map.animation else {
                     return None;
                 };
-                let first = keys.first()?;
-                // Every key moves later in clip time by what was added at the
-                // front, and a new one opens the map at the earlier source.
-                let mut grown = vec![Keyframe {
-                    time: Rational::ZERO,
-                    value: first.value - speed * added.to_f64(),
-                    interp_in: SideInterp::Linear,
-                    interp_out: SideInterp::Linear,
-                }];
-                for k in keys {
-                    grown.push(Keyframe {
-                        time: k.time.checked_add(added).ok()?,
-                        ..*k
-                    });
-                }
+                let grown = if at_start {
+                    // Every key moves later in clip time by what was added at
+                    // the front, and a new one opens the map earlier in source.
+                    let first = keys.first()?;
+                    let mut grown =
+                        vec![flat(Rational::ZERO, first.value - speed * added.to_f64())];
+                    for k in keys {
+                        grown.push(Keyframe {
+                            time: k.time.checked_add(added).ok()?,
+                            ..*k
+                        });
+                    }
+                    grown
+                } else {
+                    let last = keys.last()?;
+                    let mut grown = keys.clone();
+                    grown.push(flat(duration, last.value + speed * added.to_f64()));
+                    grown
+                };
                 Some(Property {
                     animation: Animation::Keyframed(grown),
                     extra: map.extra.clone(),
                 })
             }
         };
-        Some(Clip {
-            place_start: new_start,
-            place_duration: duration,
-            source_in,
-            retime,
-            ..self.clone()
+        Some(if at_start {
+            Clip {
+                place_start: self.place_start.checked_sub(added).ok()?,
+                place_duration: duration,
+                source_in: self.source_in.checked_sub(consumed).ok()?,
+                retime,
+                ..self.clone()
+            }
+        } else {
+            Clip {
+                place_duration: duration,
+                source_out: self.source_out.checked_add(consumed).ok()?,
+                retime,
+                ..self.clone()
+            }
         })
     }
 
@@ -826,11 +802,7 @@ pub fn overwrite_with(clips: &[Clip], dropped: Uuid) -> Vec<Clip> {
             out.push(trimmed);
         }
     }
-    out.sort_by(|a, b| {
-        a.place_start
-            .partial_cmp(&b.place_start)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    out.sort_by_key(|c| c.place_start);
     out
 }
 
@@ -842,13 +814,9 @@ pub fn overwrite_with(clips: &[Clip], dropped: Uuid) -> Vec<Clip> {
 /// by scanning rather than by reading the ends — reordering a Sequence layer
 /// is exactly the operation this has to survive.
 pub fn clips_span(clips: &[Clip]) -> Option<(Rational, Rational)> {
-    let mut start: Option<Rational> = None;
-    let mut end: Option<Rational> = None;
-    for c in clips {
-        start = Some(start.map_or(c.place_start, |s: Rational| s.min(c.place_start)));
-        end = Some(end.map_or(c.place_end(), |e: Rational| e.max(c.place_end())));
-    }
-    Some((start?, end?))
+    let start = clips.iter().map(|c| c.place_start).min()?;
+    let end = clips.iter().map(Clip::place_end).max()?;
+    Some((start, end))
 }
 
 /// The clip active at layer-local time `lt`, or None if `lt` is in a gap
@@ -888,12 +856,7 @@ pub fn single_source(clips: &[Clip]) -> Option<ClipSource> {
 /// non-decreasing by timeline position. Gaps are allowed; reordering is not.
 pub fn is_source_ordered(clips: &[Clip]) -> bool {
     let mut by_place: Vec<&Clip> = clips.iter().collect();
-    by_place.sort_by(|a, b| {
-        a.place_start
-            .to_f64()
-            .partial_cmp(&b.place_start.to_f64())
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    by_place.sort_by_key(|c| c.place_start);
     by_place
         .windows(2)
         .all(|w| w[0].source_in <= w[1].source_in)
@@ -907,7 +870,7 @@ pub fn has_overlap(clips: &[Clip]) -> bool {
         .iter()
         .map(|c| (c.place_start.to_f64(), c.place_end().to_f64()))
         .collect();
-    spans.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    spans.sort_by(|a, b| a.0.total_cmp(&b.0));
     spans.windows(2).any(|w| w[1].0 < w[0].1)
 }
 
@@ -931,18 +894,18 @@ mod tests {
     }
 
     #[test]
-    fn with_speed_reprices_the_clip_without_moving_it() {
+    fn a_flat_ramp_reprices_the_clip_without_moving_it() {
         // A 4 s clip of source [0,4). Play it at 2× → it still occupies 4 s on
         // the layer (place unchanged) but consumes 8 s of source.
         let base = clip(Uuid::now_v7(), 3, 4);
-        let fast = base.with_speed(rat(2, 1));
+        let fast = base.with_ramp(rat(2, 1), rat(2, 1));
         assert_eq!(fast.place_start, base.place_start); // edit point held
         assert_eq!(fast.place_duration, base.place_duration);
         assert_eq!(fast.source_out, rat(8, 1)); // 4 s × 2×
         assert_eq!(fast.id, base.id); // same clip
         assert_eq!(fast.constant_speed(), Some(2.0));
         // Half speed consumes half the source.
-        let slow = base.with_speed(rat(1, 2));
+        let slow = base.with_ramp(rat(1, 2), rat(1, 2));
         assert_eq!(slow.source_out, rat(2, 1));
         assert_eq!(slow.constant_speed(), Some(0.5));
         // A plain clip reads as 1×.
@@ -988,7 +951,7 @@ mod tests {
         let src = Uuid::now_v7();
         let mut c = clip(src, 2, 4);
         c.source_in = rat(10, 1);
-        c = c.with_speed(rat(1, 2));
+        c = c.with_ramp(rat(1, 2), rat(1, 2));
         assert!((c.source_time(2.0) - 10.0).abs() < 1e-9); // clip start
         assert!((c.source_time(4.0) - 11.0).abs() < 1e-9); // half speed
         assert!((c.source_time(6.0) - 12.0).abs() < 1e-9); // clip end
@@ -1097,7 +1060,7 @@ mod tests {
         let src = Uuid::now_v7();
         // Clip at layer [0,4), source [0,4). Retime it to 2× so f(t) = 2t runs
         // out of the source (out = 4) at local time 2.
-        let mut c = clip(src, 0, 4).with_speed(rat(2, 1));
+        let mut c = clip(src, 0, 4).with_ramp(rat(2, 1), rat(2, 1));
         // Re-speeding re-derives how much source the clip *asks* for (8 s);
         // the media it actually has is still the 4 s it was trimmed to, and
         // that mismatch is exactly what overrun is.
