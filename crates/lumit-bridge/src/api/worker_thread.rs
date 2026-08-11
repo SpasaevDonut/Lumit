@@ -133,8 +133,9 @@ struct DiskWant {
 /// Name one frame through the worker's memo: computed at most once per
 /// document revision however many consumers ask, served as a lookup after
 /// that. [`lumit_render::HeadlessRenderer::presync_items`] must have run for
-/// this document first — an unprobed source makes the frame unnameable
-/// (`None`), never wrongly named.
+/// this document **and this composition** first — it probes what that comp can
+/// show, and an unprobed source makes the frame unnameable (`None`), never
+/// wrongly named.
 #[frb(ignore)]
 fn frame_name(
     state: &mut WorkerState,
@@ -588,9 +589,9 @@ fn publish_cache_bar(state: &mut WorkerState, stream: &mut WorkerResponseStream)
     if !changed && state.bar_refined_to >= frames {
         return;
     }
-    let Some((comp_w, comp_h)) = document.comp(comp_id).map(|c| (c.width, c.height)) else {
+    if document.comp(comp_id).is_none() {
         return;
-    };
+    }
     // Whether every frame's *name* may have changed, as against merely which of
     // them are held. A different composition, length, scale or document revision
     // renames frames, so the strip means nothing and is rebuilt; a frame merely
@@ -614,7 +615,7 @@ fn publish_cache_bar(state: &mut WorkerState, stream: &mut WorkerResponseStream)
     };
     // Every name below is of this one snapshot: probe it once, so the memo's
     // misses are hashes and nothing else (see `frame_name`).
-    state.renderer.presync_items(&document, (comp_w, comp_h));
+    state.renderer.presync_items(&document, comp_id);
 
     // Naming one frame needs the renderer, the document and the three tiers; the
     // walk over frames needs none of them. Split so the walk can be tested
@@ -1203,7 +1204,7 @@ fn idle_fill(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
     // warm up by *reading* rather than by rendering everything a second time.
     // The window's names are all of this one snapshot: probe it once, then
     // each name is computed at most once per edit (see `frame_name`).
-    state.renderer.presync_items(&document, (cw, ch));
+    state.renderer.presync_items(&document, comp_ref.id);
     for frame in crate::playback::fill_order(anchor, first, last).take(window) {
         // Naming the frame is what tells the fill whether there is anything to
         // do — and under content keying the name is the same one every tier files
@@ -2230,11 +2231,7 @@ fn play_one_frame(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
             // Every name asked for below — the disk grace, the look-ahead —
             // is of this one snapshot: probe it once, so the memo's misses
             // are hashes and nothing else (see `frame_name`).
-            if let Some(comp) = document.comp(comp_id) {
-                state
-                    .renderer
-                    .presync_items(&document, (comp.width, comp.height));
-            }
+            state.renderer.presync_items(&document, comp_id);
             // Every-frame only: when the NEXT frame's bytes are on their way
             // up from disk, hold the composite a bounded moment — the copy is
             // far cheaper than making the frame again, and every-frame
@@ -2482,7 +2479,6 @@ fn start_playback(req: PlayRequest, state: &mut WorkerState) -> Result<(), Bridg
     };
     let comp = document.comp(req.comp.id).ok_or(BridgeError::InvalidComp)?;
     let comp_id = req.comp.id;
-    let (comp_w, comp_h) = (comp.width, comp.height);
     let fps = comp.frame_rate.fps();
     // The same derivation `CompositionReference::duration_frames` uses: the
     // document stores a length in seconds, and the count is that read at the
@@ -2504,7 +2500,7 @@ fn start_playback(req: PlayRequest, state: &mut WorkerState) -> Result<(), Bridg
     // starts at Full (the reset below), so the names are at the plain scale.
     let quality = quality_for(req.scale);
     let bgra = zero_copy_wants_bgra();
-    state.renderer.presync_items(&document, (comp_w, comp_h));
+    state.renderer.presync_items(&document, comp_id);
     let ask_to = from.saturating_add(DISK_PRE_ASK).min(last);
     for frame in from..=ask_to {
         let name = state

@@ -3503,6 +3503,54 @@ There is nothing to poll and nothing to drain. Every panel that shows a fact
 about a footage file already asks for it when it draws; the worker only decides
 whether that question costs a file open or a look-up.
 
+### The renderer only opens the files the picture needs
+
+The renderer does its own probing, and it is a heavier one than the Project
+panel's: as well as the file's label it wants the file's **frame index** — the
+table that says which byte in the file each frame starts at, which is what makes
+scrubbing land on exactly the frame you asked for. Building that table for a
+file it has never seen means reading the whole file through once. It is cached
+on disk afterwards, so it is paid once per file, ever — but the first time is
+seconds on a long clip, and it happens before any pixels appear.
+
+It used to do this for **every footage item in the Project panel**, before the
+first frame of any composition. A project with forty clips in it opened all
+forty files before showing you the first frame of one of them, and — the part
+that gave the game away — making a brand new, completely empty composition made
+you wait for all forty too, in order to show you nothing.
+
+The fix is to ask a smaller question. Before a frame is made, the renderer works
+out which footage items *this* composition can actually put on screen:
+
+- the footage its own layers name;
+- the footage named by the clips on its Sequence layers;
+- and then the same question again for every composition it nests — through a
+  Precomp layer, or through a clip whose source is a comp — following the chain
+  as deep as it goes.
+
+Everything else in the project is left shut. An empty comp opens nothing at all.
+
+Two details make this safe rather than merely quick. The walk ignores whether a
+layer is switched visible and whether the playhead is inside it, because a hidden
+layer is one click from being shown and the answer must not wobble as the
+playhead moves. And what has been probed *stays* probed — the results live in one
+notebook per session, keyed by item — so switching between two comps that share a
+clip does not open it twice, and each composition's first frame only pays for
+what it adds.
+
+The interlock that keeps the cache honest is untouched. A frame can only be given
+a name (and therefore banked) once every source it shows is known; a source the
+renderer has not looked at yet leaves the frame unnameable, so it is drawn live
+and filed nowhere rather than filed under a name that might be wrong. Since the
+probing now covers exactly what the comp can show, the frame is nameable exactly
+when it was before.
+
+The walk itself lives in `lumit-core` (`comp_footage_items`), not in the
+renderer, because "which files can this comp want" is a question about the
+document rather than about pixels — the same question the background probe worker
+above would need to ask if it ever wanted to warm the files for the comp you are
+about to open, rather than every file you import.
+
 ### Finding the beat, without stopping everything else
 
 Beat detection is the same story one size up. Asking a composition where its

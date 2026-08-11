@@ -697,9 +697,7 @@ impl HeadlessRenderer {
             return None;
         }
         let comp = doc.comp(comp_id)?;
-        let slate = (comp.width, comp.height);
-        self.sync_items(doc, slate);
-        let comp = doc.comp(comp_id)?;
+        self.sync_items(doc, comp);
         crate::cache::frame_key(
             doc,
             comp,
@@ -709,22 +707,25 @@ impl HeadlessRenderer {
         )
     }
 
-    /// Probe anything new in `doc` so a batch of [`Self::frame_key_presynced`]
-    /// calls can run against a settled probe cache. [`Self::frame_key`] does
-    /// this itself, per call — which rebuilds the footage map every time, and a
-    /// consumer naming hundreds of frames of the SAME document (the cache bar,
-    /// the playback look-ahead) was paying that rebuild per frame. Call this
-    /// once per document, then name as many frames as needed. `slate` is the
-    /// comp's dimensions, exactly as a render would pass them.
-    pub fn presync_items(&mut self, doc: &Document, slate: (u32, u32)) {
-        self.sync_items(doc, slate);
+    /// Probe what comp `comp_id` can show, so a batch of
+    /// [`Self::frame_key_presynced`] calls can run against a settled probe
+    /// cache. [`Self::frame_key`] does this itself, per call — which rebuilds
+    /// the footage map every time, and a consumer naming hundreds of frames of
+    /// the SAME document (the cache bar, the playback look-ahead) was paying
+    /// that rebuild per frame. Call this once per document, then name as many
+    /// frames as needed. An unknown comp probes nothing, calmly.
+    pub fn presync_items(&mut self, doc: &Document, comp_id: Uuid) {
+        if let Some(comp) = doc.comp(comp_id) {
+            self.sync_items(doc, comp);
+        }
     }
 
     /// [`Self::frame_key`] against the probes already gathered — no probing, no
     /// footage-map rebuild, and thus `&self`. Only correct after
-    /// [`Self::presync_items`] was called for this document; an unprobed source
-    /// simply makes the frame unnameable (`None`), never wrongly named, so a
-    /// caller that forgets the presync renders live rather than mis-caching.
+    /// [`Self::presync_items`] was called for this document and this comp; an
+    /// unprobed source simply makes the frame unnameable (`None`), never
+    /// wrongly named, so a caller that forgets the presync renders live rather
+    /// than mis-caching.
     #[must_use]
     pub fn frame_key_presynced(
         &self,
@@ -782,8 +783,9 @@ impl HeadlessRenderer {
             .comp(comp_id)
             .ok_or_else(|| "headless preview: unknown composition".to_string())?;
         let (cw, ch) = (comp.width, comp.height);
-        // Fills `probe_cache` for anything new, which `ProbeView` then reads.
-        self.sync_items(doc, (cw, ch));
+        // Fills `probe_cache` for anything new this comp can show, which
+        // `ProbeView` then reads.
+        self.sync_items(doc, comp);
         let fps = comp.frame_rate.fps().max(1.0);
         let t = frame as f64 / fps;
 
@@ -980,8 +982,7 @@ impl HeadlessRenderer {
         let Some(comp) = doc.comp(comp_id) else {
             return Vec::new();
         };
-        let (cw, ch) = (comp.width, comp.height);
-        self.sync_items(doc, (cw, ch));
+        self.sync_items(doc, comp);
         let fps = comp.frame_rate.fps().max(1.0);
         let t = frame as f64 / fps;
         let jobs = plan_comp_frame(doc, comp, t, quality, &ProbeView(&self.probe_cache));
@@ -1815,13 +1816,29 @@ impl HeadlessRenderer {
         self.shared.len()
     }
 
-    /// Rebuild the `ItemInfo` map from the document's footage, probing any item
-    /// not already in `probe_cache`. Slate items are sized to `slate` (the
-    /// comp's dimensions this call), matching export's `item_infos`.
-    fn sync_items(&mut self, doc: &Document, slate: (u32, u32)) {
+    /// Rebuild the `ItemInfo` map for what comp `comp` can show, probing any of
+    /// those items not already in `probe_cache`. Slate items are sized to the
+    /// comp's own dimensions, matching export's `item_infos`.
+    ///
+    /// **Only the comp's own footage is probed** — the items its layers name,
+    /// and transitively everything its Precomp layers and comp-sourced clips
+    /// reach ([`lumit_core::model::comp_footage_items`]). A probe opens a file
+    /// and loads or builds its frame index, so probing the whole Project panel
+    /// here made the first frame of *any* comp wait for every file in the
+    /// project, and a freshly made empty comp wait for all of them to show
+    /// nothing. The cache is keyed by item, never emptied between comps, so an
+    /// item probed for one comp is already probed when the next one needs it:
+    /// the cost is paid once per file per session, and only for files something
+    /// on screen can actually want.
+    ///
+    /// The frame-key interlock is unaffected: an item this comp shows is probed
+    /// here before [`crate::cache::frame_key`] reads the probe cache, and an
+    /// item this comp cannot show contributes nothing to its key.
+    fn sync_items(&mut self, doc: &Document, comp: &Composition) {
+        let slate = (comp.width, comp.height);
         self.items.clear();
-        for item in &doc.items {
-            let ProjectItem::Footage(f) = item else {
+        for id in lumit_core::model::comp_footage_items(doc, comp) {
+            let Some(ProjectItem::Footage(f)) = doc.item(id) else {
                 continue;
             };
             let probe = self
@@ -2177,6 +2194,76 @@ mod tests {
         (DocumentStore::new(doc), comp_id)
     }
 
+    /// A footage item in the Project panel, on no layer anywhere. Returns its
+    /// id. The path is deliberately not on disk: `probe_item` answers
+    /// [`Probe::Slate`] for a path that is not a file without opening anything,
+    /// so a probe here costs a `stat` and never FFmpeg.
+    fn push_footage_item(doc: &mut Document, name: &str) -> Uuid {
+        let id = Uuid::now_v7();
+        doc.items
+            .push(ProjectItem::Footage(lumit_core::model::FootageItem {
+                id,
+                name: name.into(),
+                media: lumit_core::model::MediaRef {
+                    relative_path: name.into(),
+                    absolute_path: name.into(),
+                    fingerprint: None,
+                    extra: serde_json::Map::new(),
+                },
+                extra: serde_json::Map::new(),
+            }));
+        id
+    }
+
+    /// Put a layer of `kind` into comp `comp` (which must exist in `doc`).
+    fn push_layer(doc: &mut Document, comp: Uuid, kind: LayerKind) {
+        let layer = lumit_core::model::Layer {
+            markers: Vec::new(),
+            id: Uuid::now_v7(),
+            name: "layer".into(),
+            kind,
+            in_point: CompTime(Rational::new(0, 1).unwrap()),
+            out_point: CompTime(Rational::new(5, 1).unwrap()),
+            start_offset: CompTime(Rational::new(0, 1).unwrap()),
+            transform: TransformGroup::default(),
+            matte: None,
+            parent: None,
+            label: 0,
+            volume_db: lumit_core::anim::Property::zero(),
+            retime: None,
+            interpolation: Default::default(),
+            blend: Default::default(),
+            masks: Vec::new(),
+            paint: Vec::new(),
+            effects: Vec::new(),
+            switches: Switches::default(),
+            extra: serde_json::Map::new(),
+        };
+        if let Some(ProjectItem::Composition(c)) = doc.item_mut(comp) {
+            c.layers.push(layer);
+        }
+    }
+
+    /// An empty composition added to `doc`, returning its id.
+    fn push_comp(doc: &mut Document, name: &str, w: u32, h: u32) -> Uuid {
+        let id = Uuid::now_v7();
+        doc.items.push(ProjectItem::Composition(Composition {
+            id,
+            name: name.into(),
+            width: w,
+            height: h,
+            frame_rate: FrameRate::new(30, 1).unwrap(),
+            duration: Duration(Rational::new(5, 1).unwrap()),
+            background: LinearColour::BLACK,
+            work_area: None,
+            layers: Vec::new(),
+            markers: Vec::new(),
+            motion_blur: lumit_core::model::MotionBlur::default(),
+            extra: serde_json::Map::new(),
+        }));
+        id
+    }
+
     /// A full-frame red solid composites to red in the centre pixel — the GPU
     /// oracle that proves the headless seam drives the real compositor. Skips
     /// when the machine has no adapter (the lavapipe/hardware convention the
@@ -2287,7 +2374,7 @@ mod tests {
 
         let neutral = r.frame_key(&doc, comp_id, 0, q);
         assert!(neutral.is_some(), "a neutral view names its frames");
-        r.presync_items(&doc, (8, 8));
+        r.presync_items(&doc, comp_id);
         assert_eq!(
             r.frame_key_presynced(&doc, comp_id, 0, q),
             neutral,
@@ -2395,43 +2482,26 @@ mod tests {
         };
         let (store, _comp_id) = doc_with_solid(LinearColour([1.0, 1.0, 1.0, 1.0]), 4, 4);
         let mut doc = (*store.snapshot()).clone();
+        // The comp is asked about at 64×64 below, so the slate it makes is that
+        // size; a layer per item, since only what the comp can show is probed.
+        let sized = push_comp(&mut doc, "sized", 64, 64);
 
-        let audio_id = Uuid::now_v7();
-        doc.items
-            .push(ProjectItem::Footage(lumit_core::model::FootageItem {
-                id: audio_id,
-                name: "audio.wav".into(),
-                media: lumit_core::model::MediaRef {
-                    relative_path: "audio.wav".into(),
-                    absolute_path: "audio.wav".into(),
-                    fingerprint: None,
-                    extra: serde_json::Map::new(),
-                },
-                extra: serde_json::Map::new(),
-            }));
+        let audio_id = push_footage_item(&mut doc, "audio.wav");
+        push_layer(&mut doc, sized, LayerKind::Footage { item: audio_id });
         r.probe_cache.insert(audio_id, Probe::NoVideo);
-        r.sync_items(&doc, (64, 64));
+        let comp = doc.comp(sized).expect("sized comp").clone();
+        r.sync_items(&doc, &comp);
         assert!(
             !r.items.contains_key(&audio_id),
             "audio-only media must contribute no picture, not a missing slate"
         );
 
         // Contrast: a genuinely missing/unreadable file DOES slate.
-        let missing_id = Uuid::now_v7();
-        doc.items
-            .push(ProjectItem::Footage(lumit_core::model::FootageItem {
-                id: missing_id,
-                name: "gone.mp4".into(),
-                media: lumit_core::model::MediaRef {
-                    relative_path: "gone.mp4".into(),
-                    absolute_path: "gone.mp4".into(),
-                    fingerprint: None,
-                    extra: serde_json::Map::new(),
-                },
-                extra: serde_json::Map::new(),
-            }));
+        let missing_id = push_footage_item(&mut doc, "gone.mp4");
+        push_layer(&mut doc, sized, LayerKind::Footage { item: missing_id });
         r.probe_cache.insert(missing_id, Probe::Slate);
-        r.sync_items(&doc, (64, 64));
+        let comp = doc.comp(sized).expect("sized comp").clone();
+        r.sync_items(&doc, &comp);
         assert_eq!(
             r.items.get(&missing_id).map(|i| i.missing),
             Some(Some((64, 64))),
@@ -2439,6 +2509,86 @@ mod tests {
         );
         // The audio-only item stays omitted across the second sync_items call.
         assert!(!r.items.contains_key(&audio_id));
+    }
+
+    /// **A render probes only what its comp can show.** Probing is opening a
+    /// file and loading or building its frame index, and it used to run over
+    /// every footage item in the project before the first frame of any comp —
+    /// so a project with a full Project panel paid for all of them before the
+    /// first pixel, and a freshly made empty comp paid for all of them to show
+    /// nothing.
+    ///
+    /// `probe_cache` is the counter: an item is in it exactly once it has been
+    /// probed, and the cache is never emptied between comps, so the assertions
+    /// below read both "what did this call probe" and "what has been probed at
+    /// all". No media fixture is needed — the paths are not on disk, so each
+    /// probe is a `stat` that answers [`Probe::Slate`].
+    #[test]
+    fn a_comp_probes_its_own_footage_and_nothing_else() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                lumit_gpu::no_adapter();
+                return;
+            }
+        };
+        let mut doc = Document::new();
+        let (shown, nested, spare) = (
+            push_footage_item(&mut doc, "shown.mp4"),
+            push_footage_item(&mut doc, "nested.mp4"),
+            push_footage_item(&mut doc, "spare.mp4"),
+        );
+        let empty = push_comp(&mut doc, "empty", 32, 32);
+        let one = push_comp(&mut doc, "one", 32, 32);
+        push_layer(&mut doc, one, LayerKind::Footage { item: shown });
+        let inner = push_comp(&mut doc, "inner", 32, 32);
+        push_layer(&mut doc, inner, LayerKind::Footage { item: nested });
+        let outer = push_comp(&mut doc, "outer", 32, 32);
+        push_layer(&mut doc, outer, LayerKind::Precomp { comp: inner });
+
+        let probed = |r: &HeadlessRenderer| {
+            let mut ids: Vec<Uuid> = r.probe_cache.keys().copied().collect();
+            ids.sort();
+            ids
+        };
+        let sorted = |mut ids: Vec<Uuid>| {
+            ids.sort();
+            ids
+        };
+        let doc = Arc::new(doc);
+
+        // A comp with no layers, in a project with three footage items.
+        r.presync_items(&doc, empty);
+        assert!(
+            probed(&r).is_empty(),
+            "an empty comp must open no files at all"
+        );
+
+        // One of three items, and only that one.
+        r.presync_items(&doc, one);
+        assert_eq!(probed(&r), vec![shown]);
+
+        // Footage a Precomp layer reaches is footage the comp can show, so it
+        // is probed — and the frame-key interlock depends on it, since an
+        // unprobed source makes the frame unnameable.
+        r.presync_items(&doc, outer);
+        assert_eq!(
+            probed(&r),
+            sorted(vec![shown, nested]),
+            "a second comp probes what it adds, and what was probed stays probed"
+        );
+        assert!(
+            r.frame_key(&doc, outer, 0, crate::plan::Quality::default())
+                .is_some(),
+            "everything the comp can show is probed, so its frames are nameable"
+        );
+
+        // The item on no layer anywhere is never opened, however many comps
+        // have been rendered.
+        assert!(
+            !probed(&r).contains(&spare),
+            "footage no comp shows must never be probed"
+        );
     }
 
     /// The zero-copy path (K-177) renders a real comp into a shared GPU texture

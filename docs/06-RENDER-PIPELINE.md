@@ -523,6 +523,16 @@ thus the width in the name is the width the pixels were decoded at.
 A frame is only nameable once its footage is probed. Until then it renders live and is banked
 nowhere, so an entry can never be a promise the renderer did not keep.
 
+**A render probes what its composition can show, and nothing else** — the footage its layers
+name, the footage its Sequence layers' clips name, and the same again through every composition
+it nests (`lumit_core::model::comp_footage_items`, walked whatever the layers' switches and spans
+say, so the answer does not move with the playhead). A probe opens a file and loads or builds its
+frame index, so probing the whole Project panel made the first frame of *any* composition wait
+for every file in the project, and a freshly made empty composition wait for all of them to show
+nothing. The probe cache is per item and survives across compositions, so a source shared by two
+comps is opened once a session and each comp's first frame pays only for what it adds. Nameability
+is unchanged by this: everything a comp shows is probed before its frames are named.
+
 ### 5.3 Eviction
 
 Cost-aware LRU (GreedyDual-style), managed by the resource governor's budgets: each entry
