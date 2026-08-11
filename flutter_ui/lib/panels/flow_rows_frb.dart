@@ -212,29 +212,26 @@ class FlowRowsFrb extends StatelessWidget {
       onChanged();
     }
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: fxTwoColumnRow(
-        context: context,
-        keyframeControls: KeyframeControlsFrb(
-          scalars: [rate],
-          onWrite: (next) {
-            layer.setFlowInputRate(value: next.first);
-            onChanged();
-          },
-          comp: comp,
-          playheadFrame: playheadFrame,
-          onSeek: onSeek,
-          rowKey: 'flow-input-rate',
-        ),
-        name: Text(l10n.flowInputRate,
-            style: t.body, overflow: TextOverflow.ellipsis),
-        control: FlowRateControl(
-          shown: shown,
-          fieldWidth: _cellWidth,
-          presetWidth: 92,
-          onRate: writeRate,
-        ),
+    return fxTwoColumnRow(
+      context: context,
+      keyframeControls: KeyframeControlsFrb(
+        scalars: [rate],
+        onWrite: (next) {
+          layer.setFlowInputRate(value: next.first);
+          onChanged();
+        },
+        comp: comp,
+        playheadFrame: playheadFrame,
+        onSeek: onSeek,
+        rowKey: 'flow-input-rate',
+      ),
+      name: Text(l10n.flowInputRate,
+          style: t.body, overflow: TextOverflow.ellipsis),
+      control: FlowRateControl(
+        shown: shown,
+        fieldWidth: _cellWidth,
+        presetWidth: 92,
+        onRate: writeRate,
       ),
     );
   }
@@ -245,16 +242,13 @@ class FlowRowsFrb extends StatelessWidget {
     String label,
     Widget control,
   ) =>
-      Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
-        child: fxTwoColumnRow(
-          context: context,
-          // Not keyable properties, so plain text names — there is no curve for
-          // the graph editor to aim at. Input rate is the exception, and builds
-          // its own row above.
-          name: Text(label, style: t.body, overflow: TextOverflow.ellipsis),
-          control: control,
-        ),
+      fxTwoColumnRow(
+        context: context,
+        // Not keyable properties, so plain text names — there is no curve for
+        // the graph editor to aim at. Input rate is the exception, and builds
+        // its own row above.
+        name: Text(label, style: t.body, overflow: TextOverflow.ellipsis),
+        control: control,
       );
 }
 

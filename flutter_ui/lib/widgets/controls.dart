@@ -592,6 +592,12 @@ class BareDropdown<T> extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
     return HouseButton(
+      // Vertical 2 rather than the button default's 3: a dropdown's label is
+      // body text, whose line box plus 3 above and below stands taller than a
+      // property row, and the row is what gives — clipping the label's
+      // descenders. Two fits with a little to spare, and the label keeps the
+      // size of the numbers it sits beside. Horizontal is the button's own.
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       onPressed: () async {
         final box = context.findRenderObject()! as RenderBox;
         final origin = box.localToGlobal(Offset.zero);
@@ -678,6 +684,12 @@ class BareSearchDropdown extends StatelessWidget {
     final t = ThemeScope.of(context).theme;
     final label = value >= 0 && value < options.length ? options[value] : '—';
     return HouseButton(
+      // Vertical 2 rather than the button default's 3: a dropdown's label is
+      // body text, whose line box plus 3 above and below stands taller than a
+      // property row, and the row is what gives — clipping the label's
+      // descenders. Two fits with a little to spare, and the label keeps the
+      // size of the numbers it sits beside. Horizontal is the button's own.
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       onPressed: () async {
         final box = context.findRenderObject()! as RenderBox;
         final origin = box.localToGlobal(Offset.zero);
@@ -860,6 +872,12 @@ class BareLazyDropdown<T> extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
     return HouseButton(
+      // Vertical 2 rather than the button default's 3: a dropdown's label is
+      // body text, whose line box plus 3 above and below stands taller than a
+      // property row, and the row is what gives — clipping the label's
+      // descenders. Two fits with a little to spare, and the label keeps the
+      // size of the numbers it sits beside. Horizontal is the button's own.
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       onPressed: () async {
         final box = context.findRenderObject()! as RenderBox;
         final origin = box.localToGlobal(Offset.zero);

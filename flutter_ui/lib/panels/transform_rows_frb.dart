@@ -285,7 +285,8 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
     // the shell, so it is safe to touch once this row has gone.
     final live = _ui.liveTransforms;
     if (live.value.isNotEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => live.value = const {});
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => live.value = const {});
     }
     super.dispose();
   }
