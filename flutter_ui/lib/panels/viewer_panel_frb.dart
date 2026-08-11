@@ -300,6 +300,7 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
             grid: _grid,
             wireframes: _wireframes,
             look: ui.viewerLook,
+            showToneMap: ui.workspace.interface.showToneMap,
             onStops: ui.setViewerStops,
             onToneMap: ui.toggleViewerToneMap,
             playing: playing,
@@ -1454,6 +1455,11 @@ class _Toolbar extends StatelessWidget {
   /// that asks the engine what it is set to would cross the boundary sixty
   /// times a second to be told what the frontend already knows.
   final ViewerLook look;
+
+  /// Whether the tone map button is on the bar at all (Settings → Interface).
+  /// Off by default; [look] is already gated to match, so a hidden button
+  /// never leaves an engaged tone map behind it.
+  final bool showToneMap;
   final bool playing;
   final int frame;
   final BridgeCompSettings settings;
@@ -1483,6 +1489,7 @@ class _Toolbar extends StatelessWidget {
     required this.grid,
     required this.wireframes,
     required this.look,
+    required this.showToneMap,
     required this.onStops,
     required this.onToneMap,
     required this.playing,
@@ -1602,25 +1609,33 @@ class _Toolbar extends StatelessWidget {
               resetTo: 0,
               // Snapped to the tenth the box actually reads, so a drag cannot
               // leave a hair of exposure behind that shows as `+0.0` while the
-              // engine treats the view as engaged and banks nothing.
+              // engine treats the view as engaged. Since K-346 that no longer
+              // costs the caches — a look names its frames rather than leaving
+              // them nameless — but a hair nobody asked for would still bank a
+              // whole second set of frames under a look that reads as neutral.
               onChanged: (v) => onStops((v * 10).round() / 10),
             ),
           ),
-          const SizedBox(width: 6),
-          LumitTooltip(
-            message: l10n.tipViewerToneMap,
-            child: HouseButton(
-              key: const ValueKey('viewer-tone-map'),
-              small: true,
-              frameless: true,
-              onPressed: onToneMap,
-              child: lumitIcon(
-                LumitIcon.toneMap,
-                size: iconSize,
-                color: look.toneMap ? t.accent : t.textSecondary,
+          // The tone map button is asked for rather than given (K-314): most
+          // work never reads a picture that way, so the bar stays shorter
+          // until somebody turns it on in Settings → Interface.
+          if (showToneMap) ...[
+            const SizedBox(width: 6),
+            LumitTooltip(
+              message: l10n.tipViewerToneMap,
+              child: HouseButton(
+                key: const ValueKey('viewer-tone-map'),
+                small: true,
+                frameless: true,
+                onPressed: onToneMap,
+                child: lumitIcon(
+                  LumitIcon.toneMap,
+                  size: iconSize,
+                  color: look.toneMap ? t.accent : t.textSecondary,
+                ),
               ),
             ),
-          ),
+          ],
           const SizedBox(width: 6),
           // The layer controls switch (K-217): the boxes, handles and hover
           // highlight over the picture. An icon rather than a word, because

@@ -8205,3 +8205,21 @@ construction rather than by refusing to cache — an export is neutral by constr
 export test), so a graded preview frame can never collide with one. The cost is that dialling
 an exposure through several values leaves several sets of banked frames competing for the same
 budget; the tiers evict by the usual rule and nobody has to think about it.
+
+**K-347 · DECIDED · The tone map button is asked for, not given.** From the owner
+(2026-08-11), refining K-314's presentation without touching what the feature does: "it just
+doesn't seem like a feature most people need or want, but I think it's neat and nice to
+have." The Viewer bar's tone-map switch is therefore **hidden by default** and revealed by
+**Settings → Interface → Show the tone map button**. The **exposure field is not hidden** —
+stops are an ordinary photographic control that people reach for; tone mapping is the
+specialist one.
+
+**Hidden means off, not merely invisible.** The setting gates `LumitUiState.viewerLook`, the
+one place the per-composition store becomes the look in use, so the Viewer bar, the engine
+push and the button cannot disagree, and a session saved while the tone map was engaged
+cannot come back stranded — an engaged look with no button to turn it off would change what
+the Viewer shows with nothing to explain it. Only the *reading* is gated: the per-comp store
+keeps its value, so turning the setting back on finds each composition as it was. (Moving the
+exposure while the button is away writes the pair back as it reads, which clears the stored
+tone map — a state you cannot see does not persist behind your back.) Recorded in
+[07-UI-SPEC.md](07-UI-SPEC.md) §2.2, which is where the Viewer bar is specified.

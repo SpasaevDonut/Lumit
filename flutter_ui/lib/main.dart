@@ -1382,8 +1382,21 @@ class LumitUiState extends ChangeNotifier {
 
   /// How the fronted comp is being looked at, neutral until something says
   /// otherwise.
-  ViewerLook get viewerLook =>
-      viewerLooks[_selectedComp?.internalid.toString()] ?? neutralLook;
+  ///
+  /// The one place the stored look becomes the look in use, which is why the
+  /// tone map setting is honoured here and nowhere else: the Viewer bar, the
+  /// engine push and the button all read this, so they cannot disagree. With
+  /// the setting off the tone map is false whatever the comp stored — a
+  /// session saved while it was engaged would otherwise be stranded with no
+  /// button to turn it off. Only the reading is gated, not the store, so
+  /// turning the setting back on finds the comp as it was — until the exposure
+  /// is moved while the button is away, which writes the pair back as seen.
+  ViewerLook get viewerLook {
+    final stored =
+        viewerLooks[_selectedComp?.internalid.toString()] ?? neutralLook;
+    if (workspace.interface.showToneMap) return stored;
+    return (stops: stored.stops, toneMap: false);
+  }
 
   /// The last look actually sent to the engine, so a neutral push onto an
   /// already-neutral renderer can be skipped. A worker is born neutral.

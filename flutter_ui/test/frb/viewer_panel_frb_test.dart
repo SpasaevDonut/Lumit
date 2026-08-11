@@ -415,6 +415,7 @@ void main() {
     /// one tap off.
     testWidgets('the tone-map switch is in the bar and flips', (tester) async {
       final p = withLayer();
+      p.uiState.workspace.interface.showToneMap = true;
       await mount(tester, p);
 
       final button = find.byKey(const ValueKey('viewer-tone-map'));
@@ -432,12 +433,60 @@ void main() {
       await settleFrb(tester, until: () => p.uiState.previewProgress.idle);
     });
 
+    /// The tone map is asked for, not given: the button is off the bar unless
+    /// Settings → Interface says otherwise, while the exposure stays.
+    testWidgets('the tone-map switch is absent until the setting asks for it',
+        (tester) async {
+      final p = withLayer();
+      await mount(tester, p);
+
+      expect(find.byKey(const ValueKey('viewer-tone-map')), findsNothing);
+      expect(find.byKey(const ValueKey('viewer-exposure')), findsOneWidget,
+          reason: 'only the tone map is gated, not the exposure');
+
+      p.uiState.workspace.interface.showToneMap = true;
+      await mount(tester, p);
+      expect(find.byKey(const ValueKey('viewer-tone-map')), findsOneWidget);
+
+      await settleFrb(tester, until: () => p.uiState.previewProgress.idle);
+    });
+
+    /// Hiding the button must not strand an engaged tone map: a session saved
+    /// while it was on would otherwise keep changing the picture with nothing
+    /// left to turn it off. The setting gates the *look*, not just the button.
+    testWidgets('a stored tone map is disengaged while the setting is off',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.workspace.interface.showToneMap = true;
+      await mount(tester, p);
+
+      await tester.tap(find.byKey(const ValueKey('viewer-tone-map')));
+      await tester.pump();
+      expect(p.uiState.viewerLook.toneMap, isTrue);
+
+      p.uiState.workspace.interface.showToneMap = false;
+      await tester.pump();
+      expect(p.uiState.viewerLook.toneMap, isFalse,
+          reason: 'the look the Viewer and the engine read is disengaged');
+      expect(p.uiState.session().viewerLooks[p.comp.internalid.toString()],
+          (stops: 0.0, toneMap: true),
+          reason: 'the stored value is untouched, so turning it back on '
+              'returns the comp to how it was');
+
+      p.uiState.workspace.interface.showToneMap = true;
+      await tester.pump();
+      expect(p.uiState.viewerLook.toneMap, isTrue);
+
+      await settleFrb(tester, until: () => p.uiState.previewProgress.idle);
+    });
+
     /// **Both controls are per composition** (K-314): they are a way of looking
     /// at one comp, so fronting another must show that one's own view rather
     /// than carrying the first one's exposure across.
     testWidgets('the exposure and tone map are remembered per composition',
         (tester) async {
       final p = withLayer();
+      p.uiState.workspace.interface.showToneMap = true;
       final other = p.state.project!.newComposition(name: 'Other');
       await mount(tester, p);
 
