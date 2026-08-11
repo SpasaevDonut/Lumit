@@ -152,7 +152,20 @@ class _ViewerTypeLayerState extends State<ViewerTypeLayer> {
     super.didUpdateWidget(old);
     // Putting the tool down finishes the edit, as does swapping horizontal for
     // vertical: an edit belongs to the tool that started it.
-    if (!widget.active || widget.tool != old.tool) _finish();
+    //
+    // After the frame, not inside it. This runs while the tree above is
+    // building, and [_finish] writes the document, clears the live-text
+    // notifier and calls `onChanged` — a notifier that fires mid-build marks
+    // an ancestor dirty in the middle of its own build, which is an assertion
+    // in a debug build and a dropped rebuild in a release one. The edit ends
+    // either way; it now ends as the frame commits rather than during it.
+    // Repeat calls are harmless: the first clears `_editing` and the rest
+    // return at the top.
+    if (!widget.active || widget.tool != old.tool) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _finish();
+      });
+    }
   }
 
   @override
