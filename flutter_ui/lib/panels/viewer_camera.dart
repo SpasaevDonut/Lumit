@@ -42,6 +42,7 @@ import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/system.dart';
 import 'package:lumit_flutter/state/tools.dart';
+import 'package:uuid/uuid.dart';
 
 import 'viewer_tool_cursor.dart';
 
@@ -126,17 +127,6 @@ class CameraPose {
       cy * cx,
     );
     return (right: right, up: up, forward: forward);
-  }
-
-  /// Where the eye is: [distance] back along the camera's forward axis from the
-  /// point it is looking at.
-  (double, double, double) get eye {
-    final f = axes.forward;
-    return (
-      position.$1 - f.$1 * distance,
-      position.$2 - f.$2 * distance,
-      position.$3 - f.$3 * distance,
-    );
   }
 }
 
@@ -282,6 +272,15 @@ class ViewerCameraLayer extends StatefulWidget {
 class _ViewerCameraLayerState extends State<ViewerCameraLayer> {
   Offset? _pointer;
 
+  @override
+  void dispose() {
+    // A drag cut short by a tool switch or the panel closing must not leave
+    // the pointer frozen where the drag began: the freeze is a platform-wide
+    // state, and only this widget knows it was asked for.
+    if (_locked) thawCursor();
+    super.dispose();
+  }
+
   /// The camera being moved and the pose it had when the drag began — the whole
   /// gesture is relative to that, so a drag never compounds its own rounding.
   LayerReference? _acting;
@@ -306,6 +305,13 @@ class _ViewerCameraLayerState extends State<ViewerCameraLayer> {
   BigInt? _heldRevision;
   int? _heldFrame;
 
+  /// The comp's rate and each camera's focal distance, held against the
+  /// revision the walk last crossed the bridge at. Only an edit can move
+  /// either, so a playhead move re-walks the held model — which camera is live
+  /// can change with the frame — without re-asking the engine anything.
+  double? _fps;
+  final Map<UuidValue, double> _zooms = {};
+
   /// The active camera layer: the topmost visible Camera whose span covers the
   /// playhead, which is the one the renderer looks through.
   ({LayerReference layer, CameraPose pose})? get _camera {
@@ -315,6 +321,10 @@ class _ViewerCameraLayerState extends State<ViewerCameraLayer> {
     // movement of the mouse. That was the whole of the camera tools' chatter.
     final revision = widget.uiState.model.heldRevision;
     final frame = widget.uiState.playheadFrame.value;
+    if (_heldRevision != revision) {
+      _fps = null;
+      _zooms.clear();
+    }
     if (_heldRevision != revision || _heldFrame != frame) {
       _heldRevision = revision;
       _heldFrame = frame;
@@ -371,27 +381,38 @@ class _ViewerCameraLayerState extends State<ViewerCameraLayer> {
   bool _liveAt(BridgeSpan span, int frame) {
     double seconds(BridgeRational r) =>
         r.den.toInt() == 0 ? 0 : r.num.toDouble() / r.den.toDouble();
-    // The comp's own rate, asked once per hit rather than held: this runs on a
-    // press, not per frame.
-    double rate;
-    try {
-      rate = widget.comp.fps();
-    } catch (_) {
-      return true;
+    // The comp's own rate, held against the revision: the walk runs on every
+    // playhead move, and the rate can only change with an edit.
+    var rate = _fps;
+    if (rate == null) {
+      try {
+        rate = widget.comp.fps();
+      } catch (_) {
+        return true;
+      }
+      _fps = rate;
     }
     if (rate <= 0) return true;
     final t = frame / rate;
     return t >= seconds(span.inPoint) && t < seconds(span.outPoint);
   }
 
+  /// The layer's focal distance, held against the revision for the same
+  /// reason as the rate. NaN — keyframed, or a layer that went away between
+  /// the model and the read — is held too; the answer is the same until the
+  /// document moves.
   double _distanceOf(LayerReference layer) {
+    final held = _zooms[layer.internallayerId];
+    if (held != null) return held;
+    var distance = double.nan;
     try {
       final zoom = layer.getCameraZoom();
-      if (zoom is BridgeScalar_Static) return zoom.field0;
+      if (zoom is BridgeScalar_Static) distance = zoom.field0;
     } catch (_) {
       // The layer went away between the model and the read.
     }
-    return double.nan;
+    _zooms[layer.internallayerId] = distance;
+    return distance;
   }
 
   @override
@@ -571,16 +592,12 @@ class _CameraGizmoPainter extends CustomPainter {
     final at = pivot;
     if (at == null) return;
     const reach = 10.0;
-    for (final (colour, width) in [(outline, 3.0), (mark, 1.0)]) {
-      final paint = Paint()
-        ..color = colour
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = width;
+    paintTwoPassStroke(outline, mark, (paint) {
       canvas.drawLine(
           at - const Offset(reach, 0), at + const Offset(reach, 0), paint);
       canvas.drawLine(
           at - const Offset(0, reach), at + const Offset(0, reach), paint);
-    }
+    });
     if (!orbiting) return;
     // The orbit's own circle, faint: it says which point the swing goes round
     // without drawing attention away from the picture.

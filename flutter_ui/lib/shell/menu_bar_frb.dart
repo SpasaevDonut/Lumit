@@ -173,15 +173,19 @@ class LumitMenuBarFrb extends StatelessWidget {
     // ValueNotifier that does not notify the shell state. Without this the bar
     // would keep whatever selection it was last built with, and every one of
     // those rows would be greyed out with a layer plainly selected.
-    // The updater is the second thing outside the shell state that a menu row
-    // reads (K-296): the Help row says what it is doing, and on macOS the whole
-    // tree is handed to the system, where there is no rebuilding a single row.
+    // The updater (K-296) is watched on macOS only, where the whole tree is
+    // handed to the system and there is no rebuilding a single row. In-app,
+    // the Help menu's live row listens for itself (see [_MenuList]), so
+    // download progress never rebuilds the whole bar.
+    final ui = context.read<LumitUiState>();
     return ValueListenableBuilder<List<LayerReference>>(
-      valueListenable: context.read<LumitUiState>().selectedLayers,
-      builder: (context, _, __) => ListenableBuilder(
-        listenable: context.read<LumitUiState>().updates,
-        builder: (context, _) => _bar(context),
-      ),
+      valueListenable: ui.selectedLayers,
+      builder: (context, _, __) => defaultTargetPlatform == TargetPlatform.macOS
+          ? ListenableBuilder(
+              listenable: ui.updates,
+              builder: (context, _) => _bar(context),
+            )
+          : _bar(context),
     );
   }
 
@@ -202,8 +206,14 @@ class LumitMenuBarFrb extends StatelessWidget {
       return PlatformMenuBar(
         menus: platformMenusFor(context, menus),
         child: Stack(children: [
-          _PaletteHotkey(onRequested: () => _palette(context)),
-          _ConsoleHotkey(onRequested: () => _console(context)),
+          _RequestHotkey(
+            requests: context.read<LumitUiState>().paletteRequest,
+            onRequested: () => _palette(context),
+          ),
+          _RequestHotkey(
+            requests: context.read<LumitUiState>().consoleRequest,
+            onRequested: () => _console(context),
+          ),
         ]),
       );
     }
@@ -230,10 +240,16 @@ class LumitMenuBarFrb extends StatelessWidget {
             // Nothing to look at: it is here so `Ctrl+Shift+P` opens the same
             // palette this bar builds, rather than the shell building a second
             // one from a list that would drift out of step with these menus.
-            _PaletteHotkey(onRequested: () => _palette(context)),
+            _RequestHotkey(
+              requests: context.read<LumitUiState>().paletteRequest,
+              onRequested: () => _palette(context),
+            ),
             // The same, for Ctrl+Space (K-324): the console's effects and comps
             // come from this file for the same reason the palette's commands do.
-            _ConsoleHotkey(onRequested: () => _console(context)),
+            _RequestHotkey(
+              requests: context.read<LumitUiState>().consoleRequest,
+              onRequested: () => _console(context),
+            ),
           ],
         ),
       ),
@@ -1233,32 +1249,34 @@ List<PlatformMenuItem> platformMenusFor(
 
 // --- The in-app renderer --------------------------------------------------
 
-/// Watches [LumitUiState.paletteRequest] and opens the palette when the
-/// shortcut bumps it. Draws nothing; it exists only to hold the subscription,
-/// so the menu bar itself stays a plain stateless widget.
-class _PaletteHotkey extends StatefulWidget {
+/// Holds the subscription to a shortcut-request bump — the palette's
+/// Ctrl+Shift+P, the console's Ctrl+Space (K-324) — and opens its surface
+/// when the notifier fires. Draws nothing; it exists only so the menu bar
+/// itself stays a plain stateless widget.
+class _RequestHotkey extends StatefulWidget {
+  final ValueNotifier<int> requests;
   final VoidCallback onRequested;
 
-  const _PaletteHotkey({required this.onRequested});
+  const _RequestHotkey({required this.requests, required this.onRequested});
 
   @override
-  State<_PaletteHotkey> createState() => _PaletteHotkeyState();
+  State<_RequestHotkey> createState() => _RequestHotkeyState();
 }
 
-class _PaletteHotkeyState extends State<_PaletteHotkey> {
-  ValueNotifier<int>? _bound;
+class _RequestHotkeyState extends State<_RequestHotkey> {
+  @override
+  void initState() {
+    super.initState();
+    widget.requests.addListener(_open);
+  }
 
   @override
-  Widget build(BuildContext context) {
-    // `read`, not `watch`: this widget draws nothing, so a rebuild per change
-    // of the shell state would be pure cost. The state itself outlives the
-    // window, so the notifier it hands over never changes under us.
-    final requests = context.read<LumitUiState>().paletteRequest;
-    if (requests != _bound) {
-      _bound?.removeListener(_open);
-      _bound = requests..addListener(_open);
+  void didUpdateWidget(covariant _RequestHotkey old) {
+    super.didUpdateWidget(old);
+    if (old.requests != widget.requests) {
+      old.requests.removeListener(_open);
+      widget.requests.addListener(_open);
     }
-    return const SizedBox.shrink();
   }
 
   void _open() {
@@ -1267,44 +1285,12 @@ class _PaletteHotkeyState extends State<_PaletteHotkey> {
 
   @override
   void dispose() {
-    _bound?.removeListener(_open);
+    widget.requests.removeListener(_open);
     super.dispose();
   }
-}
-
-/// The same for the Ctrl+Space console (K-324): holds the subscription to
-/// [LumitUiState.consoleRequest] and draws nothing.
-class _ConsoleHotkey extends StatefulWidget {
-  final VoidCallback onRequested;
-
-  const _ConsoleHotkey({required this.onRequested});
 
   @override
-  State<_ConsoleHotkey> createState() => _ConsoleHotkeyState();
-}
-
-class _ConsoleHotkeyState extends State<_ConsoleHotkey> {
-  ValueNotifier<int>? _bound;
-
-  @override
-  Widget build(BuildContext context) {
-    final requests = context.read<LumitUiState>().consoleRequest;
-    if (requests != _bound) {
-      _bound?.removeListener(_open);
-      _bound = requests..addListener(_open);
-    }
-    return const SizedBox.shrink();
-  }
-
-  void _open() {
-    if (mounted) widget.onRequested();
-  }
-
-  @override
-  void dispose() {
-    _bound?.removeListener(_open);
-    super.dispose();
-  }
+  Widget build(BuildContext context) => const SizedBox.shrink();
 }
 
 /// The heading whose menu is up, and the handle that takes it down.

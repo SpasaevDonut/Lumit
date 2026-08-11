@@ -212,7 +212,7 @@ class _OfferUpdate extends StatelessWidget {
 
 /// The download, while it happens. Closes itself the moment the service leaves
 /// the downloading stage, however it left — finished, cancelled or failed.
-class _DownloadProgress extends StatefulWidget {
+class _DownloadProgress extends StatelessWidget {
   final UpdateService updates;
   final UpdateRelease release;
   final VoidCallback onDone;
@@ -226,110 +226,66 @@ class _DownloadProgress extends StatefulWidget {
   });
 
   @override
-  State<_DownloadProgress> createState() => _DownloadProgressState();
-}
-
-class _DownloadProgressState extends State<_DownloadProgress> {
-  @override
-  void initState() {
-    super.initState();
-    widget.updates.addListener(_onChange);
-    // A download can be over before this window is on screen — a small file, a
-    // fast connection, a failure at the first byte. Without this the window
-    // would sit there waiting for a notification that has already been sent.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && widget.updates.stage != UpdateStage.downloading) {
-        widget.onDone();
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    widget.updates.removeListener(_onChange);
-    super.dispose();
-  }
-
-  void _onChange() {
-    if (!mounted) return;
-    if (widget.updates.stage == UpdateStage.downloading) {
-      setState(() {});
-      return;
-    }
-    // Closing from inside a notification would be a window disposing itself
-    // mid-build; the next frame is soon enough and always safe.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) widget.onDone();
-    });
-  }
-
-  @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    final fraction = widget.updates.progress;
-    final done = (widget.release.assetBytes * fraction / (1 << 20)).round();
-    return FloatSurface(
-      width: 400,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(10),
-            child: Text(l10n.updateDownloading(widget.release.version),
-                style: t.bodyPrimary),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // A plain bar in the theme's own colours: the shell has no
-                // progress control of its own, and this is one rectangle.
-                Container(
-                  height: 6,
-                  decoration: BoxDecoration(
-                    color: t.surface3,
-                    borderRadius: BorderRadius.circular(3),
-                  ),
-                  child: FractionallySizedBox(
-                    alignment: Alignment.centerLeft,
-                    widthFactor: fraction.clamp(0.0, 1.0).toDouble(),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: t.accent,
-                        borderRadius: BorderRadius.circular(3),
-                      ),
+    return ListenableBuilder(
+      listenable: updates,
+      builder: (context, _) {
+        if (updates.stage != UpdateStage.downloading) {
+          // Over before this window reached the screen, or over now — either
+          // way the close waits a frame, because a window must not dispose
+          // itself mid-build. `close` is idempotent, so a repeat callback is
+          // a no-op rather than a double dismissal.
+          WidgetsBinding.instance.addPostFrameCallback((_) => onDone());
+        }
+        final fraction = updates.progress;
+        final done = (release.assetBytes * fraction / (1 << 20)).round();
+        return FloatSurface(
+          width: 400,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(10),
+                child: Text(l10n.updateDownloading(release.version),
+                    style: t.bodyPrimary),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    HouseProgressBar(fraction: fraction, height: 6),
+                    const SizedBox(height: 6),
+                    Text(
+                      '$done MB of ${release.sizeLabel}',
+                      style: t.small.copyWith(color: t.textMuted),
                     ),
-                  ),
+                  ],
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  '$done MB of ${widget.release.sizeLabel}',
-                  style: t.small.copyWith(color: t.textMuted),
+              ),
+              const SizedBox(height: 14),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    HouseButton(
+                      key: const ValueKey('update-download-cancel'),
+                      small: true,
+                      frameless: true,
+                      onPressed: onCancel,
+                      child: Text(l10n.cancel, style: t.small),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(height: 10),
+            ],
           ),
-          const SizedBox(height: 14),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                HouseButton(
-                  key: const ValueKey('update-download-cancel'),
-                  small: true,
-                  frameless: true,
-                  onPressed: widget.onCancel,
-                  child: Text(l10n.cancel, style: t.small),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 10),
-        ],
-      ),
+        );
+      },
     );
   }
 }

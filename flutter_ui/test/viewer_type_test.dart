@@ -8,12 +8,18 @@
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lumit_flutter/panels/viewer_shape_layer.dart'
+    show ShapeSpace;
 import 'package:lumit_flutter/panels/viewer_type.dart';
 // The width estimate lives with the other "how big is a layer" answers now
 // (K-230): the same sum places the caret, the anchor and the wireframe.
 import 'package:lumit_flutter/state/layer_bounds.dart';
 
 void main() {
+  // The Type tool places a click through the shared comp space now, not a
+  // conversion of its own; the sums under test are ShapeSpace.ofComp's.
+  (double, double) compPointOf(Offset screen, Rect fitted, Size comp) =>
+      ShapeSpace.ofComp(fitted: fitted, compSize: comp).ofScreen(screen);
   group('Where a click lands', () {
     test('a point on the picture becomes a point in the comp', () {
       // A 1920×1080 comp drawn at half size, 100 across and 50 down the panel.

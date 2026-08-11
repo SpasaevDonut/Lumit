@@ -21,6 +21,7 @@
 // is a vertex whose handles are both zero.
 
 import 'dart:math' as math;
+import 'dart:ui' show Offset, Path;
 
 import 'package:lumit_flutter/l10n/strings.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
@@ -236,6 +237,33 @@ List<BridgeVertex> shapePath({
     case _:
       return const [];
   }
+}
+
+/// One cubic path through [count] vertices, on whichever screen mapping the
+/// caller draws with — the walk every path outline and preview shares (K-224,
+/// K-237). The callbacks answer, for vertex `i`, where it sits and where its
+/// two handles reach, so a caller can fold in nudges or an art offset without
+/// a second copy of the cubic walk.
+Path bezierPath({
+  required int count,
+  required Offset Function(int i) at,
+  required Offset Function(int i) tangentOut,
+  required Offset Function(int i) tangentIn,
+  required bool closed,
+}) {
+  final path = Path()..moveTo(at(0).dx, at(0).dy);
+  for (var i = 1; i < count; i++) {
+    final c1 = tangentOut(i - 1);
+    final c2 = tangentIn(i);
+    path.cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, at(i).dx, at(i).dy);
+  }
+  if (closed && count > 2) {
+    final c1 = tangentOut(count - 1);
+    final c2 = tangentIn(0);
+    path.cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, at(0).dx, at(0).dy);
+    path.close();
+  }
+  return path;
 }
 
 /// [mask] showing [vertices] instead of its own — the shape an animated path

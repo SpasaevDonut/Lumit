@@ -365,15 +365,12 @@ class _StrokePainter extends CustomPainter {
     if (source != null) {
       // A cross, so the source reads as a *place* rather than as another
       // pointer.
-      for (final (colour, w) in [(outline, 3.0), (mark, 1.0)]) {
-        final paint = Paint()
-          ..color = colour
-          ..strokeWidth = w;
+      paintTwoPassStroke(outline, mark, (paint) {
         canvas.drawLine(source - const Offset(cloneSourceMarkSize, 0),
             source + const Offset(cloneSourceMarkSize, 0), paint);
         canvas.drawLine(source - const Offset(0, cloneSourceMarkSize),
             source + const Offset(0, cloneSourceMarkSize), paint);
-      }
+      });
     }
 
     if (stroke.isEmpty) return;

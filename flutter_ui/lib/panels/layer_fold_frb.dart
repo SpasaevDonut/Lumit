@@ -22,8 +22,10 @@ import 'package:lumit_flutter/l10n/strings.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
+import 'package:lumit_flutter/src/rust/api/retime.dart';
 
 import 'effect_param_row_frb.dart';
+import 'graph_maths.dart';
 import 'transform_rows_frb.dart';
 
 /// One row of a layer's fold-out.
@@ -74,7 +76,11 @@ final class FoldEffectParamRow extends LayerFoldRow {
 
 /// The layer's Volume.
 final class FoldVolumeRow extends LayerFoldRow {
-  const FoldVolumeRow({required int depth}) : super(depth);
+  /// The Volume scalar, read once per document revision by the panel and
+  /// carried here so the row draws without a bridge call (K-184). Null only
+  /// for a caller that supplied none, which the panel never is.
+  final BridgeScalar? scalar;
+  const FoldVolumeRow({this.scalar, required int depth}) : super(depth);
 }
 
 /// The layer's Retime (K-197): source time in seconds, keyframable like any
@@ -139,7 +145,13 @@ final class FoldFlowRow extends LayerFoldRow {
 
   /// The Input rate's curve; null on every other kind.
   final BridgeScalar? rate;
-  const FoldFlowRow(this.kind, {this.rate, required int depth}) : super(depth);
+
+  /// The whole group's parameters, read once per document revision by the
+  /// panel and carried here so the row draws without a bridge call (K-184).
+  /// Null only for a caller that supplied none, which the panel never is.
+  final BridgeFlowParams? params;
+  const FoldFlowRow(this.kind, {this.rate, this.params, required int depth})
+      : super(depth);
 }
 
 /// The controls of the Flow group, in the order they are shown.
@@ -245,7 +257,7 @@ BridgeMask maskWithScalar(BridgeMask mask, MaskValue value, BridgeScalar to) =>
 /// Fractional on purpose: with the magnet off a key may sit *between* frames
 /// (docs/07 §4.5), and it has to draw where it actually is.
 double laneKeyFrame(BridgeKeyframe key, double fps) =>
-    key.time.num / key.time.den.toDouble() * fps;
+    rationalSeconds(key.time) * fps;
 
 /// The exact time of a (possibly fractional) frame position — what a lane key
 /// drag commits.
@@ -275,14 +287,13 @@ bool moveLaneKey({
   required int index,
   required BridgeRational time,
 }) {
-  double at(BridgeRational r) => r.num / r.den.toDouble();
-  final target = at(time);
+  final target = rationalSeconds(time);
 
   List<BridgeKeyframe>? moved(List<BridgeKeyframe> keys) {
     if (index >= keys.length) return null;
     for (var i = 0; i < keys.length; i++) {
       if (i == index) continue;
-      final other = at(keys[i].time);
+      final other = rationalSeconds(keys[i].time);
       if (i < index ? other >= target : other <= target) return null;
     }
     return [
@@ -397,6 +408,13 @@ String foldRowPath(String layerId, LayerFoldRow row) => switch (row) {
 bool isUnderPath(String ancestor, String path) =>
     ancestor.isNotEmpty && path.startsWith('$ancestor/');
 
+/// The layer id a fold path belongs to — everything before the first `/` —
+/// or null for a bare layer id, which sits under no layer but itself.
+String? layerIdOfPath(String path) {
+  final cut = path.indexOf('/');
+  return cut > 0 ? path.substring(0, cut) : null;
+}
+
 /// The path of a layer's Retime row.
 String retimePath(String layerId) => '$layerId/retime';
 
@@ -461,10 +479,15 @@ String waveformPath(String layerId) => '$layerId/audio/waveform';
 /// `hasAudio` is passed in rather than asked for here because answering it means
 /// probing the file with FFmpeg, which is not work for a build — the Timeline
 /// caches it per layer, exactly as the Project panel caches missing media.
+/// `flowParams` and `volumeDb` are passed in for the same reason at a smaller
+/// scale: neither is in the read model, so the panel reads them once per
+/// document revision and the rows carry them (K-184).
 List<LayerFoldRow> layerFoldRows({
   required BridgeLayerEntry entry,
   required Set<String> open,
   required bool hasAudio,
+  BridgeFlowParams? flowParams,
+  BridgeScalar? volumeDb,
 }) {
   final id = entry.layer.internallayerId.toString();
   final info = entry.info;
@@ -506,6 +529,7 @@ List<LayerFoldRow> layerFoldRows({
         rows.add(FoldFlowRow(
           kind,
           rate: kind == FlowRowKind.inputRate ? info.flowInputRate : null,
+          params: flowParams,
           depth: 2,
         ));
       }
@@ -627,7 +651,7 @@ List<LayerFoldRow> layerFoldRows({
       depth: 1,
     ));
     if (audioOpen) {
-      rows.add(const FoldVolumeRow(depth: 2));
+      rows.add(FoldVolumeRow(scalar: volumeDb, depth: 2));
       // The waveform behind its own twirl (K-172), so a busy comp only pays
       // for the lanes actually being looked at.
       final waveOpen = open.contains(waveformPath(id));

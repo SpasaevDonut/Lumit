@@ -310,8 +310,7 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
             // The magnification menu is a jump to a named place, so it flies
             // there like every other zoom (K-218) — from whatever is on screen,
             // which is what the measured rectangle in the layout builder knows.
-            onZoom: (z) =>
-                _goToZoom(z, Offset.zero, from: _currentScale(comp.getSize())),
+            onZoom: (z) => _goToZoom(z, Offset.zero, from: _shownScale),
             onChannel: (c) => setState(() => _channel = c),
             onGrid: () => setState(() => _grid = !_grid),
             onWireframes: () => setState(() => _wireframes = !_wireframes),
@@ -532,8 +531,6 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
   /// and a zoom has to know where it is flying *from*.
   double _shownScale = 1;
 
-  double _currentScale(BridgeCompSize size) => _shownScale;
-
   /// The playhead moved — from anywhere. The Timeline ruler, an arrow key and
   /// the transport all just set it, and this is what tells the engine.
   ///
@@ -747,103 +744,124 @@ class _Stage extends StatelessWidget {
               rect: fitted,
               child: _Picture(uiState: uiState, channel: channel),
             ),
-            _missingSlate(context, t),
-            // The layer controls. With the Hand tool armed this only draws —
-            // it lets every gesture through to the pan above, which is the
-            // whole difference between the two tools over the picture.
-            ListenableBuilder(
-              // Four things move the boxes without the panel being rebuilt:
-              // the selection (a Timeline click), a probe landing with a
-              // clip's real size, an edit changing a transform, and a turn
-              // in flight from the Rotation tool (K-230).
-              listenable: Listenable.merge([
-                uiState.selectedLayers,
-                uiState.layerBounds,
-                uiState.model,
-                uiState.liveRotations,
-                uiState.liveText,
-              ]),
-              builder: (context, _) => ViewerGizmoLayer(
-                comp: comp,
-                uiState: uiState,
-                boxes: _boxes(),
-                showControls: wireframes,
-                tool: uiState.tools.tool,
-                // The pivot, while the tool that turns about it is in hand.
-                showAnchors: uiState.tools.tool.group == ToolGroup.rotate,
-                onChanged: onChanged,
+            _missingSlate(),
+            // The layer controls and every tool that reads the boxes, under
+            // one builder: [_boxes] walks the whole model, and it used to be
+            // called once per tool layer — six times per build, sixty times a
+            // second during playback. One walk now serves all of them.
+            Positioned.fill(
+              child: ListenableBuilder(
+                // Four things move the boxes without the panel being rebuilt:
+                // the selection (a Timeline click), a probe landing with a
+                // clip's real size, an edit changing a transform, and a turn
+                // in flight from the Rotation tool (K-230).
+                listenable: Listenable.merge([
+                  uiState.selectedLayers,
+                  uiState.layerBounds,
+                  uiState.model,
+                  uiState.liveRotations,
+                  uiState.liveText,
+                ]),
+                builder: (context, _) {
+                  final boxes = _boxes();
+                  final state = Provider.of<LumitState>(context, listen: false);
+                  return Stack(
+                    children: [
+                      // The layer controls. With the Hand tool armed this only
+                      // draws — it lets every gesture through to the pan above,
+                      // which is the whole difference between the two tools
+                      // over the picture.
+                      ViewerGizmoLayer(
+                        comp: comp,
+                        uiState: uiState,
+                        boxes: boxes,
+                        showControls: wireframes,
+                        tool: uiState.tools.tool,
+                        // The pivot, while the tool that turns about it is in
+                        // hand.
+                        showAnchors:
+                            uiState.tools.tool.group == ToolGroup.rotate,
+                        onChanged: onChanged,
+                      ),
+                      // The shape tools and the Pen: a drag draws a mask on
+                      // the selected layer, and the Pen builds one point by
+                      // point (K-222, K-223).
+                      ViewerShapeLayer(
+                        active: uiState.tools.tool.group == ToolGroup.shape ||
+                            uiState.tools.tool == ToolMode.pen,
+                        tool: uiState.tools.tool,
+                        state: state,
+                        uiState: uiState,
+                        boxes: boxes,
+                        comp: comp,
+                        fitted: fitted,
+                        compSize: Size(
+                          compSize.width.toDouble(),
+                          compSize.height.toDouble(),
+                        ),
+                        accent: t.accent,
+                        onChanged: onChanged,
+                      ),
+                      // The Type tool: a click makes or edits a text layer,
+                      // and what is typed is previewed until the edit ends
+                      // (K-225).
+                      ViewerTypeLayer(
+                        active: uiState.tools.tool.group == ToolGroup.type,
+                        tool: uiState.tools.tool,
+                        comp: comp,
+                        state: state,
+                        uiState: uiState,
+                        boxes: boxes,
+                        fitted: fitted,
+                        compSize: Size(
+                          compSize.width.toDouble(),
+                          compSize.height.toDouble(),
+                        ),
+                        accent: t.accent,
+                        onChanged: onChanged,
+                      ),
+                      // The painting tools: a drag paints a stroke on the
+                      // selected layer (K-227), under the brush ring K-226
+                      // gave them.
+                      ViewerPaintLayer(
+                        active: uiState.tools.tool.group == ToolGroup.paint,
+                        tool: uiState.tools.tool,
+                        state: state,
+                        uiState: uiState,
+                        boxes: boxes,
+                        viewScale: compSize.width == 0
+                            ? 1.0
+                            : fitted.width / compSize.width,
+                        onChanged: onChanged,
+                      ),
+                      // The Anchor point tool: its own pointer, and a drag
+                      // that slides the pivot while the picture stays still
+                      // (K-220).
+                      ViewerAnchorLayer(
+                        active: uiState.tools.tool.group == ToolGroup.anchor,
+                        comp: comp,
+                        uiState: uiState,
+                        boxes: boxes,
+                        mark: t.textPrimary,
+                        outline: t.surface0,
+                        accent: t.accent,
+                        onChanged: onChanged,
+                      ),
+                      // The Rotation tool: its own pointer, and a drag that
+                      // turns the selection about each layer's anchor (K-219).
+                      ViewerRotateLayer(
+                        active: uiState.tools.tool.group == ToolGroup.rotate,
+                        comp: comp,
+                        uiState: uiState,
+                        boxes: boxes,
+                        mark: t.textPrimary,
+                        outline: t.surface0,
+                        onChanged: onChanged,
+                      ),
+                    ],
+                  );
+                },
               ),
-            ),
-            // The shape tools and the Pen: a drag draws a mask on the
-            // selected layer, and the Pen builds one point by point (K-222,
-            // K-223).
-            ViewerShapeLayer(
-              active: uiState.tools.tool.group == ToolGroup.shape ||
-                  uiState.tools.tool == ToolMode.pen,
-              tool: uiState.tools.tool,
-              state: Provider.of<LumitState>(context, listen: false),
-              uiState: uiState,
-              boxes: _boxes(),
-              comp: comp,
-              fitted: fitted,
-              compSize: Size(
-                compSize.width.toDouble(),
-                compSize.height.toDouble(),
-              ),
-              accent: t.accent,
-              onChanged: onChanged,
-            ),
-            // The Type tool: a click makes or edits a text layer, and what
-            // is typed is previewed until the edit ends (K-225).
-            ViewerTypeLayer(
-              active: uiState.tools.tool.group == ToolGroup.type,
-              tool: uiState.tools.tool,
-              comp: comp,
-              state: Provider.of<LumitState>(context, listen: false),
-              uiState: uiState,
-              boxes: _boxes(),
-              fitted: fitted,
-              compSize: Size(
-                compSize.width.toDouble(),
-                compSize.height.toDouble(),
-              ),
-              accent: t.accent,
-              onChanged: onChanged,
-            ),
-            // The painting tools: a drag paints a stroke on the selected
-            // layer (K-227), under the brush ring K-226 gave them.
-            ViewerPaintLayer(
-              active: uiState.tools.tool.group == ToolGroup.paint,
-              tool: uiState.tools.tool,
-              state: Provider.of<LumitState>(context, listen: false),
-              uiState: uiState,
-              boxes: _boxes(),
-              viewScale:
-                  compSize.width == 0 ? 1.0 : fitted.width / compSize.width,
-              onChanged: onChanged,
-            ),
-            // The Anchor point tool: its own pointer, and a drag that slides
-            // the pivot while the picture stays still (K-220).
-            ViewerAnchorLayer(
-              active: uiState.tools.tool.group == ToolGroup.anchor,
-              comp: comp,
-              uiState: uiState,
-              boxes: _boxes(),
-              mark: t.textPrimary,
-              outline: t.surface0,
-              accent: t.accent,
-              onChanged: onChanged,
-            ),
-            // The Rotation tool: its own pointer, and a drag that turns the
-            // selection about each layer's anchor (K-219).
-            ViewerRotateLayer(
-              active: uiState.tools.tool.group == ToolGroup.rotate,
-              comp: comp,
-              uiState: uiState,
-              boxes: _boxes(),
-              mark: t.textPrimary,
-              outline: t.surface0,
-              onChanged: onChanged,
             ),
             // The camera tools: a drag orbits, tracks or dollies the comp's
             // active camera (K-229).
@@ -896,7 +914,7 @@ class _Stage extends StatelessWidget {
 
   /// A notice when a footage layer in this comp has lost its file. The probe
   /// itself happens in the badge; this only places it.
-  Widget _missingSlate(BuildContext context, LumitTheme t) {
+  Widget _missingSlate() {
     if (footage.isEmpty) return const SizedBox.shrink();
     return Positioned(
       left: 8,

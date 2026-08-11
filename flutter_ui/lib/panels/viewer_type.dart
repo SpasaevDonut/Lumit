@@ -40,17 +40,9 @@ import '../state/layer_bounds.dart' show estimatedTextWidth;
 import '../state/preview_throttle.dart';
 import '../widgets/controls.dart';
 import 'viewer_gizmo.dart';
+import 'viewer_shape_layer.dart' show ShapeSpace;
 import 'viewer_tool_cursor.dart';
 import 'viewer_layer_map.dart';
-
-/// Where a point on screen falls in the composition's own pixels.
-///
-/// [fitted] is the rectangle the picture occupies on screen, which already
-/// carries the magnification and the pan.
-(double, double) compPointOf(Offset screen, Rect fitted, Size comp) {
-  final scale = fitted.width / comp.width;
-  return ((screen.dx - fitted.left) / scale, (screen.dy - fitted.top) / scale);
-}
 
 /// The anchor a text layer of this text wants: the middle of its estimated
 /// bounds, so it scales and turns about itself rather than about its first
@@ -273,13 +265,19 @@ class _ViewerTypeLayerState extends State<ViewerTypeLayer> {
   }
 
   /// The topmost text layer whose box contains [at], or null.
+  ///
+  /// Which layers are text comes off the read model (K-184), so a click costs
+  /// no bridge calls however deep the stack — it used to ask `getText()` of
+  /// every layer under the pointer. The one read the edit needs is asked of
+  /// the layer chosen, in [_begin].
   ({LayerBox box, LayerReference layer})? _textLayerAt(Offset at) {
+    final textIds = {
+      for (final entry in widget.uiState.model.heldLayers)
+        if (entry.info.kind == BridgeLayerKind.text) entry.layer.internallayerId,
+    };
     for (final box in widget.boxes) {
-      if (!box.contains(at)) continue;
-      try {
-        if (box.layer.getText() != null) return (box: box, layer: box.layer);
-      } catch (_) {
-        // A layer that went away between the read model and the click.
+      if (box.contains(at) && textIds.contains(box.id)) {
+        return (box: box, layer: box.layer);
       }
     }
     return null;
@@ -288,7 +286,11 @@ class _ViewerTypeLayerState extends State<ViewerTypeLayer> {
   /// Make a text layer where the pointer is, and start typing into it.
   void _create(Offset at) {
     final options = widget.uiState.tools;
-    final (cx, cy) = compPointOf(at, widget.fitted, widget.compSize);
+    // The composition's own placement — the same conversion the shape tools
+    // build a new layer's art with (K-237).
+    final (cx, cy) =
+        ShapeSpace.ofComp(fitted: widget.fitted, compSize: widget.compSize)
+            .ofScreen(at);
     try {
       // One op, so one undo step, and undoing it takes the layer away (K-230).
       // This used to be three — a layer saying "Text" in the middle of the

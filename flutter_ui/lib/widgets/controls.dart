@@ -14,7 +14,6 @@ import 'package:flutter/material.dart';
 import 'package:lumit_flutter/widgets/autofill.dart';
 import 'package:lumit_flutter/widgets/hover_intent.dart';
 
-/// The theme + workspace scope: an InheritedNotifier the whole tree reads.
 /// The devices whose drags mean "move this thing" — **the trackpad's
 /// two-finger scroll deliberately excluded**.
 ///
@@ -43,6 +42,18 @@ class ControlFocusNode extends FocusNode {
   ControlFocusNode({super.debugLabel});
 }
 
+/// Enter, numpad Enter and Space, once per press (never on key repeat) —
+/// what "press the focused control" means for every house control.
+const Map<ShortcutActivator, Intent> _activateShortcuts = {
+  SingleActivator(LogicalKeyboardKey.enter, includeRepeats: false):
+      ActivateIntent(),
+  SingleActivator(LogicalKeyboardKey.numpadEnter, includeRepeats: false):
+      ActivateIntent(),
+  SingleActivator(LogicalKeyboardKey.space, includeRepeats: false):
+      ActivateIntent(),
+};
+
+/// The theme + workspace scope: an InheritedWidget the whole tree reads.
 class ThemeScope extends InheritedWidget {
   final LumitTheme theme;
   final AnimationLevel animationLevel;
@@ -113,20 +124,6 @@ class _HouseButtonState extends State<HouseButton> {
     super.dispose();
   }
 
-  KeyEventResult _onKeyEvent(FocusNode node, KeyEvent event) {
-    if (event is! KeyDownEvent) return KeyEventResult.ignored;
-    if (event.logicalKey == LogicalKeyboardKey.enter ||
-        event.logicalKey == LogicalKeyboardKey.numpadEnter ||
-        event.logicalKey == LogicalKeyboardKey.space) {
-      final pressed = widget.onPressed;
-      if (pressed != null) {
-        pressed();
-        return KeyEventResult.handled;
-      }
-    }
-    return KeyEventResult.ignored;
-  }
-
   @override
   Widget build(BuildContext context) {
     final scope = ThemeScope.of(context);
@@ -150,47 +147,49 @@ class _HouseButtonState extends State<HouseButton> {
         (widget.small
             ? const EdgeInsets.symmetric(horizontal: 5, vertical: 2)
             : const EdgeInsets.symmetric(horizontal: 8, vertical: 3));
-    return Focus(
-      // Keyboard-reachable (docs/15 §9): Tab lands here in reading order,
-      // Enter/Space press it, and the accent edge is the focus ring (§6.5).
+    // Keyboard-reachable (docs/15 §9): Tab lands here in reading order,
+    // Enter/Space press it, and the accent edge is the focus ring (§6.5).
+    return FocusableActionDetector(
       focusNode: _focusNode,
-      canRequestFocus: enabled,
-      skipTraversal: !enabled,
+      enabled: enabled,
       autofocus: widget.autofocus,
-      onKeyEvent: _onKeyEvent,
-      onFocusChange: (has) => setState(() => _focused = has),
-      child: MouseRegion(
-        cursor: enabled ? SystemMouseCursors.click : MouseCursor.defer,
-        onEnter: (_) => setState(() => _hover = true),
-        onExit: (_) => setState(() {
-          _hover = false;
-          _down = false;
+      mouseCursor: enabled ? SystemMouseCursors.click : MouseCursor.defer,
+      shortcuts: _activateShortcuts,
+      actions: <Type, Action<Intent>>{
+        ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) {
+          widget.onPressed?.call();
+          return null;
         }),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTapDown: enabled ? (_) => setState(() => _down = true) : null,
-          onTapUp: enabled ? (_) => setState(() => _down = false) : null,
-          onTapCancel: enabled ? () => setState(() => _down = false) : null,
-          onTap: widget.onPressed,
-          child: AnimatedContainer(
-            duration: animationDuration(scope.animationLevel),
-            padding: pad,
-            decoration: BoxDecoration(
-              color: fill,
-              borderRadius: BorderRadius.circular(t.tokens.controlRadius),
-              // Always a border, transparent when there is nothing to show. A
-              // BoxDecoration's border insets its child, so appearing on hover
-              // grew the control by 2 px each way and nudged everything beside
-              // it — the whole row visibly shifting as the pointer crossed it.
-              border:
-                  Border.all(color: edge ?? const Color(0x00000000), width: 1),
-            ),
-            child: DefaultTextStyle(
-              style: enabled
-                  ? t.bodyPrimary
-                  : t.body.copyWith(color: t.textDisabled),
-              child: widget.child,
-            ),
+      },
+      onFocusChange: (has) => setState(() => _focused = has),
+      onShowHoverHighlight: (over) => setState(() {
+        _hover = over;
+        if (!over) _down = false;
+      }),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: enabled ? (_) => setState(() => _down = true) : null,
+        onTapUp: enabled ? (_) => setState(() => _down = false) : null,
+        onTapCancel: enabled ? () => setState(() => _down = false) : null,
+        onTap: widget.onPressed,
+        child: AnimatedContainer(
+          duration: animationDuration(scope.animationLevel),
+          padding: pad,
+          decoration: BoxDecoration(
+            color: fill,
+            borderRadius: BorderRadius.circular(t.tokens.controlRadius),
+            // Always a border, transparent when there is nothing to show. A
+            // BoxDecoration's border insets its child, so appearing on hover
+            // grew the control by 2 px each way and nudged everything beside
+            // it — the whole row visibly shifting as the pointer crossed it.
+            border:
+                Border.all(color: edge ?? const Color(0x00000000), width: 1),
+          ),
+          child: DefaultTextStyle(
+            style: enabled
+                ? t.bodyPrimary
+                : t.body.copyWith(color: t.textDisabled),
+            child: widget.child,
           ),
         ),
       ),
@@ -548,6 +547,24 @@ class _MenuHoverScope extends InheritedWidget {
   bool updateShouldNotify(_MenuHoverScope old) => false;
 }
 
+/// The closed face all three bare dropdowns share: the label and the caret.
+///
+/// Ellipsised rather than allowed to overflow: a dropdown sits in whatever
+/// width its caller has, and a label longer than that is a layout error the
+/// user sees as striped tape. `Flexible` keeps the button intrinsic-width when
+/// there is room, so nothing that fits changes shape.
+Widget _dropdownFace(LumitTheme t, String label) => Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Flexible(child: Text(label, overflow: TextOverflow.ellipsis)),
+        const SizedBox(width: 4),
+        CustomPaint(
+          size: const Size(9, 9),
+          painter: _CaretPainter(t.textSecondary),
+        ),
+      ],
+    );
+
 /// A dropdown drawn as a bare label + caret; the open list floats on the
 /// standard menu surface (`bare_dropdown` in the Rust settings window).
 class BareDropdown<T> extends StatelessWidget {
@@ -616,22 +633,7 @@ class BareDropdown<T> extends StatelessWidget {
         );
         if (picked != null) onChanged(picked);
       },
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Ellipsised rather than allowed to overflow: a dropdown sits in
-          // whatever width its caller has, and a label longer than that is a
-          // layout error the user sees as striped tape. `Flexible` keeps the
-          // button intrinsic-width when there is room, so nothing that fits
-          // changes shape.
-          Flexible(child: Text(label(value), overflow: TextOverflow.ellipsis)),
-          const SizedBox(width: 4),
-          CustomPaint(
-            size: const Size(9, 9),
-            painter: _CaretPainter(t.textSecondary),
-          ),
-        ],
-      ),
+      child: _dropdownFace(t, label(value)),
     );
   }
 }
@@ -694,17 +696,7 @@ class BareSearchDropdown extends StatelessWidget {
         );
         if (picked != null) onChanged(picked);
       },
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Flexible(child: Text(label, overflow: TextOverflow.ellipsis)),
-          const SizedBox(width: 4),
-          CustomPaint(
-            size: const Size(9, 9),
-            painter: _CaretPainter(t.textSecondary),
-          ),
-        ],
-      ),
+      child: _dropdownFace(t, label),
     );
   }
 }
@@ -896,17 +888,7 @@ class BareLazyDropdown<T> extends StatelessWidget {
         );
         if (picked != null) onChanged(picked.$1);
       },
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Flexible(child: Text(label, overflow: TextOverflow.ellipsis)),
-          const SizedBox(width: 4),
-          CustomPaint(
-            size: const Size(9, 9),
-            painter: _CaretPainter(t.textSecondary),
-          ),
-        ],
-      ),
+      child: _dropdownFace(t, label),
     );
   }
 }
@@ -1248,7 +1230,7 @@ class HouseTextField extends StatefulWidget {
   /// it cannot be swallowed by `EditableText`'s own `DismissIntent` handling.
   final VoidCallback? onCancelled;
   final TextStyle? style;
-  final AutofillGenerator? autofill;
+  final ExpressionAutofillGenerator? autofill;
 
   /// Grab focus on first build — for fields that appear in response to a
   /// gesture (an inline rename), where a second click to focus would be
@@ -1779,23 +1761,18 @@ class _HouseCheckboxState extends State<HouseCheckbox> {
     super.dispose();
   }
 
-  KeyEventResult _onKeyEvent(FocusNode node, KeyEvent event) {
-    if (event is! KeyDownEvent) return KeyEventResult.ignored;
-    if (event.logicalKey == LogicalKeyboardKey.enter ||
-        event.logicalKey == LogicalKeyboardKey.numpadEnter ||
-        event.logicalKey == LogicalKeyboardKey.space) {
-      widget.onChanged(!widget.value);
-      return KeyEventResult.handled;
-    }
-    return KeyEventResult.ignored;
-  }
-
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    return Focus(
+    return FocusableActionDetector(
       focusNode: _focusNode,
-      onKeyEvent: _onKeyEvent,
+      shortcuts: _activateShortcuts,
+      actions: <Type, Action<Intent>>{
+        ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) {
+          widget.onChanged(!widget.value);
+          return null;
+        }),
+      },
       onFocusChange: (has) => setState(() => _focused = has),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
@@ -1851,20 +1828,6 @@ class _HouseRadioState extends State<HouseRadio> {
     super.dispose();
   }
 
-  KeyEventResult _onKeyEvent(FocusNode node, KeyEvent event) {
-    if (event is! KeyDownEvent) return KeyEventResult.ignored;
-    if (event.logicalKey == LogicalKeyboardKey.enter ||
-        event.logicalKey == LogicalKeyboardKey.numpadEnter ||
-        event.logicalKey == LogicalKeyboardKey.space) {
-      final changed = widget.onChanged;
-      if (widget.enabled && changed != null) {
-        changed();
-        return KeyEventResult.handled;
-      }
-    }
-    return KeyEventResult.ignored;
-  }
-
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
@@ -1872,11 +1835,16 @@ class _HouseRadioState extends State<HouseRadio> {
         ? t.textMuted.withValues(alpha: 0.4)
         : (_focused || widget.selected ? t.accent : t.hairlineStrong);
 
-    return Focus(
+    return FocusableActionDetector(
       focusNode: _focusNode,
-      canRequestFocus: widget.enabled,
-      skipTraversal: !widget.enabled,
-      onKeyEvent: _onKeyEvent,
+      enabled: widget.enabled,
+      shortcuts: _activateShortcuts,
+      actions: <Type, Action<Intent>>{
+        ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) {
+          widget.onChanged?.call();
+          return null;
+        }),
+      },
       onFocusChange: (has) => setState(() => _focused = has),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
@@ -2214,81 +2182,83 @@ class _DragValueFieldState extends State<DragValueField>
         ),
       );
     }
-    return Focus(
+    return FocusableActionDetector(
       focusNode: _idleFocus,
-      onFocusChange: (has) => setState(() => _focused = has),
-      onKeyEvent: (node, event) {
-        if (event is KeyDownEvent &&
-            (event.logicalKey == LogicalKeyboardKey.enter ||
-                event.logicalKey == LogicalKeyboardKey.numpadEnter)) {
-          _beginEdit();
-          return KeyEventResult.handled;
-        }
-        return KeyEventResult.ignored;
+      // Enter only, no Space: this is a number box, and `Enter` opening the
+      // editor is what Tab-and-type needs (K-319).
+      shortcuts: const {
+        SingleActivator(LogicalKeyboardKey.enter, includeRepeats: false):
+            ActivateIntent(),
+        SingleActivator(LogicalKeyboardKey.numpadEnter, includeRepeats: false):
+            ActivateIntent(),
       },
-      child: MouseRegion(
-        cursor: SystemMouseCursors.resizeLeftRight,
-        onEnter: (_) => setState(() => _hover = true),
-        onExit: (_) => setState(() => _hover = false),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: _beginEdit,
-          onSecondaryTapDown: (d) => _contextMenu(context, d.globalPosition),
-          onHorizontalDragStart: (_) {
+      actions: <Type, Action<Intent>>{
+        ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) {
+          _beginEdit();
+          return null;
+        }),
+      },
+      onFocusChange: (has) => setState(() => _focused = has),
+      mouseCursor: SystemMouseCursors.resizeLeftRight,
+      onShowHoverHighlight: (over) => setState(() => _hover = over),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: _beginEdit,
+        onSecondaryTapDown: (d) => _contextMenu(context, d.globalPosition),
+        onHorizontalDragStart: (_) {
+          _dragAccum = 0;
+          _lastDragValue = null;
+          widget.onChangeStart?.call();
+        },
+        onHorizontalDragUpdate: (d) {
+          final factor = scrubFactor();
+          _dragAccum += d.delta.dx * widget.speed * factor;
+          if (_dragAccum.abs() >= widget.speed * factor) {
+            // The drag runs from its own last tick, not from `widget.value`:
+            // pointer events arrive faster than rebuilds, and a base read
+            // from the stale prop dropped every chunk but the frame's last —
+            // a fast drag lost most of its travel.
+            final next = ((_lastDragValue ?? widget.value) + _dragAccum)
+                .clamp(widget.min, widget.max);
             _dragAccum = 0;
-            _lastDragValue = null;
-            widget.onChangeStart?.call();
-          },
-          onHorizontalDragUpdate: (d) {
-            final factor = scrubFactor();
-            _dragAccum += d.delta.dx * widget.speed * factor;
-            if (_dragAccum.abs() >= widget.speed * factor) {
-              // The drag runs from its own last tick, not from `widget.value`:
-              // pointer events arrive faster than rebuilds, and a base read
-              // from the stale prop dropped every chunk but the frame's last —
-              // a fast drag lost most of its travel.
-              final next = ((_lastDragValue ?? widget.value) + _dragAccum)
-                  .clamp(widget.min, widget.max);
-              _dragAccum = 0;
-              _lastDragValue = next;
-              (widget.onChangeLive ?? widget.onChanged)(next);
-            }
-          },
-          onHorizontalDragEnd: (_) {
-            final v = _lastDragValue;
-            _lastDragValue = null;
-            if (v != null) {
-              (widget.onChangeEnd ?? widget.onChanged)(v);
-            } else {
-              // Never crossed one speed-increment: nothing was ticked, so the
-              // press was a click that wobbled a few pixels, not a scrub. It
-              // cancels as a drag — and then does what the click meant, which
-              // is open the editor (K-319). Before this, a click that moved
-              // at all did nothing, and value boxes felt like they swallowed
-              // clicks.
-              widget.onDragCancel?.call();
-              _beginEdit();
-            }
-          },
-          onHorizontalDragCancel: () {
-            _lastDragValue = null;
+            _lastDragValue = next;
+            (widget.onChangeLive ?? widget.onChanged)(next);
+          }
+        },
+        onHorizontalDragEnd: (_) {
+          final v = _lastDragValue;
+          _lastDragValue = null;
+          if (v != null) {
+            (widget.onChangeEnd ?? widget.onChanged)(v);
+          } else {
+            // Never crossed one speed-increment: nothing was ticked, so the
+            // press was a click that wobbled a few pixels, not a scrub. It
+            // cancels as a drag — and then does what the click meant, which
+            // is open the editor (K-319). Before this, a click that moved
+            // at all did nothing, and value boxes felt like they swallowed
+            // clicks.
             widget.onDragCancel?.call();
-          },
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-            decoration: BoxDecoration(
-              color: _hover ? t.surface4 : (widget.fill ?? t.surface3),
-              borderRadius: BorderRadius.circular(t.tokens.controlRadius),
-              // Reserved even when not hovered — see HouseButton above. The
-              // accent edge while keyboard-focused is the focus ring (§6.5).
-              border: Border.all(
-                  color: _focused
-                      ? t.accent
-                      : (_hover ? t.hairlineStrong : const Color(0x00000000)),
-                  width: 1),
-            ),
-            child: Text(_format(widget.value), style: t.bodyPrimary),
+            _beginEdit();
+          }
+        },
+        onHorizontalDragCancel: () {
+          _lastDragValue = null;
+          widget.onDragCancel?.call();
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          decoration: BoxDecoration(
+            color: _hover ? t.surface4 : (widget.fill ?? t.surface3),
+            borderRadius: BorderRadius.circular(t.tokens.controlRadius),
+            // Reserved even when not hovered — see HouseButton above. The
+            // accent edge while keyboard-focused is the focus ring (§6.5).
+            border: Border.all(
+                color: _focused
+                    ? t.accent
+                    : (_hover ? t.hairlineStrong : const Color(0x00000000)),
+                width: 1),
           ),
+          child: Text(_format(widget.value), style: t.bodyPrimary),
         ),
       ),
     );
@@ -2549,16 +2519,8 @@ class _HoverTipState extends State<_HoverTip> {
       );
 }
 
-class AutofillSuggestion<T> {
-  T value;
-  String word;
-
-  AutofillSuggestion(this.value, this.word);
-}
-
-/// A single-line text box in the house style. The dialogs each grew their own
-/// copy of this; it belongs here.
-
+/// A right-click menu holder: wraps [child] and floats [itemBuilder]'s rows
+/// at the pointer on a secondary tap.
 class HouseContextMenu extends StatelessWidget {
   const HouseContextMenu({this.child, this.itemBuilder, super.key});
   final Widget? child;
@@ -2566,12 +2528,11 @@ class HouseContextMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MouseRegion(
-        child: GestureDetector(
+    return GestureDetector(
       behavior: HitTestBehavior.translucent,
       onSecondaryTapDown: (d) => _contextMenu(context, d.globalPosition),
       child: child,
-    ));
+    );
   }
 
   void _contextMenu(BuildContext context, Offset globalPos) {
@@ -2593,5 +2554,28 @@ class HouseContextMenu extends StatelessWidget {
   }
 }
 
-/// A thin themed slider. `commitOnRelease` reproduces the UI-scale rule
-/// (K-117): the dragged value shows live but `onChanged` fires on release.
+/// The house progress bar: a fraction of accent fill on a `surface3` track.
+/// One shape for the status line's export and cache meters and the update
+/// download, which had each hand-rolled their own.
+class HouseProgressBar extends StatelessWidget {
+  final double fraction;
+  final double height;
+  const HouseProgressBar({super.key, required this.fraction, this.height = 4});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    final radius = BorderRadius.circular(height / 2);
+    return Container(
+      height: height,
+      decoration: BoxDecoration(color: t.surface3, borderRadius: radius),
+      child: FractionallySizedBox(
+        alignment: Alignment.centerLeft,
+        widthFactor: fraction.clamp(0.0, 1.0),
+        child: Container(
+          decoration: BoxDecoration(color: t.accent, borderRadius: radius),
+        ),
+      ),
+    );
+  }
+}

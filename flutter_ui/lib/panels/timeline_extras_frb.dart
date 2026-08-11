@@ -10,6 +10,7 @@
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
@@ -110,6 +111,119 @@ class CompTabsFrb extends StatelessWidget {
   }
 }
 
+/// Spot a double-click from two timestamps, without a recogniser.
+///
+/// A double-tap recogniser holds every single tap back for the whole
+/// double-tap window while the arena waits to see whether a second one is
+/// coming — which delays the selection a single click makes, and beside the
+/// razor's `onTapUp` stops it cutting at all. Two timestamps owe the arena
+/// nothing. One instance per surface that wants the gesture.
+class DoubleTap {
+  DateTime? _last;
+
+  /// Record a tap; true when it is the second inside [kDoubleTapTimeout].
+  bool tap() {
+    final now = DateTime.now();
+    final last = _last;
+    _last = now;
+    if (last != null && now.difference(last) < kDoubleTapTimeout) {
+      _last = null;
+      return true;
+    }
+    return false;
+  }
+}
+
+/// One floating menu at [position] — the `showLumitPopup(FloatSurface(
+/// Column(MenuRow…)))` sandwich every context menu here was hand-rolling.
+///
+/// [rows] builds the menu rows around `close`, which resolves the popup with
+/// what was picked (or null when it is dismissed). With no [width] the menu
+/// sizes itself to its widest row, which is what the marker menus always did.
+Future<T?> showMenuAt<T>({
+  required BuildContext context,
+  required Offset position,
+  double? width,
+  required List<Widget> Function(void Function(T?) close) rows,
+}) =>
+    showLumitPopup<T>(
+      context: context,
+      position: position,
+      builder: (close) {
+        final column = Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: rows(close),
+        );
+        return FloatSurface(
+          width: width,
+          child: width == null ? IntrinsicWidth(child: column) : column,
+        );
+      },
+    );
+
+/// The right-click menu on a marker flag: edit what it says, take it away, or
+/// — for a layer's own markers — clear the lot. Shared by the ruler's comp
+/// markers and the bars' layer markers (K-254), which had grown one copy each.
+///
+/// [markers] is read when a command is picked, not when the menu opens, so an
+/// edit made while the label dialog was up is not silently overwritten.
+/// [write] commits a replacement list wherever the list lives; [keyPrefix]
+/// keeps each surface's long-standing widget keys.
+Future<void> showMarkerMenuFrb({
+  required BuildContext context,
+  required Offset position,
+  required BridgeMarker marker,
+  required List<BridgeMarker> Function() markers,
+  required void Function(List<BridgeMarker>) write,
+  bool deleteAll = false,
+  String keyPrefix = 'marker-menu',
+}) async {
+  final picked = await showMenuAt<String>(
+    context: context,
+    position: position,
+    rows: (close) => [
+      MenuRow(
+        key: ValueKey<String>('$keyPrefix-edit'),
+        onPressed: () => close('edit'),
+        child: Text(l10n.editMarkerEllipsis),
+      ),
+      MenuRow(
+        key: ValueKey<String>('$keyPrefix-delete'),
+        onPressed: () => close('delete'),
+        child: Text(l10n.deleteMarker),
+      ),
+      if (deleteAll)
+        MenuRow(
+          key: ValueKey<String>('$keyPrefix-delete-all'),
+          onPressed: () => close('delete-all'),
+          child: Text(l10n.deleteAllMarkers),
+        ),
+    ],
+  );
+  if (picked == null || !context.mounted) return;
+  switch (picked) {
+    case 'edit':
+      final label = await showMarkerLabelDialogFrb(
+          context: context, initial: marker.label);
+      if (label == null) return;
+      write([
+        for (final m in markers())
+          if (m.id == marker.id)
+            BridgeMarker(id: m.id, time: m.time, label: label)
+          else
+            m,
+      ]);
+    case 'delete':
+      write([
+        for (final m in markers())
+          if (m.id != marker.id) m,
+      ]);
+    case 'delete-all':
+      write(const []);
+  }
+}
+
 /// A comp tab's context menu. Only one entry so far — the same Composition
 /// settings dialog the Project panel's menu opens, reached from the comp the
 /// user is actually working in rather than by hunting for its project row.
@@ -119,17 +233,17 @@ Future<void> showCompTabMenuFrb({
   required Offset position,
   required VoidCallback onChanged,
 }) async {
-  final open = await showLumitPopup<bool>(
+  final open = await showMenuAt<bool>(
     context: context,
     position: position,
-    builder: (close) => FloatSurface(
-      width: 210,
-      child: MenuRow(
+    width: 210,
+    rows: (close) => [
+      MenuRow(
         key: const ValueKey('tl-tab-menu-settings'),
         onPressed: () => close(true),
         child: Text(l10n.compositionSettingsEllipsis),
       ),
-    ),
+    ],
   );
   if (open != true || !context.mounted) return;
   if (await showCompSettingsFrb(context: context, comp: comp)) onChanged();
@@ -916,52 +1030,13 @@ class _TimelineRulerState extends State<TimelineRuler> {
 
   /// The right-click menu on a flag: change what it says, or take it away.
   void _markerMenu(BuildContext context, BridgeMarker marker, Offset at) {
-    showLumitPopup<void>(
+    showMarkerMenuFrb(
       context: context,
       position: at,
-      builder: (close) => FloatSurface(
-        child: IntrinsicWidth(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              MenuRow(
-                key: const ValueKey('marker-menu-edit'),
-                onPressed: () {
-                  close(null);
-                  _editMarker(context, marker);
-                },
-                child: Text(l10n.editMarkerEllipsis),
-              ),
-              MenuRow(
-                key: const ValueKey('marker-menu-delete'),
-                onPressed: () {
-                  close(null);
-                  _writeMarkers([
-                    for (final m in markersOf(widget.comp))
-                      if (m.id != marker.id) m,
-                  ]);
-                },
-                child: Text(l10n.deleteMarker),
-              ),
-            ],
-          ),
-        ),
-      ),
+      marker: marker,
+      markers: () => markersOf(widget.comp),
+      write: _writeMarkers,
     );
-  }
-
-  Future<void> _editMarker(BuildContext context, BridgeMarker marker) async {
-    final label =
-        await showMarkerLabelDialogFrb(context: context, initial: marker.label);
-    if (label == null || !mounted) return;
-    _writeMarkers([
-      for (final m in markersOf(widget.comp))
-        if (m.id == marker.id)
-          BridgeMarker(id: m.id, time: m.time, label: label)
-        else
-          m,
-    ]);
   }
 
   /// The work area as it should draw right now: the panel's, with the edge

@@ -75,7 +75,7 @@ class FlowRowsFrb extends StatelessWidget {
           t,
           'Flow resolution',
           'flow-resolution',
-          const ['Native', 'Half', 'Quarter'],
+          flowResolutionOptions,
           p.resolution,
           (v) => write(flowParamsWith(p, resolution: v)),
         ),
@@ -85,7 +85,7 @@ class FlowRowsFrb extends StatelessWidget {
           t,
           'Vector detail',
           'flow-detail',
-          const ['Low', 'Medium', 'High', 'Ultra'],
+          flowDetailOptions,
           p.detail,
           (v) => write(flowParamsWith(p, detail: v)),
         ),
@@ -110,7 +110,7 @@ class FlowRowsFrb extends StatelessWidget {
           t,
           'Occlusion',
           'flow-occlusion',
-          const ['Visible only', 'Blend'],
+          flowOcclusionOptions,
           p.occlusion,
           (v) => write(flowParamsWith(p, occlusion: v)),
         ),
@@ -119,7 +119,7 @@ class FlowRowsFrb extends StatelessWidget {
           t,
           'Fallback',
           'flow-fallback',
-          const ['Blend', 'Nearest'],
+          flowFallbackOptions,
           p.fallback,
           (v) => write(flowParamsWith(p, fallback: v)),
         ),
@@ -147,10 +147,7 @@ class FlowRowsFrb extends StatelessWidget {
     );
   }
 
-  /// A labelled dropdown over a small set of codes. The label list is in code
-  /// order, so its index *is* the stored value — the same order the engine's
-  /// `OPTIONS` constants declare, which is what keeps a stored index and its
-  /// name from drifting apart.
+  /// A labelled [FlowChoice], in this section's own row shape.
   Widget _choice(
     BuildContext context,
     LumitTheme t,
@@ -166,11 +163,10 @@ class FlowRowsFrb extends StatelessWidget {
         label,
         SizedBox(
           width: _cellWidth + 40,
-          child: BareDropdown<int>(
-            key: ValueKey(keyName),
-            value: value < options.length ? value : 0,
-            options: List.generate(options.length, (i) => i),
-            label: (i) => options[i],
+          child: FlowChoice(
+            keyName: keyName,
+            options: options,
+            value: value,
             onChanged: onChanged,
           ),
         ),
@@ -232,40 +228,11 @@ class FlowRowsFrb extends StatelessWidget {
         ),
         name:
             Text('Input rate', style: t.body, overflow: TextOverflow.ellipsis),
-        control: Row(
-          children: [
-            SizedBox(
-              width: _cellWidth,
-              child: DragValueField(
-                key: const ValueKey('flow-input-rate'),
-                value: shown,
-                min: 0,
-                max: 240,
-                decimals: 2,
-                // 0 is Auto rather than "zero frames per second", which is not
-                // a thing — so the field says so instead of showing a number
-                // that would read as a mistake.
-                suffix: shown < 0.5 ? '' : ' fps',
-                onChanged: (v) => writeRate(v.toDouble()),
-              ),
-            ),
-            const SizedBox(width: 6),
-            SizedBox(
-              width: 92,
-              child: BareDropdown<double>(
-                key: const ValueKey('flow-input-rate-preset'),
-                value: flowPresetLabel(shown) == null ? -1 : shown,
-                options: [
-                  if (flowPresetLabel(shown) == null) -1,
-                  ...flowRatePresets.map((p) => p.$1),
-                ],
-                label: (v) => flowPresetLabel(v) ?? 'Custom',
-                onChanged: (v) {
-                  if (v >= 0) writeRate(v);
-                },
-              ),
-            ),
-          ],
+        control: FlowRateControl(
+          shown: shown,
+          fieldWidth: _cellWidth,
+          presetWidth: 92,
+          onRate: writeRate,
         ),
       ),
     );
@@ -288,6 +255,104 @@ class FlowRowsFrb extends StatelessWidget {
           control: control,
         ),
       );
+}
+
+/// The choice controls' labels, in code order, so an option's index *is* the
+/// stored value — the same order the engine's `OPTIONS` constants declare,
+/// which is what keeps a stored index and its name from drifting apart.
+/// Shared with the Timeline fold-out so the two surfaces cannot disagree.
+const List<String> flowResolutionOptions = ['Native', 'Half', 'Quarter'];
+const List<String> flowDetailOptions = ['Low', 'Medium', 'High', 'Ultra'];
+const List<String> flowOcclusionOptions = ['Visible only', 'Blend'];
+const List<String> flowFallbackOptions = ['Blend', 'Nearest'];
+
+/// A dropdown over one of the Flow group's option lists — the control both
+/// surfaces (this section and the Timeline fold-out) build their choices from.
+class FlowChoice extends StatelessWidget {
+  final String keyName;
+  final List<String> options;
+  final int value;
+  final ValueChanged<int> onChanged;
+
+  const FlowChoice({
+    super.key,
+    required this.keyName,
+    required this.options,
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) => BareDropdown<int>(
+        key: ValueKey(keyName),
+        value: value < options.length ? value : 0,
+        options: List.generate(options.length, (i) => i),
+        label: (i) => options[i],
+        onChanged: onChanged,
+      );
+}
+
+/// The Input rate's two controls — the typed rate and the cadence presets —
+/// shared by this section and the Timeline fold-out's row. Only the widths
+/// differ between the two homes, so they come in as parameters.
+class FlowRateControl extends StatelessWidget {
+  final double shown;
+  final double fieldWidth;
+
+  /// A fixed width for the preset dropdown, or null to give it the row's
+  /// remaining room.
+  final double? presetWidth;
+  final double gap;
+  final ValueChanged<double> onRate;
+
+  const FlowRateControl({
+    super.key,
+    required this.shown,
+    required this.fieldWidth,
+    this.presetWidth,
+    this.gap = 6,
+    required this.onRate,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final preset = BareDropdown<double>(
+      key: const ValueKey('flow-input-rate-preset'),
+      value: flowPresetLabel(shown) == null ? -1 : shown,
+      options: [
+        if (flowPresetLabel(shown) == null) -1,
+        ...flowRatePresets.map((p) => p.$1),
+      ],
+      label: (v) => flowPresetLabel(v) ?? 'Custom',
+      onChanged: (v) {
+        if (v >= 0) onRate(v);
+      },
+    );
+    return Row(
+      children: [
+        SizedBox(
+          width: fieldWidth,
+          child: DragValueField(
+            key: const ValueKey('flow-input-rate'),
+            value: shown,
+            min: 0,
+            max: 240,
+            decimals: 2,
+            // 0 is Auto rather than "zero frames per second", which is not
+            // a thing — so the field says so instead of showing a number
+            // that would read as a mistake.
+            suffix: shown < 0.5 ? '' : ' fps',
+            onChanged: (v) => onRate(v.toDouble()),
+          ),
+        ),
+        SizedBox(width: gap),
+        if (presetWidth case final width?)
+          SizedBox(width: width, child: preset)
+        else
+          Expanded(child: preset),
+      ],
+    );
+  }
 }
 
 /// Input-rate presets, keyed by the fps they write.

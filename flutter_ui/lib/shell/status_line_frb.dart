@@ -23,6 +23,12 @@ import 'package:lumit_flutter/panels/timeline_timings.dart';
 
 import 'cache_confirm_frb.dart';
 
+/// Bumped by whatever starts an export — the export dialogue, the console's
+/// snapshot — so the strip knows to start polling. Without a start signal the
+/// only way to notice an export is to ask the engine on a timer all session,
+/// which cost the idle strip ~12 bridge calls a second for the answer "no".
+final ValueNotifier<int> statusLineExportStarted = ValueNotifier<int>(0);
+
 class StatusLineFrb extends StatefulWidget {
   /// The poll seam, injected by tests so no engine has to run an export.
   final BridgeExportState Function()? poll;
@@ -37,24 +43,71 @@ class _StatusLineFrbState extends State<StatusLineFrb> {
   BridgeExportState _export = const BridgeExportState.idle();
   Timer? _timer;
 
+  /// One pending repaint for a cache bump that arrived while the tick was
+  /// off, so a burst of banked frames coalesces into a single redraw.
+  Timer? _bump;
+
+  late final LumitUiState _ui;
+
   @override
   void initState() {
     super.initState();
-    // Half a second is fast enough to feel live on a bar this small. Each tick
-    // redraws the whole strip: the export poll, the dirty flag and the cache
-    // numbers are all sync reads of a few held values, and the strip is 20
-    // pixels of mostly text.
-    _timer = Timer.periodic(const Duration(milliseconds: 500), (_) => _tick());
+    _ui = context.read<LumitUiState>();
+    // One poll up front: a strip mounted over a running export (a hot reload
+    // mid-export, say) has to pick it up without waiting for a start signal.
+    _export = (widget.poll ?? exportPoll)();
+    statusLineExportStarted.addListener(_tick);
+    // Playback fills the caches, so the meter ticks while it runs.
+    _ui.playing.addListener(_tick);
+    // A frame banked or delivered outside playback — the idle fill, a scrub —
+    // moves the meter too, coalesced to one repaint per half second.
+    _ui.cacheChanged.addListener(_bumped);
+    _ui.frameArrived.addListener(_bumped);
+    _syncTimer();
   }
 
+  /// Half a second is fast enough to feel live on a bar this small. Each tick
+  /// redraws the whole strip: the export poll, the dirty flag and the cache
+  /// numbers are all sync reads of a few held values, and the strip is 20
+  /// pixels of mostly text.
   void _tick() {
     _export = (widget.poll ?? exportPoll)();
+    _syncTimer();
     if (mounted) setState(() {});
+  }
+
+  /// The tick runs only while something on the strip is actually moving: an
+  /// export in flight, or playback filling the caches. Everything else that
+  /// changes the strip announces itself — document edits notify the shell
+  /// state, notices are a ValueListenable, banked frames bump
+  /// [LumitUiState.cacheChanged] — so an idle strip costs no bridge calls.
+  void _syncTimer() {
+    if (_export is BridgeExportState_Running || _ui.playing.value) {
+      _timer ??=
+          Timer.periodic(const Duration(milliseconds: 500), (_) => _tick());
+    } else {
+      _timer?.cancel();
+      _timer = null;
+    }
+  }
+
+  /// A cache bump while the tick is off: one coalesced repaint.
+  void _bumped() {
+    if (_timer != null || _bump != null || !mounted) return;
+    _bump = Timer(const Duration(milliseconds: 500), () {
+      _bump = null;
+      if (mounted) setState(() {});
+    });
   }
 
   @override
   void dispose() {
+    statusLineExportStarted.removeListener(_tick);
+    _ui.playing.removeListener(_tick);
+    _ui.cacheChanged.removeListener(_bumped);
+    _ui.frameArrived.removeListener(_bumped);
     _timer?.cancel();
+    _bump?.cancel();
     super.dispose();
   }
 
@@ -182,15 +235,11 @@ class _StatusLineFrbState extends State<StatusLineFrb> {
             const SizedBox(width: 8),
             SizedBox(
               width: 120,
-              child: Stack(children: [
-                Container(height: 4, color: t.surface3),
-                FractionallySizedBox(
-                  widthFactor: total == BigInt.zero
-                      ? 0.0
-                      : (frame.toDouble() / total.toDouble()).clamp(0.0, 1.0),
-                  child: Container(height: 4, color: t.accent),
-                ),
-              ]),
+              child: HouseProgressBar(
+                fraction: total == BigInt.zero
+                    ? 0.0
+                    : frame.toDouble() / total.toDouble(),
+              ),
             ),
             const SizedBox(width: 8),
             HouseButton(
@@ -334,16 +383,7 @@ class _TierMeter extends StatelessWidget {
           children: [
             Text(label, style: t.small.copyWith(color: t.textMuted)),
             const SizedBox(width: 4),
-            SizedBox(
-              width: 32,
-              child: Stack(children: [
-                Container(height: 4, color: t.surface3),
-                FractionallySizedBox(
-                  widthFactor: fraction,
-                  child: Container(height: 4, color: t.accent),
-                ),
-              ]),
-            ),
+            SizedBox(width: 32, child: HouseProgressBar(fraction: fraction)),
             const SizedBox(width: 4),
             // Used only: the budget is in the tooltip and in Settings, and the
             // status line is one line shared with the notices and export.

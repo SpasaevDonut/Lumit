@@ -25,7 +25,6 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
-import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
@@ -226,7 +225,7 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
     if (!(to > from)) return;
     // Clip-local placed seconds start at the clip's own place_start, which is
     // the clock `clipAudioPeaks` buckets in.
-    final localStart = clip.placeStart.num / clip.placeStart.den.toDouble();
+    final localStart = rationalSeconds(clip.placeStart);
     final request = WaveformRequest.forView(
       startSeconds: localStart + (from - left) * secondsPerPixel,
       endSeconds: localStart + (to - left) * secondsPerPixel,
@@ -253,23 +252,11 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
     });
   }
 
-  /// Where the envelope and the clip strip were last clicked, for spotting a
-  /// double-click without putting a recogniser in the way of the single click
-  /// that selects — the same trap the bar and the graph pane both hit.
-  DateTime? _lastEnvelopeTap;
-  DateTime? _lastStripTap;
-
-  /// Whether this click is the second of a double, on the clip strip.
-  bool _doubleOnStrip() {
-    final now = DateTime.now();
-    final last = _lastStripTap;
-    _lastStripTap = now;
-    if (last != null && now.difference(last) < kDoubleTapTimeout) {
-      _lastStripTap = null;
-      return true;
-    }
-    return false;
-  }
+  /// Double-clicks on the envelope and the clip strip, spotted without a
+  /// recogniser in the way of the single click that selects — the same trap
+  /// the bar and the graph pane both hit ([DoubleTap]).
+  final DoubleTap _envelopeTaps = DoubleTap();
+  final DoubleTap _stripTaps = DoubleTap();
 
   List<BridgeClip> get _clips => widget.entry.info.clips;
 
@@ -309,7 +296,7 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
               widget.onSelect?.call();
               // Double-clicking the region shuts it again, the same gesture
               // that opened it.
-              if (_doubleOnStrip()) widget.onClose?.call();
+              if (_stripTaps.tap()) widget.onClose?.call();
             },
             child: Stack(
               children: [
@@ -350,12 +337,7 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
             fpsDen: widget.fpsDen,
             onChanged: widget.onChanged,
             onPreview: widget.onPreview,
-            onTapped: () {
-              final now = DateTime.now();
-              final last = _lastEnvelopeTap;
-              _lastEnvelopeTap = now;
-              return last != null && now.difference(last) < kDoubleTapTimeout;
-            },
+            onTapped: _envelopeTaps.tap,
           ),
         ),
         // The divider, at the very bottom of the view: drag it to give the
@@ -389,7 +371,7 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
     // rides along; dragging the *start* edge moves the box over content that
     // stays put, so the origin travels with it and the wave holds still until
     // the trim commits and the peaks are asked for again.
-    final originSeconds = clip.placeStart.num / clip.placeStart.den.toDouble() +
+    final originSeconds = rationalSeconds(clip.placeStart) +
         (moving && drag.grab == _Grab.start ? shift / widget.fps : 0);
 
     return Positioned(
@@ -502,32 +484,23 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
   /// operations live: it is the one gesture that is unambiguously *about this
   /// clip* and cannot be confused with cutting, moving or trimming it.
   Future<void> _clipMenu(BridgeClip clip, Offset at) async {
-    final picked = await showLumitPopup<String>(
+    final picked = await showMenuAt<String>(
       context: context,
       position: at,
-      builder: (close) => FloatSurface(
-        width: 190,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            MenuRow(
-                onPressed: () => close('copy-clip'),
-                child: Text(l10n.clipCopyShape)),
-            MenuRow(
-                onPressed: () => close('copy-row'),
-                child: Text(l10n.clipCopyRowShape)),
-            MenuRow(
-                onPressed: () => close('paste'),
-                child: Text(l10n.clipPasteShape)),
-            MenuRow(
-                onPressed: () => close('reset'),
-                child: Text(l10n.clipResetSpeed)),
-            MenuRow(
-                onPressed: () => close('delete'), child: Text(l10n.clipDelete)),
-          ],
-        ),
-      ),
+      width: 190,
+      rows: (close) => [
+        MenuRow(
+            onPressed: () => close('copy-clip'),
+            child: Text(l10n.clipCopyShape)),
+        MenuRow(
+            onPressed: () => close('copy-row'),
+            child: Text(l10n.clipCopyRowShape)),
+        MenuRow(
+            onPressed: () => close('paste'), child: Text(l10n.clipPasteShape)),
+        MenuRow(
+            onPressed: () => close('reset'), child: Text(l10n.clipResetSpeed)),
+        MenuRow(onPressed: () => close('delete'), child: Text(l10n.clipDelete)),
+      ],
     );
     if (!mounted || picked == null) return;
     switch (picked) {
