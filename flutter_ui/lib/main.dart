@@ -28,6 +28,7 @@ import 'package:lumit_flutter/shell/fx_console_frb.dart'
 import 'package:lumit_flutter/shell/menu_bar_frb.dart';
 import 'package:lumit_flutter/shell/project_settings_frb.dart';
 import 'package:lumit_flutter/shell/settings_window_frb.dart';
+import 'package:lumit_flutter/shell/splash.dart';
 import 'package:lumit_flutter/shell/status_line_frb.dart';
 import 'package:lumit_flutter/shell/tool_bar_frb.dart';
 import 'package:lumit_flutter/src/rust/api/cache.dart';
@@ -36,6 +37,7 @@ import 'package:lumit_flutter/src/rust/api/footage.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/project.dart';
 import 'package:lumit_flutter/src/rust/api/project_item.dart';
+import 'package:lumit_flutter/src/rust/api/shell.dart' show bootLog;
 import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:lumit_flutter/src/rust/frb_generated.dart';
 import 'package:lumit_flutter/state/comp_model.dart';
@@ -1758,7 +1760,7 @@ class LumitAppNew extends StatelessWidget {
                   child: UiScaleView(
                     scale: uiState.workspace.interface.uiScale,
                     child: Overlay(initialEntries: [
-                      OverlayEntry(builder: (context) => const LumitAppView())
+                      OverlayEntry(builder: (context) => const BootGate())
                     ]),
                   ),
                 ),
@@ -1769,6 +1771,58 @@ class LumitAppNew extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The boot splash, and the shell behind it once boot is over (K-008).
+///
+/// **The splash is the window while it is up**, not a card floating over a
+/// half-built application: the shell is not put in the tree until the splash
+/// has finished, so nothing of the application shows through, no dialogue —
+/// the first-run question above all — can appear underneath it, and no panel
+/// starts asking the engine for pictures nobody can see yet.
+///
+/// The lines it streams are the engine's own boot log: the library version, the
+/// ABI, and what this build was compiled with. That is the only thing the
+/// engine can say about starting up — there is no notice stream to subscribe
+/// to, only `boot_log` (docs/TODO.md) — so it is what the splash shows, and a
+/// build with no bridge at all falls back to the canned list in splash.dart.
+class BootGate extends StatefulWidget {
+  /// Whether to show the splash at all. False in the tests that drive the
+  /// whole shell, which have no boot to wait for and would otherwise spend a
+  /// second and a third of simulated time watching one.
+  final bool splash;
+
+  const BootGate({super.key, this.splash = true});
+
+  @override
+  State<BootGate> createState() => _BootGateState();
+}
+
+class _BootGateState extends State<BootGate> {
+  late bool _booting = widget.splash;
+
+  /// The engine's boot log, or empty where there is no engine to ask — a
+  /// placeholder build, or a widget test with no library loaded. Read once:
+  /// it is a bridge call, and it answers the same thing every time.
+  late final List<String> _lines = _readBootLog();
+
+  static List<String> _readBootLog() {
+    try {
+      return bootLog();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => _booting
+      ? SplashOverlay(
+          lines: _lines,
+          onDone: () {
+            if (mounted) setState(() => _booting = false);
+          },
+        )
+      : const LumitAppView();
 }
 
 class LumitAppView extends StatefulWidget {

@@ -3419,6 +3419,25 @@ crates. Dart displays values and forwards calls; when something has to be
 | `docs/17-BRIDGE-CONTRACT.md` | The normative front/back boundary. Read it before touching the seam |
 | `docs/archive/flutter-port/` | Frozen notes from the port itself |
 
+### The first second: the boot splash
+
+Lumit opens on a small centred card that lists what came up, then gives way to
+the application. `BootGate` in `main.dart` is the switch, and the rule it keeps
+is that **the splash is the window while it is up** — the shell is not put in
+the tree behind it at all. That is not fussiness about appearances: if the shell
+were built underneath, the first-run question would open on top of a screen you
+cannot click through, and every panel would start asking the engine for pictures
+nobody can see yet.
+
+The lines it streams are not invented. They are the engine's own boot log — the
+library version, the ABI it speaks, what this build was compiled with — read
+once through `bootLog()`. That is genuinely everything the engine can say about
+starting up: there is no stream of boot events to subscribe to, so the splash
+cannot report a module that took its time or came up degraded. Noted in
+`docs/TODO.md` as the thing that would need building first. A build with no
+engine behind it at all falls back to a canned list, so the placeholder still
+opens on something honest rather than a blank rectangle.
+
 ### The bridge
 
 `crates/lumit-bridge` builds to one shared library the app loads at startup. It

@@ -231,9 +231,11 @@ selection only), and a place to keep themes other than the workspace file, so an
 imported theme travels with the user rather than the machine's settings.
 
 **Shell and onboarding:**
-- **The boot splash is not mounted.** `flutter_ui/lib/shell/splash.dart` exists
-    and only its test imports it. Engine-side events cannot post a notice either:
-    there is no notice stream, only `boot_log`.
+- **The boot splash says only what `boot_log` says.** It is mounted now
+    (`BootGate` in main.dart) and streams the engine's own boot log, which is
+    all the engine can tell it: there is no notice stream to subscribe to, so a
+    module that took a long time coming up, or came up degraded, cannot say so
+    on the splash. Wants an engine-side boot event stream before it can.
 - **Pop-out panel windows are removed** (K-182). Rebuild from git history
     (`flutter-frontend-alternative`, pre-K-182) when pop-out is wanted, and land
     it wired end to end.
