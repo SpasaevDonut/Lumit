@@ -23,6 +23,7 @@ import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/state/dock.dart';
 import 'package:lumit_flutter/shell/menu_bar_frb.dart';
 import 'package:lumit_flutter/src/rust/api/project_item.dart';
+import 'package:lumit_flutter/state/viewer_view.dart';
 import 'package:lumit_flutter/theme/theme.dart';
 import 'package:provider/provider.dart';
 
@@ -642,6 +643,47 @@ void main() {
         expect(find.byKey(ValueKey<String>('menu-$title')), findsOneWidget,
             reason: '$title is on the bar');
       }
+    });
+
+    /// View ▸ Resolution is a real raster reduction (docs/07 §2.2 item 2): it
+    /// changes the `scale` every render request carries, so the engine makes
+    /// fewer pixels rather than the panel drawing the same ones smaller.
+    testWidgets('View ▸ Resolution changes what the engine is asked for',
+        (tester) async {
+      final p = await mount(tester);
+      expect(p.uiState.previewResolution, PreviewResolution.full);
+      final full = p.uiState.viewerScale;
+
+      await choose(tester, 'View', 'Half', under: 'Resolution');
+      expect(p.uiState.previewResolution, PreviewResolution.half);
+      expect(p.uiState.viewerScale, closeTo(full / 2, 1e-9));
+
+      await choose(tester, 'View', 'Quarter', under: 'Resolution');
+      expect(p.uiState.viewerScale, closeTo(full / 4, 1e-9));
+
+      await choose(tester, 'View', 'Full', under: 'Resolution');
+      expect(p.uiState.viewerScale, closeTo(full, 1e-9));
+    });
+
+    /// The magnification rows *ask* the Viewer rather than doing it here:
+    /// "fit" is a rule only the panel can resolve, and the panel need not even
+    /// be mounted for the row to be harmless.
+    testWidgets('View ▸ Zoom in asks the Viewer for a magnification',
+        (tester) async {
+      final p = await mount(tester);
+      await makeComp(tester);
+
+      await choose(tester, 'View', 'Zoom in');
+      expect(p.uiState.viewerZoomRequest.value?.$2, ViewerZoomCommand.zoomIn);
+
+      // Twice is twice: the serial is what stops a repeated request being
+      // swallowed as "no change".
+      final first = p.uiState.viewerZoomRequest.value!.$1;
+      await choose(tester, 'View', 'Zoom in');
+      expect(p.uiState.viewerZoomRequest.value!.$1, greaterThan(first));
+
+      await choose(tester, 'View', 'Fit');
+      expect(p.uiState.viewerZoomRequest.value?.$2, ViewerZoomCommand.fit);
     });
 
     /// Shortcuts are the engine's (K-199): a row shows whatever the keymap

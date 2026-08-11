@@ -17,6 +17,7 @@ import 'package:lumit_flutter/shell/settings_window_frb.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/keymap.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
+import 'package:lumit_flutter/state/viewer_view.dart';
 import 'package:lumit_flutter/widgets/controls.dart';
 
 import 'frb_test_support.dart';
@@ -430,4 +431,21 @@ void main() {
           reason: 'the cycle restarted rather than continuing to UUU');
     });
   });
+
+  /// The Viewer's own commands name keymap actions rather than carrying chords
+  /// of their own (K-199), which only works if the ids match the engine's. A
+  /// typo here would show as a menu row with no shortcut beside it and a chord
+  /// that runs nothing — two silent failures rather than one loud one.
+  test('the Viewer view commands name actions the keymap has', () {
+    final actions = {
+      for (final group in keymapGroups())
+        for (final binding in group.bindings) binding.action,
+    };
+    for (final zoom in ViewerZoomCommand.values) {
+      expect(actions, contains(zoom.action));
+    }
+    for (final resolution in PreviewResolution.values) {
+      expect(actions, contains(resolution.action));
+    }
+  }, skip: !engineAvailable);
 }

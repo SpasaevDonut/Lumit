@@ -4001,6 +4001,43 @@ change.
 The graph editor and the Project panel's thumbnails still cut rather than fly.
 They are the same job, and the shared piece is written.
 
+### Magnification and preview resolution are two different things
+
+Both sound like "zoom", and confusing them is how a viewer ends up lying to
+you. `flutter_ui/lib/state/viewer_view.dart` is where the two words are kept
+apart.
+
+**Magnification** is how big the picture is *drawn*. Zooming to 400% does not
+ask the engine for a single extra pixel — it takes the frame that arrived and
+draws it four times the size. That is deliberate: if zooming out lowered the
+resolution, every frame already banked in the cache would be worthless the
+moment you leaned back to see more of the composition, and every frame would
+have to be made again on the way in.
+
+**Preview resolution** is the opposite: it changes what the engine is asked to
+make. Half renders a quarter of the pixels (half the width *and* half the
+height), so a heavy composition previews four times cheaper and looks
+correspondingly softer. It is the honest trade you reach for while working on
+something slow, and it can never reach the export — the export builds its own
+renderer and is never told about it.
+
+Two small pieces of plumbing make this work without the shell reaching into a
+panel that may not even be on screen:
+
+- **The magnification is asked for, not set.** *Fit* is a rule ("the whole
+  picture in the panel"), not a number, and only the Viewer knows its own size —
+  so View ▸ Fit, `Shift+/` and the command palette all bump a request that the
+  Viewer answers if it is mounted, and nothing at all happens if it is not. The
+  request carries a running number so pressing Zoom in twice is two events
+  rather than one; a plain "the value is still zoomIn" would be no change at
+  all and the second press would be swallowed.
+- **The scale the engine is asked for is a multiplication.** The panel measures
+  itself and reports the scale its size implies; the preview resolution is a
+  fraction on top of that. `LumitUiState.viewerScale` multiplies the two on
+  every read, which means a change to either is in force on the very next
+  render request and there is no third number to keep in step with the other
+  two.
+
 ### What is remembered, and where
 
 - **The workspace** — panel arrangement, colour scheme, interface scale, tooltips,

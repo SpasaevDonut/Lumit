@@ -12,6 +12,8 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/state/clipboard.dart';
+import 'package:lumit_flutter/state/dock.dart';
+import 'package:lumit_flutter/state/viewer_view.dart';
 
 import 'frb_test_support.dart';
 
@@ -575,6 +577,53 @@ void main() {
       expect(comp.getMarkers(), hasLength(1));
       expect(comp.getMarkers().single.label, isEmpty);
       expect(comp.frameAtTime(time: comp.getMarkers().single.time), 9);
+    });
+
+    /// The Viewer's own chords (docs/07 §15). They are scoped to the Viewer
+    /// context, so the panel has to be the active one for them to mean
+    /// anything at all — which is the half of this that a Global-context test
+    /// would not prove.
+    testWidgets('Ctrl+J and its siblings set the preview resolution',
+        (tester) async {
+      final p = await mount(tester);
+      p.uiState.activePanel.value = Panel.viewer;
+      await tester.pump();
+
+      Future<void> chord(List<LogicalKeyboardKey> modifiers,
+          LogicalKeyboardKey key) async {
+        for (final m in modifiers) {
+          await tester.sendKeyDownEvent(m);
+        }
+        await tester.sendKeyEvent(key);
+        for (final m in modifiers.reversed) {
+          await tester.sendKeyUpEvent(m);
+        }
+        await tester.pump();
+      }
+
+      await chord(
+        [LogicalKeyboardKey.controlLeft, LogicalKeyboardKey.shiftLeft],
+        LogicalKeyboardKey.keyJ,
+      );
+      expect(p.uiState.previewResolution, PreviewResolution.half);
+
+      await chord([LogicalKeyboardKey.controlLeft], LogicalKeyboardKey.keyJ);
+      expect(p.uiState.previewResolution, PreviewResolution.full);
+    });
+
+    /// The magnification chords do not zoom here — they *ask* the Viewer to,
+    /// because "fit" is a rule only the panel can resolve.
+    testWidgets('Ctrl+= asks the Viewer for a magnification', (tester) async {
+      final p = await mount(tester);
+      p.uiState.activePanel.value = Panel.viewer;
+      await tester.pump();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.equal);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+
+      expect(p.uiState.viewerZoomRequest.value?.$2, ViewerZoomCommand.zoomIn);
     });
   }, skip: !engineAvailable);
 }

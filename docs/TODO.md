@@ -67,6 +67,12 @@ These are v1-scope surfaces it does not yet match.
 **Viewer bar ([07-UI-SPEC.md](07-UI-SPEC.md) §2.2):**
 - The wireframe/overlay *menu*; guides menu; region-of-interest;
     background-colour swatch.
+- **Preview resolution is a menu row, not yet a bar dropdown** (§2.2 item 2).
+    Full / Half / Quarter work end to end — the View menu, the three chords and
+    the command palette all set the `scale` every render request carries — but
+    the dropdown the bar is supposed to carry is not built, **Third** and
+    **Auto** have no rows, and the choice is shell-wide rather than stored per
+    composition in the project as §2.2 asks.
 - **The colour-management indicator** (§2.2 item 8) — and it is now owed twice.
     Exposure and tone mapping (K-314) are built, and §2.2 says the badge is where
     the Viewer states that the picture is not the export while either is engaged.
@@ -544,10 +550,11 @@ entry above.
     "(Not implemented)" in File/Edit/Composition/Layer/Animation/View/Help is a
     command with a place waiting for it: Close project, History,
     layer settings and the mask/transform/blending/matte/style families, the
-    whole Animation menu, the View menu's zoom/resolution/grid/ruler rows,
+    whole Animation menu, the View menu's grid/ruler/wireframe/snap rows,
     Trim and Crop comp to work area, Add to export queue and the help links
-    (Check for updates is built — K-296). Delete each mark as the command
-    lands. Suggested chords for the AE-shaped ones are in K-244.
+    (Check for updates is built — K-296; so are the View menu's magnification
+    and resolution rows). Delete each mark as the command lands. Suggested
+    chords for the AE-shaped ones are in K-244.
 
 - **A Flatpak remote, so `flatpak update` has something to update from (K-297).**
     Releases ship a single-file `.flatpak` bundle, which installs perfectly well

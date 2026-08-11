@@ -53,6 +53,7 @@ import 'package:lumit_flutter/state/settings.dart';
 import 'package:lumit_flutter/state/install_site.dart';
 import 'package:lumit_flutter/state/tools.dart';
 import 'package:lumit_flutter/state/updates.dart';
+import 'package:lumit_flutter/state/viewer_view.dart';
 import 'package:lumit_flutter/state/workspace.dart';
 import 'package:lumit_flutter/theme/theme.dart';
 import 'package:lumit_flutter/widgets/controls.dart';
@@ -1093,15 +1094,60 @@ class LumitUiState extends ChangeNotifier {
   /// resolution. It is the frb counterpart of v0's `effectivePreviewScale`, minus
   /// the adaptive quality tier (K-171), which is not ported yet — so this tracks
   /// the panel size only, not measured render cost.
-  double viewerScale = 1.0;
+  ///
+  /// A getter, not a field, because two separate things decide it: the panel
+  /// measures itself ([reportViewerScale]) and the user chooses a preview
+  /// resolution ([previewResolution]). Multiplying them here means a change to
+  /// either is in force on the very next render request, with nothing to keep
+  /// in step.
+  double get viewerScale => _panelScale * previewResolution.scale;
+
+  /// The scale the *panel* implies, last time the Viewer laid itself out.
+  double _panelScale = 1.0;
 
   /// Called by the Viewer as it lays out. Clamped to (0, 1]: rendering *above*
   /// comp resolution would cost more for no visible gain, and a zero or negative
   /// scale is meaningless.
   void reportViewerScale(double scale) {
     if (!scale.isFinite || scale <= 0) return;
-    viewerScale = scale > 1.0 ? 1.0 : scale;
+    _panelScale = scale > 1.0 ? 1.0 : scale;
   }
+
+  /// How many pixels the engine is asked for, as a fraction of composition
+  /// resolution (docs/07 §2.2 item 2, glossary §5).
+  ///
+  /// Full until something says otherwise. Shell-wide rather than per
+  /// composition, and not written down: §2.2 wants it stored per comp in the
+  /// project, alongside a bar dropdown that also offers Third and Auto, and
+  /// neither is built (docs/TODO.md). What *is* built is the thing that
+  /// matters — a real raster reduction that never reaches the export.
+  PreviewResolution previewResolution = PreviewResolution.full;
+
+  /// Choose the preview resolution, and ask for the frame again — the setting
+  /// changes what the *next* frame is made of, so without the ask the picture
+  /// would not change until something else moved.
+  void setPreviewResolution(PreviewResolution resolution) {
+    if (previewResolution == resolution) return;
+    previewResolution = resolution;
+    // The View menu ticks the one in force, so the bar has to be rebuilt.
+    notifyListeners();
+    requestFrame();
+  }
+
+  /// A named magnification the Viewer has been asked to take (docs/07 §2.2).
+  ///
+  /// A notifier for the same reason as [togglePlayRequest]: the magnification
+  /// belongs to the Viewer panel — "fit" cannot be worked out without the
+  /// panel's size — and the shell must not have to reach into a panel that may
+  /// not be mounted. The serial makes two identical requests in a row two
+  /// events rather than one, so pressing Zoom in twice zooms twice.
+  final ValueNotifier<(int, ViewerZoomCommand)?> viewerZoomRequest =
+      ValueNotifier(null);
+
+  int _viewerZoomRequests = 0;
+
+  void requestViewerZoom(ViewerZoomCommand command) =>
+      viewerZoomRequest.value = (++_viewerZoomRequests, command);
 
   /// The armed dropper, or null when the tool is not armed (docs/07 §7).
   ///
@@ -1344,6 +1390,7 @@ class LumitUiState extends ChangeNotifier {
     activePanel.dispose();
     paletteRequest.dispose();
     consoleRequest.dispose();
+    viewerZoomRequest.dispose();
     super.dispose();
   }
 
@@ -1930,6 +1977,22 @@ class _LumitAppViewState extends State<LumitAppView> {
         } else {
           state.toggleRetime(layer);
         }
+      // The Viewer's own magnification and preview resolution (docs/07 §2.2,
+      // §15). Both are asked for rather than done here: the magnification
+      // belongs to the Viewer panel, and the resolution is a number every
+      // render request already carries.
+      case 'viewer.zoom.in':
+        ui.requestViewerZoom(ViewerZoomCommand.zoomIn);
+      case 'viewer.zoom.out':
+        ui.requestViewerZoom(ViewerZoomCommand.zoomOut);
+      case 'viewer.zoom.fit':
+        ui.requestViewerZoom(ViewerZoomCommand.fit);
+      case 'viewer.res.full':
+        ui.setPreviewResolution(PreviewResolution.full);
+      case 'viewer.res.half':
+        ui.setPreviewResolution(PreviewResolution.half);
+      case 'viewer.res.quarter':
+        ui.setPreviewResolution(PreviewResolution.quarter);
       case 'console.open':
         // The menu bar owns the console's lists too, so the key asks for it
         // rather than assembling a second one (K-324).

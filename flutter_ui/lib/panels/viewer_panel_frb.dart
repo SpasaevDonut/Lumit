@@ -54,6 +54,7 @@ import '../state/preview_throttle.dart';
 import '../state/settings.dart';
 import '../state/tools.dart';
 import '../state/timecode.dart';
+import '../state/viewer_view.dart';
 import '../state/workspace.dart' show ViewerLook;
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
@@ -234,9 +235,35 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
     if (ui == null) return;
     ui.togglePlayRequest.removeListener(_onTogglePlayRequest);
     ui.playheadFrame.removeListener(_onPlayheadChanged);
+    ui.viewerZoomRequest.removeListener(_onZoomRequest);
   }
 
   void _onTogglePlayRequest() => _togglePlay();
+
+  /// The View menu, a chord or the command palette asked for a magnification
+  /// (docs/07 §2.2, §15). The panel answers because only it knows where the
+  /// magnification is now and what "fit" would mean at this size.
+  ///
+  /// A step is taken about the middle of the panel rather than about the
+  /// pointer: there is no pointer in a menu choice, and the middle is the one
+  /// point a keyboard zoom can promise to keep. That is why the pan goes back
+  /// to zero — the picture is re-centred, not left where a drag had pushed it.
+  void _onZoomRequest() {
+    final request = _boundUi?.viewerZoomRequest.value;
+    if (request == null || !mounted) return;
+    final from = _shownScale;
+    switch (request.$2) {
+      case ViewerZoomCommand.fit:
+        _goToZoom(null, Offset.zero, from: from);
+      case ViewerZoomCommand.zoomIn:
+        _goToZoom(_clampZoom(from * zoomToolStep), Offset.zero, from: from);
+      case ViewerZoomCommand.zoomOut:
+        _goToZoom(_clampZoom(from / zoomToolStep), Offset.zero, from: from);
+    }
+  }
+
+  static double _clampZoom(double scale) =>
+      scale.clamp(minViewerZoom, maxViewerZoom).toDouble();
 
   @override
   Widget build(BuildContext context) {
@@ -246,6 +273,7 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
       _boundUi = ui;
       ui.togglePlayRequest.addListener(_onTogglePlayRequest);
       ui.playheadFrame.addListener(_onPlayheadChanged);
+      ui.viewerZoomRequest.addListener(_onZoomRequest);
       _changes?.cancel();
       _changes = Provider.of<LumitState>(context, listen: false)
           .onChange

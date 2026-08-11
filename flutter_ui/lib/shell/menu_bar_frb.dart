@@ -38,6 +38,7 @@ import '../state/clipboard.dart';
 import '../state/dock.dart';
 import '../state/file_dialogs.dart';
 import '../state/keymap.dart';
+import '../state/viewer_view.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 import 'about_window_frb.dart';
@@ -335,6 +336,22 @@ class LumitMenuBarFrb extends StatelessWidget {
             label: panel.title,
             category: l10n.palettePanels,
             run: () => ui.activePanel.value = panel,
+          ),
+        // The View menu's magnification and preview resolution, so the palette
+        // carries them too rather than the menu being the only route.
+        for (final zoom in ViewerZoomCommand.values)
+          PaletteCommand(
+            label: zoom.title,
+            category: l10n.menuView,
+            run: () => ui.requestViewerZoom(zoom),
+          ),
+        // Under the Resolution badge rather than View's, because "Full" on its
+        // own says nothing about what it is full of.
+        for (final resolution in PreviewResolution.values)
+          PaletteCommand(
+            label: resolution.title,
+            category: l10n.menuResolution,
+            run: () => ui.setPreviewResolution(resolution),
           ),
         PaletteCommand(
           label: l10n.menuSettings,
@@ -705,14 +722,26 @@ List<MenuSection> lumitMenus(
     (
       title: l10n.menuView,
       items: [
-        MenuEntry.todo(l10n.menuZoomIn, action: 'viewer.zoom.in'),
-        MenuEntry.todo(l10n.menuZoomOut, action: 'viewer.zoom.out'),
-        MenuEntry.todo(l10n.menuFit, action: 'viewer.zoom.fit'),
+        // Magnification: the same three jumps the Viewer's own keyboard makes
+        // (docs/07 §2.2). Greyed with no composition fronted, because there is
+        // no picture in the panel to magnify.
+        for (final zoom in ViewerZoomCommand.values)
+          MenuEntry(
+            zoom.title,
+            comp == null ? null : () => ui.requestViewerZoom(zoom),
+            action: zoom.action,
+          ),
         MenuEntry.divider(),
+        // Preview resolution (§2.2 item 2): how many pixels the engine is
+        // asked for, ticked so the menu says which one is in force.
         MenuEntry.submenu(l10n.menuResolution, [
-          MenuEntry.todo(l10n.menuFull, action: 'viewer.res.full'),
-          MenuEntry.todo(l10n.menuHalf, action: 'viewer.res.half'),
-          MenuEntry.todo(l10n.menuQuarter, action: 'viewer.res.quarter'),
+          for (final resolution in PreviewResolution.values)
+            MenuEntry(
+              resolution.title,
+              () => ui.setPreviewResolution(resolution),
+              action: resolution.action,
+              checked: ui.previewResolution == resolution,
+            ),
         ]),
         MenuEntry.divider(),
         MenuEntry.todo(l10n.menuShowGrid, action: 'viewer.grid.toggle'),
