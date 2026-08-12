@@ -655,7 +655,7 @@ impl HeadlessRenderer {
     }
 
     /// Let this renderer make a Lens flare's bake beside the frame rather than
-    /// inside it (K-348), so choosing a lens is a wait you can watch instead of
+    /// inside it (K-350), so choosing a lens is a wait you can watch instead of
     /// half a second of stopped picture.
     ///
     /// **Off by default, and the exporter never turns it on.** An export builds
@@ -713,7 +713,7 @@ impl HeadlessRenderer {
         quality: Quality,
     ) -> Option<u128> {
         // A flare bake in flight means any frame made now may be drawing the
-        // lens before it (K-348). Unnameable rather than misnamed: the tiers
+        // lens before it (K-350). Unnameable rather than misnamed: the tiers
         // are keyed by what is *in* a frame (K-178), so an entry that lies
         // about that outlives every edit and undo that could have fixed it.
         if self.flare_bake_pending() {
@@ -1233,7 +1233,7 @@ impl HeadlessRenderer {
         }
         let started = std::time::Instant::now();
         // A flare bake queued *during* this composite means the picture just
-        // made may be of the previous lens (K-348). The name was taken before
+        // made may be of the previous lens (K-350). The name was taken before
         // the render, so it has to be dropped afterwards — the alternative is
         // an entry that lies about its own content, which no later edit or
         // undo can clear (K-178).
@@ -2752,7 +2752,7 @@ mod tests {
         assert_eq!(builder.has_audio.len(), 1);
     }
 
-    /// **The export contract for the deferred flare bake (K-348).** A fresh
+    /// **The export contract for the deferred flare bake (K-350).** A fresh
     /// renderer bakes lens flares *inside* the frame, exactly as it always did.
     ///
     /// This is how "an export is never a provisional picture" is kept true. An
@@ -2782,7 +2782,7 @@ mod tests {
     }
 
     /// A frame made while a lens is baking is **unnameable**, so nothing files
-    /// it under a name that says it was drawn with a lens it was not (K-348,
+    /// it under a name that says it was drawn with a lens it was not (K-350,
     /// K-178). The same mechanism unprobed footage and a non-neutral display
     /// view already use.
     #[test]

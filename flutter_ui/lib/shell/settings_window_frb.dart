@@ -766,6 +766,15 @@ class _SettingsWindowState extends State<_SettingsWindow> {
           settings.waveformsFromBottom = on;
           ui.workspace.settingsChanged();
         }),
+        _flag(
+            t,
+            'settings-easing-in-popup',
+            l10n.settingsShapeEasesInAPopup,
+            l10n.settingsHelpShapeEasesInAPopup,
+            value: settings.easingInPopup, set: (on) {
+          settings.easingInPopup = on;
+          ui.workspace.settingsChanged();
+        }),
       ]),
     ];
   }

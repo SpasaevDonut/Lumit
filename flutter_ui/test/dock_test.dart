@@ -39,10 +39,19 @@ void main() {
     expect((root.children[1] as DockPane).panel, Panel.timeline);
   });
 
-  test('every panel appears exactly once in the default workspace', () {
+  /// Every panel appears at most once, and all but Easing appear.
+  ///
+  /// This used to read "every panel, exactly once". Easing is the exception on
+  /// purpose (K-349): it belongs to the Retiming arrangement and to whoever
+  /// asks for it from the Window menu, and putting it in the default layout
+  /// would rearrange the first-run screen for a panel most projects never need.
+  /// If a *second* panel ever wants the same exemption, name it here rather
+  /// than loosening this to "some panels are missing".
+  test('no panel appears twice in the default workspace, and only Easing is '
+      'absent', () {
     final panels = panelsIn(defaultLayout());
     expect(panels.toSet().length, panels.length);
-    expect(panels.toSet(), Panel.values.toSet());
+    expect(panels.toSet(), Panel.values.toSet()..remove(Panel.easing));
   });
 
   test('serialisation round-trips the tree', () {
@@ -114,6 +123,45 @@ void main() {
       setPanelVisible(root, Panel.scopes, true);
       expect(panelVisible(root, Panel.scopes), isTrue);
       expect(root.shares.length, root.children.length);
+    });
+  });
+
+  /// The Easing panel is Retiming's alone (K-349): a new panel that appeared in
+  /// the four arrangements people already know would be a rearrangement nobody
+  /// asked for. Anywhere else it is opened deliberately.
+  group('the Retiming preset', () {
+    test('gives the Easing panel the right-hand column, untabbed', () {
+      final root = presetLayout(WorkspacePreset.retiming);
+      final upper = root.children[0] as DockSplit;
+      final right = upper.children.last;
+      expect(right, isA<DockPane>());
+      expect((right as DockPane).panel, Panel.easing,
+          reason: 'a panel behind a tab is a panel you have to keep fetching');
+      expect(root.shares, [0.55, 0.45],
+          reason: 'retiming is timeline work, so the Timeline is as tall as '
+              "Audio's");
+      expect(upper.shares.length, upper.children.length);
+    });
+
+    test('is the only shipped arrangement holding it', () {
+      for (final preset in WorkspacePreset.values) {
+        expect(
+          panelVisible(presetLayout(preset), Panel.easing),
+          preset == WorkspacePreset.retiming,
+          reason: '${preset.name} should '
+              '${preset == WorkspacePreset.retiming ? '' : 'not '}hold Easing',
+        );
+      }
+      expect(panelVisible(defaultLayout(), Panel.easing), isFalse,
+          reason: 'first run is unchanged by the panel existing');
+    });
+
+    test('every panel is still reachable from the Window menu', () {
+      // The menu ticks `Panel.values`, so a panel in no arrangement must still
+      // be one `setPanelVisible` can place.
+      final root = defaultLayout();
+      setPanelVisible(root, Panel.easing, true);
+      expect(panelVisible(root, Panel.easing), isTrue);
     });
   });
 }

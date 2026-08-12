@@ -52,6 +52,8 @@ import '../widgets/time_readout.dart';
 export 'timeline_extras_frb.dart' show rulerLabelStepSeconds, rulerLabelOf;
 
 import 'placeholder.dart';
+import 'easing_curve.dart';
+import 'easing_editor.dart';
 import 'graph_editor_frb.dart';
 import 'graph_maths.dart';
 import 'package:lumit_flutter/state/preview_throttle.dart';
@@ -1015,6 +1017,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     final owner = layerIdOfPath(path);
     if (owner == null || path != retimePath(owner)) return;
     _graphLens = GraphLens.speed;
+    _publishEasingClaim();
   }
 
   /// Settings ▸ Interface ▸ Editing ▸ *Video arrives as a Sequence layer*
@@ -1364,6 +1367,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     _ui!.deleteClaim = _deleteSelectedMasks;
     _ui!.copyClaim = _copySelectedKeys;
     _ui!.pasteClaim = _pasteKeysIntoSelection;
+    _publishEasingClaim();
     // An effect can be picked in the Effect controls panel too (K-300), and one
     // selection means the row here lights up when it is.
     _ui!.selectedEffects.addListener(_onEffectSelectionChanged);
@@ -1476,6 +1480,83 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     ui.model.refresh();
   }
 
+  /// Stamp a shaped ease onto the selection — the easing editor's Apply.
+  ///
+  /// The selection is resolved the same way [_applyInterp] resolves it, so the
+  /// bottom bar's one-click eases and a shaped one act on exactly the same
+  /// keys. Where they differ is the unit: a side is stamped key by key, a curve
+  /// span by span (`applyEasingToSelection`).
+  ///
+  /// Value lens only, and locked twice: the bottom bar hides the button in the
+  /// speed lens, and this refuses the call. A shape is drawn against value
+  /// travel, so stamping one from the speed lens would edit a graph the user is
+  /// not looking at.
+  /// The Easing… button: dock the Easing panel, or — with Settings ▸ Interface
+  /// ▸ Editing ▸ *Shape eases in a popup* on — open the same editor over the
+  /// footer (K-349).
+  ///
+  /// Docking rather than only focusing: the button is how the panel is
+  /// discovered, and a button that does nothing because the panel is already in
+  /// an arrangement the user cannot see is worse than one that opens it twice.
+  /// `setPanelVisible` is a no-op when it is already there, so a second press
+  /// only brings it to the front of its tab group.
+  void _openEasing(BuildContext buttonContext) {
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    if (ui.workspace.interface.easingInPopup) {
+      final box = buttonContext.findRenderObject() as RenderBox?;
+      if (box == null) return;
+      showEasingPopup(
+        context: buttonContext,
+        position: box.localToGlobal(Offset.zero),
+        onApply: _applyEasing,
+      );
+      return;
+    }
+    setPanelVisible(ui.split, Panel.easing, true);
+    activatePanelTab(ui.split, Panel.easing);
+    ui.activePanel.value = Panel.easing;
+    ui.workspace.touch();
+  }
+
+  /// What the Easing panel and the popup both press. Published to the shell as
+  /// [LumitUiState.easingApply] while this panel can take a shape, so the panel
+  /// can grey its Apply when it cannot (K-349).
+  ///
+  /// The popup is an overlay entry, so it outlives the panel that opened it —
+  /// a re-dock while it is up would otherwise land an Apply on a dead State.
+  void _applyEasing(EasingCurve curve) {
+    if (!mounted) return;
+    if (_graph && _graphLens == GraphLens.speed) return;
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    final paths = _graph
+        ? _selectedProperties
+        : {
+            for (final id in _laneKeySelection)
+              if (id.lastIndexOf('#') > 0) id.substring(0, id.lastIndexOf('#'))
+          }.toList();
+    final channels = graphChannels(layers: ui.model.layers, selected: paths);
+    final selection = _actionKeySelection(channels);
+    if (selection.isEmpty) return;
+    applyEasingToSelection(
+      channels: channels,
+      selectedKeys: selection,
+      curve: curve,
+    );
+    ui.model.refresh();
+  }
+
+  /// Publish — or withdraw — the shell's easing claim.
+  ///
+  /// Withdrawn in exactly the case [_applyEasing] refuses: the graph showing
+  /// the speed lens. Called from the four places `_graph` and `_graphLens`
+  /// move, and from [initState] and [dispose]; a notifier write inside a
+  /// `setState` callback is fine, one during `build` would not be, which is why
+  /// this is not simply read off in the tree.
+  void _publishEasingClaim() {
+    _ui?.easingApply.value =
+        _graph && _graphLens == GraphLens.speed ? null : _applyEasing;
+  }
+
   /// The Timeline's keyboard commands: `Shift+F3` toggles the graph, the F9
   /// family sets easing, `Ctrl+Shift+D` cuts the selection at the playhead,
   /// `F` re-frames the graph, `Ctrl+C`/`Ctrl+V` copy and
@@ -1516,6 +1597,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
 
     if (action == 'graph.toggle') {
       setState(() => _graph = !_graph);
+      _publishEasingClaim();
       return true;
     }
     if (action == 'reveal.animated') {
@@ -1827,6 +1909,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     if (_ui?.deleteClaim == _deleteSelectedMasks) _ui!.deleteClaim = null;
     if (_ui?.copyClaim == _copySelectedKeys) _ui!.copyClaim = null;
     if (_ui?.pasteClaim == _pasteKeysIntoSelection) _ui!.pasteClaim = null;
+    if (_ui?.easingApply.value == _applyEasing) _ui!.easingApply.value = null;
     _ui?.selectedEffects.removeListener(_onEffectSelectionChanged);
     _boundTools?.removeListener(_onToolChanged);
     _zoomMotion.dispose();
@@ -2388,7 +2471,10 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
                               onSeek: ui.scrubTo,
                               graph: _graph,
                               onToggleGraph: () =>
-                                  setState(() => _graph = !_graph),
+                                  setState(() {
+                                    _graph = !_graph;
+                                    _publishEasingClaim();
+                                  }),
                               razor: _razorArmed(ui),
                               onToggleRazor: () => _toggleRazor(ui),
                               hideShy: _hideShy,
@@ -2665,10 +2751,14 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
           onZoomDragEnd: _zoomDragEnd,
           maxZoom: _maxZoom,
           lens: _graphLens,
-          onLens: (lens) => setState(() => _graphLens = lens),
+          onLens: (lens) => setState(() {
+            _graphLens = lens;
+            _publishEasingClaim();
+          }),
           autoFit: _graphAutoFit,
           onToggleAutoFit: () => setState(() => _graphAutoFit = !_graphAutoFit),
           onInterp: (side) => _applyInterp(side),
+          onOpenEasing: _openEasing,
         ),
       ],
     );
@@ -7300,6 +7390,11 @@ class _LaneBottomBar extends StatelessWidget {
   final VoidCallback? onToggleAutoFit;
   final ValueChanged<BridgeSideInterp>? onInterp;
 
+  /// The Easing… button pressed, with the button's own context so a popup can
+  /// be anchored to it. Whether that is a popup or a docked panel is the
+  /// panel's decision, not this bar's (K-349).
+  final ValueChanged<BuildContext>? onOpenEasing;
+
   const _LaneBottomBar({
     required this.zoom,
     required this.maxZoom,
@@ -7315,6 +7410,7 @@ class _LaneBottomBar extends StatelessWidget {
     this.autoFit = true,
     this.onToggleAutoFit,
     this.onInterp,
+    this.onOpenEasing,
   });
 
   Widget _graphButton(
@@ -7386,6 +7482,27 @@ class _LaneBottomBar extends StatelessWidget {
                             on: false,
                             onPressed: () =>
                                 onInterp?.call(const BridgeSideInterp.hold())),
+                        // The shaped ease, one step along from the one-click
+                        // three: same selection, a curve instead of a constant.
+                        // Its own Builder so the popup can find where this
+                        // button is; the popup layout slides it up into view.
+                        //
+                        // Value lens only. The box draws a shape against the
+                        // value's own travel, so a curve stamped while the
+                        // speed lens is up would land on the value graph — a
+                        // change the user cannot see in the view they drew it
+                        // in. The one-click three above stay in both lenses: a
+                        // side's interp means the same thing either way.
+                        if (lens == GraphLens.value)
+                          Builder(
+                            builder: (buttonContext) => _graphButton(t,
+                                keyName: 'graph-interp-easing',
+                                label: l10n.easeCustom,
+                                tip: l10n.tipEasingEditor,
+                                on: false,
+                                onPressed: () =>
+                                    onOpenEasing?.call(buttonContext)),
+                          ),
                         const SizedBox(width: 6),
                         _graphButton(t,
                             keyName: 'graph-lens-value',

@@ -31,7 +31,7 @@ use super::{work_texture, FxEngine};
 /// The CPU bake, as something another thread can own and run.
 ///
 /// An `Arc` rather than a borrowed `&dyn Fn` because the bake may be handed to
-/// the bake thread and outlive the frame that asked for it (K-348). The caller
+/// the bake thread and outlive the frame that asked for it (K-350). The caller
 /// builds one per flare op per frame — a single small allocation beside a
 /// pass that traces hundreds of thousands of rays.
 pub type FlareBake = Arc<dyn Fn() -> FlareBakeData + Send + Sync>;
@@ -226,7 +226,7 @@ pub struct LensFlareFx {
     scratch: Mutex<Option<Scratch>>,
     /// The pooled multisample target with its size — see [`Self::take_msaa`].
     msaa: Mutex<Option<(wgpu::Texture, u32, u32)>>,
-    /// The off-thread bake (K-348), when this engine is allowed one. `None`
+    /// The off-thread bake (K-350), when this engine is allowed one. `None`
     /// until the first deferred miss, and never built at all on an engine
     /// whose bakes must be exact — the exporter's (see
     /// [`FxEngine::set_deferred_flare_bakes`]).
@@ -238,7 +238,7 @@ pub struct LensFlareFx {
     /// picture by omission.
     pub(super) deferred: std::sync::atomic::AtomicBool,
     /// The key of the last bake a frame actually drew with, which is what a
-    /// frame whose own bake is not ready falls back to (K-348).
+    /// frame whose own bake is not ready falls back to (K-350).
     last_drawn: Mutex<Option<u64>>,
     /// Bakes handed to the baker and not yet collected.
     in_flight: Mutex<HashSet<u64>>,
@@ -816,7 +816,7 @@ impl LensFlareFx {
     ///   and now, outside the lock, exactly as it always did. A racing
     ///   double-build is harmless — the bake is a pure function — and the
     ///   insert keeps whichever landed first.
-    /// - **Deferred** (the Viewer, K-348): a miss hands the bake to the bake
+    /// - **Deferred** (the Viewer, K-350): a miss hands the bake to the bake
     ///   thread and answers with the lens the last frame drew, so choosing a
     ///   lens is a wait you can watch rather than half a second of stopped
     ///   picture. With nothing drawn yet the answer is `None` and the flare
@@ -1319,7 +1319,7 @@ impl FxEngine {
         // A deferred bake that has nothing to fall back on yet leaves the
         // frame with no flare at all rather than a wrong one: `live` is
         // "there is something to draw", and everything below already reads it
-        // as that (K-348).
+        // as that (K-350).
         let live = baked.is_some();
 
         // Matte mode runs with MAX_LIGHTS candidate slots (dead ones carry

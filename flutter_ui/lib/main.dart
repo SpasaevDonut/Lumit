@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:lumit_flutter/data/expressions_metadata.dart';
+import 'package:lumit_flutter/panels/easing_curve.dart' show EasingCurve;
 import 'package:lumit_flutter/panels/effect_param_row_frb.dart';
 import 'package:lumit_flutter/l10n/strings.dart';
 import 'package:lumit_flutter/panels/panels_frb.dart';
@@ -555,6 +556,22 @@ class LumitUiState extends ChangeNotifier {
   /// through to. Each returns whether it took the chord.
   bool Function()? copyClaim;
   bool Function()? pasteClaim;
+
+  /// Where the Easing panel sends a shape (K-349), published by the Timeline
+  /// while it can take one and null when it cannot.
+  ///
+  /// The same claim idea as the three above, but a notifier rather than a bare
+  /// field, because this one is *read to draw with*: the panel is persistent, so
+  /// it must grey its Apply the moment there is nowhere to send a shape —
+  /// no Timeline on screen, or a graph showing the speed lens, where a curve
+  /// drawn against value travel does not belong (K-348). A bare field would
+  /// leave the panel showing a live button until something else happened to
+  /// rebuild it.
+  ///
+  /// The keyframe selection itself stays the Timeline's and is never published:
+  /// the panel sends a shape and is told nothing about what it landed on.
+  final ValueNotifier<ValueChanged<EasingCurve>?> easingApply =
+      ValueNotifier(null);
 
   /// The appearance the shell is drawing in.
   ///

@@ -109,7 +109,7 @@ pub struct WorkerState {
     /// When the last request arrived — the fill waits out a ~200 ms lull
     /// after it (docs/06 §5.5), so a scrub in progress is never contended.
     last_request: std::time::Instant,
-    /// The flare-bake generation this worker has already reacted to (K-348).
+    /// The flare-bake generation this worker has already reacted to (K-350).
     /// When the renderer's moves past it, a bake has been queued or has landed
     /// — and a landing is the moment the picture on screen stops being the
     /// right one, because the frame showing was drawn with the lens before it.
@@ -1074,7 +1074,7 @@ fn idle_backup(state: &mut WorkerState) {
 }
 
 /// Render ONE uncached frame near the playhead into the VRAM frame cache —
-/// Make the shown frame again when a Lens flare's bake has landed (K-348).
+/// Make the shown frame again when a Lens flare's bake has landed (K-350).
 ///
 /// While a bake is in flight the Viewer keeps showing the lens before it — that
 /// is the whole point, a wait instead of a freeze — but nothing else would ever
@@ -1134,7 +1134,7 @@ fn idle_fill(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
         state.fill_exhausted = true;
         return;
     }
-    // Same shape while a Lens flare's bake is being made (K-348): every frame
+    // Same shape while a Lens flare's bake is being made (K-350): every frame
     // is unnameable until it lands, so filling would render and bank nothing.
     // `republish_after_bake` sets the fill going again when it does.
     if state.renderer.flare_bake_pending() {
@@ -1944,7 +1944,7 @@ fn worker_loop(
         }
     };
     // This is the *Viewer's* renderer, so a Lens flare's bake is made beside
-    // the frame rather than inside it (K-348): picking a lens shows the lens
+    // the frame rather than inside it (K-350): picking a lens shows the lens
     // before it and swaps the new one in when the optics are done, instead of
     // stopping the picture for about half a second. The exporter builds its
     // own renderer and never asks for this, so an export still bakes exactly
@@ -2058,7 +2058,7 @@ fn worker_loop(
                 Ok(request) => Some(request),
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                     // A lens finished baking: the picture on screen was drawn
-                    // with the lens before it, so make it again (K-348). This
+                    // with the lens before it, so make it again (K-350). This
                     // is what turns the old half-second freeze into a wait —
                     // the frame the user is looking at keeps its old flare and
                     // is replaced the moment the new optics are ready.
@@ -3006,7 +3006,7 @@ fn trace_scope(
                     Some(hit) => Some(hit),
                     None => {
                         // A flare bake queued *during* the render means the
-                        // picture is of the previous lens (K-348), so the name
+                        // picture is of the previous lens (K-350), so the name
                         // taken before it no longer describes what was made.
                         // Banked only when nothing moved.
                         let bakes_before = state.renderer.flare_bake_generation();
@@ -3139,7 +3139,7 @@ fn sample_pixels(
                     // and not banked: an entry under a name the renderer did
                     // not keep is worse than no entry. The bake can also start
                     // *during* the render, which only the render can report —
-                    // hence the check either side of it (K-348).
+                    // hence the check either side of it (K-350).
                     let provenance = lumit_render::FrameProvenance {
                         comp: req.comp.id,
                         frame: req.frame,

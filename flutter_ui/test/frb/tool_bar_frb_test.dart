@@ -156,8 +156,12 @@ void main() {
         (tester) async {
       final p = await mount(tester);
       final bar = tester.getRect(find.byType(LumitToolBarFrb));
-      final last = tester.getRect(
-          find.byKey(const ValueKey('workspace-audio')));
+      // Whichever preset is last, not Audio by name: Retiming (K-349) took that
+      // place, and a fifth preset must not be able to hang off the bar unnoticed
+      // because the test was watching the fourth.
+      final lastKey =
+          ValueKey<String>('workspace-${WorkspacePreset.values.last.name}');
+      final last = tester.getRect(find.byKey(lastKey));
       expect(bar.right - last.right, lessThan(40),
           reason: 'the last workspace button ends where the bar does');
 
@@ -165,8 +169,7 @@ void main() {
       // is the change that moved it in the first place.
       p.uiState.tools.select(ToolMode.brush);
       await tester.pumpAndSettle();
-      final withOptions = tester.getRect(
-          find.byKey(const ValueKey('workspace-audio')));
+      final withOptions = tester.getRect(find.byKey(lastKey));
       expect(bar.right - withOptions.right, lessThan(40),
           reason: "the tool options push nothing off the bar's right end");
       expect(tester.takeException(), isNull);

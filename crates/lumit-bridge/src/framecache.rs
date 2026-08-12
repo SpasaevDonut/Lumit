@@ -232,7 +232,7 @@ fn with_cache<R>(f: impl FnOnce(&mut Cache) -> R) -> R {
 /// Reading and banking are two calls rather than one `get_or_render` because
 /// the decision to bank cannot always be made until *after* the render: a frame
 /// drawn while a Lens flare's bake was still being made is of the previous lens
-/// (K-348), and only the render itself can say whether that happened. The key
+/// (K-350), and only the render itself can say whether that happened. The key
 /// names the content, so a superseded render for the same key simply overwrites
 /// with identical pixels.
 pub(crate) fn get(key: FrameKey) -> Option<(u32, u32, Vec<u8>)> {

@@ -202,6 +202,17 @@ class InterfaceSettings {
   /// button can never strand an engaged look with nothing to turn it off.
   bool showToneMap;
 
+  /// Whether the graph editor's **Easing…** button opens the shape editor as a
+  /// popup over the footer, rather than docking the Easing panel (K-349).
+  ///
+  /// Off by default: a popup closes on any click outside it, and choosing
+  /// different keyframes *is* a click outside — so one drawn shape could only
+  /// ever be tried on the selection that was live when it opened, which is the
+  /// opposite of what a reusable ease is for. On is for a small screen, or for
+  /// anyone who would rather not spend a column on it: the same editor, opened
+  /// and dismissed where the button is.
+  bool easingInPopup;
+
   /// The interface language, as a BCP-47 tag (`en`, `de`, `zh`), or null to
   /// follow whatever the machine is set to (K-303).
   ///
@@ -225,6 +236,7 @@ class InterfaceSettings {
     this.multiwaveWaveforms = true,
     this.waveformsFromBottom = false,
     this.showToneMap = false,
+    this.easingInPopup = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -240,6 +252,7 @@ class InterfaceSettings {
         'multiwave_waveforms': multiwaveWaveforms,
         'waveforms_from_bottom': waveformsFromBottom,
         'show_tone_map': showToneMap,
+        'easing_in_popup': easingInPopup,
       };
   factory InterfaceSettings.fromJson(Map<String, dynamic> j) =>
       InterfaceSettings(
@@ -278,5 +291,9 @@ class InterfaceSettings {
         // written before this field existed adopts it — a comp that stored an
         // engaged tone map is disengaged with it rather than left stranded.
         showToneMap: j['show_tone_map'] as bool? ?? false,
+        // Absent means off: the panel is the default (K-349), and the popup
+        // this replaced never shipped in a release, so no settings file can be
+        // asking for it by silence.
+        easingInPopup: j['easing_in_popup'] as bool? ?? false,
       );
 }
