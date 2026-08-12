@@ -133,7 +133,7 @@ struct DiskWant {
 #[frb(ignore)]
 fn frame_name(
     state: &mut WorkerState,
-    document: &lumit_core::Document,
+    document: &std::sync::Arc<lumit_core::Document>,
     revision: u64,
     comp: Uuid,
     frame: u64,
@@ -686,7 +686,7 @@ fn publish_cache_bar(state: &mut WorkerState, stream: &mut WorkerResponseStream)
 #[frb(ignore)]
 fn frame_tier(
     state: &mut WorkerState,
-    document: &lumit_core::Document,
+    document: &std::sync::Arc<lumit_core::Document>,
     revision: u64,
     comp: Uuid,
     frame: u64,
@@ -922,7 +922,7 @@ fn wants_disk_lead(on_card: bool, in_memory: bool, on_disk: bool, already_asked:
 #[frb(ignore)]
 fn prepare_frame(
     state: &mut WorkerState,
-    document: &lumit_core::Document,
+    document: &std::sync::Arc<lumit_core::Document>,
     comp: Uuid,
     frame: u64,
     quality: lumit_render::Quality,
@@ -947,6 +947,7 @@ fn prepare_frame(
             comp,
             frame,
             scale_q: lumit_render::preview_scale_q(quality),
+            quality,
         };
         match crate::framecache::held(key) {
             // Only the order it came down in can go back up: a frame read in the
@@ -1073,6 +1074,15 @@ fn idle_backup(state: &mut WorkerState) {
 /// nothing (or no room) left, so an idle editor stops spending the GPU.
 #[frb(ignore)]
 fn idle_fill(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
+    // A non-neutral Viewer view makes every frame unnameable (K-314), so the
+    // fill would render frame after frame and bank none of them, never reach
+    // the end of its list, and never stop — GPU work for nothing, for as long
+    // as the exposure is off zero. There is nothing to fill while the picture
+    // is not the composite, so the fill is simply finished.
+    if !state.renderer.display_view().is_neutral() {
+        state.fill_exhausted = true;
+        return;
+    }
     let Some((comp_ref, anchor, scale)) = state.last_shown.clone() else {
         state.fill_exhausted = true;
         return;
@@ -1158,6 +1168,7 @@ fn idle_fill(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
                     comp: comp_ref.id,
                     frame,
                     scale_q: lumit_render::preview_scale_q(quality),
+                    quality,
                 };
                 let uploaded = line_up_frame(
                     &mut state.renderer,
@@ -1216,6 +1227,14 @@ pub enum WorkerRequest {
     Play(PlayRequest),
     /// Stop playing. Harmless when nothing is playing.
     StopPlayback,
+    /// Set the Viewer's exposure and tone map (K-314). A *setting*, not a
+    /// picture: it changes how every frame from here on is display-encoded and
+    /// nothing about the document. Preview only — an export builds its own
+    /// renderer, which nobody sends this to.
+    SetDisplayView {
+        stops: f64,
+        tone_map: bool,
+    },
 }
 
 /// Start playback of `comp` at `from`.
@@ -1785,6 +1804,12 @@ pub struct RenderCompRequestWithPreview {
     /// pointer is let go, which is the one edit where watching it matters
     /// most.
     pub clip_retime: Option<(Uuid, crate::api::effect::BridgeScalar)>,
+    /// The layer's own Retime map (K-197), while a key of it is being dragged
+    /// in the graph editor. Exactly `clip_retime`'s reason, for the property
+    /// rather than a clip: the map decides which source frame is decoded, so
+    /// the drag cannot ride the retained pixels and the provisional map has to
+    /// reach the render plan.
+    pub retime: Option<crate::api::effect::BridgeScalar>,
     /// A shape layer's whole art list, while one of its items is being dragged
     /// (K-239). The same reason as `paint` above.
     pub contents: Option<Vec<crate::api::layer::BridgeShapeItem>>,
@@ -2217,6 +2242,7 @@ fn play_one_frame(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
                             comp: comp_id,
                             frame: future,
                             scale_q: lumit_render::preview_scale_q(quality),
+                            quality,
                         };
                         let uploaded = line_up_frame(
                             &mut state.renderer,
@@ -2430,6 +2456,7 @@ fn start_playback(req: PlayRequest, state: &mut WorkerState) -> Result<(), Bridg
                         comp: comp_id,
                         frame,
                         scale_q: lumit_render::preview_scale_q(quality),
+                        quality,
                     },
                     asked: std::time::Instant::now(),
                 },
@@ -2522,6 +2549,12 @@ fn handle_requests(
                     state.playback = None;
                     Ok(())
                 }
+                WorkerRequest::SetDisplayView { stops, tone_map } => {
+                    state
+                        .renderer
+                        .set_display_view(lumit_render::DisplayParams::from_stops(stops, tone_map));
+                    Ok(())
+                }
             };
             if let Err(err) = outcome {
                 eprintln!("Dropping frame: {err}");
@@ -2541,13 +2574,19 @@ fn handle_requests(
 /// long after the user had let go.
 ///
 /// Transport commands are not pictures and must never be dropped: superseding
-/// a Stop would leave playback running with nothing left to stop it.
+/// a Stop would leave playback running with nothing left to stop it. A display
+/// view (K-314) is not a picture either, and for the same reason: the last one
+/// queued is the state the renderer must end up in, so dropping one because a
+/// newer request of another kind arrived would leave the Viewer exposing frames
+/// after the user had set it back to neutral.
 #[frb(ignore)]
 fn classify_request(r: &WorkerRequest) -> DrainClass {
     match r {
         WorkerRequest::TraceScope(_) => DrainClass::Scope,
         WorkerRequest::SamplePixels(_) => DrainClass::Sample,
-        WorkerRequest::Play(_) | WorkerRequest::StopPlayback => DrainClass::PictureKeepAll,
+        WorkerRequest::Play(_)
+        | WorkerRequest::StopPlayback
+        | WorkerRequest::SetDisplayView { .. } => DrainClass::PictureKeepAll,
         WorkerRequest::RenderComp(_) | WorkerRequest::RenderCompWithPreview(_) => {
             DrainClass::PictureNewestWins
         }
@@ -2561,7 +2600,8 @@ enum DrainClass {
     /// A stale one is worthless: only the newest survives (a scrub — the
     /// playhead position behind the newest will never be looked at).
     PictureNewestWins,
-    /// Every one is served, in order (transport commands: Play and Stop).
+    /// Every one is served, in order (transport commands: Play and Stop; and
+    /// the display view, which is a setting rather than a picture).
     PictureKeepAll,
     /// A trace; the newest survives, served after the pictures.
     Scope,
@@ -2770,6 +2810,21 @@ fn render_comp_with_preview(
     if let Some(paint) = req.paint {
         comp.layers[index].paint = paint.into_iter().map(|s| s.write()).collect();
     }
+    if let Some(map) = req.retime {
+        // Keys cross the seam on the comp clock (K-213), so the layer's own
+        // zero comes back off on the way in. A layer with no Retime is left
+        // alone rather than given one: a preview must not invent a state the
+        // document cannot be in.
+        let offset = comp.layers[index].start_offset.0;
+        if let (Ok(animation), Some(retime)) =
+            (map.animation_at(offset), comp.layers[index].retime.clone())
+        {
+            comp.layers[index].retime = Some(lumit_core::anim::Property {
+                animation,
+                extra: retime.extra,
+            });
+        }
+    }
     if let Some((clip, map)) = req.clip_retime {
         // Clip time, so no layer offset is applied on the way in.
         if let Ok(animation) = map.animation_at(lumit_core::time::Rational::ZERO) {
@@ -2784,7 +2839,12 @@ fn render_comp_with_preview(
         }
     }
     if let Some(masks) = req.masks {
-        comp.layers[index].masks = masks.into_iter().map(|m| m.write()).collect();
+        // The preview's masks are the layer's own, so they read on its clock.
+        let offset = comp.layers[index].start_offset.0;
+        let written: Result<Vec<_>, _> = masks.into_iter().map(|m| m.write(offset)).collect();
+        if let Ok(written) = written {
+            comp.layers[index].masks = written;
+        }
     }
     if let Some(items) = req.contents {
         // Only a shape layer has art; a stale request against another kind
@@ -2806,6 +2866,7 @@ fn render_comp_with_preview(
     // document never committed, so they must neither be served back later nor
     // displace honest frames. It IS the case the bar exists for, though: a
     // dragged value on a heavy comp is exactly where the picture goes quiet.
+    let document = std::sync::Arc::new(document);
     watched(state, stream, req.frame, |state, stream| {
         publish_frame(
             state,
@@ -2843,47 +2904,60 @@ fn trace_scope(
     // made at. Scopes read the *values* in a frame, so any size answers the
     // question — and compositing the composition a second time to ask it was
     // doubling the cost of every played frame with the panel open.
-    let (width, height, rgba) = match crate::framecache::best_frame(req.comp.id, req.frame) {
-        Some(held) => held,
-        None => {
-            // Nothing held for this frame — the zero-copy Viewer keeps no bytes,
-            // so on that path the trace still has to make its own. Cached under
-            // the frame's content name, so a second trace of the same frame is
-            // free; an unnameable frame (footage still being probed) is traced
-            // without banking anything.
-            let quality = quality_for(req.scale);
-            let key = state
-                .renderer
-                .frame_key(&document, req.comp.id, req.frame, quality);
-            let provenance = lumit_render::FrameProvenance {
-                comp: req.comp.id,
-                frame: req.frame,
-                scale_q: lumit_render::preview_scale_q(quality),
-            };
-            let mut render = || {
-                state
-                    .renderer
-                    .render_preview(
-                        &document,
-                        req.comp.id,
-                        req.frame,
-                        quality_for(req.scale),
-                        req.scale,
-                    )
-                    .ok()
-                    .map(|(rgba, width, height)| (width, height, rgba))
-            };
-            let made = match key {
-                Some(key) => crate::framecache::get_or_render(key, provenance, &mut render),
-                None => render(),
-            };
-            let Some(made) = made else {
-                eprintln!("Scope render failed, dropping the trace");
-                return Ok(());
-            };
-            made
-        }
+    // Only a frame that is still what this position *shows* will do (K-330):
+    // an edit renames every frame it touches, and the entry the edit orphaned
+    // keeps claiming the position it was made for. Asked at the quality each
+    // candidate was made at, so a Half-resolution frame is judged by the Half
+    // name and not by the Full one.
+    let still_current = |key: u128, quality: lumit_render::Quality| {
+        state
+            .renderer
+            .frame_key_presynced(&document, req.comp.id, req.frame, quality)
+            == Some(key)
     };
+    let (width, height, rgba) =
+        match crate::framecache::best_frame(req.comp.id, req.frame, still_current) {
+            Some(held) => held,
+            None => {
+                // Nothing held for this frame — the zero-copy Viewer keeps no bytes,
+                // so on that path the trace still has to make its own. Cached under
+                // the frame's content name, so a second trace of the same frame is
+                // free; an unnameable frame (footage still being probed) is traced
+                // without banking anything.
+                let quality = quality_for(req.scale);
+                let key = state
+                    .renderer
+                    .frame_key(&document, req.comp.id, req.frame, quality);
+                let provenance = lumit_render::FrameProvenance {
+                    comp: req.comp.id,
+                    frame: req.frame,
+                    scale_q: lumit_render::preview_scale_q(quality),
+                    quality,
+                };
+                let mut render = || {
+                    state
+                        .renderer
+                        .render_preview(
+                            &document,
+                            req.comp.id,
+                            req.frame,
+                            quality_for(req.scale),
+                            req.scale,
+                        )
+                        .ok()
+                        .map(|(rgba, width, height)| (width, height, rgba))
+                };
+                let made = match key {
+                    Some(key) => crate::framecache::get_or_render(key, provenance, &mut render),
+                    None => render(),
+                };
+                let Some(made) = made else {
+                    eprintln!("Scope render failed, dropping the trace");
+                    return Ok(());
+                };
+                made
+            }
+        };
 
     match state
         .renderer
@@ -2946,8 +3020,20 @@ fn sample_pixels(
             // own pixels, not of the frame around them. A frame that came down
             // off the card is BGRA on two of the three platforms, thus the
             // window — and only the window — is put right after the cut.
-            let held =
-                crate::framecache::with_best_frame(req.comp.id, req.frame, |bytes, w, h, bgra| {
+            // Stale entries are passed over here for the same reason as in
+            // `trace_scope` (K-330): a dropper reading the picture frame 12
+            // used to show is a wrong number, not a stale one.
+            let still_current = |key: u128, quality: lumit_render::Quality| {
+                state
+                    .renderer
+                    .frame_key_presynced(&document, req.comp.id, req.frame, quality)
+                    == Some(key)
+            };
+            let held = crate::framecache::with_best_frame(
+                req.comp.id,
+                req.frame,
+                still_current,
+                |bytes, w, h, bgra| {
                     cut_patch(bytes, w, h, u, v, req.window).map(|mut p| {
                         if bgra {
                             for px in p.rgba.chunks_exact_mut(4) {
@@ -2956,8 +3042,9 @@ fn sample_pixels(
                         }
                         (p, w, h)
                     })
-                })
-                .flatten();
+                },
+            )
+            .flatten();
             match held {
                 Some(cut) => Some(cut),
                 // Nothing banked for this frame: render it once (banked under
@@ -2985,6 +3072,7 @@ fn sample_pixels(
                                 comp: req.comp.id,
                                 frame: req.frame,
                                 scale_q: lumit_render::preview_scale_q(quality),
+                                quality,
                             },
                             render,
                         ),
@@ -3057,7 +3145,7 @@ fn sample_layer_alone(
     let (rgba, w, h) = state
         .renderer
         .render_preview(
-            &patched,
+            &std::sync::Arc::new(patched),
             req.comp.id,
             req.frame,
             quality_for(req.scale),
@@ -3149,7 +3237,7 @@ fn publish_frame(
     comp: Uuid,
     frame: u64,
     scale: f32,
-    document: &lumit_core::Document,
+    document: &std::sync::Arc<lumit_core::Document>,
     stream: &mut WorkerResponseStream,
     mode: BridgePlaybackMode,
     cacheable: bool,
@@ -3179,7 +3267,7 @@ fn publish_zero_copy(
     comp: Uuid,
     frame: u64,
     scale: f32,
-    document: &lumit_core::Document,
+    document: &std::sync::Arc<lumit_core::Document>,
     stream: &mut WorkerResponseStream,
     mode: BridgePlaybackMode,
     cacheable: bool,
@@ -3242,7 +3330,7 @@ fn publish_zero_copy(
     comp: Uuid,
     frame: u64,
     scale: f32,
-    document: &lumit_core::Document,
+    document: &std::sync::Arc<lumit_core::Document>,
     stream: &mut WorkerResponseStream,
     mode: BridgePlaybackMode,
     cacheable: bool,

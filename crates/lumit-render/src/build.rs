@@ -253,7 +253,7 @@ pub fn motion_blur_samples(
 /// at comp time `t_comp` with every effect resolved at `t_comp` too — a thin
 /// wrapper over [`build_comp_draws_at`] with the sample and frame times equal.
 pub fn build_comp_draws(
-    doc: &lumit_core::model::Document,
+    doc: &Arc<lumit_core::model::Document>,
     comp: &lumit_core::model::Composition,
     t_comp: f64,
     pixels_by_layer: &std::collections::HashMap<uuid::Uuid, &CompLayerPixels>,
@@ -273,7 +273,7 @@ pub fn build_comp_draws(
 /// (each layer's own `start_offset` subtracted) so the flag is honoured at every
 /// depth.
 pub fn build_comp_draws_at(
-    doc: &lumit_core::model::Document,
+    doc: &Arc<lumit_core::model::Document>,
     comp: &lumit_core::model::Composition,
     t_comp: f64,
     frame_t: f64,
@@ -285,7 +285,10 @@ pub fn build_comp_draws_at(
         t_comp >= l.in_point.0.to_f64() && t_comp < l.out_point.0.to_f64()
     };
 
-    let expr_doc = Arc::new(doc.clone());
+    // The caller's Arc: an expression context takes an owned handle, and this
+    // shares one rather than deep-cloning the project per build (and per
+    // nesting level — this function recurses through Precomps).
+    let expr_doc = doc;
 
     let pixels_for = |layer: &lumit_core::model::Layer| -> Option<LayerPixels> {
         let context = Arc::new(ExpressionContext {
@@ -372,6 +375,10 @@ pub fn build_comp_draws_at(
             LayerKind::Precomp { .. } => None, // handled as Nested below
             LayerKind::Camera { .. } => None,  // shapes the view, draws nothing
         };
+        // The layer's own clock, the same one its transform and effects are
+        // read at (K-213) — a keyframed mask on a layer dragged along the
+        // timeline travels with the layer.
+        let lt = t_comp - layer.start_offset.0.to_f64();
         raw.map(|(mut rgba, w, h, natural)| {
             // Paint first, masks second: a stroke is part of the layer's
             // picture, and a mask gates the picture (K-227, docs/06 render
@@ -392,6 +399,7 @@ pub fn build_comp_draws_at(
                 f64::from(natural.0),
                 f64::from(natural.1),
                 &layer.masks,
+                lt,
             );
             (rgba, w, h, natural)
         })
@@ -469,6 +477,78 @@ pub fn build_comp_draws_at(
         }
     }
 
+    // One referenced layer resolved into an input slot — the body
+    // `dof_inputs_for` and `flare_mattes_for` share (docs/impl/layer-input.md
+    // §2): the span gate, the K-266 nested-precomp render, and the K-142
+    // masks-and-effects folding, so the depth pass and the flare matte can
+    // never disagree about what "a layer rendered alone" means.
+    let layer_slot = |e: &lumit_core::model::EffectInstance, param: &str| -> Option<DofInputDraw> {
+        let id = e.layer_ref(param)?;
+        let src = comp.layers.iter().find(|l| l.id == id)?;
+        if !in_span(src) {
+            return None;
+        }
+        // A Precomp reference renders its comp (K-266) — "a white circle
+        // in a precomp" is the natural way to author a flare source, and
+        // a depth pass authored as a comp is the same shape.
+        if let Some(nested) = nested_input_for(src) {
+            return Some(nested);
+        }
+        let mode = e.layer_source(param);
+        // Layer source (K-142). None samples the layer's raw pixels —
+        // clear its masks so `pixels_for` skips them; Masks and Effects
+        // and masks keep them.
+        let (rgba, tex_w, tex_h, natural) = if mode.applies_masks() {
+            pixels_for(src)?
+        } else {
+            let mut bare = src.clone();
+            bare.masks.clear();
+            pixels_for(&bare)?
+        };
+        // Effects and masks (K-142): resolve the referenced layer's own
+        // stack at its layer time so render_dof_inputs runs it on the
+        // texture before resampling. Uses that layer's decode scale (its
+        // px@comp radii stay honest), the same resolve export uses
+        // (K-031). Empty otherwise.
+        let (fx, lut_files) = if mode.folds_effects() && src.switches.fx {
+            let slt = t_comp - src.start_offset.0.to_f64();
+            let comp_diag = ((comp.width as f32).powi(2) + (comp.height as f32).powi(2)).sqrt();
+            let scale = tex_w as f32 / natural.0.max(1.0);
+            let markers = lumit_core::fx::MarkerContext::for_layer(comp, src);
+            // The referenced layer's own effects, so its own expressions
+            // resolve about it rather than about the layer that pointed
+            // at it.
+            let context = Arc::new(ExpressionContext {
+                document: expr_doc.clone(),
+                comp: Some(comp.id),
+                layer: Some(src.id),
+                comp_time: t_comp,
+                current_depth: 0,
+            });
+            (
+                lumit_core::fx::resolve_stack(
+                    &src.effects,
+                    slt,
+                    comp_diag * scale,
+                    scale,
+                    &markers,
+                    context,
+                ),
+                lut_files(&src.effects, slt),
+            )
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        Some(DofInputDraw {
+            rgba,
+            tex_w,
+            tex_h,
+            fx,
+            lut_files,
+            nested: None,
+        })
+    };
+
     let dof_inputs_for =
         |owner: uuid::Uuid, effects: &[lumit_core::model::EffectInstance]| -> Vec<LayerInputDraw> {
             use lumit_core::model::EffectNamespace;
@@ -493,72 +573,7 @@ pub fn build_comp_draws_at(
                     if e.layer_ref(param) == Some(owner) {
                         return LayerInputDraw::ThisLayer;
                     }
-                    let slot = || -> Option<DofInputDraw> {
-                        let id = e.layer_ref(param)?;
-                        let src = comp.layers.iter().find(|l| l.id == id)?;
-                        if !in_span(src) {
-                            return None;
-                        }
-                        // A Precomp depth renders its comp (K-266).
-                        if let Some(nested) = nested_input_for(src) {
-                            return Some(nested);
-                        }
-                        let mode = e.layer_source(param);
-                        // Depth source (K-142). None samples the depth layer's raw
-                        // pixels — clear its masks so `pixels_for` skips them; Masks
-                        // and Effects and masks keep them.
-                        let (rgba, tex_w, tex_h, natural) = if mode.applies_masks() {
-                            pixels_for(src)?
-                        } else {
-                            let mut bare = src.clone();
-                            bare.masks.clear();
-                            pixels_for(&bare)?
-                        };
-                        // Effects and masks (K-142): resolve the depth layer's own
-                        // stack at its layer time so render_dof_inputs runs it on the
-                        // depth texture before resampling. Uses the depth layer's
-                        // decode scale (its px@comp radii stay honest), the same
-                        // resolve export uses (K-031). Empty otherwise.
-                        let (fx, lut_files) = if mode.folds_effects() && src.switches.fx {
-                            let slt = t_comp - src.start_offset.0.to_f64();
-                            let comp_diag =
-                                ((comp.width as f32).powi(2) + (comp.height as f32).powi(2)).sqrt();
-                            let scale = tex_w as f32 / natural.0.max(1.0);
-                            let markers = lumit_core::fx::MarkerContext::for_layer(comp, src);
-                            // The referenced layer's own effects, so its own
-                            // expressions resolve about it rather than about
-                            // the layer that pointed at it.
-                            let context = Arc::new(ExpressionContext {
-                                document: expr_doc.clone(),
-                                comp: Some(comp.id),
-                                layer: Some(src.id),
-                                comp_time: t_comp,
-                                current_depth: 0,
-                            });
-                            (
-                                lumit_core::fx::resolve_stack(
-                                    &src.effects,
-                                    slt,
-                                    comp_diag * scale,
-                                    scale,
-                                    &markers,
-                                    context,
-                                ),
-                                lut_files(&src.effects, slt),
-                            )
-                        } else {
-                            (Vec::new(), Vec::new())
-                        };
-                        Some(DofInputDraw {
-                            rgba,
-                            tex_w,
-                            tex_h,
-                            fx,
-                            lut_files,
-                            nested: None,
-                        })
-                    };
-                    slot().map_or(LayerInputDraw::Absent, LayerInputDraw::Layer)
+                    layer_slot(e, param).map_or(LayerInputDraw::Absent, LayerInputDraw::Layer)
                 })
                 .collect()
         };
@@ -591,66 +606,7 @@ pub fn build_comp_draws_at(
                     if e.layer_ref("matte") == Some(owner) {
                         return LayerInputDraw::ThisLayer;
                     }
-                    let slot = || -> Option<DofInputDraw> {
-                        let id = e.layer_ref("matte")?;
-                        let src = comp.layers.iter().find(|l| l.id == id)?;
-                        if !in_span(src) {
-                            return None;
-                        }
-                        // A Precomp matte renders its comp (K-266) — "a white
-                        // circle in a precomp" is the natural way to author a
-                        // flare source, and it detected nothing before this.
-                        if let Some(nested) = nested_input_for(src) {
-                            return Some(nested);
-                        }
-                        let mode = e.layer_source("matte");
-                        let (rgba, tex_w, tex_h, natural) = if mode.applies_masks() {
-                            pixels_for(src)?
-                        } else {
-                            let mut bare = src.clone();
-                            bare.masks.clear();
-                            pixels_for(&bare)?
-                        };
-                        let (fx, lut_files) = if mode.folds_effects() && src.switches.fx {
-                            let slt = t_comp - src.start_offset.0.to_f64();
-                            let comp_diag =
-                                ((comp.width as f32).powi(2) + (comp.height as f32).powi(2)).sqrt();
-                            let scale = tex_w as f32 / natural.0.max(1.0);
-                            let markers = lumit_core::fx::MarkerContext::for_layer(comp, src);
-                            // The referenced layer's own effects, so its own
-                            // expressions resolve about it rather than about
-                            // the layer that pointed at it.
-                            let context = Arc::new(ExpressionContext {
-                                document: expr_doc.clone(),
-                                comp: Some(comp.id),
-                                layer: Some(src.id),
-                                comp_time: t_comp,
-                                current_depth: 0,
-                            });
-                            (
-                                lumit_core::fx::resolve_stack(
-                                    &src.effects,
-                                    slt,
-                                    comp_diag * scale,
-                                    scale,
-                                    &markers,
-                                    context,
-                                ),
-                                lut_files(&src.effects, slt),
-                            )
-                        } else {
-                            (Vec::new(), Vec::new())
-                        };
-                        Some(DofInputDraw {
-                            rgba,
-                            tex_w,
-                            tex_h,
-                            fx,
-                            lut_files,
-                            nested: None,
-                        })
-                    };
-                    slot().map_or(LayerInputDraw::Absent, LayerInputDraw::Layer)
+                    layer_slot(e, "matte").map_or(LayerInputDraw::Absent, LayerInputDraw::Layer)
                 })
                 .collect()
         };
@@ -882,6 +838,7 @@ pub fn build_comp_draws_at(
                                 comp.height,
                                 f64::from(comp.width),
                                 f64::from(comp.height),
+                                lt,
                             )),
                             comp.width,
                             comp.height,
@@ -1116,6 +1073,7 @@ pub fn build_comp_draws_at(
                             h,
                             f64::from(w),
                             f64::from(h),
+                            lt,
                         )),
                         w,
                         h,
@@ -1213,7 +1171,7 @@ fn flare_lens_files(effects: &[lumit_core::model::EffectInstance], lt: f64) -> V
 #[allow(clippy::too_many_arguments)]
 pub fn render_below_at(
     realiser: &Realiser,
-    doc: &lumit_core::model::Document,
+    doc: &Arc<lumit_core::model::Document>,
     comp: &lumit_core::model::Composition,
     below: &[lumit_core::model::Layer],
     tau: f64,
@@ -1244,7 +1202,7 @@ pub fn render_below_at(
 /// dropped to stills ([`strip_temporal_inputs`]).
 #[allow(clippy::too_many_arguments)]
 pub fn below_draws_at(
-    doc: &lumit_core::model::Document,
+    doc: &Arc<lumit_core::model::Document>,
     comp: &lumit_core::model::Composition,
     below: &[lumit_core::model::Layer],
     tau: f64,
@@ -1286,7 +1244,7 @@ pub fn below_draws_at(
 /// later step), so it returns None here.
 #[allow(clippy::too_many_arguments)]
 pub fn posterize_below(
-    doc: &lumit_core::model::Document,
+    doc: &Arc<lumit_core::model::Document>,
     comp: &lumit_core::model::Composition,
     layer: &lumit_core::model::Layer,
     idx: usize,
@@ -1332,7 +1290,7 @@ pub fn posterize_below(
 /// at the frame time (§5).
 #[allow(clippy::too_many_arguments)]
 pub fn accumulation_mb_below(
-    doc: &lumit_core::model::Document,
+    doc: &Arc<lumit_core::model::Document>,
     comp: &lumit_core::model::Composition,
     layer: &lumit_core::model::Layer,
     idx: usize,
@@ -1584,7 +1542,13 @@ mod render_below_at_tests {
 
         let width_at = |t: f64| {
             let mut visited = vec![comp.id];
-            let draws = build_comp_draws(&doc, &comp, t, &pixels, &mut visited);
+            let draws = build_comp_draws(
+                &std::sync::Arc::new(doc.clone()),
+                &comp,
+                t,
+                &pixels,
+                &mut visited,
+            );
             match &draws.first().expect("one draw").source {
                 DrawSource::Pixels { tex_w, .. } => *tex_w,
                 _ => panic!("a text layer draws its own pixels"),
@@ -1645,10 +1609,19 @@ mod render_below_at_tests {
         let t = 0.3;
 
         let mut v1 = vec![comp.id];
-        let draws = build_comp_draws(&doc, &comp, t, &pixels, &mut v1);
+        let draws = build_comp_draws(
+            &std::sync::Arc::new(doc.clone()),
+            &comp,
+            t,
+            &pixels,
+            &mut v1,
+        );
         let normal = realiser.realise(comp.camera_pose(t), comp.width, comp.height, bg, &draws);
         let normal_bytes = engine
-            .readback8(&ctx, &engine.display(&ctx, &normal))
+            .readback8(
+                &ctx,
+                &engine.display(&ctx, &normal, lumit_gpu::DisplayParams::NEUTRAL),
+            )
             .unwrap();
 
         // Re-render the whole stack (every layer counts as "below") at the same
@@ -1656,7 +1629,7 @@ mod render_below_at_tests {
         let mut v2 = vec![comp.id];
         let below = render_below_at(
             &realiser,
-            &doc,
+            &std::sync::Arc::new(doc.clone()),
             &comp,
             &comp.layers,
             t,
@@ -1666,7 +1639,10 @@ mod render_below_at_tests {
             &mut v2,
         );
         let below_bytes = engine
-            .readback8(&ctx, &engine.display(&ctx, &below))
+            .readback8(
+                &ctx,
+                &engine.display(&ctx, &below, lumit_gpu::DisplayParams::NEUTRAL),
+            )
             .unwrap();
 
         assert_eq!(
@@ -1759,7 +1735,13 @@ mod render_below_at_tests {
         let pixels: HashMap<Uuid, &CompLayerPixels> = HashMap::new();
         let mut visited = vec![comp.id];
         // t = 0.35, 10 fps grid → held tau = floor(3.5)/10 = 0.3.
-        let draws = build_comp_draws(&doc, &comp, 0.35, &pixels, &mut visited);
+        let draws = build_comp_draws(
+            &std::sync::Arc::new(doc.clone()),
+            &comp,
+            0.35,
+            &pixels,
+            &mut visited,
+        );
         let adj = draws
             .iter()
             .find(|d| matches!(d.source, DrawSource::Adjust))
@@ -1812,7 +1794,13 @@ mod render_below_at_tests {
         let doc = Document::new();
         let pixels: HashMap<Uuid, &CompLayerPixels> = HashMap::new();
         let mut visited = vec![comp.id];
-        let draws = build_comp_draws(&doc, &comp, 0.35, &pixels, &mut visited);
+        let draws = build_comp_draws(
+            &std::sync::Arc::new(doc.clone()),
+            &comp,
+            0.35,
+            &pixels,
+            &mut visited,
+        );
         let adj = draws
             .iter()
             .find(|d| matches!(d.source, DrawSource::Adjust))
@@ -1889,7 +1877,13 @@ mod render_below_at_tests {
         let doc = Document::new();
         let pixels: HashMap<Uuid, &CompLayerPixels> = HashMap::new();
         let mut visited = vec![comp.id];
-        let draws = build_comp_draws(&doc, &comp, 0.35, &pixels, &mut visited);
+        let draws = build_comp_draws(
+            &std::sync::Arc::new(doc.clone()),
+            &comp,
+            0.35,
+            &pixels,
+            &mut visited,
+        );
         let d = draws
             .iter()
             .find(|d| !matches!(d.source, DrawSource::Adjust))
@@ -1955,11 +1949,20 @@ mod render_below_at_tests {
 
         // The posterised frame at t = 0.35.
         let mut v1 = vec![comp.id];
-        let draws = build_comp_draws(&doc, &comp, 0.35, &pixels, &mut v1);
+        let draws = build_comp_draws(
+            &std::sync::Arc::new(doc.clone()),
+            &comp,
+            0.35,
+            &pixels,
+            &mut v1,
+        );
         let posterised =
             realiser.realise(comp.camera_pose(0.35), comp.width, comp.height, bg, &draws);
         let posterised_bytes = engine
-            .readback8(&ctx, &engine.display(&ctx, &posterised))
+            .readback8(
+                &ctx,
+                &engine.display(&ctx, &posterised, lumit_gpu::DisplayParams::NEUTRAL),
+            )
             .unwrap();
 
         // A plain render of the below-stack (just the text) at tau = 0.3.
@@ -1968,10 +1971,21 @@ mod render_below_at_tests {
         // frame_t = 0.35 matches what the posterise adjustment passes (its own
         // frame time), so the two below-renders build the identical draws.
         let held = render_below_at(
-            &realiser, &doc, &comp, below, 0.3, 0.35, None, &pixels, &mut v2,
+            &realiser,
+            &std::sync::Arc::new(doc.clone()),
+            &comp,
+            below,
+            0.3,
+            0.35,
+            None,
+            &pixels,
+            &mut v2,
         );
         let held_bytes = engine
-            .readback8(&ctx, &engine.display(&ctx, &held))
+            .readback8(
+                &ctx,
+                &engine.display(&ctx, &held, lumit_gpu::DisplayParams::NEUTRAL),
+            )
             .unwrap();
 
         assert_eq!(
@@ -2043,7 +2057,13 @@ mod render_below_at_tests {
         let doc = Document::new();
         let pixels: HashMap<Uuid, &CompLayerPixels> = HashMap::new();
         let mut visited = vec![comp.id];
-        let draws = build_comp_draws(&doc, &comp, 0.5, &pixels, &mut visited);
+        let draws = build_comp_draws(
+            &std::sync::Arc::new(doc.clone()),
+            &comp,
+            0.5,
+            &pixels,
+            &mut visited,
+        );
         let adj = draws
             .iter()
             .find(|d| matches!(d.source, DrawSource::Adjust))
@@ -2099,10 +2119,16 @@ mod render_below_at_tests {
         let pixels: HashMap<Uuid, &CompLayerPixels> = HashMap::new();
         let render = |comp: &Composition, t: f64| -> Vec<u8> {
             let mut v = vec![comp.id];
-            let draws = build_comp_draws(&doc, comp, t, &pixels, &mut v);
+            let draws =
+                build_comp_draws(&std::sync::Arc::new(doc.clone()), comp, t, &pixels, &mut v);
             let bg = comp.background.0.map(f64::from);
             let tex = realiser.realise(comp.camera_pose(t), comp.width, comp.height, bg, &draws);
-            engine.readback8(&ctx, &engine.display(&ctx, &tex)).unwrap()
+            engine
+                .readback8(
+                    &ctx,
+                    &engine.display(&ctx, &tex, lumit_gpu::DisplayParams::NEUTRAL),
+                )
+                .unwrap()
         };
 
         // STILL scene: a static text below a 4-sample accumulation adjustment must

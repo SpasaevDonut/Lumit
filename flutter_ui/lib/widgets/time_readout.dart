@@ -242,7 +242,9 @@ class _TimeReadoutState extends State<TimeReadout>
             : null,
         onHorizontalDragUpdate: widget.draggable
             ? (d) {
-                _dragAccum += d.delta.dx;
+                // Shift scrubs coarse (×10), Ctrl fine (×0.1) — with whole
+                // frames, fine means ten times the drag per frame.
+                _dragAccum += d.delta.dx * scrubFactor();
                 final steps = (_dragAccum / _pixelsPerFrame).truncate();
                 if (steps == 0) return;
                 _dragAccum -= steps * _pixelsPerFrame;

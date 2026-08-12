@@ -34,6 +34,29 @@ const double fxNameColumnWidth = 138;
 /// whether or not the property can animate.
 const double fxKeyframeGutter = 18;
 
+/// How tall one property row's content is — **every** row in the Effect
+/// controls panel, whatever control it carries.
+///
+/// The panel used to let each row be as tall as its own tallest control, so a
+/// tick-box row (14 px checkbox) came out four to eight pixels shorter than a
+/// number row (22 px stopwatch strip) or a choice row (a dropdown's button
+/// face), and a stack of parameters visibly stepped in and out. One fixed
+/// height for the content box settles it, and the height is the tick-box row's
+/// — the shortest of them, and the one the owner asked everything to match.
+///
+/// It is the *content* box: the section adds its own 2 px above and below and
+/// the hairline under the row, so a row occupies 23 px on the panel.
+///
+/// Controls taller than this than sit inside it rather than pushing it out —
+/// their padding is squeezed by the constraint, never their text. The one
+/// control that had to give ground is the stopwatch button, whose 16 px icon
+/// plus 2 px of padding would have spilled: it carries none now (see
+/// `keyframe_controls_frb.dart`).
+///
+/// Not shared with the Timeline: its lanes have their own heights, and its
+/// fold-out rows take the other branch of these row widgets entirely.
+const double fxRowHeight = 18;
+
 /// One twirl-open section: Source, Transform, or one effect.
 class FxSection extends StatelessWidget {
   /// The section's own control, left of the name — an effect's enable switch.
@@ -306,22 +329,25 @@ Widget fxTwoColumnRow({
   Widget? keyframeControls,
   required Widget control,
 }) =>
-    Row(
-      children: [
-        SizedBox(
-          width: fxNameColumnWidth,
-          child: Row(
-            children: [
-              keyframeControls ?? const SizedBox(width: fxKeyframeGutter),
-              const SizedBox(width: 4),
-              Expanded(child: name),
-            ],
+    SizedBox(
+      height: fxRowHeight,
+      child: Row(
+        children: [
+          SizedBox(
+            width: fxNameColumnWidth,
+            child: Row(
+              children: [
+                keyframeControls ?? const SizedBox(width: fxKeyframeGutter),
+                const SizedBox(width: 4),
+                Expanded(child: name),
+              ],
+            ),
           ),
-        ),
-        Expanded(
-          child: Align(alignment: Alignment.centerLeft, child: control),
-        ),
-      ],
+          Expanded(
+            child: Align(alignment: Alignment.centerLeft, child: control),
+          ),
+        ],
+      ),
     );
 
 /// A parameter group's own twirl inside a section (P4, K-145): the sub-heading
@@ -350,31 +376,34 @@ Widget fxGroupHeaderRow(
     key: key,
     behavior: HitTestBehavior.opaque,
     onTap: onToggle,
-    child: Row(
-      children: [
-        SizedBox(
-          width: fxNameColumnWidth,
-          child: Row(
-            children: [
-              const SizedBox(width: 2),
-              lumitIcon(
-                open ? LumitIcon.twirlOpen : LumitIcon.twirlClosed,
-                size: iconSize,
-                color: open ? t.textPrimary : t.textMuted,
-              ),
-              const SizedBox(width: 2),
-              Expanded(
-                child: Text(
-                  label,
-                  style: t.bodyPrimary,
-                  overflow: TextOverflow.ellipsis,
+    child: SizedBox(
+      height: fxRowHeight,
+      child: Row(
+        children: [
+          SizedBox(
+            width: fxNameColumnWidth,
+            child: Row(
+              children: [
+                const SizedBox(width: 2),
+                lumitIcon(
+                  open ? LumitIcon.twirlOpen : LumitIcon.twirlClosed,
+                  size: iconSize,
+                  color: open ? t.textPrimary : t.textMuted,
                 ),
-              ),
-            ],
+                const SizedBox(width: 2),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: t.bodyPrimary,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-        const Expanded(child: SizedBox.shrink()),
-      ],
+          const Expanded(child: SizedBox.shrink()),
+        ],
+      ),
     ),
   );
 }

@@ -58,9 +58,11 @@ For a visual layer at comp time `t`, the compiled subgraph is, in order:
    picture and effects see it. A layer with paint on it is rasterised at its real size (a flat
    solid is otherwise an 8×8 tile), and paint on a Precomp layer forces the nested intermediate
    exactly as a mask does. Stamping is on the CPU today; a GPU path changes nothing above it.
-3. **Masks** — bezier paths combined top-to-bottom by mode (add, subtract, intersect, lighten,
-   darken, difference, none), each with feather, expansion, opacity, inversion. Masks gate the
-   layer's alpha before any effect runs, so effects see the masked image.
+3. **Masks** — bezier paths combined top-to-bottom by mode (none, add, subtract, intersect,
+   difference; lighten and darken are not built yet), each with feather, expansion, opacity,
+   inversion — applied to a mask in that order, before it folds into the stack
+   ([03-DATA-MODEL.md](03-DATA-MODEL.md) §7). Masks gate the layer's alpha before any effect
+   runs, so effects see the masked image.
 4. **Effect stack** — top-to-bottom ([08-EFFECTS.md](08-EFFECTS.md)). Each effect sees the
    output of the one above it, in working space, premultiplied unless it declares otherwise
    (§3.4).

@@ -87,4 +87,9 @@ pub use realise::Realiser;
 /// reporting what the Settings row is really drawing at — need not take a
 /// direct dependency on `lumit-gpu` just to ask.
 pub use lumit_gpu::adapter_sample_count;
+
+/// The Viewer's display view (K-314), re-exported for the same reason: the
+/// bridge sets it on [`HeadlessRenderer::set_display_view`] and would otherwise
+/// need a `lumit-gpu` dependency to name the type it is passing.
+pub use lumit_gpu::DisplayParams;
 pub use source::{SourceProbe, SourceProbes};

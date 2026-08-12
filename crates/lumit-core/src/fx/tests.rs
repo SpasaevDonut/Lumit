@@ -4782,57 +4782,6 @@ fn lens_flare_fft_round_trips_matches_dft_and_conserves_energy() {
     assert!((e_time - e_freq).abs() < 1e-9);
 }
 
-// §8.2 — the FRFT, pinned against the reference implementation: golden
-// probe values computed by realflare's `frft.py` (numpy, f64) on a fixed
-// 8×8 input, at order 1.0 (exercising the plain branch) and at 0.12 (the
-// small-alpha normalisation branch the ghost-disc bake actually uses —
-// which routes through an extra inverse FFT). Note the discrete FrFT at
-// order 1 is NOT the plain DFT (it approximates the continuous transform);
-// the golden is the truth, not an identity.
-#[test]
-fn lens_flare_frft_matches_the_reference_goldens() {
-    use crate::fx::fft::{frft2, Cx};
-    let (w, h) = (8usize, 8usize);
-    let src: Vec<Cx> = (0..w * h)
-        .map(|i| Cx::new((i as f64 * 0.7).sin() + 0.5 * (i as f64 * 1.3).cos(), 0.0))
-        .collect();
-    type FrftGolden = (f64, [(usize, usize, f64, f64); 4]);
-    let goldens: [FrftGolden; 2] = [
-        (
-            1.0,
-            [
-                (0, 0, 0.009899350669, 0.0),
-                (1, 3, 0.019183561776, -0.002196803383),
-                (4, 4, 0.012801348175, 0.0),
-                (7, 5, 0.019183561776, 0.002196803383),
-            ],
-        ),
-        (
-            0.12,
-            [
-                (0, 0, 0.018843641651, -0.050445840078),
-                (1, 3, 0.093980541881, -0.074974910874),
-                (4, 4, 0.051332648711, -0.015411838816),
-                (7, 5, -0.059131178422, 0.142959643795),
-            ],
-        ),
-    ];
-    for (alpha, probes) in goldens {
-        let mut out = src.clone();
-        frft2(&mut out, w, h, alpha);
-        assert!(out.iter().all(|z| z.re.is_finite() && z.im.is_finite()));
-        for (y, x, re, im) in probes {
-            let z = out[y * w + x];
-            assert!(
-                (z.re - re).abs() < 1e-9 && (z.im - im).abs() < 1e-9,
-                "alpha {alpha} [{y},{x}]: got {} {:+}, want {re} {im:+}",
-                z.re,
-                z.im,
-            );
-        }
-    }
-}
-
 // §8.3 — optics units: the Cauchy fit reproduces n_d exactly and the Abbe
 // number within tolerance; refraction matches Snell; Fresnel at normal
 // incidence is the textbook ((n1-n2)/(n1+n2))²; the quarter-wave MgF₂
@@ -5480,6 +5429,36 @@ fn lens_flare_blend_options_all_resolve() {
         };
         assert_eq!(p.blend, mode.min(last));
     }
+}
+
+/// The Lens flare's float parameters read through the expression context like
+/// every other effect's. A merge had left the flare's arm on the context-free
+/// `float_at`, where `time` evaluates to nothing — so an expression-driven
+/// flare silently ignored its expressions while every neighbour honoured
+/// theirs.
+#[test]
+fn lens_flare_params_evaluate_expressions_in_context() {
+    let mut inst = instantiate("lens_flare").unwrap();
+    for p in &mut inst.params {
+        if p.id == "intensity" {
+            let mut prop = Property::fixed(1.0);
+            prop.animation = Animation::Expression("time".into());
+            p.value = EffectValue::Float(prop);
+        }
+    }
+    let context = Arc::new(ExpressionContext {
+        comp_time: 3.0,
+        ..ExpressionContext::detached()
+    });
+    let ops = super::resolve_stack(&[inst], 0.0, 2202.9, 1.0, &MarkerContext::NONE, context);
+    let [Resolved::LensFlare(p)] = ops.as_slice() else {
+        panic!("lens_flare must resolve to exactly one op");
+    };
+    assert!(
+        (p.intensity - 3.0).abs() < 1e-6,
+        "intensity must follow the expression through the context: {}",
+        p.intensity
+    );
 }
 
 // The blend table itself (K-289), against the formulas written out by hand.

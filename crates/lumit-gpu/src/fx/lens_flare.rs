@@ -228,7 +228,7 @@ pub struct LensFlareFx {
 pub(super) struct BakeCache<T> {
     by_key: HashMap<u64, T>,
     /// Insertion order, oldest first.
-    order: Vec<u64>,
+    order: std::collections::VecDeque<u64>,
     cap: usize,
 }
 
@@ -236,7 +236,7 @@ impl<T: Clone> BakeCache<T> {
     pub(super) fn new(cap: usize) -> Self {
         Self {
             by_key: HashMap::new(),
-            order: Vec::new(),
+            order: std::collections::VecDeque::new(),
             cap: cap.max(1),
         }
     }
@@ -253,9 +253,8 @@ impl<T: Clone> BakeCache<T> {
             return held.clone();
         }
         while self.by_key.len() >= self.cap {
-            match self.order.first().copied() {
+            match self.order.pop_front() {
                 Some(oldest) => {
-                    self.order.remove(0);
                     self.by_key.remove(&oldest);
                 }
                 // Unreachable while the two stay in step, but a cache may
@@ -263,7 +262,7 @@ impl<T: Clone> BakeCache<T> {
                 None => self.by_key.clear(),
             }
         }
-        self.order.push(key);
+        self.order.push_back(key);
         self.by_key.insert(key, value.clone());
         value
     }
@@ -348,6 +347,38 @@ struct TraceParams {
     roundness: f32,
     softness: f32,
     light_offset: u32,
+}
+
+/// The frame-time optics both the production trace and the §8.5 debug hook
+/// derive before filling [`TraceParams`] — shared with the CPU reference
+/// (K-261): the stop-down scale, the wide-open roundness blend, and the
+/// thin-lens focus shift (K-260's f²/(1000·d − f), exactly as the CPU
+/// reference computes it). One place, so the two fills cannot drift.
+struct FrameOptics {
+    stop_scale: f32,
+    wide_open: f32,
+    sensor_shift_mm: f32,
+}
+
+fn frame_optics(native_fstop: f32, focal_mm: f32, fstop: f32, focus_m: f32) -> FrameOptics {
+    let stop_scale = if native_fstop > 0.0 && fstop > 0.0 {
+        (native_fstop / fstop).clamp(0.05, 1.0)
+    } else {
+        1.0
+    };
+    let native = native_fstop.max(0.7);
+    let wide_open = (1.0 - (fstop / native - 1.0).clamp(0.0, 2.0) / 2.0).clamp(0.0, 1.0);
+    let f = focal_mm;
+    let sensor_shift_mm = if focus_m <= 0.0 {
+        0.0
+    } else {
+        (f * f / (1000.0 * focus_m - f).max(f)).clamp(0.0, f)
+    };
+    FrameOptics {
+        stop_scale,
+        wide_open,
+        sensor_shift_mm,
+    }
 }
 
 #[repr(C)]
@@ -1307,16 +1338,12 @@ impl FxEngine {
                     let batch_rays = grid * grid;
                     let batch_quads = (grid - 1) * (grid - 1);
                     // Frame-time optics shared with the CPU reference
-                    // (K-261): the stop-down scale, the wide-open roundness
-                    // blend, and the launch cell area in flare-buffer px².
-                    let stop_scale = if baked.native_fstop > 0.0 && op.fstop > 0.0 {
-                        (baked.native_fstop / op.fstop).clamp(0.05, 1.0)
-                    } else {
-                        1.0
-                    };
-                    let native = baked.native_fstop.max(0.7);
-                    let wide_open =
-                        (1.0 - (op.fstop / native - 1.0).clamp(0.0, 2.0) / 2.0).clamp(0.0, 1.0);
+                    // (K-261), plus the launch cell area in flare-buffer px².
+                    let FrameOptics {
+                        stop_scale,
+                        wide_open,
+                        sensor_shift_mm,
+                    } = frame_optics(baked.native_fstop, baked.focal_mm, op.fstop, op.focus_m);
                     let st_flare = op.screen_transform / div as f32;
                     let cell_mm = 2.0 * baked.pupil_mm * stop_scale / (grid.max(2) - 1) as f32;
                     let params = ctx
@@ -1336,16 +1363,7 @@ impl FxEngine {
                                 raster_w: fpw as f32,
                                 raster_h: fph as f32,
                                 light_count: light_chunk,
-                                // Focus (K-260): thin-lens shift, the same
-                                // f²/(1000·d − f) the CPU reference uses.
-                                sensor_shift_mm: {
-                                    let f = baked.focal_mm;
-                                    if op.focus_m <= 0.0 {
-                                        0.0
-                                    } else {
-                                        (f * f / (1000.0 * op.focus_m - f).max(f)).clamp(0.0, f)
-                                    }
-                                },
+                                sensor_shift_mm,
                                 pupil_mm: baked.pupil_mm * stop_scale,
                                 start_z_mm: baked.start_z_mm,
                                 sensor_z_mm: baked.sensor_z_mm,
@@ -1702,14 +1720,11 @@ impl FxEngine {
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("fx-lens-flare-dbg-params"),
                 contents: bytemuck::bytes_of(&{
-                    let stop_scale = if baked.native_fstop > 0.0 && op.fstop > 0.0 {
-                        (baked.native_fstop / op.fstop).clamp(0.05, 1.0)
-                    } else {
-                        1.0
-                    };
-                    let native = baked.native_fstop.max(0.7);
-                    let wide_open =
-                        (1.0 - (op.fstop / native - 1.0).clamp(0.0, 2.0) / 2.0).clamp(0.0, 1.0);
+                    let FrameOptics {
+                        stop_scale,
+                        wide_open,
+                        sensor_shift_mm,
+                    } = frame_optics(baked.native_fstop, baked.focal_mm, op.fstop, op.focus_m);
                     let cell_mm = 2.0 * baked.pupil_mm * stop_scale / (grid.max(2) - 1) as f32;
                     TraceParams {
                         surface_count: baked.surface_count,
@@ -1723,14 +1738,7 @@ impl FxEngine {
                         raster_w: w as f32,
                         raster_h: h as f32,
                         light_count: 1,
-                        sensor_shift_mm: {
-                            let f = baked.focal_mm;
-                            if op.focus_m <= 0.0 {
-                                0.0
-                            } else {
-                                (f * f / (1000.0 * op.focus_m - f).max(f)).clamp(0.0, f)
-                            }
-                        },
+                        sensor_shift_mm,
                         pupil_mm: baked.pupil_mm * stop_scale,
                         start_z_mm: baked.start_z_mm,
                         sensor_z_mm: baked.sensor_z_mm,

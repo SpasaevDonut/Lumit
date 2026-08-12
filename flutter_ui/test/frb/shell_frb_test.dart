@@ -82,7 +82,6 @@ void main() {
       expect(find.byKey(const ValueKey('settings-tier')), findsOneWidget);
       expect(find.byKey(const ValueKey('settings-cache-used')), findsOneWidget);
 
-
       // The budget is a typed number now (K-194), not a pick from a list:
       // dragging it changes what the engine holds, not just the label.
       final before = cacheStats().budgetBytes.toInt();
@@ -182,7 +181,8 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('A folder I choose').last);
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('settings-disk-folder')), findsOneWidget);
+      expect(
+          find.byKey(const ValueKey('settings-disk-folder')), findsOneWidget);
 
       // Leave the engine on its default, since the location is process-wide.
       setDiskCacheLocation(location: BridgeCacheLocation.appData, folder: '');
@@ -417,6 +417,11 @@ void main() {
     /// export through running to its outcome, and offers Cancel only while
     /// something is actually cancellable. Driven through the injected poll,
     /// so no engine has to run a real export.
+    ///
+    /// The strip polls only while an export is live: each start is announced
+    /// through [statusLineExportStarted], as the export dialogue and the
+    /// snapshot do, and the poll follows the export to its outcome on its
+    /// own from there. An idle strip makes no bridge calls at all.
     testWidgets('the status line follows an export through its states',
         (tester) async {
       var state = const BridgeExportState.idle();
@@ -433,11 +438,14 @@ void main() {
 
       state = BridgeExportState.running(
           frame: BigInt.from(30), total: BigInt.from(120), encoder: 'x264');
+      statusLineExportStarted.value++;
       await tester.pump(const Duration(milliseconds: 600));
       expect(find.textContaining('frame 30 of 120'), findsOneWidget);
       expect(find.byKey(const ValueKey('status-export-cancel')), findsOneWidget,
           reason: 'a running export can be cancelled from the strip');
 
+      // No new signal: the poll that saw "running" keeps ticking until the
+      // export leaves that state, so the outcome arrives on its own.
       state = const BridgeExportState.done(path: 'C:/out/final.mp4');
       await tester.pump(const Duration(milliseconds: 600));
       expect(find.textContaining('Exported to'), findsOneWidget);
@@ -445,6 +453,7 @@ void main() {
           reason: 'nothing to cancel any more');
 
       state = const BridgeExportState.failed(error: 'cancelled');
+      statusLineExportStarted.value++;
       await tester.pump(const Duration(milliseconds: 600));
       expect(find.text('Export cancelled'), findsOneWidget);
     });
@@ -463,7 +472,10 @@ void main() {
       expect(find.text('Not saved yet'), findsOneWidget,
           reason: 'a fresh untouched project has nothing to lose');
 
+      // The strip redraws on document notifications rather than a poll, so
+      // the edit announces itself the way every edit in the application does.
       p.state.project!.newComposition(name: 'Scene');
+      p.state.notifyDocumentChanged();
       await tester.pump(const Duration(milliseconds: 600));
       expect(find.text('Unsaved changes'), findsOneWidget);
 
@@ -473,6 +485,8 @@ void main() {
       // lands on the real turns settleFrb provides.
       p.state.project!.save(path: '${dir.path}/probe.lum');
       await settleFrb(tester, until: () => !p.state.project!.isDirty());
+      // As the application's own save path does once the write lands.
+      p.state.notifyDocumentChanged();
       await tester.pump(const Duration(milliseconds: 600));
       expect(find.text('Saved'), findsOneWidget,
           reason: 'the save stamped the revision clean');
@@ -569,8 +583,7 @@ void main() {
         child: Builder(
           builder: (context) => HouseButton(
             key: const ValueKey('open-export'),
-            onPressed: () =>
-                showExportDialogFrb(context: context, comp: comp),
+            onPressed: () => showExportDialogFrb(context: context, comp: comp),
             child: const Text('Open'),
           ),
         ),
@@ -605,8 +618,7 @@ void main() {
         child: Builder(
           builder: (context) => HouseButton(
             key: const ValueKey('open-export'),
-            onPressed: () =>
-                showExportDialogFrb(context: context, comp: comp),
+            onPressed: () => showExportDialogFrb(context: context, comp: comp),
             child: const Text('Open'),
           ),
         ),

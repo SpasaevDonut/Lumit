@@ -4310,15 +4310,16 @@ fn the_retime_property_toggles_and_reads_back() {
         .iter()
         .any(|l| l.info.retime.is_some()));
 
+    // A constant map is not a map: writing one takes the Retime away rather
+    // than freezing the layer on a single source moment — see
+    // `a_flattened_retime_is_removed_rather_than_freezing_the_layer`.
     layer
         .set_retime_property(BridgeScalar::Static(2.5))
         .expect("write");
-    assert!(matches!(
-        layer.get_retime_property().expect("read"),
-        Some(BridgeScalar::Static(v)) if (v - 2.5).abs() < 1e-9
-    ));
+    assert!(layer.get_retime_property().expect("read").is_none());
 
     // Off removes it entirely — "not retimed", not "retimed to 1×".
+    assert!(layer.toggle_retime_property().expect("on again"));
     assert!(!layer.toggle_retime_property().expect("off"));
     assert!(layer.get_retime_property().expect("read").is_none());
 }
@@ -5157,6 +5158,75 @@ fn switching_retime_off_re_hangs_the_layer_on_its_source() {
     );
 }
 
+/// A Retime flattened to one constant is a Retime **removed**, not a layer
+/// frozen on one frame.
+///
+/// The reported bug: turning the Retime row's stopwatch off — or deleting the
+/// last key, which the graph editor also answers with a static value — wrote a
+/// constant map. A constant map says "show this one source moment for the whole
+/// layer", so the layer sat on a single frame for ever, with the row gone quiet
+/// and nothing on screen to say why. Both gestures mean "no more retime", so
+/// both take the Ctrl+Alt+T-off route: the property goes and the layer is
+/// re-hung on its source (K-212), in one undo step.
+#[test]
+fn a_flattened_retime_is_removed_rather_than_freezing_the_layer() {
+    use crate::api::composition::BridgeCompSettings;
+    use crate::api::effect::{BridgeRational, BridgeScalar};
+
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let inner = project
+        .new_composition(
+            "Inner".into(),
+            Some(BridgeCompSettings {
+                name: "Inner".into(),
+                width: 320,
+                height: 240,
+                fps_num: 60,
+                fps_den: 1,
+                duration: BridgeRational { num: 5, den: 1 },
+            }),
+        )
+        .expect("comp");
+    let outer = project.new_composition("Outer".into(), None).expect("comp");
+    let layer = outer.add_precomp_layer(&inner).expect("nested");
+
+    layer.toggle_retime_property().expect("on");
+    assert!(layer.get_retime_property().expect("read").is_some());
+
+    // The stopwatch turned off: the value the curve read at the playhead,
+    // written as a constant.
+    layer
+        .set_retime_property(BridgeScalar::Static(0.0))
+        .expect("de-animated");
+    assert!(
+        layer.get_retime_property().expect("read").is_none(),
+        "a constant map takes the Retime away instead of freezing the layer"
+    );
+
+    // And the layer is re-hung on its source, so it plays at source rate again:
+    // five seconds of source from the frame that was showing at the in point.
+    let span = layer.get_span().expect("span");
+    assert_eq!(outer.frame_at_time(span.in_point).expect("frame"), 0);
+    assert_eq!(
+        outer.frame_at_time(span.out_point).expect("frame"),
+        300,
+        "the whole source runs again rather than one frame holding"
+    );
+
+    // One undo step covers the removal and the re-hang together.
+    project.undo().expect("undone");
+    assert!(
+        layer.get_retime_property().expect("read").is_some(),
+        "the Retime comes back whole"
+    );
+
+    // A layer with no Retime at all still refuses, rather than being given one.
+    layer.toggle_retime_property().expect("off");
+    assert!(layer
+        .set_retime_property(BridgeScalar::Static(0.0))
+        .is_err());
+}
+
 /// Keyframes belong to the layer, and the seam says so in the interface's units
 /// (K-213).
 ///
@@ -5254,4 +5324,204 @@ fn enabling_retime_keys_the_layer_where_it_sits() {
     // so each is the layer's own local time and nothing moves on screen.
     assert!((keys[0].value - 1.0).abs() < 1e-9);
     assert!((keys[1].value - 6.0).abs() < 1e-9);
+}
+
+/// A mask carries two things `BridgeMask` does not describe — its path
+/// keyframes and the forward-compatibility `extra` a newer Lumit may have
+/// written — and an ordinary edit from the frontend must keep both.
+///
+/// The regression this pins: `BridgeMask::write` rebuilds the engine's mask
+/// field by field, so `set_mask` used to replace the stored mask outright.
+/// Dragging a mask's opacity therefore deleted its animation, and dropped
+/// exactly the unknown fields docs/10 §1.1 makes it mandatory to round-trip.
+#[test]
+fn editing_a_mask_keeps_what_the_bridge_cannot_describe() {
+    use crate::api::layer::{BridgeMask, BridgeMaskMode, BridgeVertex};
+
+    let (project, layer) = project_with_layer();
+    let vertices = vec![
+        BridgeVertex {
+            x: 0.0,
+            y: 0.0,
+            tan_in_x: 0.0,
+            tan_in_y: 0.0,
+            tan_out_x: 0.0,
+            tan_out_y: 0.0,
+        },
+        BridgeVertex {
+            x: 10.0,
+            y: 0.0,
+            tan_in_x: 0.0,
+            tan_in_y: 0.0,
+            tan_out_x: 0.0,
+            tan_out_y: 0.0,
+        },
+        BridgeVertex {
+            x: 10.0,
+            y: 10.0,
+            tan_in_x: 0.0,
+            tan_in_y: 0.0,
+            tan_out_x: 0.0,
+            tan_out_y: 0.0,
+        },
+    ];
+    let mask = BridgeMask {
+        id: uuid::Uuid::now_v7(),
+        name: "Rectangle".into(),
+        vertices: vertices.clone(),
+        closed: true,
+        inverted: false,
+        opacity: BridgeScalar::Static(100.0),
+        mode: BridgeMaskMode::Add,
+        feather: BridgeScalar::Static(0.0),
+        expansion: BridgeScalar::Static(0.0),
+        path_keys: Vec::new(),
+    };
+    layer.add_mask(mask.clone()).expect("added");
+
+    // Give the stored mask both of the things the bridge cannot carry, as a
+    // newer version of Lumit (or the keyframe UI, once it exists) would.
+    let key_time = lumit_core::time::Rational::new(1, 1).expect("1 s");
+    {
+        let state = project.state().expect("state");
+        let state = state.write().expect("write");
+        let mut doc = lumit_core::Document::clone(&state.store.snapshot());
+        let stored = doc
+            .comp_mut(layer.comp_id)
+            .expect("the comp")
+            .layers
+            .iter_mut()
+            .flat_map(|l| l.masks.iter_mut())
+            .find(|m| m.id == mask.id)
+            .expect("the mask we just added");
+        stored.path_keys = vec![lumit_core::mask::PathKeyframe {
+            time: key_time,
+            path: stored.path.clone(),
+            interp_in: lumit_core::anim::SideInterp::Linear,
+            interp_out: lumit_core::anim::SideInterp::Linear,
+        }];
+        stored
+            .extra
+            .insert("fromTheFuture".into(), serde_json::json!(7));
+        state.store.replace_document(doc);
+    }
+
+    // An ordinary edit: the same thing dragging the opacity slider does. No
+    // time, because an opacity drag is not a shape edit.
+    layer
+        .set_mask(
+            BridgeMask {
+                opacity: BridgeScalar::Static(40.0),
+                ..mask.clone()
+            },
+            None,
+        )
+        .expect("edited");
+
+    let state = project.state().expect("state");
+    let state = state.read().expect("read");
+    let doc = state.store.snapshot();
+    let stored = doc
+        .comp(layer.comp_id)
+        .expect("the comp")
+        .layers
+        .iter()
+        .flat_map(|l| l.masks.iter())
+        .find(|m| m.id == mask.id)
+        .expect("the mask survives its own edit");
+
+    assert!(
+        (stored.opacity.value_at(0.0) - 40.0).abs() < 1e-9,
+        "the edit landed"
+    );
+    assert_eq!(
+        stored.path_keys.len(),
+        1,
+        "an opacity edit must not delete the mask's animation"
+    );
+    assert_eq!(stored.path_keys[0].time, key_time);
+    assert_eq!(
+        stored.extra.get("fromTheFuture"),
+        Some(&serde_json::json!(7)),
+        "a field a newer Lumit wrote must survive an edit from this one"
+    );
+    drop(state);
+
+    // **A shape edit on a keyed mask lands on the key** (K-340). Once a path is
+    // animated `path` is not what the mask draws, so writing the dragged
+    // vertices there would move nothing at all and the shape would look frozen
+    // under the pointer.
+    let dragged: Vec<BridgeVertex> = mask
+        .vertices
+        .iter()
+        .map(|v| BridgeVertex {
+            x: v.x + 25.0,
+            ..*v
+        })
+        .collect();
+    layer
+        .set_mask(
+            BridgeMask {
+                vertices: dragged,
+                ..mask.clone()
+            },
+            Some(BridgeRational {
+                num: key_time.num(),
+                den: key_time.den(),
+            }),
+        )
+        .expect("shape edited");
+
+    let state = project.state().expect("state");
+    let state = state.read().expect("read");
+    let doc = state.store.snapshot();
+    let stored = doc
+        .comp(layer.comp_id)
+        .expect("the comp")
+        .layers
+        .iter()
+        .flat_map(|l| l.masks.iter())
+        .find(|m| m.id == mask.id)
+        .expect("the mask is still there");
+    assert_eq!(stored.path_keys.len(), 1, "the drag reused the key there");
+    assert!(
+        (stored.path_keys[0].path.vertices[0].pos.0 - (mask.vertices[0].x + 25.0)).abs() < 1e-9,
+        "the dragged shape went into the key, not the ignored static path"
+    );
+
+    // The document's lock goes back before anything writes through it again:
+    // `clear_mask_path_keys` below takes the write side, and a read guard still
+    // alive here would sit on it for ever (docs/14: no lock held across a call
+    // that takes the other side).
+    drop(state);
+
+    // **And the wireframe can find that shape** (K-342). The mask still carries
+    // its old static path — `path` is not what an animated mask draws — so
+    // without this the Viewer drew the shape snapping back to where it began
+    // the moment the drag ended, even though the render animated correctly.
+    let comp = crate::api::composition::CompositionReference::new(layer.project_id, layer.comp_id);
+    let shown = comp
+        .animated_mask_paths_at(0)
+        .expect("the comp answers for frame 0");
+    let row = shown
+        .iter()
+        .find(|r| r.mask == mask.id)
+        .expect("an animated mask is listed");
+    assert_eq!(row.layer, layer.layer_id);
+    assert!(
+        (row.vertices[0].x - (mask.vertices[0].x + 25.0)).abs() < 1e-9,
+        "the shape shown is the keyed one, not the stale static path"
+    );
+
+    // A still mask is not listed at all: its own vertices already say where it
+    // is, and sending every mask every frame is what this avoids.
+    layer
+        .clear_mask_path_keys(mask.id, BridgeRational { num: 0, den: 1 })
+        .expect("stopped animating");
+    assert!(
+        comp.animated_mask_paths_at(0)
+            .expect("still answers")
+            .is_empty(),
+        "a mask that is not animated must not be listed"
+    );
 }

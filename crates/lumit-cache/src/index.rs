@@ -86,18 +86,6 @@ pub fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-/// The eviction score for one entry: **stale × large ÷ cheap-to-remake**, the
-/// same shape [`crate::ByteLru`] uses for the tiers above, so the ladder evicts
-/// by one rule from top to bottom (docs/06 §5.3). Higher means evict sooner.
-#[must_use]
-pub fn eviction_score(entry: &IndexEntry, now: u64) -> f64 {
-    let staleness = now.saturating_sub(entry.last_used) as f64;
-    // A frame stored this very second is not worth zero: without the floor every
-    // fresh entry would score 0 and sort identically, so a cache filled in one
-    // burst would evict in map order rather than by size and cost.
-    (staleness + 1.0) * entry.bytes as f64 / f64::from(entry.cost_ms.max(1))
-}
-
 /// The disk tier's index. Held by [`crate::disk::DiskCache`] on its IO thread.
 pub struct FrameIndex {
     root: PathBuf,
@@ -253,8 +241,10 @@ impl FrameIndex {
         self.entries.contains_key(&hash)
     }
 
-    #[must_use]
-    pub fn get(&self, hash: u128) -> Option<IndexEntry> {
+    /// Test inspection hook; production code goes through [`Self::contains`]
+    /// and the eviction paths.
+    #[cfg(test)]
+    fn get(&self, hash: u128) -> Option<IndexEntry> {
         self.entries.get(&hash).copied()
     }
 
@@ -281,6 +271,10 @@ impl FrameIndex {
     /// Which entries to delete, worst-scoring first, to bring the total from
     /// where it is down to `cap`. Empty when it already fits.
     ///
+    /// The score is **stale × large ÷ cheap-to-remake**, the same shape
+    /// [`crate::ByteLru`] uses for the tiers above, so the ladder evicts by one
+    /// rule from top to bottom (docs/06 §5.3). Higher means evict sooner.
+    ///
     /// A full sort rather than a heap: this runs when the cache is over its cap,
     /// which is once per store at worst and never on a render thread, and a sort
     /// of a few tens of thousands of rows is microseconds.
@@ -289,10 +283,18 @@ impl FrameIndex {
         if self.used_bytes <= cap {
             return Vec::new();
         }
+        let score = |entry: &IndexEntry| {
+            let staleness = now.saturating_sub(entry.last_used) as f64;
+            // A frame stored this very second is not worth zero: without the
+            // floor every fresh entry would score 0 and sort identically, so a
+            // cache filled in one burst would evict in map order rather than by
+            // size and cost.
+            (staleness + 1.0) * entry.bytes as f64 / f64::from(entry.cost_ms.max(1))
+        };
         let mut ranked: Vec<(f64, u128, u64)> = self
             .entries
             .iter()
-            .map(|(hash, entry)| (eviction_score(entry, now), *hash, entry.bytes))
+            .map(|(hash, entry)| (score(entry), *hash, entry.bytes))
             .collect();
         // Worst (highest-scoring) first. `total_cmp` rather than `partial_cmp`:
         // no NaN can reach here, and a comparator that cannot fail needs no

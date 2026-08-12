@@ -43,6 +43,16 @@ void main() {
     expect(i.retimeInSeconds, isFalse);
   });
 
+  /// The tone map button is asked for (K-314): hidden by default, and hidden
+  /// for a settings file written before the field existed.
+  test('the tone map button is hidden unless a settings file asks for it', () {
+    expect(InterfaceSettings().showToneMap, isFalse);
+    expect(InterfaceSettings.fromJson(const {'ui_scale': 1.25}).showToneMap,
+        isFalse);
+    final on = InterfaceSettings()..showToneMap = true;
+    expect(InterfaceSettings.fromJson(on.toJson()).showToneMap, isTrue);
+  });
+
   test('the Retime seconds preference round-trips', () {
     final i = InterfaceSettings(retimeInSeconds: true);
     expect(InterfaceSettings.fromJson(i.toJson()).retimeInSeconds, isTrue);

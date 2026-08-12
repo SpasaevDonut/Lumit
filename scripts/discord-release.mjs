@@ -10,8 +10,8 @@
 //   node scripts/discord-release.mjs 0.2.0 --no-ping   post it quietly
 //
 // A release pings @everyone, as its own short message ahead of the notes. That
-// needs MENTION_EVERYONE granted to @everyone in the channel, which
-// bootstrap.mjs does for #announcements only — see `pingable` in its config.
+// needs MENTION_EVERYONE granted to @everyone in #announcements, set once
+// by hand in the channel's permission settings.
 //
 // The webhook address comes from DISCORD_RELEASE_WEBHOOK. It is a secret in its
 // own right — anyone holding it can post into the channel — so it is never
@@ -234,9 +234,8 @@ async function main() {
     die(
       'DISCORD_RELEASE_WEBHOOK is not set.\n' +
         '  In CI it comes from the repository secret of the same name; GitHub\n' +
-        '  will not give that back, so to post one by hand use the bootstrap\n' +
-        '  tooling, which looks the webhook up from Discord:\n\n' +
-        `    node announce.mjs --post ${version}\n\n` +
+        '  will not give that back, so to post by hand copy the webhook URL\n' +
+        '  from the channel settings on Discord (Integrations, Webhooks).\n\n' +
         '  Or --dry-run here to see the messages without sending them.',
     );
   }

@@ -7588,6 +7588,63 @@ hide exactly this fault (fx_console_test.dart). With the console open the space 
 instead of playing, and plays again once Escape closes it (shortcuts_frb_test.dart — the
 existing Ctrl+Space test now closes the console before asserting the bare space bar).
 
+
+**K-329 · DECIDED · Curves preview while they are dragged, and a Retime flattened to one
+constant is a Retime removed.** Two reports from the 0.2.0 release, one week apart, that turn
+out to be the same complaint: the Retime path had no live feedback, and the one gesture that
+looked like "take it away" quietly froze the layer instead.
+
+**A graph drag previews.** Every other live drag in the editor already renders its provisional
+value through the engine's patched clone (K-192, K-225, K-239, K-240, K-247); the graph editor
+— where curves are actually shaped — was the one place that committed on release and showed
+nothing before it. It now previews on every tick, throttled and coalescing like the rest
+(`previewChannelEdits`, beside the `commitChannelEdits` it mirrors, so the picture during the
+drag is made of exactly the scalars the release will write). One layer and one kind of patch
+per gesture, because a preview request patches one layer's one state: a selection spanning
+several layers, or a transform *and* an effect at once, shows the rest on release as before.
+The layer's own Retime map gets a preview door of its own
+(`CompositionReference::render_frame_with_retime`), for K-247's reason applied to K-197's
+property: a retime decides *which source frame is decoded*, so it cannot be previewed by
+re-compositing pixels already in hand. The Retime row's value drag uses the same door, which
+retires the "no preview path for that yet" note that sat in it.
+
+**A constant map removes the Retime.** `set_retime_property` given a static value takes the
+property away and re-hangs the layer on its source (K-212) rather than writing it. The two
+gestures that produce one — the row's stopwatch turned off, and the last key deleted, which
+the graph editor answers with a static value — both mean "no more retime"; written as they
+arrived they left the layer showing a single source frame for its whole length, with the row
+gone quiet and nothing on screen to say why. That is not a state K-197 has ("no freeze"), and
+it is the exact bug reported. This narrows K-197's "an ordinary property, the same stopwatch,
+nothing Retime-specific": the stopwatch is still the same control, but on this one property
+turning it off means what Ctrl+Alt+T off means. A freeze is still reachable and still says so
+— a map with one key holds that moment, as After Effects does. Regression tests:
+`a_flattened_retime_is_removed_rather_than_freezing_the_layer` (lumit-bridge), which also pins
+the one undo step covering removal and re-hang together.
+
+**K-330 · DECIDED · A positional frame lookup must prove the frame is still that position's.**
+Reported on 0.2.0: retime a footage layer and the Scopes jump, flicker and match nothing in the
+Viewer.
+
+The frame cache names a frame by its **content**, and keeps its **provenance** — the position
+and quality it was made for — beside it, because a hash cannot answer "is there any picture of
+frame 12?" (K-096, K-183). Two consumers ask exactly that positional question: the Scopes, which
+want the numbers in a frame at any resolution, and the dropper. Provenance records where a frame
+*came from*, and that never stops being true — but what a position *shows* does change. An edit
+renames every frame it touches, so frame 12 renders to a new name while the entry made before it
+sits in the map still claiming frame 12. `best_frame` took the finest of the candidates, and
+which one that was flipped as the tiers churned under playback: the flicker, and a scope
+disagreeing with the picture beside it. A retime made it obvious because a retime changes every
+frame of the layer at once.
+
+So both positional lookups now take a predicate and ask each candidate whether its name is still
+what that position renders to **at the quality that candidate was made at** — which is why
+`FrameProvenance` carries the `Quality` and not only the preview scale it derived from. A stale
+entry is passed over, never evicted: its name is still valid content, so an undo that brings the
+old picture back finds it in the cache. Nothing current held means the consumer renders its own,
+which is the fallback it always had. The predicate runs under the cache lock and is therefore
+held to the dropper's rule — bounded, pure CPU, nowhere near the GPU or the FFI boundary
+(docs/14). Regression test: `a_frame_the_edit_orphaned_is_not_served_positionally` (lumit-bridge).
+
 **Renumbered on merge, twice.** These two were written as K-256 and K-257 on a branch; the lens-flare work claimed those first, so they became K-268 and K-269 — and main claimed *those* while the branch waited. They are K-331 and K-332 here, and this is the last time: the renumber-on-merge rule K-160 records.
 
 **K-331 · DECIDED · Flow is rebuilt on the render device: GPU synthesis, a cache tier of its
@@ -7686,3 +7743,483 @@ field**, so Fast motion blur (§3.2) and Datamosh (§3.12) need DIS-class vector
 happens to retime synthesis — a learned model could one day replace the *synthesis* half and
 never the *measurement* half. The follow-up the owner accepted is a measurement harness on real
 gameplay, so the learned ceiling is judged later against numbers rather than impressions.
+
+**K-333 · DECIDED · Four graph-editor faults from the owner's pass, and a keyed value drag
+that showed nothing.** All reported against the 0.2.0 build; each is a fix rather than a change
+of intent, so they are recorded together.
+
+**Auto-fit frames what is on screen.** It was fitting over every key of every selected channel
+whatever the time zoom, so zooming into a quiet stretch of a curve that spikes somewhere
+off-screen still left room for the spike and the part under the pointer stayed a flat line. The
+fit now takes the keys inside the visible time window, plus what each curve reads at the two
+edges of it — the edges being what stops a span *between* two keys from framing on nothing.
+
+**"No other scroll works until I press Alt again" was never the Alt key.** The first reading was
+a stale modifier — Alt is Windows' menu-activation chord, so the key-up that ends an Alt+wheel
+zoom is easily lost — and the handler does now ask the platform what is really held. But that
+was not the fault. Alt+wheel multiplies the vertical span by 1.2 a tick and nothing bounded it,
+so half a second of scrolling gave a range hundreds of times the curve and a few seconds gave
+millions. Nothing about the pane then looks broken; it looks *dead*. The curve is far outside
+the window, a pan of one wheel notch moves it by a fraction of a span nobody can see, and only
+another Alt+wheel — being multiplicative — can climb back, which is exactly what "press Alt
+again and it works" was describing. The vertical range is now held finite, the right way up, and
+within a thousandfold of what auto-fit would choose; the zoom's anchor is clamped to the pane,
+because the pointer signal is reported against a listener taller than the graph and an anchor
+from outside it zooms about a value nowhere near the curve.
+
+**The magnet snaps the picture, not only the write.** A key drag rounded to whole frames on
+release and drew unrounded until then, so a key bound for frame 12 sat between 11 and 12 for
+the whole gesture and jumped on the way out.
+
+**`Shift` lays a tangent handle flat**, holding the value at the key's own so the curve leaves
+it horizontally; a joined partner is mirrored from the dragged side and comes flat with it.
+
+**A value drag in the layer area previews, and the graph follows it.** The picture is rendered
+through the same patched clone a static drag uses (K-192), carrying the whole animation. The
+curve is a second problem with the same cause — the pane draws from the read model, and the
+provisional value lives in the row's own state until the release — so the row **publishes** it
+(`rowValueDrag`), exactly as a bar drag publishes its travel for the waveform lane
+(`BarDragPreview`, K-172), and the pane draws through it. Matched by layer and *axis*, so
+dragging Position x leaves y where it is.
+
+Two rules about keys go with it. An **animated** property with no key under the playhead gains
+one the moment the drag starts, holding the value already showing — nothing moves, and the drag
+then has a key to carry, which is what makes it visible in the graph as it goes. An **unkeyed**
+property is drawn at its new value and gains no diamond: the drag is not planting a key, and a
+glyph would say it was.
+
+**K-334 · DECIDED · A press on a row's controls selects the row, and Alt is asked of the
+operating system.** Two more findings from the owner testing K-333, both of which turn earlier
+fixes from nearly-right to right.
+
+**Selection.** K-196 put selection on the property's *name*; every other press on a row — the
+stopwatch, the ◄ ◆ ► navigator, the value field — acted without choosing. That is why the graph
+still did not follow a value drag after K-333 wired the preview: the pane draws **selected**
+channels, the drag was on an unselected row, and the channel it should have moved was not on
+screen at all. Any unmodified pointer-down on a property row now selects it (replace, not
+toggle — `_selectOnEdit`'s behaviour), on pointer-DOWN so the channel exists before the drag's
+first tick. Modified presses keep the label's Ctrl/Shift semantics; group headings keep their
+pick-and-twirl click (K-300). Extends K-196.
+
+**Alt.** K-333's second reading (the unbounded zoom) was real and stays, but the first reading
+was righter than its fix: Alt genuinely sticks, and `syncKeyboardState` cannot unstick it
+because it re-asks the same embedding that missed the key-up. `altActuallyHeld()` asks the OS
+(`GetKeyState`) — only ever to clear a false positive, trusting the framework when it says Alt
+is up, and trusting simulated modifiers under `flutter test`. Used everywhere the graph gates
+behaviour on Alt: the wheel zoom, Alt-click key removal, and handle break/join — a stuck Alt was
+also silently deleting keys on plain clicks and flipping every handle drag to broken.
+
+**K-335 · DECIDED · The Alt witness is `GetAsyncKeyState`, and every value row publishes its
+drag.** The owner's third report of both K-333 bugs, and this time the mechanisms rather than
+more wiring.
+
+**Alt.** K-334's `GetKeyState` was the right idea asked of the wrong thread: it reads the
+keyboard state of the *calling thread's message queue*, and Dart's UI thread is not the Win32
+thread that receives keyboard messages, so its answer was as stale as the framework belief it
+was meant to correct. `GetAsyncKeyState` reads the physical key state whoever asks. Same
+guardrails: only ever clears a false positive, and trusts simulated modifiers under
+`flutter test`.
+
+**The graph follow.** The transform rows were wired and the effect parameter rows were not —
+and a value being dragged in the layer area is as often a blur radius as a Position. The
+published drag (`rowValueDrag`) grows selectors for all three channel kinds — a transform axis,
+an effect parameter, the Retime — and every keyed row publishes: transform axes (K-334), effect
+parameters (this entry, with the drag-start key plant and the staged-stack picture preview the
+transforms already had), and the Retime row. Three end-to-end regression tests drive the real
+outline field with a held-down gesture and watch the graph: a drag on a key, a drag *between*
+keys (the key plants at drag start and is carried), and a drag on an effect parameter.
+
+**K-336 · DECIDED · The dead scrolling was the Windows menu loop, and the drag preview matches
+keys by half a frame.** The owner's fourth report of the Alt bug, and the one that ends it —
+because this time the mechanism was reproduced in a clean-room probe app before the fix was
+written, and the fix was proven against the same probe.
+
+**It was never a modifier.** Releasing a *lone* Alt makes DefWindowProc enter the modal menu
+loop (`WM_SYSCOMMAND`/`SC_KEYMENU`): a loop inside Windows itself that swallows every wheel —
+plain, Ctrl and Shift alike — and keyboard input, until Alt is pressed again, Escape is hit, or
+the window is clicked. A key press between Alt going down and up cancels the request, but a
+wheel tick does not — which is why exactly Alt+wheel (the graph's vertical zoom) left scrolling
+dead while every ordinary Alt shortcut was fine, and why "press Alt again" fixed it. The probe:
+a bare Flutter app whose posted probe-key vanishes after `SC_KEYMENU` and returns after an Alt
+press — and stops vanishing entirely with the fix in. The fix is in the runner
+(`win32_window.cpp`): `SC_KEYMENU` returns 0, because Lumit's menu bar is Flutter-drawn and
+there is no native menu for the chord to open. K-334/K-335's stale-modifier readings were
+wrong about the cause; `altActuallyHeld()` stays, as a harmless guard that only ever clears a
+true false-positive.
+
+**The drag preview replaces keys within half a frame.** The published row drag swapped its
+value into the curve by *exact float* frame equality, and a key's frame comes back through
+rational-to-double maths that does not always land on the integer — so the drag's key could be
+inserted beside the document's instead of replacing it. One extra key shifts every later glyph
+index: the dragged key drew at the next key's place and everything after it sat one key off
+until the release rebuilt from the document. The preview now replaces the nearest key within
+half a frame, keeping list length and order stable, and the between-keys regression test pins
+the glyph count and the immobility of the keys after the playhead.
+
+**K-337 · DECIDED · A glyph reads both its coordinates from one list.** The screenshot that
+closed the drag-preview saga: drag the Retime readout on a frame with no key and the diamonds
+floated off the curve. K-336's half-frame match fixed replacement, but a keyless frame takes the
+*insertion* path — the preview list is one key longer than the document's — and `_keyPoint` read
+x from the document's keys while `_keyY` read y from the preview's, so every glyph past the
+insertion drew with one key's x and another's y. Both now read the same `_shownKeys` list in
+every lens, with an index guard. The Retime row also plants its key on the drag's first tick,
+as the transform and effect rows already did (K-333's rule), so the ordinary gesture takes the
+replacement path anyway and a diamond stands at the playhead from the first tick. Regression:
+`a Retime drag on a keyless frame keeps the diamonds on the curve`, which fails on the mixed
+lists and on the missing plant alike.
+
+**K-338 · DECIDED · Masks gain modes, feather and expansion, and the first mask in the
+list decides what the fold starts from.** 03-DATA-MODEL §7 always described a v1 mask as
+"static, Add-mode" with the rest listed as future. The future is now partly here:
+`MaskMode` is `None | Add | Subtract | Intersect | Difference`, and every mask carries a
+`feather` and an `expansion` in layer pixels. Lighten and Darken are deliberately not
+built — they are max and min over overlapping opacities, and nobody has asked.
+
+**Combination is now sequential, and it had to become so.** `combined_coverage` summed
+every mask's coverage and clamped, which is order-independent and correct precisely
+because everything was Add. Subtract and Intersect are not commutative, so masks now fold
+top to bottom in list order, which is what 06-RENDER-PIPELINE §3 always said they should.
+Add's expression is unchanged, so an all-Add project is bit-identical to before.
+
+**The first mask needs a starting value, and the honest one depends on its mode.** With
+the accumulator starting at zero, a lone Subtract subtracts from nothing and a lone
+Intersect intersects with nothing — both give an empty frame, which is not what anyone
+drawing a single subtract mask means. So the fold starts from zero when the topmost
+non-`None` mask is Add, and from full coverage otherwise: a lone Subtract cuts a hole, a
+lone Intersect shows just its own shape, a lone Difference shows its inverse. This is
+After Effects' behaviour and it is the only reading under which the first mask does
+something rather than nothing.
+
+**Feather and expansion are one mechanism, not two.** The obvious build is a blur for
+feather and a morphological grow/shrink for expansion. Instead the rasterised coverage
+becomes a signed distance field once — an exact Euclidean transform, Felzenszwalb and
+Huttenlocher, seeded from the antialiased edge so it keeps sub-pixel placement — and both
+controls read off it: expansion shifts the zero crossing, feather sets the width of the
+ramp across it. One pass, and it is what "feather in pixels" actually means, measured
+along the surface normal rather than approximated by a blur radius. The cost is that an
+expanded or eroded shape rounds its corners, because distance is measured to the nearest
+point on the path; that is also what After Effects does.
+
+**With both at zero the rasteriser's bytes are returned untouched** — no distance field,
+no allocation. That is what keeps every existing project bit-identical, and it is why the
+new fields also serialise only when they differ from their defaults: the frame cache key
+hashes the serialised masks, and always emitting them would have retired every frame
+every existing project has banked.
+
+**Variable-width (per-point) feather is not built.** It is a second point set on the path
+with its own tool, and `ToolMode.penMaskFeather` already exists in the toolbar as a stub
+with nothing behind it. It stays in TODO.
+
+**K-339 · DECIDED · A mask path animates through its own keyframe list, and mismatched point
+counts resample upward.** From the owner (2026-08-08): the deferral K-224 recorded ("neither
+can a mask path be keyframed") is closed for the engine half.
+
+**A separate carrier, not a generic `Property`.** Every animatable value in Lumit is a scalar:
+`Animation::{Static, Keyframed, Expression}` behind a `Property` whose `value_at` returns one
+`f64` at roughly two hundred call sites. A shape is not a scalar, and making `Property` generic
+to hold one would churn all two hundred to buy nothing. So `Mask` carries `path_keys:
+Vec<PathKeyframe>` beside its `path`, in `lumit-core::mask` where the path type already lives.
+Empty means unanimated, and empty is omitted from the file — an untouched mask writes the exact
+bytes it always did, which is what keeps every frame every existing project has banked
+(`lumit-eval` hashes the serialised masks into the frame key).
+
+**Timing eases, no value graph.** Path keys carry the same `SideInterp` pair a scalar keyframe
+does, and it shapes the **interpolation parameter** — 0 at this key, 1 at the next — evaluated
+by the scalar evaluator itself rather than a second copy of the same maths. A shape has no
+value to plot, so the lane shows diamonds only; the graph editor's speed lens is the TODO item
+that pairs with this.
+
+**Mismatched vertex counts resample to the higher count, never refuse.** Adding a point to a
+mask halfway through an animation is an ordinary act, so interpolation between a four-point key
+and a seven-point key must simply work. The sparser path is redrawn at the higher count by
+**splitting its own segments** — de Casteljau at a parameter, the same exact split K-221 relies
+on, so the two halves *are* the original cubic and the reconciled path is geometrically the
+path it was. Distribution is fixed arithmetic (evenly, remainder to the earliest segments), so
+the reconciliation is deterministic and playback repeats frame for frame. Then the two run
+vertex for vertex, position and both handles blended straight. This is what After Effects does,
+so an imported comp and a hand-built one behave alike.
+
+**Open against closed is held, not blended.** Whether a path is joined up is not a quantity and
+has no halfway. Across a span it takes the outgoing key's flag and flips at the next key — a
+Hold in all but name. The geometry still interpolates; only the closing segment appears or
+disappears, on a frame boundary rather than smearing.
+
+**The frame cache needs the evaluated path, not the stored keys.** The key carries no timeline
+position by design (K-214), and a keyframed mask serialises identically at every frame — so the
+stored keys alone would name every frame of a moving mask the same, and playback would hand
+back the first frame drawn while the mask sat still. The evaluated shape at the layer's local
+time therefore joins the hash, **and only for masks that are actually animated**, so no
+existing key moves and `ALGO_VERSION` does not need bumping. Masks evaluate at the layer's own
+clock, the one every other property on the layer reads (K-213).
+
+**Still whole-list ops.** `SetLayerMasks` carries the entire mask list, so a keyframe drag
+rewrites all of it as one undo entry. That is correct but coarse; a per-key op is noted in
+TODO.md for when the interface can make one.
+
+**K-314 · DECIDED · The Viewer gets an exposure and a tone map that the export can never
+see, and the tone map is a fixed highlight rolloff.** Two controls in the Viewer bar
+(07-UI-SPEC §2.2), both preview only, both inside the display transform where
+06-RENDER-PIPELINE §3.3 already reserved room for exactly this. Exposure reads signed
+stops to one decimal and means what the Exposure effect means — the same `2^stops`
+scene-linear gain, computed host-side, so the two agree by construction (K-106). The tone
+map is an icon toggle with a tooltip and no menu.
+
+**The curve is a knee at 0.8 and an exponential shoulder above it**, applied to luminance
+so hue and saturation stay where the author put them:
+`knee + room · (1 − exp(−(L − knee) / room))`, `room = 1 − knee`. Its slope at the knee is
+exactly 1, so the join is smooth, and it approaches 1 without reaching it, so no highlight
+clips flat however bright. Below the knee it is the identity, exactly.
+
+**That identity is the reason for the choice.** Reinhard darkens mid grey by about 15%,
+the ACES fits impose filmic contrast across the whole range and carry the familiar hue
+skews, and AgX — the best-looking of them on genuinely blown content, and Blender's
+default — is a *look*: it moves mids and saturation on a composite that never exceeds 1.
+Any of those makes turning the toggle on change a picture that had nothing wrong with it,
+which reads as the Viewer lying about the export. The rolloff cannot: on an ordinary
+composite it does nothing at all, and on one running past 1 it shows what is up there.
+AgX remains the right answer later as a *selectable* transform when OCIO lands, and the
+tone-mapping **effect** (08-EFFECTS, still unbuilt) must share this curve, so this entry
+binds twice.
+
+**"Auto" was asked for and is not what shipped.** A measured, time-smoothed exposure makes
+the displayed frame depend on which frames preceded it: scrubbing back to frame one shows
+different pixels than frame one showed, which breaks the cache tier outright and puts a
+clock in the pixel path that 14-ENGINEERING-RULES §7 forbids. Unsmoothed measurement is
+worse — the picture pumps on every cut. No compositor's viewer adapts per frame; After
+Effects, Resolve and Blender all apply a fixed transform. So the control is named "tone
+mapping", because nothing about a constant is automatic, and the word "auto" is left free
+for the day a measured white point is genuinely built.
+
+**Export is neutral by construction, not by discipline.** `DisplayParams` defaults to
+neutral on `HeadlessRenderer`, the shader short-circuits on it so a neutral pass is
+bit-identical to the plain copy it replaced, and an export builds its own renderer that
+nobody ever calls the setter on. The K-031 promise — the Viewer at full resolution is the
+export — survives as "the Viewer at full resolution and neutral view".
+
+**A non-neutral view makes a frame unnameable**, so nothing rendered while a control is
+engaged enters any cache tier and the neutral frames already banked stay banked, returning
+as hits the moment it goes back to neutral. Widening the frame key through three tiers
+would have been the alternative; this costs a cache miss while the control is engaged and
+cannot mis-serve an exposed frame to something expecting the composite.
+
+**The settings persist per composition, in the project, through `ui_state`** — the blob
+K-245 already writes into the `.lum`, which is not undoable and does not mark the project
+dirty. A way of looking is not an edit to the work, so Ctrl+Z must never undo an exposure
+nudge, and a comp reopens looking how it was left.
+
+**K-340 · DECIDED · Every one of a mask's values animates, and a still mask still writes
+bare numbers.** From the owner, testing K-338 in the app (2026-08-10): "currently no mask
+property has the clock icon to enable keyframing. This should be the same as any
+transform/effect etc. and all the properties should be able to be keyframed." K-339 had
+given the *path* its keys and left the three numbers static, and had exposed neither to the
+frontend — so the branch claimed keyframing that nothing in the interface could reach.
+
+**Opacity, feather and expansion become ordinary `Property`s**, not a second key-list
+carrier beside each value. K-339 argued the other way for the *path*, and that argument
+still holds there: a shape is not a scalar, and making `Property` generic to hold one would
+churn two hundred call sites to buy nothing. A number is a scalar. Making these three what
+every other animatable number already is means the Timeline row reuses the stopwatch, the
+◄ ◆ ► navigator, the keyed-value field and the lane diamonds exactly as they stand —
+"the same as any transform/effect" is then true by construction rather than by a parallel
+implementation that would drift.
+
+**The file keeps its old shape while the mask is still.** A `Property` normally serialises
+as an object, and switching to that would have migrated every `.lum` ever written and —
+worse — retired every frame every project has banked, because the frame key names a mask by
+the bytes its list serialises to. So the three fields carry their own encoding
+(`still_or_keyed`): a static value writes as the bare number it always wrote, and only a
+mask somebody has actually keyed grows the object. Reading takes either. An unkeyed mask is
+therefore byte-identical to what it was, which is the same promise K-338 and K-339 each
+made and is why the cache survives all three.
+
+**The frame key learns the evaluated numbers, for the same reason it learned the evaluated
+path.** A keyed opacity serialises identically at every frame while the key deliberately
+carries no timeline position of its own (K-214), so without the value at the layer's local
+time a moving mask would name every frame alike and playback would hand back the first one
+drawn. Fed only for properties that actually hold keys.
+
+**Clamping an animation clamps its keys.** The bridge has always held a mask's opacity into
+0..100 and its feather and expansion into a sane span rather than trusting the frontend. A
+key three seconds away at −40 % is exactly as wrong as one now, so the clamp walks the
+keyframes rather than the value under the playhead.
+
+**Opacity moves off the mask's header onto a row of its own**, joining Path, Feather and
+Expansion. A property with no row has nowhere to put a stopwatch, and the header now carries
+only what the mask *is*: its name, its invert switch and its mode.
+
+**The shape's row keys through its own ops.** `toggle_mask_path_key` and
+`clear_mask_path_keys` plant, remove and stop — a key holds the shape the mask is *already*
+showing at that moment, so pressing ◆ never moves anything, and switching animation off
+keeps the shape under the playhead rather than snapping to the first key. That is what the
+stopwatch does everywhere else. `MaskPathKeyframesFrb` sits in the same file as the scalar
+controls so the two cannot drift into different ideas of what a diamond means.
+
+**Two switches mean a mask does nothing, and neither hides the layer.** Mode `None` and
+opacity zero both used to blank the layer outright when the mask was the only one on it —
+the fold started from an empty stack and then skipped the very mask it had started from.
+`Mask::does_something_at` is now the single question every caller routes through, and it
+takes a time because opacity animates: a mask keyed up from zero is off for the first half
+of the shot and on for the second.
+
+
+**K-341 · DECIDED · A picked property row is a picked layer everywhere else, and a mask's
+rows behave like every other property row.** From the owner, testing K-340 (2026-08-10):
+"why tf if I click a mask row it doesn't just select it. Please can you treat all property
+rows the same in this regard, between transform/effects… whenever I add a keyframe it
+doesn't display it in the lane area… i can't view any of the mask properties in the graph
+view."
+
+**The selection was never the problem; everything downstream of it was.** Clicking a mask
+row did pick it — the row's fill said so — but nothing else in the program knew what to do
+with the pick. `laneKeysOf` had no mask arm, so a key planted by the stopwatch drew no
+diamond; `graphChannels` had no mask arm, so the graph editor had no curve to show and read
+as "the row cannot be selected"; and the property selection never left the Timeline at all,
+so the Viewer outlined nothing. Three separate silences that added up to one apparently
+dead row. Mask rows now answer all three, through the same functions the transform and
+effect rows already go through rather than through a mask-shaped path of their own.
+
+**The shape's lane shows diamonds without a curve.** A path key holds no number, so it
+cannot be a graph channel (K-339 already said so) — but it *can* be a position on a lane,
+and a key the author just planted must be visible or it reads as not having landed. The
+diamonds are built from the key times alone, and dragging one goes through a dedicated
+`move_mask_path_key` rather than the scalar path, because what is moving is a whole shape.
+
+**Picking a property says which layer is being worked on, and the picture says so too.**
+`selectedProperties` is published from the Timeline to the shell, and the Viewer outlines
+the layers those rows belong to — wireframe and masks — exactly as it does for a layer
+picked on its own row. Drawing only: what can be *dragged* stays the layer selection
+proper, so an outline never turns into a handle nobody asked for.
+
+**A mask's Path row is the shape being edited.** Picking it offers that mask's points for
+dragging without the layer having to be clicked first, and the reverse holds too: dragging
+a keyed mask path selects that Path row, so the key the drag just wrote is on a row the
+author can see. The two directions are one idea — the row and the shape are the same thing
+seen from two panels.
+
+**Both of the mask's own switches move into the value column.** The invert mark and the
+mode picker sat beside the name, in no column at all; K-340 had put the mode under the
+blend header on the grounds that it is the same kind of choice, and the owner's answer was
+that consistency down the *fold-out* matters more than consistency across to the layer row.
+The mode picker takes the rest of the cell so a long name ellipsises rather than pushing
+the row wider than its column, which is the rule the blend picker already followed.
+
+
+**K-342 · DECIDED · The wireframe of an animated mask is drawn from the shape it is
+showing, asked of the engine.** From the owner, testing K-340/K-341 (2026-08-10): "after
+you move the path in the viewer, visually it snaps back to its original position, but it
+adds the keyframe correctly and when you preview it animates correctly."
+
+**The picture was right and the outline was stale.** Once a path is keyed, `Mask::path` is
+no longer what the mask draws — `path_at` reads the keys — but the Viewer's wireframe was
+drawn from the vertices the mask carries, which are exactly that stale `path`. So a drag
+wrote its key, the render animated, and the outline sprang back to where the shape began.
+
+**Evaluated engine-side, not in Dart.** Dart samples ordinary scalars itself and could have
+been given the keyed *shapes* to interpolate — but interpolating two paths means
+reconciling their vertex counts by splitting cubics (K-339), and a second implementation of
+that here would drift from the one that draws the pixels. A wireframe that stops matching
+the mask it describes is worse than no wireframe. So `animated_mask_paths_at(frame)` asks
+the engine, which answers with the same `path_at` the renderer uses.
+
+**Only animated masks are listed, and the answer is held.** A still mask's own vertices
+already say where it is, so the ordinary composition answers with an empty list and pays
+nothing. The Viewer rebuilds on every movement of the pointer, so the answer is cached
+against the document revision and the playhead frame — the two things that can change it —
+and a hover asks nothing. That keeps K-184's budget intact: the hover test still measures
+zero.
+
+**K-343 · DECIDED · A property row takes the press across its whole width, not only where a
+widget happens to sit.** From the owner (2026-08-10): "when I click the path row, it
+deselects and can't be re-selected by clicking like it should."
+
+The fold-out's rows select on pointer-down through a `Listener`, and a `Listener` defers to
+its children by default — so a press only counted where it landed *on* something. A
+property row is mostly empty: the label stops where its text stops, and the value column is
+one narrow field in a wide cell. A press in the space between reached the outline behind
+instead, which is the surface that **clears** the selection — so clicking a row could
+unpick it, and clicking again did the same thing rather than picking it back.
+
+Worst on a mask's **Path** row, which by design has no value field at all (a shape has no
+number to put in one, K-339), leaving almost the whole row dead to the pointer.
+
+The rows that select are now opaque to hit testing, so the press lands on the row wherever
+it falls. Group headings keep defer-to-child: their own detector owns the click, and a
+heading both picks and twirls (K-300).
+
+**The graph editor showing nothing for a Path row is not this bug.** A path has no value
+axis, so it is deliberately not a graph channel — its keys live on the lane as diamonds.
+Easing them wants the speed lens K-339 already recorded as outstanding. A mask's opacity,
+feather and expansion *do* resolve into channels and draw curves.
+
+**K-344 · DECIDED · A keyed mask shape draws its rate of change, in both lenses.** The
+deferral K-339 recorded — "a keyframed mask path shows a speed graph and no value graph" —
+is closed. From the owner (2026-08-10): opening the graph on a Path row showed an empty
+pane, which reads as a property that is plainly animating having nothing to say.
+
+**What a path can honestly plot.** A shape has no number, so there is no value curve. What
+there *is* is the crossing from one keyed shape to the next, shaped by the ordinary eases
+K-339 gave those keys — and the rate of that crossing is a real, meaningful curve. So the
+shape's keys now carry a **counted-up interpolation parameter**: key *i* holds *i*, and
+every span therefore rises by exactly one. The number is not worth reading; its slope is
+the whole point, and it is what After Effects draws for a mask path.
+
+**Both lenses draw the slope.** The value lens would otherwise show a meaningless staircase
+and the speed lens the useful curve — one of the two views blank or misleading for no
+reason. A shape channel is therefore drawn in the speed reading whichever lens is on, and a
+pane holding only shapes fits its axis to speeds. Every other channel still follows the
+view's lens exactly as before.
+
+**The keys cross with their eases, and edits go back the same way.** `BridgeMask` carries
+`path_keys` (time, counted value, both `SideInterp`s) rather than bare times, which is what
+lets the lane draw its diamonds *and* the graph draw the curve from one read.
+`set_mask_path_keys` writes a whole re-timed, re-eased list back — refused outright if the
+times are not strictly ascending, because the evaluator walks them assuming so and a
+half-applied reorder is not a mask. The shapes themselves never cross: a key holds a path,
+which the drawing tools edit (K-339).
+
+
+**K-345 · DECIDED · "Clip" is restricted as a noun, not as the keying/colour verb.** From
+the owner (2026-08-11), resolving a question the 2026-08-10 audit raised: the Matte key
+ships Keylight's control names — Clip black, Clip white, Clip rollback — and glossary §9's
+"clip only inside Sequence layers" reads as if it forbids them. It does not. The
+restriction is about the noun (a clip is an entry inside a Sequence layer, never a general
+word for a layer or footage); *to clip* in its keying and colour sense — clipping a matte,
+clipped highlights — is ordinary trade language and keeps its names. §9 now says so.
+
+**K-346 · DECIDED · A Viewer look names its frames apart; it no longer switches the caches
+off.** From the owner (2026-08-11), superseding the naming half of K-314. K-314 made a
+non-neutral view leave frames **unnameable**, so nothing entered any cache tier while an
+exposure or the tone map was engaged — the reasoning being that it was cheaper than widening
+the key through three tiers and could not mis-serve an exposed frame. In use that reads as a
+fault: the owner worked with the tone map on, found the VRAM and RAM meters sat at zero all
+session, and nothing on screen said why (the §2.2 colour-management badge is still unbuilt).
+A way of looking that silently disables the whole cache ladder is not a preview convenience.
+So the look is now folded into the frame's name instead: `HeadlessRenderer::named_under_view`
+hashes the exposure gain and the tone-map flag into the content name, under its own tag, with
+the same blake3 the name was built with — deterministic across runs and toolchains, which the
+disk tier needs since it keeps names between sessions. **Neutral is untouched**, byte-for-byte
+the name it always had, so every frame already banked stays a hit. Each look therefore banks
+its own frames and changing a control retires nothing but takes a fresh set of names, which is
+honest: those are different pictures. The mis-serving worry K-314 raised is answered by
+construction rather than by refusing to cache — an export is neutral by construction (see the
+export test), so a graded preview frame can never collide with one. The cost is that dialling
+an exposure through several values leaves several sets of banked frames competing for the same
+budget; the tiers evict by the usual rule and nobody has to think about it.
+
+**K-347 · DECIDED · The tone map button is asked for, not given.** From the owner
+(2026-08-11), refining K-314's presentation without touching what the feature does: "it just
+doesn't seem like a feature most people need or want, but I think it's neat and nice to
+have." The Viewer bar's tone-map switch is therefore **hidden by default** and revealed by
+**Settings → Interface → Show the tone map button**. The **exposure field is not hidden** —
+stops are an ordinary photographic control that people reach for; tone mapping is the
+specialist one.
+
+**Hidden means off, not merely invisible.** The setting gates `LumitUiState.viewerLook`, the
+one place the per-composition store becomes the look in use, so the Viewer bar, the engine
+push and the button cannot disagree, and a session saved while the tone map was engaged
+cannot come back stranded — an engaged look with no button to turn it off would change what
+the Viewer shows with nothing to explain it. Only the *reading* is gated: the per-comp store
+keeps its value, so turning the setting back on finds each composition as it was. (Moving the
+exposure while the button is away writes the pair back as it reads, which clears the stored
+tone map — a state you cannot see does not persist behind your back.) Recorded in
+[07-UI-SPEC.md](07-UI-SPEC.md) §2.2, which is where the Viewer bar is specified.

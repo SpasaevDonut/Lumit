@@ -14,7 +14,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:uuid/uuid.dart';
 
 // These functions are ignored because they are not marked as `pub`: `add_at_top`, `bridge_marker`, `commit`, `composition`, `core_marker`, `core_markers`, `dispatch`, `document`, `footage_span_and_size`, `project`, `runs_as_video`, `to_engine`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `id`, `new`, `project_id`
 
 /// Every blend mode, in the order the Timeline's dropdown shows them. The index
@@ -25,6 +25,32 @@ import 'package:uuid/uuid.dart';
 /// selected.
 List<String> listBlendModes() =>
     BridgeLib.instance.api.crateApiCompositionListBlendModes();
+
+/// One animated mask's shape at a moment (K-342): which mask, on which layer,
+/// and the path it is showing there.
+class BridgeAnimatedMaskPath {
+  final UuidValue layer;
+  final UuidValue mask;
+  final List<BridgeVertex> vertices;
+
+  const BridgeAnimatedMaskPath({
+    required this.layer,
+    required this.mask,
+    required this.vertices,
+  });
+
+  @override
+  int get hashCode => layer.hashCode ^ mask.hashCode ^ vertices.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeAnimatedMaskPath &&
+          runtimeType == other.runtimeType &&
+          layer == other.layer &&
+          mask == other.mask &&
+          vertices == other.vertices;
+}
 
 /// The comp read model (K-184): what one `get_model` crossing carries. Dart
 /// holds this and refreshes it when the engine reports a change; panels draw
@@ -367,6 +393,25 @@ class CompositionReference {
           .crateApiCompositionCompositionReferenceAddTextLayerAt(
               that: this, document: document, x: x, y: y);
 
+  /// The **shape every animated mask is actually showing** at `frame`
+  /// (K-342), so the Viewer can draw a keyed mask's wireframe where the
+  /// picture has it rather than where its still path used to be.
+  ///
+  /// Only masks that carry path keys are listed — a still mask's own
+  /// vertices already say where it is, and sending them again would put the
+  /// whole document through here on every frame. An empty answer, which is
+  /// the ordinary case, means "nothing moved; use what you have".
+  ///
+  /// Evaluated engine-side on purpose: interpolating two paths means
+  /// reconciling vertex counts by splitting cubics (K-339), and a second
+  /// implementation of that in Dart would drift from the one that draws the
+  /// pixels — the wireframe would stop matching the mask it describes.
+  List<BridgeAnimatedMaskPath> animatedMaskPathsAt(
+          {required PlatformInt64 frame}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceAnimatedMaskPathsAt(
+              that: this, frame: frame);
+
   /// Start playing this comp's audio from `start` seconds.
   void audioPlay({required double start}) =>
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceAudioPlay(
@@ -701,6 +746,31 @@ class CompositionReference {
               layer: layer,
               effects: effects);
 
+  /// Ask for `frame` with one layer's Retime map replaced — the live graph
+  /// drag on the Retime channel, which never touches the document.
+  ///
+  /// The same reason as [`Self::render_frame_with_clip_retime`] one function
+  /// up, for the layer's own map (K-197) rather than a clip's: a retime
+  /// decides *which frame of the source* is decoded, so it cannot be
+  /// previewed by re-compositing pixels already in hand. Without it the
+  /// picture does not move until the key is let go, which is the one edit
+  /// where watching it matters most.
+  ///
+  /// `retime` arrives on the comp clock like every keyframed value that
+  /// crosses the seam (K-213); the worker returns it to the layer's own.
+  void renderFrameWithRetime(
+          {required BigInt frame,
+          required double scale,
+          required LayerReference layer,
+          required BridgeScalar retime}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceRenderFrameWithRetime(
+              that: this,
+              frame: frame,
+              scale: scale,
+              layer: layer,
+              retime: retime);
+
   /// Ask for `frame` with `layer`'s art replaced by `contents` — the shape
   /// layer's half of the call above (K-239).
   ///
@@ -815,6 +885,22 @@ class CompositionReference {
               window: window,
               scale: scale,
               layer: layer);
+
+  /// Set what the Viewer looks *through*: `stops` of exposure and whether the
+  /// tone map is engaged (K-314, docs/07 §2.2 items 12-13).
+  ///
+  /// **Preview only.** It moves the display encode of every frame the session
+  /// renderer composites from here on and nothing else — no document, no op,
+  /// no undo step. An export builds its own renderer and this is never sent
+  /// to it, so the export is neutral by construction.
+  ///
+  /// The frontend follows this with its ordinary request for the frame under
+  /// the playhead: a setting changes what the *next* frame looks like, and
+  /// without an ask the picture would not move until something else did.
+  void setDisplayView({required double stops, required bool toneMap}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceSetDisplayView(
+              that: this, stops: stops, toneMap: toneMap);
 
   /// Replace the whole marker list — one op, trivially invertible, which is
   /// also how beat detection commits a regenerated set.

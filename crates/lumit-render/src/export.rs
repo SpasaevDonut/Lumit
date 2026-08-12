@@ -371,7 +371,7 @@ pub fn audio_samples_through(frame_count: usize, fps: f64, rate: u32) -> usize {
 }
 
 fn run(
-    doc: &Document,
+    doc: &Arc<Document>,
     comp_id: Uuid,
     audio_jobs: &[AudioJob],
     out_path: &std::path::Path,
@@ -754,7 +754,7 @@ mod tests {
     /// Run an export to completion on this thread, skipping (Ok(None)) on a
     /// machine with no GPU adapter — the lavapipe convention.
     fn run_now(
-        doc: &Document,
+        doc: &Arc<Document>,
         comp: Uuid,
         path: &std::path::Path,
         spec: &ExportSpec,

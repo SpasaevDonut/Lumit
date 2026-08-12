@@ -290,7 +290,8 @@ void main() {
               find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}')))
           .width;
       final before = barWidth();
-      final track = tester.getRect(find.byKey(const ValueKey('tl-zoom-slider')));
+      final track =
+          tester.getRect(find.byKey(const ValueKey('tl-zoom-slider')));
       counter
         ..reset()
         ..counting = true;
@@ -555,6 +556,16 @@ void main() {
         0,
         reason: 'a compile-time constant is read once, not per frame',
       );
+      // The exposure box and the tone-map switch (K-314) are told to the engine
+      // when they *change*, and are drawn from the value the frontend already
+      // holds. A rebuild must not restate them: that would be a call per frame
+      // for a setting that has not moved, and every one of them would ask for
+      // the frame again in turn.
+      expect(
+        counter.calls['composition_reference_set_display_view'] ?? 0,
+        0,
+        reason: 'the display view is pushed on change, never on a rebuild',
+      );
       // What is left is one `render_frame` for each move of the playhead —
       // the request the move is for. Measured at 10 for 10 frames; the cap is
       // two for each frame, so honest growth does not trip it.
@@ -575,6 +586,7 @@ void main() {
         maxRounds: 100,
       );
     });
+
     /// **Panning the picture must ask the engine nothing (K-230).**
     ///
     /// A pan moves where the picture is drawn and changes nothing else, but it
@@ -702,6 +714,60 @@ void main() {
       );
     });
 
+    /// **Nor must fronting a composition, while nobody is looking through
+    /// anything (K-314).**
+    ///
+    /// The Viewer's exposure and tone map are per composition, so fronting one
+    /// is what puts its view on the renderer — but a view that is neutral onto
+    /// a renderer already neutral is nothing to say and nothing to undo, and
+    /// the ask for the frame that followed it was a second whole composite on
+    /// top of the one the fronting itself asks for. That is every tab click in
+    /// every session where neither control has been touched.
+    testWidgets('fronting a comp costs no extra frame while neutral',
+        (tester) async {
+      final p = freshProject();
+      final a = p.state.project!.newComposition(name: 'A');
+      a.addSolidLayer();
+      final b = p.state.project!.newComposition(name: 'B');
+      b.addSolidLayer();
+      p.uiState.setSelectedComp(a);
+      p.uiState.model.refresh();
+
+      await tester.pumpWidget(hostPanel(
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(900, 600),
+        child: const ViewerPanelFrb(),
+      ));
+      await settleFrb(tester, minRounds: 8);
+
+      counter
+        ..reset()
+        ..counting = true;
+      p.uiState.setSelectedComp(b);
+      await tester.pump();
+      p.uiState.setSelectedComp(a);
+      await tester.pump();
+      counter.counting = false;
+
+      // ignore: avoid_print
+      print('NEUTRAL FRONTING COST ${counter.total} calls\n'
+          '${counter.ranking()}');
+      expect(
+        counter.calls['composition_reference_set_display_view'] ?? 0,
+        0,
+        reason: 'a neutral view was pushed onto a neutral renderer:\n'
+            '${counter.ranking()}',
+      );
+      // One composite per fronting is the picture the user asked to see. Two
+      // is the frame plus the one the view push added behind it.
+      expect(
+        counter.calls['composition_reference_render_frame'] ?? 0,
+        lessThanOrEqualTo(2),
+        reason: 'fronting asked for the frame twice:\n${counter.ranking()}',
+      );
+    });
+
     /// **A path drag shows the picture it is making (K-308).**
     ///
     /// Dragging a point used to move the wireframe and leave the picture until
@@ -785,8 +851,8 @@ void main() {
       // ignore: avoid_print
       print('POINT DRAG COST ${counter.total} calls\n${counter.ranking()}');
       expect(
-        counter
-                .calls['composition_reference_render_frame_with_shape_preview'] ??
+        counter.calls[
+                'composition_reference_render_frame_with_shape_preview'] ??
             0,
         greaterThan(0),
         reason: 'the drag showed no picture until it was let go:\n'

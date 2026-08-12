@@ -37,6 +37,7 @@ use lumit_core::model::{Composition, Document, FootageItem, LayerKind, ProjectIt
 use lumit_gpu::scaled_size;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// The persistent GPU engines a render needs, held between calls so shaders
@@ -147,6 +148,15 @@ pub struct HeadlessRenderer {
     /// frame worth describing) and playback (a frame that must not be slowed).
     watching: bool,
     measuring: bool,
+    /// The Viewer's own exposure and tone map (K-314) — a way of *looking* at
+    /// the composite, never part of it.
+    ///
+    /// **This is how "it can never reach an export" is kept true.** It defaults
+    /// to neutral and only [`Self::set_display_view`] moves it, and an export
+    /// builds its own renderer (`export::run`) which nobody calls that on. So
+    /// the promise is a property of the code's shape rather than a rule anyone
+    /// has to remember — and `an_export_ignores_the_viewer_view` pins it.
+    view: lumit_gpu::DisplayParams,
     /// The Windows zero-copy Viewer targets (K-177): **one per size, kept and
     /// reused**, most recently used last.
     ///
@@ -283,12 +293,17 @@ pub fn preview_scale_q(quality: Quality) -> u16 {
 /// for. Deliberately NOT part of its name — two positions with identical content
 /// share one entry, and this then records whichever asked for it first — but kept
 /// because a hash alone cannot answer "is there any picture of frame 12?".
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub struct FrameProvenance {
     pub comp: Uuid,
     pub frame: u64,
     /// Preview scale in thousandths — see [`preview_scale_q`].
     pub scale_q: u16,
+    /// The quality the frame was made at, which is what makes the position
+    /// answerable *and* checkable: a positional consumer can recompute the
+    /// content name this position has now at this quality, and so tell the
+    /// picture of frame 12 from a picture frame 12 used to show (K-330).
+    pub quality: Quality,
 }
 
 /// A frame's name in the VRAM cache: its content hash, plus the channel order
@@ -508,6 +523,7 @@ impl HeadlessRenderer {
             profile: None,
             watching: false,
             measuring: false,
+            view: lumit_gpu::DisplayParams::NEUTRAL,
             #[cfg(all(windows, feature = "shared-texture"))]
             shared: Vec::new(),
             #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
@@ -594,16 +610,62 @@ impl HeadlessRenderer {
         self.audio_jobs.audio_jobs(doc, comp)
     }
 
+    /// Set the Viewer's exposure and tone map for every frame this renderer
+    /// composites from here on (K-314). Preview only — see [`Self::view`].
+    ///
+    /// A non-neutral view **names its frames differently** rather than leaving
+    /// them nameless (K-346, superseding that part of K-314): the look is baked
+    /// into the display-encoded pixels these tiers hold, so a frame under one
+    /// is a different picture and takes a different name. Refusing a name
+    /// instead switched every tier off for as long as a control was engaged,
+    /// which is a whole session for anyone who works with the tone map on.
+    /// Neutral is unchanged and keeps the names it always had, so frames banked
+    /// before this still come back. An export is always neutral, so a graded
+    /// preview frame can never be served as one.
+    pub fn set_display_view(&mut self, view: lumit_gpu::DisplayParams) {
+        self.view = view;
+    }
+
+    /// A content name with the Viewer's own way of looking folded in.
+    ///
+    /// Neutral returns the name untouched — byte-for-byte what
+    /// [`crate::cache::frame_key`] gave — so nothing already banked is
+    /// orphaned, on disk least of all. Anything else mixes the look in through
+    /// the same hash the name was built with, under its own tag so a look can
+    /// never be confused for content.
+    fn named_under_view(&self, base: u128) -> u128 {
+        if self.view.is_neutral() {
+            return base;
+        }
+        let mut h = blake3::Hasher::new();
+        h.update(b"view/");
+        h.update(&base.to_le_bytes());
+        h.update(&self.view.gain.to_bits().to_le_bytes());
+        h.update(&[u8::from(self.view.tone_map)]);
+        let bytes = h.finalize();
+        let mut k = [0u8; 16];
+        k.copy_from_slice(&bytes.as_bytes()[..16]);
+        u128::from_le_bytes(k)
+    }
+
+    /// What the Viewer is currently looking through.
+    #[must_use]
+    pub fn display_view(&self) -> lumit_gpu::DisplayParams {
+        self.view
+    }
+
     /// The content-hash name of this comp frame ([`crate::cache::frame_key`]),
     /// computed from **this renderer's own** probe results so the name and the
     /// pixels can never disagree about what a source file is. `None` while some
-    /// footage is unprobed — the frame renders live and is not cached.
+    /// footage is unprobed — the frame renders live and is not cached. The
+    /// Viewer's own way of looking is folded in ([`Self::named_under_view`]),
+    /// so an exposed frame is named as one rather than left nameless.
     ///
     /// Takes `&mut self` because it probes anything new, exactly as a render
     /// would; a caller that then renders pays for the probe only once.
     pub fn frame_key(
         &mut self,
-        doc: &Document,
+        doc: &Arc<Document>,
         comp_id: Uuid,
         frame: u64,
         quality: Quality,
@@ -619,6 +681,7 @@ impl HeadlessRenderer {
             quality,
             &ProbeView(&self.probe_cache),
         )
+        .map(|k| self.named_under_view(k))
     }
 
     /// Probe anything new in `doc` so a batch of [`Self::frame_key_presynced`]
@@ -640,7 +703,7 @@ impl HeadlessRenderer {
     #[must_use]
     pub fn frame_key_presynced(
         &self,
-        doc: &Document,
+        doc: &Arc<Document>,
         comp_id: Uuid,
         frame: u64,
         quality: Quality,
@@ -653,6 +716,7 @@ impl HeadlessRenderer {
             quality,
             &ProbeView(&self.probe_cache),
         )
+        .map(|k| self.named_under_view(k))
     }
 
     /// Composite one interactive frame and return the display-encoded GPU
@@ -669,7 +733,7 @@ impl HeadlessRenderer {
     /// same pixels, and both get the drag fast path.
     fn preview_display_texture(
         &mut self,
-        doc: &Document,
+        doc: &Arc<Document>,
         comp_id: Uuid,
         frame: u64,
         quality: Quality,
@@ -681,7 +745,7 @@ impl HeadlessRenderer {
     /// `bgra` is for the shared-texture Viewer only (see `render_to_shared`).
     fn preview_display_texture_fmt(
         &mut self,
-        doc: &Document,
+        doc: &Arc<Document>,
         comp_id: Uuid,
         frame: u64,
         quality: Quality,
@@ -769,10 +833,12 @@ impl HeadlessRenderer {
             if let Some(w) = &watcher {
                 w.presenting();
             }
+            // The one place the Viewer's own way of looking is applied: on the
+            // linear composite, on its way to display bytes (docs/06 §3.3).
             Ok(if bgra {
-                parts.colour.display_bgra(&self.gpu, &linear)
+                parts.colour.display_bgra(&self.gpu, &linear, self.view)
             } else {
-                parts.colour.display(&self.gpu, &linear)
+                parts.colour.display(&self.gpu, &linear, self.view)
             })
         };
         // Return the engines to the pool even on error, so one failed frame does
@@ -820,7 +886,7 @@ impl HeadlessRenderer {
     /// returned buffer already carries the slate.
     pub fn render_preview(
         &mut self,
-        doc: &Document,
+        doc: &Arc<Document>,
         comp_id: Uuid,
         frame: u64,
         quality: Quality,
@@ -847,7 +913,16 @@ impl HeadlessRenderer {
                 .map(|rgba| (rgba, sw, sh))
                 .map_err(|e| format!("headless preview: {e}"));
         }
-        let reduced = parts.colour.display_scaled(&self.gpu, &shown, sw, sh);
+        // Neutral, and it must stay so: `shown` is already display-encoded, and
+        // the Viewer's view was applied on the way there. Passing it again here
+        // would expose the picture twice.
+        let reduced = parts.colour.display_scaled(
+            &self.gpu,
+            &shown,
+            sw,
+            sh,
+            lumit_gpu::DisplayParams::NEUTRAL,
+        );
         parts
             .colour
             .readback8(&self.gpu, &reduced)
@@ -995,7 +1070,7 @@ impl HeadlessRenderer {
     /// "the frame as an export would write it".
     pub fn render_rgba(
         &mut self,
-        doc: &Document,
+        doc: &Arc<Document>,
         comp_id: Uuid,
         frame: u64,
         scale: f32,
@@ -1062,7 +1137,7 @@ impl HeadlessRenderer {
     /// (see [`Self::frame_key`]) — never filed under a promise it cannot keep.
     pub fn render_prepared(
         &mut self,
-        doc: &Document,
+        doc: &Arc<Document>,
         comp_id: Uuid,
         frame: u64,
         quality: Quality,
@@ -1085,7 +1160,7 @@ impl HeadlessRenderer {
     /// unnameable frame (footage still being probed) gets.
     pub fn render_prepared_named(
         &mut self,
-        doc: &Document,
+        doc: &Arc<Document>,
         comp_id: Uuid,
         frame: u64,
         quality: Quality,
@@ -1125,6 +1200,7 @@ impl HeadlessRenderer {
                         comp: comp_id,
                         frame,
                         scale_q: preview_scale_q(quality),
+                        quality,
                     },
                     from_lower_tier: false,
                     cost_ms,
@@ -1453,7 +1529,7 @@ impl HeadlessRenderer {
     #[cfg(all(windows, feature = "shared-texture"))]
     pub fn render_to_shared(
         &mut self,
-        doc: &Document,
+        doc: &Arc<Document>,
         comp_id: Uuid,
         frame: u64,
         quality: Quality,
@@ -1533,7 +1609,7 @@ impl HeadlessRenderer {
     #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
     pub fn render_to_shared_dmabuf(
         &mut self,
-        doc: &Document,
+        doc: &Arc<Document>,
         comp_id: Uuid,
         frame: u64,
         quality: Quality,
@@ -1609,7 +1685,7 @@ impl HeadlessRenderer {
     #[cfg(all(target_os = "macos", feature = "shared-texture-macos"))]
     pub fn render_to_shared(
         &mut self,
-        doc: &Document,
+        doc: &Arc<Document>,
         comp_id: Uuid,
         frame: u64,
         quality: Quality,
@@ -2174,6 +2250,130 @@ mod tests {
         assert!(rgba[idx] > 200, "red solid stays red at the scaled size");
     }
 
+    /// **A view names its frames apart rather than leaving them nameless**
+    /// (K-346, superseding that half of K-314). The look is baked into the
+    /// display-encoded pixels the tiers hold, so a frame under one is a
+    /// different picture and takes a different name — which is what lets the
+    /// caches keep working while an exposure is dialled in, where the old rule
+    /// switched all three off for as long as a control was engaged. Neutral
+    /// keeps the name it always had, so frames banked before this still come
+    /// back. Needs no adapter — naming is a hash of the document, not a render.
+    #[test]
+    fn a_view_names_its_frames_apart_rather_than_leaving_them_nameless() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                lumit_gpu::no_adapter();
+                return;
+            }
+        };
+        let (store, comp_id) = doc_with_solid(LinearColour([1.0, 0.0, 0.0, 1.0]), 8, 8);
+        let doc = store.snapshot();
+        let q = crate::plan::Quality::default();
+
+        let neutral = r.frame_key(&doc, comp_id, 0, q);
+        assert!(neutral.is_some(), "a neutral view names its frames");
+        r.presync_items(&doc, (8, 8));
+        assert_eq!(
+            r.frame_key_presynced(&doc, comp_id, 0, q),
+            neutral,
+            "both naming entry points agree while neutral"
+        );
+
+        // Exposure alone, tone map alone, and both — each is its own picture.
+        let mut seen = vec![neutral];
+        for view in [
+            lumit_gpu::DisplayParams::from_stops(1.0, false),
+            lumit_gpu::DisplayParams::from_stops(0.0, true),
+            lumit_gpu::DisplayParams::from_stops(-2.3, true),
+        ] {
+            r.set_display_view(view);
+            let named = r.frame_key(&doc, comp_id, 0, q);
+            assert!(named.is_some(), "{view:?} must still name the frame");
+            assert!(
+                !seen.contains(&named),
+                "{view:?} must not share a name with a look already seen"
+            );
+            assert_eq!(
+                r.frame_key_presynced(&doc, comp_id, 0, q),
+                named,
+                "{view:?}: both naming entry points must agree under a look"
+            );
+            // Asked twice under the same look, the name must not move, or a
+            // frame would be banked under a name nothing looks up again.
+            assert_eq!(
+                r.frame_key(&doc, comp_id, 0, q),
+                named,
+                "{view:?}: naming is deterministic"
+            );
+            seen.push(named);
+        }
+
+        // And back: the name it had is the name it gets again, so the frames
+        // banked before the control was touched are hits once more.
+        r.set_display_view(lumit_gpu::DisplayParams::NEUTRAL);
+        assert_eq!(
+            r.frame_key(&doc, comp_id, 0, q),
+            neutral,
+            "returning to neutral returns the frame's own name"
+        );
+    }
+
+    /// **The export cannot see the Viewer's view** (K-314), and it is neutral by
+    /// *construction* rather than by discipline: `export::run` builds its own
+    /// `HeadlessRenderer` and nothing ever calls the setter on it, then renders
+    /// each frame through `render_preview` exactly as this does.
+    ///
+    /// So the property under test is that the view is renderer-owned state. The
+    /// obvious regression — making it a global, a static or a thread-local, all
+    /// of which would look fine in every preview test — fails here, because the
+    /// export's fresh renderer would then inherit a view somebody else set. The
+    /// first assertion also proves the view is doing something at all, so this
+    /// cannot pass by the display transform being a no-op.
+    #[test]
+    fn an_export_renders_neutral_whatever_the_viewer_is_set_to() {
+        let mut viewer = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                lumit_gpu::no_adapter();
+                return;
+            }
+        };
+        let (store, comp_id) = doc_with_solid(LinearColour([0.18, 0.18, 0.18, 1.0]), 8, 8);
+        let doc = store.snapshot();
+        let q = crate::plan::Quality::default();
+
+        let (neutral, _, _) = viewer
+            .render_preview(&doc, comp_id, 0, q, 1.0)
+            .expect("neutral render");
+
+        viewer.set_display_view(lumit_gpu::DisplayParams::from_stops(2.0, true));
+        let (exposed, _, _) = viewer
+            .render_preview(&doc, comp_id, 0, q, 1.0)
+            .expect("exposed render");
+        assert_ne!(
+            exposed, neutral,
+            "two stops and a tone map must visibly change the preview, or this \
+             test would pass on a display transform that does nothing"
+        );
+
+        // What the exporter does, in the order it does it (`export::run`): its
+        // own renderer, then `render_preview` per frame at full quality.
+        let mut exporter = HeadlessRenderer::new().expect("export renderer");
+        assert!(
+            exporter.display_view().is_neutral(),
+            "a fresh renderer starts neutral, which is what makes export neutral"
+        );
+        let (exported, _, _) = exporter
+            .render_preview(&doc, comp_id, 0, q, 1.0)
+            .expect("export render");
+        assert_eq!(
+            exported, neutral,
+            "the export's bytes are the neutral bytes, with the Viewer set to \
+             two stops and a tone map"
+        );
+    }
+
     /// Audio-only media (a readable file with no video stream) must not draw
     /// the missing-footage slate: it is a valid source, not a broken one. Bugs
     /// here previously conflated the two (`Probe::Slate`), which painted the
@@ -2425,7 +2625,7 @@ mod tests {
                     }
                 }
             }
-            r.render_preview(&dragging, comp_id, 0, q, 1.0)
+            r.render_preview(&std::sync::Arc::new(dragging.clone()), comp_id, 0, q, 1.0)
                 .expect("drag tick");
         }
         assert_eq!(
@@ -2563,8 +2763,15 @@ mod tests {
         let mut doc = (*store.snapshot()).clone();
         let q = crate::plan::Quality::default();
 
-        r.render_prepared(&doc, comp_id, 0, q, false, true)
-            .expect("first render");
+        r.render_prepared(
+            &std::sync::Arc::new(doc.clone()),
+            comp_id,
+            0,
+            q,
+            false,
+            true,
+        )
+        .expect("first render");
         let hits = r.frame_texture_hits();
 
         // Rename the layer and nudge the work area: neither is in the picture.
@@ -2576,8 +2783,15 @@ mod tests {
                 lumit_core::time::CompTime(lumit_core::time::Rational::new(1, 2).unwrap()),
             ));
         }
-        r.render_prepared(&doc, comp_id, 0, q, false, true)
-            .expect("render after the picture-free edit");
+        r.render_prepared(
+            &std::sync::Arc::new(doc.clone()),
+            comp_id,
+            0,
+            q,
+            false,
+            true,
+        )
+        .expect("render after the picture-free edit");
         assert_eq!(
             r.frame_texture_hits(),
             hits + 1,
@@ -2589,8 +2803,15 @@ mod tests {
         if let Some(comp) = doc.comp_mut(comp_id) {
             comp.layers[0].transform.opacity = lumit_core::anim::Property::fixed(40.0);
         }
-        r.render_prepared(&doc, comp_id, 0, q, false, true)
-            .expect("render after a real edit");
+        r.render_prepared(
+            &std::sync::Arc::new(doc.clone()),
+            comp_id,
+            0,
+            q,
+            false,
+            true,
+        )
+        .expect("render after a real edit");
         assert_eq!(
             r.frame_texture_hits(),
             hits + 1,
@@ -2628,10 +2849,17 @@ mod tests {
         // A budget that holds exactly one 8×8 frame, so the second picture
         // evicts the first.
         r.set_frame_texture_budget(8 * 8 * 4 + 64);
-        r.render_prepared(&doc, comp_id, 0, q, false, true)
-            .expect("composite the frame the ladder will demote");
+        r.render_prepared(
+            &std::sync::Arc::new(doc.clone()),
+            comp_id,
+            0,
+            q,
+            false,
+            true,
+        )
+        .expect("composite the frame the ladder will demote");
         let first = r
-            .frame_key(&doc, comp_id, 0, q)
+            .frame_key(&std::sync::Arc::new(doc.clone()), comp_id, 0, q)
             .expect("a solid-only comp is nameable");
         assert!(r.has_frame_texture(first, false));
 
@@ -2640,8 +2868,15 @@ mod tests {
         if let Some(comp) = doc.comp_mut(comp_id) {
             comp.layers[0].transform.opacity = lumit_core::anim::Property::fixed(30.0);
         }
-        r.render_prepared(&doc, comp_id, 0, q, false, true)
-            .expect("composite a second picture, evicting the first");
+        r.render_prepared(
+            &std::sync::Arc::new(doc.clone()),
+            comp_id,
+            0,
+            q,
+            false,
+            true,
+        )
+        .expect("composite a second picture, evicting the first");
         assert!(!r.has_frame_texture(first, false), "the first was evicted");
 
         // The read-back lands within a few polls; it is running on the card.
@@ -2683,8 +2918,15 @@ mod tests {
         if let Some(comp) = doc.comp_mut(comp_id) {
             comp.layers[0].transform.opacity = lumit_core::anim::Property::fixed(70.0);
         }
-        r.render_prepared(&doc, comp_id, 0, q, false, true)
-            .expect("a third picture takes the promoted frame's place");
+        r.render_prepared(
+            &std::sync::Arc::new(doc.clone()),
+            comp_id,
+            0,
+            q,
+            false,
+            true,
+        )
+        .expect("a third picture takes the promoted frame's place");
         assert!(
             !r.has_frame_texture(first, false),
             "the promoted frame went"
@@ -2770,8 +3012,15 @@ mod tests {
         if let Some(comp) = doc.comp_mut(comp_id) {
             comp.layers[0].transform.opacity = lumit_core::anim::Property::fixed(25.0);
         }
-        r.render_prepared(&doc, comp_id, 0, q, false, true)
-            .expect("a second picture takes its place");
+        r.render_prepared(
+            &std::sync::Arc::new(doc.clone()),
+            comp_id,
+            0,
+            q,
+            false,
+            true,
+        )
+        .expect("a second picture takes its place");
         assert!(!r.has_frame_texture(key, false), "the first was evicted");
         let mut came_down = Vec::new();
         for _ in 0..40 {
@@ -2814,6 +3063,7 @@ mod tests {
                 comp,
                 frame: key as u64,
                 scale_q: 1000,
+                quality: Quality::default(),
             },
         };
         // Room for exactly one 8×8 frame, so each promotion evicts the one
@@ -2895,7 +3145,9 @@ mod tests {
         let colour = LinearColour([0.8, 0.1, 0.1, 1.0]);
 
         let (plain, plain_comp, _) = matrix_base(cw, ch, colour);
-        let (without, w, h) = r.render_rgba(&plain, plain_comp, 0, 1.0).expect("render");
+        let (without, w, h) = r
+            .render_rgba(&std::sync::Arc::new(plain.clone()), plain_comp, 0, 1.0)
+            .expect("render");
 
         let (mut with_null, null_comp, _) = matrix_base(cw, ch, colour);
         let mut null = matrix_layer("Null", LayerKind::Null, cw, ch);
@@ -2908,7 +3160,7 @@ mod tests {
             .layers
             .insert(0, null);
         let (with, w2, h2) = r
-            .render_rgba(&with_null, null_comp, 0, 1.0)
+            .render_rgba(&std::sync::Arc::new(with_null.clone()), null_comp, 0, 1.0)
             .expect("render");
 
         assert_eq!((w, h), (w2, h2));
@@ -3817,7 +4069,9 @@ mod tests {
             comp.layers.push(matte);
         }
 
-        let (rgba, w, h) = r.render_rgba(&doc, comp_id, 0, 1.0).expect("render");
+        let (rgba, w, h) = r
+            .render_rgba(&std::sync::Arc::new(doc.clone()), comp_id, 0, 1.0)
+            .expect("render");
         assert_eq!((w, h), (cw, ch));
         let at = |x: u32, y: u32| {
             let i = ((y * w + x) * 4) as usize;
@@ -3893,7 +4147,13 @@ mod tests {
                 ..Quality::default()
             };
             let (rgba, w, h) = r
-                .render_preview(&doc, comp_id, 0, quality, scale)
+                .render_preview(
+                    &std::sync::Arc::new(doc.clone()),
+                    comp_id,
+                    0,
+                    quality,
+                    scale,
+                )
                 .expect("render");
             let at = |fx: f32| {
                 let x = ((w as f32 * fx) as u32).min(w - 1);

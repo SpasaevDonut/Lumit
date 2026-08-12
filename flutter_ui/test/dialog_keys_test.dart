@@ -52,8 +52,9 @@ void main() {
     )));
     await tester.pump();
     tester
-        .firstWidget<Focus>(find.descendant(
-            of: find.byType(HouseCheckbox), matching: find.byType(Focus)))
+        .widget<FocusableActionDetector>(find.descendant(
+            of: find.byType(HouseCheckbox),
+            matching: find.byType(FocusableActionDetector)))
         .focusNode!
         .requestFocus();
     await tester.pump();

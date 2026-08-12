@@ -77,6 +77,20 @@ import 'transform_rows_frb.dart';
 /// life of the process, and every outline row was re-fetching it per rebuild.
 List<String>? _blendModes;
 
+/// The engine's answers to "what does this curve read at this time",
+/// remembered per (scalar, time) — the same bargain state/comp_time.dart
+/// strikes for frame↔time: the engine still computes each answer, once,
+/// rather than once per rebuild of every animated row (K-184). A freezed
+/// scalar compares by value, so an edited curve is a new question here, never
+/// a stale answer; the ceiling only stops a long session growing forever.
+final Map<(BridgeScalar, BridgeRational), double> _scalarSamples = {};
+
+double sampledScalar(BridgeScalar scalar, BridgeRational time) {
+  if (_scalarSamples.length >= 8192) _scalarSamples.clear();
+  return _scalarSamples[(scalar, time)] ??=
+      sampleScalar(scalar: scalar, time: time);
+}
+
 /// One layer row's height.
 const double _rowHeight = 22;
 
@@ -204,12 +218,16 @@ class LayerRow {
       _rowHeight * (1 + drawnRows.length) + (sequenceExtra ?? 0);
 }
 
-/// Decide every layer's row, once for the whole panel.
+/// Decide every layer's row, once for the whole panel. `flowParams` and
+/// `volumeDb` are the panel's once-per-revision reads, riding down onto the
+/// fold rows (K-184).
 List<LayerRow> layerRows({
   required List<BridgeLayerEntry> layers,
   required Set<String> open,
   required Map<String, bool> hasAudio,
   Map<String, double> sequenceExtra = const {},
+  Map<String, BridgeFlowParams> flowParams = const {},
+  Map<String, BridgeScalar> volumeDb = const {},
 }) {
   final out = <LayerRow>[];
   for (final entry in layers) {
@@ -219,7 +237,11 @@ List<LayerRow> layerRows({
       id: id,
       open: open.contains(id),
       foldRows: layerFoldRows(
-          entry: entry, open: open, hasAudio: hasAudio[id] ?? false),
+          entry: entry,
+          open: open,
+          hasAudio: hasAudio[id] ?? false,
+          flowParams: flowParams[id],
+          volumeDb: volumeDb[id]),
       sequenceExtra: sequenceExtra[id],
     ));
   }
@@ -478,8 +500,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
         continue;
       }
       final span = entry.info.span;
-      final startOffset =
-          span.startOffset.num / span.startOffset.den.toDouble();
+      final startOffset = rationalSeconds(span.startOffset);
       // The layer's own source clock: comp time less where its source starts.
       final request = WaveformRequest.forView(
         startSeconds: viewStart - startOffset,
@@ -565,7 +586,33 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
         entry.layer.internallayerId.toString():
             _boundsOf(entry, fpsNum, fpsDen),
     };
+    // The Flow group's parameters and the Volume scalar, for the fold-out's
+    // rows: neither is in the read model, so they are read here — once per
+    // document revision, on the same bargain as the bounds — and ride down on
+    // the rows rather than being asked for per rebuild (K-184).
+    final flowParams = <String, BridgeFlowParams>{};
+    final volumeDb = <String, BridgeScalar>{};
+    for (final entry in layers) {
+      final id = entry.layer.internallayerId.toString();
+      try {
+        if (entry.info.flow) flowParams[id] = entry.layer.getFlowParams();
+        if (_hasAudio[id] ?? false) volumeDb[id] = entry.layer.getVolumeDb();
+      } catch (_) {
+        // A layer gone between the model read and this: its rows go too.
+      }
+    }
+    _flowParams = flowParams;
+    _volumeDb = volumeDb;
   }
+
+  /// Per-layer answers the fold rows carry (K-184) — see [_refreshBounds].
+  Map<String, BridgeFlowParams> _flowParams = {};
+  Map<String, BridgeScalar> _volumeDb = {};
+
+  /// The work area, held between document revisions — see the note in [_body].
+  ({int start, int end, bool whole})? _workArea;
+  BigInt? _workRevision;
+  CompositionReference? _workComp;
 
   /// One layer's bounds, from what its kind can be asked cheaply.
   BarBounds _boundsOf(BridgeLayerEntry entry, int fpsNum, int fpsDen) {
@@ -715,7 +762,12 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
       _hasAudio[id] = false;
       entry.layer.hasAudio().then((has) {
         if (!mounted || _hasAudio[id] == has) return;
-        setState(() => _hasAudio[id] = has);
+        setState(() {
+          _hasAudio[id] = has;
+          // A layer with sound has a Volume scalar to fetch, and the document
+          // has not moved: forget the revision so the next build reads it.
+          _boundsRevision = null;
+        });
       });
     }
   }
@@ -849,10 +901,10 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
             ..add(path);
         }
         _graphKeySelection.clear();
-        final cut = path.indexOf('/');
-        if (cut > 0) _highlighted = path.substring(0, cut);
+        _highlighted = layerIdOfPath(path) ?? _highlighted;
         _openRetimeInItsDefaultLens(path);
         _publishEffectSelection();
+        _publishPropertySelection();
       });
 
   /// The other direction: an effect picked in the Effect controls panel lights
@@ -891,6 +943,36 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
   /// has one idea of what is selected, and an effect heading is a row in it.
   /// Rows on more than one layer resolve to the first layer with an effect
   /// picked, because a `.lumfx` document is one layer's stack.
+  /// Tell the rest of the shell which property rows are picked (K-341), so the
+  /// Viewer can outline the layer they belong to and show the points of a mask
+  /// whose Path row is among them.
+  void _publishPropertySelection() {
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    ui.selectedProperties.value =
+        List<String>.unmodifiable(_selectedProperties);
+  }
+
+  /// The Viewer asking for a row to be picked — a mask path it has just
+  /// dragged, whose keyframe moved and whose row should therefore be the one
+  /// showing.
+  void _onSelectPropertyRequested() {
+    if (!mounted) return;
+    final path = _ui?.selectPropertyRequest.value;
+    if (path == null) return;
+    _ui!.selectPropertyRequest.value = null;
+    if (_selectedProperties.length == 1 && _selectedProperties.first == path) {
+      return;
+    }
+    setState(() {
+      _selectedProperties
+        ..clear()
+        ..add(path);
+      _graphKeySelection.clear();
+      _highlighted = layerIdOfPath(path) ?? _highlighted;
+    });
+    _publishPropertySelection();
+  }
+
   void _publishEffectSelection() {
     final ui = Provider.of<LumitUiState>(context, listen: false);
     String? layerId;
@@ -898,7 +980,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     for (final path in _selectedProperties) {
       final effect = effectIdOfPath(path);
       if (effect == null) continue;
-      final owner = path.substring(0, path.indexOf('/'));
+      final owner = layerIdOfPath(path)!;
       layerId ??= owner;
       if (owner == layerId) picked.add(UuidValue.fromString(effect));
     }
@@ -923,7 +1005,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
   }
 
   /// Opening a **Retime** row lands in the lens the user asked for (K-246):
-  /// with *Retime opens to Velocity* on, the speed view — which in that mode
+  /// with *Retime opens to Speed* on, the speed view — which in that mode
   /// is the Vegas envelope (K-247).
   ///
   /// Only on the way *in*, and only for a Retime: switching lens by hand
@@ -932,8 +1014,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
   /// view is back — which is the point of it being a preference, not a mode.
   void _openRetimeInItsDefaultLens(String path) {
     if (!_vegas(context)) return;
-    final cut = path.indexOf('/');
-    if (cut <= 0 || path != retimePath(path.substring(0, cut))) return;
+    final owner = layerIdOfPath(path);
+    if (owner == null || path != retimePath(owner)) return;
     _graphLens = GraphLens.speed;
   }
 
@@ -946,7 +1028,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
           .interface
           .videoAsSequenceLayer;
 
-  /// Settings ▸ Interface ▸ Editing ▸ *Retime opens to Velocity* (K-246).
+  /// Settings ▸ Interface ▸ Editing ▸ *Retime opens to Speed* (K-246).
   bool _vegas(BuildContext context) =>
       Provider.of<LumitUiState>(context, listen: false)
           .workspace
@@ -962,9 +1044,9 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
         ..clear()
         ..add(path);
       _graphKeySelection.clear();
-      final cut = path.indexOf('/');
-      if (cut > 0) _highlighted = path.substring(0, cut);
+      _highlighted = layerIdOfPath(path) ?? _highlighted;
     });
+    _publishPropertySelection();
   }
 
   /// The graph editor replaces the layer area rather than sitting beside it:
@@ -1305,6 +1387,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     // be on screen (K-326). Ensure-open, not the reveal keys' toggle: showing
     // a row that is already showing must never hide it.
     _ui!.revealPropertyRequest.addListener(_onRevealRequested);
+    _ui!.selectPropertyRequest.addListener(_onSelectPropertyRequested);
     // Merged **once**, not per build: a fresh `Listenable` every rebuild makes
     // every cache bar under it unsubscribe and resubscribe, which during a zoom
     // flight is sixty times a second for nothing (K-293).
@@ -1600,9 +1683,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     // read straight off the selection — no lookup table to keep in step.
     final wanted = <String, Set<String>>{};
     for (final path in _selectedProperties) {
-      final cut = path.indexOf('/');
-      if (cut <= 0) continue;
-      final layerId = path.substring(0, cut);
+      final layerId = layerIdOfPath(path);
+      if (layerId == null) continue;
       if (!isUnderPath(masksPath(layerId), path)) continue;
       (wanted[layerId] ??= {})
           .add(path.substring(masksPath(layerId).length + 1));
@@ -1626,9 +1708,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     if (!deleted) return false;
     // The rows are gone, so the highlight that pointed at them goes too.
     setState(() => _selectedProperties.removeWhere((path) {
-          final cut = path.indexOf('/');
-          return cut > 0 &&
-              isUnderPath(masksPath(path.substring(0, cut)), path);
+          final owner = layerIdOfPath(path);
+          return owner != null && isUnderPath(masksPath(owner), path);
         }));
     ui.model.refresh();
     return true;
@@ -1775,6 +1856,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     _ui?.selectedLayer.removeListener(_onPrimaryChanged);
     _ui?.renderTimings.removeListener(_onTimingsChanged);
     _ui?.revealPropertyRequest.removeListener(_onRevealRequested);
+    _ui?.selectPropertyRequest.removeListener(_onSelectPropertyRequested);
     if (_ui?.deleteClaim == _deleteSelectedMasks) _ui!.deleteClaim = null;
     if (_ui?.copyClaim == _copySelectedKeys) _ui!.copyClaim = null;
     if (_ui?.pasteClaim == _pasteKeysIntoSelection) _ui!.pasteClaim = null;
@@ -2036,7 +2118,9 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
         layers: layers,
         open: _open,
         hasAudio: _hasAudio,
-        sequenceExtra: _sequenceExtra);
+        sequenceExtra: _sequenceExtra,
+        flowParams: _flowParams,
+        volumeDb: _volumeDb);
 
     // The property rows on screen, in display order — what a Shift+click
     // range runs along — and the graph channels the selection resolves to,
@@ -2052,10 +2136,16 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
     ];
     final channels =
         graphChannels(layers: ui.model.layers, selected: _selectedProperties);
-    // The work area, in frames, read once for the whole panel (K-203): the
-    // ruler draws it, the lanes and the curves are washed by it, and the two
-    // are one span.
-    final work = workAreaFrames(comp);
+    // The work area, in frames, read once for the whole panel (K-203) — and
+    // once per document *revision*, not per rebuild: `workAreaFrames` is two
+    // to four bridge calls, and only an edit can change its answer (K-184).
+    final revision = ui.model.revision;
+    if (_workArea == null || revision != _workRevision || comp != _workComp) {
+      _workRevision = revision;
+      _workComp = comp;
+      _workArea = workAreaFrames(comp);
+    }
+    final work = _workArea!;
     // The block heights, as a plain list. Still needed even though the rows
     // now carry their own height: a drag measures its travel against the
     // *stack* ([layerDragTarget]), a drop reads a slot out of it
@@ -2211,207 +2301,15 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        SizedBox(
-                          width: outlineViewport,
-                          // A column, to match the lane side's: rows, then a
-                          // block the height of the lane bottom bar, so both
-                          // halves give their rows the same viewport and scroll
-                          // the same distance ([_laneBottomBarHeight]).
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Expanded(
-                                  child: Stack(
-                                children: [
-                                  Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.stretch,
-                                    children: [
-                                      Expanded(
-                                        child: SingleChildScrollView(
-                                          scrollDirection: Axis.horizontal,
-                                          child: SizedBox(
-                                            width: outlineWidth,
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.stretch,
-                                              children: [
-                                                // The toolbar and the column header live in
-                                                // the outline, not across the panel: the lane
-                                                // side gives their height to a taller, easier
-                                                // to grab time ruler (docs/07 §4.1).
-                                                _Toolbar(
-                                                  comp: comp,
-                                                  model: ui.model,
-                                                  playhead: ui.playheadFrame,
-                                                  onSeek: ui.scrubTo,
-                                                  graph: _graph,
-                                                  onToggleGraph: () => setState(
-                                                      () => _graph = !_graph),
-                                                  razor: _razorArmed(ui),
-                                                  onToggleRazor: () =>
-                                                      _toggleRazor(ui),
-                                                  hideShy: _hideShy,
-                                                  onToggleHideShy: () =>
-                                                      setState(() =>
-                                                          _hideShy = !_hideShy),
-                                                  onSearch: (v) => setState(
-                                                      () => _search = v),
-                                                  onChanged: ui.model.refresh,
-                                                ),
-                                                _ColumnHeader(
-                                                  order: groupOrder,
-                                                  widths: groupWidths,
-                                                  onResize: _resizeGroup,
-                                                  onReorder:
-                                                      (dragged, target) =>
-                                                          setState(
-                                                    () => _groupOrder =
-                                                        reorderedGroups(
-                                                            _groupOrder,
-                                                            dragged,
-                                                            target),
-                                                  ),
-                                                ),
-                                                // The rows scroll under the pinned toolbar
-                                                // and header, in step with the lanes.
-                                                Expanded(
-                                                  // A click that misses every row
-                                                  // deselects (K-203). Translucent
-                                                  // and outermost, so a name, a
-                                                  // switch or a property still
-                                                  // wins its own tap in the arena
-                                                  // and only the empty ground
-                                                  // below the last layer reaches
-                                                  // here.
-                                                  child: GestureDetector(
-                                                    key: const ValueKey(
-                                                        'tl-outline-ground'),
-                                                    behavior: HitTestBehavior
-                                                        .translucent,
-                                                    onTap: () =>
-                                                        _deselectAll(ui),
-                                                    child:
-                                                        SingleChildScrollView(
-                                                      controller: _vOutline,
-                                                      child: _Outline(
-                                                        comp: comp,
-                                                        rows: rows,
-                                                        onOpenSequence:
-                                                            _toggleSequenceView,
-                                                        layerDrag: _layerDrag,
-                                                        renameRequest:
-                                                            _renameRequest,
-                                                        blockHeights:
-                                                            blockHeights,
-                                                        groupOrder: groupOrder,
-                                                        widths: groupWidths,
-                                                        selectedIds:
-                                                            ui.selectedLayerIds,
-                                                        highlighted:
-                                                            _highlighted,
-                                                        selectedProperties:
-                                                            _selectedProperties,
-                                                        graphColours:
-                                                            graphColours,
-                                                        onSelectProperty:
-                                                            _selectProperty,
-                                                        onEditProperty:
-                                                            _selectOnEdit,
-                                                        onToggle: _toggle,
-                                                        playheadFrame: ui
-                                                            .playheadFrame
-                                                            .value,
-                                                        onSeek: ui.scrubTo,
-                                                        onSelect: (l) =>
-                                                            _selectLayer(ui, l,
-                                                                among: layers),
-                                                        onHighlight: (id) =>
-                                                            setState(() =>
-                                                                _highlighted =
-                                                                    id),
-                                                        onChanged:
-                                                            ui.model.refresh,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                      // The outline's own gutter: a fixed block level
-                                      // with the toolbar and column header, then its
-                                      // thumb — which only shows in graph view, where
-                                      // the two halves scroll apart.
-                                      _scrollGutter(
-                                        t,
-                                        controller: _vOutline,
-                                        showThumb: _graph,
-                                        header: [
-                                          Container(
-                                              height: _toolbarHeight,
-                                              color: t.surface1),
-                                          Container(
-                                              height: _headerHeight,
-                                              color: t.surface2),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
-                                  // The row seams, over the columns *and* the
-                                  // gutter so they meet the lane area's (K-192);
-                                  // phased by the scroll so they travel with the
-                                  // rows they separate.
-                                  Positioned(
-                                    top: _toolbarHeight + _headerHeight,
-                                    left: 0,
-                                    right: 0,
-                                    bottom: 0,
-                                    child: IgnorePointer(
-                                      child: AnimatedBuilder(
-                                        animation: _vOutline,
-                                        builder: (context, _) => CustomPaint(
-                                          painter: _RowDividerPainter(
-                                            step: _rowHeight,
-                                            colour: t.hairline,
-                                            phase: -((_positionOf(_vOutline)
-                                                        ?.pixels ??
-                                                    0) %
-                                                _rowHeight),
-                                            // The grid here repeats from the
-                                            // panel's edge, so the blanks are
-                                            // carried up by however far the rows
-                                            // have scrolled.
-                                            blanks: [
-                                              for (final b
-                                                  in _sequenceBlanks(rows))
-                                                (
-                                                  b.$1 -
-                                                      (_positionOf(_vOutline)
-                                                              ?.pixels ??
-                                                          0),
-                                                  b.$2 -
-                                                      (_positionOf(_vOutline)
-                                                              ?.pixels ??
-                                                          0),
-                                                ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              )),
-                              Container(
-                                height: _laneBottomBarHeight,
-                                color: t.surface1,
-                              ),
-                            ],
-                          ),
-                        ),
+                        _outlineHalf(context, ui, comp,
+                            rows: rows,
+                            layers: layers,
+                            blockHeights: blockHeights,
+                            groupOrder: groupOrder,
+                            groupWidths: groupWidths,
+                            graphColours: graphColours,
+                            outlineViewport: outlineViewport,
+                            outlineWidth: outlineWidth),
                         Expanded(
                           // **Only this half rebuilds when the zoom moves**
                           // (K-293). The zoom is a `Listenable`, and the lane
@@ -2440,386 +2338,23 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
                                   ? null
                                   : (axis.xOf(work.start), axis.xOf(work.end));
                               return _graph
-                                  // The graph editor: the same ruler, zoom and
-                                  // horizontal scroll as the lane view, over one
-                                  // full-height pane of curves (docs/07 §5).
-                                  ? Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.stretch,
-                                      children: [
-                                        Expanded(
-                                          child: Row(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.stretch,
-                                            children: [
-                                              Expanded(
-                                                child: SingleChildScrollView(
-                                                  scrollDirection:
-                                                      Axis.horizontal,
-                                                  controller: _hLane,
-                                                  child: SizedBox(
-                                                    width: axis.width,
-                                                    child: Stack(
-                                                      children: [
-                                                        Column(
-                                                          crossAxisAlignment:
-                                                              CrossAxisAlignment
-                                                                  .stretch,
-                                                          children: [
-                                                            TimelineRuler(
-                                                              comp: comp,
-                                                              axis: axis,
-                                                              fps: ui.model.fps,
-                                                              height:
-                                                                  _rulerHeight,
-                                                              work: work,
-                                                              onWorkArea:
-                                                                  (span) {
-                                                                comp.setWorkArea(
-                                                                    span: span);
-                                                                setState(() {});
-                                                              },
-                                                              onMarkersChanged:
-                                                                  () => setState(
-                                                                      () {}),
-                                                              onSeek: (f) => ui
-                                                                  .scrubTo(f.clamp(
-                                                                      0,
-                                                                      frames ==
-                                                                              0
-                                                                          ? 0
-                                                                          : frames -
-                                                                              1)),
-                                                            ),
-                                                            TimelineCacheBar(
-                                                              comp: comp,
-                                                              axis: axis,
-                                                              revision:
-                                                                  _cacheRevision!,
-                                                            ),
-                                                            Expanded(
-                                                              child: Stack(
-                                                                children: [
-                                                                  // The same two-shade
-                                                                  // ground the lanes
-                                                                  // get (K-203): the
-                                                                  // work area runs the
-                                                                  // full height of
-                                                                  // whichever view is
-                                                                  // open, so the span
-                                                                  // being delivered is
-                                                                  // never only a mark
-                                                                  // on the ruler.
-                                                                  Positioned
-                                                                      .fill(
-                                                                    child:
-                                                                        IgnorePointer(
-                                                                      child:
-                                                                          CustomPaint(
-                                                                        painter:
-                                                                            WorkAreaGroundPainter(
-                                                                          startX:
-                                                                              graphWork?.$1,
-                                                                          endX:
-                                                                              graphWork?.$2,
-                                                                          inside:
-                                                                              t.surface1,
-                                                                          outside:
-                                                                              t.timelineOutOfRange,
-                                                                        ),
-                                                                      ),
-                                                                    ),
-                                                                  ),
-                                                                  GraphEditorFrb(
-                                                                    key:
-                                                                        _graphPane,
-                                                                    comp: comp,
-                                                                    hScroll:
-                                                                        _hLane,
-                                                                    channels:
-                                                                        channels,
-                                                                    axis: axis,
-                                                                    frames:
-                                                                        frames,
-                                                                    fps: ui
-                                                                        .model
-                                                                        .fps,
-                                                                    fpsNum:
-                                                                        fpsNum,
-                                                                    fpsDen:
-                                                                        fpsDen,
-                                                                    magnet:
-                                                                        _magnet,
-                                                                    lens:
-                                                                        _graphLens,
-                                                                    autoFit:
-                                                                        _graphAutoFit,
-                                                                    vegas: _vegas(
-                                                                        context),
-                                                                    penArmed: ui
-                                                                            .tools
-                                                                            .tool
-                                                                            .group ==
-                                                                        ToolGroup
-                                                                            .pen,
-                                                                    selectedKeys:
-                                                                        _graphKeySelection,
-                                                                    onSelectionChanged: () =>
-                                                                        setState(
-                                                                            () {}),
-                                                                    onChanged: ui
-                                                                        .model
-                                                                        .refresh,
-                                                                    onWheelTime: (e,
-                                                                            x) =>
-                                                                        _wheel(
-                                                                            e,
-                                                                            x,
-                                                                            axis.perFrame),
-                                                                  ),
-                                                                ],
-                                                              ),
-                                                            ),
-                                                          ],
-                                                        ),
-                                                        // The playhead, over the
-                                                        // ruler and curves alike.
-                                                        ValueListenableBuilder<
-                                                            int>(
-                                                          valueListenable:
-                                                              ui.playheadFrame,
-                                                          builder: (context,
-                                                                  frame,
-                                                                  child) =>
-                                                              Positioned(
-                                                            left: axis.xOf(
-                                                                    frame) -
-                                                                PlayheadMarker
-                                                                    .halfWidth,
-                                                            top: 0,
-                                                            bottom: 0,
-                                                            child: child!,
-                                                          ),
-                                                          child:
-                                                              const PlayheadMarker(),
-                                                        ),
-                                                      ],
-                                                    ),
-                                                  ),
-                                                ),
-                                              ),
-                                              // The pane frames itself vertically
-                                              // (or the wheel does); the gutter
-                                              // block keeps the columns level
-                                              // with the lane view's.
-                                              _scrollGutter(
-                                                t,
-                                                controller: _vLane,
-                                                showThumb: false,
-                                                header: [
-                                                  Container(
-                                                    height: _rulerHeight +
-                                                        TimelineCacheBar.height,
-                                                    color: t.surface2,
-                                                  ),
-                                                ],
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                        _LaneBottomBar(
-                                          zoom: _zoomMotion.target,
-                                          hScroll: _hLane,
-                                          magnet: _magnet,
-                                          onToggleMagnet: () => setState(
-                                              () => _magnet = !_magnet),
-                                          onZoom: _setZoom,
-                                          onZoomLive: (z) =>
-                                              _setZoom(z, fly: false),
-                                          onZoomDragStart: _zoomDragStart,
-                                          onZoomDragEnd: _zoomDragEnd,
-                                          maxZoom: _maxZoom,
-                                          lens: _graphLens,
-                                          onLens: (lens) =>
-                                              setState(() => _graphLens = lens),
-                                          autoFit: _graphAutoFit,
-                                          onToggleAutoFit: () => setState(() =>
-                                              _graphAutoFit = !_graphAutoFit),
-                                          onInterp: (side) =>
-                                              _applyInterp(side),
-                                          onEasing: _applyEasing,
-                                        ),
-                                      ],
-                                    )
-                                  : Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.stretch,
-                                      children: [
-                                        Expanded(
-                                          child: Row(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.stretch,
-                                            children: [
-                                              Expanded(
-                                                child: SingleChildScrollView(
-                                                  scrollDirection:
-                                                      Axis.horizontal,
-                                                  controller: _hLane,
-                                                  child: SizedBox(
-                                                    width: axis.width,
-                                                    child: _LayerArea(
-                                                      comp: comp,
-                                                      rows: rows,
-                                                      selectedIds:
-                                                          ui.selectedLayerIds,
-                                                      layerDrag: _layerDrag,
-                                                      blockHeights:
-                                                          blockHeights,
-                                                      onOpenSequence:
-                                                          _toggleSequenceView,
-                                                      onGraphHeight: (entry,
-                                                              h) =>
-                                                          setState(() =>
-                                                              _sequenceGraph[entry
-                                                                  .layer
-                                                                  .internallayerId
-                                                                  .toString()] = h),
-                                                      sequenceBlanks:
-                                                          _sequenceBlanks(rows),
-                                                      hScroll: _hLane,
-                                                      onClipPreview: (entry,
-                                                              clip, keys) =>
-                                                          comp.renderFrameWithClipRetime(
-                                                        frame: BigInt.from(ui
-                                                            .playheadFrame
-                                                            .value),
-                                                        scale: 1.0,
-                                                        layer: entry.layer,
-                                                        clip: clip.id,
-                                                        retime: BridgeScalar
-                                                            .keyframed(keys),
-                                                      ),
-                                                      peaks: _peaks,
-                                                      waveformStyle:
-                                                          _waveformStyle,
-                                                      fps: ui.model.fps,
-                                                      fpsNum: fpsNum,
-                                                      fpsDen: fpsDen,
-                                                      magnet: _magnet,
-                                                      axis: axis,
-                                                      playhead:
-                                                          ui.playheadFrame,
-                                                      razor: _razorArmed(ui),
-                                                      onRazor: (entry, frame) =>
-                                                          _razorCutAt(
-                                                              ui,
-                                                              entry,
-                                                              frame,
-                                                              ui.model.refresh),
-                                                      vScroll: _vLane,
-                                                      selectedKeys:
-                                                          _laneKeySelection,
-                                                      onDeselectAll: () =>
-                                                          _deselectAll(ui),
-                                                      work: work,
-                                                      onKeysSelected: (keys) {
-                                                        // Picking keyframes picks
-                                                        // their properties too —
-                                                        // every distinct one the
-                                                        // box caught — so the
-                                                        // outline and the graph
-                                                        // show what was boxed
-                                                        // (docs/07 §4.3).
-                                                        setState(() {
-                                                          _laneKeySelection
-                                                            ..clear()
-                                                            ..addAll(keys);
-                                                          if (keys.isEmpty) {
-                                                            return;
-                                                          }
-                                                          _selectedProperties
-                                                              .clear();
-                                                          for (final id
-                                                              in keys) {
-                                                            final path =
-                                                                id.substring(
-                                                                    0,
-                                                                    id.lastIndexOf(
-                                                                        '#'));
-                                                            if (!_selectedProperties
-                                                                .contains(
-                                                                    path)) {
-                                                              _selectedProperties
-                                                                  .add(path);
-                                                            }
-                                                          }
-                                                          final first =
-                                                              _selectedProperties
-                                                                  .first;
-                                                          final cut = first
-                                                              .indexOf('/');
-                                                          if (cut > 0) {
-                                                            _highlighted =
-                                                                first.substring(
-                                                                    0, cut);
-                                                          }
-                                                        });
-                                                      },
-                                                      onWheel: (e, x) => _wheel(
-                                                          e, x, axis.perFrame),
-                                                      onSeek: (f) => ui.scrubTo(
-                                                          f.clamp(
-                                                              0,
-                                                              frames == 0
-                                                                  ? 0
-                                                                  : frames -
-                                                                      1)),
-                                                      onSelect: (l) =>
-                                                          _selectLayer(ui, l,
-                                                              among: layers),
-                                                      onChanged:
-                                                          ui.model.refresh,
-                                                      cacheRevision:
-                                                          _cacheRevision!,
-                                                      dragPreview: _barDrag,
-                                                      bounds: _barBounds,
-                                                    ),
-                                                  ),
-                                                ),
-                                              ),
-                                              // The lanes' thumb, pinned to the
-                                              // viewport's right edge rather than
-                                              // riding the scrolled content.
-                                              _scrollGutter(
-                                                t,
-                                                controller: _vLane,
-                                                showThumb: true,
-                                                header: [
-                                                  Container(
-                                                    height: _rulerHeight +
-                                                        TimelineCacheBar.height,
-                                                    color: t.surface2,
-                                                  ),
-                                                ],
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                        _LaneBottomBar(
-                                          zoom: _zoomMotion.target,
-                                          hScroll: _hLane,
-                                          magnet: _magnet,
-                                          onToggleMagnet: () => setState(
-                                              () => _magnet = !_magnet),
-                                          onZoom: _setZoom,
-                                          onZoomLive: (z) =>
-                                              _setZoom(z, fly: false),
-                                          onZoomDragStart: _zoomDragStart,
-                                          onZoomDragEnd: _zoomDragEnd,
-                                          maxZoom: _maxZoom,
-                                        ),
-                                      ],
-                                    );
+                                  ? _graphHalf(context, ui, comp,
+                                      axis: axis,
+                                      channels: channels,
+                                      work: work,
+                                      graphWork: graphWork,
+                                      frames: frames,
+                                      fpsNum: fpsNum,
+                                      fpsDen: fpsDen)
+                                  : _laneHalf(context, ui, comp,
+                                      axis: axis,
+                                      rows: rows,
+                                      layers: layers,
+                                      blockHeights: blockHeights,
+                                      work: work,
+                                      frames: frames,
+                                      fpsNum: fpsNum,
+                                      fpsDen: fpsDen);
                             },
                           ),
                         ),
@@ -2830,6 +2365,479 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
               ),
             ),
           ),
+        ),
+      ],
+    );
+  }
+
+  /// The outline half of the table: the toolbar, the column header, the rows
+  /// and their gutter — everything left of the seam, which the zoom never
+  /// rebuilds (K-293).
+  Widget _outlineHalf(
+    BuildContext context,
+    LumitUiState ui,
+    CompositionReference comp, {
+    required List<LayerRow> rows,
+    required List<BridgeLayerEntry> layers,
+    required List<double> blockHeights,
+    required List<TimelineGroup> groupOrder,
+    required Map<TimelineGroup, double> groupWidths,
+    required Map<String, List<Color>> graphColours,
+    required double outlineViewport,
+    required double outlineWidth,
+  }) {
+    final t = ThemeScope.of(context).theme;
+    return SizedBox(
+      width: outlineViewport,
+      // A column, to match the lane side's: rows, then a
+      // block the height of the lane bottom bar, so both
+      // halves give their rows the same viewport and scroll
+      // the same distance ([_laneBottomBarHeight]).
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+              child: Stack(
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: SizedBox(
+                        width: outlineWidth,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            // The toolbar and the column header live in
+                            // the outline, not across the panel: the lane
+                            // side gives their height to a taller, easier
+                            // to grab time ruler (docs/07 §4.1).
+                            _Toolbar(
+                              comp: comp,
+                              model: ui.model,
+                              playhead: ui.playheadFrame,
+                              onSeek: ui.scrubTo,
+                              graph: _graph,
+                              onToggleGraph: () =>
+                                  setState(() => _graph = !_graph),
+                              razor: _razorArmed(ui),
+                              onToggleRazor: () => _toggleRazor(ui),
+                              hideShy: _hideShy,
+                              onToggleHideShy: () =>
+                                  setState(() => _hideShy = !_hideShy),
+                              onSearch: (v) => setState(() => _search = v),
+                              onChanged: ui.model.refresh,
+                            ),
+                            _ColumnHeader(
+                              order: groupOrder,
+                              widths: groupWidths,
+                              onResize: _resizeGroup,
+                              onReorder: (dragged, target) => setState(
+                                () => _groupOrder = reorderedGroups(
+                                    _groupOrder, dragged, target),
+                              ),
+                            ),
+                            // The rows scroll under the pinned toolbar
+                            // and header, in step with the lanes.
+                            Expanded(
+                              // A click that misses every row
+                              // deselects (K-203). Translucent
+                              // and outermost, so a name, a
+                              // switch or a property still
+                              // wins its own tap in the arena
+                              // and only the empty ground
+                              // below the last layer reaches
+                              // here.
+                              child: GestureDetector(
+                                key: const ValueKey('tl-outline-ground'),
+                                behavior: HitTestBehavior.translucent,
+                                onTap: () => _deselectAll(ui),
+                                child: SingleChildScrollView(
+                                  controller: _vOutline,
+                                  child: _Outline(
+                                    comp: comp,
+                                    rows: rows,
+                                    onOpenSequence: _toggleSequenceView,
+                                    layerDrag: _layerDrag,
+                                    renameRequest: _renameRequest,
+                                    blockHeights: blockHeights,
+                                    groupOrder: groupOrder,
+                                    widths: groupWidths,
+                                    selectedIds: ui.selectedLayerIds,
+                                    highlighted: _highlighted,
+                                    selectedProperties: _selectedProperties,
+                                    graphColours: graphColours,
+                                    onSelectProperty: _selectProperty,
+                                    onEditProperty: _selectOnEdit,
+                                    onToggle: _toggle,
+                                    playheadFrame: ui.playheadFrame.value,
+                                    onSeek: ui.scrubTo,
+                                    onSelect: (l) =>
+                                        _selectLayer(ui, l, among: layers),
+                                    onHighlight: (id) =>
+                                        setState(() => _highlighted = id),
+                                    onChanged: ui.model.refresh,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  // The outline's own gutter: a fixed block level
+                  // with the toolbar and column header, then its
+                  // thumb — which only shows in graph view, where
+                  // the two halves scroll apart.
+                  _scrollGutter(
+                    t,
+                    controller: _vOutline,
+                    showThumb: _graph,
+                    header: [
+                      Container(height: _toolbarHeight, color: t.surface1),
+                      Container(height: _headerHeight, color: t.surface2),
+                    ],
+                  ),
+                ],
+              ),
+              // The row seams, over the columns *and* the
+              // gutter so they meet the lane area's (K-192);
+              // phased by the scroll so they travel with the
+              // rows they separate.
+              Positioned(
+                top: _toolbarHeight + _headerHeight,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: IgnorePointer(
+                  child: AnimatedBuilder(
+                    animation: _vOutline,
+                    builder: (context, _) => CustomPaint(
+                      painter: _RowDividerPainter(
+                        step: _rowHeight,
+                        colour: t.hairline,
+                        phase: -((_positionOf(_vOutline)?.pixels ?? 0) %
+                            _rowHeight),
+                        // The grid here repeats from the
+                        // panel's edge, so the blanks are
+                        // carried up by however far the rows
+                        // have scrolled.
+                        blanks: [
+                          for (final b in _sequenceBlanks(rows))
+                            (
+                              b.$1 - (_positionOf(_vOutline)?.pixels ?? 0),
+                              b.$2 - (_positionOf(_vOutline)?.pixels ?? 0),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          )),
+          Container(
+            height: _laneBottomBarHeight,
+            color: t.surface1,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// The graph editor's half: the same ruler, zoom and horizontal scroll as
+  /// the lane view, over one full-height pane of curves (docs/07 §5).
+  Widget _graphHalf(
+    BuildContext context,
+    LumitUiState ui,
+    CompositionReference comp, {
+    required TimelineAxis axis,
+    required List<GraphChannel> channels,
+    required ({int start, int end, bool whole}) work,
+    required (double, double)? graphWork,
+    required int frames,
+    required int fpsNum,
+    required int fpsDen,
+  }) {
+    final t = ThemeScope.of(context).theme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  controller: _hLane,
+                  child: SizedBox(
+                    width: axis.width,
+                    child: Stack(
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            TimelineRuler(
+                              comp: comp,
+                              axis: axis,
+                              fps: ui.model.fps,
+                              height: _rulerHeight,
+                              work: work,
+                              onWorkArea: (span) {
+                                comp.setWorkArea(span: span);
+                                setState(() {});
+                              },
+                              onMarkersChanged: () => setState(() {}),
+                              onSeek: (f) => ui.scrubTo(
+                                  f.clamp(0, frames == 0 ? 0 : frames - 1)),
+                            ),
+                            TimelineCacheBar(
+                              comp: comp,
+                              axis: axis,
+                              revision: _cacheRevision!,
+                            ),
+                            Expanded(
+                              child: Stack(
+                                children: [
+                                  // The same two-shade
+                                  // ground the lanes
+                                  // get (K-203): the
+                                  // work area runs the
+                                  // full height of
+                                  // whichever view is
+                                  // open, so the span
+                                  // being delivered is
+                                  // never only a mark
+                                  // on the ruler.
+                                  Positioned.fill(
+                                    child: IgnorePointer(
+                                      child: CustomPaint(
+                                        painter: WorkAreaGroundPainter(
+                                          startX: graphWork?.$1,
+                                          endX: graphWork?.$2,
+                                          inside: t.surface1,
+                                          outside: t.timelineOutOfRange,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  GraphEditorFrb(
+                                    key: _graphPane,
+                                    comp: comp,
+                                    hScroll: _hLane,
+                                    channels: channels,
+                                    axis: axis,
+                                    frames: frames,
+                                    fps: ui.model.fps,
+                                    fpsNum: fpsNum,
+                                    fpsDen: fpsDen,
+                                    magnet: _magnet,
+                                    lens: _graphLens,
+                                    autoFit: _graphAutoFit,
+                                    vegas: _vegas(context),
+                                    penArmed:
+                                        ui.tools.tool.group == ToolGroup.pen,
+                                    selectedKeys: _graphKeySelection,
+                                    onSelectionChanged: () => setState(() {}),
+                                    onChanged: ui.model.refresh,
+                                    onWheelTime: (e, x) =>
+                                        _wheel(e, x, axis.perFrame),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        // The playhead, over the
+                        // ruler and curves alike.
+                        ValueListenableBuilder<int>(
+                          valueListenable: ui.playheadFrame,
+                          builder: (context, frame, child) => Positioned(
+                            left: axis.xOf(frame) - PlayheadMarker.halfWidth,
+                            top: 0,
+                            bottom: 0,
+                            child: child!,
+                          ),
+                          child: const PlayheadMarker(),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              // The pane frames itself vertically
+              // (or the wheel does); the gutter
+              // block keeps the columns level
+              // with the lane view's.
+              _scrollGutter(
+                t,
+                controller: _vLane,
+                showThumb: false,
+                header: [
+                  Container(
+                    height: _rulerHeight + TimelineCacheBar.height,
+                    color: t.surface2,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        _LaneBottomBar(
+          zoom: _zoomMotion.target,
+          hScroll: _hLane,
+          magnet: _magnet,
+          onToggleMagnet: () => setState(() => _magnet = !_magnet),
+          onZoom: _setZoom,
+          onZoomLive: (z) => _setZoom(z, fly: false),
+          onZoomDragStart: _zoomDragStart,
+          onZoomDragEnd: _zoomDragEnd,
+          maxZoom: _maxZoom,
+          lens: _graphLens,
+          onLens: (lens) => setState(() => _graphLens = lens),
+          autoFit: _graphAutoFit,
+          onToggleAutoFit: () => setState(() => _graphAutoFit = !_graphAutoFit),
+          onInterp: (side) => _applyInterp(side),
+          onEasing: _applyEasing,
+        ),
+      ],
+    );
+  }
+
+  /// The lane half: the ruler, the cache bar, one bar per layer and the
+  /// bottom bar.
+  Widget _laneHalf(
+    BuildContext context,
+    LumitUiState ui,
+    CompositionReference comp, {
+    required TimelineAxis axis,
+    required List<LayerRow> rows,
+    required List<BridgeLayerEntry> layers,
+    required List<double> blockHeights,
+    required ({int start, int end, bool whole}) work,
+    required int frames,
+    required int fpsNum,
+    required int fpsDen,
+  }) {
+    final t = ThemeScope.of(context).theme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  controller: _hLane,
+                  child: SizedBox(
+                    width: axis.width,
+                    child: _LayerArea(
+                      comp: comp,
+                      rows: rows,
+                      selectedIds: ui.selectedLayerIds,
+                      layerDrag: _layerDrag,
+                      blockHeights: blockHeights,
+                      onOpenSequence: _toggleSequenceView,
+                      onGraphHeight: (entry, h) => setState(() =>
+                          _sequenceGraph[
+                              entry.layer.internallayerId.toString()] = h),
+                      sequenceBlanks: _sequenceBlanks(rows),
+                      hScroll: _hLane,
+                      onClipPreview: (entry, clip, keys) =>
+                          comp.renderFrameWithClipRetime(
+                        frame: BigInt.from(ui.playheadFrame.value),
+                        scale: 1.0,
+                        layer: entry.layer,
+                        clip: clip.id,
+                        retime: BridgeScalar.keyframed(keys),
+                      ),
+                      peaks: _peaks,
+                      waveformStyle: _waveformStyle,
+                      fps: ui.model.fps,
+                      fpsNum: fpsNum,
+                      fpsDen: fpsDen,
+                      magnet: _magnet,
+                      axis: axis,
+                      playhead: ui.playheadFrame,
+                      razor: _razorArmed(ui),
+                      onRazor: (entry, frame) =>
+                          _razorCutAt(ui, entry, frame, ui.model.refresh),
+                      vScroll: _vLane,
+                      selectedKeys: _laneKeySelection,
+                      onDeselectAll: () => _deselectAll(ui),
+                      work: work,
+                      onKeysSelected: (keys) {
+                        // Picking keyframes picks
+                        // their properties too —
+                        // every distinct one the
+                        // box caught — so the
+                        // outline and the graph
+                        // show what was boxed
+                        // (docs/07 §4.3).
+                        setState(() {
+                          _laneKeySelection
+                            ..clear()
+                            ..addAll(keys);
+                          if (keys.isEmpty) {
+                            return;
+                          }
+                          _selectedProperties.clear();
+                          for (final id in keys) {
+                            final path = id.substring(0, id.lastIndexOf('#'));
+                            if (!_selectedProperties.contains(path)) {
+                              _selectedProperties.add(path);
+                            }
+                          }
+                          _highlighted =
+                              layerIdOfPath(_selectedProperties.first) ??
+                                  _highlighted;
+                        });
+                      },
+                      onWheel: (e, x) => _wheel(e, x, axis.perFrame),
+                      onSeek: (f) =>
+                          ui.scrubTo(f.clamp(0, frames == 0 ? 0 : frames - 1)),
+                      onSelect: (l) => _selectLayer(ui, l, among: layers),
+                      onChanged: ui.model.refresh,
+                      cacheRevision: _cacheRevision!,
+                      dragPreview: _barDrag,
+                      bounds: _barBounds,
+                    ),
+                  ),
+                ),
+              ),
+              // The lanes' thumb, pinned to the
+              // viewport's right edge rather than
+              // riding the scrolled content.
+              _scrollGutter(
+                t,
+                controller: _vLane,
+                showThumb: true,
+                header: [
+                  Container(
+                    height: _rulerHeight + TimelineCacheBar.height,
+                    color: t.surface2,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        _LaneBottomBar(
+          zoom: _zoomMotion.target,
+          hScroll: _hLane,
+          magnet: _magnet,
+          onToggleMagnet: () => setState(() => _magnet = !_magnet),
+          onZoom: _setZoom,
+          onZoomLive: (z) => _setZoom(z, fly: false),
+          onZoomDragStart: _zoomDragStart,
+          onZoomDragEnd: _zoomDragEnd,
+          maxZoom: _maxZoom,
         ),
       ],
     );
@@ -2960,71 +2968,111 @@ class _FoldRow extends StatelessWidget {
     final selected = selectedProperties.contains(path);
     final contains =
         !selected && selectedProperties.any((p) => isUnderPath(path, p));
-    // Selection rides on the property's *name* (docs/07 §4.3): the label
-    // taps inside the row widgets call [onSelectProperty]; a click on the
-    // rest of the row — its fields, its empty space — selects nothing.
-    return Container(
-      height: _rowHeight,
-      // Selected is the full surface; a row that merely *contains* the
-      // selection — the effect heading over a picked parameter — is the
-      // same at half strength, exactly as a layer row marks itself.
-      decoration: BoxDecoration(
-        color: selected
-            ? t.selectionFill
-            : contains
-                ? t.selectionFill.withValues(alpha: 0.45)
-                : null,
+    // Selection rides on the property's *name* (docs/07 §4.3) — and on any
+    // press that *acts* on the row (K-334): the stopwatch, the ◄ ◆ ►
+    // navigator, a value drag. Touching a row's controls IS choosing it, and
+    // before this a value drag on an unselected row moved a curve the graph
+    // was not even showing. Pointer-down rather than tap, so the selection —
+    // and with it the graph channel — exists before the first drag tick. A
+    // modified press is left to the label's own Ctrl/Shift semantics, and a
+    // group heading keeps its pick-and-twirl click (K-300).
+    final picks = row is! FoldGroupRow && row is! FoldWaveformRow;
+    // **And the row must WIN that press, not merely see it** (K-343). The
+    // ground under the outline clears the selection on tap, and its comment
+    // has always said "a switch or a property still wins its own tap in the
+    // arena" — which was true only of rows carrying a gesture recogniser. A
+    // `Listener` is not one: it watches pointers and never competes. So a mask
+    // row lit up on the press and went out again on the release, when the
+    // ground took the tap nothing had claimed. This claims it, for every
+    // picking row, which is what makes them all behave alike.
+    //
+    // Empty `onTap`, because the selecting is done on pointer-down above:
+    // being in the arena at all is the whole job. The row's own controls sit
+    // inside and win their taps ahead of it.
+    final row_ = Listener(
+      // **The whole row takes the press, not just the parts with a widget in
+      // them** (K-343). A `Listener` defers to its children by default, and a
+      // property row is mostly empty space — so a click beside the label never
+      // reached this at all, fell through to the outline behind, and *cleared*
+      // the selection instead of making one. Worst on a mask's Path row, which
+      // has no value field and so is almost all empty. A heading keeps
+      // defer-to-child: its own detector owns the click (K-300).
+      behavior: picks ? HitTestBehavior.opaque : HitTestBehavior.deferToChild,
+      onPointerDown: !picks
+          ? null
+          : (_) {
+              final keys = HardwareKeyboard.instance;
+              if (keys.isControlPressed ||
+                  keys.isMetaPressed ||
+                  keys.isShiftPressed) {
+                return;
+              }
+              onEditProperty(path);
+            },
+      child: Container(
+        height: _rowHeight,
+        // Selected is the full surface; a row that merely *contains* the
+        // selection — the effect heading over a picked parameter — is the
+        // same at half strength, exactly as a layer row marks itself.
+        decoration: BoxDecoration(
+          color: selected
+              ? t.selectionFill
+              : contains
+                  ? t.selectionFill.withValues(alpha: 0.45)
+                  : null,
+        ),
+        padding: EdgeInsets.only(left: indent, right: 4),
+        // A locked layer's rows are read-only, not hidden (K-291): the numbers
+        // are still the document's and the curves still draw, but nothing on the
+        // row can be touched. The engine refuses the edit anyway — this is what
+        // stops the interface offering a gesture that would only be refused.
+        //
+        // A *group* row is exempt: twirling one open is navigation, not editing,
+        // and a locked layer that could not be looked inside would be worse than
+        // one that can.
+        child: locked && row is! FoldGroupRow && row is! FoldWaveformRow
+            ? AbsorbPointer(
+                child: Opacity(opacity: 0.5, child: _control(context)),
+              )
+            : _control(context),
       ),
-      padding: EdgeInsets.only(left: indent, right: 4),
-      // A locked layer's rows are read-only, not hidden (K-291): the numbers
-      // are still the document's and the curves still draw, but nothing on the
-      // row can be touched. The engine refuses the edit anyway — this is what
-      // stops the interface offering a gesture that would only be refused.
-      //
-      // A *group* row is exempt: twirling one open is navigation, not editing,
-      // and a locked layer that could not be looked inside would be worse than
-      // one that can.
-      child: locked && row is! FoldGroupRow && row is! FoldWaveformRow
-          ? AbsorbPointer(
-              child: Opacity(opacity: 0.5, child: _control(context)),
-            )
-          : _control(context),
     );
+    return picks
+        ? GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () {},
+            child: row_,
+          )
+        : row_;
   }
 
   /// Copy the effect this heading names (K-275) — or, when it is one of
   /// several picked, all of them (K-300). The Timeline's half of the pair, the
   /// Effect controls panel's heading carrying the other.
   void _effectMenu(BuildContext context, Offset at, String effectId) {
-    showLumitPopup<void>(
+    showMenuAt<void>(
       context: context,
       position: at,
-      builder: (close) => FloatSurface(
-        width: 190,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            MenuRow(
-              key: ValueKey<String>('tl-fx-menu-copy-$effectId'),
-              onPressed: () {
-                close(null);
-                final ui = Provider.of<LumitUiState>(context, listen: false);
-                try {
-                  ui.copyEffectsToClipboard(layer.copyEffects(
-                    effects:
-                        ui.effectsToCopy(layer, UuidValue.fromString(effectId)),
-                  ));
-                } catch (_) {
-                  // The effect went away between the menu opening and this row
-                  // being chosen; the clipboard keeps whatever it had.
-                }
-              },
-              child: Text(l10n.copyEffect),
-            ),
-          ],
+      width: 190,
+      rows: (close) => [
+        MenuRow(
+          key: ValueKey<String>('tl-fx-menu-copy-$effectId'),
+          onPressed: () {
+            close(null);
+            final ui = Provider.of<LumitUiState>(context, listen: false);
+            try {
+              ui.copyEffectsToClipboard(layer.copyEffects(
+                effects:
+                    ui.effectsToCopy(layer, UuidValue.fromString(effectId)),
+              ));
+            } catch (_) {
+              // The effect went away between the menu opening and this row
+              // being chosen; the clipboard keeps whatever it had.
+            }
+          },
+          child: Text(l10n.copyEffect),
         ),
-      ),
+      ],
     );
   }
 
@@ -3151,9 +3199,10 @@ class _FoldRow extends StatelessWidget {
             onChanged();
           },
         ),
-      FoldVolumeRow() => _VolumeRow(
+      FoldVolumeRow(:final scalar) => _VolumeRow(
           comp: comp,
           layer: layer,
+          scalar: scalar,
           valueColumn: valueColumn,
           playheadFrame: playheadFrame,
           onSeek: onSeek,
@@ -3182,6 +3231,19 @@ class _FoldRow extends StatelessWidget {
             onChanged();
           },
           onLabelTap: () => onSelectProperty(path),
+        ),
+      FoldMaskValueRow(:final mask, :final value) => _MaskValueRow(
+          comp: comp,
+          layer: layer,
+          mask: mask,
+          value: value,
+          valueColumn: valueColumn,
+          playheadFrame: playheadFrame,
+          onSeek: onSeek,
+          onChanged: () {
+            onEditProperty(path);
+            onChanged();
+          },
         ),
       FoldShapeRow(:final item) => _ShapeItemRow(
           comp: comp,
@@ -3234,6 +3296,14 @@ class _TimelineParamRow extends StatefulWidget {
 
 class _TimelineParamRowState extends State<_TimelineParamRow> {
   final EffectStackEditor _editor = EffectStackEditor();
+
+  @override
+  void dispose() {
+    // The editor's preview throttle owns a timer; a row unmounted mid-drag
+    // (a twirl shutting, a layer deleted) must not leave it ticking.
+    _editor.clear();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -3299,7 +3369,9 @@ class _FlowRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    final p = layer.getFlowParams();
+    // Read once per document revision by the panel, never here (K-184). The
+    // fallback covers a caller that supplied none, which the panel never is.
+    final p = row.params ?? layer.getFlowParams();
 
     void write(BridgeFlowParams next) {
       layer.setFlowParams(params: next);
@@ -3307,22 +3379,20 @@ class _FlowRow extends StatelessWidget {
     }
 
     final control = switch (row.kind) {
-      FlowRowKind.resolution => _choice('flow-resolution',
-            const ['Native', 'Half', 'Quarter'], p.resolution, (v) {
+      FlowRowKind.resolution =>
+        _choice('flow-resolution', flowResolutionOptions, p.resolution, (v) {
           write(flowParamsWith(p, resolution: v));
         }),
-      FlowRowKind.detail => _choice(
-            'flow-detail', const ['Low', 'Medium', 'High', 'Ultra'], p.detail,
-            (v) {
+      FlowRowKind.detail =>
+        _choice('flow-detail', flowDetailOptions, p.detail, (v) {
           write(flowParamsWith(p, detail: v));
         }),
       FlowRowKind.occlusion =>
-        _choice('flow-occlusion', const ['Visible only', 'Blend'], p.occlusion,
-            (v) {
+        _choice('flow-occlusion', flowOcclusionOptions, p.occlusion, (v) {
           write(flowParamsWith(p, occlusion: v));
         }),
       FlowRowKind.fallback =>
-        _choice('flow-fallback', const ['Blend', 'Nearest'], p.fallback, (v) {
+        _choice('flow-fallback', flowFallbackOptions, p.fallback, (v) {
           write(flowParamsWith(p, fallback: v));
         }),
       FlowRowKind.smoothness => SizedBox(
@@ -3380,11 +3450,10 @@ class _FlowRow extends StatelessWidget {
   ) =>
       SizedBox(
         width: valueColumn.width,
-        child: BareDropdown<int>(
-          key: ValueKey(keyName),
-          value: value < options.length ? value : 0,
-          options: List.generate(options.length, (i) => i),
-          label: (i) => options[i],
+        child: FlowChoice(
+          keyName: keyName,
+          options: options,
+          value: value,
           onChanged: onChanged,
         ),
       );
@@ -3396,48 +3465,21 @@ class _FlowRow extends StatelessWidget {
     final shown = switch (rate) {
       BridgeScalar_Static(:final field0) => field0,
       // An expression is sampled engine-side too, so it needs no case of its
-      // own here — `sampleScalar` is the one place either is evaluated.
+      // own here — `sampledScalar` is the one place either is evaluated.
       BridgeScalar_Keyframed() ||
       BridgeScalar_Expression() =>
-        sampleScalar(scalar: rate, time: timeOfFrame(comp, playheadFrame)),
+        sampledScalar(rate, timeOfFrame(comp, playheadFrame)),
     };
-    void writeRate(double fps) {
-      layer.setFlowInputRate(
-        value: scalarWithValueAt(rate, fps, comp, playheadFrame),
-      );
-      onChanged();
-    }
-
-    return Row(
-      children: [
-        SizedBox(
-          width: (valueColumn.width * 0.45).clamp(48, 90),
-          child: DragValueField(
-            key: const ValueKey('flow-input-rate'),
-            value: shown,
-            min: 0,
-            max: 240,
-            decimals: 2,
-            suffix: shown < 0.5 ? '' : ' fps',
-            onChanged: (v) => writeRate(v.toDouble()),
-          ),
-        ),
-        const SizedBox(width: 4),
-        Expanded(
-          child: BareDropdown<double>(
-            key: const ValueKey('flow-input-rate-preset'),
-            value: flowPresetLabel(shown) == null ? -1 : shown,
-            options: [
-              if (flowPresetLabel(shown) == null) -1,
-              ...flowRatePresets.map((p) => p.$1),
-            ],
-            label: (v) => flowPresetLabel(v) ?? 'Custom',
-            onChanged: (v) {
-              if (v >= 0) writeRate(v);
-            },
-          ),
-        ),
-      ],
+    return FlowRateControl(
+      shown: shown,
+      fieldWidth: (valueColumn.width * 0.45).clamp(48, 90),
+      gap: 4,
+      onRate: (fps) {
+        layer.setFlowInputRate(
+          value: scalarWithValueAt(rate, fps, comp, playheadFrame),
+        );
+        onChanged();
+      },
     );
   }
 }
@@ -3445,6 +3487,10 @@ class _FlowRow extends StatelessWidget {
 class _VolumeRow extends StatefulWidget {
   final CompositionReference comp;
   final LayerReference layer;
+
+  /// The Volume scalar, read once per document revision by the panel and
+  /// riding in on the fold row (K-184).
+  final BridgeScalar? scalar;
   final ValueColumn valueColumn;
   final int playheadFrame;
   final ValueChanged<int> onSeek;
@@ -3453,6 +3499,7 @@ class _VolumeRow extends StatefulWidget {
   const _VolumeRow({
     required this.comp,
     required this.layer,
+    required this.scalar,
     required this.valueColumn,
     required this.playheadFrame,
     required this.onSeek,
@@ -3472,7 +3519,9 @@ class _VolumeRowState extends State<_VolumeRow> {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    final scalar = widget.layer.getVolumeDb();
+    // From the fold row, never a bridge call here (K-184); the fallback
+    // covers a caller that supplied none, which the panel never is.
+    final scalar = widget.scalar ?? widget.layer.getVolumeDb();
     final animated = scalar is BridgeScalar_Keyframed;
     final playhead =
         Provider.of<LumitUiState>(context, listen: false).playheadFrame;
@@ -3482,8 +3531,7 @@ class _VolumeRowState extends State<_VolumeRow> {
       builder: (context, frame, _) {
         final value = _staged ??
             (animated
-                ? sampleScalar(
-                    scalar: scalar, time: timeOfFrame(widget.comp, frame))
+                ? sampledScalar(scalar, timeOfFrame(widget.comp, frame))
                 : (scalar as BridgeScalar_Static).field0);
         return Row(
           children: [
@@ -3557,8 +3605,147 @@ class _VolumeRowState extends State<_VolumeRow> {
 /// and only exists while the layer has been given a Retime (Ctrl+Alt+T), so
 /// unlike Volume its scalar arrives on the fold row rather than being read here
 /// (K-184: no bridge calls while drawing).
-/// One mask's row in the fold-out (K-222): its name, its invert switch and its
-/// opacity.
+/// [m] with one or two fields changed. The engine takes the whole mask, so
+/// every edit and every preview here is "the mask, with this changed".
+BridgeMask maskWith(
+  BridgeMask m, {
+  String? name,
+  bool? inverted,
+  BridgeScalar? opacity,
+  BridgeMaskMode? mode,
+  BridgeScalar? feather,
+  BridgeScalar? expansion,
+}) =>
+    BridgeMask(
+      id: m.id,
+      name: name ?? m.name,
+      vertices: m.vertices,
+      closed: m.closed,
+      inverted: inverted ?? m.inverted,
+      opacity: opacity ?? m.opacity,
+      mode: mode ?? m.mode,
+      feather: feather ?? m.feather,
+      expansion: expansion ?? m.expansion,
+      // Where the shape's own keys are is the engine's to say; an edit here
+      // never moves them (`set_mask` patches them back).
+      pathKeys: m.pathKeys,
+    );
+
+/// What a mask mode is called on its dropdown.
+String maskModeLabel(BridgeMaskMode mode) => switch (mode) {
+      BridgeMaskMode.none => l10n.maskModeNone,
+      BridgeMaskMode.add => l10n.maskModeAdd,
+      BridgeMaskMode.subtract => l10n.maskModeSubtract,
+      BridgeMaskMode.intersect => l10n.maskModeIntersect,
+      BridgeMaskMode.difference => l10n.maskModeDifference,
+    };
+
+/// The inline rename shared by the mask row and the shape-item row.
+///
+/// In plain terms: a shape drawn with the ellipse tool arrives called
+/// "Ellipse", which is the right name until it isn't — this is how it becomes
+/// "left eye". The name is a label; a double-click (or the row menu's
+/// **Rename**) turns it into a field; `Enter` or a click elsewhere keeps what
+/// was typed; `Escape` throws it away. An empty name is refused, because a row
+/// with no name is worse than a row named after its tool.
+///
+/// **Why not a single click.** A single tap on these names *selects* the row,
+/// and selection is what `Delete` acts on (K-234), so the rename needs a
+/// gesture of its own.
+///
+/// **Why not `onDoubleTap`.** A double-tap recogniser holds every single tap
+/// back for the whole double-tap window while the arena waits to see whether a
+/// second one is coming — the layer bar found that out beside the razor and
+/// counts timestamps instead ([DoubleTap]). The same trade applies here, and
+/// worse: selection arriving a third of a second after the click is the thing
+/// `Delete` is waiting on. Two timestamps owe the arena nothing.
+///
+/// The commit is one write through the row's own `_write`, so it is one op and
+/// one undo step, exactly as the opacity drag beside it is (K-234, K-240).
+mixin _InlineRename<T extends StatefulWidget> on State<T> {
+  TextEditingController? _editor;
+  final DoubleTap _nameTaps = DoubleTap();
+
+  /// What the row is called now, and how it writes a new name.
+  String get renameCurrent;
+  void renameCommit(String name);
+
+  /// Open the editor on the current name. Safe to call twice; the second call
+  /// leaves the edit in progress alone rather than restarting it.
+  void startRename() {
+    if (_editor != null) return;
+    setState(() => _editor = TextEditingController(text: renameCurrent));
+  }
+
+  /// Close the editor, writing what was typed only when [keep].
+  void _endRename({required bool keep}) {
+    // Both ways out can land here for one edit — submitting and then losing
+    // the pointer — and the row can be gone by the time the second arrives.
+    if (!mounted || _editor == null) return;
+    final text = _editor?.text.trim() ?? '';
+    setState(() {
+      _editor?.dispose();
+      _editor = null;
+    });
+    if (!keep || text.isEmpty || text == renameCurrent) return;
+    renameCommit(text);
+  }
+
+  @override
+  void dispose() {
+    _editor?.dispose();
+    super.dispose();
+  }
+
+  /// The name cell: the label, or the editor once a rename has started.
+  ///
+  /// [onTap] still fires on the first tap and at once, so selection is never
+  /// held up; the second tap inside the double-tap window opens the editor.
+  Widget renameName({
+    required String nameKey,
+    required String editorKey,
+    required TextStyle style,
+    VoidCallback? onTap,
+  }) {
+    final editor = _editor;
+    if (editor != null) {
+      return Focus(
+        // An ancestor of the field, so `Escape` reaches here after the field
+        // has had its say: abandon the edit and keep the stored name.
+        onKeyEvent: (_, event) {
+          if (event is! KeyDownEvent ||
+              event.logicalKey != LogicalKeyboardKey.escape) {
+            return KeyEventResult.ignored;
+          }
+          _endRename(keep: false);
+          return KeyEventResult.handled;
+        },
+        child: HouseTextField(
+          key: ValueKey<String>(editorKey),
+          controller: editor,
+          autofocus: true,
+          onSubmitted: (_) => _endRename(keep: true),
+          // Clicking anywhere else finishes the edit and keeps what was typed,
+          // the same as every other inline rename here (K-243).
+          onTapOutside: () => _endRename(keep: true),
+        ),
+      );
+    }
+    return GestureDetector(
+      key: ValueKey<String>(nameKey),
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        onTap?.call();
+        if (_nameTaps.tap()) startRename();
+      },
+      child: Text(renameCurrent, style: style, overflow: TextOverflow.ellipsis),
+    );
+  }
+}
+
+/// One mask's row in the fold-out (K-222): its name, its mode, its invert
+/// switch and its opacity. Its feather and its expansion are rows of their own
+/// underneath, because the value column holds one field.
 ///
 /// Read from the model, written through the layer's own handle — the same shape
 /// as every other row here. Deleting a mask is on its right-click menu, and on
@@ -3571,6 +3758,7 @@ class _MaskRow extends StatefulWidget {
   final LayerReference layer;
   final BridgeMask mask;
   final ValueColumn valueColumn;
+
   final VoidCallback onChanged;
   final VoidCallback? onLabelTap;
 
@@ -3590,81 +3778,24 @@ class _MaskRow extends StatefulWidget {
   State<_MaskRow> createState() => _MaskRowState();
 }
 
-class _MaskRowState extends State<_MaskRow> {
-  /// The opacity a drag in flight is showing, before it commits. Held here so
-  /// the whole gesture is **one** op and so one Ctrl+Z undoes the whole drag:
-  /// writing on every tick filled the undo stack with near-identical steps,
-  /// and one undo backed out a single percent — which looked like nothing.
-  double? _staged;
-
-  /// Keeps the drag's preview requests about one render apart, as every other
-  /// dragged value does.
-  final PreviewThrottle _throttle = PreviewThrottle();
+class _MaskRowState extends State<_MaskRow> with _InlineRename<_MaskRow> {
+  @override
+  String get renameCurrent => widget.mask.name;
 
   @override
-  void dispose() {
-    _throttle.cancel();
-    super.dispose();
-  }
-
-  /// Show the opacity the drag is passing through without writing it (K-240).
-  ///
-  /// The last of the three rows to get this. Staging alone made the drag one
-  /// undo step (K-234) and left the picture still until the button came up;
-  /// paint and shape art were fixed under K-239 and this is the same fix, in
-  /// the same shape, through the same clone-and-patch render path.
-  void _preview(double opacity) {
-    final ui = Provider.of<LumitUiState>(context, listen: false);
-    _throttle.request(() {
-      try {
-        widget.comp.renderFrameWithMaskPreview(
-          frame: BigInt.from(ui.playheadFrame.value),
-          scale: ui.viewerScale,
-          layer: widget.layer,
-          masks: [
-            for (final m in widget.layer.getMasks())
-              if (m.id == widget.mask.id) _withOpacity(m, opacity) else m,
-          ],
-        );
-      } catch (_) {
-        // A preview is a courtesy; the drag carries on without it.
-      }
-    });
-  }
-
-  static BridgeMask _withOpacity(BridgeMask m, double opacity) => BridgeMask(
-        id: m.id,
-        name: m.name,
-        vertices: m.vertices,
-        closed: m.closed,
-        inverted: m.inverted,
-        opacity: opacity,
-      );
+  void renameCommit(String name) => _write(name: name);
 
   /// Write the mask back with one field changed. The engine takes the whole
   /// mask, so this is the only shape an edit has.
-  void _write({bool? inverted, double? opacity}) {
-    final mask = widget.mask;
+  void _write({String? name, bool? inverted, BridgeMaskMode? mode}) {
     try {
       widget.layer.setMask(
-        mask: BridgeMask(
-          id: mask.id,
-          name: mask.name,
-          vertices: mask.vertices,
-          closed: mask.closed,
-          inverted: inverted ?? mask.inverted,
-          opacity: opacity ?? mask.opacity,
-        ),
+        mask: maskWith(widget.mask, name: name, inverted: inverted, mode: mode),
       );
       widget.onChanged();
     } catch (_) {
       // The mask or its layer went away between the draw and the click.
     }
-  }
-
-  void _commitOpacity(num v) {
-    setState(() => _staged = null);
-    _write(opacity: v.toDouble());
   }
 
   @override
@@ -3681,20 +3812,23 @@ class _MaskRowState extends State<_MaskRow> {
               size: iconSize, color: t.textSecondary),
           const SizedBox(width: 4),
           // The name is the row's handle, exactly as it is on a transform row:
-          // tapping it selects the mask, and Delete then acts on it.
+          // tapping it selects the mask, and Delete then acts on it. A
+          // double-click renames it in place, and so does the row menu.
           Expanded(
-            child: GestureDetector(
-              key: ValueKey<String>('tl-mask-name-${mask.id}'),
-              behavior: HitTestBehavior.opaque,
+            child: renameName(
+              nameKey: 'tl-mask-name-${mask.id}',
+              editorKey: 'tl-mask-rename-${mask.id}',
+              style: t.body,
               onTap: widget.onLabelTap,
-              child: Text(mask.name,
-                  style: t.body, overflow: TextOverflow.ellipsis),
             ),
           ),
+          // **Both of the mask's own switches live in the value column**, where
+          // every other row's control sits, rather than floating beside the
+          // name: the invert mark and the mode picker are what the mask *is*,
+          // and a control that sits in no column reads as belonging to nothing.
           SizedBox(
             width: valueColumn.width,
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
               children: [
                 LumitTooltip(
                   message: l10n.tipInvert,
@@ -3711,14 +3845,379 @@ class _MaskRowState extends State<_MaskRow> {
                   ),
                 ),
                 const SizedBox(width: 6),
+                // The rest of the cell, so a long mode name ellipsises rather
+                // than pushing the row wider than its column — the same rule
+                // the blend picker follows.
+                Expanded(
+                  child: LumitTooltip(
+                    message: l10n.tipMaskMode,
+                    child: BareDropdown<BridgeMaskMode>(
+                      key: ValueKey<String>('tl-mask-mode-${mask.id}'),
+                      value: mask.mode,
+                      options: BridgeMaskMode.values,
+                      label: maskModeLabel,
+                      onChanged: (m) => _write(mode: m),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(width: valueColumn.rightInset),
+        ],
+      ),
+    );
+  }
+
+  void _menu(BuildContext context, Offset at) {
+    showMenuAt<void>(
+      context: context,
+      position: at,
+      width: 160,
+      rows: (close) => [
+        MenuRow(
+          key: ValueKey<String>('tl-mask-rename-menu-${widget.mask.id}'),
+          onPressed: () {
+            close(null);
+            startRename();
+          },
+          // The same bare "Rename" the Project panel's row menu offers.
+          child: Text(l10n.rename),
+        ),
+        MenuRow(
+          key: ValueKey<String>('tl-mask-delete-${widget.mask.id}'),
+          onPressed: () {
+            close(null);
+            try {
+              widget.layer.deleteMask(id: widget.mask.id);
+              widget.onChanged();
+            } catch (_) {}
+          },
+          child: Text(l10n.deleteMask),
+        ),
+      ],
+    );
+  }
+}
+
+/// One of a mask's values on a row under it (K-222, K-340): its shape, its
+/// opacity, its feather or its expansion.
+///
+/// **Every one of them animates, and animates the way everything else does.**
+/// The row carries the same stopwatch and ◄ ◆ ► the transform and effect rows
+/// carry, reads its value at the playhead, and writes an edit into the key
+/// sitting there — so a mask is keyed with the same gesture as a position.
+///
+/// The **shape** is the exception in one respect only: a path has no number to
+/// put in a field, so its row is a name, a stopwatch and its diamonds, and the
+/// shape itself is edited where it is drawn (K-339).
+///
+/// The drag is staged and previewed exactly as it always was, so the whole
+/// gesture is one op and one undo step (K-234, K-240).
+///
+/// The row has no label tap: the mask itself is what Delete acts on, and a
+/// selectable value row under it would give Delete a path it cannot resolve to
+/// a mask.
+class _MaskValueRow extends StatefulWidget {
+  final LayerReference layer;
+  final CompositionReference comp;
+  final BridgeMask mask;
+  final MaskValue value;
+  final ValueColumn valueColumn;
+  final int playheadFrame;
+  final ValueChanged<int> onSeek;
+  final VoidCallback onChanged;
+
+  const _MaskValueRow({
+    required this.layer,
+    required this.comp,
+    required this.mask,
+    required this.value,
+    required this.valueColumn,
+    required this.playheadFrame,
+    required this.onSeek,
+    required this.onChanged,
+  });
+
+  @override
+  State<_MaskValueRow> createState() => _MaskValueRowState();
+}
+
+class _MaskValueRowState extends State<_MaskValueRow> {
+  double? _staged;
+  final PreviewThrottle _throttle = PreviewThrottle();
+
+  bool get _isPath => widget.value == MaskValue.path;
+
+  /// This row's animation. The path has none of its own — its keys are whole
+  /// shapes, not numbers — so [maskScalarOf] answers a still zero for it.
+  BridgeScalar get _scalar => maskScalarOf(widget.mask, widget.value);
+
+  /// What a drag on this row may ask for. Feather is a width, so it has no
+  /// negative side; expansion grows one way and shrinks the other; opacity is
+  /// a percentage.
+  (double, double) get _range => switch (widget.value) {
+        MaskValue.opacity => (0, 100),
+        MaskValue.feather => (0, 1000),
+        _ => (-1000, 1000),
+      };
+
+  int get _decimals => widget.value == MaskValue.opacity ? 0 : 1;
+
+  String get _suffix => widget.value == MaskValue.opacity ? '%' : ' px';
+
+  @override
+  void dispose() {
+    _throttle.cancel();
+    super.dispose();
+  }
+
+  /// Show the value the drag is passing through without writing it (K-240).
+  void _preview(BridgeScalar v) {
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    _throttle.request(() {
+      try {
+        widget.comp.renderFrameWithMaskPreview(
+          frame: BigInt.from(ui.playheadFrame.value),
+          scale: ui.viewerScale,
+          layer: widget.layer,
+          masks: [
+            for (final m in widget.layer.getMasks())
+              if (m.id == widget.mask.id)
+                maskWithScalar(m, widget.value, v)
+              else
+                m,
+          ],
+        );
+      } catch (_) {
+        // A preview is a courtesy; the drag carries on without it.
+      }
+    });
+  }
+
+  void _write(BridgeScalar v) {
+    setState(() => _staged = null);
+    try {
+      widget.layer.setMask(mask: maskWithScalar(widget.mask, widget.value, v));
+      widget.onChanged();
+    } catch (_) {
+      // The mask or its layer went away mid-drag.
+    }
+  }
+
+  /// A still value: the number typed or dragged becomes the value.
+  void _commitStatic(num v) => _write(BridgeScalar.static_(v.toDouble()));
+
+  /// An animated one: the edit lands on the key under the playhead, or plants
+  /// one there — never flattening the curve (docs/07 §4.3).
+  void _commitKeyed(double v) =>
+      _write(scalarWithValueAt(_scalar, v, widget.comp, widget.playheadFrame));
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    return Row(
+      children: [
+        if (_isPath)
+          MaskPathKeyframesFrb(
+            layer: widget.layer,
+            mask: widget.mask,
+            comp: widget.comp,
+            playheadFrame: widget.playheadFrame,
+            onSeek: widget.onSeek,
+            onChanged: widget.onChanged,
+          )
+        else
+          KeyframeControlsFrb(
+            scalars: [_scalar],
+            onWrite: (s) => _write(s.first),
+            comp: widget.comp,
+            playheadFrame: widget.playheadFrame,
+            onSeek: widget.onSeek,
+            rowKey: 'tl-mask-${widget.value.name}-${widget.mask.id}',
+          ),
+        const SizedBox(width: 4),
+        Expanded(
+          child: Text(maskValueLabel(widget.value),
+              style: t.body, overflow: TextOverflow.ellipsis),
+        ),
+        // Left of the value column, exactly where an effect parameter's field
+        // sits, so every number down an open layer forms one column.
+        SizedBox(
+          width: widget.valueColumn.width,
+          child: _isPath
+              ? const SizedBox.shrink()
+              : Align(
+                  alignment: Alignment.centerLeft,
+                  child: SizedBox(width: 72, child: _field()),
+                ),
+        ),
+        SizedBox(width: widget.valueColumn.rightInset),
+      ],
+    );
+  }
+
+  Widget _field() {
+    final (min, max) = _range;
+    final key =
+        ValueKey<String>('tl-mask-${widget.value.name}-${widget.mask.id}');
+    final scalar = _scalar;
+    if (scalar is! BridgeScalar_Keyframed) {
+      final stored =
+          _staged ?? (scalar is BridgeScalar_Static ? scalar.field0 : 0.0);
+      return DragValueField(
+        key: key,
+        value: stored,
+        min: min,
+        max: max,
+        decimals: _decimals,
+        suffix: _suffix,
+        onChanged: _commitStatic,
+        onChangeLive: (v) {
+          setState(() => _staged = v.toDouble());
+          _preview(BridgeScalar.static_(v.toDouble()));
+        },
+        onChangeEnd: _commitStatic,
+        onDragCancel: () {
+          setState(() => _staged = null);
+          // Put the document's own value back on screen.
+          _preview(scalar);
+        },
+      );
+    }
+    // Animated: the field shows what the curve reads at the playhead, and an
+    // edit writes the key there. No live preview mid-drag — staging a keyed
+    // value through the static preview would lie about the curve.
+    return KeyedValueField(
+      fieldKey: key,
+      value:
+          sampledScalar(scalar, timeOfFrame(widget.comp, widget.playheadFrame)),
+      min: min,
+      max: max,
+      decimals: _decimals,
+      suffix: _suffix,
+      onCommit: _commitKeyed,
+    );
+  }
+}
+
+/// One named, deletable item with an opacity of its own — a piece of a shape
+/// layer's art (K-237) or a paint stroke (K-227). The two rows were twins:
+/// an icon, the name, the staged-and-previewed opacity drag, and the
+/// right-click menu that deletes it. What differs — how a preview is asked
+/// for, how an edit is written, whether the name renames — comes in as
+/// callbacks from the two thin rows below.
+///
+/// The drag is staged and previewed like every other dragged value here: the
+/// tick shows live and the release commits once, so a gesture is one op and
+/// one undo step (K-238, K-239).
+class _ItemOpacityRow extends StatefulWidget {
+  final LumitIcon icon;
+  final String name;
+
+  /// The widget keys' stem: `<keyPrefix>-name-<id>` and so on, kept exactly
+  /// as the two original rows spelt them.
+  final String keyPrefix;
+  final String id;
+  final double opacity;
+  final ValueColumn valueColumn;
+
+  /// Render the picture with [opacity] in place of the stored one; called
+  /// from inside the row's own throttle.
+  final void Function(double opacity) onPreview;
+
+  /// Commit [opacity] as one op.
+  final void Function(double opacity) onCommit;
+
+  /// Write a new name, or null when this kind's name is not renamed here —
+  /// which also drops the menu's Rename row.
+  final void Function(String name)? onRename;
+  final VoidCallback onDelete;
+  final String deleteLabel;
+
+  const _ItemOpacityRow({
+    required this.icon,
+    required this.name,
+    required this.keyPrefix,
+    required this.id,
+    required this.opacity,
+    required this.valueColumn,
+    required this.onPreview,
+    required this.onCommit,
+    this.onRename,
+    required this.onDelete,
+    required this.deleteLabel,
+  });
+
+  @override
+  State<_ItemOpacityRow> createState() => _ItemOpacityRowState();
+}
+
+class _ItemOpacityRowState extends State<_ItemOpacityRow>
+    with _InlineRename<_ItemOpacityRow> {
+  /// The opacity a drag is part way through, or null when nothing is
+  /// dragging. Without it the field committed on every tick, so one drag was
+  /// a stack of ops and `Ctrl+Z` backed out a hair (K-238, K-239).
+  double? _staged;
+
+  final PreviewThrottle _throttle = PreviewThrottle();
+
+  @override
+  String get renameCurrent => widget.name;
+
+  @override
+  void renameCommit(String name) => widget.onRename?.call(name);
+
+  @override
+  void dispose() {
+    _throttle.cancel();
+    super.dispose();
+  }
+
+  void _preview(double opacity) =>
+      _throttle.request(() => widget.onPreview(opacity));
+
+  void _commitOpacity(num v) {
+    setState(() => _staged = null);
+    widget.onCommit(v.toDouble());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onSecondaryTapUp: (details) => _menu(context, details.globalPosition),
+      child: Row(
+        children: [
+          lumitIcon(widget.icon, size: iconSize, color: t.textSecondary),
+          const SizedBox(width: 4),
+          // Named after the tool that drew it — and, where the kind supports
+          // it, renamed here: a double-click on the name, or the row menu.
+          Expanded(
+            child: widget.onRename == null
+                ? Text(widget.name,
+                    style: t.body, overflow: TextOverflow.ellipsis)
+                : renameName(
+                    nameKey: '${widget.keyPrefix}-name-${widget.id}',
+                    editorKey: '${widget.keyPrefix}-rename-${widget.id}',
+                    style: t.body,
+                  ),
+          ),
+          SizedBox(
+            width: widget.valueColumn.width,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
                 SizedBox(
                   width: 56,
-                  // Staged like every other dragged value here: the drag shows
-                  // live and commits once on release, so it is one op and one
-                  // undo step.
+                  // Staged and previewed, like every other dragged value
+                  // here: the drag shows live and commits once on release,
+                  // so it is one op and one undo step.
                   child: DragValueField(
-                    key: ValueKey<String>('tl-mask-opacity-${mask.id}'),
-                    value: _staged ?? mask.opacity,
+                    key: ValueKey<String>(
+                        '${widget.keyPrefix}-opacity-${widget.id}'),
+                    value: _staged ?? widget.opacity,
                     min: 0,
                     max: 100,
                     suffix: '%',
@@ -3732,7 +4231,7 @@ class _MaskRowState extends State<_MaskRow> {
                       setState(() => _staged = null);
                       // The picture is showing a value nobody committed; put
                       // the document's own back on screen.
-                      _preview(widget.mask.opacity);
+                      _preview(widget.opacity);
                     },
                   ),
                 ),
@@ -3745,33 +4244,38 @@ class _MaskRowState extends State<_MaskRow> {
   }
 
   void _menu(BuildContext context, Offset at) {
-    showLumitPopup<void>(
+    showMenuAt<void>(
       context: context,
       position: at,
-      builder: (close) => FloatSurface(
-        width: 160,
-        child: MenuRow(
-          key: ValueKey<String>('tl-mask-delete-${widget.mask.id}'),
+      width: 160,
+      rows: (close) => [
+        if (widget.onRename != null)
+          MenuRow(
+            key: ValueKey<String>(
+                '${widget.keyPrefix}-rename-menu-${widget.id}'),
+            onPressed: () {
+              close(null);
+              startRename();
+            },
+            child: Text(l10n.rename),
+          ),
+        MenuRow(
+          key: ValueKey<String>('${widget.keyPrefix}-delete-${widget.id}'),
           onPressed: () {
             close(null);
-            try {
-              widget.layer.deleteMask(id: widget.mask.id);
-              widget.onChanged();
-            } catch (_) {}
+            widget.onDelete();
           },
-          child: Text(l10n.deleteMask),
+          child: Text(widget.deleteLabel),
         ),
-      ),
+      ],
     );
   }
 }
 
-/// One piece of a shape layer's art in the Timeline (K-237): what it is called,
-/// how opaque it is, and the menu that deletes it.
-///
-/// The same shape as the mask and stroke rows: the engine takes the whole
-/// contents list, so every edit is "the list, with this item changed".
-class _ShapeItemRow extends StatefulWidget {
+/// One piece of a shape layer's art in the Timeline (K-237), on the shared
+/// [_ItemOpacityRow]. The engine takes the whole contents list, so every
+/// edit — and the drag's preview — is "the list, with this item changed".
+class _ShapeItemRow extends StatelessWidget {
   final LayerReference layer;
   final BridgeShapeItem item;
   final ValueColumn valueColumn;
@@ -3788,86 +4292,30 @@ class _ShapeItemRow extends StatefulWidget {
     required this.comp,
   });
 
-  @override
-  State<_ShapeItemRow> createState() => _ShapeItemRowState();
-}
-
-class _ShapeItemRowState extends State<_ShapeItemRow> {
-  /// The opacity a drag is part way through, or null when nothing is dragging.
-  /// Without it the field committed on every tick, so one drag was a stack of
-  /// ops and `Ctrl+Z` backed out a hair (K-238, K-239).
-  double? _staged;
-
-  final PreviewThrottle _throttle = PreviewThrottle();
-
-  LayerReference get layer => widget.layer;
-  BridgeShapeItem get item => widget.item;
-
-  @override
-  void dispose() {
-    _throttle.cancel();
-    super.dispose();
-  }
-
-  /// Show the opacity the drag is passing through without writing it (K-239),
-  /// exactly as the stroke row above does.
-  void _preview(double opacity) {
-    final ui = Provider.of<LumitUiState>(context, listen: false);
-    _throttle.request(() {
-      try {
-        widget.comp.renderFrameWithShapePreview(
-          frame: BigInt.from(ui.playheadFrame.value),
-          scale: ui.viewerScale,
-          layer: layer,
-          contents: [
-            for (final i in layer.getShapeContents())
-              if (i.id == item.id) _withOpacity(i, opacity) else i,
-          ],
-        );
-      } catch (_) {
-        // A preview is a courtesy; the drag carries on without it.
-      }
-    });
-  }
-
-  static BridgeShapeItem _withOpacity(BridgeShapeItem i, double opacity) =>
+  static BridgeShapeItem _with(BridgeShapeItem i,
+          {String? name, double? opacity}) =>
       BridgeShapeItem(
         id: i.id,
-        name: i.name,
+        name: name ?? i.name,
         vertices: i.vertices,
         closed: i.closed,
         fill: i.fill,
         stroke: i.stroke,
         strokeWidth: i.strokeWidth,
-        opacity: opacity,
+        opacity: opacity ?? i.opacity,
       );
 
-  void _commitOpacity(num v) {
-    setState(() => _staged = null);
-    _write(opacity: v.toDouble());
-  }
-
   /// Write the contents back with this item changed, or dropped.
-  void _write({double? opacity, bool delete = false}) {
+  void _write({String? name, double? opacity, bool delete = false}) {
     try {
-      final contents = <BridgeShapeItem>[
+      layer.setShapeContents(contents: [
         for (final other in layer.getShapeContents())
           if (other.id != item.id)
             other
           else if (!delete)
-            BridgeShapeItem(
-              id: other.id,
-              name: other.name,
-              vertices: other.vertices,
-              closed: other.closed,
-              fill: other.fill,
-              stroke: other.stroke,
-              strokeWidth: other.strokeWidth,
-              opacity: opacity ?? other.opacity,
-            ),
-      ];
-      layer.setShapeContents(contents: contents);
-      widget.onChanged();
+            _with(other, name: name, opacity: opacity),
+      ]);
+      onChanged();
     } catch (_) {
       // The item or its layer went away between the draw and the click.
     }
@@ -3875,80 +4323,44 @@ class _ShapeItemRowState extends State<_ShapeItemRow> {
 
   @override
   Widget build(BuildContext context) {
-    final t = ThemeScope.of(context).theme;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onSecondaryTapUp: (details) => _menu(context, details.globalPosition),
-      child: Row(
-        children: [
-          lumitIcon(LumitIcon.rectangle,
-              size: iconSize, color: t.textSecondary),
-          const SizedBox(width: 4),
-          Expanded(
-            child:
-                Text(item.name, style: t.body, overflow: TextOverflow.ellipsis),
-          ),
-          SizedBox(
-            width: widget.valueColumn.width,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                SizedBox(
-                  width: 56,
-                  // Staged and previewed, like every other dragged value here:
-                  // the drag shows live and commits once on release, so it is
-                  // one op and one undo step.
-                  child: DragValueField(
-                    key: ValueKey<String>('tl-shape-opacity-${item.id}'),
-                    value: _staged ?? item.opacity,
-                    min: 0,
-                    max: 100,
-                    suffix: '%',
-                    onChanged: _commitOpacity,
-                    onChangeLive: (v) {
-                      setState(() => _staged = v.toDouble());
-                      _preview(v.toDouble());
-                    },
-                    onChangeEnd: _commitOpacity,
-                    onDragCancel: () {
-                      setState(() => _staged = null);
-                      _preview(item.opacity);
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _menu(BuildContext context, Offset at) {
-    showLumitPopup<void>(
-      context: context,
-      position: at,
-      builder: (close) => FloatSurface(
-        width: 160,
-        child: MenuRow(
-          key: ValueKey<String>('tl-shape-delete-${item.id}'),
-          onPressed: () {
-            close(null);
-            _write(delete: true);
-          },
-          child: Text(l10n.deleteShape),
-        ),
-      ),
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    return _ItemOpacityRow(
+      icon: LumitIcon.rectangle,
+      name: item.name,
+      keyPrefix: 'tl-shape',
+      id: item.id.toString(),
+      opacity: item.opacity,
+      valueColumn: valueColumn,
+      // Show the opacity the drag is passing through without writing it
+      // (K-239), exactly as the stroke row does.
+      onPreview: (opacity) {
+        try {
+          comp.renderFrameWithShapePreview(
+            frame: BigInt.from(ui.playheadFrame.value),
+            scale: ui.viewerScale,
+            layer: layer,
+            contents: [
+              for (final i in layer.getShapeContents())
+                if (i.id == item.id) _with(i, opacity: opacity) else i,
+            ],
+          );
+        } catch (_) {
+          // A preview is a courtesy; the drag carries on without it.
+        }
+      },
+      onCommit: (opacity) => _write(opacity: opacity),
+      onRename: (name) => _write(name: name),
+      onDelete: () => _write(delete: true),
+      deleteLabel: l10n.deleteShape,
     );
   }
 }
 
-/// One paint stroke in the Timeline (K-227): what it is called, how opaque it
-/// is, and the menu that deletes it.
-///
-/// The same shape as [_MaskRow], and for the same reason: the engine takes the
-/// whole stroke, so every edit is "this stroke, with one field changed".
-class _StrokeRow extends StatefulWidget {
+/// One paint stroke in the Timeline (K-227), on the shared [_ItemOpacityRow].
+/// The engine takes the whole stroke, so every edit is "this stroke, with one
+/// field changed" — and its name is not renamed here, so the row shows it
+/// plain.
+class _StrokeRow extends StatelessWidget {
   final LayerReference layer;
   final BridgeStroke stroke;
   final ValueColumn valueColumn;
@@ -3965,62 +4377,6 @@ class _StrokeRow extends StatefulWidget {
     required this.comp,
   });
 
-  @override
-  State<_StrokeRow> createState() => _StrokeRowState();
-}
-
-class _StrokeRowState extends State<_StrokeRow> {
-  /// The opacity a drag is part way through, or null when nothing is dragging.
-  ///
-  /// Without this the field committed on every tick of the drag, so pulling a
-  /// stroke's opacity across wrote dozens of ops and `Ctrl+Z` walked back one
-  /// hair at a time — the reading was "undo doesn't work". One gesture is one
-  /// op and one undo step (K-230), the same as the mask row above.
-  double? _staged;
-
-  /// Keeps the drag's preview requests to about one render apart, as every
-  /// other dragged value does.
-  final PreviewThrottle _throttle = PreviewThrottle();
-
-  LayerReference get layer => widget.layer;
-  BridgeStroke get stroke => widget.stroke;
-
-  @override
-  void dispose() {
-    _throttle.cancel();
-    super.dispose();
-  }
-
-  /// Show the opacity a drag is passing through, without writing it (K-239).
-  ///
-  /// Staging alone made the drag one undo step (K-238) but left the picture
-  /// still until the button came up, which is the wrong half of the bargain: a
-  /// value you drag has to show what it is doing. So the tick previews and the
-  /// release commits — the same division the Type tool and the transform rows
-  /// already use.
-  ///
-  /// The *whole* stroke list is sent, with this one stroke's opacity replaced,
-  /// because paint is stored and committed as a whole list. A preview shaped
-  /// differently from the op would be a second description of the same thing.
-  void _preview(double opacity) {
-    final ui = Provider.of<LumitUiState>(context, listen: false);
-    _throttle.request(() {
-      try {
-        widget.comp.renderFrameWithPaintPreview(
-          frame: BigInt.from(ui.playheadFrame.value),
-          scale: ui.viewerScale,
-          layer: layer,
-          strokes: [
-            for (final s in layer.getPaint())
-              if (s.id == stroke.id) _withOpacity(s, opacity) else s,
-          ],
-        );
-      } catch (_) {
-        // A preview is a courtesy; the drag carries on without it.
-      }
-    });
-  }
-
   static BridgeStroke _withOpacity(BridgeStroke s, double opacity) =>
       BridgeStroke(
         id: s.id,
@@ -4035,35 +4391,8 @@ class _StrokeRowState extends State<_StrokeRow> {
         cloneOffsetY: s.cloneOffsetY,
       );
 
-  void _write({double? opacity}) {
-    try {
-      layer.setStroke(
-        stroke: BridgeStroke(
-          id: stroke.id,
-          name: stroke.name,
-          points: stroke.points,
-          colour: stroke.colour,
-          width: stroke.width,
-          hardness: stroke.hardness,
-          opacity: opacity ?? stroke.opacity,
-          mode: stroke.mode,
-          cloneOffsetX: stroke.cloneOffsetX,
-          cloneOffsetY: stroke.cloneOffsetY,
-        ),
-      );
-      widget.onChanged();
-    } catch (_) {
-      // The stroke or its layer went away between the draw and the click.
-    }
-  }
-
-  void _commitOpacity(num v) {
-    setState(() => _staged = null);
-    _write(opacity: v.toDouble());
-  }
-
-  /// The icon says which of the three tools made it, so a list of marks can be
-  /// read at a glance.
+  /// The icon says which of the three tools made it, so a list of marks can
+  /// be read at a glance.
   LumitIcon get _icon => switch (stroke.mode) {
         BridgePaintMode.erase => LumitIcon.eraser,
         BridgePaintMode.clone => LumitIcon.cloneStamp,
@@ -4072,74 +4401,49 @@ class _StrokeRowState extends State<_StrokeRow> {
 
   @override
   Widget build(BuildContext context) {
-    final t = ThemeScope.of(context).theme;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onSecondaryTapUp: (details) => _menu(context, details.globalPosition),
-      child: Row(
-        children: [
-          lumitIcon(_icon, size: iconSize, color: t.textSecondary),
-          const SizedBox(width: 4),
-          Expanded(
-            child: Text(stroke.name,
-                style: t.body, overflow: TextOverflow.ellipsis),
-          ),
-          SizedBox(
-            width: widget.valueColumn.width,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                SizedBox(
-                  width: 56,
-                  // Staged like every other dragged value here: the drag shows
-                  // live and commits once on release, so it is one op and one
-                  // undo step.
-                  child: DragValueField(
-                    key: ValueKey<String>('tl-stroke-opacity-${stroke.id}'),
-                    value: _staged ?? stroke.opacity,
-                    min: 0,
-                    max: 100,
-                    suffix: '%',
-                    onChanged: _commitOpacity,
-                    onChangeLive: (v) {
-                      setState(() => _staged = v.toDouble());
-                      _preview(v.toDouble());
-                    },
-                    onChangeEnd: _commitOpacity,
-                    onDragCancel: () {
-                      setState(() => _staged = null);
-                      // The picture is showing a value nobody committed; put
-                      // the document's own back on screen.
-                      _preview(stroke.opacity);
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _menu(BuildContext context, Offset at) {
-    showLumitPopup<void>(
-      context: context,
-      position: at,
-      builder: (close) => FloatSurface(
-        width: 160,
-        child: MenuRow(
-          key: ValueKey<String>('tl-stroke-delete-${stroke.id}'),
-          onPressed: () {
-            close(null);
-            try {
-              layer.deleteStroke(id: stroke.id);
-              widget.onChanged();
-            } catch (_) {}
-          },
-          child: Text(l10n.deleteStroke),
-        ),
-      ),
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    return _ItemOpacityRow(
+      icon: _icon,
+      name: stroke.name,
+      keyPrefix: 'tl-stroke',
+      id: stroke.id.toString(),
+      opacity: stroke.opacity,
+      valueColumn: valueColumn,
+      // The *whole* stroke list is sent, with this one stroke's opacity
+      // replaced, because paint is stored and committed as a whole list. A
+      // preview shaped differently from the op would be a second description
+      // of the same thing.
+      onPreview: (opacity) {
+        try {
+          comp.renderFrameWithPaintPreview(
+            frame: BigInt.from(ui.playheadFrame.value),
+            scale: ui.viewerScale,
+            layer: layer,
+            strokes: [
+              for (final s in layer.getPaint())
+                if (s.id == stroke.id) _withOpacity(s, opacity) else s,
+            ],
+          );
+        } catch (_) {
+          // A preview is a courtesy; the drag carries on without it.
+        }
+      },
+      onCommit: (opacity) {
+        try {
+          layer.setStroke(stroke: _withOpacity(stroke, opacity));
+          onChanged();
+        } catch (_) {
+          // The stroke or its layer went away between the draw and the
+          // click.
+        }
+      },
+      onDelete: () {
+        try {
+          layer.deleteStroke(id: stroke.id);
+          onChanged();
+        } catch (_) {}
+      },
+      deleteLabel: l10n.deleteStroke,
     );
   }
 }
@@ -4176,10 +4480,79 @@ class _RetimeRow extends StatefulWidget {
 
 class _RetimeRowState extends State<_RetimeRow> {
   /// The value under the pointer during a drag, held so the whole gesture is
-  /// one undo step. No live preview: a retime drag changes which frame is
-  /// decoded, and there is no preview path for that yet — the release commits
-  /// and the viewer re-renders then.
+  /// one undo step. The picture keeps up in the meantime: a retime drag decides
+  /// which frame is decoded, so it previews through its own door
+  /// (`renderFrameWithRetime`) rather than by re-compositing pixels already in
+  /// hand — the one edit where watching it move is the whole point.
   double? _staged;
+
+  final PreviewThrottle _preview = PreviewThrottle();
+
+  @override
+  void dispose() {
+    _preview.cancel();
+    super.dispose();
+  }
+
+  /// The footage's own rate, probed once when the row mounts. Null until the
+  /// probe answers, or when the source is not footage (or carries no video
+  /// stream) — the comp rate stands in then, so the clock is always usable.
+  (int, int)? _sourceFps;
+
+  @override
+  void initState() {
+    super.initState();
+    _probeSourceFps();
+  }
+
+  Future<void> _probeSourceFps() async {
+    final item = widget.layer.getSourceItem();
+    if (item is! ItemReference_Footage) return;
+    final info = await item.field0.mediaInfo();
+    if (!mounted || info == null || info.fpsNum <= 0 || info.fpsDen <= 0) {
+      return;
+    }
+    setState(() => _sourceFps = (info.fpsNum, info.fpsDen));
+  }
+
+  /// Whether this gesture already planted its key — one plant per drag.
+  bool _planted = false;
+
+  /// A drag tick: render the map the release will write, without writing it —
+  /// and publish it, so the graph's Retime curve follows the drag (K-334).
+  ///
+  /// The first tick on a frame with **no key plants one** holding the value
+  /// already showing (K-333's rule, K-336 for this row): nothing moves, and
+  /// the preview then *replaces* a real key instead of inserting beside the
+  /// document's — the aligned path the transform rows take.
+  void _live(BridgeScalar scalar, double value, int frame) {
+    if (!_planted &&
+        scalar is BridgeScalar_Keyframed &&
+        !scalar.field0
+            .any((k) => widget.comp.frameAtTime(time: k.time) == frame)) {
+      _planted = true;
+      final held = sampleScalar(
+          scalar: scalar, time: widget.comp.timeOfFrame(frame: frame));
+      widget.layer.setRetimeProperty(
+        value: scalarWithValueAt(scalar, held, widget.comp, frame),
+      );
+      widget.onChanged();
+    }
+    setState(() => _staged = value);
+    rowValueDrag.value = RowValueDrag(
+      layer: widget.layer.internallayerId.toString(),
+      retime: true,
+      frame: frame,
+      value: value,
+    );
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    _preview.request(() => widget.comp.renderFrameWithRetime(
+          frame: BigInt.from(ui.playheadFrame.value),
+          scale: ui.viewerScale,
+          layer: widget.layer,
+          retime: scalarWithValueAt(scalar, value, widget.comp, frame),
+        ));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -4191,15 +4564,16 @@ class _RetimeRowState extends State<_RetimeRow> {
     // Which face the row wears (K-287): the clock by default, seconds for
     // anyone who asked for them in Settings ▸ Interface ▸ Editing.
     final seconds = ui.workspace.interface.retimeInSeconds;
-    final (fpsNum, fpsDen) = ui.model.fpsExact;
+    // The clock face counts *source* frames, so it runs at the footage's own
+    // rate — 600 fps footage counts to :599 whatever the comp's rate says.
+    final (fpsNum, fpsDen) = _sourceFps ?? ui.model.fpsExact;
 
     return ValueListenableBuilder<int>(
       valueListenable: playhead,
       builder: (context, frame, _) {
         final value = _staged ??
             (animated
-                ? sampleScalar(
-                    scalar: scalar, time: widget.comp.timeOfFrame(frame: frame))
+                ? sampledScalar(scalar, timeOfFrame(widget.comp, frame))
                 : (scalar as BridgeScalar_Static).field0);
         return Row(
           children: [
@@ -4229,6 +4603,7 @@ class _RetimeRowState extends State<_RetimeRow> {
                   ? (animated
                       ? KeyedValueField(
                           fieldKey: const ValueKey('tl-retime-seconds'),
+                          onLive: (v) => _live(scalar, v, frame),
                           value: value,
                           // The same open range a transform axis gets: a
                           // source time before zero or past the end simply
@@ -4251,7 +4626,7 @@ class _RetimeRowState extends State<_RetimeRow> {
                           speed: 0.02,
                           onChanged: (v) => _commitAt(scalar, v, frame),
                           onChangeLive: (v) =>
-                              setState(() => _staged = v.toDouble()),
+                              _live(scalar, v.toDouble(), frame),
                           onChangeEnd: (v) => _commitAt(scalar, v, frame),
                           onDragCancel: () => setState(() => _staged = null),
                         ))
@@ -4271,8 +4646,8 @@ class _RetimeRowState extends State<_RetimeRow> {
                       minFrame: -100000,
                       maxFrame: 100000,
                       draggable: true,
-                      onDragLive: (f) => setState(
-                          () => _staged = _secondsOfFrame(f, fpsNum, fpsDen)),
+                      onDragLive: (f) => _live(
+                          scalar, _secondsOfFrame(f, fpsNum, fpsDen), frame),
                       onCommit: (f) => _commitAt(
                           scalar, _secondsOfFrame(f, fpsNum, fpsDen), frame),
                       onDragCancel: () => setState(() => _staged = null),
@@ -4287,8 +4662,9 @@ class _RetimeRowState extends State<_RetimeRow> {
 
   /// A source time in seconds as a whole source frame, and back.
   ///
-  /// At the composition's rate: the read model does not carry the footage's own
-  /// rate yet, and every other time in the panel is counted in comp frames.
+  /// At the footage's own rate where the source is footage whose rate is
+  /// known; at the composition's rate until the probe answers, and for
+  /// everything else.
   static int _frameOfSeconds(double seconds, int fpsNum, int fpsDen) {
     if (fpsDen <= 0 || fpsNum <= 0) return 0;
     return (seconds * fpsNum / fpsDen).round();
@@ -4298,6 +4674,11 @@ class _RetimeRowState extends State<_RetimeRow> {
       fpsNum <= 0 ? 0 : frame * (fpsDen <= 0 ? 1 : fpsDen) / fpsNum;
 
   void _commitAt(BridgeScalar scalar, num value, int frame) {
+    // The write is the last word on the gesture: a held preview tick after it
+    // would put the provisional picture back.
+    _preview.cancel();
+    rowValueDrag.value = null;
+    _planted = false;
     widget.layer.setRetimeProperty(
       value: scalarWithValueAt(scalar, value.toDouble(), widget.comp, frame),
     );
@@ -4674,47 +5055,41 @@ class _Toolbar extends StatelessWidget {
     final box = context.findRenderObject();
     if (box is! RenderBox) return;
     final playheadNow = playhead.value;
-    final picked = await showLumitPopup<String>(
+    final picked = await showMenuAt<String>(
       context: context,
       position: box.localToGlobal(Offset(box.size.width - 190, 24)),
-      builder: (close) => FloatSurface(
-        width: 190,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            MenuRow(
-                key: const ValueKey('tl-add-layer'),
-                onPressed: () => close('new-layer'),
-                child: Text(l10n.newLayer)),
-            MenuRow(
-                key: const ValueKey('tl-razor'),
-                onPressed: () => close('razor'),
-                child: Text(razor ? l10n.disarmRazor : l10n.armRazor,
-                    style: razor ? t.body.copyWith(color: t.accent) : null)),
-            MenuRow(
-                key: const ValueKey('tl-work-in'),
-                onPressed: () => close('work-in'),
-                child: Text(l10n.workAreaStart)),
-            MenuRow(
-                key: const ValueKey('tl-work-out'),
-                onPressed: () => close('work-out'),
-                child: Text(l10n.workAreaEnd)),
-            MenuRow(
-                key: const ValueKey('tl-clear-work-area'),
-                onPressed: () => close('work-clear'),
-                child: Text(l10n.workAreaClear)),
-            MenuRow(
-                key: const ValueKey('tl-markers'),
-                onPressed: () => close('markers'),
-                child: Text(l10n.menuMarkers)),
-            MenuRow(
-                key: const ValueKey('tl-detect-beats'),
-                onPressed: () => close('beats'),
-                child: Text(l10n.menuDetectBeats)),
-          ],
-        ),
-      ),
+      width: 190,
+      rows: (close) => [
+        MenuRow(
+            key: const ValueKey('tl-add-layer'),
+            onPressed: () => close('new-layer'),
+            child: Text(l10n.newLayer)),
+        MenuRow(
+            key: const ValueKey('tl-razor'),
+            onPressed: () => close('razor'),
+            child: Text(razor ? l10n.disarmRazor : l10n.armRazor,
+                style: razor ? t.body.copyWith(color: t.accent) : null)),
+        MenuRow(
+            key: const ValueKey('tl-work-in'),
+            onPressed: () => close('work-in'),
+            child: Text(l10n.workAreaStart)),
+        MenuRow(
+            key: const ValueKey('tl-work-out'),
+            onPressed: () => close('work-out'),
+            child: Text(l10n.workAreaEnd)),
+        MenuRow(
+            key: const ValueKey('tl-clear-work-area'),
+            onPressed: () => close('work-clear'),
+            child: Text(l10n.workAreaClear)),
+        MenuRow(
+            key: const ValueKey('tl-markers'),
+            onPressed: () => close('markers'),
+            child: Text(l10n.menuMarkers)),
+        MenuRow(
+            key: const ValueKey('tl-detect-beats'),
+            onPressed: () => close('beats'),
+            child: Text(l10n.menuDetectBeats)),
+      ],
     );
     if (!context.mounted) return;
     switch (picked) {
@@ -4957,7 +5332,7 @@ class _ColumnHeader extends StatelessWidget {
   }
 
   String _labelOf(TimelineGroup group) => switch (group) {
-        TimelineGroup.switches => 'A/V',
+        TimelineGroup.switches => l10n.columnAv,
         TimelineGroup.identity => l10n.columnLayer,
         TimelineGroup.render => l10n.columnSwitches,
         TimelineGroup.compose => l10n.columnCompose,
@@ -5021,7 +5396,7 @@ class _ColumnHeader extends StatelessWidget {
             cell(LumitIcon.flow, l10n.switchFlow),
             cell(LumitIcon.fx, l10n.switchEffects),
             cell(LumitIcon.motionBlur, l10n.switchMotionBlur),
-            cell(LumitIcon.cube3d, '3D layer'),
+            cell(LumitIcon.cube3d, l10n.switchThreeD),
           ],
         ),
       // The render-time column's header is its switch — see timeline_timings.
@@ -5049,29 +5424,23 @@ Future<void> _showLayerMenu(
 ) async {
   final box = context.findRenderObject();
   if (box is! RenderBox) return;
-  final picked = await showLumitPopup<VoidCallback>(
+  final picked = await showMenuAt<VoidCallback>(
     context: context,
     position: box.localToGlobal(Offset(0, box.size.height + 2)),
-    builder: (close) => FloatSurface(
-      width: 190,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // The row carries what it does, not a word to switch on: the label is
-          // translated (K-303) and would no longer match an English case.
-          for (final (label, add) in <(String, VoidCallback)>[
-            (l10n.menuSolid, comp.addSolidLayer),
-            (l10n.menuText, comp.addTextLayer),
-            (l10n.menuCamera, comp.addCameraLayer),
-            (l10n.menuAdjustment, comp.addAdjustmentLayer),
-            (l10n.menuNull, comp.addNullLayer),
-            (l10n.menuSequence, comp.addSequenceLayer),
-          ])
-            MenuRow(onPressed: () => close(add), child: Text(label)),
-        ],
-      ),
-    ),
+    width: 190,
+    rows: (close) => [
+      // The row carries what it does, not a word to switch on: the label is
+      // translated (K-303) and would no longer match an English case.
+      for (final (label, add) in <(String, VoidCallback)>[
+        (l10n.menuSolid, comp.addSolidLayer),
+        (l10n.menuText, comp.addTextLayer),
+        (l10n.menuCamera, comp.addCameraLayer),
+        (l10n.menuAdjustment, comp.addAdjustmentLayer),
+        (l10n.menuNull, comp.addNullLayer),
+        (l10n.menuSequence, comp.addSequenceLayer),
+      ])
+        MenuRow(onPressed: () => close(add), child: Text(label)),
+    ],
   );
   if (picked == null) return;
   picked();
@@ -5150,7 +5519,11 @@ class _Outline extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // The column geometry is the same for every row, so it is worked out once
+    // here rather than once per fold row of every layer.
     final valueColumn = valueColumnFor(groupOrder, widths);
+    final timingsColumn = timingsColumnFor(groupOrder, widths);
+    final baseIndent = identityStart(groupOrder, widths);
     // The layer entries, for the parent picker's menu — every layer is on
     // offer as a parent, and they come from the row list rather than from a
     // second list handed in beside it.
@@ -5215,8 +5588,8 @@ class _Outline extends StatelessWidget {
                       layer: rows[i].entry.layer,
                       row: row,
                       valueColumn: valueColumn,
-                      timingsColumn: timingsColumnFor(groupOrder, widths),
-                      baseIndent: identityStart(groupOrder, widths),
+                      timingsColumn: timingsColumn,
+                      baseIndent: baseIndent,
                       path: foldRowPath(rows[i].id, row),
                       selectedProperties: selectedProperties,
                       graphColours: graphColours,
@@ -5637,7 +6010,16 @@ class _OutlineRowState extends State<_OutlineRow> {
                 switches.collapse, BridgeLayerSwitch.collapse,
                 tip: l10n.tipCollapseTransformations)
           else if (info.kind == BridgeLayerKind.footage)
-            _flowSwitch(context, id, info.flow)
+            // The Flow cell: shaped exactly like a switch but writing the
+            // layer's interpolation policy rather than a `BridgeLayerSwitch`,
+            // because that is what flow *is* underneath (K-088: "the option
+            // surfaces the policy").
+            _switch(context, id, 'flow', LumitIcon.flow, info.flow, null,
+                tip: info.flow ? l10n.tipFlowOn : l10n.tipFlowOff,
+                onTap: () {
+              layer.setFlowEnabled(on_: !info.flow);
+              widget.onChanged();
+            })
           else
             const SizedBox(width: switchCellWidth),
           _switch(context, id, 'fx', LumitIcon.fx, switches.fx,
@@ -5650,7 +6032,7 @@ class _OutlineRowState extends State<_OutlineRow> {
               tip: l10n.switchMotionBlur),
           _switch(context, id, '3d', LumitIcon.cube3d, switches.threeD,
               BridgeLayerSwitch.threeD,
-              tip: '3D layer'),
+              tip: l10n.switchThreeD),
         ],
       ),
     );
@@ -5815,58 +6197,19 @@ class _OutlineRowState extends State<_OutlineRow> {
   /// read as buttons rather than loose glyphs. With an [offIcon] the glyph
   /// itself flips (closed eye, muted speaker, hollow circle) and keeps full
   /// strength either way; without one the off state dims, as before.
-  /// The Flow cell. Shaped exactly like [_switch] but writing the layer's
-  /// interpolation policy rather than a `BridgeLayerSwitch`, because that is
-  /// what flow *is* underneath (K-088: "the option surfaces the policy").
-  ///
-  /// The state comes from the read model, never from a bridge call — this
-  /// builds on every timeline rebuild, which is the cost K-184 removed.
-  Widget _flowSwitch(BuildContext context, String id, bool on) {
-    final t = ThemeScope.of(context).theme;
-    final cell = GestureDetector(
-      key: ValueKey<String>('tl-flow-$id'),
-      behavior: HitTestBehavior.opaque,
-      onTap: () {
-        layer.setFlowEnabled(on_: !on);
-        widget.onChanged();
-      },
-      child: SizedBox(
-        width: switchCellWidth,
-        height: _rowHeight,
-        child: Center(
-          child: Container(
-            width: 18,
-            height: 18,
-            decoration: BoxDecoration(
-              color: t.surface0,
-              borderRadius: BorderRadius.circular(t.tokens.controlRadius),
-              border: Border.all(color: t.hairline),
-            ),
-            child: Center(
-              child: lumitIcon(LumitIcon.flow,
-                  size: iconSize, color: on ? t.textPrimary : t.textDisabled),
-            ),
-          ),
-        ),
-      ),
-    );
-    return LumitTooltip(
-      message: on
-          ? 'Flow — in-between frames are synthesised; click to turn off'
-          : 'Flow — synthesise in-between frames with optical flow',
-      child: cell,
-    );
-  }
-
+  /// [onTap] replaces the default `set_switch` write for a cell that only
+  /// wears the switch's clothes — the Flow cell, whose write is the layer's
+  /// interpolation policy — in which case [which] may be null.
   Widget _switch(
     BuildContext context,
     String id,
     String name,
     LumitIcon icon,
     bool on,
-    BridgeLayerSwitch which, {
+    BridgeLayerSwitch? which, {
     LumitIcon? offIcon,
     String? tip,
+    VoidCallback? onTap,
   }) {
     final t = ThemeScope.of(context).theme;
     final glyph = on || offIcon != null
@@ -5876,10 +6219,11 @@ class _OutlineRowState extends State<_OutlineRow> {
     final cell = GestureDetector(
       key: ValueKey<String>('tl-$name-$id'),
       behavior: HitTestBehavior.opaque,
-      onTap: () {
-        layer.setSwitch(switch_: which, on_: !on);
-        widget.onChanged();
-      },
+      onTap: onTap ??
+          () {
+            layer.setSwitch(switch_: which!, on_: !on);
+            widget.onChanged();
+          },
       child: SizedBox(
         width: switchCellWidth,
         height: _rowHeight,
@@ -5924,73 +6268,64 @@ class _OutlineRowState extends State<_OutlineRow> {
     // A locked layer keeps Duplicate — copying is not editing — but its own
     // order and existence are held still until it is unlocked.
     final locked = widget.entry.info.switches.locked;
-    final picked = await showLumitPopup<String>(
+    final picked = await showMenuAt<String>(
       context: context,
       position: position,
-      builder: (close) => FloatSurface(
-        width: 190,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
+      width: 190,
+      rows: (close) => [
+        MenuRow(
+            onPressed: () => close('duplicate'),
+            child: Text(l10n.menuDuplicate)),
+        if (!locked) ...[
+          if (index > 0)
             MenuRow(
-                onPressed: () => close('duplicate'),
-                child: Text(l10n.menuDuplicate)),
-            if (!locked) ...[
-              if (index > 0)
-                MenuRow(
-                    onPressed: () => close('up'),
-                    child: Text(l10n.bringForward)),
-              if (index < count - 1)
-                MenuRow(
-                    onPressed: () => close('down'),
-                    child: Text(l10n.sendBackward)),
-              // In and out of the clip-editing surface, for anyone. The Vegas
-              // preference decides what an *import* becomes (K-246), never
-              // what a layer is allowed to be — and coming back out is
-              // offered wherever going in is, so a user who tries it can
-              // change their mind.
-              if (widget.entry.info.kind == BridgeLayerKind.footage)
-                MenuRow(
-                    key: const ValueKey('tl-row-to-sequence'),
-                    onPressed: () => close('to-sequence'),
-                    child: Text(l10n.menuConvertToSequenceLayer)),
-              if (widget.entry.info.kind == BridgeLayerKind.sequence)
-                MenuRow(
-                    key: const ValueKey('tl-row-from-sequence'),
-                    onPressed: () => close('from-sequence'),
-                    child: Text(l10n.menuConvertToFootageLayer)),
-            ],
-            // The shape — the cuts, the gaps and the ramps, with no media in
-            // it — from the layer itself, so carrying a cut onto a depth pass
-            // never needs either row opened first (K-248). Offered on a locked
-            // layer too: copying is not editing.
-            if (widget.entry.info.kind == BridgeLayerKind.sequence) ...[
-              MenuRow(
-                  key: const ValueKey('tl-row-copy-shape'),
-                  onPressed: () => close('copy-shape'),
-                  child: Text(l10n.copySequenceShape)),
-              if (!locked && sequenceShapeClipboard != null)
-                MenuRow(
-                    key: const ValueKey('tl-row-paste-shape'),
-                    onPressed: () => close('paste-shape'),
-                    child: Text(l10n.pasteSequenceShape)),
-            ],
-            if (!locked) ...[
-              MenuRow(
-                  onPressed: () => close('delete'), child: Text(l10n.delete)),
-            ],
-            // Only when there is something to clear. A layer carries markers
-            // when a composition was dropped in with some (K-254); most layers
-            // have none and should not be offered a command that does nothing.
-            if (!locked && widget.entry.info.markers.isNotEmpty)
-              MenuRow(
-                  key: const ValueKey('tl-row-clear-markers'),
-                  onPressed: () => close('clear-markers'),
-                  child: Text(l10n.deleteAllMarkers)),
-          ],
-        ),
-      ),
+                onPressed: () => close('up'), child: Text(l10n.bringForward)),
+          if (index < count - 1)
+            MenuRow(
+                onPressed: () => close('down'), child: Text(l10n.sendBackward)),
+          // In and out of the clip-editing surface, for anyone. The Vegas
+          // preference decides what an *import* becomes (K-246), never
+          // what a layer is allowed to be — and coming back out is
+          // offered wherever going in is, so a user who tries it can
+          // change their mind.
+          if (widget.entry.info.kind == BridgeLayerKind.footage)
+            MenuRow(
+                key: const ValueKey('tl-row-to-sequence'),
+                onPressed: () => close('to-sequence'),
+                child: Text(l10n.menuConvertToSequenceLayer)),
+          if (widget.entry.info.kind == BridgeLayerKind.sequence)
+            MenuRow(
+                key: const ValueKey('tl-row-from-sequence'),
+                onPressed: () => close('from-sequence'),
+                child: Text(l10n.menuConvertToFootageLayer)),
+        ],
+        // The shape — the cuts, the gaps and the ramps, with no media in
+        // it — from the layer itself, so carrying a cut onto a depth pass
+        // never needs either row opened first (K-248). Offered on a locked
+        // layer too: copying is not editing.
+        if (widget.entry.info.kind == BridgeLayerKind.sequence) ...[
+          MenuRow(
+              key: const ValueKey('tl-row-copy-shape'),
+              onPressed: () => close('copy-shape'),
+              child: Text(l10n.copySequenceShape)),
+          if (!locked && sequenceShapeClipboard != null)
+            MenuRow(
+                key: const ValueKey('tl-row-paste-shape'),
+                onPressed: () => close('paste-shape'),
+                child: Text(l10n.pasteSequenceShape)),
+        ],
+        if (!locked) ...[
+          MenuRow(onPressed: () => close('delete'), child: Text(l10n.delete)),
+        ],
+        // Only when there is something to clear. A layer carries markers
+        // when a composition was dropped in with some (K-254); most layers
+        // have none and should not be offered a command that does nothing.
+        if (!locked && widget.entry.info.markers.isNotEmpty)
+          MenuRow(
+              key: const ValueKey('tl-row-clear-markers'),
+              onPressed: () => close('clear-markers'),
+              child: Text(l10n.deleteAllMarkers)),
+      ],
     );
     switch (picked) {
       case 'duplicate':
@@ -6577,8 +6912,7 @@ class _LayerArea extends StatelessWidget {
           final inFrame = entry.info.inFrame.toInt() + (p?.deltaIn ?? 0);
           final outFrame = entry.info.outFrame.toInt() + (p?.deltaOut ?? 0);
           final startOffset =
-              span.startOffset.num / span.startOffset.den.toDouble() +
-                  (p?.offsetShift ?? 0) / fps;
+              rationalSeconds(span.startOffset) + (p?.offsetShift ?? 0) / fps;
           final secondsPerPixel =
               axis.width <= 0 ? 0.0 : axis.frames / fps / axis.width;
           return CustomPaint(
@@ -7287,9 +7621,8 @@ class _Bar extends StatefulWidget {
 }
 
 class _BarState extends State<_Bar> {
-  /// When this bar was last clicked, for spotting a double-click without
-  /// putting a recogniser in the razor’s way.
-  DateTime? _lastBarTap;
+  /// Spots a double-click without putting a recogniser in the razor’s way.
+  final DoubleTap _barTaps = DoubleTap();
 
   /// Frames the gesture has moved so far, held here rather than committed.
   ///
@@ -7407,17 +7740,9 @@ class _BarState extends State<_Bar> {
                 // same as its name does (K-248) — counted here rather than
                 // with an `onDoubleTap` below, because a double-tap recogniser
                 // beside the razor's `onTapUp` makes the arena hold every
-                // single tap back, and the razor stops cutting. Two timestamps
-                // owe the arena nothing.
+                // single tap back, and the razor stops cutting ([DoubleTap]).
                 final open = widget.onOpenSequence;
-                if (open == null) return;
-                final now = DateTime.now();
-                final last = _lastBarTap;
-                _lastBarTap = now;
-                if (last != null && now.difference(last) < kDoubleTapTimeout) {
-                  _lastBarTap = null;
-                  open();
-                }
+                if (open != null && _barTaps.tap()) open();
               },
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
@@ -7581,72 +7906,26 @@ class _BarState extends State<_Bar> {
     );
   }
 
-  /// The right-click menu on a marker sitting on a layer's bar.
+  /// The right-click menu on a marker sitting on a layer's bar — the shared
+  /// marker menu, with Delete all on it.
   ///
   /// Deleting here touches **this layer's** list and nothing else. A layer's
   /// markers are its own copy of whatever composition was dropped in, so a
   /// delete cannot reach into that comp — or into the other places it is used
   /// (K-254).
   void _markerMenu(BuildContext context, BridgeMarker marker, Offset at) {
-    showLumitPopup<void>(
+    showMarkerMenuFrb(
       context: context,
       position: at,
-      builder: (close) => FloatSurface(
-        child: IntrinsicWidth(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              MenuRow(
-                key: const ValueKey('tl-layer-marker-edit'),
-                onPressed: () {
-                  close(null);
-                  _editMarker(context, marker);
-                },
-                child: Text(l10n.editMarkerEllipsis),
-              ),
-              MenuRow(
-                key: const ValueKey('tl-layer-marker-delete'),
-                onPressed: () {
-                  close(null);
-                  _writeMarkers([
-                    for (final m in widget.entry.info.markers)
-                      if (m.marker.id != marker.id) m.marker,
-                  ]);
-                },
-                child: Text(l10n.deleteMarker),
-              ),
-              MenuRow(
-                key: const ValueKey('tl-layer-marker-delete-all'),
-                onPressed: () {
-                  close(null);
-                  _writeMarkers(const []);
-                },
-                child: Text(l10n.deleteAllMarkers),
-              ),
-            ],
-          ),
-        ),
-      ),
+      marker: marker,
+      markers: () => [for (final m in widget.entry.info.markers) m.marker],
+      write: (markers) {
+        widget.entry.layer.setMarkers(markers: markers);
+        widget.onChanged();
+      },
+      deleteAll: true,
+      keyPrefix: 'tl-layer-marker',
     );
-  }
-
-  Future<void> _editMarker(BuildContext context, BridgeMarker marker) async {
-    final label =
-        await showMarkerLabelDialogFrb(context: context, initial: marker.label);
-    if (label == null || !mounted) return;
-    _writeMarkers([
-      for (final m in widget.entry.info.markers)
-        if (m.marker.id == marker.id)
-          BridgeMarker(id: m.marker.id, time: m.marker.time, label: label)
-        else
-          m.marker,
-    ]);
-  }
-
-  void _writeMarkers(List<BridgeMarker> markers) {
-    widget.entry.layer.setMarkers(markers: markers);
-    widget.onChanged();
   }
 
   /// One end's hover strip: the pointer becomes the horizontal resize arrow

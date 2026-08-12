@@ -36,6 +36,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::model::LinearColour;
+use crate::pixels::over;
 
 /// What a stroke does to the pixels under it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -149,6 +150,13 @@ pub fn apply_strokes(
     if strokes.is_empty() || w == 0 || h == 0 {
         return;
     }
+    // The one length check every stroke rides on: a raster that does not match
+    // its stated size paints nothing, calmly, rather than slicing past the end
+    // (docs/14: engine crates do not panic). Everything below may then index
+    // by row arithmetic without further guards.
+    if rgba.len() != (w as usize) * (h as usize) * 4 {
+        return;
+    }
     let sx = f64::from(w) / natural_w.max(1.0);
     let sy = f64::from(h) / natural_h.max(1.0);
     // Only taken when something actually clones: a copy of the layer is not
@@ -158,10 +166,15 @@ pub fn apply_strokes(
         .any(|s| s.mode == PaintMode::Clone)
         .then(|| rgba.to_vec());
 
+    // One coverage buffer for the whole pass: allocating a full raster per
+    // stroke was most of a paint frame's memory traffic. Each stroke clears
+    // and writes only its own bounds rectangle.
+    let mut coverage = vec![0u8; (w as usize) * (h as usize)];
     for stroke in strokes {
-        let coverage = coverage_of(stroke, w, h, sx, sy);
-        let Some(coverage) = coverage else { continue };
-        composite(rgba, source.as_deref(), w, h, sx, sy, stroke, &coverage);
+        let Some(rect) = fill_coverage(&mut coverage, stroke, w, h, sx, sy) else {
+            continue;
+        };
+        composite(rgba, source.as_deref(), w, sx, sy, stroke, &coverage, rect);
     }
 }
 
@@ -171,6 +184,23 @@ pub fn apply_strokes(
 /// Public because the same numbers answer "did this stroke mark this pixel",
 /// which is what the tests ask and what a GPU path would upload.
 pub fn coverage_of(stroke: &PaintStroke, w: u32, h: u32, sx: f64, sy: f64) -> Option<Vec<u8>> {
+    let mut coverage = vec![0u8; (w as usize) * (h as usize)];
+    fill_coverage(&mut coverage, stroke, w, h, sx, sy)?;
+    Some(coverage)
+}
+
+/// [`coverage_of`] into a reused buffer: clears the stroke's own bounds
+/// rectangle and stamps into it, returning that rectangle as inclusive raster
+/// coordinates `(x0, y0, x1, y1)` so the composite can visit only the pixels
+/// the stroke can have touched. `coverage` must be `w × h`.
+fn fill_coverage(
+    coverage: &mut [u8],
+    stroke: &PaintStroke,
+    w: u32,
+    h: u32,
+    sx: f64,
+    sy: f64,
+) -> Option<(u32, u32, u32, u32)> {
     if stroke.points.is_empty() || stroke.width <= 0.0 || stroke.opacity <= 0.0 {
         return None;
     }
@@ -192,13 +222,23 @@ pub fn coverage_of(stroke: &PaintStroke, w: u32, h: u32, sx: f64, sy: f64) -> Op
     let feather = (radius * (1.0 - stroke.hardness.clamp(0.0, 1.0))).max(MIN_FEATHER);
     let solid = (radius - feather).max(0.0);
 
-    let mut coverage = vec![0u8; (w as usize) * (h as usize)];
+    // The raster rectangle this stroke can reach: its bounds scaled onto the
+    // raster, grown by the brush radius — the same floor/ceil `stamp` uses per
+    // dab, so every dab lands inside the cleared area.
+    let x0 = (min_x * sx - radius).floor().max(0.0) as u32;
+    let y0 = (min_y * sy - radius).floor().max(0.0) as u32;
+    let x1 = (max_x * sx + radius).ceil().clamp(0.0, f64::from(w) - 1.0) as u32;
+    let y1 = (max_y * sy + radius).ceil().clamp(0.0, f64::from(h) - 1.0) as u32;
+    for y in y0..=y1 {
+        let row = (y as usize) * (w as usize);
+        coverage[row + x0 as usize..=row + x1 as usize].fill(0);
+    }
     for (cx, cy) in dabs(&stroke.points, radius) {
         let px = cx * sx;
         let py = cy * sy;
-        stamp(&mut coverage, w, h, px, py, radius, solid, feather);
+        stamp(coverage, w, h, px, py, radius, solid, feather);
     }
-    Some(coverage)
+    Some((x0, y0, x1, y1))
 }
 
 /// Where the dabs along a stroke's polyline go, in layer coordinates.
@@ -286,32 +326,40 @@ fn stamp(
     }
 }
 
-/// Put one stroke's coverage into the pixels, by its mode.
+/// Put one stroke's coverage into the pixels, by its mode. Visits only the
+/// stroke's own `(x0, y0, x1, y1)` rectangle — the rest of the raster is
+/// pixels this stroke cannot have marked. `apply_strokes` has already checked
+/// `rgba` is `w × h × 4`, and the rows are walked as `chunks_exact_mut(4)`, so
+/// nothing here can slice out of bounds.
 #[allow(clippy::too_many_arguments)]
 fn composite(
     rgba: &mut [u8],
     source: Option<&[u8]>,
     w: u32,
-    h: u32,
     sx: f64,
     sy: f64,
     stroke: &PaintStroke,
     coverage: &[u8],
+    (x0, y0, x1, y1): (u32, u32, u32, u32),
 ) {
     let opacity = (stroke.opacity.clamp(0.0, 100.0) / 100.0) as f32;
     let colour = crate::pixels::solid_rgba(stroke.colour);
     // The stroke's own alpha multiplies its opacity: a stroke of a
     // half-transparent colour is half transparent.
     let colour_alpha = f32::from(colour[3]) / 255.0;
+    // The clone source is the same raster, so its height is implied by its
+    // length and the shared width.
+    let h = rgba.len() / 4 / (w as usize).max(1);
 
-    for y in 0..h {
-        for x in 0..w {
-            let i = (y as usize) * (w as usize) + (x as usize);
-            let c = f32::from(coverage[i]) / 255.0;
+    for y in y0..=y1 {
+        let row = (y as usize) * (w as usize);
+        let px_row = &mut rgba[(row + x0 as usize) * 4..(row + x1 as usize + 1) * 4];
+        let cov_row = &coverage[row + x0 as usize..=row + x1 as usize];
+        for ((x, px), &cov) in (x0..=x1).zip(px_row.chunks_exact_mut(4)).zip(cov_row) {
+            let c = f32::from(cov) / 255.0;
             if c <= 0.0 {
                 continue;
             }
-            let px = &mut rgba[i * 4..i * 4 + 4];
             match stroke.mode {
                 PaintMode::Paint => {
                     let a = c * opacity * colour_alpha;
@@ -327,7 +375,7 @@ fn composite(
                     let oy = f64::from(y) + stroke.clone_offset.1 * sy;
                     // Off the layer there is nothing to copy; a clone that ran
                     // off the edge used to wrap, which reads as a bug.
-                    if ox < 0.0 || oy < 0.0 || ox >= f64::from(w) || oy >= f64::from(h) {
+                    if ox < 0.0 || oy < 0.0 || ox >= f64::from(w) || oy >= h as f64 {
                         continue;
                     }
                     let j = (oy as usize) * (w as usize) + (ox as usize);
@@ -338,28 +386,6 @@ fn composite(
             }
         }
     }
-}
-
-/// Source-over one colour onto a pixel, in the straight-alpha bytes the CPU
-/// path carries everywhere else.
-fn over(px: &mut [u8], rgb: [u8; 3], a: f32) {
-    let a = a.clamp(0.0, 1.0);
-    if a <= 0.0 {
-        return;
-    }
-    let dst_a = f32::from(px[3]) / 255.0;
-    let out_a = a + dst_a * (1.0 - a);
-    if out_a <= 0.0 {
-        px.copy_from_slice(&[0, 0, 0, 0]);
-        return;
-    }
-    for c in 0..3 {
-        let src = f32::from(rgb[c]) / 255.0;
-        let dst = f32::from(px[c]) / 255.0;
-        let out = (src * a + dst * dst_a * (1.0 - a)) / out_a;
-        px[c] = (out * 255.0).round().clamp(0.0, 255.0) as u8;
-    }
-    px[3] = (out_a * 255.0).round().clamp(0.0, 255.0) as u8;
 }
 
 #[cfg(test)]
@@ -563,6 +589,38 @@ mod tests {
         let (x0, y0, x1, y1) = stroke.bounds().expect("points");
         assert_eq!((x0, y0, x1, y1), (5.0, 5.0, 35.0, 25.0));
         assert!(PaintStroke::new("None", vec![]).bounds().is_none());
+    }
+
+    /// A raster that does not match its stated size paints nothing rather
+    /// than slicing past the end (docs/14: engine crates do not panic).
+    #[test]
+    fn a_short_raster_paints_nothing_rather_than_panicking() {
+        let mut short = vec![0u8; 10];
+        let mut stroke = PaintStroke::new("Dab", vec![(4.0, 4.0)]);
+        stroke.width = 4.0;
+        apply_strokes(&mut short, 8, 8, 8.0, 8.0, &[stroke]);
+        assert!(short.iter().all(|&b| b == 0));
+    }
+
+    /// The coverage buffer is reused across the strokes of a pass, so one
+    /// stroke's marks must never leak into the next stroke's composite. The
+    /// second stroke's bounds rectangle here contains a pixel the first
+    /// stroke painted red — stale coverage there would turn it blue.
+    #[test]
+    fn a_reused_coverage_buffer_carries_nothing_between_strokes() {
+        let mut rgba = raster(40, 40, [0, 0, 0, 0]);
+        let mut red = PaintStroke::new("Red", vec![(10.0, 10.0)]);
+        red.width = 4.0;
+        red.colour = crate::model::LinearColour([1.0, 0.0, 0.0, 1.0]);
+        // A wide dab lower down: its rectangle reaches (10, 10), but its round
+        // brush does not.
+        let mut blue = PaintStroke::new("Blue", vec![(24.0, 24.0)]);
+        blue.width = 24.0;
+        blue.colour = crate::model::LinearColour([0.0, 0.0, 1.0, 1.0]);
+        apply_strokes(&mut rgba, 40, 40, 40.0, 40.0, &[red, blue]);
+
+        assert_eq!(rgb_at(&rgba, 40, 10, 10), [255, 0, 0], "red stays red");
+        assert_eq!(rgb_at(&rgba, 40, 24, 24), [0, 0, 255], "blue landed");
     }
 
     /// The same document must give the same pixels on every machine and every

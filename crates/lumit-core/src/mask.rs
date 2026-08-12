@@ -5,11 +5,21 @@
 //! outside it doesn't (or the reverse when inverted). The rasteriser walks
 //! the shape row by row, finding where each row enters and leaves the shape —
 //! with fractional edges and two vertical subsamples so boundaries render
-//! smooth, not stair-stepped. Phase 1 scope: static paths, Add mode; animated
-//! paths, feather and the full mode set follow the data model doc.
+//! smooth, not stair-stepped. Several masks combine top to bottom by their
+//! mode (add, subtract, intersect, difference), and each can be softened
+//! (feather) or grown/shrunk (expansion) before it joins the stack. The path
+//! can be **keyframed** (see [`PathKeyframe`]); still out of scope is feather
+//! that varies along the path.
+
+use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+use crate::{
+    anim::{Animation, CubicSpan, Keyframe, Property, SideInterp},
+    time::Rational,
+};
 
 /// One path vertex with cubic tangent handles (layer-pixel coordinates;
 /// tangents relative to the vertex).
@@ -26,29 +36,174 @@ pub struct BezierPath {
     pub closed: bool,
 }
 
+/// One keyed shape of a mask path, at a time in the owner's timebase.
+///
+/// In plain terms: a whole drawn shape pinned to a moment, the way a scalar
+/// keyframe pins a number. A path has no single number to plot, so there is no
+/// value graph for it and the timeline shows these as diamonds only — but the
+/// *timing* is the ordinary keyframe timing, so the same holds and eases work.
+/// [`SideInterp`] here shapes how fast the shape crosses from this key to the
+/// next (the interpolation parameter, 0 at this key and 1 at the next), not a
+/// value curve.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PathKeyframe {
+    pub time: Rational,
+    pub path: BezierPath,
+    /// Approaching this key.
+    pub interp_in: SideInterp,
+    /// Leaving this key.
+    pub interp_out: SideInterp,
+}
+
+/// How a mask joins the stack above it (docs/06-RENDER-PIPELINE.md §2, step 3).
+/// Lighten and Darken are deliberately not here yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum MaskMode {
+    /// Geometry only: the path is drawn and editable but gates nothing.
+    None,
+    #[default]
+    Add,
+    Subtract,
+    Intersect,
+    Difference,
+}
+
+impl MaskMode {
+    fn is_add(&self) -> bool {
+        matches!(self, MaskMode::Add)
+    }
+}
+
+/// True when this property is a plain, still zero — the default for feather and
+/// expansion, and so the thing that is left out of the file entirely.
+fn is_static_zero(p: &Property) -> bool {
+    matches!(p.animation, Animation::Static(v) if v == 0.0) && p.extra.is_empty()
+}
+
+/// A mask's animatable number, written as a **bare number while it is still**.
+///
+/// In plain terms: a mask's opacity used to be just `50.0` in the file, and now
+/// it can hold keyframes. Anything that can hold keyframes is a [`Property`],
+/// and a `Property` normally writes itself as an object. If these three fields
+/// started doing that, every `.lum` ever saved would have to be migrated, and —
+/// worse — every frame every project has banked would be retired, because the
+/// frame cache names a frame partly by the bytes its masks serialise to
+/// (K-338, K-339 made a point of not doing that).
+///
+/// So the encoding stays what it was for the case that is almost always true.
+/// A still value writes as the number; only a mask somebody has actually keyed
+/// grows the object. Reading accepts either, so a project written by any build
+/// opens here, and one written by this build opens in an older one as long as
+/// nobody keyed the mask.
+mod still_or_keyed {
+    use super::{Animation, Property};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(p: &Property, s: S) -> Result<S::Ok, S::Error> {
+        match (&p.animation, p.extra.is_empty()) {
+            (Animation::Static(v), true) => s.serialize_f64(*v),
+            _ => p.serialize(s),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Property, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Either {
+            Still(f64),
+            Keyed(Property),
+        }
+        Ok(match Either::deserialize(d)? {
+            Either::Still(v) => Property::fixed(v),
+            Either::Keyed(p) => p,
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Mask {
     pub id: Uuid,
     pub name: String,
+    /// The shape when the path is not animated, and the shape the editing
+    /// tools draw into. Ignored while `path_keys` holds any key.
     pub path: BezierPath,
+    /// The keyed shapes, sorted by time, unique times (enforced by the editing
+    /// ops). Empty — the ordinary case — is absent from the file, so an
+    /// unanimated mask writes exactly the bytes it always did and the frame
+    /// cache keeps everything it has banked.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub path_keys: Vec<PathKeyframe>,
     pub inverted: bool,
-    /// 0..100.
-    pub opacity: f64,
+    /// 0..100, and animatable like any transform property (K-340). Written as
+    /// a bare number while it is still — see [`still_or_keyed`].
+    #[serde(with = "still_or_keyed")]
+    pub opacity: Property,
+    /// How this mask combines with the ones above it. Absent in projects
+    /// written before modes existed, which loaded and rendered as Add.
+    #[serde(default, skip_serializing_if = "MaskMode::is_add")]
+    pub mode: MaskMode,
+    /// Total width of the soft edge, in layer pixels, half either side of the
+    /// path (0 = the hard, antialiased edge). Animatable (K-340).
+    #[serde(
+        default = "Property::zero",
+        with = "still_or_keyed",
+        skip_serializing_if = "is_static_zero"
+    )]
+    pub feather: Property,
+    /// Grow (+) or shrink (−) the shape, in layer pixels. Animatable (K-340).
+    #[serde(
+        default = "Property::zero",
+        with = "still_or_keyed",
+        skip_serializing_if = "is_static_zero"
+    )]
+    pub expansion: Property,
     #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Mask {
+    /// Whether this mask has any say in what the layer looks like at `t`.
+    ///
+    /// Two switches turn a mask off, and both mean the same thing to the
+    /// person using them: mode `None`, and opacity zero. Neither is "combine
+    /// nothing into the stack" — a mask that is off is a mask that is not
+    /// there, so a layer carrying only switched-off masks is a layer with no
+    /// masks at all, whole and visible. Exactly zero, not merely rounding to
+    /// zero: 0.1 % is a mask the author can still see the edge of.
+    ///
+    /// Time matters because opacity animates: a mask keyed from 0 % can be off
+    /// for the first half of a shot and on for the second.
+    #[must_use]
+    pub fn does_something_at(&self, t: f64) -> bool {
+        self.mode != MaskMode::None && self.opacity.value_at(t) > 0.0
+    }
+
+    /// A fresh, default-switched mask around `path`: Add mode, full opacity,
+    /// hard-edged, unanimated.
+    fn from_path(name: &str, path: BezierPath) -> Self {
+        Self {
+            id: Uuid::now_v7(),
+            name: name.into(),
+            path,
+            path_keys: Vec::new(),
+            inverted: false,
+            opacity: Property::fixed(100.0),
+            mode: MaskMode::Add,
+            feather: Property::zero(),
+            expansion: Property::zero(),
+            extra: serde_json::Map::new(),
+        }
+    }
+
     pub fn rectangle(x: f64, y: f64, w: f64, h: f64) -> Self {
         let corner = |px: f64, py: f64| Vertex {
             pos: (px, py),
             tan_in: (0.0, 0.0),
             tan_out: (0.0, 0.0),
         };
-        Self {
-            id: Uuid::now_v7(),
-            name: "Rectangle".into(),
-            path: BezierPath {
+        Self::from_path(
+            "Rectangle",
+            BezierPath {
                 vertices: vec![
                     corner(x, y),
                     corner(x + w, y),
@@ -57,10 +212,7 @@ impl Mask {
                 ],
                 closed: true,
             },
-            inverted: false,
-            opacity: 100.0,
-            extra: serde_json::Map::new(),
-        }
+        )
     }
 
     /// An `n`-point star with straight edges (corner vertices only), outer
@@ -79,17 +231,13 @@ impl Mask {
                 tan_out: (0.0, 0.0),
             });
         }
-        Self {
-            id: Uuid::now_v7(),
-            name: "Star".into(),
-            path: BezierPath {
+        Self::from_path(
+            "Star",
+            BezierPath {
                 vertices,
                 closed: true,
             },
-            inverted: false,
-            opacity: 100.0,
-            extra: serde_json::Map::new(),
-        }
+        )
     }
 
     /// Ellipse via the standard 4-vertex cubic approximation (kappa).
@@ -100,10 +248,9 @@ impl Mask {
             tan_in: tin,
             tan_out: tout,
         };
-        Self {
-            id: Uuid::now_v7(),
-            name: "Ellipse".into(),
-            path: BezierPath {
+        Self::from_path(
+            "Ellipse",
+            BezierPath {
                 vertices: vec![
                     v((cx, cy - ry).0, cy - ry, (-rx * K, 0.0), (rx * K, 0.0)),
                     v(cx + rx, cy, (0.0, -ry * K), (0.0, ry * K)),
@@ -112,10 +259,191 @@ impl Mask {
                 ],
                 closed: true,
             },
-            inverted: false,
-            opacity: 100.0,
-            extra: serde_json::Map::new(),
+        )
+    }
+
+    /// The shape this mask has at time `t` (seconds, the owner's timebase —
+    /// layer time for a layer's masks, exactly as every other property on the
+    /// layer is read).
+    ///
+    /// Unanimated is the common case and costs nothing: the stored [`Self::path`]
+    /// is handed back by reference. With one key, that key's shape holds for
+    /// all time; with several, the two keys either side are blended by
+    /// [`lerp_paths`] at the eased parameter.
+    pub fn path_at(&self, t: f64) -> Cow<'_, BezierPath> {
+        let (Some(first), Some(last)) = (self.path_keys.first(), self.path_keys.last()) else {
+            return Cow::Borrowed(&self.path);
+        };
+        if t <= first.time.to_f64() {
+            return Cow::Borrowed(&first.path);
         }
+        if t >= last.time.to_f64() {
+            return Cow::Borrowed(&last.path);
+        }
+        let idx = self
+            .path_keys
+            .windows(2)
+            .position(|w| match w.get(1) {
+                Some(next) => t < next.time.to_f64(),
+                None => false,
+            })
+            .unwrap_or(0);
+        let (Some(a), Some(b)) = (self.path_keys.get(idx), self.path_keys.get(idx + 1)) else {
+            return Cow::Borrowed(&self.path);
+        };
+        // The eases are the scalar evaluator's, run on a 0→1 ramp: one keyframe
+        // machine, not two. Hold, linear and AE speed/influence all arrive here
+        // already correct, and the parameter is exactly 0 and 1 at the keys.
+        let ramp = [
+            Keyframe {
+                time: a.time,
+                value: 0.0,
+                interp_in: a.interp_in,
+                interp_out: a.interp_out,
+            },
+            Keyframe {
+                time: b.time,
+                value: 1.0,
+                interp_in: b.interp_in,
+                interp_out: b.interp_out,
+            },
+        ];
+        let u = crate::anim::evaluate(&ramp, t).unwrap_or(0.0);
+        Cow::Owned(lerp_paths(&a.path, &b.path, u))
+    }
+
+    /// Whether this mask's shape is keyframed.
+    pub fn path_is_animated(&self) -> bool {
+        !self.path_keys.is_empty()
+    }
+}
+
+/// Blend two paths, `u` = 0 giving `from` and 1 giving `to`.
+///
+/// Vertex counts are reconciled first ([`resample`]): the sparser path is cut
+/// into as many pieces as the denser one has, without moving the curve, and
+/// then the two run vertex for vertex — position and both tangent handles are
+/// straight-line blended. That is what After Effects does, and it is why adding
+/// a point to a shape halfway through an animation does not throw the
+/// animation away.
+///
+/// **Open against closed.** Whether a path is closed is not a quantity, so it
+/// cannot be halfway blended: it is *held* across the span, taking `from`'s
+/// flag until the next key's time, where that key's own flag takes over. The
+/// geometry still interpolates normally; only the closing segment appears or
+/// disappears, and it does so on a frame boundary rather than smearing.
+pub fn lerp_paths(from: &BezierPath, to: &BezierPath, u: f64) -> BezierPath {
+    let n = from.vertices.len().max(to.vertices.len());
+    let a = resample(from, n);
+    let b = resample(to, n);
+    let mix = |p: (f64, f64), q: (f64, f64)| (p.0 + (q.0 - p.0) * u, p.1 + (q.1 - p.1) * u);
+    BezierPath {
+        vertices: a
+            .vertices
+            .iter()
+            .zip(&b.vertices)
+            .map(|(p, q)| Vertex {
+                pos: mix(p.pos, q.pos),
+                tan_in: mix(p.tan_in, q.tan_in),
+                tan_out: mix(p.tan_out, q.tan_out),
+            })
+            .collect(),
+        closed: from.closed,
+    }
+}
+
+/// The same path drawn with `target` vertices instead of its own.
+///
+/// The added vertices are placed by **splitting** the existing curve segments,
+/// not by dropping points near them: de Casteljau at a parameter gives two
+/// cubics whose union *is* the original cubic (the same exactness
+/// [`crate::anim::Property::insert_key_preserving_shape`] relies on), so the
+/// path that comes back is geometrically the path that went in — nothing
+/// bulges, nothing flattens. Which segments get the extra points is fixed and
+/// arithmetic (spread as evenly as the count allows, earliest segments first),
+/// so the same two paths always reconcile the same way and playback is
+/// deterministic.
+///
+/// A path already at or above `target`, or with no segments at all, is returned
+/// unchanged.
+pub fn resample(path: &BezierPath, target: usize) -> BezierPath {
+    let n = path.vertices.len();
+    let segs = if path.closed { n } else { n.saturating_sub(1) };
+    if target <= n || segs == 0 {
+        return path.clone();
+    }
+    let extra = target - n;
+
+    // Every segment of the resampled path, as raw control points.
+    let mut pieces: Vec<([f64; 4], [f64; 4])> = Vec::with_capacity(segs + extra);
+    for i in 0..segs {
+        let (Some(a), Some(b)) = (path.vertices.get(i), path.vertices.get((i + 1) % n.max(1)))
+        else {
+            continue;
+        };
+        let mut cur = (
+            [
+                a.pos.0,
+                a.pos.0 + a.tan_out.0,
+                b.pos.0 + b.tan_in.0,
+                b.pos.0,
+            ],
+            [
+                a.pos.1,
+                a.pos.1 + a.tan_out.1,
+                b.pos.1 + b.tan_in.1,
+                b.pos.1,
+            ],
+        );
+        // extra / segs each, and the remainder to the earliest segments.
+        let k = extra / segs + usize::from(i < extra % segs);
+        let mut done = 0.0f64;
+        for j in 1..=k {
+            let global = j as f64 / (k + 1) as f64;
+            // The tail is a fresh cubic reparametrised to 0..1, so the next cut
+            // has to be expressed in *its* parameter, not the original's.
+            let u = (global - done) / (1.0 - done);
+            let (left, right) = CubicSpan::from_points(cur.0, cur.1).split_at(u);
+            pieces.push(left.control_points());
+            cur = right.control_points();
+            done = global;
+        }
+        pieces.push(cur);
+    }
+
+    // Each piece contributes the vertex it starts from: its own first handle is
+    // that vertex's out-tangent, and the previous piece's last handle is its
+    // in-tangent (wrapping on a closed path). An open path keeps its two ends'
+    // outer handles, which no segment describes.
+    let mut vertices = Vec::with_capacity(pieces.len() + 1);
+    for (i, (x, y)) in pieces.iter().enumerate() {
+        let prev = match i {
+            0 if path.closed => pieces.last(),
+            0 => None,
+            _ => pieces.get(i - 1),
+        };
+        let tan_in = match prev {
+            Some((px, py)) => (px[2] - px[3], py[2] - py[3]),
+            None => path.vertices.first().map_or((0.0, 0.0), |v| v.tan_in),
+        };
+        vertices.push(Vertex {
+            pos: (x[0], y[0]),
+            tan_in,
+            tan_out: (x[1] - x[0], y[1] - y[0]),
+        });
+    }
+    if !path.closed {
+        if let Some((x, y)) = pieces.last() {
+            vertices.push(Vertex {
+                pos: (x[3], y[3]),
+                tan_in: (x[2] - x[3], y[2] - y[3]),
+                tan_out: path.vertices.last().map_or((0.0, 0.0), |v| v.tan_out),
+            });
+        }
+    }
+    BezierPath {
+        vertices,
+        closed: path.closed,
     }
 }
 
@@ -197,9 +525,172 @@ pub fn rasterise(path: &BezierPath, w: u32, h: u32, sx: f64, sy: f64) -> Vec<u8>
     coverage
 }
 
+/// One mask's own 0..255 coverage: rasterised, then expanded and feathered.
+///
+/// Feather and expansion are two readings of one signed distance field rather
+/// than a blur and a separate grow/shrink pass: build the distance from the
+/// path once, and expansion moves where the edge sits while feather sets how
+/// wide the ramp across it is. Both are layer pixels, so they are multiplied
+/// by the preview scale — a feather keeps its real width when the Viewer
+/// drops to half resolution. `sx` and `sy` are averaged: a mask softens the
+/// same amount in both directions, and the two differ only when a decode is
+/// non-square.
+fn mask_coverage(mask: &Mask, w: u32, h: u32, sx: f64, sy: f64, t: f64) -> Vec<u8> {
+    let cov = rasterise(&mask.path_at(t), w, h, sx, sy);
+    let scale = (sx + sy) * 0.5;
+    let finite = |v: f64| if v.is_finite() { v } else { 0.0 };
+    let feather = (finite(mask.feather.value_at(t)).max(0.0) * scale) as f32;
+    let expansion = (finite(mask.expansion.value_at(t)) * scale) as f32;
+    // Fast path: the overwhelmingly common mask is hard-edged and unexpanded,
+    // and must come back byte for byte as the rasteriser drew it.
+    if feather == 0.0 && expansion == 0.0 {
+        return cov;
+    }
+
+    let dist = signed_distance(&cov, w as usize, h as usize);
+    // A zero feather still gets a one-pixel ramp: that is exactly the
+    // antialiased edge the rasteriser would have drawn (coverage 0.5 at the
+    // edge, falling linearly over the pixel it crosses), so expanding alone
+    // slides a smooth edge rather than stamping a jagged one.
+    let ramp = feather.max(1.0);
+    let mut out = cov;
+    for (o, d) in out.iter_mut().zip(dist) {
+        *o = (((0.5 + (d + expansion) / ramp).clamp(0.0, 1.0)) * 255.0).round() as u8;
+    }
+    out
+}
+
+/// Signed distance in pixels from each pixel centre to the mask edge —
+/// positive inside the shape, negative outside.
+///
+/// Seeded from the antialiased coverage rather than a hard threshold: where a
+/// pixel is partly covered its centre is about `0.5 − coverage` from the edge
+/// (a straight edge crossing a pixel covers it in proportion to how far past
+/// the centre it is), which puts the seeds at sub-pixel positions and keeps
+/// feathered edges as smooth as the raster they came from. Everything else
+/// starts unknown and gets its distance from the exact Euclidean transform.
+fn signed_distance(cov: &[u8], w: usize, h: usize) -> Vec<f32> {
+    // Not `f32::INFINITY`: the parabola intersections below would go NaN
+    // subtracting one infinity from another. Far beyond any real image.
+    const FAR: f32 = 1e20;
+    let mut f: Vec<f32> = cov
+        .iter()
+        .map(|&c| {
+            if c == 0 || c == 255 {
+                FAR
+            } else {
+                let t = f32::from(c) / 255.0 - 0.5;
+                t * t
+            }
+        })
+        .collect();
+    if w == 0 || h == 0 {
+        return f;
+    }
+
+    // An edge that lands exactly on a pixel boundary leaves no partly covered
+    // pixel to seed from — a rectangle on whole coordinates is the common
+    // case, not a corner one. Where two saturated neighbours disagree, the
+    // edge runs half a pixel from each of their centres.
+    for y in 0..h {
+        for x in 0..w {
+            let i = y * w + x;
+            let c = cov[i];
+            if c != 0 && c != 255 {
+                continue;
+            }
+            let mut neighbour = |j: usize| {
+                let n = cov[j];
+                if (n == 0 || n == 255) && n != c {
+                    f[i] = f[i].min(0.25);
+                    f[j] = f[j].min(0.25);
+                }
+            };
+            if x + 1 < w {
+                neighbour(i + 1);
+            }
+            if y + 1 < h {
+                neighbour(i + w);
+            }
+        }
+    }
+
+    // Felzenszwalb & Huttenlocher: the 2D squared Euclidean transform is the
+    // 1D transform down every column, then along every row. Scratch buffers
+    // are allocated once for the whole image, never per line.
+    let n = w.max(h);
+    let mut line = vec![0.0f32; n];
+    let mut out = vec![0.0f32; n];
+    let mut v = vec![0usize; n];
+    let mut z = vec![0.0f32; n + 1];
+    for x in 0..w {
+        for y in 0..h {
+            line[y] = f[y * w + x];
+        }
+        edt_1d(&line[..h], &mut out[..h], &mut v[..h], &mut z[..=h]);
+        for y in 0..h {
+            f[y * w + x] = out[y];
+        }
+    }
+    for y in 0..h {
+        let row = y * w;
+        line[..w].copy_from_slice(&f[row..row + w]);
+        edt_1d(&line[..w], &mut out[..w], &mut v[..w], &mut z[..=w]);
+        f[row..row + w].copy_from_slice(&out[..w]);
+    }
+
+    for (d, &c) in f.iter_mut().zip(cov) {
+        let inside = c >= 128;
+        *d = d.max(0.0).sqrt() * if inside { 1.0 } else { -1.0 };
+    }
+    f
+}
+
+/// The 1D squared distance transform of a sampled function: `out[q]` is the
+/// lowest `f[p] + (q − p)²` over all `p`. `v` and `z` are scratch (the indices
+/// of the parabolas forming the lower envelope, and where they cross).
+fn edt_1d(f: &[f32], out: &mut [f32], v: &mut [usize], z: &mut [f32]) {
+    let n = f.len();
+    if n == 0 || out.len() < n || v.len() < n || z.len() < n + 1 {
+        return;
+    }
+    let sq = |i: usize| (i as f32) * (i as f32);
+    let mut k = 0usize;
+    v[0] = 0;
+    z[0] = f32::NEG_INFINITY;
+    z[1] = f32::INFINITY;
+    for q in 1..n {
+        let mut s;
+        loop {
+            let p = v[k];
+            s = ((f[q] + sq(q)) - (f[p] + sq(p))) / (2.0 * (q as f32 - p as f32));
+            if k > 0 && s <= z[k] {
+                k -= 1;
+            } else {
+                break;
+            }
+        }
+        k += 1;
+        v[k] = q;
+        z[k] = s;
+        z[k + 1] = f32::INFINITY;
+    }
+    k = 0;
+    for (q, o) in out.iter_mut().enumerate().take(n) {
+        while z[k + 1] < q as f32 {
+            k += 1;
+        }
+        let p = v[k];
+        *o = (q as f32 - p as f32).powi(2) + f[p];
+    }
+}
+
 /// Apply a layer's masks to straight-alpha RGBA8 pixels in place.
-/// Multiple masks combine additively (clamped), then invert/opacity apply
-/// per mask before combination — Phase 1 Add-mode semantics.
+/// Masks combine top to bottom by mode; invert, feather, expansion and
+/// opacity apply to each mask before it joins the stack.
+///
+/// `t` is the owner's time in seconds — layer time for a layer's masks — and
+/// only matters when a path is keyframed.
 pub fn apply_masks(
     rgba: &mut [u8],
     w: u32,
@@ -207,40 +698,77 @@ pub fn apply_masks(
     natural_w: f64,
     natural_h: f64,
     masks: &[Mask],
+    t: f64,
 ) {
     if masks.is_empty() {
         return;
     }
-    let total = combined_coverage(masks, w, h, natural_w, natural_h);
+    let total = combined_coverage(masks, w, h, natural_w, natural_h, t);
     for (px, t) in rgba.chunks_exact_mut(4).zip(total) {
         px[3] = ((u16::from(px[3]) * u16::from(t)) / 255) as u8;
     }
 }
 
 /// The combined 0..255 coverage of a mask stack at `w`×`h` (path coordinates
-/// in `natural` space) — the same Add-mode maths [`apply_masks`] uses, exposed
-/// so GPU-sourced layers (Precomps) can upload it as a texture instead of
+/// in `natural` space) — the same maths [`apply_masks`] uses, exposed so
+/// GPU-sourced layers (Precomps) can upload it as a texture instead of
 /// editing pixels they don't have.
+///
+/// Masks fold in list order, top to bottom, each one's own coverage
+/// (feathered, expanded, inverted, then faded by its opacity) combined into
+/// the running total by its mode. Order therefore matters: subtracting B from
+/// A is not subtracting A from B.
+///
+/// **What the first mask combines with.** The fold has to start somewhere, and
+/// zero is only the right start for Add — a lone Subtract mask against an
+/// empty total would cut a hole in nothing and leave the layer invisible,
+/// where every editor (and every user) expects a hole in the picture. So the
+/// stack starts empty when the topmost mask that does anything is Add, and
+/// full-frame otherwise: Subtract cuts its hole, Intersect first shows just
+/// itself, Difference first shows its inverse. That matches After Effects.
 pub fn combined_coverage(
     masks: &[Mask],
     w: u32,
     h: u32,
     natural_w: f64,
     natural_h: f64,
+    t: f64,
 ) -> Vec<u8> {
     let sx = f64::from(w) / natural_w.max(1.0);
     let sy = f64::from(h) / natural_h.max(1.0);
-    let mut total = vec![0u16; (w * h) as usize];
+    let base: u16 = match masks
+        .iter()
+        .find(|m| m.does_something_at(t))
+        .map(|m| m.mode)
+    {
+        Some(MaskMode::Add) => 0,
+        // Including `None`: no mask does anything, so nothing is masked and the
+        // layer is whole. Starting at zero here would hide a layer because it
+        // carries one switched-off mask, which reads as the mask doing the
+        // exact opposite of nothing.
+        _ => 255,
+    };
+    let mut total = vec![base; (w * h) as usize];
     for mask in masks {
-        let cov = rasterise(&mask.path, w, h, sx, sy);
-        let op = (mask.opacity.clamp(0.0, 100.0) / 100.0 * 255.0) as u16;
+        if !mask.does_something_at(t) {
+            continue;
+        }
+        let cov = mask_coverage(mask, w, h, sx, sy, t);
+        let op = (mask.opacity.value_at(t).clamp(0.0, 100.0) / 100.0 * 255.0) as u16;
         for (t, c) in total.iter_mut().zip(cov) {
             let c = if mask.inverted {
                 255 - u16::from(c)
             } else {
                 u16::from(c)
             };
-            *t = (*t + c * op / 255).min(255);
+            let c = c * op / 255;
+            *t = match mask.mode {
+                MaskMode::None => *t,
+                MaskMode::Add => (*t + c).min(255),
+                MaskMode::Subtract => t.saturating_sub(c),
+                MaskMode::Intersect => (*t).min(c),
+                MaskMode::Difference => t.abs_diff(c),
+            };
         }
     }
     total.into_iter().map(|t| t as u8).collect()
@@ -305,17 +833,572 @@ mod tests {
     fn apply_masks_gates_alpha_with_invert_and_opacity() {
         let m = Mask::rectangle(0.0, 0.0, 2.0, 4.0); // left half of 4×4
         let mut rgba = vec![255u8; 4 * 4 * 4];
-        apply_masks(&mut rgba, 4, 4, 4.0, 4.0, std::slice::from_ref(&m));
+        apply_masks(&mut rgba, 4, 4, 4.0, 4.0, std::slice::from_ref(&m), 0.0);
         assert_eq!(rgba[4 * 4 + 3], 255, "left opaque");
         assert_eq!(rgba[(4 + 3) * 4 + 3], 0, "right transparent");
 
         let mut inv = m.clone();
         inv.inverted = true;
-        inv.opacity = 50.0;
+        inv.opacity = Property::fixed(50.0);
         let mut rgba = vec![255u8; 4 * 4 * 4];
-        apply_masks(&mut rgba, 4, 4, 4.0, 4.0, &[inv]);
+        apply_masks(&mut rgba, 4, 4, 4.0, 4.0, &[inv], 0.0);
         assert_eq!(rgba[4 * 4 + 3], 0, "inverted left transparent");
         let right = rgba[(4 + 3) * 4 + 3];
         assert!((i16::from(right) - 127).abs() <= 2, "half opacity {right}");
+    }
+
+    /// Two 16-wide-tall rectangles: A covers x 0..10, B covers x 6..16, so
+    /// x=2 is A only, x=8 is both, x=12 is B only.
+    fn overlapping(mode: MaskMode) -> Vec<u8> {
+        let a = Mask::rectangle(0.0, 0.0, 10.0, 16.0);
+        let mut b = Mask::rectangle(6.0, 0.0, 10.0, 16.0);
+        b.mode = mode;
+        combined_coverage(&[a, b], 16, 16, 16.0, 16.0, 0.0)
+    }
+
+    fn at(cov: &[u8], x: usize) -> u8 {
+        cov[8 * 16 + x]
+    }
+
+    #[test]
+    fn each_mode_combines_as_specified() {
+        let add = overlapping(MaskMode::Add);
+        assert_eq!((at(&add, 2), at(&add, 8), at(&add, 12)), (255, 255, 255));
+
+        let sub = overlapping(MaskMode::Subtract);
+        assert_eq!((at(&sub, 2), at(&sub, 8), at(&sub, 12)), (255, 0, 0));
+
+        let int = overlapping(MaskMode::Intersect);
+        assert_eq!((at(&int, 2), at(&int, 8), at(&int, 12)), (0, 255, 0));
+
+        let dif = overlapping(MaskMode::Difference);
+        assert_eq!((at(&dif, 2), at(&dif, 8), at(&dif, 12)), (255, 0, 255));
+    }
+
+    #[test]
+    fn none_mode_contributes_nothing() {
+        let none = overlapping(MaskMode::None);
+        let alone = combined_coverage(
+            std::slice::from_ref(&Mask::rectangle(0.0, 0.0, 10.0, 16.0)),
+            16,
+            16,
+            16.0,
+            16.0,
+            0.0,
+        );
+        assert_eq!(none, alone, "a None mask is geometry only");
+    }
+
+    /// **A mask that is switched off leaves the layer whole.** Both switches —
+    /// mode `None` and opacity zero — used to hide the layer completely when
+    /// the mask was the only one on it: the fold started from nothing and then
+    /// skipped the very mask it had started from, so the layer ended up masked
+    /// by an empty shape. The opposite of doing nothing.
+    #[test]
+    fn a_switched_off_mask_leaves_the_layer_whole() {
+        for off in [
+            {
+                let mut m = Mask::rectangle(0.0, 0.0, 8.0, 8.0);
+                m.mode = MaskMode::None;
+                m
+            },
+            {
+                let mut m = Mask::rectangle(0.0, 0.0, 8.0, 8.0);
+                m.opacity = Property::zero();
+                m
+            },
+            {
+                // Off by opacity while asking to subtract: still off.
+                let mut m = Mask::rectangle(0.0, 0.0, 8.0, 8.0);
+                m.mode = MaskMode::Subtract;
+                m.opacity = Property::zero();
+                m
+            },
+        ] {
+            let cov = combined_coverage(std::slice::from_ref(&off), 16, 16, 16.0, 16.0, 0.0);
+            assert!(
+                cov.iter().all(|c| *c == 255),
+                "mode {:?} at {} % hid the layer",
+                off.mode,
+                off.opacity.value_at(0.0),
+            );
+        }
+    }
+
+    #[test]
+    fn a_lone_subtract_mask_cuts_a_hole() {
+        let mut m = Mask::rectangle(0.0, 0.0, 8.0, 16.0);
+        m.mode = MaskMode::Subtract;
+        let cov = combined_coverage(std::slice::from_ref(&m), 16, 16, 16.0, 16.0, 0.0);
+        assert_eq!(at(&cov, 4), 0, "inside the subtracted shape");
+        assert_eq!(at(&cov, 12), 255, "the rest of the frame stays");
+    }
+
+    #[test]
+    fn subtract_order_matters() {
+        let a = Mask::rectangle(0.0, 0.0, 10.0, 16.0);
+        let b = Mask::rectangle(6.0, 0.0, 10.0, 16.0);
+        let mut b_sub = b.clone();
+        b_sub.mode = MaskMode::Subtract;
+        let mut a_sub = a.clone();
+        a_sub.mode = MaskMode::Subtract;
+
+        let a_then_b = combined_coverage(&[a, b_sub], 16, 16, 16.0, 16.0, 0.0);
+        let b_then_a = combined_coverage(&[b, a_sub], 16, 16, 16.0, 16.0, 0.0);
+        assert_ne!(a_then_b, b_then_a);
+        assert_eq!((at(&a_then_b, 2), at(&a_then_b, 12)), (255, 0));
+        assert_eq!((at(&b_then_a, 2), at(&b_then_a, 12)), (0, 255));
+    }
+
+    #[test]
+    fn zero_feather_and_expansion_leave_the_raster_untouched() {
+        let m = Mask::ellipse(32.0, 32.0, 20.0, 12.0);
+        assert_eq!(
+            mask_coverage(&m, 64, 64, 1.0, 1.0, 0.0),
+            rasterise(&m.path, 64, 64, 1.0, 1.0),
+            "the fast path must return the rasteriser's own bytes"
+        );
+    }
+
+    fn area(cov: &[u8]) -> f64 {
+        cov.iter().map(|c| f64::from(*c) / 255.0).sum()
+    }
+
+    #[test]
+    fn expansion_grows_and_shrinks_the_shape() {
+        let base = Mask::rectangle(30.0, 30.0, 40.0, 40.0);
+        let with = |e: f64| {
+            let mut m = base.clone();
+            m.expansion = Property::fixed(e);
+            area(&mask_coverage(&m, 100, 100, 1.0, 1.0, 0.0))
+        };
+        // Growing a square by r gives a square with rounded corners:
+        // (40+2r)² minus the four corner squares, plus the quarter-discs.
+        let grown = 50.0 * 50.0 - 4.0 * 25.0 + std::f64::consts::PI * 25.0;
+        assert!(
+            (with(5.0) - grown).abs() / grown < 0.05,
+            "grown {} vs {grown}",
+            with(5.0)
+        );
+        // Shrinking gives the inset square, its corners a little rounded off
+        // (distance is measured to the nearest point of the path, so corners
+        // round both ways — as they do in After Effects).
+        assert!(
+            (with(-5.0) - 900.0).abs() / 900.0 < 0.08,
+            "shrunk {}",
+            with(-5.0)
+        );
+        assert_eq!(with(-40.0), 0.0, "a big negative expansion erases the mask");
+    }
+
+    #[test]
+    fn feather_ramps_monotonically_across_the_edge() {
+        let mut m = Mask::rectangle(0.0, 0.0, 50.0, 100.0); // left half
+        m.feather = Property::fixed(12.0);
+        let cov = mask_coverage(&m, 100, 100, 1.0, 1.0, 0.0);
+        let row: Vec<u8> = (0..100).map(|x| cov[50 * 100 + x]).collect();
+        for pair in row.windows(2) {
+            assert!(pair[0] >= pair[1], "ramp goes back up: {row:?}");
+        }
+        assert_eq!(row[0], 255, "deep inside");
+        assert_eq!(row[99], 0, "well outside");
+        let soft = row.iter().filter(|c| **c > 0 && **c < 255).count();
+        assert!(
+            soft >= 8,
+            "a 12px feather should span several pixels: {soft}"
+        );
+    }
+
+    #[test]
+    fn feather_and_expansion_keep_their_shape_at_half_preview_scale() {
+        let mut m = Mask::rectangle(25.0, 25.0, 50.0, 50.0);
+        m.feather = Property::fixed(10.0);
+        m.expansion = Property::fixed(4.0);
+        // Path coordinates are natural 100×100 in both cases.
+        let full = area(&mask_coverage(&m, 100, 100, 1.0, 1.0, 0.0)) / (100.0 * 100.0);
+        let half = area(&mask_coverage(&m, 50, 50, 0.5, 0.5, 0.0)) / (50.0 * 50.0);
+        assert!(
+            (full - half).abs() < 0.02,
+            "covered fraction {full} full vs {half} half"
+        );
+    }
+
+    #[test]
+    fn inverting_a_feathered_mask_is_the_complement_of_its_feather() {
+        let mut m = Mask::ellipse(32.0, 32.0, 16.0, 16.0);
+        m.feather = Property::fixed(9.0);
+        let plain = combined_coverage(std::slice::from_ref(&m), 64, 64, 64.0, 64.0, 0.0);
+        let mut inv = m.clone();
+        inv.inverted = true;
+        // Inverted alone would start the fold at zero for Add, so compare the
+        // mask's own contribution: Add onto an empty stack is the coverage.
+        let inverted = combined_coverage(std::slice::from_ref(&inv), 64, 64, 64.0, 64.0, 0.0);
+        for (i, (p, q)) in plain.iter().zip(&inverted).enumerate() {
+            assert_eq!(255 - p, *q, "pixel {i}: {p} then {q}");
+        }
+    }
+
+    #[test]
+    fn masks_without_the_new_fields_load_as_add() {
+        let json = r#"{"id":"018f0000-0000-7000-8000-000000000000","name":"M",
+            "path":{"vertices":[],"closed":true},"inverted":false,"opacity":100.0}"#;
+        let m: Mask = serde_json::from_str(json).unwrap();
+        assert_eq!(m.mode, MaskMode::Add);
+        assert_eq!(m.feather, Property::zero());
+        assert_eq!(m.expansion, Property::zero());
+        assert_eq!(m.opacity, Property::fixed(100.0));
+        // …and an untouched mask serialises exactly as it did before, so the
+        // frame cache keeps the frames it already banked.
+        let round = serde_json::to_string(&m).unwrap();
+        assert!(!round.contains("mode"), "{round}");
+        assert!(!round.contains("feather"), "{round}");
+        assert!(round.contains(r#""opacity":100.0"#), "{round}");
+    }
+
+    /// **A still mask still writes bare numbers; only a keyed one grows.**
+    ///
+    /// The three values became animatable in K-340, and animatable normally
+    /// means an object in the file. That would have retired every frame every
+    /// project has banked, because the frame key names a mask by the bytes it
+    /// serialises to — so the encoding stays a bare number until somebody
+    /// actually keys the property.
+    #[test]
+    fn a_still_mask_writes_bare_numbers_and_a_keyed_one_does_not() {
+        let mut m = Mask::rectangle(0.0, 0.0, 8.0, 8.0);
+        m.feather = Property::fixed(4.0);
+        let still = serde_json::to_string(&m).unwrap();
+        assert!(still.contains(r#""opacity":100.0"#), "{still}");
+        assert!(still.contains(r#""feather":4.0"#), "{still}");
+        assert!(!still.contains("animation"), "{still}");
+        assert_eq!(serde_json::from_str::<Mask>(&still).unwrap(), m);
+
+        m.opacity = Property {
+            animation: Animation::Keyframed(vec![Keyframe {
+                time: Rational::new(0, 1).unwrap(),
+                value: 20.0,
+                interp_in: SideInterp::Linear,
+                interp_out: SideInterp::Linear,
+            }]),
+            extra: serde_json::Map::new(),
+        };
+        let keyed = serde_json::to_string(&m).unwrap();
+        assert!(keyed.contains("animation"), "{keyed}");
+        // And it comes back as what it was, so a keyed mask survives a save.
+        assert_eq!(serde_json::from_str::<Mask>(&keyed).unwrap(), m);
+    }
+
+    // ---- Animated paths -------------------------------------------------
+
+    fn rat(n: i64, d: i64) -> Rational {
+        Rational::new(n, d).unwrap()
+    }
+
+    fn pkey(t: (i64, i64), path: &BezierPath, side: SideInterp) -> PathKeyframe {
+        PathKeyframe {
+            time: rat(t.0, t.1),
+            path: path.clone(),
+            interp_in: side,
+            interp_out: side,
+        }
+    }
+
+    /// Move every vertex of a path by (dx, dy), tangents untouched.
+    fn shifted(path: &BezierPath, dx: f64, dy: f64) -> BezierPath {
+        BezierPath {
+            vertices: path
+                .vertices
+                .iter()
+                .map(|v| Vertex {
+                    pos: (v.pos.0 + dx, v.pos.1 + dy),
+                    ..*v
+                })
+                .collect(),
+            closed: path.closed,
+        }
+    }
+
+    /// Points along the curve itself, `per_seg` per segment.
+    fn curve_points(p: &BezierPath, per_seg: usize) -> Vec<(f64, f64)> {
+        let n = p.vertices.len();
+        let segs = if p.closed { n } else { n.saturating_sub(1) };
+        let mut out = Vec::with_capacity(segs * per_seg);
+        for i in 0..segs {
+            let (a, b) = (p.vertices[i], p.vertices[(i + 1) % n]);
+            let c = [
+                a.pos,
+                (a.pos.0 + a.tan_out.0, a.pos.1 + a.tan_out.1),
+                (b.pos.0 + b.tan_in.0, b.pos.1 + b.tan_in.1),
+                b.pos,
+            ];
+            for s in 0..per_seg {
+                let t = s as f64 / per_seg as f64;
+                let u = 1.0 - t;
+                let mix = |f: fn(&(f64, f64)) -> f64| {
+                    u * u * u * f(&c[0])
+                        + 3.0 * u * u * t * f(&c[1])
+                        + 3.0 * u * t * t * f(&c[2])
+                        + t * t * t * f(&c[3])
+                };
+                out.push((mix(|q| q.0), mix(|q| q.1)));
+            }
+        }
+        out
+    }
+
+    /// The furthest any point of `a` sits from the nearest point of `b` — a
+    /// one-sided Hausdorff distance, which is how "the same curve" is checked.
+    fn deviation(a: &[(f64, f64)], b: &[(f64, f64)]) -> f64 {
+        a.iter()
+            .map(|p| {
+                b.iter()
+                    .map(|q| ((p.0 - q.0).powi(2) + (p.1 - q.1).powi(2)).sqrt())
+                    .fold(f64::MAX, f64::min)
+            })
+            .fold(0.0, f64::max)
+    }
+
+    #[test]
+    fn an_unanimated_mask_is_byte_identical_on_disk() {
+        // The frame-cache guarantee: adding path keys to the model must not
+        // change one byte of a mask that has none, or every frame every
+        // existing project has banked is retired.
+        let m = Mask::ellipse(10.0, 10.0, 5.0, 5.0);
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(!json.contains("path_keys"), "{json}");
+        // And a file written before path keys existed still loads.
+        let old = r#"{"id":"018f0000-0000-7000-8000-000000000000","name":"M",
+            "path":{"vertices":[],"closed":true},"inverted":false,"opacity":100.0}"#;
+        let loaded: Mask = serde_json::from_str(old).unwrap();
+        assert!(loaded.path_keys.is_empty());
+        assert!(!loaded.path_is_animated());
+        assert!(!serde_json::to_string(&loaded)
+            .unwrap()
+            .contains("path_keys"));
+    }
+
+    #[test]
+    fn a_mask_without_keys_is_its_static_path_at_every_time() {
+        let m = Mask::rectangle(1.0, 2.0, 3.0, 4.0);
+        for t in [-100.0, 0.0, 0.5, 1e6] {
+            assert_eq!(*m.path_at(t), m.path, "at t={t}");
+        }
+        // One key holds for all time, the static path ignored.
+        let mut one = m.clone();
+        let other = Mask::rectangle(50.0, 50.0, 3.0, 4.0).path;
+        one.path_keys = vec![pkey((1, 1), &other, SideInterp::Linear)];
+        for t in [-5.0, 1.0, 9.0] {
+            assert_eq!(*one.path_at(t), other, "at t={t}");
+        }
+    }
+
+    #[test]
+    fn equal_vertex_counts_blend_position_and_both_tangents() {
+        let a = Mask::ellipse(0.0, 0.0, 10.0, 10.0).path;
+        let b = BezierPath {
+            vertices: a
+                .vertices
+                .iter()
+                .map(|v| Vertex {
+                    pos: (v.pos.0 + 20.0, v.pos.1 + 4.0),
+                    tan_in: (v.tan_in.0 * 3.0, v.tan_in.1 * 3.0),
+                    tan_out: (v.tan_out.0 * 3.0, v.tan_out.1 * 3.0),
+                })
+                .collect(),
+            closed: true,
+        };
+        let mut m = Mask::rectangle(0.0, 0.0, 1.0, 1.0);
+        m.path_keys = vec![
+            pkey((0, 1), &a, SideInterp::Linear),
+            pkey((2, 1), &b, SideInterp::Linear),
+        ];
+
+        // Exactly each key at its own time.
+        assert_eq!(*m.path_at(0.0), a);
+        assert_eq!(*m.path_at(2.0), b);
+
+        let mid = m.path_at(1.0);
+        assert_eq!(mid.vertices.len(), a.vertices.len());
+        for (i, v) in mid.vertices.iter().enumerate() {
+            let (p, q) = (a.vertices[i], b.vertices[i]);
+            let half = |x: f64, y: f64| (x + y) * 0.5;
+            assert!(
+                (v.pos.0 - half(p.pos.0, q.pos.0)).abs() < 1e-12,
+                "pos.x {i}"
+            );
+            assert!(
+                (v.pos.1 - half(p.pos.1, q.pos.1)).abs() < 1e-12,
+                "pos.y {i}"
+            );
+            assert!(
+                (v.tan_in.0 - half(p.tan_in.0, q.tan_in.0)).abs() < 1e-12,
+                "tan_in {i}"
+            );
+            assert!(
+                (v.tan_out.1 - half(p.tan_out.1, q.tan_out.1)).abs() < 1e-12,
+                "tan_out {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn resampling_keeps_the_curve_it_was() {
+        for base in [
+            Mask::ellipse(30.0, 30.0, 20.0, 12.0).path,
+            Mask::star(50.0, 50.0, 40.0, 16.0, 5).path,
+            BezierPath {
+                // An open path: three vertices, two segments, real handles.
+                vertices: vec![
+                    Vertex {
+                        pos: (0.0, 0.0),
+                        tan_in: (0.0, 0.0),
+                        tan_out: (10.0, 20.0),
+                    },
+                    Vertex {
+                        pos: (30.0, 0.0),
+                        tan_in: (-8.0, 15.0),
+                        tan_out: (8.0, -15.0),
+                    },
+                    Vertex {
+                        pos: (60.0, 10.0),
+                        tan_in: (-10.0, -20.0),
+                        tan_out: (0.0, 0.0),
+                    },
+                ],
+                closed: false,
+            },
+        ] {
+            let n = base.vertices.len();
+            for target in [n + 1, n + 3, n * 2, n * 3 + 1] {
+                let r = resample(&base, target);
+                assert_eq!(r.vertices.len(), target, "count for target {target}");
+                assert_eq!(r.closed, base.closed);
+                let dense = curve_points(&base, 2000);
+                let probe = curve_points(&r, 200);
+                let d = deviation(&probe, &dense);
+                assert!(d < 0.02, "resample to {target} moved the curve by {d}");
+            }
+        }
+    }
+
+    #[test]
+    fn resampling_is_deterministic() {
+        let p = Mask::ellipse(3.0, -7.0, 11.0, 4.0).path;
+        assert_eq!(resample(&p, 9), resample(&p, 9));
+        // …and so is a whole interpolation built on it.
+        let q = shifted(&p, 5.0, 5.0);
+        let once = lerp_paths(&p, &resample(&q, 9), 0.37);
+        let twice = lerp_paths(&p, &resample(&q, 9), 0.37);
+        assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn mismatched_vertex_counts_still_land_on_each_key() {
+        let sparse = Mask::ellipse(20.0, 20.0, 10.0, 10.0).path; // 4 vertices
+        let dense = resample(&shifted(&sparse, 40.0, 0.0), 7); // 7 vertices
+        let mut m = Mask::rectangle(0.0, 0.0, 1.0, 1.0);
+        m.path_keys = vec![
+            pkey((0, 1), &sparse, SideInterp::Linear),
+            pkey((1, 1), &dense, SideInterp::Linear),
+        ];
+
+        // At each key the shape is that key's own curve, exactly — a key's own
+        // time never goes near the blend.
+        assert_eq!(*m.path_at(0.0), sparse);
+        // Just inside the span the counts are reconciled upward, and the shape
+        // is still the sparse key's curve.
+        let just_after = m.path_at(1e-9);
+        assert_eq!(just_after.vertices.len(), 7, "reconciled upward");
+        let d = deviation(
+            &curve_points(&just_after, 200),
+            &curve_points(&sparse, 2000),
+        );
+        assert!(d < 0.02, "the first key's curve moved by {d}");
+        let at_end = m.path_at(1.0);
+        assert_eq!(*at_end, dense, "the denser key is used as it stands");
+
+        // And halfway across, halfway along.
+        let mid = m.path_at(0.5);
+        assert_eq!(mid.vertices.len(), 7);
+        assert!((mid.vertices[0].pos.0 - (sparse.vertices[0].pos.0 + 20.0)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn hold_holds_and_a_bezier_ease_is_not_linear_in_the_middle() {
+        let a = Mask::rectangle(0.0, 0.0, 10.0, 10.0).path;
+        let b = shifted(&a, 100.0, 0.0);
+        let mut m = Mask::rectangle(0.0, 0.0, 1.0, 1.0);
+
+        m.path_keys = vec![
+            pkey((0, 1), &a, SideInterp::Hold),
+            pkey((1, 1), &b, SideInterp::Hold),
+        ];
+        assert_eq!(*m.path_at(0.5), a, "a held span does not move");
+        assert_eq!(*m.path_at(0.999), a);
+        assert_eq!(*m.path_at(1.0), b, "and steps at the next key");
+
+        m.path_keys = vec![
+            pkey((0, 1), &a, crate::anim::EASY_EASE),
+            pkey((1, 1), &b, crate::anim::EASY_EASE),
+        ];
+        assert_eq!(*m.path_at(0.0), a, "exact at the first key");
+        assert_eq!(*m.path_at(1.0), b, "exact at the last key");
+        // Linear would put the shape at x=25 a quarter of the way through; an
+        // ease is still gathering pace.
+        let quarter = m.path_at(0.25).vertices[0].pos.0;
+        assert!(
+            quarter < 20.0 && quarter > 0.0,
+            "eased quarter at x={quarter}, linear would be 25"
+        );
+    }
+
+    #[test]
+    fn a_closed_path_stays_closed_and_closedness_is_held_not_blended() {
+        let closed = Mask::ellipse(20.0, 20.0, 10.0, 10.0).path;
+        let mut open = shifted(&closed, 30.0, 0.0);
+        open.closed = false;
+        let mut m = Mask::rectangle(0.0, 0.0, 1.0, 1.0);
+
+        m.path_keys = vec![
+            pkey((0, 1), &closed, SideInterp::Linear),
+            pkey((1, 1), &shifted(&closed, 30.0, 0.0), SideInterp::Linear),
+        ];
+        for t in [0.0, 0.3, 0.5, 1.0] {
+            assert!(m.path_at(t).closed, "closed at t={t}");
+        }
+
+        // Closed → open: the flag is not a quantity, so it holds across the
+        // span and flips at the second key, exactly like a Hold keyframe. The
+        // geometry interpolates normally throughout.
+        m.path_keys = vec![
+            pkey((0, 1), &closed, SideInterp::Linear),
+            pkey((1, 1), &open, SideInterp::Linear),
+        ];
+        assert!(m.path_at(0.0).closed);
+        assert!(m.path_at(0.99).closed, "held until the next key");
+        assert!(!m.path_at(1.0).closed, "and the open key is exactly itself");
+        assert!(
+            (m.path_at(0.5).vertices[0].pos.0 - (closed.vertices[0].pos.0 + 15.0)).abs() < 1e-9
+        );
+    }
+
+    #[test]
+    fn an_animated_mask_gates_different_pixels_at_different_times() {
+        // The end-to-end proof: a 4-wide square crossing a 16-wide frame.
+        let left = Mask::rectangle(0.0, 0.0, 4.0, 16.0).path;
+        let right = shifted(&left, 12.0, 0.0);
+        let mut m = Mask::rectangle(0.0, 0.0, 1.0, 1.0);
+        m.path_keys = vec![
+            pkey((0, 1), &left, SideInterp::Linear),
+            pkey((1, 1), &right, SideInterp::Linear),
+        ];
+
+        let alpha_at = |t: f64| {
+            let mut rgba = vec![255u8; 16 * 16 * 4];
+            apply_masks(&mut rgba, 16, 16, 16.0, 16.0, std::slice::from_ref(&m), t);
+            let px = |x: usize| rgba[(8 * 16 + x) * 4 + 3];
+            (px(2), px(14))
+        };
+        assert_eq!(alpha_at(0.0), (255, 0), "the square starts at the left");
+        assert_eq!(alpha_at(1.0), (0, 255), "and ends at the right");
     }
 }

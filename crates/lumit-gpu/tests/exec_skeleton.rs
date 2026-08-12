@@ -442,7 +442,9 @@ impl Rig {
     fn readback(&self, h: FrameHandle) -> Vec<u8> {
         let frames = self.frames.borrow();
         let tex = frames.get(h).expect("handle is valid");
-        let shown = self.colour.display(&self.ctx, tex);
+        let shown = self
+            .colour
+            .display(&self.ctx, tex, lumit_gpu::DisplayParams::NEUTRAL);
         self.colour.readback8(&self.ctx, &shown).expect("readback")
     }
 }

@@ -24,7 +24,6 @@ name: release
 on:
   push:
     tags: ["v*"]
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -69,7 +68,6 @@ jobs:
         shell: pwsh
         run: |
           $version = "$env:GITHUB_REF_NAME".TrimStart('v')
-          if (-not $version) { $version = '0.0.0' }
           & packaging/windows/build-installer.ps1 -Version $version
       # The same files the installer lays down, as a plain archive (K-297).
       # This is what a per-user installation fetches to update itself: no
@@ -78,7 +76,6 @@ jobs:
         shell: pwsh
         run: |
           $version = "$env:GITHUB_REF_NAME".TrimStart('v')
-          if (-not $version) { $version = '0.0.0' }
           $stage = "$env:RUNNER_TEMP\lumit-package"
           New-Item -ItemType Directory -Force -Path "$stage\icons" | Out-Null
           Copy-Item -Recurse -Force flutter_ui\build\windows\x64\runner\Release\* $stage
@@ -138,7 +135,7 @@ jobs:
       - name: Stage the bundle
         run: |
           version="${GITHUB_REF_NAME#v}"
-          stage="lumit-${version:-0.0.0}-linux-x64"
+          stage="lumit-$version-linux-x64"
           cp -r flutter_ui/build/linux/x64/release/bundle "$stage"
           # The bridge links FFmpeg's shared build; the launcher's rpath already
           # covers lib/, so the .so files ride along there.
@@ -158,7 +155,6 @@ jobs:
         # publishing a Linux-shaped hole.
         run: |
           version="${GITHUB_REF_NAME#v}"
-          version="${version:-0.0.0}"
           stage="lumit-$version-linux-x64"
           # Two packages flatpak-builder needs but does not depend on, both of
           # which --no-install-recommends would otherwise drop:
@@ -261,7 +257,7 @@ jobs:
       - name: Build the disk image
         run: |
           version="${GITHUB_REF_NAME#v}"
-          packaging/macos/make-dmg.sh "${version:-0.0.0}"
+          packaging/macos/make-dmg.sh "$version"
       # The bundle on its own, for in-place updates (K-297). `ditto` rather than
       # `zip`: an .app carries symbolic links, code signatures and executable
       # bits, and an archiver that drops those produces a bundle macOS refuses
@@ -269,7 +265,6 @@ jobs:
       - name: Package the bundle for in-place updates
         run: |
           version="${GITHUB_REF_NAME#v}"
-          version="${version:-0.0.0}"
           app="flutter_ui/build/macos/Build/Products/Release/Lumit.app"
           mkdir -p packaging/macos/dist
           ditto -c -k --keepParent "$app" \

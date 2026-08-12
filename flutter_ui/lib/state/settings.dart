@@ -192,6 +192,16 @@ class InterfaceSettings {
   /// the single wave and the stack alike.
   bool waveformsFromBottom;
 
+  /// Whether the Viewer bar carries its tone map button (K-314).
+  ///
+  /// Off by default: tone mapping is a preview-only way of reading a picture
+  /// brighter than the screen can show, which most work never needs, and a
+  /// button that changes what the Viewer shows is not one to leave lying about
+  /// for people who will never want it. Off also *disengages* it — the
+  /// effective look's tone map is false whatever a comp stored — so hiding the
+  /// button can never strand an engaged look with nothing to turn it off.
+  bool showToneMap;
+
   /// The interface language, as a BCP-47 tag (`en`, `de`, `zh`), or null to
   /// follow whatever the machine is set to (K-303).
   ///
@@ -214,6 +224,7 @@ class InterfaceSettings {
     this.pasteLayersAtOriginalTime = false,
     this.multiwaveWaveforms = true,
     this.waveformsFromBottom = false,
+    this.showToneMap = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -228,6 +239,7 @@ class InterfaceSettings {
         'paste_layers_at_original_time': pasteLayersAtOriginalTime,
         'multiwave_waveforms': multiwaveWaveforms,
         'waveforms_from_bottom': waveformsFromBottom,
+        'show_tone_map': showToneMap,
       };
   factory InterfaceSettings.fromJson(Map<String, dynamic> j) =>
       InterfaceSettings(
@@ -262,5 +274,9 @@ class InterfaceSettings {
         // Absent means off: centred is what a settings file written before
         // this field existed was already drawing.
         waveformsFromBottom: j['waveforms_from_bottom'] as bool? ?? false,
+        // Absent means off: hidden is the new default, and a settings file
+        // written before this field existed adopts it — a comp that stored an
+        // engaged tone map is disengaged with it rather than left stranded.
+        showToneMap: j['show_tone_map'] as bool? ?? false,
       );
 }

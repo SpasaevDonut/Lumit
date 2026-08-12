@@ -82,6 +82,39 @@ Offset constrainToAxis(Offset delta) => delta.dx.abs() >= delta.dy.abs()
     ? Offset(delta.dx, 0)
     : Offset(0, delta.dy);
 
+/// Ctrl (Cmd on a Mac): the snap modifier, spelled the way the keymap spells
+/// its primary modifier (state/keymap.dart).
+bool isPrimaryModifierHeld() => defaultTargetPlatform == TargetPlatform.macOS
+    ? HardwareKeyboard.instance.isMetaPressed
+    : HardwareKeyboard.instance.isControlPressed;
+
+/// Where the anchor should sit, in layer space, for a pointer at [screen] —
+/// with the two modifiers every pivot gesture shares (K-220): Shift locks the
+/// drag to one screen axis measured from [lockFrom], Ctrl (Cmd) snaps to the
+/// layer's own key points. Shared by this tool and the gizmo's anchor handle
+/// (K-221), so the two cannot drift apart.
+Offset wantedAnchorAt(LayerBox box, Offset screen, {Offset? lockFrom}) {
+  var at = screen;
+  if (lockFrom != null && HardwareKeyboard.instance.isShiftPressed) {
+    at = lockFrom + constrainToAxis(screen - lockFrom);
+  }
+  final wanted = box.map.layerOf(at);
+  return isPrimaryModifierHeld() ? snapAnchor(wanted, box) : wanted;
+}
+
+/// The Position that keeps the picture still while [box]'s anchor moves to
+/// [anchor] — the pan-behind sum bound to a box's own numbers, shared by every
+/// gesture that slides a pivot. The maths itself is `panBehindPosition` in
+/// viewer_layer_map.dart, ported and unit-tested.
+Offset panBehindFor(LayerBox box, Offset anchor) => panBehindPosition(
+      oldAnchor: Offset(box.map.ax, box.map.ay),
+      newAnchor: anchor,
+      position: Offset(box.map.px, box.map.py),
+      scaleXPercent: box.map.sx * 100,
+      scaleYPercent: box.map.sy * 100,
+      rotationDegrees: box.rotationDegrees,
+    );
+
 /// The Anchor point tool over the picture.
 class ViewerAnchorLayer extends StatefulWidget {
   /// Whether the tool is armed. Inert otherwise.
@@ -216,7 +249,7 @@ class _ViewerAnchorLayerState extends State<ViewerAnchorLayer> {
   /// the picture does not move. One op, so one undo step.
   void _place(LayerBox box, Offset at) {
     final anchor = _wantedAnchor(box, at);
-    final position = _panBehind(box, anchor);
+    final position = panBehindFor(box, anchor);
     try {
       box.layer.setTransforms(
         props: const [
@@ -265,22 +298,8 @@ class _ViewerAnchorLayerState extends State<ViewerAnchorLayer> {
   ///
   /// Shift still locks to one screen axis, measured from where the press
   /// landed; Ctrl (Cmd) still snaps to the layer's own key points.
-  Offset _wantedAnchor(LayerBox box, Offset at) {
-    var wantedScreen = at;
-    if (HardwareKeyboard.instance.isShiftPressed) {
-      final from = _downAt ?? at;
-      wantedScreen = from + constrainToAxis(at - from);
-    }
-    final wanted = box.map.layerOf(wantedScreen);
-    return _isPrimaryModifierHeld ? snapAnchor(wanted, box) : wanted;
-  }
-
-  /// Ctrl (Cmd on a Mac): the snap modifier, spelled the way the keymap spells
-  /// its primary modifier (state/keymap.dart).
-  bool get _isPrimaryModifierHeld =>
-      defaultTargetPlatform == TargetPlatform.macOS
-          ? HardwareKeyboard.instance.isMetaPressed
-          : HardwareKeyboard.instance.isControlPressed;
+  Offset _wantedAnchor(LayerBox box, Offset at) =>
+      wantedAnchorAt(box, at, lockFrom: _downAt ?? at);
 
   void _onPanUpdate(DragUpdateDetails details) {
     setState(() => _pointer = details.localPosition);
@@ -288,26 +307,19 @@ class _ViewerAnchorLayerState extends State<ViewerAnchorLayer> {
     final at = _pointer;
     if (box == null || at == null) return;
     final anchor = _wantedAnchor(box, at);
-    final position = _panBehind(box, anchor);
+    final position = panBehindFor(box, anchor);
     _throttle.request(() {
       try {
-        final tf = box.layer.getTransform();
         widget.comp.renderFrameWithTransformPreview(
           frame: BigInt.from(widget.uiState.playheadFrame.value),
           scale: widget.uiState.viewerScale,
           layer: box.layer,
-          transform: BridgeTransform(
-            anchorX: BridgeScalar.static_(anchor.dx),
-            anchorY: BridgeScalar.static_(anchor.dy),
-            positionX: BridgeScalar.static_(position.dx),
-            positionY: BridgeScalar.static_(position.dy),
-            positionZ: tf.positionZ,
-            scaleX: tf.scaleX,
-            scaleY: tf.scaleY,
-            rotation: tf.rotation,
-            rotationX: tf.rotationX,
-            rotationY: tf.rotationY,
-            opacity: tf.opacity,
+          transform: transformWith(
+            box.layer.getTransform(),
+            anchorX: anchor.dx,
+            anchorY: anchor.dy,
+            positionX: position.dx,
+            positionY: position.dy,
           ),
         );
       } catch (_) {
@@ -315,18 +327,6 @@ class _ViewerAnchorLayerState extends State<ViewerAnchorLayer> {
       }
     });
   }
-
-  /// The Position that keeps the picture still while the anchor moves to
-  /// [anchor] — the pan-behind compensation, ported maths, unit-tested in
-  /// viewer_layer_map.dart.
-  Offset _panBehind(LayerBox box, Offset anchor) => panBehindPosition(
-        oldAnchor: Offset(box.map.ax, box.map.ay),
-        newAnchor: anchor,
-        position: Offset(box.map.px, box.map.py),
-        scaleXPercent: box.map.sx * 100,
-        scaleYPercent: box.map.sy * 100,
-        rotationDegrees: box.rotationDegrees,
-      );
 
   void _onPanEnd() {
     final box = _acting;
@@ -368,23 +368,15 @@ class _AnchorCursorPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final pivot = anchor;
     if (pivot != null) {
-      final paint = Paint()
-        ..color = accent
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1;
-      canvas.drawCircle(pivot, 4, paint);
-      canvas.drawLine(
-          pivot - const Offset(9, 0), pivot + const Offset(9, 0), paint);
-      canvas.drawLine(
-          pivot - const Offset(0, 9), pivot + const Offset(0, 9), paint);
+      paintAnchorMark(canvas, pivot, accent, reach: 9);
     }
 
     final point = at;
     if (point == null) return;
     canvas.save();
     canvas.translate(point.dx, point.dy);
-    _cursor(canvas, outline, 3.2);
-    _cursor(canvas, mark, 1.4);
+    paintTwoPassStroke(outline, mark, (paint) => _cursor(canvas, paint),
+        outlineWidth: 3.2, markWidth: 1.4, rounded: true);
     canvas.restore();
   }
 
@@ -399,13 +391,7 @@ class _AnchorCursorPainter extends CustomPainter {
   /// The arms stop short of the middle. A reticle's gap is what leaves the
   /// exact point visible instead of covering it with the mark that is supposed
   /// to be aiming at it.
-  void _cursor(Canvas canvas, Color colour, double width) {
-    final paint = Paint()
-      ..color = colour
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = width
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
+  void _cursor(Canvas canvas, Paint paint) {
     const r = anchorCursorSize / 2;
     canvas.drawCircle(Offset.zero, r, paint);
     for (final (dx, dy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)]) {

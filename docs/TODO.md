@@ -17,6 +17,16 @@ this file is the concrete backlog underneath it.
 
 These sit above everything else: they are what the editor feels like in the hand.
 
+- **The lens flare is not bit-stable on this machine, today.**
+    `lumit-gpu`'s `fx::tests::wgsl_lens_flare_matches_the_cpu_frame_reference_and_neutrals`
+    fails its own "GPU lens flare must be bit-stable" assertion on a clean `main`
+    (checked 2026-08-08 by stashing every local change and running it alone): two
+    runs of the same flare give different pixels. Bit-stability is the property
+    the whole additive-blend draw order exists to protect
+    ([impl/lens-flare.md](impl/lens-flare.md) §2.4), so this is a real
+    regression and not a flaky test - and it means the two flare performance
+    items below cannot be measured honestly until it is understood. Find which
+    stage varies before changing anything.
 - **Take the lens flare's bake off the render thread.** Choosing a lens blocks
     the picture for about half a second of pure CPU optics (measured, K-263) -
     the single longest stall the effect has - and the bake is still a closure the
@@ -56,7 +66,18 @@ These are v1-scope surfaces it does not yet match.
 
 **Viewer bar ([07-UI-SPEC.md](07-UI-SPEC.md) §2.2):**
 - The wireframe/overlay *menu*; guides menu; region-of-interest;
-    colour-management indicator; background-colour swatch.
+    background-colour swatch.
+- **The colour-management indicator** (§2.2 item 8) — and it is now owed twice.
+    Exposure and tone mapping (K-314) are built, and §2.2 says the badge is where
+    the Viewer states that the picture is not the export while either is engaged.
+    Until the badge exists the two controls simply draw themselves in the accent
+    while engaged, which is honest but says it only where you are already
+    looking. Building the badge means moving that statement into it.
+- **Tone mapping wants a hint somewhere findable** (owner, 2026-08-08). It is an
+    icon with no label, and its tooltip is the control's *name* because §13.2
+    keeps tooltips to that — so nothing on screen says what the toggle does. The
+    explanation currently exists only in the translator's description and in
+    K-314. Wherever hints of this kind end up living, this is a first candidate.
 
 **Toolbar tools ([07-UI-SPEC.md](07-UI-SPEC.md) §1.7):** what is armed is a
 *tool*; what each tool then does is the backlog.
@@ -74,9 +95,21 @@ These are v1-scope surfaces it does not yet match.
     [03-DATA-MODEL.md](03-DATA-MODEL.md) change and a decision, not just a
     gesture; and the Pen's add/delete/convert-vertex siblings and dragging a
     whole path by a segment.
-- **Mask paths cannot be keyframed** ([03-DATA-MODEL.md](03-DATA-MODEL.md) has
-    them as animatable); there is no mask **mode** (add/subtract/intersect) -
-    every mask adds; **mask feather** has neither a control nor a renderer path.
+- **Mask paths have no per-key op.** `SetLayerMasks` rewrites the whole list for
+    every keyframe drag, so one drag is one undo step only because the drag is
+    staged - a per-key op would make it so by construction (K-344). **Lighten**
+    and **Darken** are the two mask modes still unbuilt, and feather is uniform:
+    the variable-width, per-vertex kind is a model change
+    ([03-DATA-MODEL.md](03-DATA-MODEL.md) §7).
+- **Variable-width mask feather** (K-338) - After Effects has had this since CS6:
+    the **Mask Feather Tool** (`G` cycles onto it, under the Pen) drops *feather
+    points* along an existing mask path, each dragging its own radius in or out,
+    so one edge of a mask can be razor-sharp and another 200 px soft. It is what
+    a sky replacement wants - crisp along the horizon, blending away at the
+    corner. It needs a second point set on the path, its own tool, and a
+    rasteriser that varies the ramp width along the boundary rather than using
+    one number. `ToolMode.penMaskFeather` already exists in the toolbar as a stub
+    with an icon and a string and nothing behind it.
 - **Type** - vertical type (needs `lumit-text` to lay a line downwards); true
     glyph metrics across the bridge (the caret, the anchor and the gizmo all use
     the same half-an-em estimate, and one measured advance width would replace
@@ -332,17 +365,12 @@ alone - no mtime, no LRU bound (§4).
 code (`flutter_ui/lib/l10n/`, `crowdin.yml`); what is left is other people's turn and
 three small gaps:
 
-- **Confirm the Crowdin language settings took, on the next pull (K-311).** The project
-  exists and the first pull has landed: German, Kazakh, Ukrainian, Simplified and
-  Traditional Chinese. That pull also reddened main twice over, and both causes were
-  settings rather than code: Crowdin wrote its own `zh-CN` into `@@locale`, which Flutter's
-  generator refuses when it disagrees with the file name, and en-US was on as a target
-  language, which lands a copy of the British source (K-303). Both have since been changed
-  on Crowdin — the language mapping now sends `zh` and `zh_Hant`, and en-US is off — but
-  neither has been through a sync yet. What is owed is the check: after the next
-  `crowdin pull translations`, `test/l10n/arb_test.dart` passing is the proof. If the
-  `@@locale` values come back hyphenated anyway, Crowdin ignores its mapping for file
-  content and the fix moves into CI, as a step on the sync branch that rewrites the key.
+- **Confirm the Crowdin language settings took, on the next pull (K-311).** The first
+  pull landed five languages and reddened main twice, both from Crowdin settings, both
+  since corrected there (the `zh`/`zh_Hant` mapping, en-US off) but not yet synced.
+  After the next `crowdin pull translations`, `test/l10n/arb_test.dart` passing is the
+  proof; if `@@locale` comes back hyphenated anyway, the fix moves into CI as a
+  rewrite step on the sync branch (K-303 has the history).
 - **The two numbered shortcut labels stay English.** `lumit-keymap` builds "Add marker
   {n} at the playhead" and "Go to marker {n}" with `format!`, so they are not literals
   the lookup table can hold (`lib/l10n/engine_labels.dart`). Give the bridge the number
@@ -352,23 +380,14 @@ three small gaps:
   step once the project exists.
 
 **Lens flare follow-ups (K-256..K-264, [impl/lens-flare.md](impl/lens-flare.md))** — the
-shipped core is docs/08 §3.27; its performance items sit in **Now** above. Still owed,
-each stable against the shipped parameters: the
-**Lights source wiring** (the mode is in the
-dropdown and resolves as Manual until light layers can act as flare sources); an
-**image aperture** file parameter; the **lens
-designer** (a window building a prescription element by element with a live lens
-diagram — the `lens_file` parameter landed in K-264, so the designer's output has a
-place to go); an **Occlusion layer** reference fading the flare when the light is
-covered; **adaptive grid refinement at vignette folds** — the K-264/K-265 known limits: a
-mild ripple on hard vignetted edges of extreme-defocus ghosts at Normal, and the
-toothed fold corona on a zoom shot past its native stop (K-265 lists the six
-ablations already ruled out — do not re-chase it with guards); refinement at the
-folds is the real cure for both. The panel side owes the pair row's dropper to
-**Transform's px@comp pairs** (the pixel-writing pick exists since K-260 — the flare's
-Light uses it; Transform's rows just aren't wired to it), **Radial blur's centre
-migration** from the grandfathered % of frame to px@comp (K-260 convention), and one-op
-writes for a paired keyframe toggle (two ops today).
+shipped core is docs/08 §3.27; its performance items sit in **Now** above. Still owed:
+the **Lights source wiring**; an **image aperture** file parameter; the **lens
+designer** (`lens_file` landed in K-264, so its output has a place to go); an
+**Occlusion layer** reference; **adaptive grid refinement at vignette folds**, the real
+cure for both K-264/K-265 known limits (K-265 lists the six ablations already ruled
+out — do not re-chase them with guards). Panel side: the pair row's dropper on
+**Transform's px@comp pairs** (the pick exists since K-260); **Radial blur's centre
+migration** to px@comp (K-260); one-op writes for a paired keyframe toggle.
 
 **The stale-fd race on a Linux Viewer resize** (`lumit-render/src/headless.rs`'s
 `shared_dmabuf` re-create, with `lumit-gpu/src/shared_linux.rs`'s `Drop`). The
@@ -401,6 +420,30 @@ are the reference for behaviour, not wiring targets):
 fields for the selected layer, the Viewer's missing-file probe, and the
 marker/work-area reads on a Timeline rebuild. Fold any into
 `BridgeLayerInfo`/`BridgeCompModel` if they show up in the budget ranking.
+
+**Thin-view debts the 2026-08-10 audit left for engine API** - each is Dart
+doing the engine's job and each wants one bridge call:
+- `viewer_camera.dart` re-derives the renderer's Ry·Rx·Rz basis and picks the
+    active camera itself; wants `comp.activeCameraPose(frame)`.
+- `viewer_type.dart` mirrors the engine's text-width estimate (caret, anchor,
+    gizmo all share it); wants a `layer.textMetrics` read.
+- `viewer_gizmo.dart`'s `_pathBeingEdited` parses `<layer>/masks/<mask>/path`
+    strings in a widget; wants the selection model to expose the pair.
+- The shape tool's Ctrl+Z pops draft points locally (a second undo meaning);
+    wants engine-side draft ops so undo stays the document's.
+- `fx_console_context.dart`'s `_keyTransformGroup` builds and sorts keyframe
+    lists in Dart, two bridge calls per comparison; wants a held-keyframe write
+    op on the layer.
+- `FlowRowsFrb.build` (Effect controls) still reads four flow getters in
+    build; same class of defect the audit cleared from the Timeline's rows.
+- `theme_tokens.dart`'s `_with` restatement wants `LumitTheme.copyWith` in
+    `theme.dart`, whose four-field shape is documented as deliberate - an
+    owner call, not a mechanical fold.
+- `headless.rs`'s four per-platform present-target-pool bodies share one dance;
+    fold them on a machine that compiles the macOS/Linux paths.
+- `ExpressionContext::comp_time` is raw `f64` across an engine boundary
+    (docs/14 typed time); rhai's seam is f64 regardless, so the typed carry is
+    a three-file ripple best taken while `fx/resolved.rs` is quiet.
 
 **`LumitAppNew` rebuilds the whole app on any `LumitUiState.notifyListeners`** (a
 `ListenableBuilder` above everything), and un-scoped document changes do the same
@@ -435,10 +478,11 @@ move** (§9 - the toolchain pin landed in K-272, the edition did not); the
 `indexing_slicing` / `arithmetic_side_effects` clippy denies after a hot-path sweep (§4);
 `clippy::pedantic` with curated allows (§7); the golden-frame EXR export corpus (§6).
 
-**Three unmaintained dependencies are deliberately ignored in `deny.toml`** (K-272).
+**Four unmaintained dependencies are deliberately ignored in `deny.toml`** (K-272).
 `ttf-parser` (via fontdue, via `lumit-text`) is the one with a real successor: moving
 the rasteriser to `skrifa` is its own piece of work with its own glyph-metric tests.
-`bincode` 1.x and `paste` leave when the dependencies that pull them update.
+`bincode` 1.x, `paste` and `smartstring` (via rhai, retired 2026-08-11 in favour of
+compact_str/smol_str) leave when the dependencies that pull them update.
 
 **A genuinely FFmpeg-free build is not possible yet (K-273).** `lumit_bridge
 --no-default-features` compiles the bridge's own decode paths out, but `lumit-render` and
@@ -497,38 +541,6 @@ entry above.
 - **Export status still speaks the old idiom** - `export.rs` replies in JSON
     strings (`err_json`) polled on a timer; follow the worker's typed-stream way.
 
-- **Viewer-only exposure and auto tone mapping (asked for by the owner,
-    2026-08-06).** Two controls in the Viewer bar
-    ([07-UI-SPEC.md](07-UI-SPEC.md) §2.2, which gains their entries when they
-    land), both **preview only - neither may change the export**, the same
-    promise preview resolution and the region of interest already make.
-    **(1) Exposure**: a small box that scrubs on drag and takes a typed number,
-    with an aperture icon beside it, reading signed stops to one decimal -
-    `+0.0`, `+1.4`, `-2.3`. The number must mean what the Exposure effect's does
-    (K-106): the same `2^stops` gain in scene-linear, so the two agree.
-    **(2) Auto tone mapping**: an icon that toggles it on and off, nothing more -
-    no curve picker in the bar. It is the "what will this actually look like"
-    switch for a comp whose values run past 1, keeping the low end readable
-    instead of watching the highlights clip flat.
-    Both belong **inside the display transform**, which
-    [06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md) §3.3 already reserves for
-    exactly this ("the exposure control and channel isolation are viewer-only and
-    sit inside this stage") - the display blit in `crates/lumit-gpu/src/lib.rs`
-    (`display`, `display_bgra`, `display_scaled`), not the effect stack. Check
-    before building that the frame cache holds pre-display frames: if it does,
-    changing either control is a re-blit and must not throw a cached frame away.
-    Three things to settle. **The curve is decision-sized** - Reinhard, an
-    ACES fit and AgX all look different, and picking one is a
-    [02-DECISIONS.md](02-DECISIONS.md) entry, not a code comment. **"Auto"
-    needs a definition**: if it adapts to each frame's content the picture
-    breathes as the shot cuts, so say whether it is a fixed curve or a measured
-    one, and if measured, how it is smoothed. **Persistence is an owner call** -
-    per comp in the project like preview resolution, or view state that resets.
-    Whatever they are, the Viewer must say when the picture is not the export:
-    the colour-management badge (§2.2 item 8) is where that lives, in
-    [15-DESIGN.md](15-DESIGN.md)'s calm voice - a statement, never a warning.
-    A tone mapping *effect* is separate work and sits in **Later** below.
-
 - **The menu bar names its own backlog (K-244).** Every row marked
     "(Not implemented)" in File/Edit/Composition/Layer/Animation/View/Help is a
     command with a place waiting for it: Close project, History,
@@ -578,11 +590,6 @@ list, not a re-statement of the roadmap.
     tag is the way to rehearse it. Signing the Windows installer is still
     blocked on buying a certificate, so the installer ships unsigned and
     SmartScreen still warns.
-- **Website.** The release-notes page at `/releases` is built and empty: the notes
-    themselves are written by hand, one Markdown file per version under
-    `web/src/content/releases` (copy `_template.md`; see `web/README.md`). Until
-    the first one lands the page points at GitHub releases. Delete this line when
-    v0.1.0's notes are written.
 - **Phase 2 - Retime.** Flow interpolation policies; automatic beat snapping
     across edit/retime points ([04-RETIMING.md](04-RETIMING.md),
     [09-AUDIO.md](09-AUDIO.md)).

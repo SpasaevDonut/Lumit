@@ -1578,6 +1578,7 @@ dependencies = [
 name = "lumit-render"
 version = "0.2.0"
 dependencies = [
+ "blake3",
  "lumit-audio",
  "lumit-cache",
  "lumit-core",

@@ -22,8 +22,10 @@ import 'package:lumit_flutter/l10n/strings.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
+import 'package:lumit_flutter/src/rust/api/retime.dart';
 
 import 'effect_param_row_frb.dart';
+import 'graph_maths.dart';
 import 'transform_rows_frb.dart';
 
 /// One row of a layer's fold-out.
@@ -74,7 +76,11 @@ final class FoldEffectParamRow extends LayerFoldRow {
 
 /// The layer's Volume.
 final class FoldVolumeRow extends LayerFoldRow {
-  const FoldVolumeRow({required int depth}) : super(depth);
+  /// The Volume scalar, read once per document revision by the panel and
+  /// carried here so the row draws without a bridge call (K-184). Null only
+  /// for a caller that supplied none, which the panel never is.
+  final BridgeScalar? scalar;
+  const FoldVolumeRow({this.scalar, required int depth}) : super(depth);
 }
 
 /// The layer's Retime (K-197): source time in seconds, keyframable like any
@@ -92,6 +98,26 @@ final class FoldRetimeRow extends LayerFoldRow {
 final class FoldMaskRow extends LayerFoldRow {
   final BridgeMask mask;
   const FoldMaskRow(this.mask, {required int depth}) : super(depth);
+}
+
+/// Which of a mask's animatable values a [FoldMaskValueRow] carries (K-340).
+///
+/// [path] is the shape itself: a value with no number, so its row carries a
+/// stopwatch and diamonds but no field (K-339).
+enum MaskValue { path, opacity, feather, expansion }
+
+/// One of a mask's values — its shape, opacity, feather or expansion — on a
+/// row of its own under the mask (K-222, K-340).
+///
+/// A row rather than another control squeezed onto the mask's own row: the
+/// value column holds one field, every other number in the fold-out has a row
+/// with its name on it, and a property without a row of its own has nowhere to
+/// put the stopwatch that animates it.
+final class FoldMaskValueRow extends LayerFoldRow {
+  final BridgeMask mask;
+  final MaskValue value;
+  const FoldMaskValueRow(this.mask, this.value, {required int depth})
+      : super(depth);
 }
 
 /// One piece of a shape layer's art (K-237): its name, its fill and its
@@ -119,7 +145,13 @@ final class FoldFlowRow extends LayerFoldRow {
 
   /// The Input rate's curve; null on every other kind.
   final BridgeScalar? rate;
-  const FoldFlowRow(this.kind, {this.rate, required int depth}) : super(depth);
+
+  /// The whole group's parameters, read once per document revision by the
+  /// panel and carried here so the row draws without a bridge call (K-184).
+  /// Null only for a caller that supplied none, which the panel never is.
+  final BridgeFlowParams? params;
+  const FoldFlowRow(this.kind, {this.rate, this.params, required int depth})
+      : super(depth);
 }
 
 /// The controls of the Flow group, in the order they are shown.
@@ -128,17 +160,27 @@ final class FoldFlowRow extends LayerFoldRow {
 /// frames flow works between), then how hard it looks, then what it does where
 /// it cannot see.
 enum FlowRowKind {
-  resolution('Flow resolution'),
-  inputRate('Input rate'),
-  detail('Vector detail'),
-  smoothness('Smoothness'),
-  occlusion('Occlusion'),
-  fallback('Fallback'),
-  hudGuard('HUD guard'),
-  always('Always on');
+  resolution,
+  inputRate,
+  detail,
+  smoothness,
+  occlusion,
+  fallback,
+  hudGuard,
+  always;
 
-  final String label;
-  const FlowRowKind(this.label);
+  /// The row's shown name — a getter rather than a stored constant so each
+  /// read speaks the current language.
+  String get label => switch (this) {
+        resolution => l10n.flowResolution,
+        inputRate => l10n.flowInputRate,
+        detail => l10n.flowVectorDetail,
+        smoothness => l10n.flowSmoothness,
+        occlusion => l10n.flowOcclusion,
+        fallback => l10n.flowFallback,
+        hudGuard => l10n.flowHudGuard,
+        always => l10n.flowAlwaysOn,
+      };
 }
 
 /// The waveform lane (K-172): the outline names it, the lane side draws the
@@ -173,8 +215,51 @@ List<BridgeKeyframe> laneKeysOf(LayerFoldRow row) => switch (row) {
             field0,
           _ => const [],
         },
+      // A mask's numbers key like any other scalar; its **shape** keys as whole
+      // paths, and those keys carry their own eases and a counted-up value
+      // (K-344), so the lane draws their diamonds and the graph can draw the
+      // rate the shape is changing at.
+      FoldMaskValueRow(:final mask, :final value) => value == MaskValue.path
+          ? mask.pathKeys
+          : switch (maskScalarOf(mask, value)) {
+              BridgeScalar_Keyframed(:final field0) => field0,
+              _ => const [],
+            },
       _ => const [],
     };
+
+/// What a mask's value row is called — shared by the row, the graph channel
+/// and anything else that has to name one.
+String maskValueLabel(MaskValue value) => switch (value) {
+      MaskValue.path => l10n.maskPath,
+      MaskValue.opacity => l10n.maskOpacity,
+      MaskValue.feather => l10n.maskFeather,
+      MaskValue.expansion => l10n.maskExpansion,
+    };
+
+/// Which of a mask's animatable numbers [value] names. The shape is not one of
+/// them — it has no number — and asks for the still zero nobody reads.
+BridgeScalar maskScalarOf(BridgeMask mask, MaskValue value) => switch (value) {
+      MaskValue.opacity => mask.opacity,
+      MaskValue.feather => mask.feather,
+      MaskValue.expansion => mask.expansion,
+      MaskValue.path => const BridgeScalar.static_(0),
+    };
+
+/// [mask] with the one number [value] names replaced.
+BridgeMask maskWithScalar(BridgeMask mask, MaskValue value, BridgeScalar to) =>
+    BridgeMask(
+      id: mask.id,
+      name: mask.name,
+      vertices: mask.vertices,
+      closed: mask.closed,
+      inverted: mask.inverted,
+      opacity: value == MaskValue.opacity ? to : mask.opacity,
+      mode: mask.mode,
+      feather: value == MaskValue.feather ? to : mask.feather,
+      expansion: value == MaskValue.expansion ? to : mask.expansion,
+      pathKeys: mask.pathKeys,
+    );
 
 /// A key's position on the comp's frame axis, computed Dart-side from its
 /// exact time and the comp's rate so a paint never crosses the bridge for it.
@@ -182,7 +267,7 @@ List<BridgeKeyframe> laneKeysOf(LayerFoldRow row) => switch (row) {
 /// Fractional on purpose: with the magnet off a key may sit *between* frames
 /// (docs/07 §4.5), and it has to draw where it actually is.
 double laneKeyFrame(BridgeKeyframe key, double fps) =>
-    key.time.num / key.time.den.toDouble() * fps;
+    rationalSeconds(key.time) * fps;
 
 /// The exact time of a (possibly fractional) frame position — what a lane key
 /// drag commits.
@@ -212,14 +297,13 @@ bool moveLaneKey({
   required int index,
   required BridgeRational time,
 }) {
-  double at(BridgeRational r) => r.num / r.den.toDouble();
-  final target = at(time);
+  final target = rationalSeconds(time);
 
   List<BridgeKeyframe>? moved(List<BridgeKeyframe> keys) {
     if (index >= keys.length) return null;
     for (var i = 0; i < keys.length; i++) {
       if (i == index) continue;
-      final other = at(keys[i].time);
+      final other = rationalSeconds(keys[i].time);
       if (i < index ? other >= target : other <= target) return null;
     }
     return [
@@ -280,6 +364,27 @@ bool moveLaneKey({
       entry.layer.setRetimeProperty(value: BridgeScalar.keyframed(next));
       return true;
 
+    case FoldMaskValueRow(:final mask, :final value):
+      if (value == MaskValue.path) {
+        // A path key is a whole shape, so the engine moves it rather than the
+        // frontend rebuilding a list of them (K-340).
+        if (index >= mask.pathKeys.length) return false;
+        return entry.layer.moveMaskPathKey(
+          id: mask.id,
+          from: mask.pathKeys[index].time,
+          to: time,
+        );
+      }
+      final scalar = maskScalarOf(mask, value);
+      if (scalar is! BridgeScalar_Keyframed) return false;
+      final next = moved(scalar.field0);
+      if (next == null) return false;
+      entry.layer.setMask(
+        mask: maskWithScalar(mask, value, BridgeScalar.keyframed(next)),
+        at: null,
+      );
+      return true;
+
     case _:
       return false;
   }
@@ -302,6 +407,8 @@ String foldRowPath(String layerId, LayerFoldRow row) => switch (row) {
       FoldFlowRow(:final kind) => '${flowPath(layerId)}/${kind.name}',
       FoldWaveformRow() => waveformPath(layerId),
       FoldMaskRow(:final mask) => '${masksPath(layerId)}/${mask.id}',
+      FoldMaskValueRow(:final mask, :final value) =>
+        '${masksPath(layerId)}/${mask.id}/${value.name}',
       FoldStrokeRow(:final stroke) => '${paintPath(layerId)}/${stroke.id}',
       FoldShapeRow(:final item) => '${contentsPath(layerId)}/${item.id}',
     };
@@ -310,6 +417,13 @@ String foldRowPath(String layerId, LayerFoldRow row) => switch (row) {
 /// parameter under its effect, anything under its layer.
 bool isUnderPath(String ancestor, String path) =>
     ancestor.isNotEmpty && path.startsWith('$ancestor/');
+
+/// The layer id a fold path belongs to — everything before the first `/` —
+/// or null for a bare layer id, which sits under no layer but itself.
+String? layerIdOfPath(String path) {
+  final cut = path.indexOf('/');
+  return cut > 0 ? path.substring(0, cut) : null;
+}
 
 /// The path of a layer's Retime row.
 String retimePath(String layerId) => '$layerId/retime';
@@ -375,10 +489,15 @@ String waveformPath(String layerId) => '$layerId/audio/waveform';
 /// `hasAudio` is passed in rather than asked for here because answering it means
 /// probing the file with FFmpeg, which is not work for a build — the Timeline
 /// caches it per layer, exactly as the Project panel caches missing media.
+/// `flowParams` and `volumeDb` are passed in for the same reason at a smaller
+/// scale: neither is in the read model, so the panel reads them once per
+/// document revision and the rows carry them (K-184).
 List<LayerFoldRow> layerFoldRows({
   required BridgeLayerEntry entry,
   required Set<String> open,
   required bool hasAudio,
+  BridgeFlowParams? flowParams,
+  BridgeScalar? volumeDb,
 }) {
   final id = entry.layer.internallayerId.toString();
   final info = entry.info;
@@ -411,7 +530,7 @@ List<LayerFoldRow> layerFoldRows({
     final flowOpen = open.contains(flowPath(id));
     rows.add(FoldGroupRow(
       path: flowPath(id),
-      label: 'Flow',
+      label: l10n.flowSection,
       open: flowOpen,
       depth: 1,
     ));
@@ -420,6 +539,7 @@ List<LayerFoldRow> layerFoldRows({
         rows.add(FoldFlowRow(
           kind,
           rate: kind == FlowRowKind.inputRate ? info.flowInputRate : null,
+          params: flowParams,
           depth: 2,
         ));
       }
@@ -472,6 +592,12 @@ List<LayerFoldRow> layerFoldRows({
     if (masksOpen) {
       for (final mask in info.masks) {
         rows.add(FoldMaskRow(mask, depth: 2));
+        // Its values sit under it, the way an effect's parameters sit under
+        // the effect — shape first, because it is what the mask *is*, then the
+        // numbers in the order they apply.
+        for (final value in MaskValue.values) {
+          rows.add(FoldMaskValueRow(mask, value, depth: 3));
+        }
       }
     }
   }
@@ -535,7 +661,7 @@ List<LayerFoldRow> layerFoldRows({
       depth: 1,
     ));
     if (audioOpen) {
-      rows.add(const FoldVolumeRow(depth: 2));
+      rows.add(FoldVolumeRow(scalar: volumeDb, depth: 2));
       // The waveform behind its own twirl (K-172), so a busy comp only pays
       // for the lanes actually being looked at.
       final waveOpen = open.contains(waveformPath(id));

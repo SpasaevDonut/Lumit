@@ -243,6 +243,16 @@ pub enum BridgePlaybackMode {
     EveryFrame,
 }
 
+/// One animated mask's shape at a moment (K-342): which mask, on which layer,
+/// and the path it is showing there.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeAnimatedMaskPath {
+    pub layer: Uuid,
+    pub mask: Uuid,
+    pub vertices: Vec<crate::api::layer::BridgeVertex>,
+}
+
 impl CompositionReference {
     #[frb(ignore)]
     pub fn new(project: Uuid, id: Uuid) -> CompositionReference {
@@ -1306,6 +1316,62 @@ impl CompositionReference {
         }
     }
 
+    /// The **shape every animated mask is actually showing** at `frame`
+    /// (K-342), so the Viewer can draw a keyed mask's wireframe where the
+    /// picture has it rather than where its still path used to be.
+    ///
+    /// Only masks that carry path keys are listed — a still mask's own
+    /// vertices already say where it is, and sending them again would put the
+    /// whole document through here on every frame. An empty answer, which is
+    /// the ordinary case, means "nothing moved; use what you have".
+    ///
+    /// Evaluated engine-side on purpose: interpolating two paths means
+    /// reconciling vertex counts by splitting cubics (K-339), and a second
+    /// implementation of that in Dart would drift from the one that draws the
+    /// pixels — the wireframe would stop matching the mask it describes.
+    #[frb(sync)]
+    pub fn animated_mask_paths_at(
+        &self,
+        frame: i64,
+    ) -> Result<Vec<BridgeAnimatedMaskPath>, BridgeError> {
+        let comp = self.composition()?;
+        // Not clamped at zero: a layer may start before the composition, and
+        // its masks are keyed on its own clock either way.
+        let time = comp
+            .frame_rate
+            .time_of_frame(frame)
+            .map_err(|_| BridgeError::InvalidTime)?;
+        let mut out = Vec::new();
+        for layer in &comp.layers {
+            // A mask lives on its layer's clock, as every other property does
+            // (K-213).
+            let local = time.0.checked_sub(layer.start_offset.0).unwrap_or(time.0);
+            for mask in &layer.masks {
+                if mask.path_keys.is_empty() {
+                    continue;
+                }
+                let path = mask.path_at(local.to_f64());
+                out.push(BridgeAnimatedMaskPath {
+                    layer: layer.id,
+                    mask: mask.id,
+                    vertices: path
+                        .vertices
+                        .iter()
+                        .map(|v| crate::api::layer::BridgeVertex {
+                            x: v.pos.0,
+                            y: v.pos.1,
+                            tan_in_x: v.tan_in.0,
+                            tan_in_y: v.tan_in.1,
+                            tan_out_x: v.tan_out.0,
+                            tan_out_y: v.tan_out.1,
+                        })
+                        .collect(),
+                });
+            }
+        }
+        Ok(out)
+    }
+
     #[frb(sync)]
     pub fn get_layers(&self) -> Result<Vec<LayerReference>, BridgeError> {
         Ok(self
@@ -1410,6 +1476,22 @@ impl CompositionReference {
         ))
     }
 
+    /// Set what the Viewer looks *through*: `stops` of exposure and whether the
+    /// tone map is engaged (K-314, docs/07 §2.2 items 12-13).
+    ///
+    /// **Preview only.** It moves the display encode of every frame the session
+    /// renderer composites from here on and nothing else — no document, no op,
+    /// no undo step. An export builds its own renderer and this is never sent
+    /// to it, so the export is neutral by construction.
+    ///
+    /// The frontend follows this with its ordinary request for the frame under
+    /// the playhead: a setting changes what the *next* frame looks like, and
+    /// without an ask the picture would not move until something else did.
+    #[frb(sync)]
+    pub fn set_display_view(&self, stops: f64, tone_map: bool) -> Result<(), BridgeError> {
+        self.dispatch(WorkerRequest::SetDisplayView { stops, tone_map })
+    }
+
     /// Stop playing, and silence the sound. Harmless when nothing is playing.
     #[frb(sync)]
     pub fn stop_playback(&self) -> Result<(), BridgeError> {
@@ -1459,6 +1541,7 @@ impl CompositionReference {
             contents: None,
             masks: None,
             clip_retime: None,
+            retime: None,
         }))
     }
 
@@ -1491,6 +1574,43 @@ impl CompositionReference {
             contents: None,
             masks: None,
             clip_retime: Some((clip, retime)),
+            retime: None,
+        }))
+    }
+
+    /// Ask for `frame` with one layer's Retime map replaced — the live graph
+    /// drag on the Retime channel, which never touches the document.
+    ///
+    /// The same reason as [`Self::render_frame_with_clip_retime`] one function
+    /// up, for the layer's own map (K-197) rather than a clip's: a retime
+    /// decides *which frame of the source* is decoded, so it cannot be
+    /// previewed by re-compositing pixels already in hand. Without it the
+    /// picture does not move until the key is let go, which is the one edit
+    /// where watching it matters most.
+    ///
+    /// `retime` arrives on the comp clock like every keyframed value that
+    /// crosses the seam (K-213); the worker returns it to the layer's own.
+    #[frb(sync)]
+    pub fn render_frame_with_retime(
+        &self,
+        frame: u64,
+        scale: f32,
+        layer: LayerReference,
+        retime: crate::api::effect::BridgeScalar,
+    ) -> Result<(), BridgeError> {
+        self.dispatch(RenderCompWithPreview(RenderCompRequestWithPreview {
+            comp: self.clone(),
+            frame,
+            scale,
+            layer,
+            effects: None,
+            transform: None,
+            text: None,
+            paint: None,
+            contents: None,
+            masks: None,
+            clip_retime: None,
+            retime: Some(retime),
         }))
     }
 
@@ -1505,6 +1625,10 @@ impl CompositionReference {
     #[frb(sync)]
     pub fn time_of_frame(&self, frame: i64) -> Result<BridgeRational, BridgeError> {
         let comp = self.composition()?;
+        // **Negative frames are real.** A layer may start before the composition
+        // does, so this must answer for frames below zero rather than clamping
+        // them to it — clamping here pinned a bar to the comp edge however far
+        // left it was dragged.
         let time = comp
             .frame_rate
             .time_of_frame(frame)
@@ -1630,6 +1754,7 @@ impl CompositionReference {
             contents: None,
             masks: None,
             clip_retime: None,
+            retime: None,
         }))
     }
 
@@ -1660,6 +1785,7 @@ impl CompositionReference {
             contents: None,
             masks: None,
             clip_retime: None,
+            retime: None,
         }))
     }
 
@@ -1694,6 +1820,7 @@ impl CompositionReference {
             contents: None,
             masks: None,
             clip_retime: None,
+            retime: None,
         }))
     }
 
@@ -1725,6 +1852,7 @@ impl CompositionReference {
             contents: Some(contents),
             masks: None,
             clip_retime: None,
+            retime: None,
         }))
     }
 
@@ -1749,6 +1877,7 @@ impl CompositionReference {
             paint: None,
             contents: None,
             clip_retime: None,
+            retime: None,
             masks: Some(masks),
         }))
     }

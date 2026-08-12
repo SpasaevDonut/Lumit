@@ -19,6 +19,18 @@ void main() {
   }) =>
       CameraPose(position: position, rotation: rotation, distance: distance);
 
+  /// Where the eye is: the focal distance back along the camera's forward
+  /// axis. Derived here rather than on [CameraPose] — the tools never need
+  /// it, only these geometry checks do.
+  (double, double, double) eyeOf(CameraPose p) {
+    final f = p.axes.forward;
+    return (
+      p.position.$1 - f.$1 * p.distance,
+      p.position.$2 - f.$2 * p.distance,
+      p.position.$3 - f.$3 * p.distance,
+    );
+  }
+
   void closeTriple(
     (double, double, double) got,
     (double, double, double) want, {
@@ -61,9 +73,9 @@ void main() {
 
     test('the eye sits the focal distance behind what it looks at', () {
       // Unrotated, looking down +z from 2667 back.
-      closeTriple(pose().eye, (960, 540, -2667));
+      closeTriple(eyeOf(pose()), (960, 540, -2667));
       // Turned to look along +x, the eye moves round to the -x side.
-      closeTriple(pose(rotation: (0, 90, 0)).eye, (960 - 2667, 540, 0));
+      closeTriple(eyeOf(pose(rotation: (0, 90, 0))), (960 - 2667, 540, 0));
     });
   });
 
@@ -74,18 +86,18 @@ void main() {
           reason: 'the pivot is the point being looked at, and it stays put');
       expect(turned.rotation.$2, closeTo(100 * orbitDegreesPerPixel, 1e-9));
       // The eye has swung: it is no longer straight behind.
-      expect(turned.eye.$1, isNot(closeTo(960, 1)));
+      expect(eyeOf(turned).$1, isNot(closeTo(960, 1)));
     });
 
     test('dragging up lifts the camera over the top', () {
       final up = orbitCamera(pose(), 0, -100);
       expect(up.rotation.$1, lessThan(0),
           reason: 'over the top means tilted to look down');
-      expect(up.eye.$2, lessThan(pose().eye.$2),
+      expect(eyeOf(up).$2, lessThan(eyeOf(pose()).$2),
           reason: 'the eye is higher up the screen, which is lower y');
       // And the other way round, so nobody ships an inverted orbit.
       final down = orbitCamera(pose(), 0, 100);
-      expect(down.eye.$2, greaterThan(pose().eye.$2));
+      expect(eyeOf(down).$2, greaterThan(eyeOf(pose()).$2));
     });
 
     test('the pitch stops short of straight down', () {

@@ -34,6 +34,7 @@ import '../state/preview_throttle.dart';
 import '../state/timeline_columns.dart';
 import '../widgets/angle_dial.dart';
 import '../widgets/controls.dart';
+import 'graph_editor_frb.dart';
 import 'fx_section.dart';
 import 'keyframe_controls_frb.dart';
 
@@ -244,9 +245,49 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
   /// so the pointer's last position always reaches the picture.
   final PreviewThrottle _throttle = PreviewThrottle();
 
+  /// Held rather than read through the context on the way past, because
+  /// [dispose] needs it after the context is no longer a place to look things
+  /// up — and the notifier itself outlives every row.
+  ///
+  /// Filled in [initState] rather than lazily: a row that is never dragged
+  /// would otherwise run the lookup for the first time *in* [dispose], where
+  /// the element is already being taken down and an ancestor lookup throws.
+  late final LumitUiState _ui;
+
+  @override
+  void initState() {
+    super.initState();
+    _ui = Provider.of<LumitUiState>(context, listen: false);
+  }
+
+  /// Tell the Viewer's boxes what this drag is doing. The picture is already
+  /// previewed at `staged`; without this the wireframe drawn from the document
+  /// sits still until the drag is let go (see [LumitUiState.liveTransforms]).
+  void _publishLive(BridgeTransform staged) {
+    _ui.liveTransforms.value = {widget.layer.internallayerId: staged};
+  }
+
+  /// The gesture is over: the document is the truth again.
+  void _clearLive() {
+    if (_ui.liveTransforms.value.isNotEmpty) {
+      _ui.liveTransforms.value = const {};
+    }
+  }
+
   @override
   void dispose() {
     _throttle.cancel();
+    // A drag cut short by the panel closing or the selection changing must not
+    // leave the box frozen at a provisional value nothing will ever replace.
+    // After the frame, not in it: dispose can run inside a build, and the
+    // Viewer's boxes builder listens to this notifier — firing it mid-build
+    // marks that builder dirty while it is building. The notifier belongs to
+    // the shell, so it is safe to touch once this row has gone.
+    final live = _ui.liveTransforms;
+    if (live.value.isNotEmpty) {
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => live.value = const {});
+    }
     super.dispose();
   }
 
@@ -320,21 +361,21 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
     );
 
     if (widget.twoColumn && widget.valueColumn == null) {
-      final row = Padding(
-        padding: widget.rowPadding,
-        child: fxTwoColumnRow(
-          context: context,
-          name: label,
-          keyframeControls: keyframes,
-          control: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (var i = 0; i < group.axes.length; i++) ...[
-                if (i > 0) const SizedBox(width: 6),
-                _cell(transform, group.axes[i], frame),
-              ],
+      // No padding of its own: the Effect controls panel gives every row the
+      // same fixed height ([fxRowHeight]), and padding on top of that would
+      // eat into the room the controls sit in.
+      final row = fxTwoColumnRow(
+        context: context,
+        name: label,
+        keyframeControls: keyframes,
+        control: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var i = 0; i < group.axes.length; i++) ...[
+              if (i > 0) const SizedBox(width: 6),
+              _cell(transform, group.axes[i], frame),
             ],
-          ),
+          ],
         ),
       );
       final height = widget.rowHeight;
@@ -388,18 +429,15 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
         child: EffectParamRowExpression(
             value: scalar,
             set: (value) {
+              final field = (value as BridgeEffectValue_Float).field0;
 
+              if (field is BridgeScalar_Expression) {
+                _commitExpression(axis.prop, field.field0);
+              }
 
-             final field = (value as BridgeEffectValue_Float).field0;
-
-             if ( field is BridgeScalar_Expression ) {
-              _commitExpression(axis.prop, field.field0);
-             }
-
-             if(field is BridgeScalar_Static) {
-              _commit(axis.prop, field.field0);
-             }
-
+              if (field is BridgeScalar_Static) {
+                _commit(axis.prop, field.field0);
+              }
             },
             setLive: (value) {
               _liveExpression(
@@ -444,7 +482,10 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
           onChangeStart: () => _staged = transform,
           onChangeLive: (v) => _live(axis.prop, v.toDouble()),
           onChangeEnd: (v) => _commit(axis.prop, v.toDouble()),
-          onDragCancel: () => setState(() => _staged = null),
+          onDragCancel: () {
+            _clearLive();
+            setState(() => _staged = null);
+          },
           setExpression: () {
             _commitExpression(axis.prop, static_.toString());
           },
@@ -475,14 +516,70 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
         decimals: axis.decimals,
         suffix: axis.suffix,
         onCommit: (v) => _commitKeyed(axis.prop, scalar, v, frame),
+        onLive: (v) => _liveKeyed(axis.prop, scalar, v, frame),
+        onStart: () => _keyOnDragStart(axis.prop, scalar, sampled, frame),
       ),
     );
+  }
+
+  /// The playhead has no key on this property and a drag is starting, so one is
+  /// planted there holding the value already showing (K-333). Nothing moves —
+  /// it is the same value — and the drag then has a key to carry, which is what
+  /// makes it visible in the graph as it goes rather than only on release.
+  void _keyOnDragStart(
+      BridgeTransformProp prop, BridgeScalar scalar, double value, int frame) {
+    if (scalar is! BridgeScalar_Keyframed) return;
+    if (scalar.field0
+        .any((k) => widget.comp.frameAtTime(time: k.time) == frame)) {
+      return;
+    }
+    widget.layer.setTransform(
+      prop: prop,
+      value: scalarWithValueAt(scalar, value, widget.comp, frame),
+    );
+    widget.onChanged();
+  }
+
+  /// A tick of a drag on an *animated* property: render the curve the release
+  /// will write — the key at the playhead moved, or a linear one planted there
+  /// — without writing it (K-333). The same patched-clone door a static drag
+  /// uses, carrying a whole animation instead of one number.
+  void _liveKeyed(
+      BridgeTransformProp prop, BridgeScalar scalar, double value, int frame) {
+    rowValueDrag.value = RowValueDrag(
+      layer: widget.layer.internallayerId.toString(),
+      prop: prop.name,
+      frame: frame,
+      value: value,
+    );
+    final staged = writeScalar(
+      widget.transform,
+      prop,
+      scalarWithValueAt(scalar, value, widget.comp, frame),
+    );
+    // The provisional truth, for anything drawing this layer. A keyed property
+    // draws no box today — the boxes want a static value and this one is a
+    // curve — so this changes nothing on screen yet; it is published because
+    // the contract is "what the drag is doing", not "what the box can use".
+    _publishLive(staged);
+    final ui = _ui;
+    _throttle.request(() => widget.comp.renderFrameWithTransformPreview(
+          frame: BigInt.from(ui.playheadFrame.value),
+          scale: ui.viewerScale,
+          layer: widget.layer,
+          transform: staged,
+        ));
   }
 
   /// Write `value` into the animated property's key at `frame` (or plant one
   /// there) — one op, one undo step.
   void _commitKeyed(
       BridgeTransformProp prop, BridgeScalar scalar, double value, int frame) {
+    // The write is the last word: a held preview tick after it would put the
+    // provisional picture back, and the graph reads the document again.
+    _throttle.cancel();
+    _clearLive();
+    rowValueDrag.value = null;
     widget.layer.setTransform(
       prop: prop,
       value: scalarWithValueAt(scalar, value, widget.comp, frame),
@@ -494,8 +591,11 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
   void _live(BridgeTransformProp prop, double value) {
     final staged = write(_staged ?? widget.transform, prop, value);
     setState(() => _staged = staged);
+    // The wireframe follows the picture: both are drawn from this value until
+    // the drag is let go.
+    _publishLive(staged);
 
-    final ui = Provider.of<LumitUiState>(context, listen: false);
+    final ui = _ui;
     _throttle.request(() => widget.comp.renderFrameWithTransformPreview(
           frame: BigInt.from(ui.playheadFrame.value),
           scale: ui.viewerScale,
@@ -507,8 +607,9 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
   void _liveExpression(BridgeTransformProp prop, String value) {
     final staged = writeExpression(_staged ?? widget.transform, prop, value);
     setState(() => _staged = staged);
+    _publishLive(staged);
 
-    final ui = Provider.of<LumitUiState>(context, listen: false);
+    final ui = _ui;
     _throttle.request(() => widget.comp.renderFrameWithTransformPreview(
           frame: BigInt.from(ui.playheadFrame.value),
           scale: ui.viewerScale,
@@ -522,6 +623,7 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
     // The commit is the last word on this gesture: a held preview tick after it
     // would put the provisional picture back.
     _throttle.cancel();
+    _clearLive();
     widget.layer.setTransform(prop: prop, value: BridgeScalar.static_(value));
     setState(() => _staged = null);
     widget.onChanged();
@@ -531,6 +633,7 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
     // The commit is the last word on this gesture: a held preview tick after it
     // would put the provisional picture back.
     _throttle.cancel();
+    _clearLive();
     widget.layer
         .setTransform(prop: prop, value: BridgeScalar.expression(value));
     setState(() => _staged = null);
@@ -559,8 +662,13 @@ BridgeScalar read(BridgeTransform tf, BridgeTransformProp prop) =>
 /// Rebuilt field by field because the generated type has no `copyWith`: it is a
 /// plain data class across the seam, which is the point of it.
 BridgeTransform write(
-    BridgeTransform tf, BridgeTransformProp prop, double value) {
-  final replacement = BridgeScalar.static_(value);
+        BridgeTransform tf, BridgeTransformProp prop, double value) =>
+    writeScalar(tf, prop, BridgeScalar.static_(value));
+
+/// A copy of `tf` with one property's whole animation replaced — what a graph
+/// drag previews, where the provisional value is a curve rather than a number.
+BridgeTransform writeScalar(
+    BridgeTransform tf, BridgeTransformProp prop, BridgeScalar replacement) {
   BridgeScalar pick(BridgeTransformProp p, BridgeScalar current) =>
       p == prop ? replacement : current;
 
@@ -580,22 +688,5 @@ BridgeTransform write(
 }
 
 BridgeTransform writeExpression(
-    BridgeTransform tf, BridgeTransformProp prop, String expression) {
-  final replacement = BridgeScalar.expression(expression);
-  BridgeScalar pick(BridgeTransformProp p, BridgeScalar current) =>
-      p == prop ? replacement : current;
-
-  return BridgeTransform(
-    anchorX: pick(BridgeTransformProp.anchorX, tf.anchorX),
-    anchorY: pick(BridgeTransformProp.anchorY, tf.anchorY),
-    positionX: pick(BridgeTransformProp.positionX, tf.positionX),
-    positionY: pick(BridgeTransformProp.positionY, tf.positionY),
-    positionZ: pick(BridgeTransformProp.positionZ, tf.positionZ),
-    scaleX: pick(BridgeTransformProp.scaleX, tf.scaleX),
-    scaleY: pick(BridgeTransformProp.scaleY, tf.scaleY),
-    rotation: pick(BridgeTransformProp.rotation, tf.rotation),
-    rotationX: pick(BridgeTransformProp.rotationX, tf.rotationX),
-    rotationY: pick(BridgeTransformProp.rotationY, tf.rotationY),
-    opacity: pick(BridgeTransformProp.opacity, tf.opacity),
-  );
-}
+        BridgeTransform tf, BridgeTransformProp prop, String expression) =>
+    writeScalar(tf, prop, BridgeScalar.expression(expression));

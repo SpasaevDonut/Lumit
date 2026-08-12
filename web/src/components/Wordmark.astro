@@ -2,7 +2,7 @@
 // The Lumit wordmark - a transcription of the owner's After Effects reference.
 // Per-frame position, rotation, thickness and arm lengths are sampled off the
 // 50-frame render (skeleton extraction, verified by overlay); the right
-// keyframe is the same track flipped 180 degrees about the lockup's centre,
+// keyframe is the same sampled motion flipped 180 degrees about the lockup's centre,
 // exactly as the AE project flips its precomp.
 //
 // Each keyframe is ONE path, so there is no seam where the arms meet. Corner
@@ -20,7 +20,7 @@
 // The animation holds the rest pose 100ms, then runs. The launch is
 // stretched 300ms with a power
 // ramp that starts near-still and meets the reference's own speed exactly at
-// the apex; from there the track plays 1:1 until the snap home, which is
+// the apex; from there the motion plays 1:1 until the snap home, which is
 // re-timed to accelerate into rest (about 1260ms total). Without script, or
 // under reduced motion, the markup is the finished wordmark standing still.
 interface Props { class?: string }
@@ -134,15 +134,15 @@ const { class: klass } = Astro.props;
     apply(0);
     // The launch is stretched by 300ms: a power ramp that starts near-still and
     // reaches the reference's own speed exactly at the apex (C1 at the join),
-    // then the track plays 1:1 until the snap home.
+    // then the motion plays 1:1 until the snap home.
     var P = C.T1/C.APEX;
 
-    // The snap home (track ms TAIL onwards) is re-timed to accelerate: it enters
+    // The snap home (animation ms TAIL onwards) is re-timed to accelerate: it enters
     // at exactly the 1:1 speed it left at, then ramps to roughly 2.4x by rest.
-    // Track progress across the tail is f(x) = TA*x + (1-TA)*x^TN over a wall
+    // Motion progress across the tail is f(x) = TA*x + (1-TA)*x^TN over a wall
     // window of TA*(length of the tail) - that factor is what makes f'(0) land
-    // on 1:1 exactly, so the join has no velocity step to see.
-    var TL = C.DUR - C.TAIL;          // tail length in track ms
+    // on 1:1 exactly, so the join has no speed step to see.
+    var TL = C.DUR - C.TAIL;          // tail length in animation ms
     var TW = C.TA*TL;                 // ... and the wall time it now gets
     var TE = C.T1 + (C.TAIL - C.APEX);// wall time the tail starts at
 

@@ -159,3 +159,8 @@ These three words are **not interchangeable**.
 | **Render** (meaning export) | Export | Render is the engine's act, not the user's. |
 | **Event** | Clip | Vegas-ism. |
 | **Pre-render** (user-facing) | Cache / bake | Reserved for internal cache warming. |
+
+The **clip** restriction is about the noun: a clip is an entry inside a Sequence
+layer, never a general word for a layer or a piece of footage. **To clip** as the
+keying and colour verb — the Matte key's Clip black / Clip white / Clip rollback,
+clipped highlights — is ordinary trade language and stays (K-345).

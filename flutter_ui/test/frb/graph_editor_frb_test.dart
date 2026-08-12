@@ -8,6 +8,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/panels/graph_editor_frb.dart';
+import 'package:uuid/uuid.dart';
 import 'package:lumit_flutter/panels/graph_maths.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
@@ -117,6 +118,226 @@ void main() {
       await tester.tap(find.text('Position'));
       await tester.pump();
       expect(tester.takeException(), isNull);
+    });
+
+    /// **The graph follows a value drag in the outline, while the pointer is
+    /// still down** (K-333/K-334). The row publishes each tick (`rowValueDrag`)
+    /// and the pane draws the key through it; the release commits and the
+    /// publication clears. Fails if any link of that chain breaks — the wiring
+    /// this bug shipped without twice.
+    testWidgets('the graph key follows an outline value drag mid-gesture',
+        (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer);
+      await mountGraph(tester, p);
+
+      final glyph = find.byKey(ValueKey<String>(opacityKey(p.layer, 0)));
+      final before = tester.getCenter(glyph);
+
+      // Grab the outline row's value field and drag, without letting go.
+      final field = find.byKey(const ValueKey<String>('tl-tf-opacity'));
+      final gesture = await tester.startGesture(tester.getCenter(field));
+      await tester.pump();
+      await gesture.moveBy(const Offset(30, 0));
+      await tester.pump();
+      await gesture.moveBy(const Offset(30, 0));
+      await tester.pump();
+
+      expect(rowValueDrag.value, isNotNull,
+          reason: 'the row publishes the provisional value each tick');
+      final during = tester.getCenter(glyph);
+      expect(during.dy, lessThan(before.dy),
+          reason: 'the key draws at the dragged value while the pointer '
+              'is still down');
+
+      await gesture.up();
+      await tester.pump();
+      expect(rowValueDrag.value, isNull,
+          reason: 'the release commits and the publication clears');
+      expect(opacityKeys(p.layer).first.value, greaterThan(0),
+          reason: 'and the document now holds what the drag showed');
+    });
+
+    /// The same chain with the playhead **between** keys (K-334): the drag
+    /// starts by planting a key at the playhead — holding the value already
+    /// there, so nothing moves — and the graph then carries that key live.
+    /// This is the everyday shape of the reported bug: nobody drags a value
+    /// while parked exactly on an existing key.
+    testWidgets('a drag between keys plants one and the graph carries it',
+        (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer);
+      // Frame 31, not a rounder number: 31/60 s as a double times 60 is not
+      // 31.0, which is exactly the float mismatch that made the old preview
+      // insert a duplicate key instead of replacing (K-336). Frame 50 is
+      // float-exact and cannot catch it.
+      p.uiState.scrubTo(31);
+      await mountGraph(tester, p);
+
+      expect(opacityKeys(p.layer).length, 2);
+
+      final field = find.byKey(const ValueKey<String>('tl-tf-opacity'));
+      final gesture = await tester.startGesture(tester.getCenter(field));
+      await tester.pump();
+      // The first move is spent crossing the recogniser's slop; the second is
+      // the first that ticks.
+      await gesture.moveBy(const Offset(30, 0));
+      await tester.pump();
+      await gesture.moveBy(const Offset(30, 0));
+      await tester.pump();
+
+      expect(opacityKeys(p.layer).length, 3,
+          reason: 'the drag planted a key at the playhead as it began');
+      expect(rowValueDrag.value, isNotNull);
+      // Exactly three glyphs. The preview once matched keys by *float* frame
+      // equality, and frame 31 at 60 fps does not read back as 31.0, so the
+      // drag's key was inserted BESIDE the planted one instead of replacing
+      // it — one extra key, every later diamond one index off, the dragged
+      // key drawn at the next key's place (K-336).
+      expect(
+          find.byWidgetPredicate((w) =>
+              w.key is ValueKey<String> &&
+              ((w.key as ValueKey<String>).value)
+                  .startsWith('graph-key-${p.layer.internallayerId}/')),
+          findsNWidgets(3),
+          reason: 'replaced in place, never duplicated');
+      final planted = find.byKey(ValueKey<String>(opacityKey(p.layer, 1)));
+      expect(planted, findsOneWidget,
+          reason: 'and the graph shows the planted key mid-gesture');
+      final during = tester.getCenter(planted);
+      final lastBefore = tester
+          .getCenter(find.byKey(ValueKey<String>(opacityKey(p.layer, 2))));
+
+      await gesture.moveBy(const Offset(30, 0));
+      await tester.pump();
+      expect(tester.getCenter(planted).dy, lessThan(during.dy),
+          reason: 'the planted key follows the pointer');
+      expect(
+          tester
+              .getCenter(find.byKey(ValueKey<String>(opacityKey(p.layer, 2)))),
+          lastBefore,
+          reason: 'the keys after the playhead do not move with the drag');
+
+      await gesture.up();
+      await tester.pump();
+      expect(rowValueDrag.value, isNull);
+    });
+
+    /// An **effect parameter's** drag feeds the same chain (K-334) — the wiring
+    /// the transform rows got first, which is exactly how "still not fixed"
+    /// shipped: the reporter was dragging an effect value.
+    testWidgets('the graph follows an effect value drag mid-gesture',
+        (tester) async {
+      final p = withLayer();
+      p.layer.addEffect(name: 'blur');
+      // Animate the radius so the channel has a curve.
+      final staged = p.layer.getEffects();
+      final id = staged.single.id();
+      for (final instance in staged) {
+        instance.setValue(
+          id: 'radius',
+          value: BridgeEffectValue.float(BridgeScalar.keyframed([
+            for (final (f, v) in [(0, 0.0), (100, 50.0)])
+              BridgeKeyframe(
+                time: p.comp.timeOfFrame(frame: f),
+                value: v,
+                interpIn: const BridgeSideInterp.linear(),
+                interpOut: const BridgeSideInterp.linear(),
+              ),
+          ])),
+        );
+      }
+      p.layer.setEffects(effects: staged);
+      p.uiState.model.refresh();
+      await mountGraph(tester, p, selectOpacity: false);
+
+      // Select the Radius property the outline way.
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${p.layer.internallayerId}')));
+      await tester.pump();
+      await tester.tap(find.text('Effects'));
+      await tester.pump();
+      await tester.tap(find.text('Gaussian blur'));
+      await tester.pump();
+      await tester.tap(find.text('Radius'));
+      await tester.pump();
+
+      final glyphKey =
+          'graph-key-${p.layer.internallayerId}/effects/$id/radius#0';
+      final glyph = find.byKey(ValueKey<String>(glyphKey));
+      expect(glyph, findsOneWidget, reason: 'the radius curve is on screen');
+      final before = tester.getCenter(glyph);
+
+      final field = find.byKey(ValueKey<String>('fx-float-$id-radius'));
+      final gesture = await tester.startGesture(tester.getCenter(field));
+      await tester.pump();
+      await gesture.moveBy(const Offset(30, 0));
+      await tester.pump();
+      await gesture.moveBy(const Offset(30, 0));
+      await tester.pump();
+
+      expect(rowValueDrag.value, isNotNull,
+          reason: 'the effect row publishes like a transform row');
+      expect(tester.getCenter(glyph).dy, lessThan(before.dy),
+          reason: 'the radius key draws at the dragged value mid-gesture');
+
+      await gesture.up();
+      await tester.pump();
+      expect(rowValueDrag.value, isNull);
+    });
+
+    /// The screenshot bug (K-336): drag the **Retime** readout on a frame with
+    /// no key, and the diamonds floated off the curve — every glyph past the
+    /// insertion drew with one key's x and another's y, because x read the
+    /// document's keys while y read the preview's longer list. The first tick
+    /// now plants a key (so the preview replaces, never inserts) and both
+    /// coordinates read one list either way.
+    testWidgets(
+        'a Retime drag on a keyless frame keeps the diamonds on the curve',
+        (tester) async {
+      final p = withLayer();
+      p.layer.toggleRetimeProperty();
+      p.uiState.scrubTo(31);
+      p.uiState.model.refresh();
+      await mountGraph(tester, p, selectOpacity: false);
+
+      final id = p.layer.internallayerId;
+      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('tl-retime-name')));
+      await tester.pump();
+
+      String glyph(int i) => 'graph-key-$id/retime#$i';
+      expect(find.byKey(ValueKey<String>(glyph(0))), findsOneWidget,
+          reason: 'the identity map has its first key on screen');
+      expect(find.byKey(ValueKey<String>(glyph(1))), findsOneWidget);
+      final lastBefore =
+          tester.getCenter(find.byKey(ValueKey<String>(glyph(1))));
+
+      final field = find.byKey(const ValueKey('tl-retime-seconds'));
+      final gesture = await tester.startGesture(tester.getCenter(field));
+      await tester.pump();
+      await gesture.moveBy(const Offset(30, 0));
+      await tester.pump();
+      await gesture.moveBy(const Offset(30, 0));
+      await tester.pump();
+
+      expect(rowValueDrag.value, isNotNull,
+          reason: 'the Retime row publishes its drag');
+      expect(find.byKey(ValueKey<String>(glyph(2))), findsOneWidget,
+          reason: 'the first tick planted a key, so three diamonds show');
+      // The key that was the last is now index 2 of three; its position must
+      // not have moved — with the mixed-list bug it drew at the middle key's x.
+      expect(
+          tester.getCenter(find.byKey(ValueKey<String>(glyph(2)))), lastBefore,
+          reason: 'the keys after the playhead hold still, x and y both');
+
+      await gesture.up();
+      await tester.pump();
+      expect(rowValueDrag.value, isNull);
+      final keys =
+          (p.layer.getRetimeProperty() as BridgeScalar_Keyframed).field0;
+      expect(keys.length, 3, reason: 'plant plus the dragged write persisted');
     });
 
     /// One gesture, one op: the key moves in time AND value, and one undo
@@ -591,6 +812,56 @@ void main() {
       expect(channels.last.keys, hasLength(2));
     });
 
+    /// **A mask's numbers reach the graph** (K-341), and so does its **shape**
+    /// once it is keyed (K-344) — as the interpolation parameter, whose slope
+    /// is the rate the shape is changing at. A *still* shape has no keys and so
+    /// no curve, and stays out.
+    testWidgets("graphChannels resolves a mask's numbers and its keyed shape",
+        (tester) async {
+      final p = withLayer();
+      p.layer.addMask(
+        mask: BridgeMask(
+          id: UuidValue.fromString(const Uuid().v4()),
+          name: 'Ellipse',
+          vertices: const [
+            BridgeVertex(
+                x: 0, y: 0, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+            BridgeVertex(
+                x: 10, y: 0, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+            BridgeVertex(
+                x: 10, y: 8, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+          ],
+          closed: true,
+          inverted: false,
+          opacity: const BridgeScalar.static_(100),
+          mode: BridgeMaskMode.add,
+          feather: const BridgeScalar.static_(0),
+          expansion: const BridgeScalar.static_(0),
+          pathKeys: const [],
+        ),
+      );
+      final id = p.layer.internallayerId.toString();
+      final maskId = p.layer.getMasks().single.id;
+      p.uiState.model.refresh();
+
+      final channels = graphChannels(
+        layers: p.uiState.model.layers,
+        selected: [
+          '$id/masks/$maskId/opacity',
+          '$id/masks/$maskId/feather',
+          '$id/masks/$maskId/path',
+        ],
+      );
+      expect(
+          channels.map((c) => c.id).toList(),
+          [
+            '$id/masks/$maskId/opacity',
+            '$id/masks/$maskId/feather',
+          ],
+          reason: 'the shape has no curve, so it is not a channel');
+      expect(channels.first.label, contains('Ellipse'));
+    });
+
     // --- the Vegas speed envelope (K-247) -------------------------------
 
     /// Turn the preference on the way Settings does, then open the layer's
@@ -703,7 +974,8 @@ void main() {
 
       // Halfway between the two keys: on a straight span that is exactly on
       // the curve, whatever the framing happens to be.
-      final base = 'graph-key-${p.layer.internallayerId}/transform/opacity@opacity';
+      final base =
+          'graph-key-${p.layer.internallayerId}/transform/opacity@opacity';
       final a = tester.getCenter(find.byKey(ValueKey<String>('$base#0')));
       final b = tester.getCenter(find.byKey(ValueKey<String>('$base#1')));
       final mid = Offset((a.dx + b.dx) / 2, (a.dy + b.dy) / 2);
@@ -759,7 +1031,8 @@ void main() {
       await tester.tap(key);
       await tester.pumpAndSettle();
       expect(opacityKeys(p.layer), hasLength(3),
-          reason: 'the key is still there — double-click plants, it does not lift');
+          reason:
+              'the key is still there — double-click plants, it does not lift');
     });
 
     testWidgets('the last key of a channel refuses to be lifted',
@@ -789,8 +1062,8 @@ void main() {
       // Compared as sets, because a key dragged far enough in time overtakes
       // its neighbour and the list re-sorts — which says nothing about
       // whether the constraint held.
-      List<double> values() => [for (final k in opacityKeys(p.layer)) k.value]
-        ..sort();
+      List<double> values() =>
+          [for (final k in opacityKeys(p.layer)) k.value]..sort();
       List<int> frames() => [
             for (final k in opacityKeys(p.layer))
               p.comp.frameAtTime(time: k.time)
@@ -801,8 +1074,8 @@ void main() {
       await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
       // Mostly sideways, a little up: the sideways travel wins, so the value
       // must not move at all.
-      await _drag(tester, find.byKey(ValueKey<String>(id)),
-          const Offset(40, -12));
+      await _drag(
+          tester, find.byKey(ValueKey<String>(id)), const Offset(40, -12));
       await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
 
       expect(frames(), isNot(beforeFrames), reason: 'it moved in time');
@@ -825,8 +1098,8 @@ void main() {
       final beforeValue = opacityKeys(p.layer)[1].value;
 
       await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
-      await _drag(tester, find.byKey(ValueKey<String>(id)),
-          const Offset(-12, 60));
+      await _drag(
+          tester, find.byKey(ValueKey<String>(id)), const Offset(-12, 60));
       await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
 
       expect([
@@ -835,7 +1108,6 @@ void main() {
       expect(opacityKeys(p.layer)[1].value, lessThan(beforeValue),
           reason: 'and the value moved');
     });
-
   }, skip: !engineAvailable);
 }
 

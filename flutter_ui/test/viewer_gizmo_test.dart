@@ -10,6 +10,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/panels/viewer_gizmo.dart';
 import 'package:lumit_flutter/panels/viewer_layer_map.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
@@ -77,7 +78,11 @@ void main() {
         ],
         closed: true,
         inverted: false,
-        opacity: 100,
+        opacity: const BridgeScalar.static_(100),
+        mode: BridgeMaskMode.add,
+        feather: const BridgeScalar.static_(0),
+        expansion: const BridgeScalar.static_(0),
+        pathKeys: const [],
       );
 
   /// The same square, as a shape layer's own art rather than a mask. The two
@@ -544,6 +549,33 @@ void main() {
       expect(nonZeroScale(-2), -2, reason: 'a real factor is left alone');
       final collapsed = box().scaledTo(0, 0);
       expect(collapsed.map.layerOf(const Offset(300, 200)).dx.isFinite, isTrue);
+    });
+  });
+
+  /// The in-flight copies used to be rebuilt field by field, and silently
+  /// dropped `shapeContents` and `artOrigin` — so a shape layer's art (and its
+  /// editable points) vanished from the overlay the moment a scale, turn or
+  /// pivot drag began, and came back on release.
+  group('A gesture in flight keeps the art', () {
+    test('scale, turn and pivot all carry the shape contents and art origin',
+        () {
+      final b = box(
+        size: const Size(60, 60),
+        masks: [squareMask()],
+        shapeContents: [squareShape(left: 120, top: 80, side: 60)],
+        artOrigin: const Offset(120, 80),
+      );
+      for (final moved in [
+        b.scaledTo(50, 50),
+        b.turnedTo(90),
+        b.pivotedAt(const Offset(10, 10), const Offset(290, 190)),
+      ]) {
+        expect(moved.shapeContents, b.shapeContents);
+        expect(moved.artOrigin, b.artOrigin);
+        expect(moved.masks, b.masks);
+        // The user-visible half: the art's points are still there to aim at.
+        expect(pathPointsOf(moved).where((p) => p.shape), hasLength(4));
+      }
     });
   });
 }

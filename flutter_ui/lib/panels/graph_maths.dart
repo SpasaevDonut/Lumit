@@ -15,7 +15,6 @@
 // pinned by the impl note on both sides, and the golden tests hold the two
 // implementations together.
 
-import 'package:flutter/rendering.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 
 /// A rational time as plain seconds — the evaluation domain (docs/14 §2:
@@ -123,12 +122,10 @@ class CubicSpan {
       _ => (chordSlope, 1.0 / 3.0),
     };
 
-/// Evaluate a sorted key list at `t` seconds — the engine's `evaluate`,
-/// clamped past the ends, hold-out winning its span.
-double evaluateKeys(List<BridgeKeyframe> keys, double t) {
-  if (keys.isEmpty) return 0;
-  if (t <= rationalSeconds(keys.first.time)) return keys.first.value;
-  if (t >= rationalSeconds(keys.last.time)) return keys.last.value;
+/// The span of a sorted key list holding `t` — its two keys and their times.
+/// Callers have already handled `t` outside the keys, so a span always exists.
+(BridgeKeyframe, BridgeKeyframe, double, double) _spanAt(
+    List<BridgeKeyframe> keys, double t) {
   var idx = keys.length - 2;
   for (var i = 0; i + 1 < keys.length; i++) {
     if (t < rationalSeconds(keys[i + 1].time)) {
@@ -137,7 +134,25 @@ double evaluateKeys(List<BridgeKeyframe> keys, double t) {
     }
   }
   final a = keys[idx], b = keys[idx + 1];
-  final t1 = rationalSeconds(a.time), t2 = rationalSeconds(b.time);
+  return (a, b, rationalSeconds(a.time), rationalSeconds(b.time));
+}
+
+/// The cubic across one span, its sides read through [sideParams].
+CubicSpan _cubicOf(BridgeKeyframe a, BridgeKeyframe b, double t1, double t2) {
+  final chord = (b.value - a.value) / (t2 - t1);
+  final (s1, b1) = sideParams(a.interpOut, chord);
+  final (s2, b2) = sideParams(b.interpIn, chord);
+  return CubicSpan.fromAe(t1, a.value, t2, b.value,
+      speedOut: s1, inflOut: b1, speedIn: s2, inflIn: b2);
+}
+
+/// Evaluate a sorted key list at `t` seconds — the engine's `evaluate`,
+/// clamped past the ends, hold-out winning its span.
+double evaluateKeys(List<BridgeKeyframe> keys, double t) {
+  if (keys.isEmpty) return 0;
+  if (t <= rationalSeconds(keys.first.time)) return keys.first.value;
+  if (t >= rationalSeconds(keys.last.time)) return keys.last.value;
+  final (a, b, t1, t2) = _spanAt(keys, t);
   final dt = t2 - t1;
   if (dt <= 0) return a.value;
   if (a.interpOut is BridgeSideInterp_Hold) return a.value;
@@ -145,22 +160,17 @@ double evaluateKeys(List<BridgeKeyframe> keys, double t) {
       b.interpIn is BridgeSideInterp_Linear) {
     return a.value + (b.value - a.value) * ((t - t1) / dt);
   }
-  final chord = (b.value - a.value) / dt;
-  final (s1, b1) = sideParams(a.interpOut, chord);
-  final (s2, b2) = sideParams(b.interpIn, chord);
-  return CubicSpan.fromAe(t1, a.value, t2, b.value,
-          speedOut: s1, inflOut: b1, speedIn: s2, inflIn: b2)
-      .valueAt(t);
+  return _cubicOf(a, b, t1, t2).valueAt(t);
 }
 
 /// The value of a scalar at `t` seconds — a static one is itself everywhere.
 double evaluateScalar(BridgeScalar scalar, double t) => switch (scalar) {
       BridgeScalar_Static(:final field0) => field0,
       BridgeScalar_Keyframed(:final field0) => evaluateKeys(field0, t),
-      BridgeScalar_Expression() => () {
-        debugPrint("TODO: implement evaluate scalar expression in flutter ui");
-        return 0.0;
-      }()
+      // An expression has no curve to draw here: only the engine can run it,
+      // and this evaluator exists precisely because a paint may not cross the
+      // bridge. The graph shows an expression-driven scalar as flat zero.
+      BridgeScalar_Expression() => 0.0,
     };
 
 /// dv/dt at `t` seconds — the engine's `evaluate_speed`: 0 outside the keys
@@ -172,15 +182,7 @@ double evaluateKeysSpeed(List<BridgeKeyframe> keys, double t) {
       t >= rationalSeconds(keys.last.time)) {
     return 0;
   }
-  var idx = keys.length - 2;
-  for (var i = 0; i + 1 < keys.length; i++) {
-    if (t < rationalSeconds(keys[i + 1].time)) {
-      idx = i;
-      break;
-    }
-  }
-  final a = keys[idx], b = keys[idx + 1];
-  final t1 = rationalSeconds(a.time), t2 = rationalSeconds(b.time);
+  final (a, b, t1, t2) = _spanAt(keys, t);
   final dt = t2 - t1;
   if (dt <= 0) return 0;
   if (a.interpOut is BridgeSideInterp_Hold) return 0;
@@ -188,12 +190,7 @@ double evaluateKeysSpeed(List<BridgeKeyframe> keys, double t) {
       b.interpIn is BridgeSideInterp_Linear) {
     return (b.value - a.value) / dt;
   }
-  final chord = (b.value - a.value) / dt;
-  final (s1, b1) = sideParams(a.interpOut, chord);
-  final (s2, b2) = sideParams(b.interpIn, chord);
-  return CubicSpan.fromAe(t1, a.value, t2, b.value,
-          speedOut: s1, inflOut: b1, speedIn: s2, inflIn: b2)
-      .speedAt(t);
+  return _cubicOf(a, b, t1, t2).speedAt(t);
 }
 
 /// The speed a key's chosen side reads *at the key* — what the speed graph's

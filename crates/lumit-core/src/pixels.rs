@@ -108,6 +108,29 @@ pub fn letterbox_resize(src: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h: u
     out
 }
 
+/// Source-over one colour onto a pixel, in the straight-alpha bytes the CPU
+/// path carries everywhere else. Shared by the shape and paint rasterisers so
+/// the two composite identically.
+pub(crate) fn over(px: &mut [u8], rgb: [u8; 3], a: f32) {
+    let a = a.clamp(0.0, 1.0);
+    if a <= 0.0 {
+        return;
+    }
+    let dst_a = f32::from(px[3]) / 255.0;
+    let out_a = a + dst_a * (1.0 - a);
+    if out_a <= 0.0 {
+        px.copy_from_slice(&[0, 0, 0, 0]);
+        return;
+    }
+    for c in 0..3 {
+        let src = f32::from(rgb[c]) / 255.0;
+        let dst = f32::from(px[c]) / 255.0;
+        let out = (src * a + dst * dst_a * (1.0 - a)) / out_a;
+        px[c] = (out * 255.0).round().clamp(0.0, 255.0) as u8;
+    }
+    px[3] = (out_a * 255.0).round().clamp(0.0, 255.0) as u8;
+}
+
 /// Per-channel linear crossfade of two equal-length RGBA8 buffers:
 /// `a·(1−t) + b·t`. `t` is clamped to 0..1 (0 = all `a`). The shared frame-blend
 /// used by both preview and export so a blended slow-mo frame is identical in

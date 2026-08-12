@@ -145,6 +145,60 @@ class _DrawnPointerRegionState extends State<DrawnPointerRegion> {
       );
 }
 
+/// One figure in two passes — a thick stroke in the outline colour, then the
+/// mark over it — the trick every drawn pointer here uses to stay legible over
+/// a black picture and a white one alike. [draw] is called once per pass with
+/// the pass's paint.
+void paintTwoPassStroke(
+  Color outline,
+  Color mark,
+  void Function(Paint paint) draw, {
+  double outlineWidth = 3.0,
+  double markWidth = 1.0,
+  bool rounded = false,
+}) {
+  for (final (colour, width) in [(outline, outlineWidth), (mark, markWidth)]) {
+    final paint = Paint()
+      ..color = colour
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = width;
+    if (rounded) {
+      paint
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round;
+    }
+    draw(paint);
+  }
+}
+
+/// The sweep rectangle every marquee draws — a faint fill under a hairline
+/// edge — shared so "I am sweeping an area" reads the same whichever tool is
+/// in hand.
+void paintMarquee(Canvas canvas, Rect rect, Color accent) {
+  canvas.drawRect(rect, Paint()..color = accent.withValues(alpha: 0.12));
+  canvas.drawRect(
+    rect,
+    Paint()
+      ..color = accent
+      ..strokeWidth = 1
+      ..style = PaintingStyle.stroke,
+  );
+}
+
+/// The anchor point's mark — a small ring with a cross through it, the same
+/// figure the anchor-point tool's icon carries — shared by the gizmo's pivot
+/// handle and the Anchor point tool so the two read as one idea.
+void paintAnchorMark(Canvas canvas, Offset at, Color colour,
+    {double reach = 8}) {
+  final paint = Paint()
+    ..color = colour
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 1;
+  canvas.drawCircle(at, 4, paint);
+  canvas.drawLine(at - Offset(reach, 0), at + Offset(reach, 0), paint);
+  canvas.drawLine(at - Offset(0, reach), at + Offset(0, reach), paint);
+}
+
 /// How far the tool's badge sits from the pointer, and how big it is drawn.
 ///
 /// Down and to the right, out of the way of what is being drawn: a badge above
@@ -250,32 +304,22 @@ class _ToolPointerPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final halo = Paint()
-      ..color = outline
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 3;
-    final ink = Paint()
-      ..color = mark
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1;
-
     final radius = ringRadius;
     if (radius != null) {
-      for (final paint in [halo, ink]) {
-        canvas.drawCircle(at, radius, paint);
-      }
+      paintTwoPassStroke(
+          outline, mark, (paint) => canvas.drawCircle(at, radius, paint));
       // A dot at the centre: a wide ring alone leaves the actual point of the
       // brush unmarked, and a stroke starts at a point.
       canvas.drawCircle(at, 1, Paint()..color = mark);
       return;
     }
 
-    for (final paint in [halo, ink]) {
+    paintTwoPassStroke(outline, mark, (paint) {
       canvas.drawLine(at - const Offset(toolCrosshairReach, 0),
           at + const Offset(toolCrosshairReach, 0), paint);
       canvas.drawLine(at - const Offset(0, toolCrosshairReach),
           at + const Offset(0, toolCrosshairReach), paint);
-    }
+    });
   }
 
   @override
@@ -564,12 +608,7 @@ class _MagnifierPainter extends CustomPainter {
     canvas.save();
     canvas.translate(at.dx, at.dy);
     const grip = 0.7071 * _lens;
-    for (final (colour, width) in [(outline, 3.4), (mark, 1.6)]) {
-      final paint = Paint()
-        ..color = colour
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = width
-        ..strokeCap = StrokeCap.round;
+    paintTwoPassStroke(outline, mark, (paint) {
       canvas.drawCircle(Offset.zero, _lens, paint);
       canvas.drawLine(
         const Offset(grip, grip),
@@ -584,7 +623,7 @@ class _MagnifierPainter extends CustomPainter {
       if (!out) {
         canvas.drawLine(const Offset(0, -arm), const Offset(0, arm), paint);
       }
-    }
+    }, outlineWidth: 3.4, markWidth: 1.6, rounded: true);
     canvas.restore();
   }
 
@@ -643,11 +682,7 @@ class _BeamPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     const reach = 7.0;
     const serif = 3.0;
-    for (final (colour, width) in [(outline, 3.0), (mark, 1.0)]) {
-      final paint = Paint()
-        ..color = colour
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = width;
+    paintTwoPassStroke(outline, mark, (paint) {
       canvas.drawLine(
           at - const Offset(reach, 0), at + const Offset(reach, 0), paint);
       for (final end in [-reach, reach]) {
@@ -657,7 +692,7 @@ class _BeamPainter extends CustomPainter {
           paint,
         );
       }
-    }
+    });
   }
 
   @override

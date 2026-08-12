@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'dart:io' show File, Platform;
 import 'dart:ui' show AppExitResponse;
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/gestures.dart' show GestureBinding;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -44,6 +45,7 @@ import 'package:lumit_flutter/state/dock.dart';
 import 'package:lumit_flutter/state/dropper.dart';
 import 'package:lumit_flutter/state/keymap.dart';
 import 'package:lumit_flutter/src/rust/api/keymap.dart';
+import 'package:lumit_flutter/state/animated_mask_paths.dart';
 import 'package:lumit_flutter/state/layer_bounds.dart';
 import 'package:lumit_flutter/state/preview_progress.dart';
 import 'package:lumit_flutter/state/render_timings.dart';
@@ -207,7 +209,9 @@ Future<void> main(List<String> args) async {
   // tidying problem is not a reason for an editor not to open.
   tidyAfterUpdate(InstallSite.detect());
 
-  await BridgeLib.init(handler: CustomHandler());
+  // The call tracer takes StackTrace.current on every bridge call, which is
+  // debugging money a release build must not spend.
+  await BridgeLib.init(handler: kDebugMode ? CustomHandler() : null);
   await ExpressionsMetadata.load();
   await ExpressionTextEditingController.initSyntaxHighlighting();
   final state = LumitState();
@@ -461,6 +465,12 @@ class LumitUiState extends ChangeNotifier {
   /// Viewer rebuild.
   final LayerBoundsCache layerBounds = LayerBoundsCache();
 
+  /// Where a keyed mask's shape actually is at the frame on screen (K-342), so
+  /// the Viewer's wireframe follows an animated path instead of the still one
+  /// the mask still carries. Held against the document and the playhead, so a
+  /// hover asks the engine nothing.
+  final AnimatedMaskPaths animatedMaskPaths = AnimatedMaskPaths();
+
   /// Which tool the toolbar has armed (docs/07 §1.7, K-216).
   ///
   /// Session state at the shell level, like the dropper below it and for the
@@ -558,13 +568,30 @@ class LumitUiState extends ChangeNotifier {
   void requestRevealProperty(UuidValue layer, String action) =>
       revealPropertyRequest.value = (layer, action);
 
+  /// **Which property rows the Timeline has picked**, as their paths, published
+  /// so the Viewer can answer the same question (K-341).
+  ///
+  /// A property belongs to a layer, so picking one is saying which layer is
+  /// being worked on — and the Viewer should outline that layer and its masks
+  /// exactly as it does for a layer picked on its own row. It also tells the
+  /// Viewer which mask's shape is being edited: with a mask's **Path** row
+  /// picked, that mask is the one whose points are offered for dragging.
+  final ValueNotifier<List<String>> selectedProperties =
+      ValueNotifier(const []);
+
+  /// The other direction: something outside the Timeline asking it to pick a
+  /// property row. Set by the Viewer when a mask path with keyframes is
+  /// dragged, so the row whose key just moved is the row on screen.
+  final ValueNotifier<String?> selectPropertyRequest = ValueNotifier(null);
+
+  void requestSelectProperty(String path) => selectPropertyRequest.value = path;
+
   /// The Project panel's picked item — its selection anchor, published by the
   /// panel on every click (K-327). The full selection stays the panel's own;
   /// this is the one item the FX console acts on, so a Ctrl+Space over the
   /// Project panel offers "add this to the comp" rather than the new-layer
   /// ring it used to fall through to. Null with nothing picked there.
-  final ValueNotifier<ItemReference?> selectedProjectItem =
-      ValueNotifier(null);
+  final ValueNotifier<ItemReference?> selectedProjectItem = ValueNotifier(null);
 
   /// Bumped each time a rendered frame reaches the Viewer, on any of the three
   /// transports. Watched by anything that redraws when the picture does — the
@@ -1003,6 +1030,22 @@ class LumitUiState extends ChangeNotifier {
   final ValueNotifier<Map<UuidValue, ({String text, double size})>> liveText =
       ValueNotifier(const {});
 
+  /// The transform a value scrub is part way through, by layer id.
+  ///
+  /// The third of the same family, and for the reason [liveRotations] gives:
+  /// dragging Position or Scale — in the property rows or on a curve in the
+  /// graph — previews the *picture* at the new value while the document still
+  /// holds the old one, so the box drawn from the document sat still until the
+  /// drag was released. The row that is dragging publishes the provisional
+  /// transform it already built for the preview, and the boxes read it.
+  ///
+  /// At most one layer at a time: a gesture is one property of one layer
+  /// (see `previewChannelEdits`). Empty whenever nothing is being scrubbed —
+  /// and it must be emptied on release, or the box would hold the last
+  /// provisional value for ever.
+  final ValueNotifier<Map<UuidValue, BridgeTransform>> liveTransforms =
+      ValueNotifier(const {});
+
   /// Forget layers that are no longer in the composition (K-238).
   ///
   /// **Why this is not merely tidy.** A selection is not only a highlight — it
@@ -1338,8 +1381,92 @@ class LumitUiState extends ChangeNotifier {
     }
     _selectedComp = reference;
     model.bind(reference);
+    // Each comp is looked at its own way (K-314), so fronting one is what puts
+    // its exposure and tone map back on the engine's renderer — which holds
+    // exactly one view, for whatever the Viewer is showing.
+    pushViewerLook();
     rememberSession();
     notifyListeners();
+  }
+
+  // --- How the Viewer is looking (K-314) -----------------------------------
+
+  /// Exposure and tone map per composition id. Not in the document: a way of
+  /// looking is not an edit, so this rides in the session blob (see
+  /// [session]) and never in an op.
+  final Map<String, ViewerLook> viewerLooks = {};
+
+  /// How the fronted comp is being looked at, neutral until something says
+  /// otherwise.
+  ///
+  /// The one place the stored look becomes the look in use, which is why the
+  /// tone map setting is honoured here and nowhere else: the Viewer bar, the
+  /// engine push and the button all read this, so they cannot disagree. With
+  /// the setting off the tone map is false whatever the comp stored — a
+  /// session saved while it was engaged would otherwise be stranded with no
+  /// button to turn it off. Only the reading is gated, not the store, so
+  /// turning the setting back on finds the comp as it was — until the exposure
+  /// is moved while the button is away, which writes the pair back as seen.
+  ViewerLook get viewerLook {
+    final stored =
+        viewerLooks[_selectedComp?.internalid.toString()] ?? neutralLook;
+    if (workspace.interface.showToneMap) return stored;
+    return (stops: stored.stops, toneMap: false);
+  }
+
+  /// The last look actually sent to the engine, so a neutral push onto an
+  /// already-neutral renderer can be skipped. A worker is born neutral.
+  ViewerLook _pushedLook = neutralLook;
+
+  /// Set the exposure, leaving the tone map as it is; and the mirror of it.
+  ///
+  /// Two setters rather than one taking a whole [ViewerLook], because each
+  /// control must change only its own half. A control that rebuilt the pair
+  /// from the value it was *drawn* with would carry a stale reading for the
+  /// other half into the write — two changes between two rebuilds, and the
+  /// second undoes the first.
+  void setViewerStops(double stops) =>
+      setViewerLook((stops: stops, toneMap: viewerLook.toneMap));
+
+  void toggleViewerToneMap() =>
+      setViewerLook((stops: viewerLook.stops, toneMap: !viewerLook.toneMap));
+
+  /// Set how the fronted comp is looked at, tell the engine, and write it down.
+  void setViewerLook(ViewerLook look) {
+    final id = _selectedComp?.internalid.toString();
+    if (id == null) return;
+    if (look == neutralLook) {
+      viewerLooks.remove(id);
+    } else {
+      viewerLooks[id] = look;
+    }
+    pushViewerLook();
+    rememberSession();
+    notifyListeners();
+  }
+
+  /// Tell the engine what the Viewer is looking through, and ask for the frame
+  /// again — a setting changes what the *next* frame looks like, so without the
+  /// ask the picture would not move until something else moved it.
+  ///
+  /// Neutral onto a renderer already neutral is nothing to say and nothing to
+  /// undo, so it is skipped — which is every fronting in a session where
+  /// nobody has touched either control, and the renderer is born neutral. The
+  /// re-render is the expensive half: fronting a comp asks for its frame
+  /// anyway, and asking twice is a whole extra composite each time.
+  void pushViewerLook() {
+    final comp = selectedComp;
+    if (comp == null) return;
+    final look = viewerLook;
+    if (look == neutralLook && _pushedLook == neutralLook) return;
+    _pushedLook = look;
+    try {
+      comp.setDisplayView(stops: look.stops, toneMap: look.toneMap);
+    } catch (_) {
+      // No worker yet, or a comp that has gone. The next change asks again.
+      return;
+    }
+    requestFrame();
   }
 
   // --- The per-project session ---------------------------------------------
@@ -1378,6 +1505,7 @@ class LumitUiState extends ChangeNotifier {
         frame: playheadFrame.value,
         selectedLayer: selectedLayer.value?.internallayerId.toString(),
         dock: workspace.dock.toJson(),
+        viewerLooks: Map.of(viewerLooks),
       );
 
   /// The same thing as JSON, for the copy that goes inside the `.lum` so it
@@ -1439,6 +1567,9 @@ class LumitUiState extends ChangeNotifier {
       openComps.clear();
       clearSelection();
       playheadFrame.value = 0;
+      viewerLooks.clear();
+      // A new project is a new worker, and a new worker is born neutral.
+      _pushedLook = neutralLook;
       setSelectedComp(null);
 
       final path = project?.path();
@@ -1457,6 +1588,11 @@ class LumitUiState extends ChangeNotifier {
       final known = {
         for (final (comp, _) in _app.comps()) comp.internalid.toString(): comp,
       };
+      // Only for comps this document still has: a look kept against a comp id
+      // that has gone would be written back out for ever.
+      viewerLooks.addEntries(
+        session.viewerLooks.entries.where((e) => known.containsKey(e.key)),
+      );
       for (final id in session.openComps) {
         final comp = known[id];
         if (comp != null) openComps.add(comp.internalid);

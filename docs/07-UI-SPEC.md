@@ -327,6 +327,26 @@ A single compact bar at the bottom of the Viewer holds, left to right:
     grey / custom.
 11. **Current time** readout in the comp's timecode; click to type a time. A time outside
     the composition lands on the nearest end rather than being refused (K-287).
+12. **Exposure** (K-314): a small box scrubbing on drag and taking a typed number, with an
+    aperture icon beside it, reading signed stops to one decimal — `+0.0`, `+1.4`, `-2.3`.
+    The number means what the Exposure effect's does: the same `2^stops` gain in
+    scene-linear (K-106), so the two agree. **Preview only; it MUST NOT change the
+    export.**
+13. **Tone mapping** toggle (K-314): an icon, no menu. A fixed highlight rolloff — the
+    identity below the knee, so an ordinary composite is untouched, and a smooth shoulder
+    above it that folds however-bright highlights back under 1 instead of letting them clip
+    flat. It is the "what is actually up there" switch for a comp whose values run past 1,
+    not a grade. **Preview only; it MUST NOT change the export**, and it MUST NOT adapt to
+    the frame's content: a picture that re-exposes itself per frame breathes across every
+    cut, and a revisited frame would stop being the frame it was.
+    The button is **off the bar unless Settings → Interface asks for it**: most work never
+    reads a picture this way. While it is hidden the tone map MUST also read as **off**
+    whatever the comp stored — hiding the control must never strand an engaged look with
+    nothing left to turn it off. The exposure of item 12 is never hidden.
+
+Items 12 and 13 both persist **per comp** with the project, and while either is engaged
+the Viewer MUST say the picture is not the export — item 8's badge is where that lives,
+stated calmly rather than warned about (15-DESIGN).
 
 The bar MUST remain one row; overflow collapses from the right into a chevron menu.
 
@@ -474,8 +494,26 @@ there is something to say.
   keyframed.
 - Masks appear in the layer's Timeline twirl-down under a **Masks** heading — above Effects,
   because a mask gates the layer's alpha before its effects run (docs/06 render order) — and
-  the heading appears only once the layer has one, exactly as Effects does. Each row carries
-  the mask's name, its invert switch and its opacity, and its context menu deletes it.
+  the heading appears only once the layer has one, exactly as Effects does. The mask's own
+  row carries what the mask *is* — its name, its invert switch, and its **mode** under the
+  same header a layer's blend mode sits under (K-340) — and its context menu renames and
+  deletes it.
+- **A mask's values are property rows, and every one of them keyframes** (K-340). Under the
+  mask sit **Path**, **Opacity**, **Feather** and **Expansion**, each with the same
+  stopwatch, the same ◄ ◆ ► navigator and the same lane diamonds as a transform property,
+  and each with its value in the same column an effect parameter's value sits in. Path is
+  the shape itself: it has no number, so its row has no field and its lane shows diamonds
+  without a curve (K-339).
+- **A mask (and a shape item) is renamed in place.** A shape drawn with a tool is named
+  after that tool, which is right until two ellipses need telling apart, so the name is
+  editable: **double-click** it, or pick **Rename** from the row's menu. `Enter` or a click
+  elsewhere commits; `Escape` abandons; an empty or all-space name is refused and the old
+  name stands. The whole edit is one write, so it is one undo step. This is not the layer
+  rename of K-243 (`Enter` opens that, because a double-click on a *layer* name opens the
+  layer) — a mask row has nothing to open, and its single click is already spoken for by
+  selection, so the double-click is free. It is counted from two timestamps rather than an
+  `onDoubleTap`, because a double-tap recogniser would hold the selecting click back for
+  the length of the double-tap window.
 - **A mask row is an ordinary property row (K-234).** Clicking its name selects it, with the
   same plain / `Ctrl` / `Shift` gestures every other property row takes (§4.3), and the row and
   the heading over it light up the same way. A **whole opacity drag is one undo step**, not one
@@ -489,7 +527,7 @@ bar's switch. Not built: the anchor-point centre handle, snapping of any kind, p
 and 3D gizmos, scale and rotation of a *multiple* selection about a shared box (a multiple
 selection moves, and shows a box per layer), and motion paths (§2.4). A layer whose position
 is keyframed draws no box: there is no single value for a drag to add to. **Masks can be
-drawn, listed, selected, inverted, faded, deleted (by menu or `Delete`), and their points
+drawn, listed, selected, renamed, inverted, faded, deleted (by menu or `Delete`), and their points
 selected and moved** (K-224, K-234), and **a shape layer's own art is drawn and edited by the
 same gesture** (K-307) — the two hold the same path type, so a point of either is aimed at,
 swept up and dragged alike. A shape point is drawn at the art's own coordinates less the
@@ -999,7 +1037,11 @@ measurement — the panel shows the numbers, it does not turn them on.
     time in seconds, and it is an ordinary keyframable property: the same stopwatch, the same
     navigator, the same lane diamonds and the same graph lane as Position, with nothing
     Retime-specific attached. Switching it on installs the identity map, so the picture does
-    not move; switching it off removes the property rather than flattening it.
+    not move; switching it off removes the property rather than flattening it. **A map
+    flattened to one constant removes it too** (K-329): turning the stopwatch off, or deleting
+    the last key, means "no more retime" on this property, so the layer is re-hung on its
+    source and plays at source rate again rather than freezing on a single frame. A freeze is
+    still asked for the way After Effects asks — a map with one key holds that moment.
   - **Transform**, always: one row per property group with the stopwatch, the ◄ ◆ ► navigator,
     the label, and a scrub-drag/click-to-type value per axis.
   - **Effects**, only when the layer has any: one row per effect, opening onto that effect's
@@ -1012,7 +1054,10 @@ measurement — the panel shows the numbers, it does not turn them on.
   The rows are one implementation shared with the Effect controls panel
   (`transform_rows_frb.dart`, `effect_param_row_frb.dart`) rather than a second copy, so a
   parameter behaves the same wherever it is shown. A drag stages the value, previews it through
-  the engine's patched clone, and commits once on release: one undo step for the gesture. The
+  the engine's patched clone, and commits once on release: one undo step for the gesture.
+  Every scrub-drag obeys the modifier convention After Effects uses: holding `Shift` is
+  coarse (×10 per pixel), holding `Ctrl` is fine (×0.1), and pressing or releasing the
+  modifier mid-drag takes effect at once. The
   fold-out is worked out once as a list of rows (`layer_fold_frb.dart`) that *both* halves of
   the table walk — the outline drawing each row, the lane side leaving its height — so bars
   cannot drift away from their names. Each property row leads with its keyframe controls —
@@ -1340,7 +1385,11 @@ whole selection in time and value as one write per property; and **keyframe copy
 (`Ctrl+C`/`Ctrl+V`, from the lane view as much as the graph) — full fidelity in-app,
 mirrored to the system clipboard as a tab-separated `Lumit <version> Keyframe Data` table
 whose per-value easing columns carry the shaping across, and which parses foreign
-keyframe tables back in as linear keys. Still to build:
+keyframe tables back in as linear keys. **A drag in the graph previews as it goes** (K-329):
+every tick renders the values the release will write, through the same patched clone the
+value rows use — a key drag, a tangent handle and a Vegas envelope point alike. It covers the
+grabbed key's layer, so a selection spanning several layers still shows the rest on release.
+Still to build:
 the acceleration lens and auto view (K-070), numeric entry, the transform-box scaling,
 snap-to-beat-markers in the graph, waveform ghosting, and the Retime lenses of §5.2.
 

@@ -4,6 +4,8 @@
 // the text colour of their state, and the motion-blur mark is drawn from the
 // owner's artwork rather than looked up (Iconoir has no motion-blur glyph).
 
+import 'dart:math' as math;
+
 import 'package:flutter/widgets.dart';
 import 'package:iconoir_flutter/regular/align_left.dart' as ic;
 import 'package:iconoir_flutter/regular/arc_3d.dart' as ic;
@@ -27,6 +29,7 @@ import 'package:iconoir_flutter/regular/folder.dart' as ic;
 import 'package:iconoir_flutter/regular/frame.dart' as ic;
 import 'package:iconoir_flutter/regular/fx.dart' as ic;
 import 'package:iconoir_flutter/regular/globe.dart' as ic;
+import 'package:iconoir_flutter/regular/hdr.dart' as ic;
 import 'package:iconoir_flutter/regular/intersect.dart' as ic;
 import 'package:iconoir_flutter/regular/keyframe.dart' as ic;
 import 'package:iconoir_flutter/regular/keyframe_plus.dart' as ic;
@@ -194,6 +197,16 @@ enum LumitIcon {
   /// what it depicts is Lumit's own gizmo rather than anything a general icon
   /// set has a glyph for.
   wireframe,
+
+  /// The Viewer bar's exposure box (K-314): a camera iris. Painter-drawn —
+  /// Iconoir has no aperture glyph, and exposure in stops is a camera idea, so
+  /// the mark is the camera's.
+  aperture,
+
+  /// The Viewer bar's tone-map switch (K-314). Iconoir's HDR mark: what the
+  /// toggle is about is the values above 1 that an ordinary display cannot
+  /// show.
+  toneMap,
 }
 
 /// The size an icon draws at (15-DESIGN §5: 16px for panels, 20px for the
@@ -222,15 +235,17 @@ const double _iconStrokeUnits = 1.5;
 /// looked up, exactly as in the Rust frontend.
 Widget lumitIcon(LumitIcon icon, {required double size, required Color color}) {
   final painter = switch (icon) {
-    LumitIcon.motionBlur => MotionBlurPainter(color) as CustomPainter,
-    LumitIcon.shy => ShyPainter(color, hidden: false),
-    LumitIcon.shyHidden => ShyPainter(color, hidden: true),
-    LumitIcon.circleFilled => CircleFillPainter(color),
-    LumitIcon.nullLayer => NullLayerPainter(color),
-    LumitIcon.anchorPoint => AnchorPointPainter(color),
-    LumitIcon.roundedRectangle => RoundedRectanglePainter(color),
-    LumitIcon.wireframe => WireframePainter(color),
+    LumitIcon.motionBlur => _GridIconPainter(color, _drawMotionBlur),
+    LumitIcon.shy => _GridIconPainter(color, _drawShy),
+    LumitIcon.shyHidden => _GridIconPainter(color, _drawShyHidden),
+    LumitIcon.circleFilled => _GridIconPainter(color, _drawCircleFill),
+    LumitIcon.nullLayer => _GridIconPainter(color, _drawNullLayer),
+    LumitIcon.anchorPoint => _GridIconPainter(color, _drawAnchorPoint),
+    LumitIcon.roundedRectangle =>
+      _GridIconPainter(color, _drawRoundedRectangle),
+    LumitIcon.wireframe => _GridIconPainter(color, _drawWireframe),
     LumitIcon.zoomExtent => ZoomExtentPainter(color),
+    LumitIcon.aperture => _GridIconPainter(color, _drawAperture),
     _ => null,
   };
   if (painter != null) {
@@ -350,7 +365,9 @@ Widget _glyph(LumitIcon icon, Color color) => switch (icon) {
       LumitIcon.cameraOrbit => ic.Globe(color: color),
       LumitIcon.cameraPan => ic.Drag(color: color),
       LumitIcon.cameraDolly => ic.Expand(color: color),
+      LumitIcon.toneMap => ic.Hdr(color: color),
       // Painter-drawn, handled above.
+      LumitIcon.aperture ||
       LumitIcon.shy ||
       LumitIcon.shyHidden ||
       LumitIcon.circleFilled ||
@@ -362,94 +379,121 @@ Widget _glyph(LumitIcon icon, Color color) => switch (icon) {
         const SizedBox.shrink(),
     };
 
+/// The one shell behind every painter-drawn mark. Each mark used to be its
+/// own [CustomPainter] class repeating the same shell — hold the colour,
+/// scale the 24-unit grid onto the canvas, repaint when the colour changes —
+/// around a dozen lines of actual drawing. The shell is kept once here; what
+/// to draw comes in as a top-level function, and comparing those tear-offs in
+/// [shouldRepaint] is also what repaints a swap of one mark for another (the
+/// shy mark's two states are two functions rather than a flag).
+class _GridIconPainter extends CustomPainter {
+  final Color color;
+
+  /// What to draw. `s` is the size on this canvas of one unit of the 24-unit
+  /// grid every mark's coordinates are given in.
+  final void Function(Canvas canvas, Size size, double s, Color color) draw;
+
+  const _GridIconPainter(this.color, this.draw);
+
+  @override
+  void paint(Canvas canvas, Size size) =>
+      draw(canvas, size, size.shortestSide / _iconGridUnits, color);
+
+  @override
+  bool shouldRepaint(_GridIconPainter old) =>
+      old.color != color || old.draw != draw;
+}
+
+/// The exposure box's mark (K-314): a camera iris, on the same 24×24 grid and
+/// at the same 1.5-unit stroke as every Iconoir glyph, so it sits in the bar at
+/// the weight of the icons either side of it.
+///
+/// Six blades, drawn as six chords of the ring at 60° apart. Each chord runs
+/// between two points on the circle a third of the way round from each other,
+/// which is what gives the iris its hexagonal opening without any of the lines
+/// meeting at the centre.
+void _drawAperture(Canvas canvas, Size size, double s, Color color) {
+  final centre = Offset(size.width / 2, size.height / 2);
+  final radius = 9.0 * s;
+  final paint = Paint()
+    ..color = color
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = _iconStrokeUnits * s
+    ..strokeCap = StrokeCap.round;
+  canvas.drawCircle(centre, radius, paint);
+  Offset on(double turns) =>
+      centre +
+      Offset(math.cos(turns * 2 * math.pi), math.sin(turns * 2 * math.pi)) *
+          radius;
+  for (var blade = 0; blade < 6; blade++) {
+    canvas.drawLine(on(blade / 6), on((blade + 2) / 6), paint);
+  }
+}
+
 /// The motion-blur mark: a ring with speed streaks running into it, from the
 /// owner's artwork on a 24×24 grid — coordinates identical to the Rust
 /// `draw_motion_blur` so the two frontends paint the same mark.
-class MotionBlurPainter extends CustomPainter {
-  final Color color;
-  const MotionBlurPainter(this.color);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final s = size.shortestSide / _iconGridUnits;
-    final origin = Offset(
-      size.width / 2 - 12.0 * s,
-      size.height / 2 - 12.0 * s,
-    );
-    Offset at(double x, double y) => origin + Offset(x * s, y * s);
-    final paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.0 * s
-      ..strokeCap = StrokeCap.butt;
-    // The ring: a 2-unit stroke on a 4-unit radius, centred at (17, 12).
-    canvas.drawCircle(at(17, 12), 4.0 * s, paint);
-    // The streaks; two rows broken by a shorter dash further left, which is
-    // what makes the mark read as motion rather than a plain arrow.
-    const rows = [
-      (4.0, 14.0, 8.0),
-      (10.0, 13.0, 12.0),
-      (8.0, 14.0, 16.0),
-      (3.0, 7.0, 12.0),
-      (4.0, 5.0, 16.0),
-    ];
-    for (final (x1, x2, y) in rows) {
-      canvas.drawLine(at(x1, y), at(x2, y), paint);
-    }
+void _drawMotionBlur(Canvas canvas, Size size, double s, Color color) {
+  final origin = Offset(size.width / 2 - 12.0 * s, size.height / 2 - 12.0 * s);
+  Offset at(double x, double y) => origin + Offset(x * s, y * s);
+  final paint = Paint()
+    ..color = color
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 2.0 * s
+    ..strokeCap = StrokeCap.butt;
+  // The ring: a 2-unit stroke on a 4-unit radius, centred at (17, 12).
+  canvas.drawCircle(at(17, 12), 4.0 * s, paint);
+  // The streaks; two rows broken by a shorter dash further left, which is
+  // what makes the mark read as motion rather than a plain arrow.
+  const rows = [
+    (4.0, 14.0, 8.0),
+    (10.0, 13.0, 12.0),
+    (8.0, 14.0, 16.0),
+    (3.0, 7.0, 12.0),
+    (4.0, 5.0, 16.0),
+  ];
+  for (final (x1, x2, y) in rows) {
+    canvas.drawLine(at(x1, y), at(x2, y), paint);
   }
-
-  @override
-  bool shouldRepaint(MotionBlurPainter oldDelegate) =>
-      oldDelegate.color != color;
 }
 
-/// The shy mark, on a 24×24 grid. Not hidden: two lines standing over the
-/// list's long baseline. Hidden: just a stub ducked close over the baseline —
-/// the layers have dropped out of the list.
-class ShyPainter extends CustomPainter {
-  final Color color;
-  final bool hidden;
-  const ShyPainter(this.color, {required this.hidden});
+/// The shy mark, on a 24×24 grid — two draw functions for its two states,
+/// which is also how the shell knows to repaint when one swaps for the other.
+///
+/// Not hidden: two lines standing over the list's long baseline.
+void _drawShy(Canvas canvas, Size size, double s, Color color) =>
+    _drawShyMark(canvas, s, color, hidden: false);
 
-  @override
-  void paint(Canvas canvas, Size size) {
-    final s = size.shortestSide / _iconGridUnits;
-    Offset at(double x, double y) => Offset(x * s, y * s);
-    final paint = Paint()
-      ..color = color
-      ..strokeWidth = 2.0 * s
-      ..strokeCap = StrokeCap.round;
-    // The baseline: the layer list itself.
-    canvas.drawLine(at(4, 19), at(20, 19), paint);
-    if (hidden) {
-      canvas.drawLine(at(9, 13), at(15, 13), paint);
-    } else {
-      canvas.drawLine(at(6, 12), at(18, 12), paint);
-      canvas.drawLine(at(9, 5), at(15, 5), paint);
-    }
+/// Hidden: just a stub ducked close over the baseline — the layers have
+/// dropped out of the list.
+void _drawShyHidden(Canvas canvas, Size size, double s, Color color) =>
+    _drawShyMark(canvas, s, color, hidden: true);
+
+void _drawShyMark(Canvas canvas, double s, Color color,
+    {required bool hidden}) {
+  Offset at(double x, double y) => Offset(x * s, y * s);
+  final paint = Paint()
+    ..color = color
+    ..strokeWidth = 2.0 * s
+    ..strokeCap = StrokeCap.round;
+  // The baseline: the layer list itself.
+  canvas.drawLine(at(4, 19), at(20, 19), paint);
+  if (hidden) {
+    canvas.drawLine(at(9, 13), at(15, 13), paint);
+  } else {
+    canvas.drawLine(at(6, 12), at(18, 12), paint);
+    canvas.drawLine(at(9, 5), at(15, 5), paint);
   }
-
-  @override
-  bool shouldRepaint(ShyPainter old) =>
-      old.color != color || old.hidden != hidden;
 }
 
-/// A filled circle: the solo switch's on state.
-class CircleFillPainter extends CustomPainter {
-  final Color color;
-  const CircleFillPainter(this.color);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    canvas.drawCircle(
-      size.center(Offset.zero),
-      size.shortestSide * 0.32,
-      Paint()..color = color,
-    );
-  }
-
-  @override
-  bool shouldRepaint(CircleFillPainter old) => old.color != color;
+/// A filled circle: the solo switch's on state. The only mark that ignores the
+/// grid scale — its radius is a fraction of the widget, not a unit count.
+void _drawCircleFill(Canvas canvas, Size size, double s, Color color) {
+  canvas.drawCircle(
+    size.center(Offset.zero),
+    size.shortestSide * 0.32,
+    Paint()..color = color,
+  );
 }
 
 /// The zoom slider's two ends: a landscape — two hills, the taller one behind —
@@ -460,151 +504,113 @@ class CircleFillPainter extends CustomPainter {
 /// under 16px for that; an Iconoir glyph there would put its 1.5-unit stroke on
 /// a fraction of a pixel and crunch (docs/15 §5, K-209). A filled silhouette has
 /// no stroke to lose, so it reads at 9px as cleanly as at 14.
-class ZoomExtentPainter extends CustomPainter {
-  final Color color;
-  const ZoomExtentPainter(this.color);
+void _drawZoomExtent(Canvas canvas, Size size, double s, Color color) {
+  Offset at(double x, double y) => Offset(x * s, y * s);
+  final paint = Paint()
+    ..color = color
+    ..style = PaintingStyle.fill;
+  // The far hill first, so the near one overlaps it and the two read as
+  // depth rather than as one jagged shape.
+  canvas.drawPath(
+    Path()
+      ..moveTo(at(9, 20).dx, at(9, 20).dy)
+      ..lineTo(at(15, 6).dx, at(15, 6).dy)
+      ..lineTo(at(22, 20).dx, at(22, 20).dy)
+      ..close(),
+    paint,
+  );
+  canvas.drawPath(
+    Path()
+      ..moveTo(at(2, 20).dx, at(2, 20).dy)
+      ..lineTo(at(8, 11).dx, at(8, 11).dy)
+      ..lineTo(at(14, 20).dx, at(14, 20).dy)
+      ..close(),
+    paint,
+  );
+}
 
-  @override
-  void paint(Canvas canvas, Size size) {
-    final s = size.shortestSide / _iconGridUnits;
-    Offset at(double x, double y) => Offset(x * s, y * s);
-    final paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.fill;
-    // The far hill first, so the near one overlaps it and the two read as
-    // depth rather than as one jagged shape.
-    canvas.drawPath(
-      Path()
-        ..moveTo(at(9, 20).dx, at(9, 20).dy)
-        ..lineTo(at(15, 6).dx, at(15, 6).dy)
-        ..lineTo(at(22, 20).dx, at(22, 20).dy)
-        ..close(),
-      paint,
-    );
-    canvas.drawPath(
-      Path()
-        ..moveTo(at(2, 20).dx, at(2, 20).dy)
-        ..lineTo(at(8, 11).dx, at(8, 11).dy)
-        ..lineTo(at(14, 20).dx, at(14, 20).dy)
-        ..close(),
-      paint,
-    );
-  }
-
-  @override
-  bool shouldRepaint(ZoomExtentPainter old) => old.color != color;
+/// The landscape's named type, kept: the Timeline panel's test tells the
+/// slider's two ends apart from every other mark by
+/// `painter is ZoomExtentPainter`.
+class ZoomExtentPainter extends _GridIconPainter {
+  const ZoomExtentPainter(Color color) : super(color, _drawZoomExtent);
 }
 
 /// The Null layer's mark, on the same 24×24 grid as the other drawn marks: an
 /// empty square crossed corner to corner. A Null has no pixels, so the square
 /// stands for the transform box and the cross says there is nothing in it.
-class NullLayerPainter extends CustomPainter {
-  final Color color;
-  const NullLayerPainter(this.color);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final s = size.shortestSide / _iconGridUnits;
-    Offset at(double x, double y) => Offset(x * s, y * s);
-    final paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.0 * s
-      ..strokeJoin = StrokeJoin.miter
-      ..strokeCap = StrokeCap.butt;
-    canvas.drawRect(Rect.fromPoints(at(4, 4), at(20, 20)), paint);
-    canvas.drawLine(at(4, 4), at(20, 20), paint);
-    canvas.drawLine(at(20, 4), at(4, 20), paint);
-  }
-
-  @override
-  bool shouldRepaint(NullLayerPainter old) => old.color != color;
+void _drawNullLayer(Canvas canvas, Size size, double s, Color color) {
+  Offset at(double x, double y) => Offset(x * s, y * s);
+  final paint = Paint()
+    ..color = color
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 2.0 * s
+    ..strokeJoin = StrokeJoin.miter
+    ..strokeCap = StrokeCap.butt;
+  canvas.drawRect(Rect.fromPoints(at(4, 4), at(20, 20)), paint);
+  canvas.drawLine(at(4, 4), at(20, 20), paint);
+  canvas.drawLine(at(20, 4), at(4, 20), paint);
 }
 
 /// The anchor-point tool's mark, on the same 24×24 grid: a ring with a cross
 /// through it — the origin crosshair the Viewer draws on the selected layer,
 /// which is exactly what the tool moves.
-class AnchorPointPainter extends CustomPainter {
-  final Color color;
-  const AnchorPointPainter(this.color);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final s = size.shortestSide / _iconGridUnits;
-    Offset at(double x, double y) => Offset(x * s, y * s);
-    final paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = _iconStrokeUnits * s
-      ..strokeCap = StrokeCap.butt;
-    canvas.drawCircle(at(12, 12), 5.0 * s, paint);
-    // The arms reach past the ring, so the centre reads as a point being aimed
-    // at rather than a circle with a plus in it.
-    canvas.drawLine(at(12, 3), at(12, 21), paint);
-    canvas.drawLine(at(3, 12), at(21, 12), paint);
-  }
-
-  @override
-  bool shouldRepaint(AnchorPointPainter old) => old.color != color;
+void _drawAnchorPoint(Canvas canvas, Size size, double s, Color color) {
+  Offset at(double x, double y) => Offset(x * s, y * s);
+  final paint = Paint()
+    ..color = color
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = _iconStrokeUnits * s
+    ..strokeCap = StrokeCap.butt;
+  canvas.drawCircle(at(12, 12), 5.0 * s, paint);
+  // The arms reach past the ring, so the centre reads as a point being aimed
+  // at rather than a circle with a plus in it.
+  canvas.drawLine(at(12, 3), at(12, 21), paint);
+  canvas.drawLine(at(3, 12), at(21, 12), paint);
 }
 
 /// The rounded-rectangle shape tool's mark: the same square as [LumitIcon.rectangle]
 /// with its corners taken off, so the pair reads as two members of one family
 /// at 16px.
-class RoundedRectanglePainter extends CustomPainter {
-  final Color color;
-  const RoundedRectanglePainter(this.color);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final s = size.shortestSide / _iconGridUnits;
-    final paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = _iconStrokeUnits * s
-      ..strokeJoin = StrokeJoin.round;
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTRB(4 * s, 4 * s, 20 * s, 20 * s),
-        // A quarter of the side, not three-eighths: at 6 the corners ate so
-        // much of each edge that the mark read as a circle with flats on it
-        // rather than as a square with its corners taken off.
-        Radius.circular(4 * s),
-      ),
-      paint,
-    );
-  }
-
-  @override
-  bool shouldRepaint(RoundedRectanglePainter old) => old.color != color;
+void _drawRoundedRectangle(Canvas canvas, Size size, double s, Color color) {
+  final paint = Paint()
+    ..color = color
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = _iconStrokeUnits * s
+    ..strokeJoin = StrokeJoin.round;
+  canvas.drawRRect(
+    RRect.fromRectAndRadius(
+      Rect.fromLTRB(4 * s, 4 * s, 20 * s, 20 * s),
+      // A quarter of the side, not three-eighths: at 6 the corners ate so
+      // much of each edge that the mark read as a circle with flats on it
+      // rather than as a square with its corners taken off.
+      Radius.circular(4 * s),
+    ),
+    paint,
+  );
 }
 
 /// The layer-controls switch: a box with a small filled square at each corner —
 /// the gizmo the switch shows and hides, on the same 24×24 grid.
-class WireframePainter extends CustomPainter {
-  final Color color;
-  const WireframePainter(this.color);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final s = size.shortestSide / _iconGridUnits;
-    Offset at(double x, double y) => Offset(x * s, y * s);
+void _drawWireframe(Canvas canvas, Size size, double s, Color color) {
+  Offset at(double x, double y) => Offset(x * s, y * s);
+  canvas.drawRect(
+    Rect.fromPoints(at(5, 5), at(19, 19)),
+    Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = _iconStrokeUnits * s,
+  );
+  final handle = Paint()..color = color;
+  for (final (x, y) in const [
+    (5.0, 5.0),
+    (19.0, 5.0),
+    (19.0, 19.0),
+    (5.0, 19.0)
+  ]) {
     canvas.drawRect(
-      Rect.fromPoints(at(5, 5), at(19, 19)),
-      Paint()
-        ..color = color
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = _iconStrokeUnits * s,
+      Rect.fromCenter(center: at(x, y), width: 4 * s, height: 4 * s),
+      handle,
     );
-    final handle = Paint()..color = color;
-    for (final (x, y) in const [(5.0, 5.0), (19.0, 5.0), (19.0, 19.0), (5.0, 19.0)]) {
-      canvas.drawRect(
-        Rect.fromCenter(center: at(x, y), width: 4 * s, height: 4 * s),
-        handle,
-      );
-    }
   }
-
-  @override
-  bool shouldRepaint(WireframePainter old) => old.color != color;
 }
