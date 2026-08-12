@@ -5164,14 +5164,24 @@ Crowdin, the site the translators work on, and editing one of those in this repo
 achieves nothing — the next sync writes over it. So a wrong translation is fixed
 on Crowdin, and so is anything about *which* languages exist.
 
-One trap is worth knowing, because it stopped the build once (K-311). Each of
+One trap is worth knowing, because it stopped the build twice (K-311). Each of
 those files names its own language twice: once in its file name, and once in a
 key inside it called `@@locale`. Flutter refuses to build if the two disagree,
 and Crowdin fills that key in with its own spelling of the language — "zh-CN"
-where Flutter wants "zh". The cure is a setting on Crowdin rather than an edit
-here, and `test/l10n/arb_test.dart` now compares the two on every run, so if it
-happens again the failure says which file and what to do about it, instead of the
+where Flutter wants "zh". `test/l10n/arb_test.dart` compares the two on every
+run, so the failure says which file and what to do about it rather than the
 whole build stopping with an error about locales.
+
+The cure was supposed to be a setting on Crowdin. It is not: Crowdin's language
+mapping renames the *file* — which works, and is why the file is called
+app_zh.arb at all — but the value written *inside* it comes from somewhere the
+mapping does not reach, and every sync has written "zh-CN" regardless. So the
+repair is automatic now. Crowdin pushes to a branch of its own, and a small job
+(`.github/workflows/translation-locale.yml`) meets it there, puts each
+`@@locale` back to whatever the file name says, and pushes the result on. By the
+time anybody sees a translation pull request the names agree. Nothing else in
+those files is touched — the words are the translators', and a locale name is
+bookkeeping.
 ### A text layer that says whatever the expression works out
 
 Until now a text layer said one fixed thing. You typed some words, and those

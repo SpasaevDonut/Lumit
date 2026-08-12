@@ -97,7 +97,16 @@ jobs:
       # The shipping target runs the full gate, media included — this is the parity
       # the desktop-dev setup unlocked (previously Windows built --no-default-features).
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      - run: cargo test --workspace --exclude lumit-gpu
+      # The GPU oracles single-threaded, exactly as the Linux job runs them and
+      # for the same reason: this runner has no graphics card, so the pinned
+      # DX12 backend enumerates WARP — a software rasteriser — and a dozen
+      # kernel tests hammering one at once thrashes it. That is not a
+      # hypothetical: it took the whole test process down (`exit code: 2173`,
+      # no output, no test reported as failed), which reads as a mystery
+      # crash rather than as the contention it is.
+      - name: GPU oracle tests (WARP software DX12)
+        run: cargo test -p lumit-gpu -- --test-threads=1
 
   linux:
     name: tests (Linux, with media)
