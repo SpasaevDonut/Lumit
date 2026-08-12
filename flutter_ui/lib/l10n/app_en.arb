@@ -3219,6 +3219,10 @@
   "@settingsHelpSmoothThePictureWhenZoomed": {
     "description": "Settings window: the sentence under the settingsSmoothThePictureWhenZoomed setting."
   },
+  "settingsHelpShowTheToneMapButton": "Put the tone map button on the Viewer bar. Tone mapping folds a picture brighter than the screen can show back into what it can, so the detail up there can be seen while you work — it is a way of looking, and it never reaches an export. Off unless you ask for it.",
+  "@settingsHelpShowTheToneMapButton": {
+    "description": "Settings window: the sentence under the settingsShowTheToneMapButton setting. \"Up there\" means detail brighter than the display can show."
+  },
   "settingsHelpSurroundTakesThemeColours": "Off, the area around the picture is a neutral grey — a grade cannot be judged against a tinted surround. On, it matches the rest of the shell.",
   "@settingsHelpSurroundTakesThemeColours": {
     "description": "Settings window: the sentence under the settingsSurroundTakesThemeColours setting."
@@ -3362,6 +3366,10 @@
   },
   "settingsRetimeValuesInSeconds": "Retime values in seconds",
   "@settingsRetimeValuesInSeconds": {
+    "description": "Settings window: the name of one setting."
+  },
+  "settingsShowTheToneMapButton": "Show the tone map button",
+  "@settingsShowTheToneMapButton": {
     "description": "Settings window: the name of one setting."
   },
   "settingsSmoothThePictureWhenZoomed": "Smooth the picture when zoomed in",

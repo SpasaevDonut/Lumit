@@ -304,7 +304,7 @@ softness, focus, quality and mix are frame-time and never rebake.
 **The bake costs about 0.66 s** for a 24-surface prescription on a middling CPU, of which
 the exposure probe's trace is roughly 0.5 s and the starburst 0.12 s — the rest is pair
 ranking. It used to spend that on the render thread, so choosing a lens froze the picture;
-**it now runs on a bake thread beside the frame (K-346)** — see §5a. Three K-263 economies,
+**it now runs on a bake thread beside the frame (K-348)** — see §5a. Three K-263 economies,
 all exact, cut it to that figure:
 
 - spreads are measured **after** the ranking and only for the first `MAX_RENDERED_PAIRS`
@@ -324,7 +324,7 @@ all exact, cut it to that figure:
 What remains is the trace itself, near the arithmetic floor for scalar code — which is why
 the fix was never a faster bake but a bake that does not block.
 
-### 5a. The bake runs beside the frame (K-346)
+### 5a. The bake runs beside the frame (K-348)
 
 `LensFlareFx` owns a **bake thread**. A frame that asks for a lens the engine does not hold
 hands the bake to it and draws **the lens the previous frame drew** — or, with none yet, no

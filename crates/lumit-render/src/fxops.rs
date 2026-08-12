@@ -1013,7 +1013,7 @@ pub fn run_ops(
                     &op,
                     matte,
                     // The bake as something the bake thread can own and run
-                    // (K-346): one small `Arc` a flare a frame, beside a pass
+                    // (K-348): one small `Arc` a flare a frame, beside a pass
                     // that traces hundreds of thousands of rays. Whether it is
                     // actually run beside the frame or inside it is the
                     // engine's policy, not this call's — see

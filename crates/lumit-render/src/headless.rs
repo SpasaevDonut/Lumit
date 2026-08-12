@@ -613,13 +613,39 @@ impl HeadlessRenderer {
     /// Set the Viewer's exposure and tone map for every frame this renderer
     /// composites from here on (K-314). Preview only — see [`Self::view`].
     ///
-    /// Non-neutral makes frames **unnameable** (below), so nothing this renders
-    /// while a control is engaged enters any cache tier, and the neutral frames
-    /// already banked stay banked and come straight back the moment it returns
-    /// to neutral. Cheaper than widening the key through three tiers, and it
-    /// cannot mis-serve an exposed frame to something expecting the composite.
+    /// A non-neutral view **names its frames differently** rather than leaving
+    /// them nameless (K-346, superseding that part of K-314): the look is baked
+    /// into the display-encoded pixels these tiers hold, so a frame under one
+    /// is a different picture and takes a different name. Refusing a name
+    /// instead switched every tier off for as long as a control was engaged,
+    /// which is a whole session for anyone who works with the tone map on.
+    /// Neutral is unchanged and keeps the names it always had, so frames banked
+    /// before this still come back. An export is always neutral, so a graded
+    /// preview frame can never be served as one.
     pub fn set_display_view(&mut self, view: lumit_gpu::DisplayParams) {
         self.view = view;
+    }
+
+    /// A content name with the Viewer's own way of looking folded in.
+    ///
+    /// Neutral returns the name untouched — byte-for-byte what
+    /// [`crate::cache::frame_key`] gave — so nothing already banked is
+    /// orphaned, on disk least of all. Anything else mixes the look in through
+    /// the same hash the name was built with, under its own tag so a look can
+    /// never be confused for content.
+    fn named_under_view(&self, base: u128) -> u128 {
+        if self.view.is_neutral() {
+            return base;
+        }
+        let mut h = blake3::Hasher::new();
+        h.update(b"view/");
+        h.update(&base.to_le_bytes());
+        h.update(&self.view.gain.to_bits().to_le_bytes());
+        h.update(&[u8::from(self.view.tone_map)]);
+        let bytes = h.finalize();
+        let mut k = [0u8; 16];
+        k.copy_from_slice(&bytes.as_bytes()[..16]);
+        u128::from_le_bytes(k)
     }
 
     /// What the Viewer is currently looking through.
@@ -629,7 +655,7 @@ impl HeadlessRenderer {
     }
 
     /// Let this renderer make a Lens flare's bake beside the frame rather than
-    /// inside it (K-346), so choosing a lens is a wait you can watch instead of
+    /// inside it (K-348), so choosing a lens is a wait you can watch instead of
     /// half a second of stopped picture.
     ///
     /// **Off by default, and the exporter never turns it on.** An export builds
@@ -673,9 +699,9 @@ impl HeadlessRenderer {
     /// The content-hash name of this comp frame ([`crate::cache::frame_key`]),
     /// computed from **this renderer's own** probe results so the name and the
     /// pixels can never disagree about what a source file is. `None` while some
-    /// footage is unprobed — the frame renders live and is not cached — and
-    /// `None` while the display view is non-neutral (see
-    /// [`Self::set_display_view`]).
+    /// footage is unprobed — the frame renders live and is not cached. The
+    /// Viewer's own way of looking is folded in ([`Self::named_under_view`]),
+    /// so an exposed frame is named as one rather than left nameless.
     ///
     /// Takes `&mut self` because it probes anything new, exactly as a render
     /// would; a caller that then renders pays for the probe only once.
@@ -686,11 +712,8 @@ impl HeadlessRenderer {
         frame: u64,
         quality: Quality,
     ) -> Option<u128> {
-        if !self.view.is_neutral() {
-            return None;
-        }
         // A flare bake in flight means any frame made now may be drawing the
-        // lens before it (K-346). Unnameable rather than misnamed: the tiers
+        // lens before it (K-348). Unnameable rather than misnamed: the tiers
         // are keyed by what is *in* a frame (K-178), so an entry that lies
         // about that outlives every edit and undo that could have fixed it.
         if self.flare_bake_pending() {
@@ -705,6 +728,7 @@ impl HeadlessRenderer {
             quality,
             &ProbeView(&self.probe_cache),
         )
+        .map(|k| self.named_under_view(k))
     }
 
     /// Probe what comp `comp_id` can show, so a batch of
@@ -734,9 +758,6 @@ impl HeadlessRenderer {
         frame: u64,
         quality: Quality,
     ) -> Option<u128> {
-        if !self.view.is_neutral() {
-            return None;
-        }
         let comp = doc.comp(comp_id)?;
         crate::cache::frame_key(
             doc,
@@ -745,6 +766,7 @@ impl HeadlessRenderer {
             quality,
             &ProbeView(&self.probe_cache),
         )
+        .map(|k| self.named_under_view(k))
     }
 
     /// Composite one interactive frame and return the display-encoded GPU
@@ -1211,7 +1233,7 @@ impl HeadlessRenderer {
         }
         let started = std::time::Instant::now();
         // A flare bake queued *during* this composite means the picture just
-        // made may be of the previous lens (K-346). The name was taken before
+        // made may be of the previous lens (K-348). The name was taken before
         // the render, so it has to be dropped afterwards — the alternative is
         // an entry that lies about its own content, which no later edit or
         // undo can clear (K-178).
@@ -2353,14 +2375,16 @@ mod tests {
         assert!(rgba[idx] > 200, "red solid stays red at the scaled size");
     }
 
-    /// **A non-neutral view makes a frame unnameable** (K-314). This is the
-    /// whole of how the Viewer's exposure and tone map stay out of the three
-    /// cache tiers: an unnameable frame is rendered live and banked nowhere, so
-    /// the neutral frames already held stay held and come straight back the
-    /// moment the controls return to neutral. Needs no adapter — naming is a
-    /// hash of the document, not a render.
+    /// **A view names its frames apart rather than leaving them nameless**
+    /// (K-346, superseding that half of K-314). The look is baked into the
+    /// display-encoded pixels the tiers hold, so a frame under one is a
+    /// different picture and takes a different name — which is what lets the
+    /// caches keep working while an exposure is dialled in, where the old rule
+    /// switched all three off for as long as a control was engaged. Neutral
+    /// keeps the name it always had, so frames banked before this still come
+    /// back. Needs no adapter — naming is a hash of the document, not a render.
     #[test]
-    fn a_non_neutral_view_makes_a_frame_unnameable() {
+    fn a_view_names_its_frames_apart_rather_than_leaving_them_nameless() {
         let mut r = match HeadlessRenderer::new() {
             Ok(r) => r,
             Err(_) => {
@@ -2381,21 +2405,33 @@ mod tests {
             "both naming entry points agree while neutral"
         );
 
-        // Exposure alone, tone map alone, and both — each must be enough.
+        // Exposure alone, tone map alone, and both — each is its own picture.
+        let mut seen = vec![neutral];
         for view in [
             lumit_gpu::DisplayParams::from_stops(1.0, false),
             lumit_gpu::DisplayParams::from_stops(0.0, true),
             lumit_gpu::DisplayParams::from_stops(-2.3, true),
         ] {
             r.set_display_view(view);
+            let named = r.frame_key(&doc, comp_id, 0, q);
+            assert!(named.is_some(), "{view:?} must still name the frame");
             assert!(
-                r.frame_key(&doc, comp_id, 0, q).is_none(),
-                "{view:?} must leave the frame unnameable"
+                !seen.contains(&named),
+                "{view:?} must not share a name with a look already seen"
             );
-            assert!(
-                r.frame_key_presynced(&doc, comp_id, 0, q).is_none(),
-                "{view:?} must leave the frame unnameable on the presynced path too"
+            assert_eq!(
+                r.frame_key_presynced(&doc, comp_id, 0, q),
+                named,
+                "{view:?}: both naming entry points must agree under a look"
             );
+            // Asked twice under the same look, the name must not move, or a
+            // frame would be banked under a name nothing looks up again.
+            assert_eq!(
+                r.frame_key(&doc, comp_id, 0, q),
+                named,
+                "{view:?}: naming is deterministic"
+            );
+            seen.push(named);
         }
 
         // And back: the name it had is the name it gets again, so the frames
@@ -2716,7 +2752,7 @@ mod tests {
         assert_eq!(builder.has_audio.len(), 1);
     }
 
-    /// **The export contract for the deferred flare bake (K-346).** A fresh
+    /// **The export contract for the deferred flare bake (K-348).** A fresh
     /// renderer bakes lens flares *inside* the frame, exactly as it always did.
     ///
     /// This is how "an export is never a provisional picture" is kept true. An
@@ -2746,7 +2782,7 @@ mod tests {
     }
 
     /// A frame made while a lens is baking is **unnameable**, so nothing files
-    /// it under a name that says it was drawn with a lens it was not (K-346,
+    /// it under a name that says it was drawn with a lens it was not (K-348,
     /// K-178). The same mechanism unprobed footage and a non-neutral display
     /// view already use.
     #[test]

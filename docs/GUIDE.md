@@ -3717,15 +3717,21 @@ place on screen that says what tone mapping actually does — an icon's own
 tooltip is its name and nothing more, which is a rule, and a readout is allowed
 a sentence, which is the exception this fits through.
 
-The cache had to be told about them, and the answer is pleasingly blunt: **while
-either control is engaged, frames have no name.** A frame with no name cannot be
-filed in any of the three tiers, so nothing exposed is ever banked, and the
-neutral frames already banked are untouched and come straight back as hits the
-moment both controls return to neutral. The alternative — folding the exposure
-into the name — would have meant threading it through all three tiers for the
-sake of caching frames nobody keeps. The cost of the blunt answer is that the
-picture is composited afresh while you scrub the exposure, and that is the right
-trade for a control you nudge and then put back.
+The cache had to be told about them, and the answer is that **a look is part of
+the frame's name** (K-346). Remember that a banked frame is the finished
+display-ready picture, so a frame seen through an exposure genuinely is a
+different picture from the same frame seen plainly — and the cache names frames
+by what is in them. So the exposure and the tone-map switch are mixed into the
+name, and each way of looking banks its own frames. Neutral keeps exactly the
+name it always had, which is why everything banked before you touched a control
+is still there when you put it back.
+
+It used to work the other way: while either control was engaged frames had *no*
+name at all, and a frame with no name cannot be filed in any tier. That sounded
+tidy and read as a fault — leave the tone map on and the whole cache ladder is
+switched off for the session, with nothing on screen to say so. Naming each look
+separately costs only that several looks compete for the same budget, which the
+tiers already know how to sort out by eviction.
 
 **The cache bar** under the time ruler shows what is held: mint at the current
 preview resolution, dimmed mint only at a coarser one, steel-blue on disk,

@@ -8186,7 +8186,45 @@ restriction is about the noun (a clip is an entry inside a Sequence layer, never
 word for a layer or footage); *to clip* in its keying and colour sense — clipping a matte,
 clipped highlights — is ordinary trade language and keeps its names. §9 now says so.
 
-**K-346 · DECIDED · The lens flare's bake runs beside the frame, and a frame that drew a
+**K-346 · DECIDED · A Viewer look names its frames apart; it no longer switches the caches
+off.** From the owner (2026-08-11), superseding the naming half of K-314. K-314 made a
+non-neutral view leave frames **unnameable**, so nothing entered any cache tier while an
+exposure or the tone map was engaged — the reasoning being that it was cheaper than widening
+the key through three tiers and could not mis-serve an exposed frame. In use that reads as a
+fault: the owner worked with the tone map on, found the VRAM and RAM meters sat at zero all
+session, and nothing on screen said why (the §2.2 colour-management badge is still unbuilt).
+A way of looking that silently disables the whole cache ladder is not a preview convenience.
+So the look is now folded into the frame's name instead: `HeadlessRenderer::named_under_view`
+hashes the exposure gain and the tone-map flag into the content name, under its own tag, with
+the same blake3 the name was built with — deterministic across runs and toolchains, which the
+disk tier needs since it keeps names between sessions. **Neutral is untouched**, byte-for-byte
+the name it always had, so every frame already banked stays a hit. Each look therefore banks
+its own frames and changing a control retires nothing but takes a fresh set of names, which is
+honest: those are different pictures. The mis-serving worry K-314 raised is answered by
+construction rather than by refusing to cache — an export is neutral by construction (see the
+export test), so a graded preview frame can never collide with one. The cost is that dialling
+an exposure through several values leaves several sets of banked frames competing for the same
+budget; the tiers evict by the usual rule and nobody has to think about it.
+
+**K-347 · DECIDED · The tone map button is asked for, not given.** From the owner
+(2026-08-11), refining K-314's presentation without touching what the feature does: "it just
+doesn't seem like a feature most people need or want, but I think it's neat and nice to
+have." The Viewer bar's tone-map switch is therefore **hidden by default** and revealed by
+**Settings → Interface → Show the tone map button**. The **exposure field is not hidden** —
+stops are an ordinary photographic control that people reach for; tone mapping is the
+specialist one.
+
+**Hidden means off, not merely invisible.** The setting gates `LumitUiState.viewerLook`, the
+one place the per-composition store becomes the look in use, so the Viewer bar, the engine
+push and the button cannot disagree, and a session saved while the tone map was engaged
+cannot come back stranded — an engaged look with no button to turn it off would change what
+the Viewer shows with nothing to explain it. Only the *reading* is gated: the per-comp store
+keeps its value, so turning the setting back on finds each composition as it was. (Moving the
+exposure while the button is away writes the pair back as it reads, which clears the stored
+tone map — a state you cannot see does not persist behind your back.) Recorded in
+[07-UI-SPEC.md](07-UI-SPEC.md) §2.2, which is where the Viewer bar is specified.
+
+**K-348 · DECIDED · The lens flare's bake runs beside the frame, and a frame that drew a
 lens it does not name is never banked.** K-263 measured the flare's one blocking CPU step
 at about 0.66 s and recorded the fix as owed: choosing a lens stopped the picture for half
 a second, because the bake was a closure the render thread ran inside the frame. It now

@@ -687,6 +687,16 @@ class _SettingsWindowState extends State<_SettingsWindow> {
           settings.transformInEffectControls = on;
           ui.workspace.settingsChanged();
         }),
+        _flag(t, 'settings-show-tone-map', l10n.settingsShowTheToneMapButton,
+            l10n.settingsHelpShowTheToneMapButton,
+            value: settings.showToneMap, set: (on) {
+          settings.showToneMap = on;
+          ui.workspace.settingsChanged();
+          // Turning it off disengages the tone map as well as hiding the
+          // button, so the picture has to be asked for again — the look the
+          // Viewer is now reading is not the one the engine was given.
+          ui.pushViewerLook();
+        }),
       ]),
       // The two the first-run screen sets (K-246), plus the transport's one
       // (K-254). They sit here as ordinary rows, and independently of each

@@ -113,7 +113,7 @@ pub struct FxEngine {
 
 impl FxEngine {
     /// Let this engine make a Lens flare's bake **beside** the frame rather
-    /// than inside it (K-346).
+    /// than inside it (K-348).
     ///
     /// Off by default, and that default is the safe one: an engine nobody has
     /// told otherwise bakes inside the frame exactly as it always did, so a

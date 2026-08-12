@@ -3664,7 +3664,7 @@ fn lens_flare_splits_a_heavy_frame_into_several_submissions() {
 
 /// A deferred bake really is made beside the frame: the frame that asked for
 /// a lens it does not hold draws the lens before it, the bake lands on the
-/// bake thread, and the frame after it draws the new one (K-346).
+/// bake thread, and the frame after it draws the new one (K-348).
 ///
 /// The picture is not what this checks — a card is needed for that, and the
 /// oracle tests above do it. What it checks is the part that is pure
@@ -3779,7 +3779,7 @@ fn lens_flare_deferred_bakes_answer_with_the_previous_lens_then_the_new_one() {
 
 /// Deferring changes when a bake is made, never what it is: the same key
 /// gives the same bake either way (docs/impl/lens-flare.md §5 — the bake is
-/// pure, and K-346 must not make it less so).
+/// pure, and K-348 must not make it less so).
 #[test]
 fn lens_flare_a_deferred_bake_is_the_same_bake() {
     use lumit_core::fx::lens_flare as lf;

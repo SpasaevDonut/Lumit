@@ -479,10 +479,11 @@ move** (§9 - the toolchain pin landed in K-272, the edition did not); the
 `indexing_slicing` / `arithmetic_side_effects` clippy denies after a hot-path sweep (§4);
 `clippy::pedantic` with curated allows (§7); the golden-frame EXR export corpus (§6).
 
-**Three unmaintained dependencies are deliberately ignored in `deny.toml`** (K-272).
+**Four unmaintained dependencies are deliberately ignored in `deny.toml`** (K-272).
 `ttf-parser` (via fontdue, via `lumit-text`) is the one with a real successor: moving
 the rasteriser to `skrifa` is its own piece of work with its own glyph-metric tests.
-`bincode` 1.x and `paste` leave when the dependencies that pull them update.
+`bincode` 1.x, `paste` and `smartstring` (via rhai, retired 2026-08-11 in favour of
+compact_str/smol_str) leave when the dependencies that pull them update.
 
 **A genuinely FFmpeg-free build is not possible yet (K-273).** `lumit_bridge
 --no-default-features` compiles the bridge's own decode paths out, but `lumit-render` and

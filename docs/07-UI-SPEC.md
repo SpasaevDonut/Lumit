@@ -339,6 +339,10 @@ A single compact bar at the bottom of the Viewer holds, left to right:
     not a grade. **Preview only; it MUST NOT change the export**, and it MUST NOT adapt to
     the frame's content: a picture that re-exposes itself per frame breathes across every
     cut, and a revisited frame would stop being the frame it was.
+    The button is **off the bar unless Settings → Interface asks for it**: most work never
+    reads a picture this way. While it is hidden the tone map MUST also read as **off**
+    whatever the comp stored — hiding the control must never strand an engaged look with
+    nothing left to turn it off. The exposure of item 12 is never hidden.
 
 Items 12 and 13 both persist **per comp** with the project, and while either is engaged
 the Viewer MUST say the picture is not the export — item 8's badge is where that lives,

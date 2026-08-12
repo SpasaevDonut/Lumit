@@ -189,14 +189,14 @@ class EffectParamRowFrb extends StatelessWidget {
     final control = _greyed(_control(context, t, id, value, frame));
 
     if (twoColumn && valueColumn == null) {
-      return Padding(
-        padding: rowPadding,
-        child: fxTwoColumnRow(
-          context: context,
-          name: label,
-          keyframeControls: keyframes == null ? null : _greyed(keyframes),
-          control: control,
-        ),
+      // No padding of its own: the Effect controls panel gives every row the
+      // same fixed height ([fxRowHeight]), and padding on top of that would
+      // eat into the room the controls sit in.
+      return fxTwoColumnRow(
+        context: context,
+        name: label,
+        keyframeControls: keyframes == null ? null : _greyed(keyframes),
+        control: control,
       );
     }
 
@@ -679,7 +679,7 @@ class EffectParamRowFrb extends StatelessWidget {
         AngleDial(
           key: ValueKey<String>('fx-dial-$keyName'),
           // Row height, not the standalone 34: it is a grip beside a number.
-          size: 20,
+          size: fxRowHeight,
           degrees: shown,
           step: step,
           enabled: enabled,
@@ -1045,14 +1045,11 @@ class EffectPointRowFrb extends StatelessWidget {
     );
 
     if (twoColumn) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 2),
-        child: fxTwoColumnRow(
-          context: context,
-          name: label,
-          keyframeControls: keyframes == null ? null : greyed(keyframes),
-          control: greyed(control),
-        ),
+      return fxTwoColumnRow(
+        context: context,
+        name: label,
+        keyframeControls: keyframes == null ? null : greyed(keyframes),
+        control: greyed(control),
       );
     }
     return Padding(

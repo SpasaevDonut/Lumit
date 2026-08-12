@@ -1003,8 +1003,10 @@ class _ParamGroupSectionState extends State<_ParamGroupSection> {
         GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: () => setState(() => _open = !_open),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
+          child: SizedBox(
+            // A group's twirl is a row like any other, so it is the same
+            // height as one (`fxRowHeight`).
+            height: fxRowHeight,
             child: Row(
               children: [
                 lumitIcon(

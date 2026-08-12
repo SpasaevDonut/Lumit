@@ -1086,6 +1086,22 @@ class LumitUiState extends ChangeNotifier {
   final ValueNotifier<Map<UuidValue, ({String text, double size})>> liveText =
       ValueNotifier(const {});
 
+  /// The transform a value scrub is part way through, by layer id.
+  ///
+  /// The third of the same family, and for the reason [liveRotations] gives:
+  /// dragging Position or Scale — in the property rows or on a curve in the
+  /// graph — previews the *picture* at the new value while the document still
+  /// holds the old one, so the box drawn from the document sat still until the
+  /// drag was released. The row that is dragging publishes the provisional
+  /// transform it already built for the preview, and the boxes read it.
+  ///
+  /// At most one layer at a time: a gesture is one property of one layer
+  /// (see `previewChannelEdits`). Empty whenever nothing is being scrubbed —
+  /// and it must be emptied on release, or the box would hold the last
+  /// provisional value for ever.
+  final ValueNotifier<Map<UuidValue, BridgeTransform>> liveTransforms =
+      ValueNotifier(const {});
+
   /// Forget layers that are no longer in the composition (K-238).
   ///
   /// **Why this is not merely tidy.** A selection is not only a highlight — it
@@ -1485,8 +1501,21 @@ class LumitUiState extends ChangeNotifier {
 
   /// How the fronted comp is being looked at, neutral until something says
   /// otherwise.
-  ViewerLook get viewerLook =>
-      viewerLooks[_selectedComp?.internalid.toString()] ?? neutralLook;
+  ///
+  /// The one place the stored look becomes the look in use, which is why the
+  /// tone map setting is honoured here and nowhere else: the Viewer bar, the
+  /// engine push and the button all read this, so they cannot disagree. With
+  /// the setting off the tone map is false whatever the comp stored — a
+  /// session saved while it was engaged would otherwise be stranded with no
+  /// button to turn it off. Only the reading is gated, not the store, so
+  /// turning the setting back on finds the comp as it was — until the exposure
+  /// is moved while the button is away, which writes the pair back as seen.
+  ViewerLook get viewerLook {
+    final stored =
+        viewerLooks[_selectedComp?.internalid.toString()] ?? neutralLook;
+    if (workspace.interface.showToneMap) return stored;
+    return (stops: stored.stops, toneMap: false);
+  }
 
   /// The last look actually sent to the engine, so a neutral push onto an
   /// already-neutral renderer can be skipped. A worker is born neutral.
