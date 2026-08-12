@@ -1,5 +1,5 @@
 {
-  "@@locale": "zh_Hant",
+  "@@locale": "zh-TW",
   "@@x-notes": "Lumit's user-facing text, British English (K-005), the single source translation works from (K-303). Edit this file; every other app_*.arb in this folder comes back from Crowdin and is overwritten by the next sync. Voice: sentence case, calm, no exclamation marks, no emoji, glossary terms exactly (docs/01-GLOSSARY.md section 9 - layer not track, speed not velocity, Retime not time remap, export not render, playhead not CTI). Tooltips are the control's name, not a sentence about it (docs/07-UI-SPEC.md section 13.2): under five words, two where two will do.",
   "aboutBlurb": "A motion-graphics and compositing editor. Free software under the GNU General Public Licence, version 3.",
   "@aboutBlurb": {
@@ -98,6 +98,10 @@
   "@clipPasteShape": {
     "description": "Context-menu item: apply a copied speed curve here."
   },
+  "clipRamp": "ramp",
+  "@clipRamp": {
+    "description": "Shown on a Sequence clip in place of a speed percentage when the speed changes over the clip. Lower case on purpose — it sits where a number would."
+  },
   "clipResetSpeed": "Reset speed",
   "@clipResetSpeed": {
     "description": "Context-menu item: put a clip back to playing at its normal speed."
@@ -121,6 +125,10 @@
   "colourOutsideRange": "Outside 0–1: the swatch and hex are clipped",
   "@colourOutsideRange": {
     "description": "Note in the colour picker when a value is brighter or darker than a screen can show."
+  },
+  "columnAv": "A/V",
+  "@columnAv": {
+    "description": "Timeline column heading over the audio and video switches. An abbreviation of audio/video — keep it short."
   },
   "columnBlend": "Blend",
   "@columnBlend": {
@@ -483,6 +491,111 @@
   "@firstRunVegasName": {
     "description": "First run: the name of the other editor offered. A product name — leave it as it is."
   },
+  "flowAlwaysOn": "Always on",
+  "@flowAlwaysOn": {
+    "description": "Flow group: the name of the switch that keeps frame synthesis on even at ordinary speeds."
+  },
+  "flowDetailHigh": "High",
+  "@flowDetailHigh": {
+    "description": "A choice of the Flow group's Vector detail option."
+  },
+  "flowDetailLow": "Low",
+  "@flowDetailLow": {
+    "description": "A choice of the Flow group's Vector detail option."
+  },
+  "flowDetailMedium": "Medium",
+  "@flowDetailMedium": {
+    "description": "A choice of the Flow group's Vector detail option."
+  },
+  "flowDetailUltra": "Ultra",
+  "@flowDetailUltra": {
+    "description": "A choice of the Flow group's Vector detail option."
+  },
+  "flowFallback": "Fallback",
+  "@flowFallback": {
+    "description": "Flow group: the name of the option saying what to show where motion cannot be estimated."
+  },
+  "flowFallbackBlend": "Blend",
+  "@flowFallbackBlend": {
+    "description": "A choice of the Flow group's Fallback option: cross-fade the two nearest frames."
+  },
+  "flowFallbackNearest": "Nearest",
+  "@flowFallbackNearest": {
+    "description": "A choice of the Flow group's Fallback option: hold the nearest frame."
+  },
+  "flowHudGuard": "HUD guard",
+  "@flowHudGuard": {
+    "description": "Flow group: the name of the switch that protects static overlays (score displays, watermarks) from being smeared."
+  },
+  "flowInputRate": "Input rate",
+  "@flowInputRate": {
+    "description": "Flow group: the name of the frames-per-second value the footage is interpreted at."
+  },
+  "flowOcclusion": "Occlusion",
+  "@flowOcclusion": {
+    "description": "Flow group: the name of the option saying what happens where one thing moves behind another."
+  },
+  "flowOcclusionBlend": "Blend",
+  "@flowOcclusionBlend": {
+    "description": "A choice of the Flow group's Occlusion option: mix both frames where the view is blocked."
+  },
+  "flowOcclusionVisibleOnly": "Visible only",
+  "@flowOcclusionVisibleOnly": {
+    "description": "A choice of the Flow group's Occlusion option: use only what both frames can see."
+  },
+  "flowPresetAuto": "Auto",
+  "@flowPresetAuto": {
+    "description": "Input rate preset: use the footage's own frame rate."
+  },
+  "flowPresetCadence": "On {n}s ({fps})",
+  "@flowPresetCadence": {
+    "description": "Input rate preset for animation drawn on 2s, 3s or 4s — each drawing held {n} frames. Animator's jargon; {fps} is the resulting frame rate.",
+    "placeholders": {
+      "n": {
+        "type": "String"
+      },
+      "fps": {
+        "type": "String"
+      }
+    }
+  },
+  "flowPresetFps": "{fps} fps",
+  "@flowPresetFps": {
+    "description": "Input rate preset naming a plain frame rate, such as 24 fps.",
+    "placeholders": {
+      "fps": {
+        "type": "String"
+      }
+    }
+  },
+  "flowResolution": "Flow resolution",
+  "@flowResolution": {
+    "description": "Flow group: the name of the option saying how much of the picture motion is estimated from."
+  },
+  "flowResolutionHalf": "Half",
+  "@flowResolutionHalf": {
+    "description": "A choice of the Flow resolution option: estimate motion at half size."
+  },
+  "flowResolutionNative": "Native",
+  "@flowResolutionNative": {
+    "description": "A choice of the Flow resolution option: estimate motion at full size."
+  },
+  "flowResolutionQuarter": "Quarter",
+  "@flowResolutionQuarter": {
+    "description": "A choice of the Flow resolution option: estimate motion at quarter size."
+  },
+  "flowSection": "Flow",
+  "@flowSection": {
+    "description": "Heading over a footage layer's frame-synthesis options, in the Timeline fold-out and the properties section."
+  },
+  "flowSmoothness": "Smoothness",
+  "@flowSmoothness": {
+    "description": "Flow group: the name of the value saying how strongly the motion estimate is smoothed."
+  },
+  "flowVectorDetail": "Vector detail",
+  "@flowVectorDetail": {
+    "description": "Flow group: the name of the option saying how finely motion is estimated."
+  },
   "foldContents": "Contents",
   "@foldContents": {
     "description": "Heading in a layer's fold-out, over what a shape layer is made of."
@@ -535,6 +648,10 @@
   "@fxAdd": {
     "description": "Effect controls — a control on Echo."
   },
+  "fxAlpha": "Alpha",
+  "@fxAlpha": {
+    "description": "Effect controls — a depth-channel option on Depth of field."
+  },
   "fxAlphaBias": "Alpha bias",
   "@fxAlphaBias": {
     "description": "Effect controls — a control on Matte key."
@@ -565,6 +682,10 @@
   },
   "fxAperture": "Aperture",
   "@fxAperture": {
+    "description": "Effect controls — a control on Depth of field."
+  },
+  "fxAspectRatio": "Aspect ratio",
+  "@fxAspectRatio": {
     "description": "Effect controls — a control on Depth of field."
   },
   "fxBehind": "Behind",
@@ -655,6 +776,38 @@
   "@fxConfidence": {
     "description": "Effect controls — a control on Posterize time."
   },
+  "fxConsoleAddEffect": "Add effect",
+  "@fxConsoleAddEffect": {
+    "description": "The FX console radial menu: opens the Effects & presets panel."
+  },
+  "fxConsoleAddToComp": "Add to comp",
+  "@fxConsoleAddToComp": {
+    "description": "The FX console radial menu with a Project panel item picked: places the item in the open composition."
+  },
+  "fxConsoleCompositions": "Compositions",
+  "@fxConsoleCompositions": {
+    "description": "The FX console search list: the heading over the composition results."
+  },
+  "fxConsoleEffects": "Effects",
+  "@fxConsoleEffects": {
+    "description": "The FX console search list: the heading over the effect results."
+  },
+  "fxConsoleHint": "Search effects and compositions",
+  "@fxConsoleHint": {
+    "description": "Placeholder in the FX console’s search field."
+  },
+  "fxConsoleKeyframe": "Keyframe",
+  "@fxConsoleKeyframe": {
+    "description": "The FX console radial menu: the slice that expands into one slice per transform row, each planting a keyframe at the playhead."
+  },
+  "fxConsoleNothingSelected": "Nothing selected",
+  "@fxConsoleNothingSelected": {
+    "description": "Shown in the middle of the FX console’s radial menu when nothing is selected."
+  },
+  "fxConsoleSnapshotTip": "Save a snapshot of this frame",
+  "@fxConsoleSnapshotTip": {
+    "description": "Tooltip on the FX console’s snapshot button."
+  },
   "fxContrast": "Contrast",
   "@fxContrast": {
     "description": "Effect controls — the name of an effect."
@@ -670,6 +823,10 @@
   "fxDecay": "Decay",
   "@fxDecay": {
     "description": "Effect controls — a control on Flash."
+  },
+  "fxDepthChannel": "Depth channel",
+  "@fxDepthChannel": {
+    "description": "Effect controls — a control on Depth of field."
   },
   "fxDepthInvert": "Depth invert",
   "@fxDepthInvert": {
@@ -698,6 +855,10 @@
   "fxDetail": "Detail",
   "@fxDetail": {
     "description": "Effect controls — a control on Lens flare."
+  },
+  "fxDetectEdgeThreshold": "Detect edge threshold",
+  "@fxDetectEdgeThreshold": {
+    "description": "Effect controls — a control on Depth of field."
   },
   "fxDifference": "Difference",
   "@fxDifference": {
@@ -803,6 +964,14 @@
   "@fxFocusMap": {
     "description": "Effect controls — a control on Depth of field."
   },
+  "fxFocusPointX": "Focus point x",
+  "@fxFocusPointX": {
+    "description": "Effect controls — a control on Depth of field."
+  },
+  "fxFocusPointY": "Focus point y",
+  "@fxFocusPointY": {
+    "description": "Effect controls — a control on Depth of field."
+  },
   "fxFocusRange": "Focus range",
   "@fxFocusRange": {
     "description": "Effect controls — a control on Depth of field."
@@ -863,6 +1032,18 @@
   "@fxHigh": {
     "description": "Effect controls — a control on Lens flare."
   },
+  "fxHighlightExposure": "Highlight exposure",
+  "@fxHighlightExposure": {
+    "description": "Effect controls — a control on Depth of field."
+  },
+  "fxHighlightThreshold": "Highlight threshold",
+  "@fxHighlightThreshold": {
+    "description": "Effect controls — a control on Depth of field."
+  },
+  "fxHighlights": "Highlights",
+  "@fxHighlights": {
+    "description": "Effect controls — a group of controls on Depth of field."
+  },
   "fxHueShift": "Hue shift",
   "@fxHueShift": {
     "description": "Effect controls — the name of an effect."
@@ -882,6 +1063,10 @@
   "fxInvert": "Invert",
   "@fxInvert": {
     "description": "Effect controls — the name of an effect."
+  },
+  "fxIris": "Iris",
+  "@fxIris": {
+    "description": "Effect controls — a group of controls on Depth of field."
   },
   "fxLength": "Length",
   "@fxLength": {
@@ -930,6 +1115,10 @@
   "fxLinePeriod": "Line period",
   "@fxLinePeriod": {
     "description": "Effect controls — a control on Scanlines."
+  },
+  "fxLuminance": "Luminance",
+  "@fxLuminance": {
+    "description": "Effect controls — a depth-channel option on Depth of field."
   },
   "fxLuminanceOnly": "Luminance only",
   "@fxLuminanceOnly": {
@@ -1063,6 +1252,10 @@
   "@fxRed": {
     "description": "Effect controls — a control on RGB split."
   },
+  "fxRemoveEdgeLeak": "Remove edge leak",
+  "@fxRemoveEdgeLeak": {
+    "description": "Effect controls — a control on Depth of field."
+  },
   "fxRendered": "Rendered",
   "@fxRendered": {
     "description": "Effect controls — a control on Depth of field."
@@ -1070,6 +1263,10 @@
   "fxRepeat": "Repeat",
   "@fxRepeat": {
     "description": "Effect controls — a control on an effect."
+  },
+  "fxRepeatEdgePixels": "Repeat edge pixels",
+  "@fxRepeatEdgePixels": {
+    "description": "Effect controls — a control on Depth of field."
   },
   "fxReplaceColour": "Replace colour",
   "@fxReplaceColour": {
@@ -1086,6 +1283,10 @@
   "fxRgbSplit": "RGB split",
   "@fxRgbSplit": {
     "description": "Effect controls — the name of an effect."
+  },
+  "fxRimBrightness": "Rim brightness",
+  "@fxRimBrightness": {
+    "description": "Effect controls — a control on Depth of field."
   },
   "fxRollSpeed": "Roll speed",
   "@fxRollSpeed": {
@@ -1274,6 +1475,10 @@
   "fxUnsharpMask": "Unsharp mask",
   "@fxUnsharpMask": {
     "description": "Effect controls — the name of an effect."
+  },
+  "fxUseFocusPoint": "Use focus point",
+  "@fxUseFocusPoint": {
+    "description": "Effect controls — a control on Depth of field."
   },
   "fxUseSourceColour": "Use source colour",
   "@fxUseSourceColour": {
@@ -1551,6 +1756,10 @@
   "@keyOpenTheCommandPalette": {
     "description": "Settings → Keymap: what a shortcut does, in the table’s left column."
   },
+  "keyOpenTheFxConsole": "Open the FX console",
+  "@keyOpenTheFxConsole": {
+    "description": "Settings → Keymap: what a shortcut does, in the table’s left column."
+  },
   "keyPanels": "Panels",
   "@keyPanels": {
     "description": "Settings → Keymap: a heading saying where these shortcuts are live."
@@ -1605,6 +1814,14 @@
   },
   "keyRenameTheLayer": "Rename the layer",
   "@keyRenameTheLayer": {
+    "description": "Settings → Keymap: what a shortcut does, in the table’s left column."
+  },
+  "keyRenameTheSelectedEffect": "Rename the selected effect",
+  "@keyRenameTheSelectedEffect": {
+    "description": "Settings → Keymap: what a shortcut does, in the table’s left column."
+  },
+  "keyRenameTheSelectedItem": "Rename the selected item",
+  "@keyRenameTheSelectedItem": {
     "description": "Settings → Keymap: what a shortcut does, in the table’s left column."
   },
   "keyRevealAnchorPoint": "Reveal Anchor point",
@@ -1763,13 +1980,23 @@
   "@keymapAfterEffects": {
     "description": "Button that loads shortcuts matching Adobe After Effects. A product name — leave it as it is."
   },
-  "keymapClashGlobal": "One shortcut runs two things",
-  "@keymapClashGlobal": {
-    "description": "Warning in the keymap table: the same chord is bound to two commands everywhere."
+  "keymapClashGlobalCount": "{count, plural, =1{One shortcut runs two things} other{{count} shortcuts run two things}}",
+  "@keymapClashGlobalCount": {
+    "description": "Warning in the keymap table: the same chord is bound to two commands everywhere. {count} is how many chords clash.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
-  "keymapClashPanel": "One shortcut means something else in one panel",
-  "@keymapClashPanel": {
-    "description": "Warning in the keymap table: the same chord means something different inside a particular panel."
+  "keymapClashPanelCount": "{count, plural, =1{One shortcut means something else in one panel} other{{count} shortcuts mean something else in one panel}}",
+  "@keymapClashPanelCount": {
+    "description": "Note in the keymap table: a panel takes a chord over from its app-wide meaning. {count} is how many chords do.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "keymapExported": "Keymap exported.",
   "@keymapExported": {
@@ -1803,6 +2030,24 @@
   "@keymapPressAShortcut": {
     "description": "Shown in a keymap row while it is waiting for the user to press keys."
   },
+  "keymapShadowLine": "{chord} — {action} in the {context}, {shadowed} elsewhere",
+  "@keymapShadowLine": {
+    "description": "One line under the keymap's panel note: which chord, what it does in which panel, and what it does everywhere else. {chord} is the key combination, {action} and {shadowed} are command names, {context} is a panel name.",
+    "placeholders": {
+      "chord": {
+        "type": "String"
+      },
+      "action": {
+        "type": "String"
+      },
+      "context": {
+        "type": "String"
+      },
+      "shadowed": {
+        "type": "String"
+      }
+    }
+  },
   "languageFollowSystem": "Same as this machine",
   "@languageFollowSystem": {
     "description": "Language picker: the default, which follows the operating system's own language."
@@ -1819,9 +2064,58 @@
   "@markerHint": {
     "description": "Placeholder in the marker's text field."
   },
+  "markerNoLabel": "(no label)",
+  "@markerNoLabel": {
+    "description": "Stands in for a marker's text in the marker list when it was given none. Keep the brackets."
+  },
+  "maskExpansion": "Expansion",
+  "@maskExpansion": {
+    "description": "Row label under a mask: how far its shape is grown or shrunk, in layer pixels."
+  },
+  "maskFeather": "Feather",
+  "@maskFeather": {
+    "description": "Row label under a mask: the width of its soft edge, in layer pixels."
+  },
   "maskInvertMark": "Inv",
   "@maskInvertMark": {
     "description": "Very short marker on a mask row meaning it is inverted. Abbreviate in your language too — the cell is about three characters wide."
+  },
+  "maskModeAdd": "Add",
+  "@maskModeAdd": {
+    "description": "Mask mode: this mask adds its shape to what the masks above it let through."
+  },
+  "maskModeDifference": "Difference",
+  "@maskModeDifference": {
+    "description": "Mask mode: what one of this mask and the masks above it cover, but not both."
+  },
+  "maskModeIntersect": "Intersect",
+  "@maskModeIntersect": {
+    "description": "Mask mode: only where this mask and the masks above it overlap."
+  },
+  "maskModeNone": "None",
+  "@maskModeNone": {
+    "description": "Mask mode: the shape is editable but gates nothing."
+  },
+  "maskModeSubtract": "Subtract",
+  "@maskModeSubtract": {
+    "description": "Mask mode: this mask takes its shape away from what the masks above it let through."
+  },
+  "maskNumbered": "Mask {n}",
+  "@maskNumbered": {
+    "description": "Default name for a mask drawn with the Pen. {n} counts up from 1 within the layer.",
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "maskOpacity": "Opacity",
+  "@maskOpacity": {
+    "description": "The name of a mask's opacity row in the Timeline fold-out."
+  },
+  "maskPath": "Path",
+  "@maskPath": {
+    "description": "The name of a mask's shape row in the Timeline fold-out — the row that keyframes the drawn shape itself."
   },
   "menu3dLayer": "3D layer",
   "@menu3dLayer": {
@@ -2179,9 +2473,9 @@
   "@menuTrackCamera": {
     "description": "Menu item."
   },
-  "menuTrackMatte": "Track matte",
+  "menuTrackMatte": "Matte",
   "@menuTrackMatte": {
-    "description": "Menu item."
+    "description": "Menu item: set a layer's matte (the AE 'track matte' feature; Lumit's glossary says matte)."
   },
   "menuTrackMotion": "Track motion",
   "@menuTrackMotion": {
@@ -2218,6 +2512,15 @@
   "menuZoomOut": "Zoom out",
   "@menuZoomOut": {
     "description": "Menu item."
+  },
+  "missingFileCount": "{count, plural, =1{1 missing file} other{{count} missing files}}",
+  "@missingFileCount": {
+    "description": "How many footage files cannot be found on disk. Shown as a warning badge in the Viewer and as the Project panel's missing-items header.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "missingLayer": "Missing layer",
   "@missingLayer": {
@@ -2446,9 +2749,46 @@
   "@projectEmpty": {
     "description": "Empty-state line in the Project panel."
   },
+  "projectInfoAudio": "audio",
+  "@projectInfoAudio": {
+    "description": "Project panel info line for sound-only footage, shown where a picture size would be. Lower case on purpose."
+  },
+  "projectItemCount": "{count, plural, =1{1 item} other{{count} items}}",
+  "@projectItemCount": {
+    "description": "Project panel info line for a folder: how many things it holds.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "projectItemMissing": "missing",
+  "@projectItemMissing": {
+    "description": "Warning beside a footage item whose file cannot be found on disk. Lower case on purpose — it sits in a line of facts."
+  },
   "projectSettings": "Project settings",
   "@projectSettings": {
     "description": "Title of the window holding settings that travel with the project file."
+  },
+  "projectTypeComposition": "composition",
+  "@projectTypeComposition": {
+    "description": "The word beside a selected item's name in the Project panel saying what kind of item it is. Lower case on purpose."
+  },
+  "projectTypeFolder": "folder",
+  "@projectTypeFolder": {
+    "description": "The word beside a selected item's name in the Project panel saying what kind of item it is. Lower case on purpose."
+  },
+  "projectTypeFootage": "footage",
+  "@projectTypeFootage": {
+    "description": "The word beside a selected item's name in the Project panel saying what kind of item it is. Lower case on purpose."
+  },
+  "projectTypeSolid": "solid",
+  "@projectTypeSolid": {
+    "description": "The word beside a selected item's name in the Project panel saying what kind of item it is: a plain block of one colour. Lower case on purpose."
+  },
+  "ramTier": "RAM",
+  "@ramTier": {
+    "description": "Bottom strip: the name of the memory cache tier, beside VRAM and Disk. An abbreviation most languages keep."
   },
   "recoverAutosave": "Open the newest autosave",
   "@recoverAutosave": {
@@ -2568,6 +2908,10 @@
   "@scopeHistogram": {
     "description": "The name of a scope counting how many pixels sit at each brightness."
   },
+  "scopeParade": "RGB parade",
+  "@scopeParade": {
+    "description": "The name of a scope showing the red, green and blue waveforms side by side. \"Parade\" is the standard term of the trade."
+  },
   "scopeThisProject": "This project",
   "@scopeThisProject": {
     "description": "Choice in the Applies to picker: only the project that is open."
@@ -2620,6 +2964,10 @@
   "sendBackward": "Send backward",
   "@sendBackward": {
     "description": "Context-menu item: move a layer one place down the stack."
+  },
+  "setExpression": "Set expression",
+  "@setExpression": {
+    "description": "Context-menu item on a value field: drive this value with a formula instead of a number."
   },
   "settingsAntiAliasing": "Anti-aliasing",
   "@settingsAntiAliasing": {
@@ -2862,6 +3210,10 @@
   "@settingsHelpSmoothThePictureWhenZoomed": {
     "description": "Settings window: the sentence under the settingsSmoothThePictureWhenZoomed setting."
   },
+  "settingsHelpShowTheToneMapButton": "Put the tone map button on the Viewer bar. Tone mapping folds a picture brighter than the screen can show back into what it can, so the detail up there can be seen while you work — it is a way of looking, and it never reaches an export. Off unless you ask for it.",
+  "@settingsHelpShowTheToneMapButton": {
+    "description": "Settings window: the sentence under the settingsShowTheToneMapButton setting. \"Up there\" means detail brighter than the display can show."
+  },
   "settingsHelpSurroundTakesThemeColours": "Off, the area around the picture is a neutral grey — a grade cannot be judged against a tinted surround. On, it matches the rest of the shell.",
   "@settingsHelpSurroundTakesThemeColours": {
     "description": "Settings window: the sentence under the settingsSurroundTakesThemeColours setting."
@@ -2923,6 +3275,34 @@
   "@settingsLanguage": {
     "description": "Settings window: the name of the row that chooses the interface language."
   },
+  "settingsMemoryNotKnown": "not known here",
+  "@settingsMemoryNotKnown": {
+    "description": "Settings, memory report: shown where the process size would be on a platform that cannot report it. Lower case on purpose — it sits where a number would."
+  },
+  "settingsMemoryReservedInUse": "{reserved} reserved, {inUse} in use",
+  "@settingsMemoryReservedInUse": {
+    "description": "Settings, memory report: graphics memory the driver has set aside versus what is filled. Both placeholders are amounts such as 1.5 GB.",
+    "placeholders": {
+      "reserved": {
+        "type": "String"
+      },
+      "inUse": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsMemoryTexturesBuffers": "{textures} pictures, {buffers} buffers",
+  "@settingsMemoryTexturesBuffers": {
+    "description": "Settings, memory report: how many pictures and how many blocks of working memory the graphics driver is holding. Both placeholders are counts.",
+    "placeholders": {
+      "textures": {
+        "type": "String"
+      },
+      "buffers": {
+        "type": "String"
+      }
+    }
+  },
   "settingsMotion": "Motion",
   "@settingsMotion": {
     "description": "Settings window: the name of one setting."
@@ -2979,6 +3359,10 @@
   "@settingsRetimeValuesInSeconds": {
     "description": "Settings window: the name of one setting."
   },
+  "settingsShowTheToneMapButton": "Show the tone map button",
+  "@settingsShowTheToneMapButton": {
+    "description": "Settings window: the name of one setting."
+  },
   "settingsSmoothThePictureWhenZoomed": "Smooth the picture when zoomed in",
   "@settingsSmoothThePictureWhenZoomed": {
     "description": "Settings window: the name of one setting."
@@ -3010,6 +3394,18 @@
   "settingsUseThemeColours": "Use theme colours",
   "@settingsUseThemeColours": {
     "description": "Settings window: the name of one setting."
+  },
+  "settingsUsedMbIn": "{megabytes} MB in {entries}",
+  "@settingsUsedMbIn": {
+    "description": "Settings: what a cache holds — an amount in megabytes and how many frames it is spread over. Shown for the RAM, VRAM and disk tiers.",
+    "placeholders": {
+      "megabytes": {
+        "type": "String"
+      },
+      "entries": {
+        "type": "String"
+      }
+    }
   },
   "settingsVideoArrivesAsASequence": "Video arrives as a Sequence layer",
   "@settingsVideoArrivesAsASequence": {
@@ -3138,6 +3534,10 @@
   "switchSoloed": "Soloed",
   "@switchSoloed": {
     "description": "Layer switch, when this layer is one of the soloed ones."
+  },
+  "switchThreeD": "3D layer",
+  "@switchThreeD": {
+    "description": "Layer switch and its column heading: this layer lives in three-dimensional space."
   },
   "switchVisible": "Visible",
   "@switchVisible": {
@@ -3384,6 +3784,14 @@
   "@tipEnable": {
     "description": "Tooltip on the checkbox that switches an effect on. Under five words."
   },
+  "tipFlowOff": "Flow — synthesise in-between frames with optical flow",
+  "@tipFlowOff": {
+    "description": "Tooltip on a footage layer's Flow switch while it is off: what turning it on does."
+  },
+  "tipFlowOn": "Flow — in-between frames are synthesised; click to turn off",
+  "@tipFlowOn": {
+    "description": "Tooltip on a footage layer's Flow switch while it is on."
+  },
   "tipFrameNumber": "Frame number",
   "@tipFrameNumber": {
     "description": "Tooltip on the Timeline's frame readout. Under five words."
@@ -3439,6 +3847,10 @@
   "tipMarkOpacity": "Mark opacity",
   "@tipMarkOpacity": {
     "description": "Tooltip. Keep it to the control's name — under five words."
+  },
+  "tipMaskMode": "Mask mode",
+  "@tipMaskMode": {
+    "description": "Tooltip on the picker choosing how a mask combines with the ones above it — Add, Subtract, Intersect, Difference. Under five words."
   },
   "tipMasterMotionBlurOff": "Master motion blur off",
   "@tipMasterMotionBlurOff": {
@@ -3598,6 +4010,14 @@
   "tipValueGraph": "Value graph",
   "@tipValueGraph": {
     "description": "Tooltip: show value against time. Under five words."
+  },
+  "tipViewerExposure": "Exposure — preview only",
+  "@tipViewerExposure": {
+    "description": "Tooltip on the Viewer's exposure box. It brightens or darkens the picture on screen and never the export. \"Stop\" is the photographic unit — one stop is a doubling of light."
+  },
+  "tipViewerToneMap": "Tone mapping — preview only",
+  "@tipViewerToneMap": {
+    "description": "Tooltip on the Viewer's tone-map toggle, which has an icon and no label, so this sentence is the only description of it. \"The knee\" is where the rolloff starts; \"what is up there\" means detail brighter than the display can show. Preview only."
   },
   "tipZoomPercent": "Zoom — {percent}%",
   "@tipZoomPercent": {
@@ -4065,6 +4485,18 @@
   "@transformSection": {
     "description": "Heading over a layer's position, scale, rotation and opacity."
   },
+  "transportDmaBuf": "DMA-BUF, no copy",
+  "@transportDmaBuf": {
+    "description": "Part of the playback-mode tooltip: how frames reach the Viewer in this build. DMA-BUF is a Linux technology name — leave it as it is."
+  },
+  "transportReadBack": "read-back (pixels copied)",
+  "@transportReadBack": {
+    "description": "Part of the playback-mode tooltip: how frames reach the Viewer in this build — copied through main memory, the slow route. Lower case on purpose."
+  },
+  "transportSharedTexture": "shared texture, no copy",
+  "@transportSharedTexture": {
+    "description": "Part of the playback-mode tooltip: how frames reach the Viewer in this build — handed over on the graphics card. Lower case on purpose."
+  },
   "typeVerticalNotBuilt": "Vertical type is not built yet — the engine lays out one horizontal line",
   "@typeVerticalNotBuilt": {
     "description": "Notice when the vertical type tool is used."
@@ -4072,6 +4504,18 @@
   "unitDegrees": "degrees",
   "@unitDegrees": {
     "description": "A unit, written into the keyframe data that is copied to the clipboard. Lower case."
+  },
+  "unitFps": "fps",
+  "@unitFps": {
+    "description": "The frames-per-second unit, shown after a rate such as 25 fps. Lower case."
+  },
+  "unitGb": "GB",
+  "@unitGb": {
+    "description": "The gigabyte unit, shown after an amount of memory."
+  },
+  "unitMb": "MB",
+  "@unitMb": {
+    "description": "The megabyte unit, shown after an amount of memory."
   },
   "unitPercent": "percent",
   "@unitPercent": {
@@ -4211,11 +4655,35 @@
   "@updateNotNow": {
     "description": "Button that declines an update for the moment."
   },
+  "updateOfferBody": "{name} is {size}. Lumit downloads it now and installs it when you restart, so you can carry on working in the meantime.",
+  "@updateOfferBody": {
+    "description": "Body of the dialogue offering a new version: what the download costs and that work can continue. {name} is the installer's file name, {size} an amount such as 240 MB.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "size": {
+        "type": "String"
+      }
+    }
+  },
   "updateOfferTitle": "Update to Lumit {version}?",
   "@updateOfferTitle": {
     "description": "Title of the dialogue offering a new version.",
     "placeholders": {
       "version": {
+        "type": "String"
+      }
+    }
+  },
+  "updateProgressOf": "{done} MB of {size}",
+  "@updateProgressOf": {
+    "description": "Under the download bar: how much of the update has arrived. {done} is a number of megabytes, {size} the whole amount such as 240 MB.",
+    "placeholders": {
+      "done": {
+        "type": "String"
+      },
+      "size": {
         "type": "String"
       }
     }
@@ -4320,6 +4788,10 @@
   "volume": "Volume",
   "@volume": {
     "description": "Row label: how loud a layer's sound is."
+  },
+  "vramTier": "VRAM",
+  "@vramTier": {
+    "description": "Bottom strip: the name of the graphics-card cache tier, beside RAM and Disk. An abbreviation most languages keep."
   },
   "workAreaClear": "Clear work area",
   "@workAreaClear": {
