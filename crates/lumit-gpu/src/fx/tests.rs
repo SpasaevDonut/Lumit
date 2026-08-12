@@ -3735,6 +3735,12 @@ fn lens_flare_deferred_bakes_answer_with_the_previous_lens_then_the_new_one() {
     // The bake thread finishes and the next frame picks it up. Bounded, so a
     // machine that will not give us a thread fails the wait rather than the
     // suite hanging.
+    // Every pass waits for the queue before asking for another frame. A frame
+    // is what collects a landed bake, so the loop has to render — but on a
+    // software rasteriser (CI's WARP, Mesa's lavapipe) a frame takes long
+    // enough that firing them off every 10 ms would leave submissions piling
+    // up faster than they retire, and nothing in flight is ever reclaimed.
+    // Waiting makes each pass one frame, which is all this is counting.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     while std::time::Instant::now() < deadline {
         drop(fx.lens_flare(
@@ -3747,10 +3753,11 @@ fn lens_flare_deferred_bakes_answer_with_the_previous_lens_then_the_new_one() {
             &bake_b,
             &flare_probe(&second, w, h),
         ));
+        ctx.device.poll(wgpu::Maintain::Wait);
         if !fx.flare_bake_pending() {
             break;
         }
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::thread::sleep(std::time::Duration::from_millis(50));
     }
     assert!(
         !fx.flare_bake_pending(),

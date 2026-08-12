@@ -105,8 +105,18 @@ jobs:
       # hypothetical: it took the whole test process down (`exit code: 2173`,
       # no output, no test reported as failed), which reads as a mystery
       # crash rather than as the contention it is.
+      #
+      # `--nocapture` because the failure this job has actually had was the
+      # process dying rather than a test failing, and the harness throws
+      # captured output away when that happens — so the one thing that would
+      # have explained it never reached the log. Serial output is readable,
+      # and `LUMIT_GPU_DEBUG` names the adapter, which is the first question
+      # anyone asks about a GPU failure on a runner with no graphics card.
       - name: GPU oracle tests (WARP software DX12)
-        run: cargo test -p lumit-gpu -- --test-threads=1
+        env:
+          RUST_BACKTRACE: 1
+          LUMIT_GPU_DEBUG: 1
+        run: cargo test -p lumit-gpu -- --test-threads=1 --nocapture
 
   linux:
     name: tests (Linux, with media)
