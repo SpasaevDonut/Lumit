@@ -26,6 +26,7 @@
 // estimate, and it is the same estimate on both sides, which is what keeps the
 // caret and the picture from disagreeing about where the line ends.
 
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
@@ -152,13 +153,39 @@ class _ViewerTypeLayerState extends State<ViewerTypeLayer> {
     super.didUpdateWidget(old);
     // Putting the tool down finishes the edit, as does swapping horizontal for
     // vertical: an edit belongs to the tool that started it.
-    if (!widget.active || widget.tool != old.tool) _finish();
+    //
+    // After the frame, not inside it: this runs while the Viewer is being
+    // rebuilt, and finishing writes the document and clears the live text —
+    // both of which notify listeners the Viewer's own boxes are built from.
+    // Notifying a listener during the build that is already under way marks a
+    // widget dirty mid-build, which the framework asserts on.
+    if (!widget.active || widget.tool != old.tool) {
+      _afterBuild(() {
+        if (mounted) _finish();
+      });
+    }
+  }
+
+  /// Run [fn] now, or after the frame if a build or layout is in progress.
+  void _afterBuild(VoidCallback fn) {
+    final phase = SchedulerBinding.instance.schedulerPhase;
+    if (phase == SchedulerPhase.persistentCallbacks ||
+        phase == SchedulerPhase.midFrameMicrotasks) {
+      SchedulerBinding.instance.addPostFrameCallback((_) => fn());
+    } else {
+      fn();
+    }
   }
 
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_onKey);
-    _clearLive();
+    // Unmounting happens inside a build too, so the same rule applies — and
+    // this state is going, so the notifier is cleared without it.
+    final live = widget.uiState.liveText;
+    _afterBuild(() {
+      if (live.value.isNotEmpty) live.value = const {};
+    });
     _throttle.cancel();
     _controller.dispose();
     _focus.dispose();

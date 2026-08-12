@@ -114,6 +114,12 @@ class ProjectReference {
   /// Record `path` as a footage item, as one undo step.
   ///
   /// Importing only *records* the file — it does not decode it or read its size.
+  /// It does **ask the probe worker to read it**, which is not the same thing:
+  /// the request returns immediately and the file's statistics are read on a
+  /// background thread, so by the time the user drags the item into a
+  /// composition — `add_footage_layer`, which is synchronous and needs the
+  /// media's real size and length — the answer is usually already waiting
+  /// (`crate::probe`).
   /// Footage has no auto-folder (only solids and comps do), so the item lands at
   /// the panel root, matching the egui frontend exactly.
   ///
