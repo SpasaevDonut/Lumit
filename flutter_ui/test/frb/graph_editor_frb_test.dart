@@ -14,6 +14,7 @@ import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
+import 'package:lumit_flutter/state/dock.dart';
 
 import 'frb_test_support.dart';
 
@@ -447,6 +448,138 @@ void main() {
       await tester.pumpAndSettle();
       expect(opacityKeys(p.layer)[0].interpIn, isA<BridgeSideInterp_Bezier>(),
           reason: 'F9 easy-eases the selection');
+    });
+
+    /// The shaped ease (K-348): a curve drawn once in the unit box, stamped on
+    /// every **span** whose two ends are selected — and only from the value
+    /// lens, because the shape is drawn against value travel.
+    ///
+    /// Driven through the *popup* mode of K-349, because this test mounts the
+    /// Timeline alone: in panel mode the button docks a pane that only the full
+    /// shell renders, and what is under test here is the stamping, not where
+    /// the editor is shown. `easing_panel_frb_test.dart` covers the panel, and
+    /// the two tests below cover which of them the button reaches for.
+    testWidgets('the Easing button stamps one shape across the spans',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.workspace.interface.easingInPopup = true;
+      animateOpacity(p.comp, p.layer, frames: [0, 50, 100]);
+      await mountGraph(tester, p);
+
+      // The editor is a popup: a click outside it takes it back, so the
+      // selection is made first and the box opened over it.
+      Future<void> openEditor() async {
+        await tester
+            .ensureVisible(find.byKey(const ValueKey('graph-interp-easing')));
+        await tester.tap(find.byKey(const ValueKey('graph-interp-easing')));
+        await tester.pumpAndSettle();
+      }
+
+      // A lone key names no travel: applying leaves the document as it was.
+      await tester.tap(find.byKey(ValueKey<String>(opacityKey(p.layer, 0))));
+      await tester.pump();
+      await openEditor();
+      await tester.tap(find.text('Slow start'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Apply'));
+      await tester.pumpAndSettle();
+      expect(opacityKeys(p.layer)[0].interpOut, isA<BridgeSideInterp_Linear>(),
+          reason: 'one key on its own has no span to shape');
+      await tester.tap(find.text('Close'));
+      await tester.pumpAndSettle();
+
+      // Both ends of the first span selected: that span takes the shape, and
+      // the span beyond the selection does not.
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.tap(find.byKey(ValueKey<String>(opacityKey(p.layer, 1))));
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pump();
+      await openEditor();
+      await tester.tap(find.text('Slow start'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Apply'));
+      await tester.pumpAndSettle();
+
+      final keys = opacityKeys(p.layer);
+      final out0 = keys[0].interpOut;
+      expect(out0, isA<BridgeSideInterp_Bezier>());
+      // Slow start: flat out of the first key, and the reach is the handle's
+      // own x — a third of the span (docs/impl/keyframe-eval.md §1).
+      expect((out0 as BridgeSideInterp_Bezier).field0.speed, closeTo(0, 1e-9));
+      expect(out0.field0.influence, closeTo(1 / 3, 1e-9));
+      expect(keys[1].interpOut, isA<BridgeSideInterp_Linear>(),
+          reason: 'the span past the selection was left alone');
+
+      // The speed lens takes the button away, so a shape cannot be stamped on a
+      // graph the user is not looking at.
+      await tester.tap(find.text('Close'));
+      await tester.pumpAndSettle();
+      await tester
+          .ensureVisible(find.byKey(const ValueKey('graph-lens-speed')));
+      await tester.tap(find.byKey(const ValueKey('graph-lens-speed')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('graph-interp-easing')), findsNothing);
+    });
+
+    /// Which door the button opens is Settings ▸ Interface ▸ Editing (K-349).
+    /// The panel is the default because it outlasts a selection change; the
+    /// popup is the deviation, for anyone who would rather not spend a column.
+    testWidgets('by default the Easing button docks the panel', (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer);
+      await mountGraph(tester, p);
+      expect(panelVisible(p.uiState.split, Panel.easing), isFalse,
+          reason: 'the panel is in no default arrangement');
+
+      await tester
+          .ensureVisible(find.byKey(const ValueKey('graph-interp-easing')));
+      await tester.tap(find.byKey(const ValueKey('graph-interp-easing')));
+      await tester.pumpAndSettle();
+
+      expect(panelVisible(p.uiState.split, Panel.easing), isTrue);
+      expect(p.uiState.activePanel.value, Panel.easing,
+          reason: 'a panel you just asked for is the one you want to look at');
+      expect(find.text('Apply'), findsNothing,
+          reason: 'nothing floats over the footer in panel mode');
+    });
+
+    testWidgets('a second press does not dock it twice', (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer);
+      await mountGraph(tester, p);
+
+      for (var i = 0; i < 2; i++) {
+        await tester
+            .ensureVisible(find.byKey(const ValueKey('graph-interp-easing')));
+        await tester.tap(find.byKey(const ValueKey('graph-interp-easing')));
+        await tester.pumpAndSettle();
+      }
+
+      final panels = panelsIn(p.uiState.split);
+      expect(panels.where((x) => x == Panel.easing), hasLength(1));
+    });
+
+    /// The claim the Easing panel presses (K-349) tracks the lens, so a panel
+    /// docked elsewhere in the shell can grey its Apply without ever being told
+    /// what is selected.
+    testWidgets('the shell claim follows the lens', (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer);
+      await mountGraph(tester, p);
+      expect(p.uiState.easingApply.value, isNotNull);
+
+      await tester
+          .ensureVisible(find.byKey(const ValueKey('graph-lens-speed')));
+      await tester.tap(find.byKey(const ValueKey('graph-lens-speed')));
+      await tester.pumpAndSettle();
+      expect(p.uiState.easingApply.value, isNull,
+          reason: 'a shape drawn against value travel does not belong here');
+
+      await tester
+          .ensureVisible(find.byKey(const ValueKey('graph-lens-value')));
+      await tester.tap(find.byKey(const ValueKey('graph-lens-value')));
+      await tester.pumpAndSettle();
+      expect(p.uiState.easingApply.value, isNotNull);
     });
 
     /// A joined pair moves *together and live*: the partner must follow while

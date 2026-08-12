@@ -104,7 +104,8 @@ the panel arrangement is the local user's own.
 
 ### 1.6 Shipped workspace presets
 
-Structure only; every preset uses the same panel inventory.
+Structure only, with one exception: **Retiming** is the only preset whose panel inventory
+differs, because the Easing panel is in no other arrangement (K-349).
 
 - **Edit** (default): Project panel left, fronted, with Effect Controls and Hierarchy tabbed
   behind it; Viewer centre; **right column Effects & Presets, fronted**, with Scopes and the
@@ -122,6 +123,13 @@ Structure only; every preset uses the same panel inventory.
   audio waveforms expanded by default; Viewer reduced. This is the v1 audio surface — the
   future Composer workspace is specified in [09-AUDIO.md](09-AUDIO.md) and deliberately not
   here.
+- **Retiming** (K-349): the arrangement for shaping how things move. The **Easing** panel
+  takes the right-hand column outright — a bare pane, not tabbed, because the point of the
+  panel over the popup is that it stays on screen while the selection changes underneath
+  it; Project fronted left with Effect Controls, Effects & Presets and Hierarchy tabbed
+  behind; Viewer centre; Timeline as tall as Audio's, retiming being timeline work. Shares:
+  0.55/0.45 vertically, 0.20/0.58/0.22 across the upper band. This is the only preset that
+  brings a panel the others do not have.
 
 ### 1.7 The toolbar (K-216)
 
@@ -1385,13 +1393,41 @@ whole selection in time and value as one write per property; and **keyframe copy
 (`Ctrl+C`/`Ctrl+V`, from the lane view as much as the graph) — full fidelity in-app,
 mirrored to the system clipboard as a tab-separated `Lumit <version> Keyframe Data` table
 whose per-value easing columns carry the shaping across, and which parses foreign
-keyframe tables back in as linear keys. **A drag in the graph previews as it goes** (K-329):
+keyframe tables back in as linear keys. **A shaped ease is drawn once and stamped on many**
+(K-348): an **Easing…** button beside the three one-click eases opens a unit box — travel
+left to right, two draggable control points, a row of preset shapes, Apply. Apply puts the
+shape on every **span** whose two keys are both selected (a lone key names no travel and is
+left alone), converting it per span against that span's own chord slope, so one drawn curve
+reads the same across a selection whose spans move by different amounts. It is offered in
+the **value lens only**, because a shape drawn against value travel would otherwise land on
+a graph the user is not looking at. **The box is the Easing panel** (K-349, §5.4): the
+button docks it and fronts it, and it stays on screen while the selection changes
+underneath — which is the whole point, a shape being worth drawing precisely because it
+goes on this run of keys and then that one. Settings ▸ Interface ▸ Editing ▸ *Shape eases
+in a popup* puts the same editor in a floating box over the footer instead. **A drag in the graph previews as it goes** (K-329):
 every tick renders the values the release will write, through the same patched clone the
 value rows use — a key drag, a tangent handle and a Vegas envelope point alike. It covers the
 grabbed key's layer, so a selection spanning several layers still shows the rest on release.
 Still to build:
 the acceleration lens and auto view (K-070), numeric entry, the transform-box scaling,
 snap-to-beat-markers in the graph, waveform ghosting, and the Retime lenses of §5.2.
+
+### 5.4 The Easing panel (K-349)
+
+A dockable panel holding the shape editor of §5.3 and nothing else: the unit box, the
+preset row, the four `cubic-bezier` numbers as text, and **Apply**. No Close — a panel is
+closed from its tab or the Window menu, like every other.
+
+- **It never learns what is selected.** The Timeline publishes a callback while it can take
+  a shape; the panel presses it and is told nothing about what it landed on. The keyframe
+  selection stays the Timeline's.
+- **Apply greys when there is nowhere to send a shape** — no Timeline on screen, or a graph
+  showing the speed lens — with one line saying so. A popup that vanished could stay silent
+  about this; a persistent panel showing a live button that does nothing cannot.
+- **The drawn shape survives** a selection change, a lens change and the claim coming and
+  going. It resets only when the panel itself is closed and reopened.
+- It is in the **Retiming** preset (§1.6) and in no other arrangement; anywhere else the
+  Easing… button or Window ▸ Easing puts it there.
 
 ---
 

@@ -8223,3 +8223,72 @@ keeps its value, so turning the setting back on finds each composition as it was
 exposure while the button is away writes the pair back as it reads, which clears the stored
 tone map — a state you cannot see does not persist behind your back.) Recorded in
 [07-UI-SPEC.md](07-UI-SPEC.md) §2.2, which is where the Viewer bar is specified.
+
+**K-348 · DECIDED · A shaped ease is drawn once in a unit box and stamped span by span,
+from the value lens only.** K-196's graph editor shapes one span at a time, by dragging the
+tangent handles of two particular keyframes; the footer's Linear / Bezier / Hold buttons go
+the other way and set a *constant* on every selected key. Neither covers the common job:
+one hand-drawn ease put on a great many keys at once. The **Easing…** button opens a
+normalised cubic — the four numbers CSS writes as `cubic-bezier(x1, y1, x2, y2)` — with a
+row of preset shapes, and Apply stamps it.
+
+**(1) The unit of work is a span, not a key.** A shape describes the travel *between* two
+keys, so a span takes the curve when both of its ends are selected; a lone key has named no
+travel and is left alone. This is deliberately unlike the one-click three, which are key-wise,
+and it is what makes selecting a run of keys ease the whole run.
+
+**(2) Each span converts against its own chord slope.** A keyframe side stores AE-style
+*speed* (value-units per second) and *influence* (a fraction of the gap) — `anim.rs`. Speed
+is an absolute rate, so the identical drawn shape must become a **different** stored speed
+on a span covering 400 pixels than on one covering 40, or only one of the two would look
+like the curve that was drawn. Influence is already a fraction and carries across untouched.
+`EasingCurve.sidesFor` is that conversion, derived from the control-point placement in
+docs/impl/keyframe-eval.md §1, and it is the whole reason the shape is held apart from any
+one span. A flat span has chord slope 0 and stays flat whatever the shape.
+
+**(3) Value lens only, locked twice.** The button is absent while the speed lens is up, and
+`_applyEasing` refuses the call as well. The box draws a shape against **value** travel, so
+a curve stamped from the speed lens would edit a graph the user is not looking at. The
+one-click three stay in both lenses: a side's interp means the same thing either way.
+
+**(4) The presets are named for which end is slow.** *Slow start* / *Slow finish*, not
+"ease in" / "ease out": in Lumit "in" and "out" already name the two **sides** of a key
+(F9's family), while the web's `ease-in` means a slow *start* — the opposite reading. Two
+presets leave the box on purpose (Overshoot, Anticipate), which is what sizes the editor's
+vertical margin: a handle drawn past the edge of the view is one the pointer cannot reach
+to drag back.
+
+**K-349 · DECIDED · The easing editor is a panel, and the popup is the setting.**
+From the owner (2026-08-12), revising K-348's shipping form before it reached anyone.
+K-348 put the shape editor in a popup opened from the graph footer. Every popup here
+closes on a click outside it — and **choosing different keyframes is a click outside**, so
+a shape could only ever be tried on the selection that happened to be live when the box
+opened. That is the opposite of what a reusable ease is for: the whole value of drawing one
+shape is putting it on this run of keys, then that one. The editor is now the **Easing
+panel**; `EasingEditor` is one widget and the popup is the same widget in an overlay.
+
+**(1) The panel is the default; the popup is a preference.** Settings ▸ Interface ▸ Editing
+▸ *Shape eases in a popup* (`easingInPopup`, off) restores the K-348 behaviour for a small
+screen, or for anyone who would rather not spend a column on it. Phrased as a deviation
+from the default, like K-254's playhead and K-285's waveforms, so a settings file written
+before the field existed adopts the panel by its own silence.
+
+**(2) It is not in the default arrangement, but it has an arrangement of its own.** Adding
+a pane to `defaultLayout` would rearrange the first-run screen for a panel most projects
+never open, so the four shipped presets are untouched. A fifth preset, **Retiming**, gives
+Easing the right-hand column outright — not tabbed behind Scopes, because a panel behind a
+tab is a panel you keep fetching, which is the popup's problem again in slower form — over
+a Timeline as tall as Audio's. Everywhere else the graph footer's **Easing…** button docks
+it on first press and fronts it thereafter (`setPanelVisible` is a no-op when it is already
+there), and Window ▸ Easing ticks it like every other panel. This is the first panel not
+present in every arrangement; `dock_test.dart` names it as the single exemption rather than
+loosening its invariant to "some panels are missing".
+
+**(3) The panel never learns what is selected.** It publishes nothing and asks nothing: the
+Timeline hands the shell a callback (`LumitUiState.easingApply`) while it can take a shape,
+and the panel presses it. That is K-234's and K-300's claim idiom for Delete, Copy and
+Paste, and it keeps the keyframe selection the Timeline's alone. The one difference is that
+this claim is a `ValueNotifier` rather than a bare field, because it is *read to draw
+with*: null — no Timeline on screen, or a graph in the speed lens (K-348) — greys the
+panel's Apply and shows the reason. A popup that simply vanished could stay silent about
+this; a panel sitting in the corner with a live-looking button that does nothing cannot.

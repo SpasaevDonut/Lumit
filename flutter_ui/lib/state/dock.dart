@@ -19,7 +19,8 @@ enum Panel {
   effectsAndPresets,
   scopes,
   debug,
-  hierarchy;
+  hierarchy,
+  easing;
 
   String get title => switch (this) {
         Panel.project => l10n.panelProject,
@@ -29,6 +30,7 @@ enum Panel {
         Panel.effectsAndPresets => l10n.panelEffectsAndPresets,
         Panel.scopes => l10n.panelScopes,
         Panel.hierarchy => l10n.panelHierarchy,
+        Panel.easing => l10n.panelEasing,
         Panel.debug => l10n.panelDebug
       };
 }
@@ -140,21 +142,27 @@ DockSplit defaultLayout() => DockSplit(
       [0.68, 0.32],
     );
 
-/// The four shipped workspace presets (docs/07 §1.6): the same panel
-/// inventory, four arrangements. Structure only, per the spec; the Audio
-/// preset stands in with a taller Timeline (whose waveform lanes are the v1
-/// audio surface) until the Audio panel itself is built.
+/// The shipped workspace presets (docs/07 §1.6): much the same panel
+/// inventory, arranged for different work. Structure only, per the spec; the
+/// Audio preset stands in with a taller Timeline (whose waveform lanes are the
+/// v1 audio surface) until the Audio panel itself is built.
+///
+/// Retiming is the one preset that changes the inventory rather than only the
+/// arrangement (K-349): the Easing panel is not in the others, because a panel
+/// nobody asked for should not appear in an arrangement they already know.
 enum WorkspacePreset {
   edit,
   effects,
   colour,
-  audio;
+  audio,
+  retiming;
 
   String get title => switch (this) {
         WorkspacePreset.edit => l10n.workspaceEdit,
         WorkspacePreset.effects => l10n.workspaceEffects,
         WorkspacePreset.colour => l10n.workspaceColour,
         WorkspacePreset.audio => l10n.workspaceAudio,
+        WorkspacePreset.retiming => l10n.workspaceRetiming,
       };
 }
 
@@ -237,6 +245,34 @@ DockSplit presetLayout(WorkspacePreset preset) => switch (preset) {
                 ]),
               ],
               [0.24, 0.56, 0.20],
+            ),
+            DockPane(Panel.timeline),
+          ],
+          [0.55, 0.45],
+        ),
+      // Retiming (K-349): the arrangement for shaping movement. The **Easing**
+      // panel takes the right-hand column outright rather than tabbing behind
+      // Scopes — the whole point of the panel over the popup is that it stays
+      // on screen while the selection changes underneath it, and a panel behind
+      // a tab is a panel you have to keep fetching. The Timeline is as tall as
+      // Audio's, because retiming is timeline work: the graph editor is where
+      // the eye is, and the shape is drawn beside it.
+      WorkspacePreset.retiming => DockSplit(
+          DockAxis.vertical,
+          [
+            DockSplit(
+              DockAxis.horizontal,
+              [
+                DockTabs([
+                  DockPane(Panel.project),
+                  DockPane(Panel.effectControls),
+                  DockPane(Panel.effectsAndPresets),
+                  DockPane(Panel.hierarchy),
+                ]),
+                DockPane(Panel.viewer),
+                DockPane(Panel.easing),
+              ],
+              [0.20, 0.58, 0.22],
             ),
             DockPane(Panel.timeline),
           ],

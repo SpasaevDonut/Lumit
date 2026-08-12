@@ -188,8 +188,17 @@ void main() {
     checkInvariants(root);
   });
 
+  /// Dragging panels about never loses or duplicates one.
+  ///
+  /// Measured against the arrangement's *own* inventory rather than
+  /// `Panel.values`: the default layout no longer holds every panel (Easing is
+  /// Retiming's — K-349), and what this test is actually about is that a move
+  /// conserves whatever was there. Seeded with the Easing panel present, so the
+  /// newest panel is one of the ones being thrown around.
   test('every panel appears once across a randomised sequence of moves', () {
     final root = defaultLayout();
+    setPanelVisible(root, Panel.easing, true);
+    final inventory = panelsIn(root).toSet();
     final rng = Random(20260721);
     const positions = DropPosition.values;
 
@@ -202,7 +211,7 @@ void main() {
       movePanel(root, dragged, target, pos);
 
       checkInvariants(root);
-      expect(panelsIn(root).toSet(), Panel.values.toSet(),
+      expect(panelsIn(root).toSet(), inventory,
           reason: 'no panel is lost or duplicated by move $i');
     }
   });
