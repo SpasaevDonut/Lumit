@@ -131,12 +131,13 @@ These three words are **not interchangeable**.
 | Term | Definition |
 |---|---|
 | **Panel** | A dockable UI unit (Timeline, Viewer, Project, Effect Controls, Scopes, …). Full inventory in [07-UI-SPEC.md](07-UI-SPEC.md). |
-| **Workspace** | A named, saveable arrangement of panels. Ships with presets (Edit, Effects, Colour, Audio); fully user-rearrangeable. |
+| **Workspace** | A named, saveable arrangement of panels. Ships with presets (Edit, Effects, Colour, Audio, Retiming); fully user-rearrangeable. |
 | **Viewer** | The panel that displays a comp (or footage/layer) with its toolbar: preview resolution, magnification, channel view, transparency grid, guides, and wireframe toggles. |
 | **Timeline** | The panel showing a comp's layer stack against time, with expandable property lanes, keyframes, and cache bars. |
 | **Work area** | The comp-time span used for preview and default export range. |
 | **Playhead** | The current-time indicator. *CTI* is not a Lumit term. |
 | **Scopes** | Waveform, vectorscope, histogram panels (GPU-computed). |
+| **Easing panel** | The panel holding the shape editor: one normalised curve, drawn once and applied to the selected keyframe **spans** (K-348, K-349). |
 | **Composer** | The planned audio workspace for sound design against the edit. See [09-AUDIO.md](09-AUDIO.md). |
 
 ## 8. Extensibility

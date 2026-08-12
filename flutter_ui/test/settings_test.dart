@@ -53,6 +53,18 @@ void main() {
     expect(InterfaceSettings.fromJson(on.toJson()).showToneMap, isTrue);
   });
 
+  /// K-349. The panel is the default, so the flag is the *deviation* — same
+  /// shape as the playhead and waveform preferences above.
+  test('the easing editor is a panel unless a settings file asks otherwise',
+      () {
+    expect(InterfaceSettings().easingInPopup, isFalse);
+    expect(InterfaceSettings.fromJson(const {'ui_scale': 1.25}).easingInPopup,
+        isFalse,
+        reason: 'a file written before the field existed gets the panel');
+    final popup = InterfaceSettings()..easingInPopup = true;
+    expect(InterfaceSettings.fromJson(popup.toJson()).easingInPopup, isTrue);
+  });
+
   test('the Retime seconds preference round-trips', () {
     final i = InterfaceSettings(retimeInSeconds: true);
     expect(InterfaceSettings.fromJson(i.toJson()).retimeInSeconds, isTrue);

@@ -8257,3 +8257,38 @@ one-click three stay in both lenses: a side's interp means the same thing either
 presets leave the box on purpose (Overshoot, Anticipate), which is what sizes the editor's
 vertical margin: a handle drawn past the edge of the view is one the pointer cannot reach
 to drag back.
+
+**K-349 · DECIDED · The easing editor is a panel, and the popup is the setting.**
+From the owner (2026-08-12), revising K-348's shipping form before it reached anyone.
+K-348 put the shape editor in a popup opened from the graph footer. Every popup here
+closes on a click outside it — and **choosing different keyframes is a click outside**, so
+a shape could only ever be tried on the selection that happened to be live when the box
+opened. That is the opposite of what a reusable ease is for: the whole value of drawing one
+shape is putting it on this run of keys, then that one. The editor is now the **Easing
+panel**; `EasingEditor` is one widget and the popup is the same widget in an overlay.
+
+**(1) The panel is the default; the popup is a preference.** Settings ▸ Interface ▸ Editing
+▸ *Shape eases in a popup* (`easingInPopup`, off) restores the K-348 behaviour for a small
+screen, or for anyone who would rather not spend a column on it. Phrased as a deviation
+from the default, like K-254's playhead and K-285's waveforms, so a settings file written
+before the field existed adopts the panel by its own silence.
+
+**(2) It is not in the default arrangement, but it has an arrangement of its own.** Adding
+a pane to `defaultLayout` would rearrange the first-run screen for a panel most projects
+never open, so the four shipped presets are untouched. A fifth preset, **Retiming**, gives
+Easing the right-hand column outright — not tabbed behind Scopes, because a panel behind a
+tab is a panel you keep fetching, which is the popup's problem again in slower form — over
+a Timeline as tall as Audio's. Everywhere else the graph footer's **Easing…** button docks
+it on first press and fronts it thereafter (`setPanelVisible` is a no-op when it is already
+there), and Window ▸ Easing ticks it like every other panel. This is the first panel not
+present in every arrangement; `dock_test.dart` names it as the single exemption rather than
+loosening its invariant to "some panels are missing".
+
+**(3) The panel never learns what is selected.** It publishes nothing and asks nothing: the
+Timeline hands the shell a callback (`LumitUiState.easingApply`) while it can take a shape,
+and the panel presses it. That is K-234's and K-300's claim idiom for Delete, Copy and
+Paste, and it keeps the keyframe selection the Timeline's alone. The one difference is that
+this claim is a `ValueNotifier` rather than a bare field, because it is *read to draw
+with*: null — no Timeline on screen, or a graph in the speed lens (K-348) — greys the
+panel's Apply and shows the reason. A popup that simply vanished could stay silent about
+this; a panel sitting in the corner with a live-looking button that does nothing cannot.

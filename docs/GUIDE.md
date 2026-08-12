@@ -1878,13 +1878,27 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   drag to break the two apart and shape a corner; Alt-drag again re-joins them. `Shift+F9`
   eases only the way *in*, `Ctrl+Shift+F9` only the way *out*, and the **Linear** and
   **Hold** buttons put selected keys back to straight lines or steps.
-  **Reusing one ease (the Easing button).** Shaping handles key by key is precise and slow,
+  **Reusing one ease (the Easing panel).** Shaping handles key by key is precise and slow,
   and montage work wants the *same* ease on a great many keys. The bottom bar's
-  **Easing…** button opens a small box where you draw an ease once: travel runs left to
-  right, from nothing done at the bottom-left corner to all done at the top-right, and two
-  handles bend the line between them. Pick a starting shape from the row of presets, nudge
-  it, then press **Apply** to put it on the selection. The box stays open, so you can nudge
-  and apply again until it feels right.
+  **Easing…** button opens the **Easing panel**, where you draw an ease once: travel runs
+  left to right, from nothing done at the bottom-left corner to all done at the top-right,
+  and two handles bend the line between them. Pick a starting shape from the row of
+  presets, nudge it, then press **Apply** to put it on the selection.
+  It is a *panel* rather than a floating box for one reason, and it is worth spelling out
+  because the first version got it wrong. A floating box goes away the moment you click
+  anywhere else — and clicking different keyframes *is* clicking somewhere else. So a shape
+  you had just got right could only ever be used on the keys that happened to be selected
+  when you opened it, which defeats the purpose: the value of drawing one ease is putting
+  it on this run of keys, then on that one, then on a third. Docked, it simply stays there.
+  Select, Apply, select something else, Apply again.
+  The button docks the panel the first time you press it and brings it to the front after
+  that; **Window ▸ Easing** does the same, and the **Retiming** workspace has it down the
+  right already. If you would rather have the screen space back, Settings ▸ Interface ▸
+  Editing ▸ *Shape eases in a popup* gives you the floating box instead, with the
+  limitation above.
+  When the panel cannot do anything with a shape — no Timeline on screen, or the graph is
+  showing its Speed view rather than Value — **Apply** greys out and a line underneath says
+  why, rather than the button quietly ignoring you.
   It works on **spans**, not keys: a stretch of travel takes the shape when the keys at
   *both* of its ends are selected, so selecting a run of keys eases the whole run, and
   selecting one lone key does nothing — it has named no travel to shape.

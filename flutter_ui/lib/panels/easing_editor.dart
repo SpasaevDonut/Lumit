@@ -1,5 +1,5 @@
 // The easing editor: a unit box you shape an ease in, and a button that stamps
-// it onto the selected keyframes (docs/07 §5.3, K-348).
+// it onto the selected keyframes (docs/07 §5.3 and §5.4, K-348 and K-349).
 //
 // In plain terms: the graph editor shapes one span at a time, in the units that
 // span happens to use. This is the same shape drawn once, in the abstract — the
@@ -8,9 +8,13 @@
 // Apply puts it on every span the selection covers, whatever those spans move
 // by (`applyEasingToSelection`, the per-span conversion it leans on).
 //
-// It is a popup rather than a panel on purpose: the keyframe selection is the
-// Timeline's, and a shape with nothing selected has nothing to act on, so this
-// opens from the graph's own bottom bar and closes when it is done.
+// **One editor, shown two ways** (K-349). By default it is the *Easing panel*
+// (`easing_panel_frb.dart`), which stays on screen while the selection changes
+// underneath it — that is the whole reason to prefer a panel. Settings ▸
+// Interface ▸ Editing turns it back into a popup that opens from the graph's
+// own bottom bar and closes when it is done. [EasingEditor] is the body both
+// show, and knows about neither: the only differences are whether there is a
+// Close button and whether Apply has anywhere to send a shape.
 
 import 'package:flutter/widgets.dart';
 
@@ -51,13 +55,16 @@ const double _grabRadius = 18;
 const double _popupWidth = _boxSide + _marginX * 2;
 const double _popupHeight = _boxSide + _marginY * 2;
 
-/// Open the easing editor at [position], and call [onApply] with the shape each
-/// time Apply is pressed.
+/// Open the easing editor at [position] as a popup, and call [onApply] with the
+/// shape each time Apply is pressed — the *inline* mode of Settings ▸ Interface
+/// ▸ Editing (K-349).
 ///
 /// The popup stays up across an Apply — shaping an ease is a "try it, nudge it,
 /// try it again" job, and a box that vanished on first use would make the
 /// second attempt start from nothing. It closes on Close, or on a click outside
-/// it, like every other popup here.
+/// it, like every other popup here. That last part is why the panel is the
+/// default: changing the keyframe selection *is* a click outside, so in popup
+/// mode one shape can only ever be tried on one selection.
 Future<void> showEasingPopup({
   required BuildContext context,
   required Offset position,
@@ -66,33 +73,54 @@ Future<void> showEasingPopup({
     showLumitPopup<void>(
       context: context,
       position: position,
-      builder: (close) => _EasingEditor(
-        // It opens on the gentlest preset every time. Carrying the last shape
-        // over is a nicety with nowhere to live yet — the button is inside a
-        // stateless bottom bar — and nobody has asked for it.
-        initial: easingPresets.first.curve,
-        onApply: onApply,
-        onClose: () => close(null),
-      ),
+      builder: (close) => Builder(builder: (context) {
+        // The floating surface belongs to the popup, not to the editor: a panel
+        // draws its own chrome and a second raised card inside one is a card
+        // too many.
+        final t = ThemeScope.of(context).theme;
+        return Container(
+          decoration: BoxDecoration(
+            color: t.surface2,
+            borderRadius: BorderRadius.circular(t.tokens.floatRadius),
+            border: Border.all(color: t.hairlineStrong),
+          ),
+          child: EasingEditor(
+            onApply: onApply,
+            onClose: () => close(null),
+          ),
+        );
+      }),
     );
 
-class _EasingEditor extends StatefulWidget {
-  final EasingCurve initial;
-  final ValueChanged<EasingCurve> onApply;
-  final VoidCallback onClose;
+/// The editor body: the box, the preset row, the four numbers, and the buttons.
+///
+/// [onClose] null means there is no Close button — the panel is not something
+/// you dismiss. [onApply] null means Apply is there but greyed, with [whyNot]
+/// saying what would make it live again; the panel is persistent, so a button
+/// that silently did nothing would read as a fault rather than a lock.
+class EasingEditor extends StatefulWidget {
+  final ValueChanged<EasingCurve>? onApply;
+  final VoidCallback? onClose;
 
-  const _EasingEditor({
-    required this.initial,
+  /// Shown under the buttons while [onApply] is null.
+  final String? whyNot;
+
+  const EasingEditor({
+    super.key,
     required this.onApply,
-    required this.onClose,
+    this.onClose,
+    this.whyNot,
   });
 
   @override
-  State<_EasingEditor> createState() => _EasingEditorState();
+  State<EasingEditor> createState() => _EasingEditorState();
 }
 
-class _EasingEditorState extends State<_EasingEditor> {
-  late EasingCurve _curve = widget.initial;
+class _EasingEditorState extends State<EasingEditor> {
+  /// It opens on the gentlest preset. The shape survives a selection change in
+  /// the panel — the State is not rebuilt for one — which is the thing the
+  /// popup could not do.
+  EasingCurve _curve = easingPresets.first.curve;
 
   /// Which handle the pointer has hold of: 1, 2, or null between drags.
   int? _dragging;
@@ -139,12 +167,8 @@ class _EasingEditorState extends State<_EasingEditor> {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    return Container(
-      decoration: BoxDecoration(
-        color: t.surface2,
-        borderRadius: BorderRadius.circular(t.tokens.floatRadius),
-        border: Border.all(color: t.hairlineStrong),
-      ),
+    final apply = widget.onApply;
+    return Padding(
       padding: const EdgeInsets.all(10),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -178,22 +202,37 @@ class _EasingEditorState extends State<_EasingEditor> {
             child: Row(
               children: [
                 const Spacer(),
+                if (widget.onClose != null) ...[
+                  HouseButton(
+                    small: true,
+                    onPressed: widget.onClose,
+                    child: Text(l10n.close, style: t.small),
+                  ),
+                  const SizedBox(width: 6),
+                ],
                 HouseButton(
-                  small: true,
-                  onPressed: widget.onClose,
-                  child: Text(l10n.close, style: t.small),
-                ),
-                const SizedBox(width: 6),
-                HouseButton(
+                  key: const ValueKey('easing-apply'),
                   small: true,
                   primary: true,
-                  onPressed: () => widget.onApply(_curve),
+                  // A null callback is what greys a HouseButton, so the lock
+                  // and the look are the same fact rather than two.
+                  onPressed: apply == null ? null : () => apply(_curve),
                   child: Text(l10n.apply,
-                      style: t.small.copyWith(color: t.textPrimary)),
+                      style: t.small.copyWith(
+                          color:
+                              apply == null ? t.textDisabled : t.textPrimary)),
                 ),
               ],
             ),
           ),
+          if (apply == null && widget.whyNot != null) ...[
+            const SizedBox(height: 6),
+            SizedBox(
+              width: _popupWidth,
+              child: Text(widget.whyNot!,
+                  style: t.caption.copyWith(color: t.textMuted)),
+            ),
+          ],
         ],
       ),
     );
