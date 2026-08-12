@@ -1,5 +1,6 @@
-// The easing curve: one normalised bezier shape, reusable across keyframes.
-// Pure, so it unit-tests without a widget tree and never crosses the bridge.
+// The easing curve: one normalised bezier shape, reusable across keyframes
+// (K-348). Pure, so it unit-tests without a widget tree and never crosses the
+// bridge.
 //
 // In plain terms: the graph editor shapes one span at a time, by dragging the
 // tangent handles of two particular keyframes. An *easing curve* is the same

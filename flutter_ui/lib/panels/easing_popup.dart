@@ -1,5 +1,5 @@
 // The easing editor: a unit box you shape an ease in, and a button that stamps
-// it onto the selected keyframes (docs/07 §5.3).
+// it onto the selected keyframes (docs/07 §5.3, K-348).
 //
 // In plain terms: the graph editor shapes one span at a time, in the units that
 // span happens to use. This is the same shape drawn once, in the abstract — the
@@ -62,13 +62,15 @@ Future<void> showEasingPopup({
   required BuildContext context,
   required Offset position,
   required ValueChanged<EasingCurve> onApply,
-  EasingCurve? initial,
 }) =>
     showLumitPopup<void>(
       context: context,
       position: position,
       builder: (close) => _EasingEditor(
-        initial: initial ?? easingPresets.first.curve,
+        // It opens on the gentlest preset every time. Carrying the last shape
+        // over is a nicety with nowhere to live yet — the button is inside a
+        // stateless bottom bar — and nobody has asked for it.
+        initial: easingPresets.first.curve,
         onApply: onApply,
         onClose: () => close(null),
       ),

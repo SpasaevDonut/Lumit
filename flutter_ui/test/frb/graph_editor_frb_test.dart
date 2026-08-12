@@ -449,6 +449,70 @@ void main() {
           reason: 'F9 easy-eases the selection');
     });
 
+    /// The shaped ease (K-348): a curve drawn once in the unit box, stamped on
+    /// every **span** whose two ends are selected — and only from the value
+    /// lens, because the shape is drawn against value travel.
+    testWidgets('the Easing button stamps one shape across the spans',
+        (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer, frames: [0, 50, 100]);
+      await mountGraph(tester, p);
+
+      // The editor is a popup: a click outside it takes it back, so the
+      // selection is made first and the box opened over it.
+      Future<void> openEditor() async {
+        await tester
+            .ensureVisible(find.byKey(const ValueKey('graph-interp-easing')));
+        await tester.tap(find.byKey(const ValueKey('graph-interp-easing')));
+        await tester.pumpAndSettle();
+      }
+
+      // A lone key names no travel: applying leaves the document as it was.
+      await tester.tap(find.byKey(ValueKey<String>(opacityKey(p.layer, 0))));
+      await tester.pump();
+      await openEditor();
+      await tester.tap(find.text('Slow start'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Apply'));
+      await tester.pumpAndSettle();
+      expect(opacityKeys(p.layer)[0].interpOut, isA<BridgeSideInterp_Linear>(),
+          reason: 'one key on its own has no span to shape');
+      await tester.tap(find.text('Close'));
+      await tester.pumpAndSettle();
+
+      // Both ends of the first span selected: that span takes the shape, and
+      // the span beyond the selection does not.
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.tap(find.byKey(ValueKey<String>(opacityKey(p.layer, 1))));
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pump();
+      await openEditor();
+      await tester.tap(find.text('Slow start'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Apply'));
+      await tester.pumpAndSettle();
+
+      final keys = opacityKeys(p.layer);
+      final out0 = keys[0].interpOut;
+      expect(out0, isA<BridgeSideInterp_Bezier>());
+      // Slow start: flat out of the first key, and the reach is the handle's
+      // own x — a third of the span (docs/impl/keyframe-eval.md §1).
+      expect((out0 as BridgeSideInterp_Bezier).field0.speed, closeTo(0, 1e-9));
+      expect(out0.field0.influence, closeTo(1 / 3, 1e-9));
+      expect(keys[1].interpOut, isA<BridgeSideInterp_Linear>(),
+          reason: 'the span past the selection was left alone');
+
+      // The speed lens takes the button away, so a shape cannot be stamped on a
+      // graph the user is not looking at.
+      await tester.tap(find.text('Close'));
+      await tester.pumpAndSettle();
+      await tester
+          .ensureVisible(find.byKey(const ValueKey('graph-lens-speed')));
+      await tester.tap(find.byKey(const ValueKey('graph-lens-speed')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('graph-interp-easing')), findsNothing);
+    });
+
     /// A joined pair moves *together and live*: the partner must follow while
     /// the pointer is down, not jump into place on release.
     testWidgets('dragging one handle swings its partner live', (tester) async {

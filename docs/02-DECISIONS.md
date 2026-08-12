@@ -8223,3 +8223,37 @@ keeps its value, so turning the setting back on finds each composition as it was
 exposure while the button is away writes the pair back as it reads, which clears the stored
 tone map — a state you cannot see does not persist behind your back.) Recorded in
 [07-UI-SPEC.md](07-UI-SPEC.md) §2.2, which is where the Viewer bar is specified.
+
+**K-348 · DECIDED · A shaped ease is drawn once in a unit box and stamped span by span,
+from the value lens only.** K-196's graph editor shapes one span at a time, by dragging the
+tangent handles of two particular keyframes; the footer's Linear / Bezier / Hold buttons go
+the other way and set a *constant* on every selected key. Neither covers the common job:
+one hand-drawn ease put on a great many keys at once. The **Easing…** button opens a
+normalised cubic — the four numbers CSS writes as `cubic-bezier(x1, y1, x2, y2)` — with a
+row of preset shapes, and Apply stamps it.
+
+**(1) The unit of work is a span, not a key.** A shape describes the travel *between* two
+keys, so a span takes the curve when both of its ends are selected; a lone key has named no
+travel and is left alone. This is deliberately unlike the one-click three, which are key-wise,
+and it is what makes selecting a run of keys ease the whole run.
+
+**(2) Each span converts against its own chord slope.** A keyframe side stores AE-style
+*speed* (value-units per second) and *influence* (a fraction of the gap) — `anim.rs`. Speed
+is an absolute rate, so the identical drawn shape must become a **different** stored speed
+on a span covering 400 pixels than on one covering 40, or only one of the two would look
+like the curve that was drawn. Influence is already a fraction and carries across untouched.
+`EasingCurve.sidesFor` is that conversion, derived from the control-point placement in
+docs/impl/keyframe-eval.md §1, and it is the whole reason the shape is held apart from any
+one span. A flat span has chord slope 0 and stays flat whatever the shape.
+
+**(3) Value lens only, locked twice.** The button is absent while the speed lens is up, and
+`_applyEasing` refuses the call as well. The box draws a shape against **value** travel, so
+a curve stamped from the speed lens would edit a graph the user is not looking at. The
+one-click three stay in both lenses: a side's interp means the same thing either way.
+
+**(4) The presets are named for which end is slow.** *Slow start* / *Slow finish*, not
+"ease in" / "ease out": in Lumit "in" and "out" already name the two **sides** of a key
+(F9's family), while the web's `ease-in` means a slow *start* — the opposite reading. Two
+presets leave the box on purpose (Overshoot, Anticipate), which is what sizes the editor's
+vertical margin: a handle drawn past the edge of the view is one the pointer cannot reach
+to drag back.

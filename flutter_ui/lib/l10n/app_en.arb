@@ -3800,9 +3800,9 @@
   "@tipDisable": {
     "description": "Tooltip on the checkbox that switches an effect off. Under five words."
   },
-  "tipEasingEditor": "Shape an ease and apply it",
+  "tipEasingEditor": "Easing editor",
   "@tipEasingEditor": {
-    "description": "Tooltip on the graph editor's Easing button, which opens the curve editor."
+    "description": "Tooltip on the graph editor's Easing button, which opens the curve editor. Under five words."
   },
   "tipEasyEase": "Easy ease (F9)",
   "@tipEasyEase": {

@@ -1385,7 +1385,15 @@ whole selection in time and value as one write per property; and **keyframe copy
 (`Ctrl+C`/`Ctrl+V`, from the lane view as much as the graph) — full fidelity in-app,
 mirrored to the system clipboard as a tab-separated `Lumit <version> Keyframe Data` table
 whose per-value easing columns carry the shaping across, and which parses foreign
-keyframe tables back in as linear keys. **A drag in the graph previews as it goes** (K-329):
+keyframe tables back in as linear keys. **A shaped ease is drawn once and stamped on many**
+(K-348): an **Easing…** button beside the three one-click eases opens a unit box — travel
+left to right, two draggable control points, a row of preset shapes, Apply and Close. Apply
+puts the shape on every **span** whose two keys are both selected (a lone key names no
+travel and is left alone), converting it per span against that span's own chord slope, so
+one drawn curve reads the same across a selection whose spans move by different amounts.
+The box stays up across an Apply so a shape can be nudged and re-applied; it is offered in
+the **value lens only**, because a shape drawn against value travel would otherwise land on
+a graph the user is not looking at. **A drag in the graph previews as it goes** (K-329):
 every tick renders the values the release will write, through the same patched clone the
 value rows use — a key drag, a tangent handle and a Vegas envelope point alike. It covers the
 grabbed key's layer, so a selection spanning several layers still shows the rest on release.

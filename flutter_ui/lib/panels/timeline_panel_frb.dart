@@ -1489,7 +1489,10 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb>
   /// speed lens, and this refuses the call. A shape is drawn against value
   /// travel, so stamping one from the speed lens would edit a graph the user is
   /// not looking at.
+  /// The popup is an overlay entry, so it outlives the panel that opened it —
+  /// a re-dock while it is up would otherwise land an Apply on a dead State.
   void _applyEasing(EasingCurve curve) {
+    if (!mounted) return;
     if (_graph && _graphLens == GraphLens.speed) return;
     final ui = Provider.of<LumitUiState>(context, listen: false);
     final paths = _graph
