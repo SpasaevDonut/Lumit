@@ -204,6 +204,15 @@
       }
     }
   },
+  "couldNotOpenLink": "Could not open {url}",
+  "@couldNotOpenLink": {
+    "description": "Bottom-strip notice when a Help menu link could not be handed to the machine's browser. {url} is a web address and is not translated.",
+    "placeholders": {
+      "url": {
+        "type": "String"
+      }
+    }
+  },
   "couldNotSaveProject": "Could not save the project",
   "@couldNotSaveProject": {
     "description": "Bottom-strip notice when a save failed."
@@ -3519,9 +3528,9 @@
   "@sourceZoom": {
     "description": "Field label: how much a still is scaled as it is read in."
   },
-  "splashSubtitle": "Flutter frontend",
+  "splashSubtitle": "Motion graphics and compositing",
   "@splashSubtitle": {
-    "description": "Line under the name on the start-up screen."
+    "description": "Line under the name on the start-up screen, in small muted type. Says what Lumit is, in a few words."
   },
   "switchAudible": "Audible",
   "@switchAudible": {
@@ -3816,6 +3825,10 @@
   "@tipDisable": {
     "description": "Tooltip on the checkbox that switches an effect off. Under five words."
   },
+  "tipDisplayTransform": "Display transform",
+  "@tipDisplayTransform": {
+    "description": "Tooltip on the Viewer bar's colour-management badge, which reads the display transform the picture is shown through. Under five words."
+  },
   "tipEasingEditor": "Easing editor",
   "@tipEasingEditor": {
     "description": "Tooltip on the graph editor's Easing button, which opens the curve editor. Under five words."
@@ -4062,6 +4075,10 @@
   "tipViewerExposure": "Exposure — preview only",
   "@tipViewerExposure": {
     "description": "Tooltip on the Viewer's exposure box. It brightens or darkens the picture on screen and never the export. \"Stop\" is the photographic unit — one stop is a doubling of light."
+  },
+  "tipViewerPreviewView": "The Viewer's exposure and tone mapping change this picture only, never the export. Tone mapping rolls bright highlights back under 1.",
+  "@tipViewerPreviewView": {
+    "description": "Tooltip on the Viewer bar's colour-management badge while the exposure or the tone map is engaged. Longer than a name on purpose: it is the only place either control is explained. \"Rolls back under 1\" means very bright values are folded down rather than clipping flat."
   },
   "tipViewerToneMap": "Tone mapping — preview only",
   "@tipViewerToneMap": {
@@ -4825,6 +4842,19 @@
     "description": "Settings window: the line under 'This version'. {installed} is a name and version, e.g. 'Lumit 0.4.1'.",
     "placeholders": {
       "installed": {
+        "type": "String"
+      }
+    }
+  },
+  "viewerDisplayTransform": "Linear → sRGB",
+  "@viewerDisplayTransform": {
+    "description": "Colour-management badge on the Viewer bar: the display transform, written as working space then an arrow then the display's space. \"Linear\" and \"sRGB\" are colour-space names and are not translated."
+  },
+  "viewerDisplayTransformPreview": "{transform} · preview",
+  "@viewerDisplayTransformPreview": {
+    "description": "The same badge while the Viewer's exposure or tone map is engaged, saying the picture is not the export. {transform} is viewerDisplayTransform. Must stay short: the badge sits in a fixed slot on a one-row bar.",
+    "placeholders": {
+      "transform": {
         "type": "String"
       }
     }

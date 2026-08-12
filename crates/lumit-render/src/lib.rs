@@ -56,6 +56,7 @@ pub mod draw;
 pub mod export;
 pub mod fxops;
 pub mod headless;
+pub mod media_index;
 pub mod plan;
 pub mod profile;
 pub mod realise;

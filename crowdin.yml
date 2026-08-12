@@ -23,10 +23,13 @@
 #   - Crowdin writes its own code into the `@@locale` key inside each file, and
 #     Flutter refuses to generate when that value and the file name disagree —
 #     `zh-CN` in a file called app_zh.arb takes `flutter pub get` down, and with
-#     it every Flutter job in CI. Crowdin's project settings have a per-language
-#     "custom language code" for exactly this: set the ARB code to the name used
-#     below (`zh`, `zh_Hant`), not to Crowdin's own. `test/l10n/arb_test.dart`
-#     fails loudly if a sync ever lands one that disagrees again.
+#     it every Flutter job in CI. The mapping below does NOT fix this: it names
+#     the file, and the key inside comes from somewhere it does not reach. The
+#     project's per-language "custom language code" was tried and every sync
+#     since has still written `zh-CN`. So the sync branch is mended where it
+#     lands, by `.github/workflows/translation-locale.yml`, and
+#     `test/l10n/arb_test.dart` still fails loudly on any branch where the two
+#     disagree.
 #   - British English is the source and there is no en-US (K-303). Enabling
 #     en-US as a target lands an app_en_US.arb that is a copy of the source; if
 #     one appears, it was turned on by mistake on Crowdin — turn it off there

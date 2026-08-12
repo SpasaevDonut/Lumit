@@ -654,6 +654,48 @@ impl HeadlessRenderer {
         self.view
     }
 
+    /// Let this renderer make a Lens flare's bake beside the frame rather than
+    /// inside it (K-350), so choosing a lens is a wait you can watch instead of
+    /// half a second of stopped picture.
+    ///
+    /// **Off by default, and the exporter never turns it on.** An export builds
+    /// its own renderer on its own device, so it starts with an empty bake
+    /// cache and bakes inside the frame exactly as it always did — which is
+    /// what keeps K-031's preview-equals-export identity true and an export
+    /// bit-for-bit what it was. The Viewer's renderer turns it on.
+    ///
+    /// While a bake is being made, frames are **unnameable** (see
+    /// [`Self::frame_key`]) — the same mechanism unprobed footage and a
+    /// non-neutral display view use, and for the same reason: a frame drawn
+    /// with the previous lens must not be filed under a name that says it was
+    /// drawn with this one.
+    pub fn set_deferred_flare_bakes(&self, deferred: bool) {
+        if let Some(parts) = self.parts.as_ref() {
+            parts.fx.set_deferred_flare_bakes(deferred);
+        }
+    }
+
+    /// A number that moves whenever a flare bake is queued or lands.
+    ///
+    /// Read either side of a render to answer "did this frame draw the lens its
+    /// parameters name?", and read on an idle tick to notice that a bake has
+    /// landed and the picture is now worth making again.
+    #[must_use]
+    pub fn flare_bake_generation(&self) -> u64 {
+        self.parts
+            .as_ref()
+            .map_or(0, |parts| parts.fx.flare_bake_generation())
+    }
+
+    /// Whether a flare bake is being made right now — while it is, frames are
+    /// unnameable.
+    #[must_use]
+    pub fn flare_bake_pending(&self) -> bool {
+        self.parts
+            .as_ref()
+            .is_some_and(|parts| parts.fx.flare_bake_pending())
+    }
+
     /// The content-hash name of this comp frame ([`crate::cache::frame_key`]),
     /// computed from **this renderer's own** probe results so the name and the
     /// pixels can never disagree about what a source file is. `None` while some
@@ -670,10 +712,15 @@ impl HeadlessRenderer {
         frame: u64,
         quality: Quality,
     ) -> Option<u128> {
+        // A flare bake in flight means any frame made now may be drawing the
+        // lens before it (K-350). Unnameable rather than misnamed: the tiers
+        // are keyed by what is *in* a frame (K-178), so an entry that lies
+        // about that outlives every edit and undo that could have fixed it.
+        if self.flare_bake_pending() {
+            return None;
+        }
         let comp = doc.comp(comp_id)?;
-        let slate = (comp.width, comp.height);
-        self.sync_items(doc, slate);
-        let comp = doc.comp(comp_id)?;
+        self.sync_items(doc, comp);
         crate::cache::frame_key(
             doc,
             comp,
@@ -684,22 +731,25 @@ impl HeadlessRenderer {
         .map(|k| self.named_under_view(k))
     }
 
-    /// Probe anything new in `doc` so a batch of [`Self::frame_key_presynced`]
-    /// calls can run against a settled probe cache. [`Self::frame_key`] does
-    /// this itself, per call — which rebuilds the footage map every time, and a
-    /// consumer naming hundreds of frames of the SAME document (the cache bar,
-    /// the playback look-ahead) was paying that rebuild per frame. Call this
-    /// once per document, then name as many frames as needed. `slate` is the
-    /// comp's dimensions, exactly as a render would pass them.
-    pub fn presync_items(&mut self, doc: &Document, slate: (u32, u32)) {
-        self.sync_items(doc, slate);
+    /// Probe what comp `comp_id` can show, so a batch of
+    /// [`Self::frame_key_presynced`] calls can run against a settled probe
+    /// cache. [`Self::frame_key`] does this itself, per call — which rebuilds
+    /// the footage map every time, and a consumer naming hundreds of frames of
+    /// the SAME document (the cache bar, the playback look-ahead) was paying
+    /// that rebuild per frame. Call this once per document, then name as many
+    /// frames as needed. An unknown comp probes nothing, calmly.
+    pub fn presync_items(&mut self, doc: &Document, comp_id: Uuid) {
+        if let Some(comp) = doc.comp(comp_id) {
+            self.sync_items(doc, comp);
+        }
     }
 
     /// [`Self::frame_key`] against the probes already gathered — no probing, no
     /// footage-map rebuild, and thus `&self`. Only correct after
-    /// [`Self::presync_items`] was called for this document; an unprobed source
-    /// simply makes the frame unnameable (`None`), never wrongly named, so a
-    /// caller that forgets the presync renders live rather than mis-caching.
+    /// [`Self::presync_items`] was called for this document and this comp; an
+    /// unprobed source simply makes the frame unnameable (`None`), never
+    /// wrongly named, so a caller that forgets the presync renders live rather
+    /// than mis-caching.
     #[must_use]
     pub fn frame_key_presynced(
         &self,
@@ -755,8 +805,9 @@ impl HeadlessRenderer {
             .comp(comp_id)
             .ok_or_else(|| "headless preview: unknown composition".to_string())?;
         let (cw, ch) = (comp.width, comp.height);
-        // Fills `probe_cache` for anything new, which `ProbeView` then reads.
-        self.sync_items(doc, (cw, ch));
+        // Fills `probe_cache` for anything new this comp can show, which
+        // `ProbeView` then reads.
+        self.sync_items(doc, comp);
         let fps = comp.frame_rate.fps().max(1.0);
         let t = frame as f64 / fps;
 
@@ -953,8 +1004,7 @@ impl HeadlessRenderer {
         let Some(comp) = doc.comp(comp_id) else {
             return Vec::new();
         };
-        let (cw, ch) = (comp.width, comp.height);
-        self.sync_items(doc, (cw, ch));
+        self.sync_items(doc, comp);
         let fps = comp.frame_rate.fps().max(1.0);
         let t = frame as f64 / fps;
         let jobs = plan_comp_frame(doc, comp, t, quality, &ProbeView(&self.probe_cache));
@@ -1182,8 +1232,15 @@ impl HeadlessRenderer {
             }
         }
         let started = std::time::Instant::now();
+        // A flare bake queued *during* this composite means the picture just
+        // made may be of the previous lens (K-350). The name was taken before
+        // the render, so it has to be dropped afterwards — the alternative is
+        // an entry that lies about its own content, which no later edit or
+        // undo can clear (K-178).
+        let bakes_before = self.flare_bake_generation();
         let (texture, _, _) =
             self.preview_display_texture_fmt(doc, comp_id, frame, quality, bgra)?;
+        let key = key.filter(|_| self.flare_bake_generation() == bakes_before);
         let texture = std::sync::Arc::new(texture);
         if let Some(key) = key {
             // What it actually cost, so the store's cost-aware eviction has
@@ -1781,13 +1838,29 @@ impl HeadlessRenderer {
         self.shared.len()
     }
 
-    /// Rebuild the `ItemInfo` map from the document's footage, probing any item
-    /// not already in `probe_cache`. Slate items are sized to `slate` (the
-    /// comp's dimensions this call), matching export's `item_infos`.
-    fn sync_items(&mut self, doc: &Document, slate: (u32, u32)) {
+    /// Rebuild the `ItemInfo` map for what comp `comp` can show, probing any of
+    /// those items not already in `probe_cache`. Slate items are sized to the
+    /// comp's own dimensions, matching export's `item_infos`.
+    ///
+    /// **Only the comp's own footage is probed** — the items its layers name,
+    /// and transitively everything its Precomp layers and comp-sourced clips
+    /// reach ([`lumit_core::model::comp_footage_items`]). A probe opens a file
+    /// and loads or builds its frame index, so probing the whole Project panel
+    /// here made the first frame of *any* comp wait for every file in the
+    /// project, and a freshly made empty comp wait for all of them to show
+    /// nothing. The cache is keyed by item, never emptied between comps, so an
+    /// item probed for one comp is already probed when the next one needs it:
+    /// the cost is paid once per file per session, and only for files something
+    /// on screen can actually want.
+    ///
+    /// The frame-key interlock is unaffected: an item this comp shows is probed
+    /// here before [`crate::cache::frame_key`] reads the probe cache, and an
+    /// item this comp cannot show contributes nothing to its key.
+    fn sync_items(&mut self, doc: &Document, comp: &Composition) {
+        let slate = (comp.width, comp.height);
         self.items.clear();
-        for item in &doc.items {
-            let ProjectItem::Footage(f) = item else {
+        for id in lumit_core::model::comp_footage_items(doc, comp) {
+            let Some(ProjectItem::Footage(f)) = doc.item(id) else {
                 continue;
             };
             let probe = self
@@ -1995,7 +2068,7 @@ fn probe_item(path: &Path) -> Probe {
     let Some(video) = probe.video.as_ref() else {
         return Probe::NoVideo;
     };
-    let Some(index) = load_or_build_index(path) else {
+    let Ok(index) = crate::media_index::load_or_build_index(path) else {
         return Probe::Slate;
     };
     Probe::Ok {
@@ -2034,24 +2107,6 @@ impl SourceProbes for ProbeView<'_> {
             },
         }
     }
-}
-
-/// Load the cached frame index for `path` if one matches, else build it and try
-/// to cache it — the same warm-the-cache dance the bridge's decode path runs, so
-/// the count here and the decoder the renderer opens share one index. `None`
-/// when the index cannot be built.
-fn load_or_build_index(path: &Path) -> Option<lumit_media::FrameIndex> {
-    let cache_dir = lumit_project::media_index_dir();
-    if let (Some(dir), Ok(fp)) = (&cache_dir, lumit_media::Fingerprint::of(path)) {
-        if let Some(index) = lumit_media::FrameIndex::load_cached(dir, &fp) {
-            return Some(index);
-        }
-    }
-    let index = lumit_media::index::build_frame_index(path).ok()?;
-    if let Some(dir) = &cache_dir {
-        let _ = index.save_to(dir);
-    }
-    Some(index)
 }
 
 #[cfg(test)]
@@ -2159,6 +2214,76 @@ mod tests {
             extra: serde_json::Map::new(),
         }));
         (DocumentStore::new(doc), comp_id)
+    }
+
+    /// A footage item in the Project panel, on no layer anywhere. Returns its
+    /// id. The path is deliberately not on disk: `probe_item` answers
+    /// [`Probe::Slate`] for a path that is not a file without opening anything,
+    /// so a probe here costs a `stat` and never FFmpeg.
+    fn push_footage_item(doc: &mut Document, name: &str) -> Uuid {
+        let id = Uuid::now_v7();
+        doc.items
+            .push(ProjectItem::Footage(lumit_core::model::FootageItem {
+                id,
+                name: name.into(),
+                media: lumit_core::model::MediaRef {
+                    relative_path: name.into(),
+                    absolute_path: name.into(),
+                    fingerprint: None,
+                    extra: serde_json::Map::new(),
+                },
+                extra: serde_json::Map::new(),
+            }));
+        id
+    }
+
+    /// Put a layer of `kind` into comp `comp` (which must exist in `doc`).
+    fn push_layer(doc: &mut Document, comp: Uuid, kind: LayerKind) {
+        let layer = lumit_core::model::Layer {
+            markers: Vec::new(),
+            id: Uuid::now_v7(),
+            name: "layer".into(),
+            kind,
+            in_point: CompTime(Rational::new(0, 1).unwrap()),
+            out_point: CompTime(Rational::new(5, 1).unwrap()),
+            start_offset: CompTime(Rational::new(0, 1).unwrap()),
+            transform: TransformGroup::default(),
+            matte: None,
+            parent: None,
+            label: 0,
+            volume_db: lumit_core::anim::Property::zero(),
+            retime: None,
+            interpolation: Default::default(),
+            blend: Default::default(),
+            masks: Vec::new(),
+            paint: Vec::new(),
+            effects: Vec::new(),
+            switches: Switches::default(),
+            extra: serde_json::Map::new(),
+        };
+        if let Some(ProjectItem::Composition(c)) = doc.item_mut(comp) {
+            c.layers.push(layer);
+        }
+    }
+
+    /// An empty composition added to `doc`, returning its id.
+    fn push_comp(doc: &mut Document, name: &str, w: u32, h: u32) -> Uuid {
+        let id = Uuid::now_v7();
+        doc.items.push(ProjectItem::Composition(Composition {
+            id,
+            name: name.into(),
+            width: w,
+            height: h,
+            frame_rate: FrameRate::new(30, 1).unwrap(),
+            duration: Duration(Rational::new(5, 1).unwrap()),
+            background: LinearColour::BLACK,
+            work_area: None,
+            layers: Vec::new(),
+            markers: Vec::new(),
+            motion_blur: lumit_core::model::MotionBlur::default(),
+            extra: serde_json::Map::new(),
+        }));
+        id
     }
 
     /// A full-frame red solid composites to red in the centre pixel — the GPU
@@ -2273,7 +2398,7 @@ mod tests {
 
         let neutral = r.frame_key(&doc, comp_id, 0, q);
         assert!(neutral.is_some(), "a neutral view names its frames");
-        r.presync_items(&doc, (8, 8));
+        r.presync_items(&doc, comp_id);
         assert_eq!(
             r.frame_key_presynced(&doc, comp_id, 0, q),
             neutral,
@@ -2393,43 +2518,26 @@ mod tests {
         };
         let (store, _comp_id) = doc_with_solid(LinearColour([1.0, 1.0, 1.0, 1.0]), 4, 4);
         let mut doc = (*store.snapshot()).clone();
+        // The comp is asked about at 64×64 below, so the slate it makes is that
+        // size; a layer per item, since only what the comp can show is probed.
+        let sized = push_comp(&mut doc, "sized", 64, 64);
 
-        let audio_id = Uuid::now_v7();
-        doc.items
-            .push(ProjectItem::Footage(lumit_core::model::FootageItem {
-                id: audio_id,
-                name: "audio.wav".into(),
-                media: lumit_core::model::MediaRef {
-                    relative_path: "audio.wav".into(),
-                    absolute_path: "audio.wav".into(),
-                    fingerprint: None,
-                    extra: serde_json::Map::new(),
-                },
-                extra: serde_json::Map::new(),
-            }));
+        let audio_id = push_footage_item(&mut doc, "audio.wav");
+        push_layer(&mut doc, sized, LayerKind::Footage { item: audio_id });
         r.probe_cache.insert(audio_id, Probe::NoVideo);
-        r.sync_items(&doc, (64, 64));
+        let comp = doc.comp(sized).expect("sized comp").clone();
+        r.sync_items(&doc, &comp);
         assert!(
             !r.items.contains_key(&audio_id),
             "audio-only media must contribute no picture, not a missing slate"
         );
 
         // Contrast: a genuinely missing/unreadable file DOES slate.
-        let missing_id = Uuid::now_v7();
-        doc.items
-            .push(ProjectItem::Footage(lumit_core::model::FootageItem {
-                id: missing_id,
-                name: "gone.mp4".into(),
-                media: lumit_core::model::MediaRef {
-                    relative_path: "gone.mp4".into(),
-                    absolute_path: "gone.mp4".into(),
-                    fingerprint: None,
-                    extra: serde_json::Map::new(),
-                },
-                extra: serde_json::Map::new(),
-            }));
+        let missing_id = push_footage_item(&mut doc, "gone.mp4");
+        push_layer(&mut doc, sized, LayerKind::Footage { item: missing_id });
         r.probe_cache.insert(missing_id, Probe::Slate);
-        r.sync_items(&doc, (64, 64));
+        let comp = doc.comp(sized).expect("sized comp").clone();
+        r.sync_items(&doc, &comp);
         assert_eq!(
             r.items.get(&missing_id).map(|i| i.missing),
             Some(Some((64, 64))),
@@ -2437,6 +2545,86 @@ mod tests {
         );
         // The audio-only item stays omitted across the second sync_items call.
         assert!(!r.items.contains_key(&audio_id));
+    }
+
+    /// **A render probes only what its comp can show.** Probing is opening a
+    /// file and loading or building its frame index, and it used to run over
+    /// every footage item in the project before the first frame of any comp —
+    /// so a project with a full Project panel paid for all of them before the
+    /// first pixel, and a freshly made empty comp paid for all of them to show
+    /// nothing.
+    ///
+    /// `probe_cache` is the counter: an item is in it exactly once it has been
+    /// probed, and the cache is never emptied between comps, so the assertions
+    /// below read both "what did this call probe" and "what has been probed at
+    /// all". No media fixture is needed — the paths are not on disk, so each
+    /// probe is a `stat` that answers [`Probe::Slate`].
+    #[test]
+    fn a_comp_probes_its_own_footage_and_nothing_else() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                lumit_gpu::no_adapter();
+                return;
+            }
+        };
+        let mut doc = Document::new();
+        let (shown, nested, spare) = (
+            push_footage_item(&mut doc, "shown.mp4"),
+            push_footage_item(&mut doc, "nested.mp4"),
+            push_footage_item(&mut doc, "spare.mp4"),
+        );
+        let empty = push_comp(&mut doc, "empty", 32, 32);
+        let one = push_comp(&mut doc, "one", 32, 32);
+        push_layer(&mut doc, one, LayerKind::Footage { item: shown });
+        let inner = push_comp(&mut doc, "inner", 32, 32);
+        push_layer(&mut doc, inner, LayerKind::Footage { item: nested });
+        let outer = push_comp(&mut doc, "outer", 32, 32);
+        push_layer(&mut doc, outer, LayerKind::Precomp { comp: inner });
+
+        let probed = |r: &HeadlessRenderer| {
+            let mut ids: Vec<Uuid> = r.probe_cache.keys().copied().collect();
+            ids.sort();
+            ids
+        };
+        let sorted = |mut ids: Vec<Uuid>| {
+            ids.sort();
+            ids
+        };
+        let doc = Arc::new(doc);
+
+        // A comp with no layers, in a project with three footage items.
+        r.presync_items(&doc, empty);
+        assert!(
+            probed(&r).is_empty(),
+            "an empty comp must open no files at all"
+        );
+
+        // One of three items, and only that one.
+        r.presync_items(&doc, one);
+        assert_eq!(probed(&r), vec![shown]);
+
+        // Footage a Precomp layer reaches is footage the comp can show, so it
+        // is probed — and the frame-key interlock depends on it, since an
+        // unprobed source makes the frame unnameable.
+        r.presync_items(&doc, outer);
+        assert_eq!(
+            probed(&r),
+            sorted(vec![shown, nested]),
+            "a second comp probes what it adds, and what was probed stays probed"
+        );
+        assert!(
+            r.frame_key(&doc, outer, 0, crate::plan::Quality::default())
+                .is_some(),
+            "everything the comp can show is probed, so its frames are nameable"
+        );
+
+        // The item on no layer anywhere is never opened, however many comps
+        // have been rendered.
+        assert!(
+            !probed(&r).contains(&spare),
+            "footage no comp shows must never be probed"
+        );
     }
 
     /// The zero-copy path (K-177) renders a real comp into a shared GPU texture
@@ -2562,6 +2750,87 @@ mod tests {
         // probe directly, but the cached map must not grow).
         assert!(builder.audio_jobs(&doc, &comp).is_empty());
         assert_eq!(builder.has_audio.len(), 1);
+    }
+
+    /// **The export contract for the deferred flare bake (K-350).** A fresh
+    /// renderer bakes lens flares *inside* the frame, exactly as it always did.
+    ///
+    /// This is how "an export is never a provisional picture" is kept true. An
+    /// export builds its own renderer (`export::run`), and nobody calls
+    /// `set_deferred_flare_bakes` on it — only the Viewer's worker does — so
+    /// the promise is a property of the code's shape rather than a rule anyone
+    /// has to remember. The default being the exact one is the load-bearing
+    /// half: a path that forgets to choose gets the safe behaviour.
+    #[test]
+    fn a_fresh_renderer_bakes_flares_inside_the_frame() {
+        let r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                lumit_gpu::no_adapter();
+                return;
+            }
+        };
+        assert!(
+            !r.flare_bake_pending(),
+            "a renderer that has made no frames has nothing baking"
+        );
+        assert_eq!(
+            r.flare_bake_generation(),
+            0,
+            "and nothing has been queued or landed"
+        );
+    }
+
+    /// A frame made while a lens is baking is **unnameable**, so nothing files
+    /// it under a name that says it was drawn with a lens it was not (K-350,
+    /// K-178). The same mechanism unprobed footage and a non-neutral display
+    /// view already use.
+    #[test]
+    fn a_baking_flare_makes_frames_unnameable() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                lumit_gpu::no_adapter();
+                return;
+            }
+        };
+        let (store, comp_id) = doc_with_solid(LinearColour([1.0, 1.0, 1.0, 1.0]), 8, 8);
+        let doc = store.snapshot();
+        assert!(
+            r.frame_key(&doc, comp_id, 0, Quality::default()).is_some(),
+            "an ordinary frame of a solid names itself"
+        );
+
+        // Queue a bake by hand: the effect engine is the authority the name
+        // asks, and driving it directly keeps this a test of the *rule*
+        // rather than of how long a real bake takes on a software rasteriser.
+        r.set_deferred_flare_bakes(true);
+        let queued = {
+            let Some(parts) = r.parts.as_ref() else {
+                return;
+            };
+            let bake = std::sync::Arc::new(|| lumit_gpu::fx::FlareBakeData {
+                surfaces: Vec::new(),
+                ghosts: Vec::new(),
+                spreads: Vec::new(),
+                sensor_z_mm: 0.0,
+                focal_mm: 1.0,
+                native_fstop: 1.0,
+                pupil_mm: 1.0,
+                start_z_mm: 0.0,
+                energy_gain: 1.0,
+                starburst: Vec::new(),
+                sb_res: 1,
+            }) as lumit_gpu::fx::FlareBake;
+            parts.fx.warm_flare_bake(0xfeed_face, &bake)
+        };
+        if !queued {
+            return; // no bake thread on this machine
+        }
+        assert!(
+            r.frame_key(&doc, comp_id, 0, Quality::default()).is_none(),
+            "while a lens is baking, no frame may be named"
+        );
     }
 
     /// An unknown comp id is a calm error, never a panic.

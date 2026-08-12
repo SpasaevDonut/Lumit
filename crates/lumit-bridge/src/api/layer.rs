@@ -2007,9 +2007,8 @@ impl LayerReference {
                     return Ok(None);
                 };
                 // The media's own rate turns its seconds into its frames.
-                let fps = lumit_media::probe::probe(&path)
-                    .ok()
-                    .and_then(|i| i.video.map(|v| v.fps()))
+                let fps = crate::probe::ensure_probed(&path)
+                    .and_then(|i| i.video.as_ref().map(|v| v.fps()))
                     .filter(|fps| *fps > 0.0)
                     .unwrap_or(1.0);
                 let at = (opens_at * fps).round() as i64;
@@ -3018,7 +3017,7 @@ impl LayerReference {
             else {
                 return Ok(false);
             };
-            Ok(lumit_media::probe::probe(&path)
+            Ok(crate::probe::ensure_probed(&path)
                 .map(|p| p.video.is_some())
                 .unwrap_or(false))
         }
@@ -3063,7 +3062,7 @@ impl LayerReference {
             else {
                 return Ok(false);
             };
-            Ok(lumit_media::probe::probe(&path)
+            Ok(crate::probe::ensure_probed(&path)
                 .map(|p| p.audio.is_some())
                 .unwrap_or(false))
         }
@@ -3212,7 +3211,7 @@ impl LayerReference {
                     return None;
                 };
                 let path = crate::api::footage::FootageReference::resolve_path(&proj, footage)?;
-                let info = lumit_media::probe::probe(&path).ok()?;
+                let info = crate::probe::ensure_probed(&path)?;
                 // The one sanctioned route back from the container's floating
                 // point duration is an explicit grid (docs/impl/rational-time.md
                 // §4) — the same millisecond grid `media_info` reports on.

@@ -4190,6 +4190,56 @@ fn video_is_wrapped_and_a_still_is_not() {
     }
 }
 
+/// Placing footage answers with the media's own size and length whether the
+/// probe worker got there first or not — the two halves of `crate::probe`,
+/// checked through the op that actually needs them.
+///
+/// The first placement runs with nothing warmed but the import's own request,
+/// which may or may not have landed; the second runs with the answer certainly
+/// held. Both must produce the same layer, because the fallback probes rather
+/// than guessing. Needs an ffmpeg on PATH for the fixture; skips itself
+/// without one.
+#[test]
+#[cfg(feature = "media")]
+fn a_placed_layer_is_the_same_whether_the_probe_was_warm_or_not() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let Some(clip) = lumit_media::index::tests_support::fixture(dir.path()) else {
+        return; // no ffmpeg on this machine
+    };
+
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
+    let footage = project
+        .import_footage(clip.to_string_lossy().into_owned())
+        .expect("imported");
+
+    // Cold: whatever the import queued may still be in flight, so this
+    // placement is the one that has to stand on the synchronous fallback.
+    comp.add_footage_layer(&footage, false)
+        .expect("placed cold");
+    let cold = comp.get_layers().expect("layers")[0]
+        .get_info()
+        .expect("info");
+
+    // Warm: the answer is certainly held now, so this placement is a look-up.
+    let probed = crate::probe::ensure_probed(&clip).expect("the fixture probes");
+    assert!(probed.video.is_some(), "the fixture has a picture");
+    comp.add_footage_layer(&footage, false)
+        .expect("placed warm");
+    let warm = comp.get_layers().expect("layers")[0]
+        .get_info()
+        .expect("info");
+
+    assert_eq!(
+        cold.out_frame, warm.out_frame,
+        "the span comes from the media either way"
+    );
+    assert!(
+        cold.out_frame > 1,
+        "the fixture runs for two seconds, so the span is not the one-frame fallback"
+    );
+}
+
 /// Media that will not probe stays a plain Footage layer even when the
 /// preference is on. Guessing towards the more elaborate shape on no
 /// information is the more annoying mistake to undo.

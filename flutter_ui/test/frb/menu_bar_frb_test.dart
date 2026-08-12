@@ -23,6 +23,8 @@ import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/state/dock.dart';
 import 'package:lumit_flutter/shell/menu_bar_frb.dart';
 import 'package:lumit_flutter/src/rust/api/project_item.dart';
+import 'package:lumit_flutter/state/external_links.dart';
+import 'package:lumit_flutter/state/viewer_view.dart';
 import 'package:lumit_flutter/theme/theme.dart';
 import 'package:provider/provider.dart';
 
@@ -644,6 +646,47 @@ void main() {
       }
     });
 
+    /// View ▸ Resolution is a real raster reduction (docs/07 §2.2 item 2): it
+    /// changes the `scale` every render request carries, so the engine makes
+    /// fewer pixels rather than the panel drawing the same ones smaller.
+    testWidgets('View ▸ Resolution changes what the engine is asked for',
+        (tester) async {
+      final p = await mount(tester);
+      expect(p.uiState.previewResolution, PreviewResolution.full);
+      final full = p.uiState.viewerScale;
+
+      await choose(tester, 'View', 'Half', under: 'Resolution');
+      expect(p.uiState.previewResolution, PreviewResolution.half);
+      expect(p.uiState.viewerScale, closeTo(full / 2, 1e-9));
+
+      await choose(tester, 'View', 'Quarter', under: 'Resolution');
+      expect(p.uiState.viewerScale, closeTo(full / 4, 1e-9));
+
+      await choose(tester, 'View', 'Full', under: 'Resolution');
+      expect(p.uiState.viewerScale, closeTo(full, 1e-9));
+    });
+
+    /// The magnification rows *ask* the Viewer rather than doing it here:
+    /// "fit" is a rule only the panel can resolve, and the panel need not even
+    /// be mounted for the row to be harmless.
+    testWidgets('View ▸ Zoom in asks the Viewer for a magnification',
+        (tester) async {
+      final p = await mount(tester);
+      await makeComp(tester);
+
+      await choose(tester, 'View', 'Zoom in');
+      expect(p.uiState.viewerZoomRequest.value?.$2, ViewerZoomCommand.zoomIn);
+
+      // Twice is twice: the serial is what stops a repeated request being
+      // swallowed as "no change".
+      final first = p.uiState.viewerZoomRequest.value!.$1;
+      await choose(tester, 'View', 'Zoom in');
+      expect(p.uiState.viewerZoomRequest.value!.$1, greaterThan(first));
+
+      await choose(tester, 'View', 'Fit');
+      expect(p.uiState.viewerZoomRequest.value?.$2, ViewerZoomCommand.fit);
+    });
+
     /// Shortcuts are the engine's (K-199): a row shows whatever the keymap
     /// currently binds to its action, so a rebind changes the menus too.
     testWidgets('a row teaches the chord its action answers to',
@@ -741,6 +784,50 @@ void main() {
       expect(find.text('Check for updates'), findsOneWidget);
       expect(find.text('Check for updates (Not implemented)'), findsNothing);
       await dismiss(tester);
+    });
+
+    /// The two documentation rows hand a web address to the desktop (K-279).
+    /// The launcher is stopped up: a test suite must never open a browser.
+    testWidgets('Help ▸ the documentation rows open the docs site',
+        (tester) async {
+      final asked = <String>[];
+      final real = openExternalLink;
+      openExternalLink = (url) async {
+        asked.add(url);
+        return true;
+      };
+      addTearDown(() => openExternalLink = real);
+
+      await mount(tester);
+      await choose(tester, 'Help', 'Lumit help');
+      await tester.pump();
+      expect(asked, ['https://docs.lumitlab.com/']);
+
+      await choose(tester, 'Help', 'Lumit online guides');
+      await tester.pump();
+      expect(asked.last, 'https://docs.lumitlab.com/start/first-composition/');
+    });
+
+    /// A machine with no browser registered leaves a row that does nothing,
+    /// which reads as broken. It says so in the status line instead.
+    testWidgets('a link the desktop will not take says so', (tester) async {
+      final real = openExternalLink;
+      openExternalLink = (_) async => false;
+      addTearDown(() => openExternalLink = real);
+
+      final p = await mount(tester);
+      await choose(tester, 'Help', 'Lumit help');
+      await tester.pump();
+      expect(p.state.notice.value?.message, contains('docs.lumitlab.com'));
+      expect(p.state.notice.value?.error, isTrue);
+    });
+
+    /// Only a web address is ever handed over, whatever a caller passes.
+    test('the launcher refuses anything that is not a web address', () async {
+      expect(await launchInDefaultBrowser('file:///etc/passwd'), isFalse);
+      expect(await launchInDefaultBrowser('javascript:alert(1)'), isFalse);
+      expect(await launchInDefaultBrowser('https://'), isFalse);
+      expect(await launchInDefaultBrowser('not a url at all'), isFalse);
     });
 
     testWidgets('Help ▸ About Lumit opens the About window', (tester) async {

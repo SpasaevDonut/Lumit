@@ -3459,7 +3459,7 @@ fn lens_flare_dump_frame() {
         h,
         &op,
         None,
-        &|| flare_bake_data(&p),
+        &(std::sync::Arc::new(move || flare_bake_data(&p)) as crate::fx::FlareBake),
         &flare_probe(&p, w, h),
     );
     let gpu = readback_linear_f32(&ctx, &out, w, h).unwrap();
@@ -3512,32 +3512,18 @@ fn lens_flare_frame_cost() {
         ..flare_params()
     };
     let op = flare_op(&p, w, h);
-    let data = flare_bake_data(&p);
+    let data = std::sync::Arc::new(flare_bake_data(&p));
+    let bake = {
+        let data = std::sync::Arc::clone(&data);
+        std::sync::Arc::new(move || (*data).clone()) as crate::fx::FlareBake
+    };
     // Warm: shader compilation and the bake upload are one-off costs.
-    let warm = fx.lens_flare(
-        &ctx,
-        &tex,
-        w,
-        h,
-        &op,
-        None,
-        &|| data.clone(),
-        &flare_probe(&p, w, h),
-    );
+    let warm = fx.lens_flare(&ctx, &tex, w, h, &op, None, &bake, &flare_probe(&p, w, h));
     drop(readback_linear_f32(&ctx, &warm, w, h));
     let runs = 3;
     let started = std::time::Instant::now();
     for _ in 0..runs {
-        let out = fx.lens_flare(
-            &ctx,
-            &tex,
-            w,
-            h,
-            &op,
-            None,
-            &|| data.clone(),
-            &flare_probe(&p, w, h),
-        );
+        let out = fx.lens_flare(&ctx, &tex, w, h, &op, None, &bake, &flare_probe(&p, w, h));
         // Read back so the timing includes the card finishing the work.
         drop(readback_linear_f32(&ctx, &out, w, h));
     }
@@ -3594,7 +3580,7 @@ fn wgsl_lens_flare_ghost_blur_matches_the_cpu_reference() {
         h,
         &op,
         None,
-        &|| flare_bake_data(&p),
+        &(std::sync::Arc::new(move || flare_bake_data(&p)) as crate::fx::FlareBake),
         &flare_probe(&p, w, h),
     );
     let gpu = readback_linear_f32(&ctx, &out, w, h).unwrap();
@@ -3676,6 +3662,155 @@ fn lens_flare_splits_a_heavy_frame_into_several_submissions() {
     );
 }
 
+/// A deferred bake really is made beside the frame: the frame that asked for
+/// a lens it does not hold draws the lens before it, the bake lands on the
+/// bake thread, and the frame after it draws the new one (K-350).
+///
+/// The picture is not what this checks — a card is needed for that, and the
+/// oracle tests above do it. What it checks is the part that is pure
+/// bookkeeping and would otherwise only ever be exercised by hand: which bake
+/// a frame is given, and when.
+#[test]
+fn lens_flare_deferred_bakes_answer_with_the_previous_lens_then_the_new_one() {
+    let Ok(ctx) = GpuContext::headless() else {
+        crate::no_adapter();
+        return;
+    };
+    let fx = FxEngine::new(&ctx);
+    use lumit_core::fx::lens_flare as lf;
+    let (w, h) = (64u32, 36u32);
+
+    let first = lf::LensFlareParams {
+        lens: 3,
+        ..flare_params()
+    };
+    let second = lf::LensFlareParams {
+        lens: 7,
+        ..flare_params()
+    };
+    let tex = crate::fx::work_texture(&ctx, w, h, "flare-defer-src");
+
+    // Exact to begin with, so there is a lens on screen to fall back to —
+    // and so the first frame of a session is never a flare-less one by
+    // accident.
+    fx.set_deferred_flare_bakes(false);
+    let op_a = flare_op(&first, w, h);
+    let bake_a = std::sync::Arc::new(move || flare_bake_data(&first)) as crate::fx::FlareBake;
+    drop(fx.lens_flare(
+        &ctx,
+        &tex,
+        w,
+        h,
+        &op_a,
+        None,
+        &bake_a,
+        &flare_probe(&first, w, h),
+    ));
+    assert!(
+        !fx.flare_bake_pending(),
+        "an exact bake is finished by the time the frame is"
+    );
+    let after_exact = fx.flare_bake_generation();
+
+    // Now defer, and ask for a lens nothing holds.
+    fx.set_deferred_flare_bakes(true);
+    let op_b = flare_op(&second, w, h);
+    let bake_b = std::sync::Arc::new(move || flare_bake_data(&second)) as crate::fx::FlareBake;
+    drop(fx.lens_flare(
+        &ctx,
+        &tex,
+        w,
+        h,
+        &op_b,
+        None,
+        &bake_b,
+        &flare_probe(&second, w, h),
+    ));
+    assert_ne!(
+        fx.flare_bake_generation(),
+        after_exact,
+        "asking for a lens that is not held queues its bake, and says so"
+    );
+
+    // The bake thread finishes and the next frame picks it up. Bounded, so a
+    // machine that will not give us a thread fails the wait rather than the
+    // suite hanging.
+    // Every pass waits for the queue before asking for another frame. A frame
+    // is what collects a landed bake, so the loop has to render — but on a
+    // software rasteriser (CI's WARP, Mesa's lavapipe) a frame takes long
+    // enough that firing them off every 10 ms would leave submissions piling
+    // up faster than they retire, and nothing in flight is ever reclaimed.
+    // Waiting makes each pass one frame, which is all this is counting.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
+        drop(fx.lens_flare(
+            &ctx,
+            &tex,
+            w,
+            h,
+            &op_b,
+            None,
+            &bake_b,
+            &flare_probe(&second, w, h),
+        ));
+        ctx.device.poll(wgpu::Maintain::Wait);
+        if !fx.flare_bake_pending() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(
+        !fx.flare_bake_pending(),
+        "the bake lands and the frame after it is no longer waiting"
+    );
+
+    // And once it is held, the frame is nameable again: nothing more is
+    // queued and the generation sits still.
+    let settled = fx.flare_bake_generation();
+    drop(fx.lens_flare(
+        &ctx,
+        &tex,
+        w,
+        h,
+        &op_b,
+        None,
+        &bake_b,
+        &flare_probe(&second, w, h),
+    ));
+    assert_eq!(
+        fx.flare_bake_generation(),
+        settled,
+        "a held lens neither queues nor lands anything"
+    );
+}
+
+/// Deferring changes when a bake is made, never what it is: the same key
+/// gives the same bake either way (docs/impl/lens-flare.md §5 — the bake is
+/// pure, and K-350 must not make it less so).
+#[test]
+fn lens_flare_a_deferred_bake_is_the_same_bake() {
+    use lumit_core::fx::lens_flare as lf;
+    let p = lf::LensFlareParams {
+        lens: 11,
+        ..flare_params()
+    };
+    let inline = flare_bake_data(&p);
+    let bake = std::sync::Arc::new(move || flare_bake_data(&p)) as crate::fx::FlareBake;
+    // Run it where the bake thread would: another thread entirely.
+    let elsewhere = std::thread::spawn(move || bake())
+        .join()
+        .expect("the bake thread finishes");
+    assert_eq!(inline.surfaces, elsewhere.surfaces);
+    assert_eq!(inline.ghosts, elsewhere.ghosts);
+    assert_eq!(inline.spreads, elsewhere.spreads);
+    assert_eq!(inline.starburst, elsewhere.starburst);
+    assert_eq!(
+        inline.energy_gain.to_bits(),
+        elsewhere.energy_gain.to_bits(),
+        "the auto-exposure gain is bit-equal, not merely close"
+    );
+}
+
 /// The bake cache keeps its most recent entries and drops the oldest — it
 /// does not empty itself (K-263). Emptying is what made trying lenses
 /// quadratic: every overflow threw away a full cap's worth of bakes, and a
@@ -3725,8 +3860,14 @@ fn wgsl_lens_flare_trace_matches_the_cpu_reference() {
             let op = flare_op(&p, w, h);
             let dir = lf::light_direction(light_frac, h as f32 / w as f32, baked.focal_mm);
             let combo_limit = 12u32;
-            let gpu =
-                fx.lens_flare_trace_debug(&ctx, &op, &|| flare_bake_data(&p), combo_limit, w, h);
+            let gpu = fx.lens_flare_trace_debug(
+                &ctx,
+                &op,
+                &(std::sync::Arc::new(move || flare_bake_data(&p)) as crate::fx::FlareBake),
+                combo_limit,
+                w,
+                h,
+            );
             assert!(!gpu.is_empty(), "trace debug returned nothing");
 
             // Rebuild the same combo order the GPU used: pair-major over
@@ -3898,7 +4039,7 @@ fn wgsl_lens_flare_matches_the_cpu_frame_reference_and_neutrals() {
         h,
         &op,
         None,
-        &|| flare_bake_data(&p),
+        &(std::sync::Arc::new(move || flare_bake_data(&p)) as crate::fx::FlareBake),
         &flare_probe(&p, w, h),
     );
     let gpu = readback_linear_f32(&ctx, &out, w, h).unwrap();
@@ -3942,7 +4083,7 @@ fn wgsl_lens_flare_matches_the_cpu_frame_reference_and_neutrals() {
         h,
         &op,
         None,
-        &|| flare_bake_data(&p),
+        &(std::sync::Arc::new(move || flare_bake_data(&p)) as crate::fx::FlareBake),
         &flare_probe(&p, w, h),
     );
     let gpu2 = readback_linear_f32(&ctx, &out2, w, h).unwrap();
@@ -3965,7 +4106,7 @@ fn wgsl_lens_flare_matches_the_cpu_frame_reference_and_neutrals() {
             h,
             &nop,
             None,
-            &|| flare_bake_data(&neutral),
+            &(std::sync::Arc::new(move || flare_bake_data(&neutral)) as crate::fx::FlareBake),
             &flare_probe(&neutral, w, h),
         );
         let ngpu = readback_linear_f32(&ctx, &nout, w, h).unwrap();
@@ -4016,7 +4157,7 @@ fn wgsl_lens_flare_padded_anamorphic_matches_and_fills_the_edge() {
         h,
         &op,
         None,
-        &|| flare_bake_data(&p),
+        &(std::sync::Arc::new(move || flare_bake_data(&p)) as crate::fx::FlareBake),
         &flare_probe(&p, w, h),
     );
     let gpu = readback_linear_f32(&ctx, &out, w, h).unwrap();
@@ -4141,7 +4282,7 @@ fn wgsl_lens_flare_matte_mode_matches_the_cpu_reference() {
         h,
         &op,
         Some(&matte_tex),
-        &|| flare_bake_data(&p),
+        &(std::sync::Arc::new(move || flare_bake_data(&p)) as crate::fx::FlareBake),
         &flare_probe(&p, w, h),
     );
     let gpu = readback_linear_f32(&ctx, &out, w, h).unwrap();
@@ -4175,7 +4316,7 @@ fn wgsl_lens_flare_matte_mode_matches_the_cpu_reference() {
         h,
         &op,
         None,
-        &|| flare_bake_data(&p),
+        &(std::sync::Arc::new(move || flare_bake_data(&p)) as crate::fx::FlareBake),
         &flare_probe(&p, w, h),
     );
     let ngpu = readback_linear_f32(&ctx, &nout, w, h).unwrap();
@@ -4217,7 +4358,7 @@ fn wgsl_lens_flare_matte_mode_matches_the_cpu_reference() {
         h,
         &flare_op(&tinted, w, h),
         Some(&matte_tex),
-        &|| flare_bake_data(&tinted),
+        &(std::sync::Arc::new(move || flare_bake_data(&tinted)) as crate::fx::FlareBake),
         &flare_probe(&tinted, w, h),
     );
     let t_gpu = readback_linear_f32(&ctx, &t_out, w, h).unwrap();
@@ -4267,7 +4408,7 @@ fn lens_flare_montage() {
             th,
             &op,
             None,
-            &|| flare_bake_data(&p),
+            &(std::sync::Arc::new(move || flare_bake_data(&p)) as crate::fx::FlareBake),
             &flare_probe(&p, tw, th),
         );
         let gpu = readback_linear_f32(&ctx, &out, tw, th).unwrap();

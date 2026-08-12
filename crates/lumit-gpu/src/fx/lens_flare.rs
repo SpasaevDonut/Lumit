@@ -17,12 +17,24 @@
 //! Fourier transforms — never runs here; it arrives as textures baked on
 //! the CPU and cached by parameter hash.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::collections::{HashMap, HashSet};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    mpsc::{channel, Receiver, Sender},
+    Arc, Mutex, OnceLock,
+};
 
 use crate::{GpuContext, WORKING_FORMAT};
 
 use super::{work_texture, FxEngine};
+
+/// The CPU bake, as something another thread can own and run.
+///
+/// An `Arc` rather than a borrowed `&dyn Fn` because the bake may be handed to
+/// the bake thread and outlive the frame that asked for it (K-350). The caller
+/// builds one per flare op per frame — a single small allocation beside a
+/// pass that traces hundreds of thousands of rays.
+pub type FlareBake = Arc<dyn Fn() -> FlareBakeData + Send + Sync>;
 
 /// The resolved Lens flare op in lumit-gpu's own terms: plain numbers plus
 /// the per-frame wavelength table, all derived by the caller (lumit-render)
@@ -214,6 +226,94 @@ pub struct LensFlareFx {
     scratch: Mutex<Option<Scratch>>,
     /// The pooled multisample target with its size — see [`Self::take_msaa`].
     msaa: Mutex<Option<(wgpu::Texture, u32, u32)>>,
+    /// The off-thread bake (K-350), when this engine is allowed one. `None`
+    /// until the first deferred miss, and never built at all on an engine
+    /// whose bakes must be exact — the exporter's (see
+    /// [`FxEngine::set_deferred_flare_bakes`]).
+    baker: OnceLock<Option<Baker>>,
+    /// Whether a miss may render the previous lens while the bake is made
+    /// beside the frame. Off by default: an engine that has not been told
+    /// otherwise bakes inside the frame exactly as it did before, so a path
+    /// that has not opted in — the exporter's — cannot draw a provisional
+    /// picture by omission.
+    pub(super) deferred: std::sync::atomic::AtomicBool,
+    /// The key of the last bake a frame actually drew with, which is what a
+    /// frame whose own bake is not ready falls back to (K-350).
+    last_drawn: Mutex<Option<u64>>,
+    /// Bakes handed to the baker and not yet collected.
+    in_flight: Mutex<HashSet<u64>>,
+    /// Bumped whenever a bake is queued and again when one lands. A frame
+    /// rendered across a change of this number may have drawn a lens other
+    /// than the one its parameters name, so the caller must not file it under
+    /// a name that says otherwise — see `FxEngine::flare_bake_generation`.
+    pub(super) generation: AtomicU64,
+}
+
+/// The bake thread and its two channels.
+struct Baker {
+    jobs: Sender<BakeJob>,
+    done: Mutex<Receiver<(u64, Option<FlareBakeData>)>>,
+}
+
+struct BakeJob {
+    key: u64,
+    bake: FlareBake,
+}
+
+impl Baker {
+    /// Start the bake thread, or answer `None` on a machine that will not give
+    /// us one — where every miss then bakes inside the frame, which is what it
+    /// did before this existed.
+    fn start() -> Option<Baker> {
+        let (jobs, queue) = channel::<BakeJob>();
+        let (finished, done) = channel::<(u64, Option<FlareBakeData>)>();
+        std::thread::Builder::new()
+            .name("lumit-flare-bake".into())
+            .spawn(move || Self::run(&queue, &finished))
+            .ok()
+            .map(|_| Baker {
+                jobs,
+                done: Mutex::new(done),
+            })
+    }
+
+    /// The bake loop. Ends when the sender is dropped — the engine going away.
+    ///
+    /// **Cancellation is by supersession, and it is exact** (docs/14 §6): a
+    /// bake is named by a hash of the parameters that produced it, so a job
+    /// whose key is not among those still queued behind it is a lens the user
+    /// has already moved past. Dragging the f-stop slider queues a key a tick,
+    /// and only the last of them is worth half a second of optics; the rest
+    /// are dropped before they start.
+    fn run(queue: &Receiver<BakeJob>, finished: &Sender<(u64, Option<FlareBakeData>)>) {
+        while let Ok(job) = queue.recv() {
+            // Everything else already waiting, so the newest is known before
+            // anything is baked.
+            let mut pending: Vec<BakeJob> = vec![job];
+            while let Ok(next) = queue.try_recv() {
+                pending.push(next);
+            }
+            // Only the last survives, and only if nothing else asked for it
+            // in the meantime — the ones before it are keys nobody is looking
+            // at any more.
+            let Some(wanted) = pending.pop() else {
+                continue;
+            };
+            for dropped in pending {
+                // Answered with nothing: the engine takes the key off its
+                // in-flight list, so a lens abandoned mid-drag does not leave
+                // the frame permanently unnameable. If it turns out to be
+                // wanted after all, the next frame that asks re-queues it.
+                if finished.send((dropped.key, None)).is_err() {
+                    return;
+                }
+            }
+            let data = (wanted.bake)();
+            if finished.send((wanted.key, Some(data))).is_err() {
+                return; // nobody is collecting any more
+            }
+        }
+    }
 }
 
 /// A bounded, oldest-first cache of bakes by parameter hash (K-263).
@@ -699,30 +799,179 @@ impl LensFlareFx {
             cache: Mutex::new(BakeCache::new(Self::CACHE_CAP)),
             scratch: Mutex::new(None),
             msaa: Mutex::new(None),
+            baker: OnceLock::new(),
+            deferred: std::sync::atomic::AtomicBool::new(false),
+            last_drawn: Mutex::new(None),
+            in_flight: Mutex::new(HashSet::new()),
+            generation: AtomicU64::new(0),
         }
     }
 
-    /// The cached GPU bake for `op.bake_key`, building (outside the lock)
-    /// from the caller's lazy `bake` on a miss. A racing double-build is
-    /// harmless — the bake is a pure function — and the insert keeps
-    /// whichever landed first.
-    fn baked(
+    /// The GPU bake for `op.bake_key`, or `None` when there is nothing to draw
+    /// with yet.
+    ///
+    /// Two behaviours, chosen by [`FxEngine::set_deferred_flare_bakes`]:
+    ///
+    /// - **Exact** (the default, and what an export runs): a miss bakes here
+    ///   and now, outside the lock, exactly as it always did. A racing
+    ///   double-build is harmless — the bake is a pure function — and the
+    ///   insert keeps whichever landed first.
+    /// - **Deferred** (the Viewer, K-350): a miss hands the bake to the bake
+    ///   thread and answers with the lens the last frame drew, so choosing a
+    ///   lens is a wait you can watch rather than half a second of stopped
+    ///   picture. With nothing drawn yet the answer is `None` and the flare
+    ///   sits this frame out.
+    ///
+    /// Determinism is untouched either way: the bake is the same pure function
+    /// of the same key wherever it runs, and the frame that finally draws the
+    /// new lens is the frame the exact path would have drawn. What the caller
+    /// must not do is *name* a provisional frame as though it were the real
+    /// one — see [`FxEngine::flare_bake_generation`].
+    fn baked(&self, ctx: &GpuContext, op: &LensFlareOp, bake: &FlareBake) -> Option<Arc<GpuBaked>> {
+        // Anything the bake thread finished since the last frame, uploaded
+        // here — on the render thread, which is the only thread that may
+        // touch the device.
+        self.collect(ctx);
+
+        if let Ok(cache) = self.cache.lock() {
+            if let Some(hit) = cache.get(op.bake_key) {
+                drop(cache);
+                self.remember_drawn(op.bake_key);
+                return Some(hit);
+            }
+        }
+
+        if !self.deferred.load(Ordering::Relaxed) {
+            let data = bake();
+            let built = Arc::new(upload_bake(ctx, &data));
+            let stored = match self.cache.lock() {
+                Ok(mut cache) => cache.insert(op.bake_key, built),
+                Err(_) => built,
+            };
+            self.remember_drawn(op.bake_key);
+            return Some(stored);
+        }
+
+        self.queue(op.bake_key, bake);
+
+        // The lens the last frame drew. Not "any cached bake": stepping back
+        // and forth through the picker must show the lens you just left, not
+        // whichever entry the map happens to hold.
+        let previous = self.last_drawn.lock().ok().and_then(|held| *held)?;
+        self.cache.lock().ok().and_then(|cache| cache.get(previous))
+    }
+
+    /// Note which bake a frame drew with, so the next frame has something to
+    /// fall back on while its own is being made.
+    fn remember_drawn(&self, key: u64) {
+        if let Ok(mut held) = self.last_drawn.lock() {
+            *held = Some(key);
+        }
+    }
+
+    /// Hand one bake to the bake thread, once per key. A key already in flight
+    /// is not queued again, and a bake thread that cannot be started leaves
+    /// the key unqueued — the next frame simply asks again.
+    fn queue(&self, key: u64, bake: &FlareBake) {
+        {
+            let Ok(mut flight) = self.in_flight.lock() else {
+                return;
+            };
+            if !flight.insert(key) {
+                return;
+            }
+        }
+        let queued = self
+            .baker
+            .get_or_init(Baker::start)
+            .as_ref()
+            .is_some_and(|baker| {
+                baker
+                    .jobs
+                    .send(BakeJob {
+                        key,
+                        bake: Arc::clone(bake),
+                    })
+                    .is_ok()
+            });
+        if queued {
+            // Queued, so this frame is drawing something other than what its
+            // parameters name; the caller reads this to decide whether the
+            // frame may be filed under that name.
+            self.generation.fetch_add(1, Ordering::Relaxed);
+        } else if let Ok(mut flight) = self.in_flight.lock() {
+            flight.remove(&key);
+        }
+    }
+
+    /// Upload and file everything the bake thread has finished. Called at the
+    /// top of every [`Self::baked`], which is the only place that runs on the
+    /// render thread with a device to hand.
+    fn collect(&self, ctx: &GpuContext) {
+        let Some(baker) = self.baker.get().and_then(Option::as_ref) else {
+            return;
+        };
+        // The finished bakes, taken out from under the lock before any upload:
+        // the rule is the rule even for a channel (docs/14 §3).
+        let mut landed: Vec<(u64, Option<FlareBakeData>)> = Vec::new();
+        if let Ok(done) = baker.done.lock() {
+            while let Ok(one) = done.try_recv() {
+                landed.push(one);
+            }
+        }
+        for (key, data) in landed {
+            // A superseded key comes back with nothing: it is taken off the
+            // in-flight list and nothing is uploaded for it.
+            if let Some(data) = data {
+                let built = Arc::new(upload_bake(ctx, &data));
+                if let Ok(mut cache) = self.cache.lock() {
+                    cache.insert(key, built);
+                }
+            }
+            if let Ok(mut flight) = self.in_flight.lock() {
+                flight.remove(&key);
+            }
+            self.generation.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Queue a bake by key without asking for a picture — see
+    /// [`FxEngine::warm_flare_bake`]. Answers whether anything was queued.
+    pub(super) fn warm(&self, key: u64, bake: &FlareBake) -> bool {
+        let before = self.generation.load(Ordering::Relaxed);
+        self.queue(key, bake);
+        self.generation.load(Ordering::Relaxed) != before
+    }
+
+    /// Whether a bake is being made right now — so a frame drawn during it is
+    /// showing a lens other than the one it names.
+    pub(super) fn bake_pending(&self) -> bool {
+        self.in_flight
+            .lock()
+            .map(|f| !f.is_empty())
+            .unwrap_or(false)
+    }
+
+    /// The bake for this key, made here and now if it is not held — whatever
+    /// the deferral policy. What the trace-debug path and any caller that
+    /// needs *this* lens rather than a picture uses.
+    fn baked_exact(
         &self,
         ctx: &GpuContext,
         op: &LensFlareOp,
-        bake: &dyn Fn() -> FlareBakeData,
-    ) -> Arc<GpuBaked> {
+        bake: &FlareBake,
+    ) -> Option<Arc<GpuBaked>> {
+        self.collect(ctx);
         if let Ok(cache) = self.cache.lock() {
             if let Some(hit) = cache.get(op.bake_key) {
-                return hit;
+                return Some(hit);
             }
         }
-        let data = bake();
-        let built = Arc::new(upload_bake(ctx, &data));
-        match self.cache.lock() {
+        let built = Arc::new(upload_bake(ctx, &bake()));
+        Some(match self.cache.lock() {
             Ok(mut cache) => cache.insert(op.bake_key, built),
             Err(_) => built,
-        }
+        })
     }
 
     /// Take the pooled scratch if it is free and big enough, else build one.
@@ -1051,7 +1300,7 @@ impl FxEngine {
         h: u32,
         op: &LensFlareOp,
         matte: Option<&wgpu::Texture>,
-        bake: &dyn Fn() -> FlareBakeData,
+        bake: &FlareBake,
         probe: &dyn Fn(&FlareProbeBake) -> Vec<u32>,
     ) -> wgpu::Texture {
         use wgpu::util::DeviceExt;
@@ -1061,12 +1310,17 @@ impl FxEngine {
         // Neutral short-circuit mirror (the combine kernel also guards, but
         // skipping the whole pipeline is the honest fast path).
         let ghost_count_max = op.max_ghosts.min(200);
-        let live = op.intensity > 0.0 && op.mix > 0.0;
-        let baked = if live {
-            Some(lf.baked(ctx, op, bake))
+        let wanted = op.intensity > 0.0 && op.mix > 0.0;
+        let baked = if wanted {
+            lf.baked(ctx, op, bake)
         } else {
             None
         };
+        // A deferred bake that has nothing to fall back on yet leaves the
+        // frame with no flare at all rather than a wrong one: `live` is
+        // "there is something to draw", and everything below already reads it
+        // as that (K-350).
+        let live = baked.is_some();
 
         // Matte mode runs with MAX_LIGHTS candidate slots (dead ones carry
         // zero weight and cost no fill); Manual and the prepared Lights mode
@@ -1639,14 +1893,19 @@ impl FxEngine {
         &self,
         ctx: &GpuContext,
         op: &LensFlareOp,
-        bake: &dyn Fn() -> FlareBakeData,
+        bake: &FlareBake,
         combo_limit: u32,
         w: u32,
         h: u32,
     ) -> Vec<[f32; 4]> {
         use wgpu::util::DeviceExt;
         let lf = &self.lens_flare;
-        let baked = lf.baked(ctx, op, bake);
+        // The debug trace wants the real bake, whatever the policy: it is a
+        // test and diagnostic path, and an answer for the previous lens would
+        // be an answer to a question nobody asked.
+        let Some(baked) = lf.baked_exact(ctx, op, bake) else {
+            return Vec::new();
+        };
         let ghost_count = (op.max_ghosts as usize).min(baked.ghosts.len());
         let mut combos: Vec<GpuCombo> = Vec::new();
         'outer: for ghost in baked.ghosts.iter().take(ghost_count) {

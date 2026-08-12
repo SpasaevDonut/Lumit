@@ -8292,3 +8292,42 @@ this claim is a `ValueNotifier` rather than a bare field, because it is *read to
 with*: null — no Timeline on screen, or a graph in the speed lens (K-348) — greys the
 panel's Apply and shows the reason. A popup that simply vanished could stay silent about
 this; a panel sitting in the corner with a live-looking button that does nothing cannot.
+
+**K-350 · DECIDED · The lens flare's bake runs beside the frame, and a frame that drew a
+lens it does not name is never banked.** K-263 measured the flare's one blocking CPU step
+at about 0.66 s and recorded the fix as owed: choosing a lens stopped the picture for half
+a second, because the bake was a closure the render thread ran inside the frame. It now
+runs on a **bake thread** of its own (`lumit-gpu`'s `LensFlareFx`), and a frame that asks
+for a lens the engine does not hold draws the lens the previous frame drew — or, with none
+yet, no flare at all — so the freeze becomes a wait you can watch. The new optics are
+picked up by the next frame after they land, and the worker makes that frame itself
+(`republish_after_bake`), so the picture catches up without the user touching anything.
+
+Three properties make it safe, and each is the reason for a piece of the design.
+
+**(1) An export never draws a provisional picture.** Deferring is *off* by default and only
+the Viewer's renderer turns it on; the exporter builds its own renderer on its own device
+(`export::run`) and nobody calls it there, so the safe behaviour is what a path gets by
+forgetting to choose rather than by remembering to. K-031's preview-equals-export identity
+is untouched, and an export is bit-for-bit what it was.
+
+**(2) A provisional frame is unnameable.** The three cache tiers are keyed by a hash of
+what is *in* a frame (K-178), so a frame drawn with the previous lens and filed under the
+new lens's name is an entry that lies about itself and outlives every edit and undo that
+might have fixed it. `frame_key` therefore answers `None` while a bake is in flight — the
+same mechanism unprobed footage and a non-neutral display view already use — and, because
+a bake can also be queued *during* a render, the naming is checked either side of it
+(`flare_bake_generation`). The idle cache fill stands down while a bake is in flight for
+the same reason, and starts again when it lands.
+
+**(3) The bake is still pure, and cancellation is exact.** The bake is the same function of
+the same key wherever it runs, so the frame that finally shows the new lens is the frame
+the old code would have drawn. Superseded keys are dropped **before** they start: a bake is
+named by a hash of the parameters that made it, so dragging the f-stop queues a key a tick
+and only the last is worth half a second of optics — the rest are answered with nothing and
+taken off the in-flight list, which is what stops an abandoned lens leaving every frame
+permanently unnameable.
+
+Not fixed here, and unchanged: the flare's raster still draws the cells it culled, and the
+`wgsl_lens_flare_matches_the_cpu_frame_reference_and_neutrals` bit-stability question is
+still open (both remain in TODO).

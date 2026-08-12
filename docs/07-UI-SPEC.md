@@ -2173,11 +2173,12 @@ engine decides what a chord means and the frontend only spells the keypress and 
 answer (K-199). The keymap is stored in the workspace file as the engine's own JSON, so it
 survives a restart in the same format it exports in.
 
-Two honest gaps. The **Project**, **Panels** and **Effects** contexts have rows
-in the table and nothing behind them — those commands are not built on this frontend, so the
-bindings are real and pressing them does nothing. The **Tools** context arms the toolbar's
+One honest gap. The **Tools** context arms the toolbar's
 tools (§1.7) and cycles a group on a repeat press, but what most tools then *do* is not built
-either, so the chord lands and the picture stays as it was. Stepping a frame has a second
+yet, so the chord lands and the picture stays as it was. The **Project**, **Panels** and
+**Effects** contexts, which once had rows and nothing behind them, are built: `Enter` renames
+in the Project panel and in Effect controls (K-321), and the Panels context cycles the focus
+ring and focuses a panel's search field. Stepping a frame has a second
 chord alongside `Page Down`/`Page Up` — `Ctrl`+arrow (K-282); the **bare** arrows do nothing
 app-wide, so a list, a field or a canvas is free to use them for moving within itself.
 

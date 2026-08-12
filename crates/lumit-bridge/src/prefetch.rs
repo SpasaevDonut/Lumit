@@ -78,7 +78,11 @@ fn run(jobs: Receiver<PrefetchWant>, done: Sender<Done>) {
         let dec = match decoders.entry(want.item) {
             std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
             std::collections::hash_map::Entry::Vacant(e) => {
-                let Ok(index) = lumit_media::index::build_frame_index(&want.path) else {
+                // Through the shared sidecar-cache helper, like every other
+                // decoder open: a decode-ahead thread that re-scanned the file
+                // would spend the first seconds of playback doing work the
+                // probe had already done.
+                let Ok(index) = lumit_render::media_index::load_or_build_index(&want.path) else {
                     continue;
                 };
                 let Ok(dec) = lumit_media::VideoDecoder::open(&want.path, index) else {

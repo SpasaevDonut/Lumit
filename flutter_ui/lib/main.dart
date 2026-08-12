@@ -29,6 +29,7 @@ import 'package:lumit_flutter/shell/fx_console_frb.dart'
 import 'package:lumit_flutter/shell/menu_bar_frb.dart';
 import 'package:lumit_flutter/shell/project_settings_frb.dart';
 import 'package:lumit_flutter/shell/settings_window_frb.dart';
+import 'package:lumit_flutter/shell/splash.dart';
 import 'package:lumit_flutter/shell/status_line_frb.dart';
 import 'package:lumit_flutter/shell/tool_bar_frb.dart';
 import 'package:lumit_flutter/src/rust/api/cache.dart';
@@ -37,6 +38,7 @@ import 'package:lumit_flutter/src/rust/api/footage.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/project.dart';
 import 'package:lumit_flutter/src/rust/api/project_item.dart';
+import 'package:lumit_flutter/src/rust/api/shell.dart' show bootLog;
 import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:lumit_flutter/src/rust/frb_generated.dart';
 import 'package:lumit_flutter/state/comp_model.dart';
@@ -54,6 +56,7 @@ import 'package:lumit_flutter/state/settings.dart';
 import 'package:lumit_flutter/state/install_site.dart';
 import 'package:lumit_flutter/state/tools.dart';
 import 'package:lumit_flutter/state/updates.dart';
+import 'package:lumit_flutter/state/viewer_view.dart';
 import 'package:lumit_flutter/state/workspace.dart';
 import 'package:lumit_flutter/theme/theme.dart';
 import 'package:lumit_flutter/widgets/controls.dart';
@@ -481,6 +484,59 @@ class LumitUiState extends ChangeNotifier {
 
   DockSplit get split => workspace.dock;
   ValueNotifier<Panel?> activePanel = ValueNotifier(null);
+
+  /// Move the focus ring on by [by] panels in the arrangement's own order —
+  /// `Ctrl+F6` forwards, `Ctrl+Shift+F6` back (docs/07 §15, "Panels").
+  ///
+  /// The arrangement's order, not the enum's: what the ring walks is what is on
+  /// screen, left to right and top to bottom as the tree visits it, so a panel
+  /// dropped from the workspace is simply not in the cycle. A panel sitting
+  /// behind a tab is *brought to the front* as it is reached, because a focus
+  /// ring on something nobody can see is a keystroke that appears to have done
+  /// nothing.
+  ///
+  /// Answers whether it moved, so an arrangement with nothing in it leaves the
+  /// chord to whatever else might want it.
+  bool cyclePanelFocus(int by) {
+    final panels = panelsIn(split);
+    if (panels.isEmpty) return false;
+    final current = activePanel.value;
+    final at = current == null ? -1 : panels.indexOf(current);
+    // Nothing focused yet: the first panel is where a cycle begins, whichever
+    // way it was asked to go.
+    final next =
+        at < 0 ? panels.first : panels[(at + by) % panels.length];
+    activatePanelTab(split, next);
+    activePanel.value = next;
+    // Which tab a group fronts is part of the arrangement, and the arrangement
+    // persists — `touch` both redraws the dock and writes it down.
+    workspace.touch();
+    return true;
+  }
+
+  /// Bumped when `Ctrl+F` asks the focused panel to put the cursor in its
+  /// search box (docs/07 §15).
+  ///
+  /// A notifier for the same reason as [togglePlayRequest]: the field belongs
+  /// to whichever panel is focused, and the shell has no business reaching into
+  /// one. Each panel with a search box listens and answers only when it is the
+  /// focused one, so one request can never focus two fields.
+  final ValueNotifier<int> panelSearchRequest = ValueNotifier(0);
+
+  /// Ask the focused panel for its search box, and say whether there is one to
+  /// ask for. Only two panels have one (docs/07 §15); anywhere else the chord
+  /// is left alone rather than swallowed.
+  bool requestPanelSearch() {
+    final panel = activePanel.value;
+    if (panel != Panel.project && panel != Panel.effectsAndPresets) {
+      return false;
+    }
+    panelSearchRequest.value++;
+    return true;
+  }
+
+  /// Whether [panel] is the one a [panelSearchRequest] is meant for.
+  bool searchRequestIsFor(Panel panel) => activePanel.value == panel;
 
   /// A finer selection's claim on Delete (K-234), set by the Timeline while it
   /// is mounted and cleared when it goes.
@@ -1126,15 +1182,60 @@ class LumitUiState extends ChangeNotifier {
   /// resolution. It is the frb counterpart of v0's `effectivePreviewScale`, minus
   /// the adaptive quality tier (K-171), which is not ported yet — so this tracks
   /// the panel size only, not measured render cost.
-  double viewerScale = 1.0;
+  ///
+  /// A getter, not a field, because two separate things decide it: the panel
+  /// measures itself ([reportViewerScale]) and the user chooses a preview
+  /// resolution ([previewResolution]). Multiplying them here means a change to
+  /// either is in force on the very next render request, with nothing to keep
+  /// in step.
+  double get viewerScale => _panelScale * previewResolution.scale;
+
+  /// The scale the *panel* implies, last time the Viewer laid itself out.
+  double _panelScale = 1.0;
 
   /// Called by the Viewer as it lays out. Clamped to (0, 1]: rendering *above*
   /// comp resolution would cost more for no visible gain, and a zero or negative
   /// scale is meaningless.
   void reportViewerScale(double scale) {
     if (!scale.isFinite || scale <= 0) return;
-    viewerScale = scale > 1.0 ? 1.0 : scale;
+    _panelScale = scale > 1.0 ? 1.0 : scale;
   }
+
+  /// How many pixels the engine is asked for, as a fraction of composition
+  /// resolution (docs/07 §2.2 item 2, glossary §5).
+  ///
+  /// Full until something says otherwise. Shell-wide rather than per
+  /// composition, and not written down: §2.2 wants it stored per comp in the
+  /// project, alongside a bar dropdown that also offers Third and Auto, and
+  /// neither is built (docs/TODO.md). What *is* built is the thing that
+  /// matters — a real raster reduction that never reaches the export.
+  PreviewResolution previewResolution = PreviewResolution.full;
+
+  /// Choose the preview resolution, and ask for the frame again — the setting
+  /// changes what the *next* frame is made of, so without the ask the picture
+  /// would not change until something else moved.
+  void setPreviewResolution(PreviewResolution resolution) {
+    if (previewResolution == resolution) return;
+    previewResolution = resolution;
+    // The View menu ticks the one in force, so the bar has to be rebuilt.
+    notifyListeners();
+    requestFrame();
+  }
+
+  /// A named magnification the Viewer has been asked to take (docs/07 §2.2).
+  ///
+  /// A notifier for the same reason as [togglePlayRequest]: the magnification
+  /// belongs to the Viewer panel — "fit" cannot be worked out without the
+  /// panel's size — and the shell must not have to reach into a panel that may
+  /// not be mounted. The serial makes two identical requests in a row two
+  /// events rather than one, so pressing Zoom in twice zooms twice.
+  final ValueNotifier<(int, ViewerZoomCommand)?> viewerZoomRequest =
+      ValueNotifier(null);
+
+  int _viewerZoomRequests = 0;
+
+  void requestViewerZoom(ViewerZoomCommand command) =>
+      viewerZoomRequest.value = (++_viewerZoomRequests, command);
 
   /// The armed dropper, or null when the tool is not armed (docs/07 §7).
   ///
@@ -1377,6 +1478,8 @@ class LumitUiState extends ChangeNotifier {
     activePanel.dispose();
     paletteRequest.dispose();
     consoleRequest.dispose();
+    viewerZoomRequest.dispose();
+    panelSearchRequest.dispose();
     super.dispose();
   }
 
@@ -1757,7 +1860,7 @@ class LumitAppNew extends StatelessWidget {
                   child: UiScaleView(
                     scale: uiState.workspace.interface.uiScale,
                     child: Overlay(initialEntries: [
-                      OverlayEntry(builder: (context) => const LumitAppView())
+                      OverlayEntry(builder: (context) => const BootGate())
                     ]),
                   ),
                 ),
@@ -1768,6 +1871,58 @@ class LumitAppNew extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The boot splash, and the shell behind it once boot is over (K-008).
+///
+/// **The splash is the window while it is up**, not a card floating over a
+/// half-built application: the shell is not put in the tree until the splash
+/// has finished, so nothing of the application shows through, no dialogue —
+/// the first-run question above all — can appear underneath it, and no panel
+/// starts asking the engine for pictures nobody can see yet.
+///
+/// The lines it streams are the engine's own boot log: the library version, the
+/// ABI, and what this build was compiled with. That is the only thing the
+/// engine can say about starting up — there is no notice stream to subscribe
+/// to, only `boot_log` (docs/TODO.md) — so it is what the splash shows, and a
+/// build with no bridge at all falls back to the canned list in splash.dart.
+class BootGate extends StatefulWidget {
+  /// Whether to show the splash at all. False in the tests that drive the
+  /// whole shell, which have no boot to wait for and would otherwise spend a
+  /// second and a third of simulated time watching one.
+  final bool splash;
+
+  const BootGate({super.key, this.splash = true});
+
+  @override
+  State<BootGate> createState() => _BootGateState();
+}
+
+class _BootGateState extends State<BootGate> {
+  late bool _booting = widget.splash;
+
+  /// The engine's boot log, or empty where there is no engine to ask — a
+  /// placeholder build, or a widget test with no library loaded. Read once:
+  /// it is a bridge call, and it answers the same thing every time.
+  late final List<String> _lines = _readBootLog();
+
+  static List<String> _readBootLog() {
+    try {
+      return bootLog();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => _booting
+      ? SplashOverlay(
+          lines: _lines,
+          onDone: () {
+            if (mounted) setState(() => _booting = false);
+          },
+        )
+      : const LumitAppView();
 }
 
 class LumitAppView extends StatefulWidget {
@@ -1924,11 +2079,11 @@ class _LumitAppViewState extends State<LumitAppView> {
     // panel is active — the engine falls back to Global itself, so one call
     // answers both. (This handler runs wherever focus is; the active panel is
     // what the dock last fronted, which is what a user would call "where I am".)
-    final action = ui.keymap.actionFor(_contextOf(ui.activePanel.value), event);
+    var action = ui.keymap.actionFor(_contextOf(ui.activePanel.value), event);
     if (action == null) {
-      // The Tools context is the one context no panel *is* (docs/07 §15 scopes
-      // it to the toolbar, not to a pane), so it is asked for separately and
-      // only once the focused panel and the app-wide table have both declined.
+      // The Tools context is a context no panel *is* (docs/07 §15 scopes it to
+      // the toolbar, not to a pane), so it is asked for separately and only
+      // once the focused panel and the app-wide table have both declined.
       // That ordering is what keeps a panel free to claim a letter a tool also
       // uses — `C` cuts a clip in the Timeline and arms the razor everywhere
       // else — without either binding having to know about the other.
@@ -1936,7 +2091,14 @@ class _LumitAppViewState extends State<LumitAppView> {
       if (tool != null && ui.tools.handleAction(tool)) {
         return KeyEventResult.handled;
       }
-      return KeyEventResult.ignored;
+      // **Panels** is the other one, and for the same reason: its three
+      // bindings are about moving *between* panels, so scoping them to one
+      // would make them unreachable from every other. Asked last, so a panel
+      // that binds `Ctrl+F` for itself one day would still win where it is
+      // focused. The engine falls back to Global from here too, which the
+      // first lookup has already covered, so nothing can be dispatched twice.
+      action = ui.keymap.actionFor(BridgeKeyContext.panels, event);
+      if (action == null) return KeyEventResult.ignored;
     }
     // A tool action can also arrive from the primary lookup, if someone rebinds
     // one into a context a panel is. Same handler either way.
@@ -1976,6 +2138,29 @@ class _LumitAppViewState extends State<LumitAppView> {
         } else {
           state.toggleRetime(layer);
         }
+      // The Viewer's own magnification and preview resolution (docs/07 §2.2,
+      // §15). Both are asked for rather than done here: the magnification
+      // belongs to the Viewer panel, and the resolution is a number every
+      // render request already carries.
+      case 'viewer.zoom.in':
+        ui.requestViewerZoom(ViewerZoomCommand.zoomIn);
+      case 'viewer.zoom.out':
+        ui.requestViewerZoom(ViewerZoomCommand.zoomOut);
+      case 'viewer.zoom.fit':
+        ui.requestViewerZoom(ViewerZoomCommand.fit);
+      case 'viewer.res.full':
+        ui.setPreviewResolution(PreviewResolution.full);
+      case 'viewer.res.half':
+        ui.setPreviewResolution(PreviewResolution.half);
+      case 'viewer.res.quarter':
+        ui.setPreviewResolution(PreviewResolution.quarter);
+      // Moving between panels without the mouse (docs/07 §15, "Panels").
+      case 'panel.focus.next':
+        handled = ui.cyclePanelFocus(1);
+      case 'panel.focus.prev':
+        handled = ui.cyclePanelFocus(-1);
+      case 'panel.search.focus':
+        handled = ui.requestPanelSearch();
       case 'console.open':
         // The menu bar owns the console's lists too, so the key asks for it
         // rather than assembling a second one (K-324).

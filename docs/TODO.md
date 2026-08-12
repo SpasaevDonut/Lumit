@@ -27,12 +27,6 @@ These sit above everything else: they are what the editor feels like in the hand
     regression and not a flaky test - and it means the two flare performance
     items below cannot be measured honestly until it is understood. Find which
     stage varies before changing anything.
-- **Take the lens flare's bake off the render thread.** Choosing a lens blocks
-    the picture for about half a second of pure CPU optics (measured, K-263) -
-    the single longest stall the effect has - and the bake is still a closure the
-    render thread runs inside the frame (`lumit-render/src/fxops.rs`, the
-    `Resolved::LensFlare` arm). Run it beside the render and a freeze becomes a
-    wait you can see.
 - **The flare's raster still draws the cells it culled.** After K-263 a batch
     draws exactly its own cells, but a cell the guards kill is still stored and
     still submitted as a degenerate off-screen triangle. Compacting to just the
@@ -67,17 +61,26 @@ These are v1-scope surfaces it does not yet match.
 **Viewer bar ([07-UI-SPEC.md](07-UI-SPEC.md) §2.2):**
 - The wireframe/overlay *menu*; guides menu; region-of-interest;
     background-colour swatch.
-- **The colour-management indicator** (§2.2 item 8) — and it is now owed twice.
-    Exposure and tone mapping (K-314) are built, and §2.2 says the badge is where
-    the Viewer states that the picture is not the export while either is engaged.
-    Until the badge exists the two controls simply draw themselves in the accent
-    while engaged, which is honest but says it only where you are already
-    looking. Building the badge means moving that statement into it.
-- **Tone mapping wants a hint somewhere findable** (owner, 2026-08-08). It is an
-    icon with no label, and its tooltip is the control's *name* because §13.2
-    keeps tooltips to that — so nothing on screen says what the toggle does. The
-    explanation currently exists only in the translator's description and in
-    K-314. Wherever hints of this kind end up living, this is a first candidate.
+- **Preview resolution is a menu row, not yet a bar dropdown** (§2.2 item 2).
+    Full / Half / Quarter work end to end — the View menu, the three chords and
+    the command palette all set the `scale` every render request carries — but
+    the dropdown the bar is supposed to carry is not built, **Third** and
+    **Auto** have no rows, and the choice is shell-wide rather than stored per
+    composition in the project as §2.2 asks.
+- **The colour-management badge is a readout and cannot yet be clicked**
+    (§2.2 item 8). It is built: always on the bar, naming the display
+    transform, and saying the picture is not the export while the exposure or
+    the tone map is engaged (K-314). §2.2 also asks that clicking it open
+    colour settings — there are none to open, so it is plainly not a control
+    rather than a button that does nothing. It names the one built-in transform
+    pair (scene-linear → sRGB) as a constant; when the transform becomes a
+    choice (docs/06 §3.3's OCIO slot) this is the readout that must follow it.
+- **Tone mapping's explanation now lives in the badge's tooltip** and nowhere
+    else on screen (owner, 2026-08-08). The toggle itself is an icon whose own
+    tooltip is its name, because §13.2 keeps tooltips to that; the badge is a
+    readout, which §13.2 does allow a sentence, so that is where "what this
+    does" went. If hints of this kind ever get a home of their own, this is
+    still a candidate to move.
 
 **Toolbar tools ([07-UI-SPEC.md](07-UI-SPEC.md) §1.7):** what is armed is a
 *tool*; what each tool then does is the backlog.
@@ -214,10 +217,6 @@ cache ceiling falls back to the frontend's documented figure on macOS and
 Linux. Wants Metal's `recommendedMaxWorkingSetSize` and the Vulkan adapter's
 device-local heap (K-033).
 
-**Bound keys with nothing behind them.** The **Panels** context's three bindings
-(`panel.focus.next`, `panel.focus.prev`, `panel.search.focus`) have no commands.
-Either build them or drop the bindings.
-
 **Appearance.** The seven built-in schemes still restate every colour
 individually; only the two Timeline tokens default from the mode. Owed after
 K-298: a swatch strip per row **inside** the picker's menu (it previews the
@@ -225,9 +224,11 @@ selection only), and a place to keep themes other than the workspace file, so an
 imported theme travels with the user rather than the machine's settings.
 
 **Shell and onboarding:**
-- **The boot splash is not mounted.** `flutter_ui/lib/shell/splash.dart` exists
-    and only its test imports it. Engine-side events cannot post a notice either:
-    there is no notice stream, only `boot_log`.
+- **The boot splash says only what `boot_log` says.** It is mounted now
+    (`BootGate` in main.dart) and streams the engine's own boot log, which is
+    all the engine can tell it: there is no notice stream to subscribe to, so a
+    module that took a long time coming up, or came up degraded, cannot say so
+    on the splash. Wants an engine-side boot event stream before it can.
 - **Pop-out panel windows are removed** (K-182). Rebuild from git history
     (`flutter-frontend-alternative`, pre-K-182) when pop-out is wanted, and land
     it wired end to end.
@@ -523,12 +524,6 @@ entry above.
     the only coverage of that path.
 
 **Threading / platform:**
-- **Move footage probing off-thread** - synchronous today; needs a probe worker
-    drained on `lumit_bridge_snapshot` plus a synchronous `ensure_probed` fallback
-    for `convert_to_sequenced`, `trim_to_source_end`, `add_footage_layer` and
-    relink. **Beat detection is the same shape** - it runs on the calling thread
-    ([17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md) §Threading) and wants the same
-    worker treatment.
 - **Shared-texture producer/consumer fence** - only if a live run shows tearing;
     verify on the machine first.
 - **Linux packaging** - the Flutter Linux build needs its own packaging when a
@@ -545,10 +540,12 @@ entry above.
     "(Not implemented)" in File/Edit/Composition/Layer/Animation/View/Help is a
     command with a place waiting for it: Close project, History,
     layer settings and the mask/transform/blending/matte/style families, the
-    whole Animation menu, the View menu's zoom/resolution/grid/ruler rows,
-    Trim and Crop comp to work area, Add to export queue and the help links
-    (Check for updates is built — K-296). Delete each mark as the command
-    lands. Suggested chords for the AE-shaped ones are in K-244.
+    whole Animation menu, the View menu's grid/ruler/wireframe/snap rows,
+    Trim and Crop comp to work area, and Add to export queue (Check for
+    updates is built — K-296; so are the View menu's magnification and
+    resolution rows and the Help menu's two documentation links). Delete each
+    mark as the command lands. Suggested chords for the AE-shaped ones are in
+    K-244.
 
 - **A Flatpak remote, so `flatpak update` has something to update from (K-297).**
     Releases ship a single-file `.flatpak` bundle, which installs perfectly well

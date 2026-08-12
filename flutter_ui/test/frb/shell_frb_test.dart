@@ -8,8 +8,10 @@ import 'dart:io';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/shell/cache_confirm_frb.dart';
 import 'package:lumit_flutter/shell/command_palette_frb.dart';
+import 'package:lumit_flutter/shell/splash.dart' show bootLines;
 import 'package:lumit_flutter/shell/export_dialog_frb.dart';
 import 'package:lumit_flutter/shell/recovery_dialog_frb.dart';
 import 'package:lumit_flutter/shell/settings_window_frb.dart';
@@ -653,6 +655,54 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey('export-close')));
       await tester.pumpAndSettle();
+    });
+  }, skip: !engineAvailable);
+
+  /// The boot splash is the window until boot ends (K-008): the shell must not
+  /// be in the tree behind it, or the first-run question would open underneath
+  /// a screen nothing can be clicked through.
+  group('The boot splash', () {
+    testWidgets('is the whole window, and hands over to the shell',
+        (tester) async {
+      tester.view.physicalSize = const Size(1800, 1100);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final p = freshProject();
+      await tester.pumpWidget(hostPanel(
+        child: const BootGate(),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(find.text('Lumit'), findsOneWidget, reason: 'the splash is up');
+      expect(find.byType(LumitAppView), findsNothing,
+          reason: 'and nothing of the application is behind it');
+      // The engine's own first line, not the canned fallback: with a bridge
+      // loaded the log is what the splash streams.
+      expect(find.text(bootLines.first), findsNothing);
+      expect(find.text(bootLog().first), findsOneWidget);
+
+      await tester.pumpAndSettle();
+      expect(find.byType(LumitAppView), findsOneWidget,
+          reason: 'boot over, the shell takes the window');
+    });
+
+    testWidgets('can be stood down, for the tests that drive the shell',
+        (tester) async {
+      tester.view.physicalSize = const Size(1800, 1100);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final p = freshProject();
+      await tester.pumpWidget(hostPanel(
+        child: const BootGate(splash: false),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+      expect(find.byType(LumitAppView), findsOneWidget);
     });
   }, skip: !engineAvailable);
 }

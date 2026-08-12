@@ -67,9 +67,10 @@ impl MediaCache {
 }
 /// Decode one footage frame to tightly-packed RGBA8 (`media` feature only).
 /// `None` on any failure (missing file, unreadable, frame index empty). Rebuilds
-/// nothing it can load: it loads the cached frame index when present, else builds
-/// (and caches) it, then opens a decoder for this one call — synchronous, and
-/// not yet pooled across calls (a later phase caches decoders per item).
+/// nothing it can load: the frame index comes from the engine's one sidecar-cache
+/// helper ([`lumit_render::media_index`]), the same one the probe and the Viewer's
+/// decode use, then a decoder is opened for this one call — synchronous, and not
+/// yet pooled across calls (a later phase caches decoders per item).
 #[cfg(feature = "media")]
 pub(crate) fn decode_frame(
     path: &std::path::Path,
@@ -78,7 +79,7 @@ pub(crate) fn decode_frame(
     if !path.is_file() {
         return None;
     }
-    let index = load_or_build_index(path)?;
+    let index = lumit_render::media_index::load_or_build_index(path).ok()?;
     let mut decoder = lumit_media::VideoDecoder::open(path, index).ok()?;
     let count = decoder.frame_count();
     if count == 0 {
@@ -214,21 +215,4 @@ fn downscale_to_max_edge(sw: u32, sh: u32, src: &[u8], max_edge: u32) -> (u32, u
         }
     }
     (dw, dh, out)
-}
-
-/// Load the cached frame index for `path` if one matches, else build it and try
-/// to cache it. `None` when the index cannot be built (unreadable/truncated).
-#[cfg(feature = "media")]
-fn load_or_build_index(path: &std::path::Path) -> Option<lumit_media::FrameIndex> {
-    let cache_dir = lumit_project::media_index_dir();
-    if let (Some(dir), Ok(fp)) = (&cache_dir, lumit_media::Fingerprint::of(path)) {
-        if let Some(index) = lumit_media::FrameIndex::load_cached(dir, &fp) {
-            return Some(index);
-        }
-    }
-    let index = lumit_media::index::build_frame_index(path).ok()?;
-    if let Some(dir) = &cache_dir {
-        let _ = index.save_to(dir);
-    }
-    Some(index)
 }

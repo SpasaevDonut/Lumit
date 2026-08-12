@@ -48,6 +48,15 @@ Runs as a background job on import or on demand per audio item; 3-minute track �
 ms of FFTs — do not stream/incrementalise, just compute whole. Cache envelope + markers in
 the sidecar `peaks/` alongside waveform data, keyed by media fingerprint + parameters.
 
+**Where it runs (shipped).** `lumit-bridge::beats` is the worker: one dedicated thread,
+one analysis at a time, jobs stamped with a generation so closing a project drops the
+ones queued for it, and an inline fallback when there is no worker to hand a job to. The
+mixdown is the expensive half (it decodes every audible source) and runs there too. The
+worker answers **times and confidences**; `CompositionReference::detect_beats` mints the
+marker ids afterwards, which is what keeps §5.4's determinism claim about the analysis
+rather than about freshly generated uuids. The fingerprint-keyed sidecar cache above is
+still owed.
+
 ## 5. Test plan
 
 1. Synthetic clicks at 120 BPM ± jitter over noise: recall ≥ 0.98, precision ≥ 0.98,

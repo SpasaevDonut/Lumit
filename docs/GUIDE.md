@@ -1532,6 +1532,20 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   scrubbing can land on exactly the right frame. Indexing runs on a background thread
   (the UI never waits) and the result is cached on disk, keyed by a *fingerprint* of the
   file's content — change the file and the stale index is ignored automatically.
+- `crates/lumit-render/src/media_index.rs` — **the one place that decides whether to scan.**
+  That frame index costs seconds on a long clip, and it depends on nothing but the file's
+  bytes, so it is worked out once and parked in a small sidecar file in Lumit's cache
+  folder, named after the fingerprint. Everything that opens a decoder asks *this* helper
+  for the index — the probe that fills the Project panel, the Viewer's decode, the
+  decode-ahead thread, the thumbnails — so the sidecar one of them writes is the sidecar
+  the others read, and the second time you open a project nothing is scanned at all. It
+  had to be one shared helper: the probe used to warm the cache and the decoder used to
+  ignore it, which is why the first preview frame of a session used to sit there thinking
+  for a few seconds on every clip. If the file has changed since, the fingerprint no
+  longer matches and the index is rebuilt rather than believed; if the sidecar is corrupt,
+  or the cache folder is not writable, or the machine has nowhere to put it, everything
+  still works — it simply scans, like it did before the cache existed. The folder is
+  always safe to delete.
 - `crates/lumit-gpu/` — **the colour foundation.** All engine maths happens on
   "light-linear" values (where adding two lights behaves like real light); files and
   screens use sRGB encoding. This crate owns the only two crossings between those worlds
@@ -3441,6 +3455,25 @@ crates. Dart displays values and forwards calls; when something has to be
 | `docs/17-BRIDGE-CONTRACT.md` | The normative front/back boundary. Read it before touching the seam |
 | `docs/archive/flutter-port/` | Frozen notes from the port itself |
 
+### The first second: the boot splash
+
+Lumit opens on a small centred card that lists what came up, then gives way to
+the application. `BootGate` in `main.dart` is the switch, and the rule it keeps
+is that **the splash is the window while it is up** — the shell is not put in
+the tree behind it at all. That is not fussiness about appearances: if the shell
+were built underneath, the first-run question would open on top of a screen you
+cannot click through, and every panel would start asking the engine for pictures
+nobody can see yet.
+
+The lines it streams are not invented. They are the engine's own boot log — the
+library version, the ABI it speaks, what this build was compiled with — read
+once through `bootLog()`. That is genuinely everything the engine can say about
+starting up: there is no stream of boot events to subscribe to, so the splash
+cannot report a module that took its time or came up degraded. Noted in
+`docs/TODO.md` as the thing that would need building first. A build with no
+engine behind it at all falls back to a canned list, so the placeholder still
+opens on something honest rather than a blank rectangle.
+
 ### The bridge
 
 `crates/lumit-bridge` builds to one shared library the app loads at startup. It
@@ -3466,6 +3499,166 @@ Two promises hold at the seam: a panic inside Rust is caught and returned as an
 ordinary error rather than crashing Dart (CI's `no-panics-in-frb-api` job greps
 for the shortcuts that would break this), and a call that takes a handle *by
 value* empties the Dart side — never keep one you have handed over.
+
+### Reading what a file is, without stopping the editor
+
+Before Lumit can put a clip in a composition it has to know some plain facts about
+it: how big the picture is, how fast it runs, how long it lasts, whether it has
+sound. Finding out is called **probing**, and it is not a decode — it is opening
+the file far enough to read the label. It is still a file being opened, though,
+and off a slow drive or a network share that takes long enough to feel.
+
+It used to be felt, because it happened *while you waited*. Dropping footage into
+a composition asked the file its size and length on the very thread the interface
+was calling on, so the editor stopped until the answer came back.
+
+`crates/lumit-bridge/src/probe.rs` is the fix, and it has two halves:
+
+- **A worker thread that reads ahead.** Importing a file, opening a project or
+  relinking one says "this file will be asked about soon" and carries on
+  immediately. The worker opens each file in the background and writes what it
+  finds into a small shared notebook.
+- **A fallback that never guesses.** When something genuinely needs the answer
+  now — placing a layer, which has to know the media's real length — it looks in
+  the notebook, and if the answer is not there yet it reads the file itself,
+  there and then. That is the important half: the worker makes the answer *fast*,
+  it never changes what the answer *is*. A file nobody warmed gives exactly the
+  same layer as a file that was.
+
+The notebook entry is filed under the file's own size and modification time, so
+an answer can only ever be read back for the file it was taken from. Replace the
+file, move it, delete it, relink to a different one, and the entry no longer
+matches: it is read again. That is what lets the Project panel keep asking "is
+this media still there" honestly while paying for the real question only once.
+It is bounded (a few hundred files) and emptied when a project closes, which also
+cancels anything the worker still had queued for the project that is going away —
+the same "check whether your work is still wanted" habit the rest of the engine
+has.
+
+There is nothing to poll and nothing to drain. Every panel that shows a fact
+about a footage file already asks for it when it draws; the worker only decides
+whether that question costs a file open or a look-up.
+
+### The renderer only opens the files the picture needs
+
+The renderer does its own probing, and it is a heavier one than the Project
+panel's: as well as the file's label it wants the file's **frame index** — the
+table that says which byte in the file each frame starts at, which is what makes
+scrubbing land on exactly the frame you asked for. Building that table for a
+file it has never seen means reading the whole file through once. It is cached
+on disk afterwards, so it is paid once per file, ever — but the first time is
+seconds on a long clip, and it happens before any pixels appear.
+
+It used to do this for **every footage item in the Project panel**, before the
+first frame of any composition. A project with forty clips in it opened all
+forty files before showing you the first frame of one of them, and — the part
+that gave the game away — making a brand new, completely empty composition made
+you wait for all forty too, in order to show you nothing.
+
+The fix is to ask a smaller question. Before a frame is made, the renderer works
+out which footage items *this* composition can actually put on screen:
+
+- the footage its own layers name;
+- the footage named by the clips on its Sequence layers;
+- and then the same question again for every composition it nests — through a
+  Precomp layer, or through a clip whose source is a comp — following the chain
+  as deep as it goes.
+
+Everything else in the project is left shut. An empty comp opens nothing at all.
+
+Two details make this safe rather than merely quick. The walk ignores whether a
+layer is switched visible and whether the playhead is inside it, because a hidden
+layer is one click from being shown and the answer must not wobble as the
+playhead moves. And what has been probed *stays* probed — the results live in one
+notebook per session, keyed by item — so switching between two comps that share a
+clip does not open it twice, and each composition's first frame only pays for
+what it adds.
+
+The interlock that keeps the cache honest is untouched. A frame can only be given
+a name (and therefore banked) once every source it shows is known; a source the
+renderer has not looked at yet leaves the frame unnameable, so it is drawn live
+and filed nowhere rather than filed under a name that might be wrong. Since the
+probing now covers exactly what the comp can show, the frame is nameable exactly
+when it was before.
+
+The walk itself lives in `lumit-core` (`comp_footage_items`), not in the
+renderer, because "which files can this comp want" is a question about the
+document rather than about pixels — the same question the background probe worker
+above would need to ask if it ever wanted to warm the files for the comp you are
+about to open, rather than every file you import.
+
+### Finding the beat, without stopping everything else
+
+Beat detection is the same story one size up. Asking a composition where its
+beats are means mixing all of its audio down — which decodes every sound file it
+holds — and then analysing the result. On a long comp that is seconds.
+
+It never ran on the thread that draws the interface, so it was not a freeze in
+the obvious sense. But it did run on a small **pool** of threads that the bridge
+keeps for anything slow, and that pool is shared: it is also how the Project
+panel fetches thumbnails, how a layer finds out whether its source has sound,
+how the footage panel reads a file's statistics. Two or three detections at once
+could occupy the whole pool for seconds, and every panel waiting behind them
+stopped. Nothing cancelled, either — closing the project left the analysis
+running.
+
+`crates/lumit-bridge/src/beats.rs` gives detection a thread of its own, built
+the same way as the probe worker: requests queue and run one at a time, the
+caller waits for its own answer (so the button still reports how many markers it
+placed), each job remembers which project it was asked for, and closing that
+project makes the worker drop it instead of analysing music nobody has open. If
+the thread cannot be started at all, the caller simply does the work itself —
+the worker chooses where the work happens, never what the answer is.
+
+One detail worth knowing, because it is what keeps the promise testable: the
+worker answers with *times and confidences*, not with finished markers. Markers
+carry identifiers, and a fresh identifier is different every time by design, so
+a marker list can never be compared with a marker list. Times and confidences
+can — and "the same audio at the same sensitivity finds the same beats" is
+exactly the promise that moving work between threads must not break.
+
+### The half-second the lens picker used to cost
+
+The Lens flare effect simulates a real camera lens: the ghosts are traced through an actual
+glass prescription, and the starburst is a Fourier transform of the iris. Most of that
+happens on the graphics card every frame, and it is fast. One part does not: the **bake** —
+working out the lens's ghost pairs, its starburst sprite and its exposure — is heavy
+maths on the ordinary processor, about half a second for a complicated lens. It only has to
+happen once per lens, and the result is kept, so trying lenses you have already seen is
+instant.
+
+The first time, though, it used to happen *inside the frame*, on the same thread that draws
+the picture. So choosing a lens from the picker stopped the Viewer dead for half a second,
+every time you tried one you had not tried before.
+
+It now runs on a **thread of its own, beside the frame**. Pick a lens, and the frame you are
+looking at carries on showing the lens you had — the picture keeps moving, keeps
+scrubbing, keeps responding — while the optics are worked out next door. The moment they
+are ready the frame is made again with the new lens and the Viewer catches up on its own.
+A freeze became a wait you can watch.
+
+Two things had to be true for that to be safe, and they are the interesting part.
+
+**An export must never be provisional.** A frame with the wrong lens in it is a disaster in
+a file you are delivering. So the "bake beside the frame" behaviour is *off* unless
+something switches it on, and only the Viewer switches it on. The exporter builds its own
+renderer, and nobody switches it on there — so the safe behaviour is what you get by
+forgetting, rather than something you have to remember.
+
+**A frame with the old lens in it must not be filed under the new lens's name.** Lumit
+names every finished frame by a fingerprint of *what is in it* (that is what lets an undo
+find its frames still waiting). A frame drawn with the previous lens but named for the new
+one would be a permanent lie: nothing you did afterwards — no edit, no undo — would ever
+clear it, because nothing would know it was wrong. So while a lens is baking, frames are
+simply **not named at all**. They are drawn and shown and thrown away, exactly as frames
+are while footage is still being read. It costs a re-render; it cannot cost a wrong picture
+that never goes away.
+
+There is one more rule, and it is about not wasting the half-second. If you drag the
+aperture slider, every position asks for a different bake. Only the last one is worth
+computing, so the bake thread takes everything waiting, keeps the newest, and drops the
+rest before they start — the same "is my work still wanted" habit the rest of the engine
+has.
 
 ### How the picture reaches the screen
 
@@ -3547,6 +3740,18 @@ ever sets a view on it.
 Both are per composition and are remembered in the session (above), so a comp
 reopens looking how you left it, and neither is an edit: Ctrl+Z will not undo an
 exposure nudge and setting one does not make the project dirty.
+
+**And the Viewer says so, in one place.** The **colour-management badge** on the
+bar always names the display transform the picture is being shown through —
+scene-linear to sRGB, the one built-in pair today — and while either of those
+two controls is engaged it reads "· preview" instead, in the accent. The two
+controls do light up while they are on, but that only says *this control is on*,
+and only where you are already looking; the sentence that matters is "what you
+are watching is not what the export will be", and it belongs somewhere you can
+read without leaving the picture. Its tooltip is also, for the moment, the only
+place on screen that says what tone mapping actually does — an icon's own
+tooltip is its name and nothing more, which is a rule, and a readout is allowed
+a sentence, which is the exception this fits through.
 
 The cache had to be told about them, and the answer is that **a look is part of
 the frame's name** (K-346). Remember that a banked frame is the finished
@@ -4028,6 +4233,72 @@ change.
 
 The graph editor and the Project panel's thumbnails still cut rather than fly.
 They are the same job, and the shared piece is written.
+
+### Magnification and preview resolution are two different things
+
+Both sound like "zoom", and confusing them is how a viewer ends up lying to
+you. `flutter_ui/lib/state/viewer_view.dart` is where the two words are kept
+apart.
+
+**Magnification** is how big the picture is *drawn*. Zooming to 400% does not
+ask the engine for a single extra pixel — it takes the frame that arrived and
+draws it four times the size. That is deliberate: if zooming out lowered the
+resolution, every frame already banked in the cache would be worthless the
+moment you leaned back to see more of the composition, and every frame would
+have to be made again on the way in.
+
+**Preview resolution** is the opposite: it changes what the engine is asked to
+make. Half renders a quarter of the pixels (half the width *and* half the
+height), so a heavy composition previews four times cheaper and looks
+correspondingly softer. It is the honest trade you reach for while working on
+something slow, and it can never reach the export — the export builds its own
+renderer and is never told about it.
+
+Two small pieces of plumbing make this work without the shell reaching into a
+panel that may not even be on screen:
+
+- **The magnification is asked for, not set.** *Fit* is a rule ("the whole
+  picture in the panel"), not a number, and only the Viewer knows its own size —
+  so View ▸ Fit, `Shift+/` and the command palette all bump a request that the
+  Viewer answers if it is mounted, and nothing at all happens if it is not. The
+  request carries a running number so pressing Zoom in twice is two events
+  rather than one; a plain "the value is still zoomIn" would be no change at
+  all and the second press would be swallowed.
+- **The scale the engine is asked for is a multiplication.** The panel measures
+  itself and reports the scale its size implies; the preview resolution is a
+  fraction on top of that. `LumitUiState.viewerScale` multiplies the two on
+  every read, which means a change to either is in force on the very next
+  render request and there is no third number to keep in step with the other
+  two.
+
+### Moving between panels without the mouse
+
+`Ctrl+F6` moves the focus ring on to the next panel, `Ctrl+Shift+F6` back, and
+`Ctrl+F` puts the cursor in the focused panel's search box. Three small things,
+and two of the details in them are worth knowing.
+
+**The ring walks the arrangement, not a list of panels.** The order is the one
+the dock tree is visited in — roughly left to right and top to bottom — so a
+panel you have closed is simply not in the cycle, and rearranging the workspace
+rearranges the ring with it. A panel sitting behind a tab is brought to the
+front as the ring reaches it, because a focus ring on something nobody can see
+is a keystroke that appears to have done nothing.
+
+**The search chord asks rather than reaches.** The field belongs to whichever
+panel is focused, and the shell has no business reaching into a panel — so
+`Ctrl+F` bumps a request, and each panel that owns a search box listens and
+answers only when it is the focused one. That is what makes it impossible for
+one keystroke to focus two fields, and it means the chord is a quiet no-op in
+the six panels that have no search box rather than doing something arbitrary.
+
+There was a third thing to fix before either could work at all. Lumit asks the
+engine what a chord means *in the focused panel's context* — and the keymap's
+"Panels" context is one that no panel actually **is**, since its whole subject
+is moving *between* panels. So the lookup never asked for it and the three
+bindings were unreachable by construction. The keyboard now asks the Panels
+context after the focused panel and the app-wide table have both declined,
+which is exactly what it already did for the toolbar's "Tools" context, and for
+the same reason.
 
 ### What is remembered, and where
 
@@ -4929,14 +5200,24 @@ Crowdin, the site the translators work on, and editing one of those in this repo
 achieves nothing — the next sync writes over it. So a wrong translation is fixed
 on Crowdin, and so is anything about *which* languages exist.
 
-One trap is worth knowing, because it stopped the build once (K-311). Each of
+One trap is worth knowing, because it stopped the build twice (K-311). Each of
 those files names its own language twice: once in its file name, and once in a
 key inside it called `@@locale`. Flutter refuses to build if the two disagree,
 and Crowdin fills that key in with its own spelling of the language — "zh-CN"
-where Flutter wants "zh". The cure is a setting on Crowdin rather than an edit
-here, and `test/l10n/arb_test.dart` now compares the two on every run, so if it
-happens again the failure says which file and what to do about it, instead of the
+where Flutter wants "zh". `test/l10n/arb_test.dart` compares the two on every
+run, so the failure says which file and what to do about it rather than the
 whole build stopping with an error about locales.
+
+The cure was supposed to be a setting on Crowdin. It is not: Crowdin's language
+mapping renames the *file* — which works, and is why the file is called
+app_zh.arb at all — but the value written *inside* it comes from somewhere the
+mapping does not reach, and every sync has written "zh-CN" regardless. So the
+repair is automatic now. Crowdin pushes to a branch of its own, and a small job
+(`.github/workflows/translation-locale.yml`) meets it there, puts each
+`@@locale` back to whatever the file name says, and pushes the result on. By the
+time anybody sees a translation pull request the names agree. Nothing else in
+those files is touched — the words are the translators', and a locale name is
+bookkeeping.
 ### A text layer that says whatever the expression works out
 
 Until now a text layer said one fixed thing. You typed some words, and those
@@ -5151,3 +5432,19 @@ crate, no Flutter code and no test reaches into them, so a change to either
 site can never break a build of Lumit itself, nor the other way round. The
 practical details — running one locally, how deployment to Cloudflare works,
 and the traps in it — are in `web/README.md`.
+
+**Help ▸ Lumit help and Help ▸ Lumit online guides open the docs site**, and
+that is the one thread between the application and either site.
+`flutter_ui/lib/state/external_links.dart` holds the two addresses and one
+launcher: Lumit has no browser of its own and hands the address to the desktop
+— `rundll32 url.dll,FileProtocolHandler` on Windows, `open` on macOS,
+`xdg-open` elsewhere — exactly as the updater already does when it reveals a
+downloaded file. Nothing goes through a command shell (the URL is one argument
+of a program, never part of a line to be parsed), the scheme is checked so only
+`http` and `https` are ever handed over, and a machine that refuses gets a line
+in the status strip rather than a menu row that silently does nothing.
+
+Both rows point at pages, not sections. The docs site's sidebar headings are
+generated from folders and have no page of their own, so a link to `/use/`
+would be a 404 — "online guides" therefore goes to the first-composition
+walkthrough, which is where somebody asking for guides wanted to end up.

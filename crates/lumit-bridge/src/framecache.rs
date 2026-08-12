@@ -223,33 +223,38 @@ fn with_cache<R>(f: impl FnOnce(&mut Cache) -> R) -> R {
     f(&mut guard)
 }
 
-/// Serve `key` from the cache, or render it with `render` and bank the result.
-/// The cache lock is **dropped** across `render` (it never wraps GPU/FFI work —
-/// docs/14 §"no locks across GPU"): a hit returns under the lock; a miss
-/// releases it, renders, then re-locks to insert. A superseded render for the
-/// same key simply overwrites, which is harmless — the key names the content, so
-/// the pixels are identical. `render` is called at most once per genuine miss,
-/// so a re-scrubbed frame never re-renders (proven by the module tests' render
-/// counter).
+/// This frame's held RGBA bytes, if the memory tier has them.
 ///
-/// The rendered bytes are RGBA: this is the CPU path, which is the Scopes' and
-/// never the zero-copy Viewer's.
-pub(crate) fn get_or_render(
+/// A hit returns under the cache lock and the lock is let go before anything
+/// else happens; the lock never wraps GPU or FFI work (docs/14 §"no locks
+/// across GPU").
+///
+/// Reading and banking are two calls rather than one `get_or_render` because
+/// the decision to bank cannot always be made until *after* the render: a frame
+/// drawn while a Lens flare's bake was still being made is of the previous lens
+/// (K-350), and only the render itself can say whether that happened. The key
+/// names the content, so a superseded render for the same key simply overwrites
+/// with identical pixels.
+pub(crate) fn get(key: FrameKey) -> Option<(u32, u32, Vec<u8>)> {
+    with_cache(|c| c.get(&key))
+}
+
+/// Bank a freshly rendered frame under its content name — the other half of
+/// [`get`].
+pub(crate) fn put_rendered(
     key: FrameKey,
     provenance: Provenance,
-    render: impl FnOnce() -> Option<(u32, u32, Vec<u8>)>,
-) -> Option<(u32, u32, Vec<u8>)> {
-    if let Some(hit) = with_cache(|c| c.get(&key)) {
-        return Some(hit);
-    }
-    let (width, height, bytes) = render()?;
+    width: u32,
+    height: u32,
+    bytes: &[u8],
+) {
     with_cache(|c| {
         c.put(
             key,
             Entry {
                 width,
                 height,
-                bytes: Arc::new(bytes.clone()),
+                bytes: Arc::new(bytes.to_vec()),
                 bgra: false,
                 cost_ms: 1,
                 provenance,
@@ -257,7 +262,6 @@ pub(crate) fn get_or_render(
             },
         );
     });
-    Some((width, height, bytes))
 }
 
 /// File a frame the demotion ladder brought down off the graphics card

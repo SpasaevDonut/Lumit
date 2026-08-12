@@ -1253,6 +1253,92 @@ pub fn parenting_would_cycle(comp: &Composition, layer: Uuid, new_parent: Uuid) 
     new_parent == layer || layer_parent_chain(comp, new_parent).contains(&layer)
 }
 
+/// Every footage item composition `comp` can put on screen: its own Footage
+/// layers, the footage its Sequence layers' clips name, and — transitively —
+/// everything the compositions it nests can show, whether they are reached
+/// through a Precomp layer or through a comp-sourced clip.
+///
+/// # In plain terms
+///
+/// "If I open this comp, which files on disk might it want?" A project's
+/// Project panel can hold hundreds of items a given comp never touches, so
+/// answering this before opening anything is what lets the renderer look at
+/// only the files that can actually appear. An empty comp answers "none".
+///
+/// Layers are walked whatever their switches and in/out points say: a hidden
+/// layer, or one the playhead is not inside, is still something this comp can
+/// show a moment later, and the answer must not wobble with the playhead.
+/// Nesting cycles terminate (a comp is walked at most once), a Precomp layer
+/// naming a comp that no longer exists is skipped rather than an error, and
+/// every id appears exactly once, in walk order — the same document always
+/// gives the same list.
+#[must_use]
+pub fn comp_footage_items(doc: &Document, comp: &Composition) -> Vec<Uuid> {
+    let mut found: Vec<Uuid> = Vec::new();
+    let mut walked: Vec<Uuid> = vec![comp.id];
+    collect_comp_footage(doc, comp, &mut found, &mut walked);
+    found
+}
+
+/// One comp's contribution to [`comp_footage_items`], plus the descent into the
+/// comps it names. `walked` holds every comp already collected, so a comp
+/// reached twice (a diamond) costs one walk and a cycle terminates.
+fn collect_comp_footage(
+    doc: &Document,
+    comp: &Composition,
+    found: &mut Vec<Uuid>,
+    walked: &mut Vec<Uuid>,
+) {
+    for layer in &comp.layers {
+        match &layer.kind {
+            LayerKind::Footage { item } => {
+                if !found.contains(item) {
+                    found.push(*item);
+                }
+            }
+            LayerKind::Precomp { comp: nested } => {
+                descend_into_comp(doc, *nested, found, walked);
+            }
+            LayerKind::Sequence { clips } => {
+                for clip in clips {
+                    match clip.source {
+                        crate::sequence::ClipSource::Footage(item) => {
+                            if !found.contains(&item) {
+                                found.push(item);
+                            }
+                        }
+                        crate::sequence::ClipSource::Comp(nested) => {
+                            descend_into_comp(doc, nested, found, walked);
+                        }
+                    }
+                }
+            }
+            // No media source of their own: a solid is a colour, text and
+            // shapes are drawn, a camera is a viewpoint, an adjustment layer
+            // works on the composite below it, a null draws nothing.
+            LayerKind::Solid { .. }
+            | LayerKind::Text { .. }
+            | LayerKind::Shape { .. }
+            | LayerKind::Camera { .. }
+            | LayerKind::Adjustment
+            | LayerKind::Null => {}
+        }
+    }
+}
+
+/// Walk nested comp `id` for [`comp_footage_items`], unless it has been walked
+/// already (a diamond) or is not in the document (a dangling reference).
+fn descend_into_comp(doc: &Document, id: Uuid, found: &mut Vec<Uuid>, walked: &mut Vec<Uuid>) {
+    if walked.contains(&id) {
+        return;
+    }
+    let Some(nested) = doc.comp(id) else {
+        return;
+    };
+    walked.push(id);
+    collect_comp_footage(doc, nested, found, walked);
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ProjectItem {
     Footage(FootageItem),
@@ -2197,6 +2283,187 @@ mod tests {
             parent: Some(Uuid::now_v7()),
         };
         assert_eq!(apply(&mut doc, &unknown), Err(OpError::InvalidParent));
+    }
+
+    /// An empty composition of the given size, for the footage-reference walk.
+    fn bare_comp(name: &str) -> Composition {
+        Composition {
+            id: Uuid::now_v7(),
+            name: name.into(),
+            width: 64,
+            height: 64,
+            frame_rate: FrameRate::new(25, 1).unwrap(),
+            duration: Duration(Rational::new(4, 1).unwrap()),
+            background: LinearColour([0.0, 0.0, 0.0, 1.0]),
+            work_area: None,
+            layers: Vec::new(),
+            markers: Vec::new(),
+            motion_blur: Default::default(),
+            extra: serde_json::Map::new(),
+        }
+    }
+
+    /// One layer of `kind`, in span for the comp's whole length.
+    fn bare_layer(kind: LayerKind) -> Layer {
+        Layer {
+            markers: Vec::new(),
+            id: Uuid::now_v7(),
+            name: "layer".into(),
+            kind,
+            in_point: secs(0),
+            out_point: secs(4),
+            start_offset: secs(0),
+            transform: TransformGroup::default(),
+            matte: None,
+            parent: None,
+            label: 0,
+            volume_db: crate::anim::Property::zero(),
+            retime: None,
+            interpolation: Default::default(),
+            blend: BlendMode::Normal,
+            masks: Vec::new(),
+            paint: Vec::new(),
+            effects: Vec::new(),
+            switches: Switches::default(),
+            extra: serde_json::Map::new(),
+        }
+    }
+
+    /// The footage-reference walk answers with what the comp can show and
+    /// nothing else: a comp with no layers names no footage however full the
+    /// project is, a comp names only its own sources, and footage reachable
+    /// only through a Precomp layer or a comp-sourced clip is still named.
+    ///
+    /// This is the walk the renderer probes by (`HeadlessRenderer::sync_items`),
+    /// so "names nothing" is what stops an empty comp opening every file in the
+    /// project before it can show its first frame.
+    #[test]
+    fn the_footage_walk_names_what_the_comp_can_show_and_no_more() {
+        let (a, b, c, unused) = (
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+        );
+        let mut doc = Document::new();
+
+        // Deepest first: `inner` shows `c` only.
+        let mut inner = bare_comp("inner");
+        inner
+            .layers
+            .push(bare_layer(LayerKind::Footage { item: c }));
+        let inner_id = inner.id;
+
+        // `middle` reaches `c` through a Precomp layer and shows `b` itself,
+        // on a hidden layer — hidden today is visible after one click, and the
+        // answer must not depend on a switch.
+        let mut middle = bare_comp("middle");
+        middle
+            .layers
+            .push(bare_layer(LayerKind::Precomp { comp: inner_id }));
+        let mut hidden = bare_layer(LayerKind::Footage { item: b });
+        hidden.switches.visible = false;
+        middle.layers.push(hidden);
+        let middle_id = middle.id;
+
+        // `outer` shows `a` on a Sequence clip and nests `middle` twice — the
+        // diamond a cycle guard must survive without repeating an id.
+        let mut outer = bare_comp("outer");
+        outer.layers.push(bare_layer(LayerKind::Sequence {
+            clips: vec![crate::sequence::Clip::new(
+                crate::sequence::ClipSource::Footage(a),
+                Rational::new(0, 1).unwrap(),
+                Rational::new(2, 1).unwrap(),
+                Rational::new(0, 1).unwrap(),
+                Rational::new(2, 1).unwrap(),
+            )],
+        }));
+        outer
+            .layers
+            .push(bare_layer(LayerKind::Precomp { comp: middle_id }));
+        outer
+            .layers
+            .push(bare_layer(LayerKind::Precomp { comp: middle_id }));
+        let outer_id = outer.id;
+
+        // A comp nobody nests, showing an item nobody else does.
+        let mut orphan = bare_comp("orphan");
+        orphan
+            .layers
+            .push(bare_layer(LayerKind::Footage { item: unused }));
+        let orphan_id = orphan.id;
+
+        let empty = bare_comp("empty");
+        let empty_id = empty.id;
+
+        for comp in [inner, middle, outer, orphan, empty] {
+            doc.items.push(ProjectItem::Composition(comp));
+        }
+
+        let named = |id: Uuid| comp_footage_items(&doc, doc.comp(id).unwrap());
+
+        assert!(
+            named(empty_id).is_empty(),
+            "an empty comp can show nothing, however much the project holds"
+        );
+        assert_eq!(named(inner_id), vec![c]);
+        assert_eq!(
+            named(middle_id),
+            vec![c, b],
+            "a hidden layer's footage counts, and the Precomp's comes first"
+        );
+        assert_eq!(
+            named(outer_id),
+            vec![a, c, b],
+            "a clip's source, then everything the nested comps reach, once each"
+        );
+        assert_eq!(named(orphan_id), vec![unused]);
+        for id in [inner_id, middle_id, outer_id, empty_id] {
+            assert!(
+                !named(id).contains(&unused),
+                "footage only another comp shows must never be named"
+            );
+        }
+    }
+
+    /// A Precomp cycle terminates, and a Precomp layer naming a comp that is
+    /// not in the document is skipped rather than being an error.
+    #[test]
+    fn the_footage_walk_survives_a_cycle_and_a_dangling_precomp() {
+        let item = Uuid::now_v7();
+        let mut doc = Document::new();
+
+        let mut one = bare_comp("one");
+        let mut two = bare_comp("two");
+        let (one_id, two_id) = (one.id, two.id);
+        one.layers
+            .push(bare_layer(LayerKind::Precomp { comp: two_id }));
+        one.layers.push(bare_layer(LayerKind::Footage { item }));
+        two.layers
+            .push(bare_layer(LayerKind::Precomp { comp: one_id }));
+        two.layers.push(bare_layer(LayerKind::Precomp {
+            comp: Uuid::now_v7(),
+        }));
+        two.layers.push(bare_layer(LayerKind::Sequence {
+            clips: vec![crate::sequence::Clip::new(
+                crate::sequence::ClipSource::Comp(one_id),
+                Rational::new(0, 1).unwrap(),
+                Rational::new(2, 1).unwrap(),
+                Rational::new(0, 1).unwrap(),
+                Rational::new(2, 1).unwrap(),
+            )],
+        }));
+        doc.items.push(ProjectItem::Composition(one));
+        doc.items.push(ProjectItem::Composition(two));
+
+        assert_eq!(
+            comp_footage_items(&doc, doc.comp(one_id).unwrap()),
+            vec![item]
+        );
+        assert_eq!(
+            comp_footage_items(&doc, doc.comp(two_id).unwrap()),
+            vec![item]
+        );
     }
 
     #[test]

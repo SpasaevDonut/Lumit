@@ -20,6 +20,7 @@ import 'package:provider/provider.dart';
 import '../icons/icons.dart';
 import '../l10n/engine_labels.dart';
 import '../l10n/strings.dart';
+import '../state/dock.dart' show Panel;
 import '../theme/theme.dart';
 import '../state/drag_payloads.dart';
 import '../state/file_dialogs.dart';
@@ -43,6 +44,14 @@ class EffectsPresetsPanelFrb extends StatefulWidget {
 class _EffectsPresetsPanelFrbState extends State<EffectsPresetsPanelFrb> {
   final TextEditingController _search = TextEditingController();
 
+  /// The search field's focus, owned here so `Ctrl+F` can put the cursor in it
+  /// (docs/07 §15, "Panels").
+  final FocusNode _searchFocus = FocusNode();
+
+  /// The shell state this panel is listening to, so the listener comes off the
+  /// same object it went on.
+  LumitUiState? _boundUi;
+
   /// The saved-preset library, read once and after each save — not per
   /// rebuild, which would scan a folder on every search keystroke.
   List<BridgePresetInfo> _presets = const [];
@@ -52,6 +61,17 @@ class _EffectsPresetsPanelFrbState extends State<EffectsPresetsPanelFrb> {
     super.initState();
     _search.addListener(() => setState(() {}));
     _presets = (widget.presetsLister ?? listPresets)();
+    // `Ctrl+F` asks the focused panel for its search box; this answers only
+    // while Effects & presets is the focused one.
+    _boundUi = Provider.of<LumitUiState>(context, listen: false);
+    _boundUi!.panelSearchRequest.addListener(_onSearchRequested);
+  }
+
+  void _onSearchRequested() {
+    if (!mounted) return;
+    if (_boundUi?.searchRequestIsFor(Panel.effectsAndPresets) ?? false) {
+      _searchFocus.requestFocus();
+    }
   }
 
   void _refreshPresets() {
@@ -60,7 +80,9 @@ class _EffectsPresetsPanelFrbState extends State<EffectsPresetsPanelFrb> {
 
   @override
   void dispose() {
+    _boundUi?.panelSearchRequest.removeListener(_onSearchRequested);
     _search.dispose();
+    _searchFocus.dispose();
     super.dispose();
   }
 
@@ -97,9 +119,9 @@ class _EffectsPresetsPanelFrbState extends State<EffectsPresetsPanelFrb> {
               const SizedBox(width: 6),
               Expanded(
                 child: HouseTextField(
-                  
                   key: const ValueKey('fx-search'),
                   controller: _search,
+                  focusNode: _searchFocus,
                   width: 160,
                 ),
               ),

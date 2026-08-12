@@ -82,8 +82,55 @@ impl FrameIndex {
     }
 }
 
+/// Read `path`'s frame index from the sidecar cache when one is there for the
+/// file's *current* content, else build it — a full packet scan — and write the
+/// sidecar back so the next session starts warm.
+///
+/// This is the only way anything in the engine should obtain a frame index for
+/// a file it is about to decode: a scan costs seconds on a long clip, and the
+/// answer depends on nothing but the file's bytes.
+///
+/// `cache_dir` is where the sidecars live — `lumit_project::media_index_dir()`
+/// in the running application, a temporary directory in tests. `None` means no
+/// cache at all, and every call scans.
+///
+/// Three ways the cache declines to answer, none of them an error:
+/// the file's content changed (its fingerprint no longer matches, so
+/// [`FrameIndex::load_cached`] refuses the stale index and this rebuilds and
+/// rewrites), the sidecar is unreadable or corrupt (same treatment — build), or
+/// the cache directory cannot be written after a build (the index is still
+/// returned; only the next session pays for it again).
+pub fn load_or_build_index(
+    path: &Path,
+    cache_dir: Option<&Path>,
+) -> Result<FrameIndex, MediaError> {
+    load_or_build_with(path, cache_dir, build_frame_index)
+}
+
+/// [`load_or_build_index`] with the build step injected, which is what lets the
+/// cache decision — hit, stale, corrupt, absent — be tested without a media
+/// file and without ffmpeg: the fake builder counts the scans that were avoided.
+pub(crate) fn load_or_build_with(
+    path: &Path,
+    cache_dir: Option<&Path>,
+    build: impl FnOnce(&Path) -> Result<FrameIndex, MediaError>,
+) -> Result<FrameIndex, MediaError> {
+    if let (Some(dir), Ok(fp)) = (cache_dir, Fingerprint::of(path)) {
+        if let Some(index) = FrameIndex::load_cached(dir, &fp) {
+            return Ok(index);
+        }
+    }
+    let index = build(path)?;
+    if let Some(dir) = cache_dir {
+        let _ = index.save_to(dir);
+    }
+    Ok(index)
+}
+
 /// Scan every packet of the primary video stream (no decoding) and build the
-/// index. Seconds for an hour of 4K — run on a background thread.
+/// index. Seconds for an hour of 4K — run on a background thread. Prefer
+/// [`load_or_build_index`], which pays this cost once per file rather than once
+/// per session.
 pub fn build_frame_index(path: &Path) -> Result<FrameIndex, MediaError> {
     let fingerprint = Fingerprint::of(path)?;
     let mut input = crate::probe::open_input(path)?;
@@ -450,5 +497,156 @@ mod tests {
             assert!(k <= n, "keyframe {k} should be at or before frame {n}");
             assert!(index.entries[k].keyframe, "frame {k} should be a keyframe");
         }
+    }
+
+    // ---- load-or-build: the cache decision on its own -------------------
+    //
+    // These need no media file and no ffmpeg at run time: the build step is
+    // injected, so what is under test is exactly the choice between reading a
+    // sidecar and paying for a packet scan. `frames` in the synthetic index
+    // says which index the caller ended up with.
+
+    fn synthetic_index(path: &Path, frames: usize) -> FrameIndex {
+        FrameIndex {
+            timebase_num: 1,
+            timebase_den: 60,
+            entries: (0..frames)
+                .map(|n| IndexEntry {
+                    pts: n as i64,
+                    keyframe: n == 0,
+                })
+                .collect(),
+            vfr: false,
+            median_delta: 1,
+            fingerprint: Fingerprint::of(path).unwrap(),
+        }
+    }
+
+    fn media_file(dir: &Path, bytes: u8, len: usize) -> PathBuf {
+        let path = dir.join("clip.mp4");
+        std::fs::write(&path, vec![bytes; len]).unwrap();
+        path
+    }
+
+    /// The regression this whole helper exists for: with a sidecar already on
+    /// disk for this file's content, opening a decoder must read it, not scan
+    /// the file again. Before the fix the decode path called
+    /// `build_frame_index` unconditionally and every session paid for a full
+    /// packet scan of every clip.
+    #[test]
+    fn a_matching_sidecar_is_reused_and_nothing_is_scanned() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = media_file(dir.path(), 7, 4096);
+        let cache = dir.path().join("media-index");
+        synthetic_index(&file, 7).save_to(&cache).unwrap();
+
+        let scans = std::cell::Cell::new(0);
+        let index = load_or_build_with(&file, Some(&cache), |p| {
+            scans.set(scans.get() + 1);
+            Ok(synthetic_index(p, 99))
+        })
+        .unwrap();
+
+        assert_eq!(scans.get(), 0, "a valid sidecar must not be re-scanned");
+        assert_eq!(index.frame_count(), 7, "the cached index is the one used");
+    }
+
+    /// A file that changed since its index was written must be rebuilt — never
+    /// replayed from the stale sidecar — and the fresh index written back under
+    /// the new fingerprint, so the session after this one is warm again.
+    #[test]
+    fn a_sidecar_for_different_content_is_rebuilt_and_rewritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = media_file(dir.path(), 7, 4096);
+        let cache = dir.path().join("media-index");
+        synthetic_index(&file, 7).save_to(&cache).unwrap();
+
+        // Re-export over the same path: same name, different bytes.
+        std::fs::write(&file, vec![9u8; 8192]).unwrap();
+
+        let scans = std::cell::Cell::new(0);
+        let index = load_or_build_with(&file, Some(&cache), |p| {
+            scans.set(scans.get() + 1);
+            Ok(synthetic_index(p, 3))
+        })
+        .unwrap();
+
+        assert_eq!(scans.get(), 1, "changed content must rebuild");
+        assert_eq!(index.frame_count(), 3);
+
+        let fp = Fingerprint::of(&file).unwrap();
+        assert_eq!(
+            FrameIndex::load_cached(&cache, &fp).expect("the rebuild was written back"),
+            index,
+            "the sidecar must hold exactly the index that was returned"
+        );
+    }
+
+    /// A truncated or scribbled-on sidecar is a cache miss, not a failure: the
+    /// index is rebuilt calmly and the bad file replaced.
+    #[test]
+    fn a_corrupt_sidecar_falls_back_to_a_build() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = media_file(dir.path(), 7, 4096);
+        let cache = dir.path().join("media-index");
+        let fp = Fingerprint::of(&file).unwrap();
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::write(FrameIndex::cache_path(&cache, &fp), b"not an index").unwrap();
+
+        let scans = std::cell::Cell::new(0);
+        let index = load_or_build_with(&file, Some(&cache), |p| {
+            scans.set(scans.get() + 1);
+            Ok(synthetic_index(p, 5))
+        })
+        .unwrap();
+
+        assert_eq!(scans.get(), 1, "an unreadable sidecar must rebuild");
+        assert_eq!(index.frame_count(), 5);
+        assert_eq!(
+            FrameIndex::load_cached(&cache, &fp).expect("the good index replaced the bad one"),
+            index
+        );
+    }
+
+    /// No cache directory at all (a platform with no home directory) still
+    /// works — it simply scans every time, which is what it did before the
+    /// cache existed.
+    #[test]
+    fn without_a_cache_directory_every_call_builds() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = media_file(dir.path(), 7, 4096);
+
+        let scans = std::cell::Cell::new(0);
+        for _ in 0..2 {
+            let index = load_or_build_with(&file, None, |p| {
+                scans.set(scans.get() + 1);
+                Ok(synthetic_index(p, 4))
+            })
+            .unwrap();
+            assert_eq!(index.frame_count(), 4);
+        }
+        assert_eq!(scans.get(), 2);
+    }
+
+    /// Whichever path produced it, the index is the same bytes: a build
+    /// written to the sidecar and read back must serialise identically, or
+    /// "the cache is faster" would quietly mean "the cache is different"
+    /// (docs/14 determinism).
+    #[test]
+    fn a_cached_index_round_trips_byte_for_byte() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = media_file(dir.path(), 7, 4096);
+        let cache = dir.path().join("media-index");
+
+        let built =
+            load_or_build_with(&file, Some(&cache), |p| Ok(synthetic_index(p, 11))).unwrap();
+        let loaded =
+            load_or_build_with(&file, Some(&cache), |p| Ok(synthetic_index(p, 99))).unwrap();
+
+        assert_eq!(built, loaded);
+        assert_eq!(
+            bincode::serialize(&built).unwrap(),
+            bincode::serialize(&loaded).unwrap()
+        );
     }
 }
